@@ -134,24 +134,25 @@ def get_collected_series() -> List[Dict[str, Any]]:
     conn.execute('PRAGMA query_only = ON')
     try:
         cursor = conn.cursor()
-        # Get unique shows with their metadata
+        # NULLIF so empty-string imdb_id falls through to tmdb (matches normalize_show_id)
         cursor.execute("""
             SELECT DISTINCT
-                COALESCE(imdb_id, tmdb_id) as show_id,
+                COALESCE(NULLIF(imdb_id, ''), NULLIF(CAST(tmdb_id AS TEXT), '')) as show_id,
                 imdb_id, tmdb_id, title, year, genres, runtime
             FROM media_items
             WHERE state = 'Collected'
             AND type = 'episode'
             AND (file_path IS NOT NULL OR location_on_disk IS NOT NULL)
-            GROUP BY COALESCE(imdb_id, tmdb_id), title
+            GROUP BY COALESCE(NULLIF(imdb_id, ''), NULLIF(CAST(tmdb_id AS TEXT), '')), title
         """)
 
         series_list = []
         for row in cursor.fetchall():
+            imdb_id, tmdb_id = row[1], row[2]
             series_list.append({
-                'show_id': row[0],
-                'imdb_id': row[1],
-                'tmdb_id': row[2],
+                'show_id': normalize_show_id(imdb_id, tmdb_id) or row[0],
+                'imdb_id': imdb_id,
+                'tmdb_id': tmdb_id,
                 'title': row[3],
                 'year': row[4],
                 'genres': row[5],
@@ -244,8 +245,30 @@ def get_all_collected_episodes() -> List[Dict[str, Any]]:
         conn.close()
 
 
+def _movie_row_to_dict(row) -> Dict[str, Any]:
+    return {
+        'id': row[0],
+        'imdb_id': row[1],
+        'tmdb_id': row[2],
+        'title': row[3],
+        'year': row[4],
+        'file_path': row[5],
+        'location_on_disk': row[6],
+        'genres': row[7],
+        'runtime': row[8],
+        'collected_at': row[9],
+        'version': row[10],
+        'filled_by_file': row[11],
+        'resolution': row[12]
+    }
+
+
 def get_movie_by_id(movie_id: int) -> Optional[Dict[str, Any]]:
-    """Get a specific movie by its ID."""
+    """Get a specific movie by its Radarr id (TMDB, else hashed media id).
+
+    Prefer tmdb_id match — never match media_items.id first, which collides
+    with TMDB ids and returns the wrong title.
+    """
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -254,64 +277,76 @@ def get_movie_by_id(movie_id: int) -> Optional[Dict[str, Any]]:
                    location_on_disk, genres, runtime, collected_at, version,
                    filled_by_file, resolution
             FROM media_items
-            WHERE (id = ? OR tmdb_id = ? OR tmdb_id = ?)
-            AND state = 'Collected'
+            WHERE state = 'Collected'
             AND type = 'movie'
+            AND (tmdb_id = ? OR tmdb_id = ?)
             LIMIT 1
-        """, (movie_id, str(movie_id), movie_id))
+        """, (str(movie_id), movie_id))
 
         row = cursor.fetchone()
         if row:
-            return {
-                'id': row[0],
-                'imdb_id': row[1],
-                'tmdb_id': row[2],
-                'title': row[3],
-                'year': row[4],
-                'file_path': row[5],
-                'location_on_disk': row[6],
-                'genres': row[7],
-                'runtime': row[8],
-                'collected_at': row[9],
-                'version': row[10],
-                'filled_by_file': row[11],
-                'resolution': row[12]
-            }
-        return None
+            return _movie_row_to_dict(row)
     finally:
         conn.close()
 
+    # Fallback: hashed movie ids when TMDB is missing
+    for movie in get_collected_movies():
+        try:
+            tmdb_id = int(movie.get('tmdb_id') or 0)
+        except (ValueError, TypeError):
+            tmdb_id = 0
+        resolved = tmdb_id or generate_unique_id(movie.get('id'), 'movie')
+        if resolved == movie_id:
+            return movie
+    return None
+
 
 def get_series_by_id(series_id: int) -> Optional[Dict[str, Any]]:
-    """Get a specific series by its ID."""
+    """Resolve a Sonarr series id to show metadata.
+
+    Prefer tmdb_id match (not media_items.id — PK collisions with TMDB break
+    Bazarr FK inserts). Fall back to scanning collected shows for hashed
+    sonarr_series_id matches when TMDB is absent.
+    """
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT DISTINCT
-                COALESCE(imdb_id, tmdb_id) as show_id,
+                COALESCE(NULLIF(imdb_id, ''), NULLIF(CAST(tmdb_id AS TEXT), '')) as show_id,
                 imdb_id, tmdb_id, title, year, genres, runtime
             FROM media_items
-            WHERE (id = ? OR tmdb_id = ? OR tmdb_id = ? OR imdb_id = ?)
-            AND state = 'Collected'
+            WHERE state = 'Collected'
             AND type = 'episode'
+            AND (tmdb_id = ? OR tmdb_id = ?)
+            AND (file_path IS NOT NULL OR location_on_disk IS NOT NULL)
             LIMIT 1
-        """, (series_id, str(series_id), series_id, str(series_id)))
+        """, (str(series_id), series_id))
 
         row = cursor.fetchone()
         if row:
+            imdb_id, tmdb_id = row[1], row[2]
             return {
-                'show_id': row[0],
-                'imdb_id': row[1],
-                'tmdb_id': row[2],
+                'show_id': normalize_show_id(imdb_id, tmdb_id) or row[0],
+                'imdb_id': imdb_id,
+                'tmdb_id': tmdb_id,
                 'title': row[3],
                 'year': row[4],
                 'genres': row[5],
                 'runtime': row[6]
             }
-        return None
     finally:
         conn.close()
+
+    for series in get_collected_series():
+        if sonarr_series_id(series) == series_id:
+            result = dict(series)
+            result['show_id'] = (
+                normalize_show_id(result.get('imdb_id'), result.get('tmdb_id'))
+                or result.get('show_id')
+            )
+            return result
+    return None
 
 
 # ============================================================================
@@ -382,6 +417,36 @@ def generate_unique_id(base_id: Any, prefix: str = '') -> int:
     # Always use hash to ensure prefix is incorporated
     hash_input = f"{prefix}{base_id}".encode()
     return int(hashlib.md5(hash_input).hexdigest()[:8], 16)
+
+
+def normalize_show_id(imdb_id: Any = None, tmdb_id: Any = None) -> str:
+    """Normalize show identity for grouping and lookups.
+
+    Blank/whitespace strings are treated as missing. Prefer IMDB, then TMDB —
+    matching SQL COALESCE(NULLIF(imdb_id, ''), NULLIF(tmdb_id, '')).
+    """
+    def _clean(value: Any) -> str:
+        if value is None:
+            return ''
+        text = str(value).strip()
+        return text if text else ''
+
+    return _clean(imdb_id) or _clean(tmdb_id)
+
+
+def sonarr_series_id(item: Dict[str, Any]) -> int:
+    """Stable Sonarr series id used by every HTTP and SignalR path.
+
+    Use integer TMDB when present; otherwise a deterministic hash of show_id.
+    """
+    try:
+        tmdb_id = int(item.get('tmdb_id') or 0)
+    except (ValueError, TypeError):
+        tmdb_id = 0
+    if tmdb_id:
+        return tmdb_id
+    show_id = item.get('show_id') or normalize_show_id(item.get('imdb_id'), item.get('tmdb_id'))
+    return generate_unique_id(show_id, 'series')
 
 
 def generate_tvdb_id(tmdb_id: Any, title: str, episode_info: Optional[Dict[str, Any]] = None) -> int:
@@ -639,7 +704,7 @@ def create_series_resource(item: Dict[str, Any], episodes: List[Dict[str, Any]] 
         tmdb_id = int(item.get('tmdb_id') or 0)
     except (ValueError, TypeError):
         tmdb_id = 0
-    series_id = tmdb_id or generate_unique_id(item.get('show_id'), 'series')
+    series_id = sonarr_series_id(item)
     title = item.get('title', 'Unknown')
 
     # Generate consistent tvdbId for Bazarr compatibility
@@ -1130,16 +1195,17 @@ def get_series():
 
     try:
         series_list = get_collected_series()
-        # Load all episodes in one query and group by show_id
+        # Load all episodes in one query and group by normalized show_id
         all_episodes = get_all_collected_episodes()
         ep_map = {}
         for ep in all_episodes:
-            key = ep.get('imdb_id') or ep.get('tmdb_id') or ''
-            ep_map.setdefault(key, []).append(ep)
+            key = normalize_show_id(ep.get('imdb_id'), ep.get('tmdb_id'))
+            if key:
+                ep_map.setdefault(key, []).append(ep)
 
         result = []
         for s in series_list:
-            show_id = s.get('show_id', '')
+            show_id = normalize_show_id(s.get('imdb_id'), s.get('tmdb_id')) or s.get('show_id', '')
             episodes = ep_map.get(show_id, [])
             result.append(create_series_resource(s, episodes))
         return jsonify(result)
@@ -1402,6 +1468,9 @@ def signalr_negotiate():
 
     connection_id = f"cli_debrid-{int(time.time() * 1000)}"
 
+    # Bazarr's bundled signalrcore only implements WebSocket transport (it
+    # ignores availableTransports and always opens ws://). Advertise WebSockets
+    # and require the WS-capable Werkzeug handler in run_server().
     return jsonify({
         'connectionId': connection_id,
         'connectionToken': connection_id,
@@ -1414,10 +1483,6 @@ def signalr_negotiate():
             {
                 'transport': 'ServerSentEvents',
                 'transferFormats': ['Text']
-            },
-            {
-                'transport': 'LongPolling',
-                'transferFormats': ['Text', 'Binary']
             }
         ]
     })
@@ -1426,44 +1491,63 @@ def signalr_negotiate():
 @bazarr_bp.route('/signalr/messages', methods=['GET'])
 @bazarr_bp.route('/signalr', methods=['GET'])
 def signalr_messages():
-    """Handle SignalR message stream (WebSocket or Server-Sent Events fallback)."""
+    """Handle SignalR message stream (WebSocket preferred; SSE fallback)."""
     if not is_symlinked_mode() or not get_setting('Bazarr Integration', 'enabled', False):
         return jsonify({'error': 'Not found'}), 404
 
-    # Check if this is a WebSocket upgrade request
+    # Prefer the Werkzeug request-handler path for WebSockets (avoids Flask
+    # middleware blocking the 101). Keep this branch for non-standard servers.
     if request.headers.get('Upgrade', '').lower() == 'websocket':
-        return handle_signalr_websocket()
+        run_signalr_websocket_session(request.environ)
+        return ''
 
-    # Fall back to Server-Sent Events
     return handle_signalr_sse()
 
 
-def handle_signalr_websocket():
-    """Handle SignalR WebSocket connection (matches CineSync implementation)."""
+def run_signalr_websocket_session(environ) -> None:
+    """Run a SignalR JSON-protocol WebSocket session on an upgraded socket.
+
+    ``environ`` must include ``werkzeug.socket`` (injected by
+    ``WebSocketAwareHandler``) so simple_websocket can complete the handshake.
+    """
     try:
         from simple_websocket import Server, ConnectionClosed
     except ImportError:
-        # simple-websocket not available, fall back to SSE
-        logging.debug("[SignalR] WebSocket requested but simple-websocket not installed, using SSE")
-        return handle_signalr_sse()
+        logging.error("[SignalR] simple-websocket not installed")
+        return
+
+    from urllib.parse import parse_qs
+    qs = parse_qs(environ.get('QUERY_STRING') or '')
+    connection_id = (
+        (qs.get('id') or qs.get('connectionToken') or [None])[0]
+        or f"ws-{int(time.time() * 1000)}"
+    )
+
+    if not is_symlinked_mode() or not get_setting('Bazarr Integration', 'enabled', False):
+        logging.warning("[SignalR] WebSocket rejected: Bazarr integration disabled")
+        return
 
     try:
-        ws = Server.accept(request.environ)
+        ws = Server.accept(environ)
     except Exception as e:
         logging.error(f"[SignalR] WebSocket accept failed: {e}")
-        return handle_signalr_sse()
+        return
 
-    connection_id = f"ws-{int(time.time() * 1000)}"
-
-    # Register this connection for event broadcasting
     from routes.bazarr_signalr import register_connection, unregister_connection, get_pending_events
-    event_queue = register_connection(connection_id)
+    register_connection(connection_id)
 
     try:
-        # Send handshake response (matches CineSync: {"error":null}\x1e)
+        # Wait for client handshake: {"protocol":"json","version":1}\x1e
+        try:
+            first = ws.receive(timeout=10)
+            if first:
+                logging.debug(f"[SignalR] client handshake: {str(first)[:80]!r}")
+        except Exception:
+            pass
+
+        # Handshake response required by SignalR JSON protocol
         ws.send(json.dumps({"error": None}) + '\x1e')
 
-        # Send version message
         version = get_setting('Bazarr Integration', 'spoofed_version', '5.14.0.9383')
         version_msg = {
             'type': 1,
@@ -1476,26 +1560,23 @@ def handle_signalr_websocket():
 
         last_ping = time.time()
         while True:
-            # Check for incoming messages (non-blocking with short timeout)
             try:
                 data = ws.receive(timeout=0.1)
-                if data:
-                    # Handle ping/pong from client
-                    try:
-                        msg = json.loads(data.rstrip('\x1e'))
-                        if msg.get('type') == 6:  # Ping
-                            ws.send(json.dumps({'type': 6}) + '\x1e')
-                    except (json.JSONDecodeError, AttributeError):
-                        pass
             except Exception:
-                pass
+                data = None
 
-            # Check for events to broadcast
+            if data:
+                try:
+                    msg = json.loads(str(data).rstrip('\x1e'))
+                    if msg.get('type') == 6:  # Ping
+                        ws.send(json.dumps({'type': 6}) + '\x1e')
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    pass
+
             events = get_pending_events(connection_id, timeout=0.1)
             for event in events:
                 ws.send(json.dumps(event) + '\x1e')
 
-            # Send periodic ping (every 10 seconds like CineSync)
             if time.time() - last_ping > 10:
                 ws.send(json.dumps({'type': 6}) + '\x1e')
                 last_ping = time.time()
@@ -1507,24 +1588,23 @@ def handle_signalr_websocket():
     finally:
         unregister_connection(connection_id)
 
-    return ''
-
 
 def handle_signalr_sse():
     """Handle SignalR Server-Sent Events connection."""
-    connection_id = f"sse-{int(time.time() * 1000)}"
+    connection_id = (
+        request.args.get('id')
+        or request.args.get('connectionToken')
+        or f"sse-{int(time.time() * 1000)}"
+    )
 
-    # Register this connection for event broadcasting
     from routes.bazarr_signalr import register_connection, unregister_connection, get_pending_events
 
     def generate():
-        event_queue = register_connection(connection_id)
+        register_connection(connection_id)
 
         try:
-            # Send handshake response
             yield f'data: {json.dumps({"error": None})}\x1e\n\n'
 
-            # Send version message
             version = get_setting('Bazarr Integration', 'spoofed_version', '5.14.0.9383')
             version_msg = {
                 'type': 1,
@@ -1537,12 +1617,10 @@ def handle_signalr_sse():
 
             last_ping = time.time()
             while True:
-                # Check for events to broadcast
                 events = get_pending_events(connection_id, timeout=1.0)
                 for event in events:
                     yield f'data: {json.dumps(event)}\x1e\n\n'
 
-                # Send periodic ping (every 15 seconds)
                 if time.time() - last_ping > 15:
                     yield f'data: {json.dumps({"type": 6})}\x1e\n\n'
                     last_ping = time.time()
@@ -1558,6 +1636,7 @@ def handle_signalr_sse():
         headers={
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
             'Access-Control-Allow-Origin': '*'
         }
     )

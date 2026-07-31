@@ -858,7 +858,10 @@ class AddingQueue:
                     upgrading_queue.add_failed_upgrade(item['id'], failed_info)
                     logging.info(f"Successfully reverted failed upgrade for {item_identifier}")
                 else:
-                    logging.error(f"Failed to restore previous state for {item_identifier} after adding queue failure")
+                    # No snapshot to restore; revert to Collected so the item doesn't loop forever at state='Adding'.
+                    logging.error(f"Failed to restore previous state for {item_identifier} after adding queue failure; reverting to Collected")
+                    if item_id:
+                        update_media_item(item_id, state='Collected', upgrading=False, upgrading_from=None)
 
                 # --- START EDIT: Check if failure was due to filter and remove torrent ---
                 if "matched filter-out list" in error:

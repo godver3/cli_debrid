@@ -9,10 +9,83 @@ from datetime import datetime, timedelta
 DEFAULT_TAKE = 100
 REQUEST_TIMEOUT = 15  # seconds
 
+
+class OverseerrAuthError(Exception):
+    """Raised when Overseerr rejects the configured API key (401/403)."""
+    pass
+
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 OVERSEERR_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'overseerr_cache.pkl')
 CACHE_EXPIRY_DAYS = 7
+OVERSEERR_AUTH_STATE_FILE = os.path.join(DB_CONTENT_DIR, 'overseerr_auth_state.pkl')
+
+
+def _load_overseerr_auth_state() -> Dict[str, bool]:
+    """Per-source_id -> True if currently in a notified auth-failure state. Persisted
+    to disk so a program restart (e.g. after a settings save) doesn't cause a
+    duplicate notification for a failure the user already saw."""
+    try:
+        if os.path.exists(OVERSEERR_AUTH_STATE_FILE):
+            with open(OVERSEERR_AUTH_STATE_FILE, 'rb') as f:
+                return pickle.load(f)
+    except Exception as e:
+        logging.debug(f"Error loading Overseerr auth state: {e}. Starting fresh.")
+    return {}
+
+
+def _save_overseerr_auth_state(state: Dict[str, bool]):
+    try:
+        os.makedirs(os.path.dirname(OVERSEERR_AUTH_STATE_FILE), exist_ok=True)
+        with open(OVERSEERR_AUTH_STATE_FILE, 'wb') as f:
+            pickle.dump(state, f)
+    except Exception as e:
+        logging.debug(f"Error saving Overseerr auth state: {e}")
+
+
+def _notify_overseerr_auth_failure(source_id: str, display_name: str):
+    """Fire a notification only on the transition into an auth-failure state, so a
+    ~15-minute polling cycle doesn't spam a notification every run while the key
+    stays broken."""
+    state = _load_overseerr_auth_state()
+    if state.get(source_id):
+        return  # Already notified for this ongoing failure
+    state[source_id] = True
+    _save_overseerr_auth_state(state)
+    try:
+        from routes.notifications import store_notification
+        store_notification(
+            title="Overseerr Connection Failed",
+            message=(
+                f"'{display_name}' rejected the configured API key (401/403). "
+                f"Wanted content from this source will not be fetched until the API key is corrected in Settings."
+            ),
+            notification_type='error',
+            link="/settings"
+        )
+    except Exception as e:
+        logging.warning(f"Could not store Overseerr auth-failure notification: {e}")
+
+
+def _clear_overseerr_auth_failure(source_id: str, display_name: str):
+    """Called on a successful fetch — clears the notified state and, if we were
+    previously in a failure state, lets the user know it recovered."""
+    state = _load_overseerr_auth_state()
+    if not state.get(source_id):
+        return
+    del state[source_id]
+    _save_overseerr_auth_state(state)
+    try:
+        from routes.notifications import store_notification
+        store_notification(
+            title="Overseerr Connection Restored",
+            message=f"'{display_name}' is authenticating successfully again.",
+            notification_type='info',
+            link="/settings"
+        )
+    except Exception as e:
+        logging.warning(f"Could not store Overseerr auth-recovery notification: {e}")
+
 
 def parse_bool(value: Any) -> bool:
     """Safely parse various truthy/falsey representations into a boolean."""
@@ -173,6 +246,10 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
                 break
 
         except api.exceptions.RequestException as e:
+            status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status_code in (401, 403):
+                logging.error(f"Error fetching wanted content from Overseerr: {e}")
+                raise OverseerrAuthError(f"Overseerr rejected the API key (HTTP {status_code})") from e
             logging.error(f"Error fetching wanted content from Overseerr: {e}")
             break
         except Exception as e:
@@ -184,27 +261,29 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
 
 def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     content_sources = get_all_settings().get('Content Sources', {})
-    overseerr_sources = [data for source, data in content_sources.items() if source.startswith('Overseerr') and data.get('enabled', False)]
+    overseerr_sources = [(source_id, data) for source_id, data in content_sources.items() if source_id.startswith('Overseerr') and data.get('enabled', False)]
     allow_partial = parse_bool(get_setting('Debug', 'allow_partial_overseerr_requests', 'False'))
     disable_caching = True  # Hardcoded to True
     logging.info(f"allow_partial: {allow_partial}")
-    
+
     all_wanted_items = []
     cache = {} if disable_caching else load_overseerr_cache()
     current_time = datetime.now()
-    
-    for source in overseerr_sources:
+
+    for source_id, source in overseerr_sources:
         overseerr_url = source.get('url')
         overseerr_api_key = source.get('api_key')
+        display_name = source.get('display_name') or source_id
         ignore_tags_str = source.get('ignore_tags', '')
         ignore_tags = {tag.strip().lower() for tag in ignore_tags_str.split(',') if tag.strip()} if ignore_tags_str else set()
-        
+
         if not overseerr_url or not overseerr_api_key:
             logging.error(f"Overseerr URL or API key not set for source: {source}. Please configure in settings.")
             continue
 
         try:
             wanted_content_raw = fetch_overseerr_wanted_content(overseerr_url, overseerr_api_key)
+            _clear_overseerr_auth_failure(source_id, display_name)
             wanted_items = []
             cache_skipped = 0
             ignored_by_tag = 0
@@ -276,6 +355,9 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
                 logging.info(f"Ignored {ignored_by_tag} items from Overseerr source based on tags.")
             all_wanted_items.append((wanted_items, versions))
             logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source")
+        except OverseerrAuthError as e:
+            logging.error(f"Overseerr auth failure for source '{display_name}': {e}")
+            _notify_overseerr_auth_failure(source_id, display_name)
         except Exception as e:
             logging.error(f"Unexpected error while processing Overseerr source: {e}")
 
