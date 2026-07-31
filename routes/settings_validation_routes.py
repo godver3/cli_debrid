@@ -199,11 +199,13 @@ def validate_trakt_credentials(client_id, client_secret):
     if not client_id or not client_secret:
         return False, "Both Client ID and Client Secret are required"
     
-    # Validate format
-    if len(client_id) != 64:
-        return False, "Invalid Trakt Client ID format (must be 64 characters)"
-    if len(client_secret) != 64:
-        return False, "Invalid Trakt Client Secret format (must be 64 characters)"
+    # Validate basic sanity (Trakt has changed key lengths over time, so we
+    # avoid hardcoding an exact character count and only guard against
+    # obviously-wrong input, e.g. empty/placeholder text pasted by mistake).
+    if len(client_id.strip()) < 10:
+        return False, "Invalid Trakt Client ID format (too short)"
+    if len(client_secret.strip()) < 10:
+        return False, "Invalid Trakt Client Secret format (too short)"
     
     try:
         # Try to get a device code - this validates both client ID and secret

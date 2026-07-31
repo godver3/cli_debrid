@@ -339,11 +339,24 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
             except ValueError:
                  logging.warning(f"Invalid show default airtime format: {default_airtime_str}. Using default 19:00.")
 
+    # 'year' is not always present on show metadata (e.g. unreleased/sparsely-documented
+    # shows) — fall back to deriving it from a release date rather than crashing.
+    show_year = show_item.get('year')
+    if not isinstance(show_year, int):
+        for _date_field in ('first_aired', 'release_date'):
+            _date_val = show_item.get(_date_field)
+            if _date_val and len(str(_date_val)) >= 4:
+                try:
+                    show_year = int(str(_date_val)[:4])
+                    break
+                except (ValueError, TypeError):
+                    pass
+
     episode_item = {
         'imdb_id': show_item['imdb_id'],
         'tmdb_id': show_item['tmdb_id'],
         'title': show_item['title'],
-        'year': show_item['year'],
+        'year': show_year,
         'season_number': int(season_number),
         'episode_number': int(episode_number),
         'episode_title': episode_data.get('title', f"Episode {episode_number}"),

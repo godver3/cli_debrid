@@ -191,11 +191,52 @@ def signal_handler(signum, frame):
 
 def run_server():
     from routes.extensions import app
-    
+    from werkzeug.serving import make_server, WSGIRequestHandler
+
     # Get port from environment variable or use default
     port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+
+    class WebSocketAwareHandler(WSGIRequestHandler):
+        """Threaded Werkzeug handler that supports SignalR WebSocket upgrades.
+
+        SignalR WebSocket sessions are handled here directly (not via Flask) so
+        app before_request / session middleware cannot block the 101 handshake.
+        """
+
+        protocol_version = "HTTP/1.1"
+
+        def make_environ(self):
+            environ = super().make_environ()
+            environ['werkzeug.socket'] = self.connection
+            return environ
+
+        def run_wsgi(self):
+            upgrade = (self.headers.get('Upgrade') or '').lower().strip()
+            path = (self.path or '').split('?', 1)[0]
+            if upgrade == 'websocket' and path in ('/signalr/messages', '/signalr'):
+                self.environ = environ = self.make_environ()
+                try:
+                    from routes.bazarr_spoofing_routes import run_signalr_websocket_session
+                    run_signalr_websocket_session(environ)
+                except (BrokenPipeError, ConnectionError, ConnectionResetError):
+                    pass
+                except Exception as e:
+                    logging.error(f"[SignalR] WebSocket handler error: {e}", exc_info=True)
+                return
+            return super().run_wsgi()
+
     try:
-        app.run(debug=True, use_reloader=False, host='0.0.0.0', port=port, threaded=True)
+        # Use make_server (not app.run) so we control the request handler and
+        # avoid the Flask debugger wrapper interfering with Upgrade requests.
+        logging.info(f"Starting Werkzeug threaded server with WebSocket support on 0.0.0.0:{port}")
+        server = make_server(
+            '0.0.0.0',
+            port,
+            app,
+            threaded=True,
+            request_handler=WebSocketAwareHandler,
+        )
+        server.serve_forever()
     except Exception as e:
         logging.error(f"Error running server: {str(e)}")
         cleanup_port(port)
