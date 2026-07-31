@@ -11,7 +11,14 @@ RUN apt-get update && \
     # xvfb + Chromium runtime deps for the Cloudflare-challenge bypass browser
     # (see utilities/cloudflare_bypass.py) — headless mode alone fails the
     # challenge, so a real headed browser under a virtual display is required.
-    xvfb && \
+    # Installed explicitly (not via `patchright install --with-deps`) because
+    # that command's OS detection doesn't recognize Debian trixie and falls
+    # back to Ubuntu 20.04 package names, two of which (ttf-ubuntu-font-family,
+    # ttf-unifont) don't exist on trixie and fail the build.
+    xvfb fonts-liberation fonts-unifont libnss3 libnspr4 libatk1.0-0 \
+    libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
+    libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 \
+    libcairo2 libatspi2.0-0 && \
     # Cleanup
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -30,10 +37,10 @@ RUN pip install --upgrade pip "setuptools<78" wheel supervisor
 # Install the requirements
 RUN pip install --no-cache-dir -r requirements-linux.txt
 
-# Install Chromium + its OS-level dependencies for patchright (Cloudflare-challenge
-# bypass browser, see utilities/cloudflare_bypass.py). --with-deps installs the
-# required apt packages automatically.
-RUN patchright install --with-deps chromium
+# Install Chromium for patchright (Cloudflare-challenge bypass browser, see
+# utilities/cloudflare_bypass.py). OS-level deps are installed explicitly above
+# (not via --with-deps, which fails on this base image — see comment above).
+RUN patchright install chromium
 
 # Copy the current directory contents into the container at /app
 COPY . .
