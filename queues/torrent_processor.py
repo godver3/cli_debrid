@@ -667,7 +667,14 @@ class TorrentProcessor:
                 episode_title=None if _is_season_pack else (item or {}).get('episode_title'),
                 tags=(item or {}).get('tags') or None,
             ) or title
-        except Exception:
+        except Exception as _bnt_exc:
+            # Falling back to the raw scraped title silently here means the
+            # resulting cli_mount entry has no imdb tag, no version tag, and no
+            # structured name at all — indistinguishable from naming being
+            # disabled. Log it so a real bug (bad settings lookup, unexpected
+            # season/episode type, etc.) is visible instead of masquerading as
+            # "naming worked but produced a plain title".
+            logging.warning(f'[{item_identifier}] _build_nzb_title failed, falling back to raw title: {_bnt_exc}', exc_info=True)
             job_title = title
 
         # Check if same NZB title already in cli_mount/NzbDAV to avoid duplicates.

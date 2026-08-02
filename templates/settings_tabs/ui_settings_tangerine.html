@@ -198,8 +198,9 @@
                 <option value="auto" {% if settings.get('UI Settings', {}).get('stats_provider_priority', 'auto') == 'auto' %}selected{% endif %}>Auto (debrid if configured, otherwise usenet)</option>
                 <option value="debrid" {% if settings.get('UI Settings', {}).get('stats_provider_priority') == 'debrid' %}selected{% endif %}>Debrid</option>
                 <option value="usenet" {% if settings.get('UI Settings', {}).get('stats_provider_priority') == 'usenet' %}selected{% endif %}>Usenet</option>
+                <option value="combined" {% if settings.get('UI Settings', {}).get('stats_provider_priority') == 'combined' %}selected{% endif %}>Combined (debrid + usenet)</option>
             </select>
-            <p class="settings-description">Choose which provider's download stats to display on the Statistics page. Usenet shows cli_mount connection stats even when a debrid provider is also configured.</p>
+            <p class="settings-description">Choose which provider's download stats to display on the Statistics page. Usenet shows cli_mount connection stats even when a debrid provider is also configured. Combined shows the total size and broken count across every debrid provider and usenet together.</p>
         </div>
     </div>
 </div>

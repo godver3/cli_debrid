@@ -1939,17 +1939,24 @@ def _build_nzb_title(title, year, imdb_id, version, original_scraped_torrent_tit
         if len(without_cs) <= _MAX_TITLE:
             return without_cs
 
-        # Truncate (original) to fit — always keep it, just shorter
+        # Truncate (original) to fit — always keep it, just shorter. Drop
+        # tags/version from fixed_part first if even that alone leaves no room,
+        # so imdb_part (the field cli_debrid uses to re-match this entry later)
+        # is the last thing ever dropped, never the first.
         if _orig:
-            fixed_part = _assemble(base, _imdb_part, _tags_part, _version)
-            # " - (" prefix + ")" suffix = 4 chars overhead
-            available = _MAX_TITLE - len(fixed_part) - 4
-            if available > 10:
-                truncated_orig = _orig[:available]
-                return f'{fixed_part} - ({truncated_orig})'
+            for fixed_part in (
+                _assemble(base, _imdb_part, _tags_part, _version),
+                _assemble(base, _imdb_part, _version),
+                _assemble(base, _imdb_part),
+            ):
+                # " - (" prefix (4 chars) + ")" suffix (1 char) = 5 chars overhead
+                available = _MAX_TITLE - len(fixed_part) - 5
+                if available > 10:
+                    truncated_orig = _orig[:available]
+                    return f'{fixed_part} - ({truncated_orig})'
 
-        # Last resort: no (original)
-        without_orig = _assemble(base, _imdb_part, _tags_part, _version)
+        # Last resort: no (original), but imdb is still present.
+        without_orig = _assemble(base, _imdb_part)
         if len(without_orig) <= _MAX_TITLE:
             return without_orig
         return base[:_MAX_TITLE]
@@ -1958,16 +1965,35 @@ def _build_nzb_title(title, year, imdb_id, version, original_scraped_torrent_tit
         base = _assemble(f'{_title} ({_year})', _season_part)
         _imdb_str = f'{{imdb-{_imdb}}}' if _imdb else ''
         _orig_part = f'({_orig})' if _orig else ''
+
+        # imdb_id must never be the thing dropped to fit _MAX_TITLE — it is the
+        # only field cli_debrid uses to re-match this entry later (see
+        # repair_engine.py Strategy 4). Drop content-source, tags, then version
+        # first; only then truncate — and finally drop — the (original) bracket,
+        # which is decorative. This mirrors the episode branch above, which
+        # already protects imdb_part the same way.
         for attempt in [
             _assemble(base, _imdb_str, _tags_part, _version, _cs_part, _orig_part),
             _assemble(base, _imdb_str, _tags_part, _version, _orig_part),
-            _assemble(base, _imdb_str, _tags_part, _orig_part),
+            _assemble(base, _imdb_str, _version, _orig_part),
             _assemble(base, _imdb_str, _orig_part),
-            _assemble(base, _orig_part),
-            base,
         ]:
             if len(attempt) <= _MAX_TITLE:
                 return attempt
+
+        # Truncate (original) to fit — always keep it, just shorter.
+        if _orig:
+            fixed_part = _assemble(base, _imdb_str)
+            # " - (" prefix (4 chars) + ")" suffix (1 char) = 5 chars overhead
+            available = _MAX_TITLE - len(fixed_part) - 5
+            if available > 10:
+                truncated_orig = _orig[:available]
+                return f'{fixed_part} - ({truncated_orig})'
+
+        # Last resort: no (original), but imdb is still present.
+        without_orig = _assemble(base, _imdb_str)
+        if len(without_orig) <= _MAX_TITLE:
+            return without_orig
         return base[:_MAX_TITLE]
 
 
@@ -2037,32 +2063,67 @@ def _build_debrid_title(title, year, imdb_id, version, original_scraped_torrent_
         _ep_title = _san(episode_title or '')
         base = _assemble(f'{_title} ({_year})', f'S{int(season):02d}E{int(episode):02d}')
         _imdb_part = f'{{imdb-{_imdb}}}' if _imdb else ''
+
+        # imdb_id must never be the thing dropped to fit _MAX_TITLE — it is the
+        # only field cli_debrid uses to re-match this entry later (see
+        # repair_engine.py Strategy 4). Drop ep_title/cs/tags/version first;
+        # only then truncate — and finally drop — the (original) bracket,
+        # which is decorative.
         for attempt in [
             _assemble(base, _ep_title, _imdb_part, _tags_part, _version, _cs_part, _orig_part),
             _assemble(base, _imdb_part, _tags_part, _version, _cs_part, _orig_part),
             _assemble(base, _imdb_part, _tags_part, _version, _orig_part),
-            _assemble(base, _imdb_part, _tags_part, _orig_part),
             _assemble(base, _imdb_part, _orig_part),
-            _assemble(base, _orig_part),
-            base,
         ]:
             if len(attempt) <= _MAX_TITLE:
                 return attempt
+
+        # Truncate (original) to fit — always keep it, just shorter.
+        if _orig:
+            fixed_part = _assemble(base, _imdb_part)
+            # " - (" prefix (4 chars) + ")" suffix (1 char) = 5 chars overhead
+            available = _MAX_TITLE - len(fixed_part) - 5
+            if available > 10:
+                truncated_orig = _orig[:available]
+                return f'{fixed_part} - ({truncated_orig})'
+
+        # Last resort: no (original), but imdb is still present.
+        without_orig = _assemble(base, _imdb_part)
+        if len(without_orig) <= _MAX_TITLE:
+            return without_orig
         return base[:_MAX_TITLE]
     else:
         _season_part = f'S{int(season):02d}' if season is not None else ''
         base = _assemble(f'{_title} ({_year})', _season_part)
         _imdb_str = f'{{imdb-{_imdb}}}' if _imdb else ''
+
+        # imdb_id must never be the thing dropped to fit _MAX_TITLE — it is the
+        # only field cli_debrid uses to re-match this entry later (see
+        # repair_engine.py Strategy 4). Drop content-source and tags first;
+        # only then truncate — and finally drop — the (original) bracket,
+        # which is decorative.
         for attempt in [
             _assemble(base, _imdb_str, _tags_part, _version, _cs_part, _orig_part),
             _assemble(base, _imdb_str, _tags_part, _version, _orig_part),
-            _assemble(base, _imdb_str, _tags_part, _orig_part),
+            _assemble(base, _imdb_str, _version, _orig_part),
             _assemble(base, _imdb_str, _orig_part),
-            _assemble(base, _orig_part),
-            base,
         ]:
             if len(attempt) <= _MAX_TITLE:
                 return attempt
+
+        # Truncate (original) to fit — always keep it, just shorter.
+        if _orig:
+            fixed_part = _assemble(base, _imdb_str)
+            # " - (" prefix (4 chars) + ")" suffix (1 char) = 5 chars overhead
+            available = _MAX_TITLE - len(fixed_part) - 5
+            if available > 10:
+                truncated_orig = _orig[:available]
+                return f'{fixed_part} - ({truncated_orig})'
+
+        # Last resort: no (original), but imdb is still present.
+        without_orig = _assemble(base, _imdb_str)
+        if len(without_orig) <= _MAX_TITLE:
+            return without_orig
         return base[:_MAX_TITLE]
 
 
