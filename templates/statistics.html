@@ -96,7 +96,8 @@
 <div class="statistics-wrapper {% if compact_view %}compact-view{% endif %}">
     <div class="toggle-container" id="toggle_container">
       <div class="topbar-inner">
-        {% set _is_dcy = stats.active_downloads_data and stats.active_downloads_data.get('source') == 'climount' %}
+        {% set _stats_source = stats.active_downloads_data.get('source') if stats.active_downloads_data else none %}
+        {% set _is_dcy = _stats_source in ('climount', 'combined') %}
         {% if not limited_env %}
         <div class="tb-pill">
             <i class="fas fa-server" style="color:var(--st-accent)"></i>
@@ -595,20 +596,46 @@
             document.querySelectorAll('.stats-card[data-badges-applied]').forEach(c => c.removeAttribute('data-badges-applied'));
             setTimeout(applyQualityBadges, 100);
 
-            // Update subscription days in toggle bar, if present
+            // Update the toggle-bar Broken/Sub pill, mode-aware
             try {
-                const subToggle = document.getElementById('subscription-days-toggle');
-                const subData = data.subscription_status || (data.stats && data.stats.subscription_status) || null;
-                if (subToggle) {
-                    if (subData && subData.days_remaining !== null && subData.days_remaining !== undefined) {
-                        subToggle.textContent = `${subData.days_remaining} days`;
-                        subToggle.classList.toggle('critical', Number(subData.days_remaining) < 10);
-                    } else {
-                        subToggle.textContent = 'N/A';
-                        subToggle.classList.remove('critical');
-                    }
-                }
+                updateStatsToggleBarPill(data);
             } catch (e) {}
+        }
+
+        // Updates the shared #subscription-days-toggle element with either the
+        // broken count (usenet/combined stats_provider_priority mode) or
+        // subscription days remaining (debrid mode). The element is reused for
+        // both meanings (see templates/statistics.html's toggle-bar markup),
+        // so any refresh path touching it must check
+        // active_downloads_data.source first — writing "N days" over what is
+        // currently showing "Broken: N" (or vice versa) is the bug this
+        // guards against.
+        function updateStatsToggleBarPill(data) {
+            const subToggle = document.getElementById('subscription-days-toggle');
+            if (!subToggle) return;
+
+            const activeDownloadsData = data.active_downloads_data ||
+                                      (data.stats && data.stats.active_downloads_data) ||
+                                      null;
+            const source = activeDownloadsData && activeDownloadsData.source;
+
+            if (source === 'climount' || source === 'combined') {
+                const broken = activeDownloadsData.broken_nzbs || 0;
+                subToggle.textContent = `${broken}`;
+                subToggle.classList.toggle('critical', broken > 0);
+                return;
+            }
+
+            // Debrid mode (or unknown/absent source): fall back to
+            // subscription days, matching the pill's original behavior.
+            const subData = data.subscription_status || (data.stats && data.stats.subscription_status) || null;
+            if (subData && subData.days_remaining !== null && subData.days_remaining !== undefined) {
+                subToggle.textContent = `${subData.days_remaining} days`;
+                subToggle.classList.toggle('critical', Number(subData.days_remaining) < 10);
+            } else {
+                subToggle.textContent = 'N/A';
+                subToggle.classList.remove('critical');
+            }
         }
 
         // Function to reattach external links listeners
@@ -935,7 +962,7 @@
                     </div>
                 </div>
                 {% if not limited_env %}
-                {% set is_climount = stats.active_downloads_data and stats.active_downloads_data.get('source') == 'climount' %}
+                {% set is_climount = stats.active_downloads_data and stats.active_downloads_data.get('source') in ('climount', 'combined') %}
                 <div class="stat-item {% if not is_climount %}stat-item-clickable{% endif %} status-{{ stats.active_downloads_data.status }}" id="kpi-active" {% if not is_climount %}onclick="window.location.href='/debrid_manager/?tab=active'"{% endif %}>
                     <div class="stat-content">
                         <div class="stat-icon">
@@ -944,7 +971,11 @@
                         <div class="stat-text-content">
                             <div class="stat-label">{% if is_climount %}Connections{% else %}Active{% endif %}</div>
                             <div class="stat-number {{ stats.active_downloads_data.status }}">
-                                <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>{% if not is_climount %}/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>{% endif %}
+                                {% if is_climount %}
+                                <span id="active_downloads" title="Active connections">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="idle_downloads" title="Idle connections">{{ stats.active_downloads_data.idle|default(0) }}</span>
+                                {% else %}
+                                <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>
+                                {% endif %}
                             </div>
                         </div>
                     </div>
@@ -1319,20 +1350,29 @@
     function updateActiveDownloadsDisplay() {
         const data = {{ stats.active_downloads_data|tojson|safe }};
         const downloadsElement = document.getElementById('active_downloads');
+        // Only one of these two siblings exists at a time — debrid mode
+        // renders #download_limit (active/limit), usenet/combined mode
+        // renders #idle_downloads (active/idle) instead.
         const limitElement = document.getElementById('download_limit');
+        const idleElement = document.getElementById('idle_downloads');
         const subDaysElement = document.getElementById('subscription_days');
-        
+
         // Skip if elements don't exist (limited environment)
-        if (!downloadsElement || !limitElement || !data) {
+        if (!downloadsElement || !data) {
             return;
         }
-        
+
         const statusElement = downloadsElement.parentElement;
-        
+
         // Update the display values with fallbacks
         downloadsElement.textContent = data.count || 0;
-        limitElement.textContent = data.limit || 25;  // Fallback to default max downloads
-        
+        if (limitElement) {
+            limitElement.textContent = data.limit || 25;  // Fallback to default max downloads
+        }
+        if (idleElement) {
+            idleElement.textContent = data.idle || 0;
+        }
+
         // Update styling based on status
         statusElement.classList.remove('warning', 'critical');
         if (data.status === 'critical') {
@@ -1549,14 +1589,26 @@
                                              (data.stats && data.stats.usage_stats_data) || 
                                              {};
                         
-                        // Update active downloads (only if not in limited environment)
+                        // Update active downloads (only if not in limited environment).
+                        // Two mutually exclusive layouts share #active_downloads:
+                        // debrid mode pairs it with #download_limit (active/limit),
+                        // usenet/combined mode pairs it with #idle_downloads
+                        // (active/idle connections) — only one of the two sibling
+                        // elements exists in the DOM at a time, per which the
+                        // server rendered.
                         const activeDownloadsElement = document.getElementById('active_downloads');
                         const downloadLimitElement = document.getElementById('download_limit');
+                        const idleDownloadsElement = document.getElementById('idle_downloads');
                         const subDaysElement = document.getElementById('subscription_days');
-                        if (activeDownloadsElement && downloadLimitElement && activeDownloadsData) {
+                        if (activeDownloadsElement && activeDownloadsData) {
                             activeDownloadsElement.textContent = activeDownloadsData.count || "0";
-                            downloadLimitElement.textContent = activeDownloadsData.limit || "25";
-                            
+                            if (downloadLimitElement) {
+                                downloadLimitElement.textContent = activeDownloadsData.limit || "25";
+                            }
+                            if (idleDownloadsElement) {
+                                idleDownloadsElement.textContent = activeDownloadsData.idle || "0";
+                            }
+
                             // Also update class if status is provided
                             if (activeDownloadsData.status) {
                                 const statusElement = activeDownloadsElement.parentElement;
@@ -1578,19 +1630,9 @@
                             }
                         }
                         
-                        // Update subscription days in toggle bar on auto-refresh
+                        // Update the toggle-bar Broken/Sub pill on auto-refresh, mode-aware
                         try {
-                            const subToggle = document.getElementById('subscription-days-toggle');
-                            const subData = data.subscription_status || (data.stats && data.stats.subscription_status) || null;
-                            if (subToggle) {
-                                if (subData && subData.days_remaining !== null && subData.days_remaining !== undefined) {
-                                    subToggle.textContent = `${subData.days_remaining} days`;
-                                    subToggle.classList.toggle('critical', Number(subData.days_remaining) < 10);
-                                } else {
-                                    subToggle.textContent = 'N/A';
-                                    subToggle.classList.remove('critical');
-                                }
-                            }
+                            updateStatsToggleBarPill(data);
                         } catch (e) {}
 
                         // Update usage stats (only if not in limited environment)

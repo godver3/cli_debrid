@@ -1505,8 +1505,25 @@ def get_library_size_api():
     is_cached_value = False
     calculation_error = None # Store the specific error if calculation fails
 
-    # cli_mount mode — reset nzbs size cache and re-run statvfs
     from utilities.settings import get_setting as _gs_lib
+    _stats_priority = _gs_lib('UI Settings', 'stats_provider_priority', default='auto').strip()
+
+    # Combined mode: always the combined debrid+usenet total from cli_mount,
+    # regardless of whether a debrid provider is configured — same source
+    # _refresh_download_stats_blocking uses for the toggle-bar Library value,
+    # so the on-demand refresh button and the cached value never disagree.
+    if _stats_priority == 'combined':
+        try:
+            from database.statistics import download_stats_cache
+            download_stats_cache['last_update'] = 0  # force stats re-fetch
+            from database import get_cached_download_stats
+            active, _ = get_cached_download_stats()
+            size_str = (active or {}).get('library_size', 'N/A')
+        except Exception as _e:
+            size_str = 'N/A'
+        return jsonify({'total_library_size': size_str})
+
+    # cli_mount mode — reset nzbs size cache and re-run statvfs
     if not _gs_lib('Debrid Provider', 'api_key', default='').strip():
         try:
             from database.statistics import _dcy_nzbs_size_cache, download_stats_cache
@@ -1518,6 +1535,25 @@ def get_library_size_api():
         except Exception as _e:
             size_str = 'N/A'
         return jsonify({'total_library_size': size_str})
+
+    # Debrid mode: prefer cli_mount's /debug/stats (per-provider library size,
+    # works for every debrid backend cli_mount supports) over calling the
+    # debrid provider's own account API directly (implemented for Real-Debrid
+    # only, via provider.get_total_library_size() below). Sums every
+    # debrids[] entry cli_mount reports rather than trying to map cli_debrid's
+    # configured provider name onto cli_mount's internal client key.
+    try:
+        from database.statistics import _fetch_climount_debug_stats, format_bytes as _fmt_bytes
+        _cm_data = _fetch_climount_debug_stats()
+        if _cm_data is not None:
+            _cm_total_bytes = sum(
+                (d.get('library', {}) or {}).get('total_size', 0)
+                for d in (_cm_data.get('debrids') or [])
+            )
+            if _cm_total_bytes > 0:
+                return jsonify({'total_library_size': _fmt_bytes(_cm_total_bytes)})
+    except Exception as _cm_exc:
+        logging.debug(f"cli_mount library size fetch failed, falling back to provider API: {_cm_exc}")
 
     try:
         provider = get_debrid_provider()

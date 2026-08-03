@@ -27,6 +27,29 @@ def format_bytes(size):
 # Cache for cli_mount nzbs folder size (updated by background du -sh)
 _dcy_nzbs_size_cache = {'size': 'N/A', 'last_update': 0}
 
+
+def _fetch_climount_debug_stats(timeout=10):
+    """Fetch cli_mount's /debug/stats. Returns the parsed JSON dict, or None if
+    cli_mount is disabled/unreachable/erroring. Shared by the usenet, debrid,
+    and combined branches of _refresh_download_stats_blocking so each doesn't
+    need its own copy of the enabled/url/token/HTTP-error handling.
+    """
+    try:
+        _dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
+        _dcy_token = get_setting('Usenet Provider', 'api_token', default='').strip()
+        _dcy_enabled = get_setting('Usenet Provider', 'enabled', default=False)
+        if not (_dcy_enabled and _dcy_url):
+            return None
+        import requests as _rq
+        _headers = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+        _r = _rq.get(f'{_dcy_url}/debug/stats', headers=_headers, timeout=timeout)
+        if _r.status_code != 200:
+            return None
+        return _r.json()
+    except Exception as _exc:
+        logging.debug(f"cli_mount /debug/stats fetch failed: {_exc}")
+        return None
+
 # Cache for download stats
 download_stats_cache = {
     'active_downloads': None,
@@ -152,6 +175,62 @@ def _refresh_download_stats_blocking():
         _stats_priority = get_setting('UI Settings', 'stats_provider_priority', default='auto').strip()
         _debrid_api_key = get_setting('Debrid Provider', 'api_key', default='').strip()
         _use_usenet = (_stats_priority == 'usenet') or (_stats_priority == 'auto' and not _debrid_api_key)
+        _use_combined = (_stats_priority == 'combined')
+        if _use_combined:
+            # Combined mode reads cli_mount's /debug/stats directly: 'content'
+            # is already a server-side sum across every debrid provider plus
+            # usenet (see decypharr pkg/stats/stats.go combinedContentStats),
+            # and 'repair.health.broken' is likewise unfiltered by protocol, so
+            # no separate debrid-provider or per-protocol calls are needed.
+            #
+            # The "Connections"/"Active" KPI card (active_downloads_data.count)
+            # is the NNTP connection pool, same as usenet mode — NOT the
+            # content item count. Combined mode still only has one cli_mount
+            # instance to poll for pool stats (debrid providers don't expose an
+            # equivalent connection-pool concept through this API), so this
+            # mirrors the usenet branch below exactly for that part.
+            _data = _fetch_climount_debug_stats()
+            if _data is not None:
+                _pool = _data.get('usenet', {}).get('pool', {})
+                _active = _pool.get('active', 0)
+                _idle = _pool.get('idle', 0)
+                _max = _pool.get('max_connections', 0)
+                _used = _active + _idle
+                _pct = round((_used / _max * 100) if _max > 0 else 0)
+                _status = 'critical' if _pct >= 90 else ('warning' if _pct >= 75 else 'normal')
+
+                _content = _data.get('content', {}) or {}
+                _total_size = _content.get('total_size', 0)
+                _broken = _data.get('repair', {}).get('health', {}).get('broken', 0)
+
+                download_stats_cache['active_downloads'] = {
+                    'count': _active,
+                    'idle': _idle,
+                    'limit': _max,
+                    'percentage': round((_active / _max * 100) if _max > 0 else 0),
+                    'status': _status,
+                    'error': None,
+                    'source': 'combined',
+                    'library_size': format_bytes(_total_size),
+                    'broken_nzbs': _broken,
+                }
+                download_stats_cache['usage_stats'] = {
+                    'used': str(_used),
+                    'limit': str(_max),
+                    'percentage': _pct,
+                    'error': None,
+                    'source': 'combined',
+                    'label': 'Connections',
+                }
+                download_stats_cache['last_update'] = current_time
+                logging.debug(f"Combined stats: pool_active={_active}, pool_max={_max}, total_size={_total_size}, broken={_broken}")
+                return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+            # cli_mount not available — return empty stats (same shape as the usenet-mode fallback below)
+            download_stats_cache['active_downloads'] = {'count': 0, 'limit': 0, 'percentage': 0, 'status': 'error', 'error': 'no_provider'}
+            download_stats_cache['usage_stats'] = {'used': '0', 'limit': '0', 'percentage': 0, 'error': 'no_provider'}
+            download_stats_cache['last_update'] = current_time
+            return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+
         if _use_usenet:
             try:
                 _dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
@@ -203,6 +282,7 @@ def _refresh_download_stats_blocking():
 
                         download_stats_cache['active_downloads'] = {
                             'count': _active,
+                            'idle': _idle,
                             'limit': _max,
                             'percentage': round((_active / _max * 100) if _max > 0 else 0),
                             'status': _status,
