@@ -44,6 +44,7 @@
         initializePlexLabelsFields();
         initializeAdaptiveListButtons();
         loadOverseerrUsers();
+        initializeMdblistModeToggles();
 
         const settingsContainer = document.querySelector('.settings-container');
         if (settingsContainer) {
@@ -71,6 +72,31 @@
             }
         });
         // Note: Header colors are set by Jinja template based on config.enabled
+    }
+
+    // Show only the fields belonging to the MDBList list source method that is selected.
+    // Fields for the other methods stay in the DOM (just hidden) so their values survive
+    // switching back and forth before saving.
+    function updateMdblistModeVisibility(sourceId, mode) {
+        document.querySelectorAll(`.mdblist-mode-field[data-source-id="${sourceId}"]`).forEach(field => {
+            field.style.display = (field.getAttribute('data-mdblist-mode') === mode) ? 'block' : 'none';
+        });
+    }
+
+    function initializeMdblistModeToggles() {
+        document.querySelectorAll('input[data-mdblist-mode-radio]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.checked) {
+                    updateMdblistModeVisibility(this.getAttribute('data-mdblist-mode-radio'), this.value);
+                }
+            });
+        });
+
+        document.querySelectorAll('.mdblist-mode-group[data-source-id]').forEach(group => {
+            const sourceId = group.getAttribute('data-source-id');
+            const checked = group.querySelector('input[data-mdblist-mode-radio]:checked');
+            updateMdblistModeVisibility(sourceId, checked ? checked.value : 'json_url');
+        });
     }
 
     function updateSymlinkSubfolderVisibility(sourceId, fileManagementValue) {
@@ -254,7 +280,7 @@
                 const sourceTypes = data.source_types;
                 const dropdownOptions = sourceTypes.map(type => ({
                     value: type,
-                    text: type === 'MDBList' ? 'MDBList/JSON list)' : 
+                    text: type === 'MDBList' ? 'MDBList (JSON list URL or API)' :
                           type === 'Overseerr' ? 'Seerr' : type
                 }));
 
@@ -1193,17 +1219,27 @@
                 {% endif %}
             {% endif %}
             
+            {# Type badge. For MDBList it also shows which list source method the source uses. #}
+            {% set mdblist_mode_labels = {'json_url': 'JSON list', 'api_watchlist': 'Watchlist API', 'api_user_list': 'User List API', 'api_list_id': 'List ID API'} %}
+            {% if config.type == 'Overseerr' %}
+                {% set type_label = 'Seerr' %}
+            {% elif config.type == 'MDBList' %}
+                {% set type_label = 'MDBList/' ~ mdblist_mode_labels.get(config.get('source_mode') or 'json_url', 'JSON list') %}
+            {% else %}
+                {% set type_label = config.type %}
+            {% endif %}
+
             <div class="settings-section" data-source-id="{{ source_id }}">
                 <div class="settings-section-header{% if not config.get('enabled', True) %} source-disabled{% endif %}">
                     <span class="settings-toggle-icon">+</span>
                     <h4>
                         {% if config.display_name %}
-                            {{ config.display_name }} [{% if config.type == 'Overseerr' %}Seerr{% elif config.type == 'MDBList' %}MDBList/JSON list{% else %}{{ config.type }}{% endif %}]
+                            {{ config.display_name }} [{{ type_label }}]
                         {% else %}
                             {% if config.type == 'Overseerr' %}
                                 Seerr_{{ source_id.split('_')[-1] if '_' in source_id else source_id }} [Seerr]
                             {% else %}
-                                {{ source_id }} [{{ config.type }}{% if config.type == 'MDBList' %}/JSON list{% endif %}]
+                                {{ source_id }} [{{ type_label }}]
                             {% endif %}
                         {% endif %}
                         {% if not has_enabled_versions %}
@@ -1730,11 +1766,16 @@
                         </div>
 
                     {% else %}
+                        {% if config.type == 'MDBList' %}
+                            {# --- MDBList list source: pick the /json URL method or a specific API endpoint --- #}
+                            {% include 'settings_tabs/_mdblist_source_mode.html' %}
+                        {% endif %}
+
                         {# --- Render fields using the GENERAL loop for other types --- #}
                         {% for key, value in config.items() %}
                             {# Skip standard 'type' field and any empty/invalid keys #}
                             {% if key and key != 'type' %}
-                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters'] or (key == 'ignore_tags' and config.type == 'Overseerr') %}
+                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters'] or (key == 'ignore_tags' and config.type == 'Overseerr') or (config.type == 'MDBList' and key in ['source_mode', 'urls', 'username', 'listname', 'list_id']) %}
                                 {% if not _skip %}
                                 <div class="settings-form-group">
                                     {% if key == 'versions' %}

@@ -3628,6 +3628,7 @@ def add_default_mdblists():
         default_mdblists = {
             "MDBList_1": {
                 "enabled": True,
+                "source_mode": "json_url",
                 "urls": "https://mdblist.com/lists/hdlists/top-ten-pirated-movies-of-the-week-torrent-freak-com",
                 "versions": {
                     default_version: True
@@ -3642,6 +3643,7 @@ def add_default_mdblists():
             },
             "MDBList_2": {
                 "enabled": True,
+                "source_mode": "json_url",
                 "urls": "https://mdblist.com/lists/godver3/top-10-shows",
                 "versions": {
                     default_version: True

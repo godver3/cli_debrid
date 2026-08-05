@@ -403,7 +403,7 @@ SETTINGS_SCHEMA = {
         "tab": "Additional Settings",
         "api_key": {
             "type": "string",
-            "description": "MDBList API key - enables curated lists from IMDB, Trakt, Netflix, Disney+, and more on the Discover page. Get your API key at <a href='https://mdblist.com/preferences/' target='_blank'>mdblist.com/preferences</a>",
+            "description": "MDBList API key - enables curated lists from IMDB, Trakt, Netflix, Disney+, and more on the Discover page, and is required for MDBList content sources that use an API endpoint (watchlist / username+list name / list ID). Get your API key at <a href='https://mdblist.com/preferences/' target='_blank'>mdblist.com/preferences</a>",
             "default": "",
             "sensitive": True
         },
@@ -1205,7 +1205,32 @@ SETTINGS_SCHEMA = {
         "schema": {
             "MDBList": {
                 "enabled": {"type": "boolean", "default": False},
-                "urls": {"type": "string", "default": ""},
+                "source_mode": {
+                    "type": "string",
+                    "description": "How this source fetches its items. 'json_url' appends /json to a public MDBList (or compatible) list URL and needs no API key. The 'api_*' modes call the MDBList API directly and require an MDBList API key (Additional Settings -> MDBList).",
+                    "default": "json_url",
+                    "choices": ["json_url", "api_watchlist", "api_user_list", "api_list_id"]
+                },
+                "urls": {
+                    "type": "string",
+                    "description": "Comma-separated MDBList (or compatible) list URLs. '/json' is appended automatically unless the URL already ends in '.json'. Used when source_mode is 'json_url'.",
+                    "default": ""
+                },
+                "username": {
+                    "type": "string",
+                    "description": "MDBList username that owns the list. Used when source_mode is 'api_user_list' (GET /lists/{username}/{listname}/items).",
+                    "default": ""
+                },
+                "listname": {
+                    "type": "string",
+                    "description": "MDBList list name/slug as it appears in the list URL. Used when source_mode is 'api_user_list' (GET /lists/{username}/{listname}/items).",
+                    "default": ""
+                },
+                "list_id": {
+                    "type": "string",
+                    "description": "Numeric MDBList list ID, or several separated by commas. Used when source_mode is 'api_list_id' (GET /lists/{listid}/items).",
+                    "default": ""
+                },
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "MDBList"},

@@ -47,7 +47,7 @@ from content_checkers.trakt import (
     get_wanted_from_friend_trakt_watchlist,
     get_wanted_from_special_trakt_lists # New import
 )
-from content_checkers.mdb_list import get_wanted_from_mdblists
+from content_checkers.mdb_list import get_wanted_from_mdblist_source
 from content_checkers.content_source_detail import append_content_source_detail
 from database.not_wanted_magnets import purge_not_wanted_magnets_file
 import traceback
@@ -1948,11 +1948,7 @@ class ProgramRunner:
             if source_type == 'Overseerr':
                 wanted_content = get_wanted_from_overseerr(versions_from_config)
             elif source_type == 'MDBList':
-                mdblist_urls = data.get('urls', '').split(',')
-                for mdblist_url in mdblist_urls:
-                    mdblist_url = mdblist_url.strip()
-                    if mdblist_url: # Ensure not empty
-                        wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions_from_config))
+                wanted_content = get_wanted_from_mdblist_source(data, versions_from_config)
             elif source_type == 'Trakt Watchlist':
                 try:
                     wanted_content = get_wanted_from_trakt_watchlist(versions_from_config, unblacklist=unblacklist_on_source_run)

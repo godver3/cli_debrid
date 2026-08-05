@@ -367,6 +367,10 @@ export function updateSettings() {
             sourceData.versions = [];
 
             section.querySelectorAll('input, select, textarea').forEach(input => {
+                // Skip radio buttons that are not checked - otherwise the last radio in a
+                // group would always win regardless of the user's selection.
+                if (input.type === 'radio' && !input.checked) return;
+
                 const nameParts = input.name.split('.');
                 // nameParts = ['Content Sources', 'Trakt Lists_1', 'plex_labels', 'enabled']
                 // We need everything after the source ID (index 2+)
