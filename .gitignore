@@ -168,3 +168,5 @@ firefox_extension/
 clear_migration_flag.py
 CLAUDE.md
 dev.sh
+# Kimi project memory
+.kimi-memory/

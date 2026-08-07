@@ -1133,6 +1133,93 @@ def _apply_nzb_naming(source_file: str, item: Dict[str, Any]) -> str:
         return source_file
 
 
+def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file: str, old_filename: str) -> None:
+    """Remove the old symlink (and notify the media server) after a successful upgrade.
+
+    Only called when Scraping.enable_upgrading_cleanup is enabled — the old torrent/file
+    has already been removed by the caller at this point, this just cleans up the stale
+    symlink that pointed at it.
+    """
+    old_base_path = os.path.dirname(source_file) if source_file else None
+
+    if not (old_base_path and old_filename):
+        logging.warning("[UPGRADE] Could not determine old source path components for symlink removal.")
+        return
+
+    # Construct the hypothetical source path for the old file
+    old_source_for_symlink_path = os.path.join(old_base_path, old_filename)
+
+    # Temporarily modify a copy of the item to represent the OLD file state for get_symlink_path
+    item_for_old_path = item.copy()
+    item_for_old_path['filled_by_file'] = old_filename
+    # Explicitly set the version to the one we are upgrading FROM
+    old_version_str = item.get('upgrading_from_version')
+    if old_version_str:
+        item_for_old_path['version'] = old_version_str
+        logging.info(f"[UPGRADE] Using old version '{old_version_str}' for old symlink path calculation.")
+    else:
+        logging.warning("[UPGRADE] 'upgrading_from_version' not found in item dict. Old symlink path might be incorrect if version changed.")
+        # Keep the current version as a fallback if the old one isn't stored
+
+    old_dest = get_symlink_path(item_for_old_path, old_source_for_symlink_path, skip_jikan_lookup=False)
+
+    if not (old_dest and os.path.lexists(old_dest)):
+        logging.debug(f"[UPGRADE] No old symlink found at {old_dest} (or path couldn't be determined).")
+        return
+
+    try:
+        os.unlink(old_dest)
+        logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
+
+        try:
+            removed_count = remove_verification_by_media_item_id(item['id'])
+            if removed_count > 0:
+                logging.info(f"[UPGRADE] Removed {removed_count} old verification record(s) for media item ID {item['id']}")
+            else:
+                logging.debug(f"[UPGRADE] No existing verification record found to remove for media item ID {item['id']}")
+        except Exception as db_remove_err:
+            logging.error(f"[UPGRADE] Failed to remove old verification record for media item ID {item['id']}: {db_remove_err}")
+
+        # Add the path to the removal verification queue with titles
+        episode_title_for_removal = item.get('episode_title') if item.get('type') == 'episode' else None
+        add_path_for_removal_verification(old_dest, item['title'], episode_title_for_removal)
+        # Wait for media server to detect the removed symlink
+        time.sleep(1)
+
+        # Remove the old file from Plex or Emby/Jellyfin
+        media_server_type = 'none'
+        if get_setting('Debug', 'emby_jellyfin_url', default=False):
+            media_server_type = 'emby_jellyfin'
+        elif get_setting('File Management', 'plex_url_for_symlink', default=False):
+            media_server_type = 'plex'
+
+        if media_server_type != 'none':
+            try:
+                episode_title = item.get('episode_title') if item.get('type') == 'episode' else None
+                if media_server_type == 'emby_jellyfin':
+                    from utilities.emby_functions import remove_file_from_emby
+                    remove_file_from_emby(item['title'], old_dest, episode_title)
+                elif media_server_type == 'plex':
+                    from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
+                    success = remove_file_from_plex(item['title'], old_dest, episode_title)
+                    # If direct removal failed (possibly 400 error), try scan & empty trash as fallback
+                    if not success:
+                        logging.warning(f"[UPGRADE] Direct Plex removal failed for '{item['title']}'. Trying scan & empty trash...")
+                        try:
+                            # Determine section type based on item type
+                            section_type = 'movie' if item.get('type') == 'movie' else 'show'
+                            scan_paths = [os.path.dirname(old_dest)] if old_dest else None
+                            scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
+                            logging.info(f"[UPGRADE] Triggered library scan and trash empty for '{item['title']}' (section_type={section_type}).")
+                        except Exception as scan_err:
+                            logging.warning(f"[UPGRADE] Scan & empty trash also failed for '{item['title']}': {scan_err}")
+            except Exception as media_server_remove_err:
+                 logging.error(f"[UPGRADE] Failed removing old file {old_dest} from {media_server_type}: {media_server_remove_err}")
+
+    except Exception as e:
+        logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
+
+
 def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False, on_success_callback: Optional[Callable[[str], None]] = None, skip_multifile_scan: bool = False) -> bool:
     """
     Check if the local file for the item exists and create symlink if needed.
@@ -1360,12 +1447,17 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 item_title = item.get('title') # For logging
                 logging.info(f"[UPGRADE] Processing confirmed upgrade for {item_identifier}")
 
+                upgrading_cleanup_enabled = get_setting("Scraping", "enable_upgrading_cleanup", default=False)
+
                 # --- Start: Torrent/File Removal Logic ---
-                removal_successful = False
                 old_torrent_id = item.get('upgrading_from_torrent_id')
                 old_filename = item.get('upgrading_from') # Filename of the file being replaced
 
-                if old_torrent_id:
+                if not upgrading_cleanup_enabled:
+                    logging.info(f"[UPGRADE] Scraping.enable_upgrading_cleanup is disabled — keeping old file/torrent for {item_identifier} and skipping removal.")
+                    removal_successful = True
+                elif old_torrent_id:
+                    removal_successful = False
                     if str(old_torrent_id).startswith('nzb:'):
                         # NZB jobs are managed by cli_mount, not debrid — skip debrid removal
                         logging.debug(f"[UPGRADE] Old torrent {old_torrent_id} is an NZB job — skipping debrid removal")
@@ -1396,6 +1488,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             else:
                                 logging.error(f"[UPGRADE] Failed to remove old torrent {old_torrent_id} via debrid API: {remove_err}")
                 else:
+                    removal_successful = False
                     old_file_path_from_item = item.get('original_path_for_symlink') # Get path from item dict
                     logging.warning(f"[UPGRADE] Old torrent ID is missing for item {item['id']}. Attempting local file deletion using item's original path: '{old_file_path_from_item}'")
                     # Directly use the path from the item dict
@@ -1442,90 +1535,11 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 # Only proceed if removal was successful or deemed unnecessary
                 if removal_successful:
                     logging.info("[UPGRADE] Old file/torrent removal successful or not needed, proceeding with symlink cleanup/creation.")
-                    # Remove old symlink if it exists
-                    # Use the old file's name to get the old symlink path
 
-                    # Determine the source path of the OLD file to find its corresponding symlink
-                    # We need the original base path where the old file *would* have been downloaded.
-                    # Using the new file's directory might be the best guess if they are typically co-located.
-                    old_base_path = os.path.dirname(source_file) if source_file else None
-
-                    if old_base_path and old_filename:
-                        # Construct the hypothetical source path for the old file
-                        old_source_for_symlink_path = os.path.join(old_base_path, old_filename)
-
-                        # Temporarily modify a copy of the item to represent the OLD file state for get_symlink_path
-                        item_for_old_path = item.copy()
-                        item_for_old_path['filled_by_file'] = old_filename
-                        # Explicitly set the version to the one we are upgrading FROM
-                        old_version_str = item.get('upgrading_from_version')
-                        if old_version_str:
-                            item_for_old_path['version'] = old_version_str
-                            logging.info(f"[UPGRADE] Using old version '{old_version_str}' for old symlink path calculation.")
-                        else:
-                            logging.warning("[UPGRADE] 'upgrading_from_version' not found in item dict. Old symlink path might be incorrect if version changed.")
-                            # Keep the current version as a fallback if the old one isn't stored
-
-                        old_dest = get_symlink_path(item_for_old_path, old_source_for_symlink_path, skip_jikan_lookup=False)
-
-                        if old_dest and os.path.lexists(old_dest):
-                            try:
-                                os.unlink(old_dest)
-                                logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
-
-                                # --- EDIT: Remove old verification entry ---
-                                try:
-                                    removed_count = remove_verification_by_media_item_id(item['id'])
-                                    if removed_count > 0:
-                                        logging.info(f"[UPGRADE] Removed {removed_count} old verification record(s) for media item ID {item['id']}")
-                                    else:
-                                        logging.debug(f"[UPGRADE] No existing verification record found to remove for media item ID {item['id']}")
-                                except Exception as db_remove_err:
-                                    logging.error(f"[UPGRADE] Failed to remove old verification record for media item ID {item['id']}: {db_remove_err}")
-                                # --- END EDIT ---
-
-                                # Add the path to the removal verification queue with titles
-                                episode_title_for_removal = item.get('episode_title') if item.get('type') == 'episode' else None
-                                add_path_for_removal_verification(old_dest, item['title'], episode_title_for_removal)
-                                # Wait for media server to detect the removed symlink
-                                time.sleep(1)
-
-                                # Remove the old file from Plex or Emby/Jellyfin
-                                media_server_type = 'none'
-                                if get_setting('Debug', 'emby_jellyfin_url', default=False):
-                                    media_server_type = 'emby_jellyfin'
-                                elif get_setting('File Management', 'plex_url_for_symlink', default=False):
-                                    media_server_type = 'plex'
-
-                                if media_server_type != 'none':
-                                    try:
-                                        episode_title = item.get('episode_title') if item.get('type') == 'episode' else None
-                                        if media_server_type == 'emby_jellyfin':
-                                            from utilities.emby_functions import remove_file_from_emby
-                                            remove_file_from_emby(item['title'], old_dest, episode_title)
-                                        elif media_server_type == 'plex':
-                                            from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
-                                            success = remove_file_from_plex(item['title'], old_dest, episode_title)
-                                            # If direct removal failed (possibly 400 error), try scan & empty trash as fallback
-                                            if not success:
-                                                logging.warning(f"[UPGRADE] Direct Plex removal failed for '{item['title']}'. Trying scan & empty trash...")
-                                                try:
-                                                    # Determine section type based on item type
-                                                    section_type = 'movie' if item.get('type') == 'movie' else 'show'
-                                                    scan_paths = [os.path.dirname(old_dest)] if old_dest else None
-                                                    scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
-                                                    logging.info(f"[UPGRADE] Triggered library scan and trash empty for '{item['title']}' (section_type={section_type}).")
-                                                except Exception as scan_err:
-                                                    logging.warning(f"[UPGRADE] Scan & empty trash also failed for '{item['title']}': {scan_err}")
-                                    except Exception as media_server_remove_err:
-                                         logging.error(f"[UPGRADE] Failed removing old file {old_dest} from {media_server_type}: {media_server_remove_err}")
-
-                            except Exception as e:
-                                logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
-                        else:
-                            logging.debug(f"[UPGRADE] No old symlink found at {old_dest} (or path couldn't be determined).")
+                    if not upgrading_cleanup_enabled:
+                        logging.info(f"[UPGRADE] Scraping.enable_upgrading_cleanup is disabled — keeping old symlink in place for {item_identifier}.")
                     else:
-                         logging.warning("[UPGRADE] Could not determine old source path components for symlink removal.")
+                        _cleanup_old_symlink(item, item_identifier, source_file, old_filename)
 
                     # Note: Symlink creation moved outside the upgrade block to run unconditionally
 
@@ -1535,7 +1549,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     # We need to signal failure back up the call stack if necessary
                     return False # Indicate failure
 
-            # --- Unconditionally attempt to create/replace the symlink --- 
+            # --- Unconditionally attempt to create/replace the symlink ---
             # This runs for both upgrades (after cleanup) and non-upgrades
             logging.info(f"Attempting to create/replace symlink: {source_file} -> {dest_file}")
             success = create_symlink(source_file, dest_file, item.get('id'), skip_verification=False)

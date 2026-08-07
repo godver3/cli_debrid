@@ -7,7 +7,7 @@ from routes.extensions import db
 from utilities.settings import get_setting
 import json
 from utilities.reverse_parser import get_version_settings, get_default_version, get_version_order, parse_filename_for_version
-from .models import admin_required
+from .models import admin_required, user_required
 from utilities.plex_removal_cache import cache_plex_removal
 from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
 from database.database_reading import get_media_item_by_id
@@ -1320,6 +1320,252 @@ def bulk_queue_action():
             program_runner.resume_queue() 
         elif program_runner and not bulk_action_paused_queue:
             logging.info("Queue was not paused by this bulk operation or program_runner not available/suitable for resume.")
+
+def rescrape_single_item(item_id):
+    """Reset a single media_items row back to Wanted, cleaning up its file/Plex/
+    cli_mount references first. Single-item counterpart to bulk_queue_action's
+    'rescrape' action (see that function for the batched/CASE-SQL version) —
+    kept in sync with the same side effects and safety checks:
+      - Plex/symlink removal is only queued for Collected/Upgrading items
+      - cli_mount torrent/NZB removal is skipped if another item still uses
+        the same filled_by_torrent_id in an active state
+      - version's '*' (primary-version marker) is stripped on rescrape
+
+    Returns {'success': True} on success, or {'success': False, 'error': str}.
+    Does not raise for expected failure modes (item not found, db locked).
+    """
+    from database import get_db_connection
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """SELECT id, state, location_on_disk, original_path_for_symlink,
+                      filled_by_file, title, type, episode_title, version,
+                      original_scraped_torrent_title, filled_by_torrent_id, filled_by_magnet
+               FROM media_items WHERE id = ?""",
+            (item_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {'success': False, 'error': f'Item {item_id} not found'}
+        columns = [c[0] for c in cursor.description]
+        item_db_data = dict(zip(columns, row))
+
+        file_management = get_setting('File Management', 'file_collection_management', 'Plex')
+
+        if item_db_data['state'] in ('Collected', 'Upgrading'):
+            queue_plex_removal_for_item(item_db_data, file_management, item_id)
+            if item_db_data.get('location_on_disk') or item_db_data.get('original_path_for_symlink'):
+                sleep(0.5)
+
+        current_version_val = item_db_data.get('version')
+        cleaned_version_val = current_version_val
+        if isinstance(current_version_val, str) and '*' in current_version_val:
+            cleaned_version_val = current_version_val.replace('*', '')
+
+        # cli_mount torrent/NZB removal — skip if another item still actively uses it
+        if item_db_data['state'] in ('Collected', 'Upgrading', 'Checking'):
+            tid = item_db_data.get('filled_by_torrent_id') or ''
+            if tid:
+                try:
+                    from usenet.climount_client import get_climount_client as _get_dc
+                    _dc = _get_dc()
+                    if _dc and _dc.is_enabled():
+                        still_used = cursor.execute(
+                            """SELECT 1 FROM media_items
+                               WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking')
+                               AND id != ?""",
+                            (tid, item_id)
+                        ).fetchone()
+                        if still_used:
+                            logging.info(f"Rescrape: Skipping cli_mount removal for {tid!r} — still used by another item")
+                        elif tid.startswith('nzb:'):
+                            nzb_hash = tid[4:]
+                            if nzb_hash:
+                                _dc.remove_nzb(nzb_hash)
+                                logging.info(f"Rescrape: Removed NZB {nzb_hash!r} from cli_mount")
+                        else:
+                            magnet = item_db_data.get('filled_by_magnet') or ''
+                            import re as _re
+                            m = _re.search(r'urn:btih:([0-9a-fA-F]{40})', magnet, _re.IGNORECASE)
+                            infohash = m.group(1).lower() if m else ''
+                            if infohash:
+                                _dc.remove_nzb(infohash)
+                                logging.info(f"Rescrape: Removed debrid torrent {infohash!r} (RD id={tid!r}) from cli_mount")
+                            else:
+                                logging.warning(f"Rescrape: Cannot remove {tid!r} from cli_mount — no infohash in magnet link")
+                except Exception as cm_err:
+                    logging.warning(f"Rescrape: cli_mount removal failed for item {item_id}: {cm_err}")
+
+        cursor.execute(
+            """UPDATE media_items
+               SET state = 'Wanted',
+                   location_on_disk = NULL,
+                   original_path_for_symlink = NULL,
+                   filled_by_file = NULL,
+                   filled_by_title = NULL,
+                   filled_by_magnet = NULL,
+                   filled_by_torrent_id = NULL,
+                   collected_at = NULL,
+                   rescrape_original_torrent_title = ?,
+                   original_scraped_torrent_title = NULL,
+                   upgrading_from = NULL,
+                   upgrading = NULL,
+                   version = ?,
+                   fall_back_to_single_scraper = 0,
+                   last_updated = ?
+               WHERE id = ?""",
+            (item_db_data.get('original_scraped_torrent_title'), cleaned_version_val, datetime.now(), item_id)
+        )
+
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return {'success': False, 'error': f'Expected to update 1 row for item {item_id}, DB reported {cursor.rowcount}'}
+
+        conn.commit()
+        logging.info(f"Rescrape: Successfully reset item {item_id} to Wanted.")
+        return {'success': True}
+
+    except sqlite3.OperationalError as e:
+        if conn:
+            conn.rollback()
+        if "database is locked" in str(e):
+            logging.error(f"Database is locked during rescrape of item {item_id}.")
+            return {'success': False, 'error': 'database is locked', 'database_locked': True}
+        logging.error(f"Operational error rescraping item {item_id}: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logging.error(f"Error rescraping item {item_id}: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+def _find_rescrape_candidates(ms_item_id, item_type, season_number=None, episode_number=None, filename=None):
+    """Resolve an external client's (ms_item_id, type[, season/episode], filename)
+    tuple down to matching media_items rows. ms_item_id alone cannot uniquely
+    identify a single version/file (see column comment in schema_management.py —
+    it's shared across every version of a movie, and for episodes it's the
+    *show's* ratingKey/ItemId, not the episode's), so this narrows by
+    ms_item_id + type [+ season/episode for episodes], then disambiguates by
+    filename (matched against location_basename, falling back to filled_by_file)
+    when more than one candidate remains.
+
+    Returns a list of dicts (each: id, title, version, state, filename/basename)
+    — empty if no match, one item if unambiguous, multiple if the caller needs
+    to prompt the user (e.g. multiple versions with no filename to disambiguate,
+    or filename didn't narrow it down).
+    """
+    from database import get_db_connection
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        query = """SELECT id, title, type, version, state, season_number, episode_number,
+                          location_basename, filled_by_file
+                   FROM media_items
+                   WHERE ms_item_id = ? AND type = ?"""
+        params = [ms_item_id, item_type]
+        if item_type == 'episode':
+            query += " AND season_number = ? AND episode_number = ?"
+            params += [season_number, episode_number]
+        cursor.execute(query, params)
+        columns = [c[0] for c in cursor.description]
+        rows = [dict(zip(columns, r)) for r in cursor.fetchall()]
+
+        if len(rows) <= 1 or not filename:
+            return rows
+
+        wanted_basename = os.path.basename(filename)
+        by_location = [r for r in rows if r.get('location_basename') == wanted_basename]
+        if by_location:
+            return by_location
+
+        by_filled = [r for r in rows if r.get('filled_by_file') and os.path.basename(r['filled_by_file']) == wanted_basename]
+        if by_filled:
+            return by_filled
+
+        return rows
+    finally:
+        conn.close()
+
+
+@database_bp.route('/rescrape_item', methods=['POST'])
+@user_required
+def rescrape_item():
+    """Move a single Collected/Upgrading item back to Wanted for re-request,
+    for use by external clients (e.g. the Plezy companion app) that only know
+    a media-server item id (Plex ratingKey / Jellyfin item id) and, optionally,
+    the on-disk filename of the specific version they want re-requested.
+
+    Request JSON:
+      item_id: int            — optional; if given, skips lookup and rescrapes
+                                 this media_items row directly (e.g. the row the
+                                 client already resolved via a version picker).
+      ms_item_id: str          — Plex ratingKey or Jellyfin item id.
+      type: 'movie'|'episode'
+      season_number, episode_number: int — required when type == 'episode'.
+      filename: str            — basename of the specific file/version to
+                                  disambiguate when ms_item_id matches more
+                                  than one version row.
+
+    Either item_id, or (ms_item_id + type [+ season/episode]), is required.
+
+    Response:
+      200 {"success": true} on success.
+      200 {"success": false, "error": "ambiguous", "candidates": [...]} when
+          more than one version matches and filename didn't disambiguate —
+          the client should prompt the user and retry with item_id set.
+      404 {"success": false, "error": "..."} when nothing matches.
+      400 {"success": false, "error": "..."} on a malformed request.
+    """
+    data = request.get_json(silent=True) or {}
+
+    item_id = data.get('item_id')
+    if item_id:
+        try:
+            item_id = int(item_id)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'item_id must be an integer'}), 400
+        result = rescrape_single_item(item_id)
+        status = 200 if result.get('success') else (503 if result.get('database_locked') else 400)
+        return jsonify(result), status
+
+    ms_item_id = data.get('ms_item_id')
+    item_type = data.get('type')
+    if not ms_item_id or item_type not in ('movie', 'episode'):
+        return jsonify({'success': False, 'error': 'ms_item_id and type (movie|episode) are required when item_id is not provided'}), 400
+
+    season_number = data.get('season_number')
+    episode_number = data.get('episode_number')
+    if item_type == 'episode' and (season_number is None or episode_number is None):
+        return jsonify({'success': False, 'error': 'season_number and episode_number are required when type is episode'}), 400
+
+    filename = data.get('filename')
+
+    candidates = _find_rescrape_candidates(ms_item_id, item_type, season_number, episode_number, filename)
+
+    if not candidates:
+        return jsonify({'success': False, 'error': 'No matching item found for the given ms_item_id'}), 404
+
+    if len(candidates) > 1:
+        return jsonify({
+            'success': False,
+            'error': 'ambiguous',
+            'message': 'Multiple versions match — retry with item_id set to the chosen candidate',
+            'candidates': candidates,
+        }), 200
+
+    result = rescrape_single_item(candidates[0]['id'])
+    status = 200 if result.get('success') else (503 if result.get('database_locked') else 400)
+    return jsonify(result), status
+
 
 @database_bp.route('/delete_item', methods=['POST'])
 @admin_required

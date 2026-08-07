@@ -929,6 +929,26 @@ def get_trakt_friends():
         logging.error(f"Error listing Trakt friends: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@settings_bp.route('/content-sources/scrob-lists')
+def get_scrob_lists():
+    """Get the user's Scrob lists (id + name) for the multi-select picker."""
+    try:
+        from content_checkers.scrob import get_scrob_config, _scrob_get
+
+        if not get_scrob_config():
+            return jsonify({'success': False, 'error': 'Scrob URL/API key not configured in Additional Settings → Scrob'}), 400
+
+        data = _scrob_get('/lists')
+        if data is None:
+            return jsonify({'success': False, 'error': 'Failed to reach Scrob. Check the URL/API key in Additional Settings → Scrob.'}), 502
+
+        lists = [{'id': lst['id'], 'name': lst.get('name', f"List {lst['id']}"), 'item_count': lst.get('item_count', 0)}
+                 for lst in data.get('lists', [])]
+        return jsonify({'success': True, 'lists': lists})
+    except Exception as e:
+        logging.error(f"Error fetching Scrob lists: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @settings_bp.route('/content-sources/overseerr-users')
 def get_overseerr_users():
     from utilities.settings import get_setting, get_all_settings

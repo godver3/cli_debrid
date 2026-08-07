@@ -1767,6 +1767,24 @@ def _fetch_live_imdb_ids_for_source(src_id: str, src_cfg: dict, all_settings: di
             for items, _ in results:
                 _ingest(items)
 
+        elif src_type == 'Scrob Lists':
+            from content_checkers.scrob import get_wanted_from_scrob_lists
+            results = get_wanted_from_scrob_lists(src_cfg.get('scrob_list_ids', ''), versions)
+            for items, _ in results:
+                _ingest(items)
+
+        elif src_type == 'Scrob Collection':
+            from content_checkers.scrob import get_wanted_from_scrob_collection
+            results = get_wanted_from_scrob_collection(versions)
+            for items, _ in results:
+                _ingest(items)
+
+        elif src_type == 'Special Scrob Lists':
+            from content_checkers.scrob import get_wanted_from_scrob_special
+            results = get_wanted_from_scrob_special(src_cfg, versions)
+            for items, _ in results:
+                _ingest(items)
+
         elif src_type == 'My Plex Watchlist':
             from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist
             results = get_wanted_from_plex_watchlist(versions)

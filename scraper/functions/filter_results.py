@@ -106,6 +106,7 @@ def filter_results(
     filter_out = version_settings.get('filter_out', [])
     enable_hdr = version_settings.get('enable_hdr', False)
     disable_adult = get_setting('Scraping', 'disable_adult', False)
+    disable_nzb_season_packs = get_setting('Usenet Provider', 'disable_nzb_season_packs', False)
     
     #logging.debug(f"Starting filter_results with {len(results)} results")
     #logging.debug(f"Version settings: resolution={max_resolution}({resolution_wanted}), size={min_size_gb}-{max_size_gb}GB, HDR={enable_hdr}")
@@ -1560,6 +1561,15 @@ def filter_results(
                 is_identified_as_pack = (season_pack_type_from_parse not in ['N/A', 'Unknown']) or \
                                         (len(parsed_episodes_list_from_parse) > 1)
 
+                # NZB season packs re-download the whole pack to repair a single damaged
+                # article, unlike per-episode/aggregate results which only re-grab the
+                # affected episode. When disabled, reject NZB packs outright rather than
+                # scoring/selecting them — movies and non-NZB (torrent) packs are unaffected.
+                if disable_nzb_season_packs and is_identified_as_pack and result.get('protocol') == 'nzb':
+                    result['filter_reason'] = "NZB season packs disabled"
+                    logging.info(f"Rejected: NZB season pack disabled by setting for '{original_title}' (Size: {result['size']:.2f}GB)")
+                    continue
+
                 # --- START: New Pack Wantedness Check ---
                 from database.database_reading import get_all_media_items
 
@@ -1781,17 +1791,21 @@ def filter_results(
             pre_size_filtered_results.append(result.copy()) 
             
             # Size filters
-            if result['size'] > 0:
-                if result['size'] < min_size_gb:
-                    size_type_msg = "Average episode size" if is_episode and is_identified_as_pack and num_episodes_in_pack > 0 else "Size"
-                    result['filter_reason'] = f"{size_type_msg} too small: {result['size']:.2f} GB (min: {min_size_gb} GB)"
-                    logging.info(f"Rejected: {size_type_msg} {result['size']:.2f}GB below minimum {min_size_gb}GB for '{original_title}' (Total pack: {result['total_size_gb']:.2f}GB)")
-                    continue
-                if result['size'] > max_size_gb:
-                    size_type_msg = "Average episode size" if is_episode and is_identified_as_pack and num_episodes_in_pack > 0 else "Size"
-                    result['filter_reason'] = f"Size too large: {result['size']:.2f} GB (max: {max_size_gb} GB)"
-                    logging.info(f"Rejected: {size_type_msg} {result['size']:.2f}GB above maximum {max_size_gb}GB for '{original_title}' (Total pack: {result['total_size_gb']:.2f}GB)")
-                    continue
+            # result['size'] == 0 means the scraper could not parse a size (e.g. an
+            # AIOStreams/MediaFusion result whose description has no machine-readable
+            # size), not that the release is verified to be empty — it must still be
+            # held to min_size_gb rather than bypassing the check entirely.
+            if result['size'] < min_size_gb:
+                size_type_msg = "Average episode size" if is_episode and is_identified_as_pack and num_episodes_in_pack > 0 else "Size"
+                reason = "unknown/unparseable" if result['size'] == 0 else f"{result['size']:.2f} GB"
+                result['filter_reason'] = f"{size_type_msg} too small: {reason} (min: {min_size_gb} GB)"
+                logging.info(f"Rejected: {size_type_msg} {reason} below minimum {min_size_gb}GB for '{original_title}' (Total pack: {result['total_size_gb']:.2f}GB)")
+                continue
+            if result['size'] > max_size_gb:
+                size_type_msg = "Average episode size" if is_episode and is_identified_as_pack and num_episodes_in_pack > 0 else "Size"
+                result['filter_reason'] = f"Size too large: {result['size']:.2f} GB (max: {max_size_gb} GB)"
+                logging.info(f"Rejected: {size_type_msg} {result['size']:.2f}GB above maximum {max_size_gb}GB for '{original_title}' (Total pack: {result['total_size_gb']:.2f}GB)")
+                continue
             #logging.debug("✓ Passed size checks")
             
             # Bitrate filters

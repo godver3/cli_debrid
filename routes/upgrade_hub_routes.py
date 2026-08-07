@@ -232,8 +232,6 @@ def queue_items():
 _SETTINGS_KEYS = {
     'min_improvement_threshold': int,
     'scan_limit': lambda v: int(v) if v not in (None, '', 'null') else None,
-    'auto_scan_enabled': bool,
-    'auto_queue_enabled': bool,
     'max_upgrades_per_run': int,
     'show_recent_only': bool,
     'hide_pack_episodes': bool,
@@ -245,8 +243,6 @@ _SETTINGS_KEYS = {
 _SETTINGS_DEFAULTS = {
     'min_improvement_threshold': 0,
     'scan_limit': None,
-    'auto_scan_enabled': False,
-    'auto_queue_enabled': False,
     'max_upgrades_per_run': 10,
     'show_recent_only': False,
     'hide_pack_episodes': False,
@@ -271,7 +267,7 @@ def get_settings():
                 settings[key] = int(val or default)
             except (TypeError, ValueError):
                 settings[key] = default
-        elif key in ('auto_scan_enabled', 'auto_queue_enabled', 'show_recent_only', 'hide_pack_episodes', 'exclude_nas_items'):
+        elif key in ('show_recent_only', 'hide_pack_episodes', 'exclude_nas_items'):
             settings[key] = bool(val) if not isinstance(val, str) else val.lower() == 'true'
         else:
             settings[key] = val
@@ -289,7 +285,7 @@ def save_settings():
         # Normalise scan_limit: None/null → store as empty string so get_setting returns None
         if key == 'scan_limit':
             set_setting('Upgrade Hub', key, '' if value is None else int(value))
-        elif key in ('auto_scan_enabled', 'auto_queue_enabled', 'show_recent_only', 'hide_pack_episodes', 'exclude_nas_items'):
+        elif key in ('show_recent_only', 'hide_pack_episodes', 'exclude_nas_items'):
             set_setting('Upgrade Hub', key, bool(value))
         else:
             try:

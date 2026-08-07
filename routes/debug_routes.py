@@ -948,6 +948,7 @@ def get_and_add_wanted_content(source_id):
     from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
     from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
     from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist, get_wanted_from_special_trakt_lists
+    from content_checkers.scrob import get_wanted_from_scrob_lists, get_wanted_from_scrob_collection, get_wanted_from_scrob_special
     from content_checkers.mdb_list import get_wanted_from_mdblists
     from content_checkers.adaptive_list import get_wanted_from_adaptive_list
     from content_checkers.content_source_detail import append_content_source_detail
@@ -1050,6 +1051,12 @@ def get_and_add_wanted_content(source_id):
         elif source_type == 'Trakt Collection':
             update_trakt_settings(content_sources)
             wanted_content = get_wanted_from_trakt_collection(versions_from_config)
+        elif source_type == 'Scrob Lists':
+            wanted_content = get_wanted_from_scrob_lists(source_data.get('scrob_list_ids', ''), versions_from_config)
+        elif source_type == 'Scrob Collection':
+            wanted_content = get_wanted_from_scrob_collection(versions_from_config)
+        elif source_type == 'Special Scrob Lists':
+            wanted_content = get_wanted_from_scrob_special(source_data, versions_from_config)
         elif source_type == 'Collected':
             wanted_content = get_wanted_from_collected()
         elif source_type == 'Adaptive List':

@@ -1221,6 +1221,12 @@ def build_discover_params(filters: Dict, date_field: str, media_type: str) -> Li
         params.append(f"with_watch_providers={provider_or}")
         watch_region = filters.get('watch_region', 'US')
         params.append(f"watch_region={watch_region}")
+        # TMDB's with_watch_providers matches a title if it's available via
+        # flatrate (subscription), buy, OR rent on that provider — without this,
+        # picking e.g. Netflix also returns titles that are merely purchasable/
+        # rentable on Netflix's storefront elsewhere, not actually streamable
+        # with a subscription. Restrict to subscription availability.
+        params.append("with_watch_monetization_types=flatrate")
     if filters.get('watch_provider_exclude'):
         params.append(f"without_watch_providers={filters['watch_provider_exclude']}")
 

@@ -44,9 +44,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     title: 'Assignment Successful',
                     message: data.message || `Successfully assigned ${data.added_count || 0} item(s).`,
                     autoClose: 4000,
-                    onConfirm: () => { window.location.href = "{{ url_for('magnet.assign_magnet') }}"; }
+                    onConfirm: () => { window.location.href = "{{ url_for('discover.index') }}"; }
                 });
-                setTimeout(() => { window.location.href = "{{ url_for('magnet.assign_magnet') }}"; }, 4000);
+                setTimeout(() => { window.location.href = "{{ url_for('discover.index') }}"; }, 4000);
             } else {
                 showPopup({
                     type: POPUP_TYPES.ERROR,

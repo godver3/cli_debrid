@@ -1367,6 +1367,74 @@ class DeletionManager:
                     result['sources_failed'].append(source_name)
                     result['details'][source_name] = {'success': False, 'message': str(e)}
 
+            # Check Scrob Lists/Collection — SKIP if item not from a Scrob source
+            # (item_source_types values are the literal source_type strings, e.g.
+            # "Scrob Lists_1".split('_')[0] == "Scrob Lists" — check by prefix,
+            # not exact match, same as the pre-existing "'Trakt' not in ..." gates above).
+            item_is_from_scrob = any(t.startswith('Scrob') for t in item_source_types)
+            if item_source_types and not item_is_from_scrob:
+                logging.info(f"[CONTENT_SOURCE_REMOVAL] ⏭️  Skipping Scrob - item not from a Scrob source")
+            else:
+                from content_checkers.scrob import is_deletion_sync_configured
+                if not is_deletion_sync_configured():
+                    logging.debug("[CONTENT_SOURCE_REMOVAL] Scrob username/password not configured — skipping Scrob deletion sync")
+                else:
+                    # Scrob Collection
+                    scrob_collection_sources = [
+                        source_key for source_key, source_config in content_sources.items()
+                        if source_config.get('type') == 'Scrob Collection' and source_config.get('enabled', False)
+                    ]
+                    if scrob_collection_sources:
+                        source_name = 'Scrob_Collection'
+                        result['sources_attempted'].append(source_name)
+                        try:
+                            from content_checkers.scrob import remove_from_scrob_collection
+                            removal_result = remove_from_scrob_collection([item])
+                            result['details'][source_name] = removal_result
+                            if removal_result.get('success'):
+                                logging.info(f"[CONTENT_SOURCE_REMOVAL] ✓ Successfully removed from Scrob Collection: {removal_result.get('message')}")
+                                result['sources_succeeded'].append(source_name)
+                            else:
+                                logging.warning(f"[CONTENT_SOURCE_REMOVAL] ✗ Failed to remove from Scrob Collection: {removal_result.get('message')}")
+                                result['sources_failed'].append(source_name)
+                        except Exception as e:
+                            logging.error(f"[CONTENT_SOURCE_REMOVAL] Exception removing from Scrob Collection: {e}")
+                            result['sources_failed'].append(source_name)
+                            result['details'][source_name] = {'success': False, 'message': str(e)}
+
+                    # Scrob Lists — one removal attempt per configured list ID, across all enabled Scrob Lists sources
+                    scrob_list_ids = set()
+                    for source_key, source_config in content_sources.items():
+                        if source_config.get('type') == 'Scrob Lists' and source_config.get('enabled', False):
+                            source_media_type = source_config.get('media_type', 'All')
+                            if source_media_type != 'All':
+                                if media_type == 'movie' and source_media_type != 'Movies':
+                                    continue
+                                if media_type == 'show' and source_media_type != 'Shows':
+                                    continue
+                            for lid in (source_config.get('scrob_list_ids', '') or '').split(','):
+                                lid = lid.strip()
+                                if lid:
+                                    scrob_list_ids.add(lid)
+
+                    for list_id in scrob_list_ids:
+                        source_name = f'Scrob_List_{list_id}'
+                        result['sources_attempted'].append(source_name)
+                        try:
+                            from content_checkers.scrob import remove_from_scrob_list
+                            removal_result = remove_from_scrob_list(list_id, [item])
+                            result['details'][source_name] = removal_result
+                            if removal_result.get('success'):
+                                logging.info(f"[CONTENT_SOURCE_REMOVAL] ✓ Successfully removed from Scrob list {list_id}: {removal_result.get('message')}")
+                                result['sources_succeeded'].append(source_name)
+                            else:
+                                logging.warning(f"[CONTENT_SOURCE_REMOVAL] ✗ Failed to remove from Scrob list {list_id}: {removal_result.get('message')}")
+                                result['sources_failed'].append(source_name)
+                        except Exception as e:
+                            logging.error(f"[CONTENT_SOURCE_REMOVAL] Exception removing from Scrob list {list_id}: {e}")
+                            result['sources_failed'].append(source_name)
+                            result['details'][source_name] = {'success': False, 'message': str(e)}
+
             # Check Plex Watchlist - SKIP if item not from Plex Watchlist
             if item_source_types and 'Plex' not in item_source_types and 'My' not in item_source_types:
                 logging.info(f"[CONTENT_SOURCE_REMOVAL] ⏭️  Skipping Plex Watchlist - item not from Plex source")

@@ -2284,6 +2284,20 @@ function applyAdvancedFilters(closeDrawer = true) {
         return;  // Don't proceed to TMDB API search
     }
 
+    runDiscoverFilterQuery();
+}
+
+/**
+ * Build TMDB discover params from the current filter state and fetch results.
+ * This is the generic (non-list-mode, non-tab-specific) query path shared by
+ * applyAdvancedFilters() and the adaptive-list edit one-time initial load
+ * (see loadAdaptiveListForEdit) — the latter calls this directly to bypass
+ * applyAdvancedFilters()'s deliberate no-fetch-while-editing guard, since an
+ * initial load is a one-time fetch, not a live-tweak reaction.
+ */
+function runDiscoverFilterQuery() {
+    const state = window.discoverState;
+
     // Build sort_by parameter - dropdown values already include order (e.g., "popularity.desc")
     // If sortBy already has the order, use it directly; otherwise combine with sortOrder
     // 'none' is only meaningful for list mode; fall back to popularity for TMDB API
@@ -5257,7 +5271,16 @@ function applyFiltersToUI(filters) {
 
     // Apply filters and update UI
     setTimeout(() => {
-        applyFilters();
+        // Adaptive-list edit/create mode has a deliberate guard (applyAdvancedFilters)
+        // that skips TMDB fetches on every filter tweak while editing, to avoid firing
+        // an API call per click. But loading a saved list for editing needs exactly one
+        // initial fetch so the results grid isn't blank — list-sourced lists (filters.lists)
+        // already get that via loadSavedLists() above, so only pure-filter lists need this.
+        if (window.adaptiveListEditMode && !filters.lists) {
+            runDiscoverFilterQuery();
+        } else {
+            applyFilters();
+        }
         updateActiveFilters();
     }, 100);
 }
@@ -7743,6 +7766,8 @@ window.sidebarListsState = {
     mdblistPersonalLists: [],
     traktSpecialLists: [],
     traktMyLists: [],
+    scrobSpecialLists: [],
+    scrobMyLists: [],
     rawResults: [],  // Store merged raw list results for client-side filtering
 };
 
@@ -7884,6 +7909,33 @@ async function loadSidebarListsData() {
                 const mdbPersonalData = await mdbPersonalResp.json();
                 if (mdbPersonalData.success) {
                     window.sidebarListsState.mdblistPersonalLists = mdbPersonalData.lists || [];
+                }
+            }
+        } catch (_e) {}
+
+        // Load Scrob special lists (static, always available)
+        // Mirrors SCROB_SPECIAL_LISTS defined later in file — keep in sync if adding items
+        window.sidebarListsState.scrobSpecialLists = [
+            { key: 'Trending',         name: 'Trending' },
+            { key: 'Popular',          name: 'Popular' },
+            { key: 'Top Rated',        name: 'Top Rated' },
+            { key: 'Now Playing',      name: 'Now Playing' },
+            { key: 'Upcoming',         name: 'Upcoming' },
+            { key: 'On Air Today',     name: 'On Air Today' },
+            { key: 'On Air This Week', name: 'On Air This Week' },
+            { key: 'New Episodes',     name: 'New Episodes' },
+            { key: 'Hidden Gems',      name: 'Hidden Gems' },
+            { key: 'For You',          name: 'For You' },
+            { key: 'Recently Added',   name: 'Recently Added' },
+        ];
+
+        // Load Scrob My Lists (user-specific, requires Scrob to be configured)
+        try {
+            const scrobResp = await fetch('/discover/api/scrob/lists');
+            if (scrobResp.ok) {
+                const scrobData = await scrobResp.json();
+                if (scrobData.success) {
+                    window.sidebarListsState.scrobMyLists = scrobData.lists || [];
                 }
             }
         } catch (_e) {}
@@ -8061,10 +8113,59 @@ function populateSidebarListsDropdown() {
         });
     }
 
+    // Add Scrob — Special Lists
+    if (state.scrobSpecialLists.length > 0) {
+        const scrobSpecialHeader = document.createElement('div');
+        scrobSpecialHeader.className = 'chips-dropdown-header';
+        scrobSpecialHeader.textContent = 'Scrob — Special Lists';
+        dropdown.appendChild(scrobSpecialHeader);
+
+        state.scrobSpecialLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'chips-dropdown-item';
+            item.dataset.value = `scrob-special:${list.key}`;
+            item.dataset.source = 'scrob-special';
+            item.dataset.listId = list.key;
+            item.dataset.name = list.name;
+
+            const isSelected = state.selectedLists.some(l => l.source === 'scrob-special' && l.listId === list.key);
+            if (isSelected) item.classList.add('included');
+
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('scrob')}</span> ${list.name}`;
+            item.addEventListener('click', () => toggleSidebarList(item, 'scrob-special', list.key, list.name));
+            dropdown.appendChild(item);
+        });
+    }
+
+    // Add Scrob — My Lists
+    if (state.scrobMyLists.length > 0) {
+        const scrobMyHeader = document.createElement('div');
+        scrobMyHeader.className = 'chips-dropdown-header';
+        scrobMyHeader.textContent = 'Scrob — My Lists';
+        dropdown.appendChild(scrobMyHeader);
+
+        state.scrobMyLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'chips-dropdown-item';
+            item.dataset.value = `scrob-mylist:${list.id}`;
+            item.dataset.source = 'scrob-mylist';
+            item.dataset.listId = String(list.id);
+            item.dataset.name = list.name;
+
+            const isSelected = state.selectedLists.some(l => l.source === 'scrob-mylist' && l.listId === String(list.id));
+            if (isSelected) item.classList.add('included');
+
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('scrob')}</span> ${list.name}`;
+            item.addEventListener('click', () => toggleSidebarList(item, 'scrob-mylist', String(list.id), list.name));
+            dropdown.appendChild(item);
+        });
+    }
+
     // If no lists loaded at all
     if (state.flixpatrolPlatforms.length === 0 && state.mdblistLists.length === 0 &&
         state.mdblistPersonalLists.length === 0 &&
-        state.traktSpecialLists.length === 0 && state.traktMyLists.length === 0) {
+        state.traktSpecialLists.length === 0 && state.traktMyLists.length === 0 &&
+        state.scrobSpecialLists.length === 0 && state.scrobMyLists.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'chips-dropdown-empty';
         empty.textContent = 'No lists available';
@@ -8373,6 +8474,16 @@ async function loadAllSelectedLists() {
                     const response = await fetch(`/discover/api/tmdb/shows/${listType}`);
                     if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
                     data = await response.json();
+                } else if (list.source === 'scrob-special') {
+                    const mediaType = window.discoverState.mediaType || 'all';
+                    const response = await fetch(`/discover/api/scrob/special/${encodeURIComponent(list.listId)}?type=${mediaType}`);
+                    if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
+                    data = await response.json();
+                } else if (list.source === 'scrob-mylist') {
+                    const mediaType = window.discoverState.mediaType || 'all';
+                    const response = await fetch(`/discover/api/scrob/list/${list.listId}?type=${mediaType}`);
+                    if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
+                    data = await response.json();
                 }
 
                 // Add results, avoiding duplicates
@@ -8477,6 +8588,12 @@ async function loadSavedLists(listPairs) {
         } else if (source === 'tmdb_shows') {
             const tmdbList = state.mdblistLists.find(l => l.key === listId && l.source === 'tmdb_shows');
             listName = tmdbList ? tmdbList.name : listId;
+        } else if (source === 'scrob-special') {
+            const special = state.scrobSpecialLists.find(l => l.key === listId);
+            listName = special ? special.name : listId;
+        } else if (source === 'scrob-mylist') {
+            const mylist = state.scrobMyLists.find(l => String(l.id) === listId);
+            listName = mylist ? mylist.name : listId;
         }
 
         if (listName) {
@@ -9425,7 +9542,8 @@ initializeModalListeners();
 
 window.personalState = {
     myLists: [],
-    currentSelection: null,  // { type: 'special'|'mylist', key: string, name: string }
+    scrobLists: [],
+    currentSelection: null,  // { type: 'special'|'mylist'|'scrob-special'|'scrob-mylist', key: string, name: string }
     myListsLoaded: false,
     isLoading: false,
 };
@@ -9442,12 +9560,28 @@ const PERSONAL_SPECIAL_LISTS = [
     { key: 'boxoffice',     name: 'Box Office' },
 ];
 
-function populatePersonalDropdown(myLists, mdblistPersonalLists) {
+// Keys must match SPECIAL_LIST_ENDPOINTS in content_checkers/scrob.py exactly
+// (case-sensitive — sent as-is to /discover/api/scrob/special/<key>).
+const SCROB_SPECIAL_LISTS = [
+    { key: 'Trending',         name: 'Trending' },
+    { key: 'Popular',          name: 'Popular' },
+    { key: 'Top Rated',        name: 'Top Rated' },
+    { key: 'Now Playing',      name: 'Now Playing' },
+    { key: 'Upcoming',         name: 'Upcoming' },
+    { key: 'On Air Today',     name: 'On Air Today' },
+    { key: 'On Air This Week', name: 'On Air This Week' },
+    { key: 'New Episodes',     name: 'New Episodes' },
+    { key: 'Hidden Gems',      name: 'Hidden Gems' },
+    { key: 'For You',          name: 'For You' },
+    { key: 'Recently Added',   name: 'Recently Added' },
+];
+
+function populatePersonalDropdown(myLists, mdblistPersonalLists, scrobLists) {
     const menu = document.getElementById('personal-dropdown-menu');
     if (!menu) return;
     menu.innerHTML = '';
 
-    // Special Lists group
+    // Special Lists group (Trakt)
     const specialHeader = document.createElement('div');
     specialHeader.className = 'mdblist-dropdown-header';
     specialHeader.textContent = 'Special Lists';
@@ -9459,6 +9593,22 @@ function populatePersonalDropdown(myLists, mdblistPersonalLists) {
         item.dataset.key = list.key;
         item.innerHTML = `<span class="list-name">${list.name}</span>`;
         item.addEventListener('click', () => selectPersonalList({ type: 'special', key: list.key, name: list.name }));
+        menu.appendChild(item);
+    });
+
+    // Scrob Special Lists group — separate from Trakt's since several names
+    // overlap (Trending, Popular) but hit a different backend/results.
+    const scrobSpecialHeader = document.createElement('div');
+    scrobSpecialHeader.className = 'mdblist-dropdown-header';
+    scrobSpecialHeader.textContent = 'Scrob — Special Lists';
+    menu.appendChild(scrobSpecialHeader);
+
+    SCROB_SPECIAL_LISTS.forEach(list => {
+        const item = document.createElement('div');
+        item.className = 'mdblist-dropdown-item';
+        item.dataset.scrobSpecialKey = list.key;
+        item.innerHTML = `<span class="list-name">${list.name}</span>`;
+        item.addEventListener('click', () => selectPersonalList({ type: 'scrob-special', key: list.key, name: list.name }));
         menu.appendChild(item);
     });
 
@@ -9495,11 +9645,28 @@ function populatePersonalDropdown(myLists, mdblistPersonalLists) {
             menu.appendChild(item);
         });
     }
+
+    // Scrob My Lists group — only if we have any
+    if (scrobLists && scrobLists.length > 0) {
+        const scrobHeader = document.createElement('div');
+        scrobHeader.className = 'mdblist-dropdown-header';
+        scrobHeader.textContent = 'Scrob — My Lists';
+        menu.appendChild(scrobHeader);
+
+        scrobLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'mdblist-dropdown-item';
+            item.dataset.scrobListId = list.id;
+            item.innerHTML = `<span class="list-name">${list.name}</span>`;
+            item.addEventListener('click', () => selectPersonalList({ type: 'scrob-mylist', key: String(list.id), name: list.name }));
+            menu.appendChild(item);
+        });
+    }
 }
 
 async function initPersonal() {
     // Populate Special Lists immediately (static)
-    populatePersonalDropdown([], []);
+    populatePersonalDropdown([], [], []);
     bindPersonalEvents();
 
     // Restore saved selection
@@ -9523,9 +9690,10 @@ async function initPersonal() {
 async function loadPersonalMyLists() {
     if (window.personalState.myListsLoaded) return;
     try {
-        const [traktResp, mdbResp] = await Promise.allSettled([
+        const [traktResp, mdbResp, scrobResp] = await Promise.allSettled([
             fetch('/discover/api/trakt/lists'),
             fetch('/discover/api/mdblist/personal-lists'),
+            fetch('/discover/api/scrob/lists'),
         ]);
 
         if (traktResp.status === 'fulfilled' && traktResp.value.ok) {
@@ -9544,8 +9712,17 @@ async function loadPersonalMyLists() {
             }
         }
 
+        let scrobLists = [];
+        if (scrobResp.status === 'fulfilled' && scrobResp.value.ok) {
+            const data = await scrobResp.value.json();
+            if (data.success && data.lists) {
+                scrobLists = data.lists;
+                window.personalState.scrobLists = scrobLists;
+            }
+        }
+
         window.personalState.myListsLoaded = true;
-        populatePersonalDropdown(window.personalState.myLists || [], mdblistPersonalLists);
+        populatePersonalDropdown(window.personalState.myLists || [], mdblistPersonalLists, scrobLists);
     } catch (e) {
         console.error('[Personal] Failed to load my lists:', e);
     }
@@ -9606,6 +9783,10 @@ async function loadPersonalContent() {
             url = `/discover/api/trakt/special/${sel.key}?type=${mediaType}`;
         } else if (sel.type === 'mdblist-personal') {
             url = `/discover/api/mdblist/personal-list/${sel.key}`;
+        } else if (sel.type === 'scrob-special') {
+            url = `/discover/api/scrob/special/${encodeURIComponent(sel.key)}?type=${mediaType}`;
+        } else if (sel.type === 'scrob-mylist') {
+            url = `/discover/api/scrob/list/${sel.key}?type=${mediaType}`;
         } else {
             url = `/discover/api/trakt/mylist/${sel.key}?type=${mediaType}`;
         }

@@ -134,7 +134,14 @@ class WantedQueue:
         try:
             # Check 1: Reconciliation (adapted from original _reconcile_with_existing_items and process loop)
             # This check needs to be robust. Using check_existing_media_item.
-            if check_existing_media_item(item, item.get('version'), ['Collected', 'Upgrading']):
+            # Exempt user-initiated adds (Request button / content_requester, manual
+            # Magnet_Assigner) from this check — those are an explicit request for a
+            # second/replacement copy and must be allowed to scrape and collect their
+            # own file rather than being silently deleted because a prior copy is
+            # already Collected/Upgrading. Existing rows with no content_source (or
+            # any automated content-source value) keep the original behavior.
+            is_user_initiated_add = item.get('content_source') in ('content_requester', 'Magnet_Assigner')
+            if not is_user_initiated_add and check_existing_media_item(item, item.get('version'), ['Collected', 'Upgrading']):
                 logging.info(f"Item ID {item_id} (Version: {item.get('version')}) already exists in Collected/Upgrading state. Removing duplicate from Wanted.")
                 remove_from_media_items(item_id)
                 return {'status': 'reconciled', 'item_data': item, 'message': f"Reconciled and removed {item_identifier}"}

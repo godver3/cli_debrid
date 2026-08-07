@@ -195,6 +195,7 @@ def _process_single_title(args):
             'episodes': parsed_info_from_ptt.get('episodes', []),
             'type': parsed_info_from_ptt.get('type'),
             'country': parsed_info_from_ptt.get('country'),
+            'languages': parsed_info_from_ptt.get('languages', []),
             'date': parsed_info_from_ptt.get('date'),
             'documentary': parsed_info_from_ptt.get('documentary', False),
             'site': site,

@@ -93,7 +93,8 @@ def parse_with_ptt(title: str) -> Dict[str, Any]:
             'episodes': result.get('episodes', []),
             'site': result.get('site'),  # Store the site separately
             'trash': result.get('trash', False),  # Include trash flag
-            'country': result.get('country')  # Include country code from PTT
+            'country': result.get('country'),  # Include country code from PTT
+            'languages': result.get('languages', [])  # ISO 639-1 audio/sub language codes from PTT
         }
 
         

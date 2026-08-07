@@ -819,6 +819,46 @@ function createSeasonPanel(season, isActive) {
     `;
     panel.appendChild(seasonHeader);
 
+    // Bulk-delete action bar — hidden until at least one episode checkbox is checked
+    if (hasAdminPermissions && !isPhantomSeason) {
+        const bulkActionBar = document.createElement('div');
+        bulkActionBar.className = 'episode-bulk-action-bar';
+        bulkActionBar.style.display = 'none';
+        bulkActionBar.innerHTML = `
+            <span class="episode-bulk-selected-count">0 selected</span>
+            <button type="button" class="btn btn-sm btn-danger episode-bulk-delete-btn">Delete Selected</button>
+            <button type="button" class="btn btn-sm episode-bulk-clear-btn">Clear Selection</button>
+        `;
+        panel.appendChild(bulkActionBar);
+
+        const updateBulkActionBar = () => {
+            const checked = panel.querySelectorAll('.episode-bulk-select-checkbox:checked');
+            if (checked.length > 0) {
+                bulkActionBar.style.display = 'flex';
+                bulkActionBar.querySelector('.episode-bulk-selected-count').textContent = `${checked.length} selected`;
+            } else {
+                bulkActionBar.style.display = 'none';
+            }
+        };
+
+        // Delegate change events from the panel so dynamically-added rows are covered too
+        panel.addEventListener('change', (e) => {
+            if (e.target.classList.contains('episode-bulk-select-checkbox')) {
+                updateBulkActionBar();
+            }
+        });
+
+        bulkActionBar.querySelector('.episode-bulk-clear-btn').addEventListener('click', () => {
+            panel.querySelectorAll('.episode-bulk-select-checkbox:checked').forEach(cb => cb.checked = false);
+            updateBulkActionBar();
+        });
+
+        bulkActionBar.querySelector('.episode-bulk-delete-btn').addEventListener('click', () => {
+            const checkedBoxes = Array.from(panel.querySelectorAll('.episode-bulk-select-checkbox:checked'));
+            handleBulkDeleteEpisodes(checkedBoxes, season.season_number);
+        });
+    }
+
     // Magnet season button handler
     const magnetSeasonBtn = seasonHeader.querySelector('.magnet-season-btn');
     if (magnetSeasonBtn) {
@@ -1253,6 +1293,19 @@ function createEpisodeRow(episodes, seasonNumber) {
         </button>
     `;
 
+    // Bulk-select checkbox (Admin only, not for phantom rows — they don't exist in the DB)
+    let bulkSelectCheckbox = '';
+    if (hasAdminPermissions && !isPhantom) {
+        const allEpisodeIds = episodes.map(ep => ep.id).join(',');
+        bulkSelectCheckbox = `
+            <input type="checkbox" class="episode-bulk-select-checkbox"
+                   data-imdb-id="${firstEp.imdb_id || ''}"
+                   data-season="${seasonNumber}"
+                   data-episode="${firstEp.episode_number || 0}"
+                   data-episode-ids="${allEpisodeIds}">
+        `;
+    }
+
     // Delete icon - deletes episode (Admin only)
     let deleteIcon = '';
     if (hasAdminPermissions) {
@@ -1361,6 +1414,7 @@ function createEpisodeRow(episodes, seasonNumber) {
     }
 
     row.innerHTML = `
+        ${bulkSelectCheckbox}
         <div class="episode-number">${firstEp.episode_number}</div>
         ${statusIcon}
         <div class="episode-info-section">
@@ -2436,6 +2490,109 @@ function showFileSelectionPopup(files, episodeTitle, actionLabel) {
  * Handle delete episode button click
  * Supports single and multi-file episodes with progress tracking
  */
+/**
+ * Bulk-delete every file for each checked episode row.
+ *
+ * Reuses the exact same per-episode endpoint as the single-episode delete button
+ * (/library/delete_episode/<imdbId>/<season>/<episode>), one call per selected
+ * episode, passing that episode's full item_ids list so every file is removed —
+ * this intentionally skips the interactive single-file picker used by the
+ * one-at-a-time delete flow, since a bulk action has no per-file choice to make.
+ * No backend or DeletionManager changes — inherits Plex/Symlinked-Local handling
+ * for free from the existing endpoint.
+ */
+async function handleBulkDeleteEpisodes(checkboxes, seasonNumber) {
+    if (!checkboxes || checkboxes.length === 0) return;
+
+    const episodesToDelete = checkboxes.map(cb => ({
+        imdbId: cb.dataset.imdbId,
+        episodeNumber: parseInt(cb.dataset.episode),
+        itemIds: cb.dataset.episodeIds.split(',').map(Number).filter(Boolean)
+    })).filter(ep => ep.imdbId && ep.episodeNumber && ep.itemIds.length > 0);
+
+    if (episodesToDelete.length === 0) {
+        showPopup({ type: POPUP_TYPES.ERROR, message: 'Cannot delete: Missing episode information', autoClose: 3000 });
+        return;
+    }
+
+    const episodeLabels = episodesToDelete.map(ep => `S${seasonNumber.toString().padStart(2, '0')}E${ep.episodeNumber.toString().padStart(2, '0')}`);
+    const confirmed = await new Promise(resolve => {
+        showPopup({
+            type: 'confirm',
+            title: 'Delete Selected Episodes',
+            message: `Delete ${episodesToDelete.length} episode${episodesToDelete.length !== 1 ? 's' : ''} (${episodeLabels.join(', ')})?\n\nThis action cannot be undone.`,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => resolve(true),
+            onCancel: () => resolve(false)
+        });
+    });
+    if (!confirmed) return;
+
+    showDeletionLoading(`Deleting ${episodesToDelete.length} episode${episodesToDelete.length !== 1 ? 's' : ''}`);
+
+    const succeeded = [];
+    const failed = [];
+
+    for (let i = 0; i < episodesToDelete.length; i++) {
+        const ep = episodesToDelete[i];
+        const label = episodeLabels[i];
+        updateDeletionLoading(`Deleting ${label}...`, `Episode ${i + 1} of ${episodesToDelete.length}`);
+
+        try {
+            const response = await fetch(`/library/delete_episode/${ep.imdbId}/${seasonNumber}/${ep.episodeNumber}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    item_ids: ep.itemIds,
+                    layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache']
+                })
+            });
+
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                failed.push({ label, error: `Unexpected response (status ${response.status})` });
+                continue;
+            }
+
+            const result = await response.json();
+            if (result && result.success) {
+                succeeded.push(label);
+            } else {
+                failed.push({ label, error: result.error || 'Failed to delete episode' });
+            }
+        } catch (error) {
+            failed.push({ label, error: error.message });
+        }
+    }
+
+    hideDeletionLoading();
+
+    const reportLines = [];
+    if (succeeded.length > 0) {
+        reportLines.push(`<strong>Deleted ${succeeded.length} episode${succeeded.length !== 1 ? 's' : ''}:</strong> ${succeeded.join(', ')}`);
+    }
+    if (failed.length > 0) {
+        reportLines.push('');
+        reportLines.push(`<strong>Failed (${failed.length}):</strong>`);
+        failed.forEach(f => reportLines.push(`✗ ${f.label}: ${escapeHtml(f.error)}`));
+    }
+
+    showPopup({
+        type: failed.length === 0 ? POPUP_TYPES.SUCCESS : POPUP_TYPES.WARNING,
+        message: reportLines.join('\n'),
+        autoClose: false,
+        onConfirm: () => loadShowData()
+    });
+
+    setTimeout(() => {
+        const closeButton = document.querySelector('.universal-popup #popupClose');
+        if (closeButton) {
+            closeButton.onclick = () => loadShowData();
+        }
+    }, 100);
+}
+
 async function handleDeleteEpisode(event) {
     const button = event.currentTarget;
     const imdbId = button.dataset.imdbId;
