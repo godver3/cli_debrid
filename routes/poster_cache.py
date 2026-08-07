@@ -24,6 +24,7 @@ _cache_lock = threading.Lock()
 _cache_dirty = False          # True when in-memory cache differs from disk
 _cache_loaded = False         # True after first load from disk
 _save_interval_seconds = 60   # Flush to disk at most every 60 s
+_expiry_sweep_interval_seconds = 3600  # Purge expired entries at most every hour
 
 
 def _load_from_disk() -> dict:
@@ -89,10 +90,18 @@ def _save_to_disk(cache_snapshot: dict) -> bool:
 
 
 def _background_saver():
-    """Daemon thread: flushes the in-memory cache to disk every 60 seconds."""
+    """Daemon thread: flushes the in-memory cache to disk every 60 seconds,
+    and purges expired entries once an hour so the cache doesn't grow forever."""
     global _cache_dirty
+    elapsed_since_sweep = 0
     while True:
         _time.sleep(_save_interval_seconds)
+        elapsed_since_sweep += _save_interval_seconds
+
+        if elapsed_since_sweep >= _expiry_sweep_interval_seconds:
+            elapsed_since_sweep = 0
+            clean_expired_cache()
+
         if _cache_dirty:
             with _cache_lock:
                 if _cache_dirty:

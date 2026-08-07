@@ -379,6 +379,29 @@ def rank_result_key(
             language_reason += f" + Bonus for having language codes: {detected_language_codes}"
     # --- End Language Code Ranking Logic ---
 
+    # --- Preferred Audio/Sub Language Ranking (via PTT-detected languages) ---
+    # The blocks above only compare title text (useless when a title is identical
+    # across languages, e.g. "Inception") or release-region codes (UK/US/AU — an
+    # unrelated concept). This checks the actual audio/subtitle languages PTT
+    # detected in the release name (FRENCH, VF, MULTI, etc.) against the
+    # user's preferred language code, so a non-English audio preference actually
+    # affects ranking for titles with no distinct translated title.
+    detected_release_languages = [str(l).lower() for l in (parsed_info.get('languages') or [])]
+    if preferred_language:
+        preferred_language_lower = preferred_language.lower()
+        if preferred_language_lower in detected_release_languages:
+            language_score += 75
+            language_reason += f" + Bonus for matching preferred language '{preferred_language_lower}' in release ({detected_release_languages})"
+        elif detected_release_languages and preferred_language_lower not in detected_release_languages:
+            # Release has detected languages but not the preferred one — only
+            # penalize if it's *not* multi-language (MULTI releases typically
+            # include the preferred language as an undubbed extra track PTT
+            # doesn't always tag, so don't punish those).
+            if 'multi' not in detected_release_languages:
+                language_score -= 30
+                language_reason += f" - Penalty for missing preferred language '{preferred_language_lower}' (found {detected_release_languages})"
+    # --- End Preferred Audio/Sub Language Ranking ---
+
     normalized_language = language_score # Use the raw score
 
     # Apply weights

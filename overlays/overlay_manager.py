@@ -629,27 +629,42 @@ class OverlayManager:
         Called when the media server returns 404 for an item ID, meaning the item was
         re-indexed and has a new ID. The next sync will re-discover
         the correct ID via _sync_library_keys_for_new_items.
+
+        All sibling episodes sharing this same stale ms_item_id (the show-level rating
+        key returned by get_show_best_episode_media) are cleared in the same pass —
+        otherwise only the one representative row picked by that cycle's dedup query
+        gets reset, and the rest keep 404ing once per hour until their turn comes up.
         """
         try:
             conn = _get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
-                'UPDATE media_items SET ms_item_id = NULL WHERE id = ?',
-                (media_item_id,)
+                "SELECT id FROM media_items WHERE ms_item_id = ? AND type = 'episode'",
+                (ms_item_id,)
             )
-            cursor.execute('''
+            sibling_ids = [row[0] for row in cursor.fetchall()]
+            if media_item_id not in sibling_ids:
+                sibling_ids.append(media_item_id)
+
+            cursor.execute(
+                "UPDATE media_items SET ms_item_id = NULL "
+                "WHERE ms_item_id = ? AND type = 'episode'",
+                (ms_item_id,)
+            )
+            cursor.executemany('''
                 INSERT INTO media_overlay_state (media_item_id, status, reason, updated_at, created_at)
                 VALUES (?, 'pending', 'Stale ms_item_id reset — will re-sync on next run', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT(media_item_id) DO UPDATE SET
                     status = 'pending',
                     reason = 'Stale ms_item_id reset — will re-sync on next run',
                     updated_at = CURRENT_TIMESTAMP
-            ''', (media_item_id,))
+            ''', [(sid,) for sid in sibling_ids])
             conn.commit()
             conn.close()
             self.logger.warning(
-                f"Reset stale ms_item_id {ms_item_id} for item {media_item_id} "
-                f"(media server returned 404 — key will be re-synced on next overlay run)"
+                f"Reset stale ms_item_id {ms_item_id} for item {media_item_id} and "
+                f"{len(sibling_ids) - 1} sibling episode(s) "
+                f"(media server returned 404 — key(s) will be re-synced on next overlay run)"
             )
         except Exception as e:
             self.logger.error(f"Failed to reset stale ms_item_id for item {media_item_id}: {e}")

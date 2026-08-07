@@ -929,7 +929,12 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         languages_to_try = [lang.strip() for lang in language_setting.split(',') if lang.strip() and lang.strip().lower() != 'en']
         logging.info(f"Languages to attempt translation for (from version '{version}' settings): {languages_to_try}")
 
-        preferred_language = None # Language for which translation was successful
+        # preferred_language reflects the user's setting regardless of whether a
+        # translated title is found — needed so rank_results can still score
+        # releases against the preferred audio/sub language (detected via PTT)
+        # even for titles that are identical across languages (e.g. "Inception"),
+        # where no distinct translated title would ever be found.
+        preferred_language = languages_to_try[0] if languages_to_try else None
         translated_title = None
 
         if languages_to_try:
@@ -944,7 +949,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
                     if current_translated_title:
                         translated_title = current_translated_title
-                        preferred_language = lang_code # Store the successful language code
+                        preferred_language = lang_code # Use the language the translation matched
                         logging.info(f"Found translated title ({preferred_language}): {translated_title}")
                         break # Stop searching once a translation is found
                     else:
@@ -1483,6 +1488,30 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             if initial_count != final_count:
                  logging.info(f"Applied minimum scrape score filter ({minimum_scrape_score_setting}): {initial_count} -> {final_count} results. Added {len(score_filtered_out_results)} to filtered out results.")
         # --- End Minimum Scrape Score Filter ---
+
+        # --- SeaDex Priority: move the SeaDex-confirmed-best release (if present) to
+        # the front, after every other sort/filter has already run. This deliberately
+        # does not touch rank_result_key's scoring — a Seadex-boosted result still had
+        # to pass the minimum score filter above like anything else; only its final
+        # position changes. Anime-only, and never inside a "Non-Anime Only" version.
+        if (is_anime
+                and get_setting('Scraping', 'enable_seadex_priority', False)
+                and version_settings.get('anime_filter_mode') != 'Non-Anime Only'):
+            try:
+                from scraper.seadex import get_seadex_hashes
+                seadex_hashes = get_seadex_hashes(imdb_id)
+                if seadex_hashes:
+                    boosted, rest = [], []
+                    for result in deduplicated_results:
+                        result_hash = (result.get('info_hash') or '').lower()
+                        (boosted if result_hash in seadex_hashes else rest).append(result)
+                    if boosted:
+                        logging.info(f"SeaDex Priority: promoted {len(boosted)} result(s) to top for '{title}'")
+                        deduplicated_results = boosted + rest
+            except Exception as e:
+                # Never let a SeaDex lookup failure affect scraping.
+                logging.debug(f"SeaDex Priority lookup failed for '{title}': {e}")
+        # --- End SeaDex Priority ---
 
         # Log final results
         logging.info(f"Final sorted results for '{title}' ({year}): {len(deduplicated_results)}")

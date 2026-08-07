@@ -127,6 +127,7 @@
         initializeAssignUserButtons();
         initializePlexLabelsFields();
         initializeAdaptiveListButtons();
+        initializeScrobListPickers();
         loadOverseerrUsers();
         updatePlexOnlySections();
 
@@ -830,6 +831,74 @@
     function initializeAdaptiveListButtons() {
         // No longer needed - each adaptive list is its own content source
         // and can be deleted using the standard "Delete Source" button
+    }
+
+    // ── Scrob list multi-select picker ────────────────────────────────────
+    // Populates the <select multiple> for each Scrob Lists source with the
+    // user's real Scrob lists (fetched once, shared across all Scrob Lists
+    // sources on the page), pre-selects previously-saved IDs, and keeps the
+    // real hidden input (the one actually collected/saved) in sync on change.
+    let _scrobListsCache = null;
+    let _scrobListsFetchPromise = null;
+
+    function fetchScrobLists() {
+        if (_scrobListsFetchPromise) return _scrobListsFetchPromise;
+        _scrobListsFetchPromise = fetch('/settings/content-sources/scrob-lists')
+            .then(response => response.json())
+            .then(data => {
+                _scrobListsCache = data.success ? data.lists : [];
+                if (!data.success) {
+                    console.warn('Could not load Scrob lists:', data.error);
+                }
+                return _scrobListsCache;
+            })
+            .catch(error => {
+                console.error('Error fetching Scrob lists:', error);
+                _scrobListsCache = [];
+                return _scrobListsCache;
+            });
+        return _scrobListsFetchPromise;
+    }
+
+    function initializeScrobListPickers() {
+        const pickers = document.querySelectorAll('.scrob-list-multiselect');
+        if (!pickers.length) return;
+
+        fetchScrobLists().then(lists => {
+            pickers.forEach(select => {
+                const sourceId = select.getAttribute('data-source-id');
+                const hidden = document.getElementById(`content-sources-${sourceId}-scrob_list_ids`);
+                const initialIds = new Set(
+                    (select.getAttribute('data-initial-value') || '')
+                        .split(',').map(s => s.trim()).filter(Boolean)
+                );
+
+                select.innerHTML = '';
+                if (!lists.length) {
+                    const opt = document.createElement('option');
+                    opt.value = '';
+                    opt.disabled = true;
+                    opt.textContent = 'No Scrob lists found (check URL/API Key in Additional Settings → Scrob)';
+                    select.appendChild(opt);
+                    return;
+                }
+
+                lists.forEach(list => {
+                    const opt = document.createElement('option');
+                    opt.value = String(list.id);
+                    opt.textContent = `${list.name} (${list.item_count} items)`;
+                    opt.selected = initialIds.has(String(list.id));
+                    select.appendChild(opt);
+                });
+
+                select.addEventListener('change', () => {
+                    if (hidden) {
+                        hidden.value = Array.from(select.selectedOptions).map(o => o.value).join(',');
+                        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                });
+            });
+        });
     }
 
     // ── Overseerr requester checkboxes ────────────────────────────────────
@@ -2031,6 +2100,25 @@
                                                  <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
                                              {% endfor %}
                                          </select>
+                                    {% elif key == 'scrob_list_ids' and config.type == 'Scrob Lists' %}
+                                         {# Multi-select populated live from GET /settings/content-sources/scrob-lists.
+                                            The hidden input carries the actual comma-separated value that gets saved;
+                                            the visible <select> is just a picker UI kept in sync via initializeScrobListPickers() below. #}
+                                         <label for="content-sources-{{ source_id }}-scrob_list_ids-select" class="settings-title">Scrob List(s):</label>
+                                         <select id="content-sources-{{ source_id }}-scrob_list_ids-select"
+                                                 class="settings-input scrob-list-multiselect"
+                                                 data-source-id="{{ source_id }}"
+                                                 data-initial-value="{{ value }}"
+                                                 multiple>
+                                             <option value="" disabled>Loading Scrob lists…</option>
+                                         </select>
+                                         <input type="hidden"
+                                                id="content-sources-{{ source_id }}-scrob_list_ids"
+                                                name="Content Sources.{{ source_id }}.scrob_list_ids"
+                                                value="{{ value }}"
+                                                data-section="Content Sources"
+                                                data-key="{{ source_id }}.scrob_list_ids">
+                                         <p class="settings-description">Select one or more of your Scrob lists. Requires Scrob URL/API Key to be configured under Additional Settings → Scrob.</p>
                                     {% elif key == 'trakt_lists' and config.type == 'Trakt Lists' %}
                                          {# ... trakt_lists rendering ... #}
                                          <label for="content-sources-{{ source_id }}-trakt_lists" class="settings-title">Trakt List URL(s):</label>

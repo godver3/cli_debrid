@@ -257,12 +257,8 @@
                 <div class="uh-settings-section">
                     <div class="uh-settings-card-header">
                         <h3>Automatic Scan</h3>
-                        <label class="uh-settings-toggle">
-                            <input type="checkbox" id="settings-auto-scan">
-                            <span class="uh-settings-toggle-track"><span class="uh-settings-toggle-thumb"></span></span>
-                        </label>
                     </div>
-                    <p class="uh-settings-desc">Run a scan automatically every 24 hours (requires enabling in the task scheduler).</p>
+                    <p class="uh-settings-desc">Enable/disable the automatic scan schedule in Task Manager ("Upgrade Hub Scan").</p>
                 </div>
 
                 <!-- Sub-card: Score Threshold -->
@@ -320,12 +316,8 @@
                 <div class="uh-settings-section">
                     <div class="uh-settings-card-header">
                         <h3>Auto Queue</h3>
-                        <label class="uh-settings-toggle">
-                            <input type="checkbox" id="settings-auto-queue">
-                            <span class="uh-settings-toggle-track"><span class="uh-settings-toggle-thumb"></span></span>
-                        </label>
                     </div>
-                    <p class="uh-settings-desc">Automatically queue upgrade candidates above the score threshold after each scheduled scan. Respects the Upgrades Per Run limit.</p>
+                    <p class="uh-settings-desc">Enable/disable the automatic queue schedule in Task Manager ("Upgrade Hub Auto Queue"). Queues upgrade candidates above the score threshold after each scheduled scan, respecting the Upgrades Per Run limit.</p>
                 </div>
 
                 <!-- Sub-card: Hide Pack Episodes -->
@@ -1203,8 +1195,6 @@ function svgPlus() {
 let _settings = {
     min_improvement_threshold: 0,
     scan_limit: null,
-    auto_scan_enabled: false,
-    auto_queue_enabled: false,
     max_upgrades_per_run: 10,
     show_recent_only: false,
     hide_pack_episodes: false,
@@ -1244,14 +1234,6 @@ function applySettingsToUI() {
         const v = btn.dataset.limit === 'null' ? null : parseInt(btn.dataset.limit);
         btn.classList.toggle('active', v === lim);
     });
-
-    // Auto scan toggle
-    const autoChk = document.getElementById('settings-auto-scan');
-    if (autoChk) autoChk.checked = !!_settings.auto_scan_enabled;
-
-    // Auto queue toggle
-    const autoQChk = document.getElementById('settings-auto-queue');
-    if (autoQChk) autoQChk.checked = !!_settings.auto_queue_enabled;
 
     // Show recent only toggle
     const recentChk = document.getElementById('settings-show-recent-only');
@@ -1378,8 +1360,6 @@ async function runUpgradeCleanup() {
 }
 
 async function saveSettings() {
-    const autoChk       = document.getElementById('settings-auto-scan');
-    const autoQChk      = document.getElementById('settings-auto-queue');
     const maxInp        = document.getElementById('settings-max-upgrades');
     const recentChk     = document.getElementById('settings-show-recent-only');
     const hidePackChk   = document.getElementById('settings-hide-pack-episodes');
@@ -1388,8 +1368,6 @@ async function saveSettings() {
     const payload = {
         min_improvement_threshold: _settings.min_improvement_threshold,
         scan_limit: _settings.scan_limit,
-        auto_scan_enabled:      autoChk      ? autoChk.checked      : false,
-        auto_queue_enabled:     autoQChk     ? autoQChk.checked     : false,
         max_upgrades_per_run:   maxInp       ? parseInt(maxInp.value) || 10 : 10,
         show_recent_only:       recentChk    ? recentChk.checked    : false,
         hide_pack_episodes:     hidePackChk  ? hidePackChk.checked  : false,

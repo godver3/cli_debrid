@@ -366,7 +366,13 @@ export function updateSettings() {
             const sourceData = {};
             sourceData.versions = [];
 
+            // scrob-list-multiselect is a picker UI only (no name attribute) — its
+            // selection is mirrored into a real hidden input by initializeScrobListPickers().
+            // Excluded here so it isn't collected as a nameless '' field.
             section.querySelectorAll('input, select, textarea').forEach(input => {
+                if (input.classList.contains('scrob-list-multiselect')) {
+                    return;
+                }
                 const nameParts = input.name.split('.');
                 // nameParts = ['Content Sources', 'Trakt Lists_1', 'plex_labels', 'enabled']
                 // We need everything after the source ID (index 2+)
@@ -527,7 +533,7 @@ export function updateSettings() {
     }
     
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider', 'Usenet Provider', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider', 'Usenet Provider', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Scrob', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -912,9 +918,17 @@ export function updateSettings() {
     }
 
     const disableAdult = document.getElementById('scraping-disable_adult');
-    
+
     if (disableAdult) {
         settingsData['Scraping']['disable_adult'] = disableAdult.checked;
+
+    } else {
+    }
+
+    const enableSeadexPriority = document.getElementById('scraping-enable_seadex_priority');
+
+    if (enableSeadexPriority) {
+        settingsData['Scraping']['enable_seadex_priority'] = enableSeadexPriority.checked;
 
     } else {
     }
@@ -1076,7 +1090,8 @@ export function updateSettings() {
     const usenetDataPath = document.getElementById('usenet_provider-data_path');
     const usenetNzbNaming = document.getElementById('usenet_provider-enable_nzb_naming');
     const usenetRetentionDays = document.getElementById('usenet_provider-retention_days');
-    if (usenetEnabled || usenetUrl || usenetToken || usenetFolder || usenetDataPath || usenetNzbNaming || usenetRetentionDays) {
+    const usenetDisableSeasonPacks = document.getElementById('usenet_provider-disable_nzb_season_packs');
+    if (usenetEnabled || usenetUrl || usenetToken || usenetFolder || usenetDataPath || usenetNzbNaming || usenetRetentionDays || usenetDisableSeasonPacks) {
         if (!settingsData['Usenet Provider']) settingsData['Usenet Provider'] = {};
         if (usenetEnabled) settingsData['Usenet Provider']['enabled'] = usenetEnabled.checked;
         if (usenetUrl) settingsData['Usenet Provider']['url'] = usenetUrl.value;
@@ -1085,6 +1100,7 @@ export function updateSettings() {
         if (usenetDataPath) settingsData['Usenet Provider']['data_path'] = usenetDataPath.value;
         if (usenetNzbNaming) settingsData['Usenet Provider']['enable_nzb_naming'] = usenetNzbNaming.checked;
         if (usenetRetentionDays) settingsData['Usenet Provider']['retention_days'] = parseInt(usenetRetentionDays.value) || 1500;
+        if (usenetDisableSeasonPacks) settingsData['Usenet Provider']['disable_nzb_season_packs'] = usenetDisableSeasonPacks.checked;
     }
 
     const updatePlexOnFileDiscovery = document.getElementById('plex-update_plex_on_file_discovery');
@@ -1274,6 +1290,10 @@ function updateContentSourceCheckPeriods() {
         'Trakt Watchlist': 900,
         'Trakt Lists': 900,
         'Trakt Collection': 900,
+        'Special Trakt Lists': 900,
+        'Scrob Lists': 900,
+        'Scrob Collection': 900,
+        'Special Scrob Lists': 900,
         'My Plex Watchlist': 900,
         'Other Plex Watchlist': 900,
         'My Plex RSS Watchlist': 900,

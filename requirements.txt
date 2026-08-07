@@ -54,3 +54,4 @@ simple-websocket>=1.0.0
 psycopg2-binary
 patchright==1.52.5
 pyvirtualdisplay==3.0
+setproctitle==1.3.4

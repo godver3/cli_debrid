@@ -886,6 +886,32 @@ ease;
     flex-shrink: 0;
 }
 
+.episode-bulk-select-checkbox {
+    width: 1.1rem;
+    height: 1.1rem;
+    flex-shrink: 0;
+    accent-color: #ff6b35;
+    cursor: pointer;
+}
+
+.episode-bulk-action-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.6rem 1rem;
+    margin-bottom: 0.5rem;
+    background: rgba(255, 107, 53, 0.1);
+    border: 1px solid rgba(255, 107, 53, 0.4);
+    border-radius: 0.5rem;
+}
+
+.episode-bulk-selected-count {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #ff9166;
+    margin-right: auto;
+}
+
 .episode-status-icon {
     width: 1.25rem;
     height: 1.25rem;
