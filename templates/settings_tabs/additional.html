@@ -5,7 +5,7 @@
 </div>
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Tags" and section != "Trakt" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Tags" and section != "Trakt" and section != "Scrob" %}
     <div class="settings-section">
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
@@ -245,6 +245,31 @@
                 <p>Your authorization code is: <strong id="trakt-code"></strong></p>
                 <p>Please visit <a id="trakt-activate-link" href="https://trakt.tv/activate" target="_blank">https://trakt.tv/activate</a> to enter this code and complete the authorization process.</p>
             </div>
+        </div>
+    </div>
+    {% elif section == "Scrob" %}
+    <div class="settings-section">
+        <div class="settings-section-header">
+            <h4>Scrob</h4>
+            <span class="settings-toggle-icon">+</span>
+        </div>
+        <div class="settings-section-content">
+            <p class="settings-description">Scrob is an optional self-hosted Trakt alternative (<a href="https://github.com/ellite/scrob" target="_blank">ellite/scrob</a>) used for Scrob-based content sources (Lists, Collection, Special Lists). Enter your instance's base URL and an API key from <b>Settings → Connections → API Key</b> in the Scrob UI. This connection is shared by every Scrob content source below — no need to re-enter it per source.</p>
+            <p class="settings-description">The API key covers everything needed to sync content <i>into</i> cli_debrid. Username and password are optional and only used so cli_debrid can also remove items from Scrob when you delete them from your library — Scrob's API only allows deletions from a logged-in session, not an API key. Leave these blank if you don't need that.</p>
+            {% for key, value in section_data.items() %}
+                {% if key != 'tab' %}
+                <div class="settings-form-group">
+                    <label for="scrob-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                    <input type="{% if value.sensitive %}password{% else %}{{ value.type }}{% endif %}"
+                           id="scrob-{{ key }}" name="Scrob.{{ key }}"
+                           value="{{ settings.get('Scrob', {}).get(key, '') }}" class="settings-input"
+                           data-section="Scrob" data-key="{{ key }}">
+                    {% if value.description %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
         </div>
     </div>
     {% elif section == "Queue" %}

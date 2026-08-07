@@ -308,6 +308,13 @@
                    min="0" placeholder="1500">
             <p class="settings-description">Maximum age of NZB results in days. Results older than this are filtered out at search time and never submitted to the Usenet provider. Set to 0 to disable. Applies everywhere NZB indexers are searched (queue, scraper results, upgrade hub, repair).</p>
         </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-disable_nzb_season_packs" class="settings-title">Disable NZB Season Packs:</label>
+            <input type="checkbox" id="usenet_provider-disable_nzb_season_packs" name="Usenet Provider.disable_nzb_season_packs"
+                   data-section="Usenet Provider" data-key="disable_nzb_season_packs"
+                   {% if settings.get('Usenet Provider', {}).get('disable_nzb_season_packs') %}checked{% endif %}>
+            <p class="settings-description">Reject NZB season packs entirely (movies are unaffected). A single damaged article in a season pack repairs the whole pack via a fresh grab; with this enabled, only aggregate/single-episode NZB results are considered, so a bad file only affects that one episode.</p>
+        </div>
         {% if settings.get('File Management', {}).get('file_collection_management', '') != 'Symlinked/Local' %}
         <div class="settings-form-group">
             <label for="usenet_provider-enable_nzb_naming" class="settings-title">Enable NZB File Naming:</label>

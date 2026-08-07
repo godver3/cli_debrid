@@ -3,7 +3,7 @@ import threading as _threading
 _assignment_store = {}  # token -> assignment data, avoids session size/race issues
 _assignment_store_lock = _threading.Lock()
 from debrid import get_debrid_provider
-from database.database_writing import add_media_item, update_media_item_torrent_id
+from database.database_writing import add_media_item
 from .models import admin_required
 from queues.config_manager import load_config
 from queues.checking_queue import CheckingQueue
@@ -773,25 +773,62 @@ def prepare_manual_assignment():
         
         # Fetch TV show season data if needed
         if media_type in ['tv', 'show']:
+            # Which season numbers this request actually needs covered, so the
+            # fallback can trigger not just when Trakt returns nothing at all, but
+            # also when it returns data that's simply missing the requested season
+            # (e.g. a recently-aired season Trakt hasn't indexed yet).
+            if selection_type == 'seasons':
+                needed_seasons = {int(s) for s in selected_seasons if s.strip().isdigit()}
+            elif selection_type != 'all' and season and season.strip().isdigit():
+                needed_seasons = {int(season)}
+            else:
+                needed_seasons = set()
+
+            def _covers_needed_seasons(data):
+                if not data:
+                    return False
+                if not needed_seasons:
+                    return True
+                return needed_seasons.issubset({int(k) for k in data.keys()})
+
+            seasons_data, source = None, None
             try:
-                # --- MODIFICATION: Use TraktMetadata and pass flag ---
                 seasons_data, source = trakt_client.get_show_seasons_and_episodes(metadata.get('imdb_id'), include_specials=True)
                 logging.debug(f"Fetched seasons data (incl specials) from {source} for {metadata.get('imdb_id')} in prepare_manual_assignment")
-                # --- END MODIFICATION ---
-                
-                if seasons_data:
-                    metadata['seasons'] = {}
-                    # Convert integer keys from Trakt to string keys for internal use
-                    for season_num, season_info in seasons_data.items():
-                        metadata['seasons'][season_num] = {
-                            'episodes': season_info.get('episodes', {}),
-                            'episode_count': len(season_info.get('episodes', {}))
-                        }
-                else:
-                     logging.warning(f"No season data fetched from Trakt for {metadata.get('imdb_id')}")
             except Exception as e:
                 # Log but don't necessarily fail, maybe proceed without detailed episode titles
                 logging.error(f"Error fetching season data from Trakt (non-critical): {str(e)}")
+
+            if not _covers_needed_seasons(seasons_data):
+                # Trakt unset/unauthorized/rate-limited, or simply missing the
+                # requested season: fall back to TVDB (or Trakt again via the same
+                # client) through the shared metadata provider used elsewhere in the
+                # app, so manual-assign for TV doesn't hard-depend on a direct,
+                # unfallbacked Trakt call or Trakt's current season coverage.
+                try:
+                    from cli_battery.app.direct_api import DirectAPI
+                    fallback_seasons_data, source = DirectAPI.get_show_seasons(metadata.get('imdb_id'))
+                    logging.info(f"Trakt missing needed season data; used fallback provider '{source}' for {metadata.get('imdb_id')} in prepare_manual_assignment")
+                    if fallback_seasons_data:
+                        # Merge rather than replace, so seasons Trakt did have (with
+                        # richer episode titles) aren't discarded in favor of a
+                        # thinner fallback response.
+                        merged = dict(seasons_data or {})
+                        merged.update(fallback_seasons_data)
+                        seasons_data = merged
+                except Exception as fallback_e:
+                    logging.error(f"Fallback season fetch (TVDB/TMDB) also failed for {metadata.get('imdb_id')}: {fallback_e}")
+
+            if seasons_data:
+                metadata['seasons'] = {}
+                # Convert integer keys to string keys for internal use
+                for season_num, season_info in seasons_data.items():
+                    metadata['seasons'][season_num] = {
+                        'episodes': season_info.get('episodes', {}),
+                        'episode_count': len(season_info.get('episodes', {}))
+                    }
+            else:
+                logging.warning(f"No season data fetched from any provider for {metadata.get('imdb_id')}")
 
         # --- ADD LOGGING HERE ---
         logging.debug(f"Metadata seasons before creating items: {json.dumps(metadata.get('seasons', {}), indent=2)}")
@@ -1113,7 +1150,55 @@ def confirm_manual_assignment():
             # We'll use the torrent ID as a fallback for tracking purposes
             logging.info(f"Using torrent ID {initial_torrent_id} as hash for torrent file tracking")
             torrent_hash = f"torrent_file_{initial_torrent_id}"
-        
+
+        # De-dupe: if this exact submission (same hash) was already confirmed moments
+        # ago, don't re-add the magnet or recreate items again — a retried/duplicate
+        # POST (double-click, page retry after the earlier missing-torrent bug, etc.)
+        # would otherwise add another permanent torrent and duplicate DB rows every
+        # time. Only guards against near-immediate re-submission; a legitimate
+        # re-assignment of the same hash later on (e.g. after deletion) is unaffected.
+        if torrent_hash and not is_torrent_file:
+            from database.torrent_tracking import get_torrent_history
+            try:
+                history = get_torrent_history(torrent_hash)
+            except Exception:
+                history = []
+            for record in history:
+                if record['trigger_source'] != 'manual_assign_confirm':
+                    continue
+                try:
+                    record_time = datetime.fromisoformat(str(record['timestamp']))
+                    if (datetime.now() - record_time).total_seconds() < 120:
+                        logging.warning(f"Duplicate manual assignment submission detected for hash {torrent_hash} ({(datetime.now() - record_time).total_seconds():.0f}s after prior confirm); ignoring re-submission.")
+                        return jsonify({'success': False, 'error': 'This torrent was already assigned moments ago. Refresh the page before assigning again.'}), 409
+                except (ValueError, TypeError):
+                    continue
+
+        # initial_torrent_id came from get_torrent_file_list's disposable preview add,
+        # which is deleted from the debrid service immediately after listing files
+        # (see get_torrent_file_list's finally block). Re-add the magnet for real BEFORE
+        # creating any DB items, so items are never created pointing at an already-deleted
+        # torrent ID (which the checking queue would then report as missing/404 and reset
+        # to Wanted).
+        final_torrent_id = initial_torrent_id
+        if magnet_link:
+            try:
+                logging.info(f"Adding permanent magnet torrent to debrid service for manual assignment: {magnet_link[:60]}...")
+                debrid_provider = get_debrid_provider()
+                readd_result_id = debrid_provider.add_torrent(magnet_link)
+                if readd_result_id:
+                    final_torrent_id = readd_result_id
+                    logging.info(f"Successfully added permanent magnet torrent with ID: {final_torrent_id}")
+                else:
+                    logging.error(f"Failed to add permanent magnet torrent for manual assignment: {magnet_link[:60]}...")
+                    return jsonify({'success': False, 'error': 'Failed to add torrent to debrid service. It may already be added, or the debrid provider rejected it.'}), 503
+            except Exception as readd_error:
+                logging.error(f"Error adding permanent magnet torrent for manual assignment: {readd_error}", exc_info=True)
+                return jsonify({'success': False, 'error': f'Failed to add torrent to debrid service: {readd_error}'}), 503
+        # else: torrent-file uploads have no magnet to re-add; the file was already
+        # added for real (not a disposable preview) in prepare_manual_assignment,
+        # so initial_torrent_id is already permanent for that path.
+
         added_items_count = 0
         failed_items_count = 0
         processed_items_info = [] # To store info for notifications
@@ -1204,7 +1289,7 @@ def confirm_manual_assignment():
                 if item_type == 'movie':
                     # Use magnet_link if available, otherwise use None for torrent files
                     item_magnet_link = magnet_link if magnet_link else None
-                    item_data = create_movie_item(metadata, title, year, version, initial_torrent_id, item_magnet_link)
+                    item_data = create_movie_item(metadata, title, year, version, final_torrent_id, item_magnet_link)
                 elif item_type == 'ep':
                     # Expecting format like 's01e13' in parts[2]
                     if len(parts) < 3:
@@ -1227,29 +1312,41 @@ def confirm_manual_assignment():
                          failed_items_count += 1
                          continue
 
-                    # Re-fetch season data if necessary
-                    if 'seasons' not in metadata:
+                    # Re-fetch season data if necessary — also re-fetch (rather than
+                    # trust an existing but incomplete 'seasons' dict) when the
+                    # specific season this item needs isn't covered yet.
+                    if 'seasons' not in metadata or season_number not in metadata.get('seasons', {}):
+                        seasons_data, source = None, None
                         try:
-                            # --- MODIFICATION: Use trakt_client and pass flag ---
-                            # Pass include_specials=True here
                             seasons_data, source = trakt_client.get_show_seasons_and_episodes(metadata.get('imdb_id'), include_specials=True)
                             logging.debug(f"Fetched seasons data (incl specials) from {source} for {metadata.get('imdb_id')} in confirm_manual_assignment")
-                            # --- END MODIFICATION ---
-                            
-                            if seasons_data:
-                                metadata['seasons'] = {}
-                                # Convert integer keys from Trakt to string keys
-                                for sn, si in seasons_data.items():
-                                    metadata['seasons'][sn] = {'episodes': si.get('episodes', {}), 'episode_count': len(si.get('episodes', {}))}
-                            else:
-                                logging.warning(f"No season data fetched from Trakt for {metadata.get('imdb_id')} in confirmation step")
                         except Exception as e:
                              logging.warning(f"Could not re-fetch season data from Trakt for {item_key}: {e}")
                              # Proceed cautiously without detailed episode info
-                    
+
+                        if not seasons_data or season_number not in seasons_data:
+                            try:
+                                from cli_battery.app.direct_api import DirectAPI
+                                fallback_seasons_data, source = DirectAPI.get_show_seasons(metadata.get('imdb_id'))
+                                logging.info(f"Trakt missing needed season data; used fallback provider '{source}' for {metadata.get('imdb_id')} in confirm_manual_assignment")
+                                if fallback_seasons_data:
+                                    merged = dict(seasons_data or {})
+                                    merged.update(fallback_seasons_data)
+                                    seasons_data = merged
+                            except Exception as fallback_e:
+                                logging.warning(f"Fallback season fetch also failed for {item_key}: {fallback_e}")
+
+                        if seasons_data:
+                            metadata['seasons'] = {}
+                            # Convert integer keys to string keys
+                            for sn, si in seasons_data.items():
+                                metadata['seasons'][sn] = {'episodes': si.get('episodes', {}), 'episode_count': len(si.get('episodes', {}))}
+                        else:
+                            logging.warning(f"No season data fetched from any provider for {metadata.get('imdb_id')} in confirmation step")
+
                     # Use magnet_link if available, otherwise use None for torrent files
                     item_magnet_link = magnet_link if magnet_link else None
-                    item_data = create_episode_item(metadata, title, year, version, initial_torrent_id, item_magnet_link, season_number, episode_number)
+                    item_data = create_episode_item(metadata, title, year, version, final_torrent_id, item_magnet_link, season_number, episode_number)
                 else:
                     logging.warning(f"Unrecognized item key format: {item_key}")
                     failed_items_count += 1
@@ -1283,16 +1380,16 @@ def confirm_manual_assignment():
                         'content_source': db_item.get('content_source'),
                         'content_source_detail': db_item.get('content_source_detail')
                     })
-                    logging.info(f"Successfully added item {item_key} with file {selected_filename}, initial torrent ID: {initial_torrent_id}")
-                    
+                    logging.info(f"Successfully added item {item_key} with file {selected_filename}, torrent ID: {final_torrent_id}")
+
                     # Prepare data for torrent tracking (only need one representative item)
                     if representative_tracking_item_data is None:
                         representative_tracking_item_data = {
-                            'title': db_item.get('title'), 'year': db_item.get('year'), 
+                            'title': db_item.get('title'), 'year': db_item.get('year'),
                             'media_type': db_item.get('type'), 'version': db_item.get('version'),
                             'tmdb_id': db_item.get('tmdb_id'), 'imdb_id': db_item.get('imdb_id'),
                             'filled_by_title': torrent_filename, 'filled_by_file': selected_filename, # Use filename here too
-                            'torrent_id': initial_torrent_id
+                            'torrent_id': final_torrent_id
                         }
                         if db_item.get('type') == 'episode':
                             representative_tracking_item_data.update({'season_number': db_item.get('season_number'), 'episode_number': db_item.get('episode_number')})
@@ -1305,41 +1402,11 @@ def confirm_manual_assignment():
                 logging.error(f"Error processing assignment for {item_key}: {item_error}", exc_info=True)
                 failed_items_count += 1
 
-        # If items were successfully added, re-add the torrent and update tracking/DB
-        final_torrent_id = initial_torrent_id
+        # final_torrent_id was already established (and the magnet already added for
+        # real) before item creation above, so items already carry the correct ID.
+        # Only torrent tracking remains to be recorded here.
         if added_items_count > 0:
-            try:
-                if magnet_link:
-                    logging.info(f"Re-adding magnet torrent to debrid service after successful manual assignment: {magnet_link[:60]}...")
-                    debrid_provider = get_debrid_provider() # Get provider instance
-                    # Re-add the magnet torrent. The add_torrent method should handle file selection.
-                    readd_result_id = debrid_provider.add_torrent(magnet_link)
-                    if readd_result_id:
-                        final_torrent_id = readd_result_id
-                        logging.info(f"Successfully re-added magnet torrent with final ID: {final_torrent_id}")
-                        
-                        # Check if the final ID is different from the initial ID
-                        if final_torrent_id != initial_torrent_id:
-                            logging.info(f"Torrent ID changed from {initial_torrent_id} to {final_torrent_id}. Updating {len(successfully_added_items)} database items.")
-                            for item_id in successfully_added_items:
-                                update_media_item_torrent_id(item_id, final_torrent_id)
-                        else:
-                            logging.info(f"Torrent ID {final_torrent_id} remains the same, no DB update needed.")
-                    else:
-                        logging.warning(f"Failed to re-add magnet torrent {magnet_link[:60]}... It might already exist or an error occurred. Using initial ID: {initial_torrent_id}")
-                else:
-                    # For torrent files, we can't re-add since we don't have the original file
-                    # The torrent should already be in the debrid service from the initial upload
-                    logging.info(f"Using existing torrent ID {initial_torrent_id} for torrent file (no re-add needed)")
-                    final_torrent_id = initial_torrent_id
-            except Exception as readd_error:
-                # Log the error but don't fail the overall success response
-                if magnet_link:
-                    logging.error(f"Error re-adding magnet torrent {magnet_link[:60]} after confirmation: {readd_error}", exc_info=True)
-                else:
-                    logging.error(f"Error handling torrent file re-add after confirmation: {readd_error}", exc_info=True)
-
-            # Now, update torrent tracking with the final ID
+            # Update torrent tracking with the final ID
             if torrent_hash and representative_tracking_item_data:
                 # Update the torrent_id in the tracking data
                 representative_tracking_item_data['torrent_id'] = final_torrent_id

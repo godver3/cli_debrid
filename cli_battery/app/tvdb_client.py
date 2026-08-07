@@ -740,12 +740,11 @@ def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
             overview = t.get('overview', overview)
             break
 
-    # Find English title, fallback to name
+    # Use TVDB's primary name as the canonical title. The "eng" nameTranslations
+    # entry is sometimes a marketing AKA (e.g. "Gangs of Manila" for "Batang Quiapo")
+    # rather than a true localization, so it must not override the primary name here —
+    # it's still captured separately via _extract_aliases() for search matching.
     title = raw.get('name', '')
-    for t in (raw.get('translations', {}).get('nameTranslations') or []):
-        if t.get('language') == 'eng':
-            title = t.get('name', title)
-            break
 
     # Airs info
     airs = {}

@@ -480,6 +480,11 @@ class UpgradingQueue:
                             from database import update_media_item_state
                             update_media_item_state(item_id, state="Collected")
                             logging.info(f"Moved item {item_id} to Collected state due to timeout.")
+                    elif not get_setting("Scraping", "enable_upgrading", default=False):
+                        logging.info(f"Item {item_id} is in the Upgrading queue but Scraping.enable_upgrading is disabled — reverting to Collected without scraping.")
+                        self.remove_item(item)
+                        from database import update_media_item_state
+                        update_media_item_state(item_id, state="Collected")
                     elif self.should_perform_hourly_scrape(item_id, current_time):
                         logging.info(f"Performing hourly scrape for item {item_id} which has been in queue for {time_in_queue}.")
                         self.hourly_scrape(item, queue_manager) # This might remove the item if upgraded

@@ -1276,6 +1276,31 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 base_response['error'] = f'TMDB API error: {str(e)}'
                 base_response['connected'] = False
 
+        # --- Scrob Sources (Lists, Collection, Special Lists) ---
+        elif source_type in ['Scrob Lists', 'Scrob Collection', 'Special Scrob Lists']:
+            from content_checkers.scrob import get_scrob_config, _scrob_get
+
+            scrob_config = get_scrob_config()
+            if not scrob_config:
+                base_response['error'] = 'Scrob URL or API key not configured in Additional Settings'
+                base_response['connected'] = False
+                return base_response
+
+            try:
+                data = _scrob_get('/lists')
+                if data is not None:
+                    base_response['connected'] = True
+                    base_response['details'].update({
+                        'url': scrob_config['base_url'],
+                        'list_count': len(data.get('lists', []))
+                    })
+                else:
+                    base_response['error'] = 'Failed to connect to Scrob API'
+                    base_response['connected'] = False
+            except Exception as e:
+                base_response['error'] = f'Scrob API error: {str(e)}'
+                base_response['connected'] = False
+
         # --- Agregarr ---
         elif source_type == 'Agregarr':
             # Agregarr is a one-way webhook integration (Agregarr → CLI Debrid)

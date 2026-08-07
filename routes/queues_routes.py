@@ -344,7 +344,7 @@ ITEMS_PER_HOUR_CACHE_DURATION = 300  # 5 minutes
 QUEUE_DISPLAY_COLUMNS = [
     'id', 'imdb_id', 'tmdb_id', 'title', 'year', 'type', 'state', 'version',
     'season_number', 'episode_number', 'release_date', 'physical_release_date',
-    'airtime', 'content_source', 'filled_by_file', 'filled_by_torrent_id',
+    'airtime', 'content_source', 'content_source_detail', 'filled_by_file', 'filled_by_torrent_id',
     'wake_count', 'collected_at', 'last_updated', 'final_check_add_timestamp',
     'force_priority', 'ghostlisted'
 ]
@@ -564,7 +564,7 @@ def index():
                 if item.get('content_source'):
                     source_config = content_sources.get(item['content_source'], {})
                     display_name = source_config.get('display_name', item['content_source'])
-                    item['content_source_display'] = display_name
+                    item['content_source_display'] = item.get('content_source_detail') or display_name
                 if queue_name in ['Adding', 'Checking']:
                     item['provider_display'] = _get_provider_display(item)
                 if queue_name == 'Adding':
@@ -764,7 +764,7 @@ def api_queue_contents():
                 if item.get('content_source'):
                     source_config = content_sources.get(item['content_source'], {})
                     display_name = source_config.get('display_name', item['content_source'])
-                    item['content_source_display'] = display_name
+                    item['content_source_display'] = item.get('content_source_detail') or display_name
                 if queue_name in ['Adding', 'Checking']:
                     item['provider_display'] = _get_provider_display(item)
                 if queue_name == 'Adding':
@@ -935,7 +935,7 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
             content_sources = process_item_for_response._content_sources_cache
             source_config = content_sources.get(item['content_source'], {})
             display_name = source_config.get('display_name', item['content_source'])
-            item['content_source_display'] = display_name
+            item['content_source_display'] = item.get('content_source_detail') or display_name
 
         if queue_name in ['Adding', 'Checking']:
             item['provider_display'] = _get_provider_display(item)

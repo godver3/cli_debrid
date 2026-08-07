@@ -473,7 +473,16 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                     if (str(imdb_id), season_number_check_collected) in _collected_seasons:
                         is_collected_or_upgrading_in_db = True
 
-            if is_collected_or_upgrading_in_db:
+            # User-initiated adds (Request button / manual magnet assign) must always
+            # be allowed to scrape and collect their own copy, even if this
+            # imdb/tmdb+season+episode already has a Collected/Upgrading entry —
+            # the user is explicitly asking for an additional/replacement file, not
+            # a background re-sync of a source that already covers this content.
+            # Automated content sources (Trakt, Overseerr, Plex Watchlist, etc.)
+            # keep the original dedup-skip behavior unchanged.
+            is_user_initiated_add = item.get('content_source') in ('content_requester', 'Magnet_Assigner')
+
+            if is_collected_or_upgrading_in_db and not is_user_initiated_add:
                 if not enable_granular_versions:
                     if _plex_labels_active:
                         new_source = item.get('content_source')
