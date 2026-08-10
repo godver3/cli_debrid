@@ -949,7 +949,7 @@ def get_and_add_wanted_content(source_id):
     from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
     from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist, get_wanted_from_special_trakt_lists
     from content_checkers.scrob import get_wanted_from_scrob_lists, get_wanted_from_scrob_collection, get_wanted_from_scrob_special
-    from content_checkers.mdb_list import get_wanted_from_mdblists
+    from content_checkers.mdb_list import get_wanted_from_mdblist_source
     from content_checkers.adaptive_list import get_wanted_from_adaptive_list
     from content_checkers.content_source_detail import append_content_source_detail
     from metadata.metadata import process_metadata
@@ -1027,11 +1027,7 @@ def get_and_add_wanted_content(source_id):
                 versions=versions_from_config
             )
         elif source_type == 'MDBList':
-            mdblist_urls = source_data.get('urls', '').split(',')
-            for mdblist_url in mdblist_urls:
-                mdblist_url = mdblist_url.strip()
-                if mdblist_url: # Check if url is not empty
-                    wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions_from_config))
+            wanted_content = get_wanted_from_mdblist_source(source_data, versions_from_config)
         elif source_type == 'Special Trakt Lists':
             update_trakt_settings(content_sources)
             wanted_content = get_wanted_from_special_trakt_lists(source_data, versions_from_config)

@@ -4312,6 +4312,30 @@ body[data-theme="tangerine"] .universal-popup #popupConfirm:active {
     transform: translateY(0) !important;
 }
 
+/* Extra (3rd) Action Button */
+body[data-theme="tangerine"] .universal-popup #popupExtra {
+    background: rgba(255, 255, 255, 0.05) !important;
+    color: #f7931e !important;
+    border: 1px solid rgba(247, 147, 30, 0.5) !important;
+    padding: 0.75rem 2rem !important;
+    border-radius: 8px !important;
+    font-size: 0.95rem !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    transition: all 0.3s ease !important;
+}
+
+body[data-theme="tangerine"] .universal-popup #popupExtra:hover {
+    background: rgba(247, 147, 30, 0.1) !important;
+    border-color: rgba(247, 147, 30, 0.8) !important;
+    transform: translateY(-2px) !important;
+    opacity: 1 !important;
+}
+
+body[data-theme="tangerine"] .universal-popup #popupExtra:active {
+    transform: translateY(0) !important;
+}
+
 /* Cancel/Close Button */
 body[data-theme="tangerine"] .universal-popup #popupCancel,
 body[data-theme="tangerine"] .universal-popup #popupClose {

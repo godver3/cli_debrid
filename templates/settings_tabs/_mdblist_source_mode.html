@@ -1,0 +1,101 @@
+{#
+  MDBList list-source selector.
+
+  Shared by content_sources.html and content_sources_tangerine.html. Renders the
+  'source_mode' radio group plus the fields each mode needs. These keys are rendered
+  here instead of by the general config.items() loop so they also appear for MDBList
+  sources that were saved before source_mode existed (those default to 'json_url',
+  which is the original behaviour).
+
+  Expects: source_id, config
+#}
+{% set mdblist_source_mode = config.get('source_mode') or 'json_url' %}
+
+<div class="settings-form-group mdblist-mode-group" data-source-id="{{ source_id }}">
+    <label class="settings-title">List Source Method:</label>
+    {% for mode_value, mode_label, mode_hint in [
+        ('json_url', 'MDBList / JSON list URL (default)', 'Appends /json to the list URL. Works with any public MDBList list and needs no API key.'),
+        ('api_watchlist', 'My MDBList Watchlist', 'api.mdblist.com/watchlist/items'),
+        ('api_user_list', 'Username + List Name', 'api.mdblist.com/lists/{username}/{listname}/items'),
+        ('api_list_id', 'List ID', 'api.mdblist.com/lists/{listid}/items')
+    ] %}
+        <label style="display: block; margin: 4px 0; font-weight: normal;">
+            <input type="radio"
+                   id="content-sources-{{ source_id }}-source_mode-{{ mode_value }}"
+                   name="Content Sources.{{ source_id }}.source_mode"
+                   value="{{ mode_value }}"
+                   data-section="Content Sources"
+                   data-key="{{ source_id }}.source_mode"
+                   data-mdblist-mode-radio="{{ source_id }}"
+                   {% if mdblist_source_mode == mode_value %}checked{% endif %}>
+            {{ mode_label }}
+            <span class="settings-description" style="display: inline; margin-left: 6px;">&mdash; {{ mode_hint }}</span>
+        </label>
+    {% endfor %}
+    <p class="settings-description">
+        The three API options call the
+        <a href="https://api.mdblist.com/docs/" target="_blank" style="color: #007bff;">MDBList API</a>
+        directly and require an MDBList API key (Additional Settings &rarr; MDBList).
+    </p>
+</div>
+
+{# --- json_url: comma separated list URLs --- #}
+<div class="settings-form-group mdblist-mode-field" data-source-id="{{ source_id }}" data-mdblist-mode="json_url"
+     style="display: {% if mdblist_source_mode == 'json_url' %}block{% else %}none{% endif %};">
+    <label for="content-sources-{{ source_id }}-urls" class="settings-title">List URL(s):</label>
+    <textarea id="content-sources-{{ source_id }}-urls"
+              name="Content Sources.{{ source_id }}.urls"
+              class="settings-input"
+              data-section="Content Sources"
+              data-key="{{ source_id }}.urls"
+              rows="3"
+              placeholder="https://mdblist.com/lists/username/list-name">{{ config.get('urls', '') }}</textarea>
+    <p class="settings-description">Comma-separated list URLs. '/json' is appended automatically unless the URL already ends in '.json'.</p>
+</div>
+
+{# --- api_watchlist: nothing to configure beyond the API key --- #}
+<div class="settings-form-group mdblist-mode-field" data-source-id="{{ source_id }}" data-mdblist-mode="api_watchlist"
+     style="display: {% if mdblist_source_mode == 'api_watchlist' %}block{% else %}none{% endif %};">
+    <label class="settings-title">Own Watchlist:</label>
+    <p class="settings-description">
+        Fetches the watchlist of the account that owns the configured MDBList API key. No further configuration needed.
+    </p>
+</div>
+
+{# --- api_user_list: username + list name --- #}
+<div class="settings-form-group mdblist-mode-field" data-source-id="{{ source_id }}" data-mdblist-mode="api_user_list"
+     style="display: {% if mdblist_source_mode == 'api_user_list' %}block{% else %}none{% endif %};">
+    <label for="content-sources-{{ source_id }}-username" class="settings-title">Username:</label>
+    <input type="text" id="content-sources-{{ source_id }}-username"
+           name="Content Sources.{{ source_id }}.username"
+           value="{{ config.get('username', '') }}"
+           class="settings-input"
+           data-section="Content Sources"
+           data-key="{{ source_id }}.username"
+           placeholder="e.g., linaspurinis">
+    <label for="content-sources-{{ source_id }}-listname" class="settings-title" style="margin-top: 10px;">List Name:</label>
+    <input type="text" id="content-sources-{{ source_id }}-listname"
+           name="Content Sources.{{ source_id }}.listname"
+           value="{{ config.get('listname', '') }}"
+           class="settings-input"
+           data-section="Content Sources"
+           data-key="{{ source_id }}.listname"
+           placeholder="e.g., top-watched-movies-of-the-week">
+    <p class="settings-description">
+        Both values come straight out of the list URL: mdblist.com/lists/<strong>username</strong>/<strong>list-name</strong>.
+    </p>
+</div>
+
+{# --- api_list_id: numeric list id(s) --- #}
+<div class="settings-form-group mdblist-mode-field" data-source-id="{{ source_id }}" data-mdblist-mode="api_list_id"
+     style="display: {% if mdblist_source_mode == 'api_list_id' %}block{% else %}none{% endif %};">
+    <label for="content-sources-{{ source_id }}-list_id" class="settings-title">List ID(s):</label>
+    <input type="text" id="content-sources-{{ source_id }}-list_id"
+           name="Content Sources.{{ source_id }}.list_id"
+           value="{{ config.get('list_id', '') }}"
+           class="settings-input"
+           data-section="Content Sources"
+           data-key="{{ source_id }}.list_id"
+           placeholder="e.g., 12345 or 12345, 67890">
+    <p class="settings-description">Numeric MDBList list ID. Several IDs can be given, separated by commas.</p>
+</div>

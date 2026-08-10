@@ -127,7 +127,9 @@ def scrape_prowlarr_instance(
     tags_setting = settings.get('tags', '')
     headers = {'X-Api-Key': prowlarr_api_key, 'accept': 'application/json'}
     search_endpoint = f"{prowlarr_url}/api/v1/search"
-    timeout = get_setting('Scraping', 'scraper_timeout', 30)
+    # scraper_timeout's own setting description says "0 to disable" — requests
+    # treats timeout=None (not 0) as no timeout, so 0/falsy must map to None.
+    timeout = get_setting('Scraping', 'scraper_timeout', 30) or None
     seeders_only = get_setting('Scraping', 'prowlarr_seeders_only', get_setting('Scraping', 'jackett_seeders_only', True))
 
     params_list = _build_prowlarr_params_list(

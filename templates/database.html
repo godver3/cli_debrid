@@ -119,6 +119,10 @@
             <select id="bulk-change-version" name="bulk_change_version" class="bulk-action-select" disabled>
                 <option value="">Change Selected Version...</option>
             </select>
+            <label for="bulk-assign-tags" class="sr-only">Tags</label>
+            <select id="bulk-assign-tags" name="bulk_assign_tags" class="bulk-action-select" disabled>
+                <option value="">Tags...</option>
+            </select>
             <button id="bulk-early-release" class="bulk-action-btn" disabled>Early Release</button>
             <button id="bulk-force-priority" class="bulk-action-btn" disabled>Force Priority</button>
             <!-- NEW: Manual resync for selected items -->
@@ -2423,6 +2427,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const bulkDeleteBtn = document.getElementById('bulk-delete');
     const bulkMoveQueue = document.getElementById('bulk-move-queue');
     const bulkChangeVersion = document.getElementById('bulk-change-version');
+    const bulkAssignTags = document.getElementById('bulk-assign-tags');
     const bulkEarlyReleaseBtn = document.getElementById('bulk-early-release');
     const bulkRescrapeBtn = document.getElementById('bulk-rescrape');
     const bulkForcePriorityBtn = document.getElementById('bulk-force-priority');
@@ -2452,6 +2457,22 @@ document.addEventListener('DOMContentLoaded', function() {
                         title: 'Error',
         });
     });
+
+    // Fetch the global tag list and populate the Assign Tags dropdown
+    fetch('/settings/api/config')
+        .then(response => response.json())
+        .then(cfgD => {
+            const globalTags = (cfgD['Tags'] || {})['tags_list'] || [];
+            globalTags.forEach(tag => {
+                const option = document.createElement('option');
+                option.value = tag;
+                option.textContent = tag;
+                bulkAssignTags.appendChild(option);
+            });
+        })
+        .catch(error => {
+            console.error('Error fetching tags:', error);
+        });
 
     // Handle bulk version change
     bulkChangeVersion.addEventListener('change', function() {
@@ -2556,6 +2577,7 @@ document.addEventListener('DOMContentLoaded', function() {
         bulkDeleteBtn.disabled = selectedCount === 0;
         bulkMoveQueue.disabled = selectedCount === 0;
         bulkChangeVersion.disabled = selectedCount === 0;
+        bulkAssignTags.disabled = selectedCount === 0;
         bulkEarlyReleaseBtn.disabled = selectedCount === 0;
         bulkRescrapeBtn.disabled = selectedCount === 0;
         bulkForcePriorityBtn.disabled = selectedCount === 0;
@@ -2834,6 +2856,37 @@ document.addEventListener('DOMContentLoaded', function() {
             title: 'Confirm Version Change',
             onConfirm: () => { // Removed async
                 executeBulkAction(selectedItems, 'change_version', selectedVersion, 'Version Change', `version changed for`);
+            },
+        });
+        this.value = ''; // Reset select
+    });
+
+    // Handle bulk tags
+    bulkAssignTags.addEventListener('change', function() {
+        const selectedTag = this.value;
+        if (!selectedTag) return;
+
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(checkbox => checkbox.dataset.itemId);
+
+        if (selectedItems.length === 0) {this.value = ''; return;}
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Tags',
+            message: `How do you want to apply the tag "${selectedTag}" to ${selectedItems.length} item(s)?`,
+            confirmText: 'Add',
+            extraButtonText: 'Update',
+            cancelText: 'Remove',
+            suppressEscapeAction: true,
+            onConfirm: () => {
+                executeBulkAction(selectedItems, 'assign_tags', selectedTag, 'Tags', `tagged with "${selectedTag}"`);
+            },
+            onExtra: () => {
+                executeBulkAction(selectedItems, 'update_tags', selectedTag, 'Tags', `tags set to "${selectedTag}"`);
+            },
+            onCancel: () => {
+                executeBulkAction(selectedItems, 'remove_tags', selectedTag, 'Tags', `tag "${selectedTag}" removed`);
             },
         });
         this.value = ''; // Reset select

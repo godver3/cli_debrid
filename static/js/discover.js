@@ -702,6 +702,19 @@ function bindEvents() {
         });
     }
 
+    // Merge with adaptive discover checkbox — re-runs the list load (capped at 5
+    // pages of TMDB Discover, same as the scheduled task) so the preview updates.
+    const mergeWithAdaptiveCheckbox = document.getElementById('merge-with-adaptive');
+    if (mergeWithAdaptiveCheckbox) {
+        mergeWithAdaptiveCheckbox.addEventListener('change', (e) => {
+            state.filters.mergeWithAdaptive = e.target.checked;
+            const listsState = window.sidebarListsState;
+            if (listsState && listsState.selectedLists && listsState.selectedLists.length > 0) {
+                loadAllSelectedLists();
+            }
+        });
+    }
+
     // Title filter input (client-side filtering)
     const titleFilterInput = document.getElementById('title-filter');
     if (titleFilterInput) {
@@ -2295,7 +2308,14 @@ function applyAdvancedFilters(closeDrawer = true) {
  * applyAdvancedFilters()'s deliberate no-fetch-while-editing guard, since an
  * initial load is a one-time fetch, not a live-tweak reaction.
  */
-function runDiscoverFilterQuery() {
+/**
+ * Build the full /discover/api/filter query params from the current advanced-filter
+ * state. Single source of truth for every field TMDB discover supports in this app —
+ * reused by both the normal Discover browsing path (runDiscoverFilterQuery) and the
+ * "merge with adaptive list" preview (loadAllSelectedLists), so the two can never
+ * drift apart by one hand-picking a subset of fields the other includes.
+ */
+function buildDiscoverFilterParams(page) {
     const state = window.discoverState;
 
     // Build sort_by parameter - dropdown values already include order (e.g., "popularity.desc")
@@ -2315,10 +2335,9 @@ function runDiscoverFilterQuery() {
     // Check if specific date filters are set (these take priority over year range)
     const hasDateFilter = state.filters.releasedWithin || state.filters.upcomingDays;
 
-    // Build query parameters
-    const params = new URLSearchParams({
+    return new URLSearchParams({
         type: mediaType,
-        page: state.page,
+        page: page,
         sort_by: sortByValue,
         // Basic filters - year range only applies if no specific date filter is set and user entered values
         year_from: !hasDateFilter && state.filters.yearFrom ? state.filters.yearFrom : '',
@@ -2360,6 +2379,11 @@ function runDiscoverFilterQuery() {
         production_company: state.filters.selectedCompanies.join(','),
         production_company_exclude: state.filters.excludedCompanies.join(',')
     });
+}
+
+function runDiscoverFilterQuery() {
+    const state = window.discoverState;
+    const params = buildDiscoverFilterParams(state.page);
 
     // Clear results and state before fetching new results to prevent showing stale data
     state.currentResults = [];
@@ -5244,6 +5268,16 @@ function applyFiltersToUI(filters) {
         applyChipsFromSavedFilters('company', companyIds, []);
     }
 
+    // Merge with adaptive discover checkbox — set BEFORE loadSavedLists() below,
+    // since that asynchronously triggers loadAllSelectedLists(), which reads this flag.
+    if (filters.merge_with_adaptive) {
+        const mergeWithAdaptiveCheckbox = document.getElementById('merge-with-adaptive');
+        if (mergeWithAdaptiveCheckbox) {
+            mergeWithAdaptiveCheckbox.checked = true;
+        }
+        state.filters.mergeWithAdaptive = true;
+    }
+
     // Lists filter (sidebar lists) - load array
     if (filters.lists) {
         // Parse "source:id" pairs
@@ -5827,6 +5861,11 @@ function buildFiltersObject() {
     if (window.sidebarListsState && window.sidebarListsState.selectedLists && window.sidebarListsState.selectedLists.length > 0) {
         // Save as comma-separated "source:id" pairs
         filters.lists = window.sidebarListsState.selectedLists.map(l => `${l.source}:${l.listId}`).join(',');
+
+        // Merge with adaptive discover — only meaningful alongside a selected list.
+        if (state.filters.mergeWithAdaptive) {
+            filters.merge_with_adaptive = true;
+        }
     }
 
     // Include video filter
@@ -8501,7 +8540,57 @@ async function loadAllSelectedLists() {
                 showNotification(`Failed to load ${list.listName}`, 'error');
             }
         }
-        
+
+        // "Merge with Adaptive List": also pull in TMDB Discover results (the same
+        // date-filtered query the scheduled adaptive-list task runs) and combine them
+        // with the list results above. Capped at 30 pages (600 items) to match
+        // fetch_from_tmdb_discover's own max_pages in content_checkers/adaptive_list.py —
+        // the scheduled task never fetches more than that either, so this is a
+        // byte-accurate preview, not an approximation. Pages are fetched concurrently
+        // (page 1 first to learn total_pages, then any remaining pages up to the cap
+        // in parallel) rather than sequentially, consistent with the existing
+        // ThreadPoolExecutor(max_workers=10) precedent for TMDB calls elsewhere in
+        // this codebase (content_checkers/adaptive_list.py's apply_list_filters).
+        if (state.filters.mergeWithAdaptive) {
+            try {
+                const MAX_PAGES = 30;
+                const firstResponse = await fetch(`/discover/api/filter?${buildDiscoverFilterParams(1)}`);
+                if (!firstResponse.ok) throw new Error('Failed to load Adaptive Discover results');
+                const firstData = await firstResponse.json();
+                const pagesToFetch = Math.min(MAX_PAGES, firstData.total_pages || 1);
+
+                const addResults = (results) => {
+                    (results || []).forEach(item => {
+                        const itemId = item.id || item.tmdb_id;
+                        if (itemId && !seenIds.has(itemId)) {
+                            seenIds.add(itemId);
+                            allResults.push(item);
+                        }
+                    });
+                };
+                addResults(firstData.results);
+
+                if (pagesToFetch > 1) {
+                    const remainingPages = [];
+                    for (let page = 2; page <= pagesToFetch; page++) {
+                        remainingPages.push(page);
+                    }
+                    const remainingResponses = await Promise.all(
+                        remainingPages.map(page => fetch(`/discover/api/filter?${buildDiscoverFilterParams(page)}`))
+                    );
+                    for (const response of remainingResponses) {
+                        if (response.ok) {
+                            const data = await response.json();
+                            addResults(data.results);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('[Lists] Error loading Adaptive Discover results:', error);
+                showNotification('Failed to load Adaptive Discover results', 'error');
+            }
+        }
+
         // Store merged results for filtering
         listsState.rawResults = allResults;
 

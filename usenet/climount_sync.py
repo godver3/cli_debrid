@@ -412,16 +412,42 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                         _cli_ids_to_register = {single_file: item_ids[0]}
 
                     # Register cli_debrid IDs with cli_mount — always send the complete map
-                    if _cli_ids_to_register:
-                        _info_hash = entry.get('info_hash') or ''
-                        if _info_hash:
-                            try:
-                                from usenet.climount_client import get_climount_client as _get_dc_sync
-                                _dc_sync = _get_dc_sync()
-                                if _dc_sync and _dc_sync.is_enabled():
-                                    _dc_sync.register_cli_ids(_info_hash, _cli_ids_to_register)
-                            except Exception as _reg_err:
-                                logger.debug(f'[CMSync] cli_ids registration error for {_info_hash}: {_reg_err}')
+                    _info_hash = entry.get('info_hash') or ''
+                    if _cli_ids_to_register and _info_hash:
+                        try:
+                            from usenet.climount_client import get_climount_client as _get_dc_sync
+                            _dc_sync = _get_dc_sync()
+                            if _dc_sync and _dc_sync.is_enabled():
+                                _dc_sync.register_cli_ids(_info_hash, _cli_ids_to_register)
+                        except Exception as _reg_err:
+                            logger.debug(f'[CMSync] cli_ids registration error for {_info_hash}: {_reg_err}')
+
+                    # Push tags to cli_mount — Plex mode only, checked inside push_tags().
+                    # Uses the first matched item's tags column (comma-separated string).
+                    if _info_hash and item_ids:
+                        try:
+                            _tags_row = conn.execute(
+                                'SELECT tags FROM media_items WHERE id = ?', (item_ids[0],)
+                            ).fetchone()
+                            if _tags_row and _tags_row[0]:
+                                from usenet.climount_client import get_climount_client as _get_dc_tags
+                                _dc_tags = _get_dc_tags()
+                                if _dc_tags and _dc_tags.is_enabled():
+                                    _tag_ok = _dc_tags.push_tags(_info_hash, _tags_row[0])
+                                    if _tag_ok:
+                                        summary['tags_pushed'] = summary.get('tags_pushed', 0) + 1
+                                        logger.info(f"[CMSync] Pushed tags '{_tags_row[0]}' for {_info_hash}")
+                                        from datetime import datetime as _dt_tags
+                                        conn.execute(
+                                            'UPDATE media_items SET tags_pushed_at = ? WHERE id = ?',
+                                            (_dt_tags.now(), item_ids[0])
+                                        )
+                                    else:
+                                        logger.warning(f"[CMSync] Tag push returned false for {_info_hash} (tags='{_tags_row[0]}')")
+                                else:
+                                    logger.warning(f'[CMSync] Tag push skipped for {_info_hash}: cli_mount client disabled/not configured')
+                        except Exception as _tag_err:
+                            logger.warning(f'[CMSync] Tag push error for {_info_hash}: {_tag_err}')
 
                     # Commit every _BATCH_SIZE updates to release write lock
                     if _batch_count >= _BATCH_SIZE:
@@ -519,4 +545,78 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
         f'matched={summary["matched"]}, updated={summary["updated"]}, '
         f'skipped={summary["skipped"]}, errors={summary["errors"]}'
     )
+    return summary
+
+
+def push_pending_tags() -> dict:
+    """
+    Push tags for any media_items row whose tags column was set/changed since
+    the last successful push to cli_mount. Independent of the decypharr-side
+    delta sync above — that mechanism only re-fetches entries decypharr itself
+    has changed, so a cli_debrid-only tags edit (e.g. via the Database "Assign
+    Tags" bulk action) would never be picked up by sync_changes_from_climount
+    alone. Uses tags_pushed_at (NULL, or older than last_updated) to find rows
+    needing a push, so already-pushed rows aren't re-sent every cycle.
+    """
+    summary = {'candidates': 0, 'pushed': 0, 'skipped_no_hash': 0, 'errors': 0}
+    try:
+        from database.core import get_db_connection
+        from usenet.climount_client import get_climount_client
+        from datetime import datetime as _dt
+
+        client = get_climount_client()
+        if not client or not client.is_enabled():
+            return summary
+
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                "SELECT id, tags, filled_by_torrent_id, filled_by_magnet FROM media_items "
+                "WHERE tags IS NOT NULL AND tags != '' "
+                "AND (tags_pushed_at IS NULL OR last_updated > tags_pushed_at) "
+                f"AND state IN {_LIVE_STATES}"
+            ).fetchall()
+            summary['candidates'] = len(rows)
+
+            for row in rows:
+                info_hash = ''
+                torrent_id = str(row['filled_by_torrent_id'] or '')
+                if torrent_id.startswith('nzb:'):
+                    info_hash = torrent_id[4:]
+                else:
+                    magnet = row['filled_by_magnet'] or ''
+                    m = _extract_infohash_from_magnet(magnet)
+                    if m:
+                        info_hash = m
+                if not info_hash:
+                    summary['skipped_no_hash'] += 1
+                    continue
+
+                try:
+                    if client.push_tags(info_hash, row['tags']):
+                        conn.execute(
+                            'UPDATE media_items SET tags_pushed_at = ? WHERE id = ?',
+                            (_dt.now(), row['id'])
+                        )
+                        conn.commit()
+                        summary['pushed'] += 1
+                        logger.info(f"[CMSync] push_pending_tags: pushed tags '{row['tags']}' for {info_hash}")
+                    else:
+                        summary['errors'] += 1
+                        logger.warning(f"[CMSync] push_pending_tags: push failed for {info_hash} (tags='{row['tags']}')")
+                except Exception as _pe:
+                    summary['errors'] += 1
+                    logger.warning(f'[CMSync] push_pending_tags: error for {info_hash}: {_pe}')
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f'[CMSync] push_pending_tags: DB error: {e}', exc_info=True)
+        summary['errors'] += 1
+
+    if summary['candidates']:
+        logger.info(
+            f"[CMSync] push_pending_tags complete — candidates={summary['candidates']}, "
+            f"pushed={summary['pushed']}, skipped_no_hash={summary['skipped_no_hash']}, "
+            f"errors={summary['errors']}"
+        )
     return summary

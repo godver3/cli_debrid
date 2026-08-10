@@ -1499,11 +1499,23 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 and version_settings.get('anime_filter_mode') != 'Non-Anime Only'):
             try:
                 from scraper.seadex import get_seadex_hashes
+                from debrid.common.utils import extract_hash_from_magnet
                 seadex_hashes = get_seadex_hashes(imdb_id)
                 if seadex_hashes:
                     boosted, rest = [], []
                     for result in deduplicated_results:
-                        result_hash = (result.get('info_hash') or '').lower()
+                        # info_hash is only populated by the debrid-catalog scrapers
+                        # (Torrentio/MediaFusion/AIOStreams/Zilean); Jackett/Prowlarr
+                        # store it under 'hash', and Nyaa doesn't expose a hash field
+                        # at all — only a magnet link it was built from. Checking only
+                        # info_hash meant SeaDex's boost silently never matched a Nyaa
+                        # result, even when it was the correct, top-ranked release.
+                        result_hash = (result.get('info_hash') or result.get('hash') or '').lower()
+                        if not result_hash and result.get('magnet'):
+                            try:
+                                result_hash = extract_hash_from_magnet(result['magnet']).lower()
+                            except ValueError:
+                                result_hash = ''
                         (boosted if result_hash in seadex_hashes else rest).append(result)
                     if boosted:
                         logging.info(f"SeaDex Priority: promoted {len(boosted)} result(s) to top for '{title}'")

@@ -8,6 +8,7 @@ import re
 
 from utilities.settings import get_setting
 from scraper.scraper import scrape
+from database.core import retry_on_db_lock
 from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted, is_nzb_guid_not_wanted
 from cli_battery.app.direct_api import DirectAPI
 from routes.notifications import send_upgrade_failed_notification
@@ -191,18 +192,22 @@ class ScrapingQueue:
             logging.warning("Attempted to remove item without ID from ScrapingQueue.")
         # else: item not found in memory
 
+    @retry_on_db_lock()
     def reset_not_wanted_check(self, item_id):
         """Reset the disable_not_wanted_check flag after scraping is complete"""
         from database import get_db_connection
+        import sqlite3
         conn = get_db_connection()
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE media_items 
+                UPDATE media_items
                 SET disable_not_wanted_check = FALSE
                 WHERE id = ?
             """, (item_id,))
             conn.commit()
+        except sqlite3.OperationalError:
+            raise
         except Exception as e:
             logging.error(f"Error resetting disable_not_wanted_check flag: {str(e)}")
         finally:

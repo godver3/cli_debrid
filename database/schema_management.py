@@ -273,6 +273,9 @@ def migrate_schema():
         if 'tags' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN tags TEXT')
             logging.info("Successfully added tags column to media_items table.")
+        if 'tags_pushed_at' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN tags_pushed_at TIMESTAMP')
+            logging.info("Successfully added tags_pushed_at column to media_items table.")
         if 'manual_replace' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN manual_replace BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added manual_replace column to media_items table.")

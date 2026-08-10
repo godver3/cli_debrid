@@ -184,8 +184,20 @@ def get_wanted_from_adaptive_list(list_configs: Dict[str, Any], versions: Dict[s
     logging.info(f"[Adaptive List] Filters received: {filters}")
 
     try:
-        # Check if this list uses FlixPatrol/MDBList sources
-        if 'lists' in filters and filters['lists']:
+        has_lists = 'lists' in filters and filters['lists']
+        if has_lists and filters.get('merge_with_adaptive'):
+            list_items = fetch_from_lists(tmdb_api_key, filters, list_name, source_media_type=media_type)
+            discover_items = fetch_from_tmdb_discover(tmdb_api_key, media_type, filters, list_name)
+            seen_tmdb_ids = set()
+            items = []
+            for item in list_items + discover_items:
+                key = item['tmdb_id']
+                if key in seen_tmdb_ids:
+                    continue
+                seen_tmdb_ids.add(key)
+                items.append(item)
+            logging.info(f"[Adaptive List] Merge mode: {len(list_items)} list item(s) + {len(discover_items)} discover item(s) -> {len(items)} after dedup")
+        elif has_lists:
             items = fetch_from_lists(tmdb_api_key, filters, list_name, source_media_type=media_type)
         else:
             items = fetch_from_tmdb_discover(tmdb_api_key, media_type, filters, list_name)
@@ -230,8 +242,8 @@ def fetch_from_tmdb_discover(api_key: str, media_type: str, filters: Dict, list_
     # Build parameters from filters
     params = build_discover_params(filters, date_field, media_type)
 
-    # Fetch up to 5 pages (100 items max) to balance coverage with API limits
-    max_pages = 5
+    # Fetch up to 30 pages (600 items max) to balance coverage with API limits
+    max_pages = 30
     total_fetched = 0
 
     for page in range(1, max_pages + 1):
@@ -396,6 +408,14 @@ def fetch_from_lists(api_key: str, filters: Dict, list_name: str, source_media_t
                 enriched = fetch_mdblist_personal_items(api_key, list_id)
                 all_list_items.extend(enriched)
                 logging.debug(f"[Adaptive List] Fetched {len(enriched)} items from MDBList personal:{list_id}")
+            elif source == 'scrob-special':
+                enriched = fetch_scrob_special_items(api_key, list_id, source_media_type=source_media_type)
+                all_list_items.extend(enriched)
+                logging.debug(f"[Adaptive List] Fetched {len(enriched)} items from Scrob special:{list_id}")
+            elif source == 'scrob-mylist':
+                enriched = fetch_scrob_mylist_items(api_key, list_id)
+                all_list_items.extend(enriched)
+                logging.debug(f"[Adaptive List] Fetched {len(enriched)} items from Scrob mylist:{list_id}")
         except Exception as e:
             logging.error(f"[Adaptive List] Error fetching list {list_pair}: {e}")
             continue
@@ -721,6 +741,115 @@ def fetch_trakt_mylist_items(slug: str) -> list:
             logging.warning(f"[Adaptive List] Trakt mylist {slug} page {page} error: {e}")
             break
     logging.info(f"[Adaptive List] Fetched {len(enriched)} items from Trakt mylist:{slug}")
+    return enriched
+
+
+def _scrob_media_to_enriched_item(api_key: str, media: Dict) -> Dict[str, Any]:
+    """Convert one raw Scrob media dict into this module's enriched-item shape.
+
+    Mirrors routes.discover_routes._scrob_items_to_discover's per-item ID
+    resolution (episode -> parent show's tmdb_id), but fetches full TMDB
+    details itself since adaptive_list's fetch_* functions are self-contained
+    (no shared per-request cache like the Discover route layer has).
+    Returns {} if the item has no usable tmdb_id or the TMDB lookup fails.
+    """
+    raw_type = (media.get('type') or '').lower()
+    if raw_type == 'movie':
+        mt = 'movie'
+        tmdb_id = media.get('tmdb_id')
+    elif raw_type == 'episode':
+        mt = 'tv'
+        tmdb_id = media.get('show_tmdb_id')
+    elif raw_type in ('series', 'show', 'tv'):
+        mt = 'tv'
+        tmdb_id = media.get('tmdb_id')
+    else:
+        return {}
+
+    if not tmdb_id:
+        return {}
+
+    endpoint = 'tv' if mt == 'tv' else 'movie'
+    try:
+        r = requests.get(
+            f'https://api.themoviedb.org/3/{endpoint}/{tmdb_id}?api_key={api_key}&language=en-US',
+            timeout=REQUEST_TIMEOUT
+        )
+        if not r.ok:
+            return {}
+        d = r.json()
+    except Exception:
+        return {}
+
+    return {
+        'id': tmdb_id,
+        'title': d.get('title') or d.get('name', ''),
+        'media_type': mt,
+        'genre_ids': [g['id'] for g in d.get('genres', [])],
+        'original_language': d.get('original_language', ''),
+        'origin_country': [],
+        'vote_average': d.get('vote_average', 0),
+        'vote_count': d.get('vote_count', 0),
+        'release_date': d.get('release_date', '') if mt == 'movie' else '',
+        'first_air_date': d.get('first_air_date', '') if mt == 'tv' else '',
+        'runtime': d.get('runtime', 0) or 0,
+    }
+
+
+def fetch_scrob_special_items(api_key: str, list_type: str, source_media_type: str = 'all') -> List[Dict]:
+    """Fetch a Scrob special list (Trending, Popular, etc.)."""
+    from content_checkers.scrob import get_scrob_config, _scrob_get, SPECIAL_LIST_ENDPOINTS
+
+    if list_type not in SPECIAL_LIST_ENDPOINTS:
+        logging.warning(f"[Adaptive List] Unknown Scrob special list type: {list_type}")
+        return []
+    if not get_scrob_config():
+        logging.warning("[Adaptive List] Scrob not configured")
+        return []
+
+    api_paths = SPECIAL_LIST_ENDPOINTS[list_type]
+    endpoints_to_call = []
+    if source_media_type in ('all', 'movie') and api_paths.get('movies'):
+        endpoints_to_call.append(api_paths['movies'])
+    if source_media_type in ('all', 'tv') and api_paths.get('shows'):
+        endpoints_to_call.append(api_paths['shows'])
+
+    raw_items = []
+    for endpoint_path, endpoint_params in endpoints_to_call:
+        data = _scrob_get(endpoint_path, params=endpoint_params)
+        if data:
+            raw_items.extend(data.get('results', []))
+
+    enriched = []
+    for item in raw_items:
+        media = item.get('media', item)
+        result = _scrob_media_to_enriched_item(api_key, media)
+        if result:
+            enriched.append(result)
+    logging.info(f"[Adaptive List] Fetched {len(enriched)} items from Scrob special:{list_type}")
+    return enriched
+
+
+def fetch_scrob_mylist_items(api_key: str, list_id: str) -> List[Dict]:
+    """Fetch items from a Scrob custom list by ID."""
+    from content_checkers.scrob import get_scrob_config, _scrob_get
+
+    if not get_scrob_config():
+        logging.warning("[Adaptive List] Scrob not configured")
+        return []
+
+    data = _scrob_get(f'/lists/{list_id}')
+    if data is None:
+        logging.warning(f"[Adaptive List] Failed to fetch Scrob list {list_id}")
+        return []
+
+    enriched = []
+    for item in data.get('items', []):
+        media = item.get('media', item)
+        result = _scrob_media_to_enriched_item(api_key, media)
+        if result:
+            enriched.append(result)
+    logging.info(f"[Adaptive List] Fetched {len(enriched)} items from Scrob mylist:{list_id}")
     return enriched
 
 

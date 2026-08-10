@@ -153,7 +153,9 @@ def scrape_newznab_instance(
 
     clean_imdb = imdb_id.replace('tt', '') if imdb_id else ''
     endpoint = f'{url}/api'
-    timeout = get_setting('Scraping', 'scraper_timeout', 30)
+    # scraper_timeout's own setting description says "0 to disable" — requests
+    # treats timeout=None (not 0) as no timeout, so 0/falsy must map to None.
+    timeout = get_setting('Scraping', 'scraper_timeout', 30) or None
 
     params_list = _build_params_list(
         api_key, clean_imdb, title, year, content_type, season, episode, multi

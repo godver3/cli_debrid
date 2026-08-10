@@ -3648,6 +3648,7 @@ def add_default_mdblists():
         default_mdblists = {
             "MDBList_1": {
                 "enabled": True,
+                "source_mode": "json_url",
                 "urls": "https://mdblist.com/lists/hdlists/top-ten-pirated-movies-of-the-week-torrent-freak-com",
                 "versions": {
                     default_version: True
@@ -3662,6 +3663,7 @@ def add_default_mdblists():
             },
             "MDBList_2": {
                 "enabled": True,
+                "source_mode": "json_url",
                 "urls": "https://mdblist.com/lists/godver3/top-10-shows",
                 "versions": {
                     default_version: True
@@ -4057,7 +4059,7 @@ def create_virtual_folder():
                     continue
                 dc_config['custom_folders'][fname] = {
                     'filters': {
-                        'regex': f'(?i)\\{{tags-[^}}]*{tag}[^}}]*\\}}'
+                        'tags': tag
                     }
                 }
                 created.append(fname)
@@ -4065,10 +4067,10 @@ def create_virtual_folder():
             # One combined folder for all selected tags
             if folder_name in dc_config['custom_folders']:
                 return jsonify({'success': False, 'error': f'Folder "{folder_name}" already exists'}), 400
-            tag_pattern = '|'.join(tag.strip() for tag in tags if tag.strip())
+            tag_value = ','.join(tag.strip() for tag in tags if tag.strip())
             dc_config['custom_folders'][folder_name] = {
                 'filters': {
-                    'regex': f'(?i)\\{{tags-[^}}]*(?:{tag_pattern})[^}}]*\\}}'
+                    'tags': tag_value
                 }
             }
             created.append(folder_name)
