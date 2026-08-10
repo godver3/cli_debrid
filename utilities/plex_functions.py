@@ -1082,15 +1082,20 @@ async def get_recent_from_plex(scan_all_libraries: bool = False):
             libraries_url = f"{plex_url}/library/sections"
             libraries_data = await fetch_data(session, libraries_url, headers, semaphore)
 
-            libraries_by_key = {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']}
-            all_libraries = {library['title']: str(library['key']) for library in libraries_data['MediaContainer']['Directory']}
+            plex_directories = libraries_data.get('MediaContainer', {}).get('Directory', [])
+            if not plex_directories:
+                logger.warning("No Plex libraries returned (Plex may be unavailable or timing out) — aborting recent scan.")
+                return {'movies': [], 'episodes': []}
+
+            libraries_by_key = {str(library['key']): library['title'] for library in plex_directories}
+            all_libraries = {library['title']: str(library['key']) for library in plex_directories}
 
             movie_libraries = []
             show_libraries = []
 
             if scan_all_libraries:
                  logger.info("Scan All Libraries requested for recent scan. Identifying all Movie and Show libraries.")
-                 for library in libraries_data['MediaContainer']['Directory']:
+                 for library in plex_directories:
                      lib_key = str(library.get('key'))
                      lib_type = library.get('type')
                      lib_title = library.get('title', 'Unknown')

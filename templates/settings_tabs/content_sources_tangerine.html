@@ -130,6 +130,7 @@
         initializeScrobListPickers();
         loadOverseerrUsers();
         updatePlexOnlySections();
+        initializeMdblistModeToggles();
 
         const settingsContainer = document.querySelector('.settings-container');
         if (settingsContainer) {
@@ -156,6 +157,31 @@
             }
         });
         // Note: Header colors are set by Jinja template based on config.enabled
+    }
+
+    // Show only the fields belonging to the MDBList list source method that is selected.
+    // Fields for the other methods stay in the DOM (just hidden) so their values survive
+    // switching back and forth before saving.
+    function updateMdblistModeVisibility(sourceId, mode) {
+        document.querySelectorAll(`.mdblist-mode-field[data-source-id="${sourceId}"]`).forEach(field => {
+            field.style.display = (field.getAttribute('data-mdblist-mode') === mode) ? 'block' : 'none';
+        });
+    }
+
+    function initializeMdblistModeToggles() {
+        document.querySelectorAll('input[data-mdblist-mode-radio]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.checked) {
+                    updateMdblistModeVisibility(this.getAttribute('data-mdblist-mode-radio'), this.value);
+                }
+            });
+        });
+
+        document.querySelectorAll('.mdblist-mode-group[data-source-id]').forEach(group => {
+            const sourceId = group.getAttribute('data-source-id');
+            const checked = group.querySelector('input[data-mdblist-mode-radio]:checked');
+            updateMdblistModeVisibility(sourceId, checked ? checked.value : 'json_url');
+        });
     }
 
     function updateSymlinkSubfolderVisibility(sourceId, fileManagementValue) {
@@ -249,7 +275,7 @@
                 const sourceTypes = data.source_types;
                 const dropdownOptions = sourceTypes.map(type => ({
                     value: type,
-                    text: type === 'MDBList' ? 'MDBList/JSON list)' : 
+                    text: type === 'MDBList' ? 'MDBList (JSON list URL or API)' :
                           type === 'Overseerr' ? 'Seerr' : type
                 }));
 
@@ -1407,7 +1433,9 @@
                                 {% endif %}
                             </h4>
                         </div>
-                        <span class="content-source-type source-type">{% if config.type == 'Overseerr' %}Seerr{% elif config.type == 'MDBList' %}MDBList/JSON list{% else %}{{ config.type }}{% endif %}</span>
+                        {# For MDBList, the badge also shows which list source method the source uses #}
+                        {% set mdblist_mode_labels = {'json_url': 'JSON list', 'api_watchlist': 'Watchlist API', 'api_user_list': 'User List API', 'api_list_id': 'List ID API'} %}
+                        <span class="content-source-type source-type">{% if config.type == 'Overseerr' %}Seerr{% elif config.type == 'MDBList' %}MDBList/{{ mdblist_mode_labels.get(config.get('source_mode') or 'json_url', 'JSON list') }}{% else %}{{ config.type }}{% endif %}</span>
                         {% if not has_enabled_versions %}
                             <span class="no-versions-warning">
                                 <span class="no-versions-warning-icon">⚠️</span>
@@ -1659,7 +1687,7 @@
                                 </div>
                                 <input type="hidden" id="cs-tags-hidden-{{ source_id }}" name="Content Sources.{{ source_id }}.tags" data-section="Content Sources" data-key="{{ source_id }}.tags" value="{{ tags_str }}">
                                 <p class="settings-description" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-                                    <span>Plex mode only: Tags embedded in NZB filenames for cli_mount virtual folder routing.</span>
+                                    <span>Plex mode only: Tags are pushed to cli_mount for virtual folder routing.</span>
                                     <button type="button" onclick="csVfOpen('{{ source_id }}')" style="background:#e8651a;color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">+ Create Virtual Folder</button>
                                 </p>
                             </div>
@@ -1904,7 +1932,7 @@
                                 </div>
                                 <input type="hidden" id="cs-tags-hidden-{{ source_id }}" name="Content Sources.{{ source_id }}.tags" data-section="Content Sources" data-key="{{ source_id }}.tags" value="{{ tags_str2 }}">
                                 <p class="settings-description" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-                                    <span>Plex mode only: Tags embedded in NZB filenames for cli_mount virtual folder routing.</span>
+                                    <span>Plex mode only: Tags are pushed to cli_mount for virtual folder routing.</span>
                                     <button type="button" onclick="csVfOpen('{{ source_id }}')" style="background:#e8651a;color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">+ Create Virtual Folder</button>
                                 </p>
                             </div>
@@ -2060,11 +2088,16 @@
                         {% endif %}
 
                     {% else %}
+                        {% if config.type == 'MDBList' %}
+                            {# --- MDBList list source: pick the /json URL method or a specific API endpoint --- #}
+                            {% include 'settings_tabs/_mdblist_source_mode.html' %}
+                        {% endif %}
+
                         {# --- Render fields using the GENERAL loop for other types --- #}
                         {% for key, value in config.items() %}
                             {# Skip standard 'type' field and any empty/invalid keys #}
                             {% if key and key != 'type' %}
-                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters', 'seasons_per_show', 'season_grab_order', 'tags', 'tags_exclusive'] or (key == 'ignore_tags' and config.type == 'Overseerr') %}
+                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters', 'seasons_per_show', 'season_grab_order', 'tags', 'tags_exclusive'] or (key == 'ignore_tags' and config.type == 'Overseerr') or (config.type == 'MDBList' and key in ['source_mode', 'urls', 'username', 'listname', 'list_id']) %}
                                 {% if not _skip %}
                                 <div class="settings-form-group">
                                     {% if key == 'versions' %}

@@ -457,8 +457,15 @@ class TorrentProcessor:
                             last_error = err_str
                             break
                     except Exception as ex:
-                        logging.error(f"[{provider.PROVIDER_NAME}] Unexpected error: {ex}", exc_info=True)
-                        last_error = str(ex)
+                        err_str = str(ex)
+                        if "space is full" in err_str.lower():
+                            # Account-storage exhaustion — an action only the user can take
+                            # (free up space / upgrade plan), not a code-level failure. A full
+                            # traceback here is just noise; a short warning is enough to act on.
+                            logging.warning(f"[{provider.PROVIDER_NAME}] Account storage is full — cannot add torrent. Free up space or upgrade your plan.")
+                        else:
+                            logging.error(f"[{provider.PROVIDER_NAME}] Unexpected error: {ex}", exc_info=True)
+                        last_error = err_str
                         break
 
                 if not torrent_id:
@@ -1273,8 +1280,22 @@ class TorrentProcessor:
                                                 if not hasattr(_dc, 'rename_nzb'):
                                                     logging.info(f'[DebridNaming] Client has no rename_nzb for {ident!r}')
                                                     return  # active usenet provider (e.g. nzbdav) has no rename semantics
+                                                # cli_mount only registers an entry as queryable-by-hash after its
+                                                # own periodic sync (default ~10 min) — a 404 in the first several
+                                                # attempts is expected, not proof the entry is gone. Only treat 404
+                                                # as final once it's persisted for that long (20 attempts x 30s).
+                                                _consecutive_404 = 0
+                                                _confirmed_gone_after = 20
                                                 for _attempt in range(100):
-                                                    if _dc.rename_nzb(h, name):
+                                                    _renamed, _not_found = _dc.rename_nzb_with_status(h, name)
+                                                    if _not_found:
+                                                        _consecutive_404 += 1
+                                                        if _consecutive_404 >= _confirmed_gone_after:
+                                                            logging.warning(f'[DebridNaming] {h!r} not found in cli_mount (404) for {_consecutive_404} consecutive attempts — giving up for {ident}')
+                                                            return
+                                                    else:
+                                                        _consecutive_404 = 0
+                                                    if _renamed:
                                                         logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} for {ident}')
                                                         if item_id:
                                                             try:
@@ -1309,6 +1330,8 @@ class TorrentProcessor:
                                                                     if _cli_ids_dn:
                                                                         _dc.register_cli_ids(h, _cli_ids_dn)
                                                                         logging.info(f'[DebridNaming] Registered {len(_cli_ids_dn)} cli_debrid IDs for {h!r}')
+                                                            if item_id:
+                                                                _dc.push_tags_for_item(h, item_id)
                                                         except Exception as _reg_dn_err:
                                                             logging.debug(f'[DebridNaming] cli_ids registration error: {_reg_dn_err}')
                                                         return

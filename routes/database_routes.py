@@ -871,6 +871,237 @@ def bulk_queue_action():
                     logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
                 finally:
                     conn.close()
+            elif action == 'assign_tags' and target_queue:  # target_queue contains the tag to assign in this case
+                logging.info("Entering 'assign_tags' block.")
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    new_tag = target_queue.strip()
+                    placeholders = ','.join('?' * len(batch))
+                    cursor.execute(
+                        f'SELECT id, tags, filled_by_torrent_id, filled_by_magnet FROM media_items WHERE id IN ({placeholders})',
+                        batch
+                    )
+                    rows = cursor.fetchall()
+                    now = datetime.now()
+                    pushed_hashes = []
+                    import re as _re_assign
+                    for row in rows:
+                        existing_tags = [t.strip() for t in (row['tags'] or '').split(',') if t.strip()]
+                        if new_tag in existing_tags:
+                            continue
+                        existing_tags.append(new_tag)
+                        updated_tags = ','.join(existing_tags)
+                        cursor.execute(
+                            'UPDATE media_items SET tags = ?, last_updated = ? WHERE id = ?',
+                            [updated_tags, now, row['id']]
+                        )
+                        total_processed += 1
+
+                        # Resolve this row's cli_mount info_hash (same convention used
+                        # elsewhere: nzb: prefix stripped, or infohash parsed from magnet)
+                        info_hash = ''
+                        torrent_id = str(row['filled_by_torrent_id'] or '')
+                        if torrent_id.startswith('nzb:'):
+                            info_hash = torrent_id[4:]
+                        else:
+                            magnet = row['filled_by_magnet'] or ''
+                            m = _re_assign.search(r'urn:btih:([0-9a-fA-F]{40})', magnet, _re_assign.IGNORECASE)
+                            if m:
+                                info_hash = m.group(1).lower()
+                        if info_hash:
+                            pushed_hashes.append((info_hash, updated_tags, row['id']))
+                    conn.commit()
+
+                    if pushed_hashes:
+                        try:
+                            from usenet.climount_client import get_climount_client as _get_dc_assign
+                            _dc_assign = _get_dc_assign()
+                            if _dc_assign and _dc_assign.is_enabled():
+                                for _ih, _tags, _row_id in pushed_hashes:
+                                    if _dc_assign.push_tags(_ih, _tags):
+                                        logging.info(f"[AssignTags] Pushed tags '{_tags}' to cli_mount for {_ih}")
+                                        cursor.execute(
+                                            'UPDATE media_items SET tags_pushed_at = ? WHERE id = ?',
+                                            [datetime.now(), _row_id]
+                                        )
+                                        conn.commit()
+                                    else:
+                                        logging.warning(f"[AssignTags] cli_mount tag push returned false for {_ih} (tags='{_tags}')")
+                            else:
+                                logging.warning('[AssignTags] cli_mount client disabled/not configured — tags not pushed')
+                        except Exception as _push_err:
+                            logging.warning(f'[AssignTags] cli_mount tag push error: {_push_err}')
+                    else:
+                        logging.info('[AssignTags] No pushable info_hash resolved for any updated row — nothing sent to cli_mount')
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e):
+                        logging.error("Database is locked during bulk assign_tags.")
+                        conn.rollback()
+                        return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                    else:
+                        error_count += 1
+                        conn.rollback()
+                        errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                except Exception as e:
+                    error_count += 1
+                    conn.rollback()
+                    errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                finally:
+                    conn.close()
+            elif action == 'update_tags' and target_queue:  # target_queue contains the tag; replaces all existing tags
+                logging.info("Entering 'update_tags' block.")
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    new_tag = target_queue.strip()
+                    placeholders = ','.join('?' * len(batch))
+                    cursor.execute(
+                        f'SELECT id, tags, filled_by_torrent_id, filled_by_magnet FROM media_items WHERE id IN ({placeholders})',
+                        batch
+                    )
+                    rows = cursor.fetchall()
+                    now = datetime.now()
+                    pushed_hashes = []
+                    import re as _re_update
+                    for row in rows:
+                        cursor.execute(
+                            'UPDATE media_items SET tags = ?, last_updated = ? WHERE id = ?',
+                            [new_tag, now, row['id']]
+                        )
+                        total_processed += 1
+
+                        info_hash = ''
+                        torrent_id = str(row['filled_by_torrent_id'] or '')
+                        if torrent_id.startswith('nzb:'):
+                            info_hash = torrent_id[4:]
+                        else:
+                            magnet = row['filled_by_magnet'] or ''
+                            m = _re_update.search(r'urn:btih:([0-9a-fA-F]{40})', magnet, _re_update.IGNORECASE)
+                            if m:
+                                info_hash = m.group(1).lower()
+                        if info_hash:
+                            pushed_hashes.append((info_hash, new_tag, row['id']))
+                    conn.commit()
+
+                    if pushed_hashes:
+                        try:
+                            from usenet.climount_client import get_climount_client as _get_dc_update
+                            _dc_update = _get_dc_update()
+                            if _dc_update and _dc_update.is_enabled():
+                                for _ih, _tags, _row_id in pushed_hashes:
+                                    if _dc_update.push_tags(_ih, _tags):
+                                        logging.info(f"[UpdateTags] Pushed tags '{_tags}' to cli_mount for {_ih}")
+                                        cursor.execute(
+                                            'UPDATE media_items SET tags_pushed_at = ? WHERE id = ?',
+                                            [datetime.now(), _row_id]
+                                        )
+                                        conn.commit()
+                                    else:
+                                        logging.warning(f"[UpdateTags] cli_mount tag push returned false for {_ih} (tags='{_tags}')")
+                            else:
+                                logging.warning('[UpdateTags] cli_mount client disabled/not configured — tags not pushed')
+                        except Exception as _push_err:
+                            logging.warning(f'[UpdateTags] cli_mount tag push error: {_push_err}')
+                    else:
+                        logging.info('[UpdateTags] No pushable info_hash resolved for any updated row — nothing sent to cli_mount')
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e):
+                        logging.error("Database is locked during bulk update_tags.")
+                        conn.rollback()
+                        return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                    else:
+                        error_count += 1
+                        conn.rollback()
+                        errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                except Exception as e:
+                    error_count += 1
+                    conn.rollback()
+                    errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                finally:
+                    conn.close()
+            elif action == 'remove_tags' and target_queue:  # target_queue contains the tag to remove
+                logging.info("Entering 'remove_tags' block.")
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    tag_to_remove = target_queue.strip()
+                    placeholders = ','.join('?' * len(batch))
+                    cursor.execute(
+                        f'SELECT id, tags, filled_by_torrent_id, filled_by_magnet FROM media_items WHERE id IN ({placeholders})',
+                        batch
+                    )
+                    rows = cursor.fetchall()
+                    now = datetime.now()
+                    pushed_hashes = []
+                    import re as _re_remove
+                    for row in rows:
+                        existing_tags = [t.strip() for t in (row['tags'] or '').split(',') if t.strip()]
+                        if tag_to_remove not in existing_tags:
+                            continue
+                        remaining_tags = [t for t in existing_tags if t != tag_to_remove]
+                        updated_tags = ','.join(remaining_tags)
+                        cursor.execute(
+                            'UPDATE media_items SET tags = ?, last_updated = ? WHERE id = ?',
+                            [updated_tags, now, row['id']]
+                        )
+                        total_processed += 1
+
+                        info_hash = ''
+                        torrent_id = str(row['filled_by_torrent_id'] or '')
+                        if torrent_id.startswith('nzb:'):
+                            info_hash = torrent_id[4:]
+                        else:
+                            magnet = row['filled_by_magnet'] or ''
+                            m = _re_remove.search(r'urn:btih:([0-9a-fA-F]{40})', magnet, _re_remove.IGNORECASE)
+                            if m:
+                                info_hash = m.group(1).lower()
+                        if info_hash:
+                            pushed_hashes.append((info_hash, tag_to_remove, row['id']))
+                    conn.commit()
+
+                    if pushed_hashes:
+                        try:
+                            from usenet.climount_client import get_climount_client as _get_dc_remove
+                            _dc_remove = _get_dc_remove()
+                            if _dc_remove and _dc_remove.is_enabled():
+                                for _ih, _tag, _row_id in pushed_hashes:
+                                    if _dc_remove.remove_tags(_ih, _tag):
+                                        logging.info(f"[RemoveTags] Removed tag '{_tag}' from cli_mount for {_ih}")
+                                        cursor.execute(
+                                            'UPDATE media_items SET tags_pushed_at = ? WHERE id = ?',
+                                            [datetime.now(), _row_id]
+                                        )
+                                        conn.commit()
+                                    else:
+                                        logging.warning(f"[RemoveTags] cli_mount tag removal returned false for {_ih} (tag='{_tag}')")
+                            else:
+                                logging.warning('[RemoveTags] cli_mount client disabled/not configured — tag not removed remotely')
+                        except Exception as _push_err:
+                            logging.warning(f'[RemoveTags] cli_mount tag removal error: {_push_err}')
+                    else:
+                        logging.info('[RemoveTags] No pushable info_hash resolved for any updated row — nothing sent to cli_mount')
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e):
+                        logging.error("Database is locked during bulk remove_tags.")
+                        conn.rollback()
+                        return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                    else:
+                        error_count += 1
+                        conn.rollback()
+                        errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                except Exception as e:
+                    error_count += 1
+                    conn.rollback()
+                    errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                finally:
+                    conn.close()
             elif action == 'early_release':
                 logging.info("Entering 'early_release' block.")
                 # Handle early release action
@@ -1293,6 +1524,9 @@ def bulk_queue_action():
                 "delete": "deleted",
                 "move": f"moved to {target_queue} queue",
                 "change_version": f"changed to version {target_queue}",
+                "assign_tags": f"tagged with '{target_queue}'",
+                "update_tags": f"tags set to '{target_queue}'",
+                "remove_tags": f"tag '{target_queue}' removed",
                 "early_release": "marked as early release and moved to Wanted queue",
                 "rescrape": "deleted files/Plex entries for and moved to Wanted queue", # Added rescrape message
                 "force_priority": "marked for forced priority",

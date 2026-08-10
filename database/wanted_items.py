@@ -290,7 +290,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                 batch = episode_imdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT imdb_id, season_number, episode_number, version, state, ghostlisted FROM media_items
+                    SELECT imdb_id, season_number, episode_number, version, state, ghostlisted, filled_by_torrent_id FROM media_items
                     WHERE type = 'episode' AND imdb_id IN ({placeholders})
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
@@ -298,7 +298,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                     key = (str(row['imdb_id']), row['season_number'], row['episode_number'])
                     if key not in existing_episodes:
                         existing_episodes[key] = []
-                    existing_episodes[key].append((strip_version(row['version']), row['state'], row['ghostlisted']))
+                    existing_episodes[key].append((strip_version(row['version']), row['state'], row['ghostlisted'], row['filled_by_torrent_id']))
 
         if episode_tmdb_ids:
             episode_tmdb_list = list(episode_tmdb_ids)
@@ -306,7 +306,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                 batch = episode_tmdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT tmdb_id, season_number, episode_number, version, state, ghostlisted FROM media_items
+                    SELECT tmdb_id, season_number, episode_number, version, state, ghostlisted, filled_by_torrent_id FROM media_items
                     WHERE type = 'episode' AND tmdb_id IN ({placeholders})
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
@@ -314,7 +314,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                     key = (str(row['tmdb_id']), row['season_number'], row['episode_number'])
                     if key not in existing_episodes:
                         existing_episodes[key] = []
-                    existing_episodes[key].append((strip_version(row['version']), row['state'], row['ghostlisted']))
+                    existing_episodes[key].append((strip_version(row['version']), row['state'], row['ghostlisted'], row['filled_by_torrent_id']))
 
         # Check plex_labels once before the loop — avoids repeated config lookups
         try:
@@ -326,14 +326,26 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
         pending_secondary_labels = []  # [(existing_id, source_name, source_detail)] — Collected items needing label from second source
         pending_source_records = []   # [(existing_id, source_name, source_detail)] — not-yet-Collected items needing source recorded
 
-        # Build O(1) lookup: set of (imdb_id, season_number) pairs that have at least one
-        # Collected/Upgrading episode — used for fast season pack sibling detection.
-        _collected_seasons = set()
+        # Build O(1) lookup: set of (imdb_id, season_number) pairs that are covered by a
+        # genuine single season-pack download — i.e. every Collected/Upgrading episode
+        # seen for that season shares the SAME filled_by_torrent_id, and there are at
+        # least 2 such episodes (one download containing multiple episodes). A season
+        # built from several individually-downloaded episodes (each its own
+        # filled_by_torrent_id) is NOT included here — see usage below for why.
+        _season_pack_torrent_ids = {}  # (imdb_id, season) -> set of distinct filled_by_torrent_id seen
+        _season_pack_episode_counts = {}  # (imdb_id, season) -> count of Collected/Upgrading episodes seen
         for (eid, seas, _epnum), vs in existing_episodes.items():
-            for _, st, _ in vs:
+            for _, st, _, filled_by_torrent_id in vs:
                 if st in ('Collected', 'Upgrading'):
-                    _collected_seasons.add((eid, seas))
+                    season_key = (eid, seas)
+                    _season_pack_torrent_ids.setdefault(season_key, set()).add(filled_by_torrent_id)
+                    _season_pack_episode_counts[season_key] = _season_pack_episode_counts.get(season_key, 0) + 1
                     break
+
+        _collected_seasons = {
+            season_key for season_key, torrent_ids in _season_pack_torrent_ids.items()
+            if len(torrent_ids) == 1 and None not in torrent_ids and _season_pack_episode_counts[season_key] >= 2
+        }
 
         filtered_media_items_batch_after_existence_check = []
         for item in media_items_batch:
@@ -416,7 +428,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                     tmdb_key_check = (str(tmdb_id), season_number_check, episode_number_check)
                     if tmdb_key_check in existing_episodes and (not imdb_key_check or imdb_key_check != tmdb_key_check):
                          existing_versions_states_check.extend(existing_episodes[tmdb_key_check])
-                for _, state, ghostlisted in existing_versions_states_check:
+                for _, state, ghostlisted, _ in existing_versions_states_check:
                     if ghostlisted == 1:
                         is_ghostlisted_in_db = True; is_blacklisted_in_db = True
                     elif state == 'Blacklisted':
@@ -462,13 +474,19 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                     tmdb_key_check_collected = (str(tmdb_id), season_number_check_collected, episode_number_check_collected)
                     if tmdb_key_check_collected in existing_episodes and (not imdb_key_check_collected or imdb_key_check_collected != tmdb_key_check_collected):
                          existing_versions_states_check_collected.extend(existing_episodes[tmdb_key_check_collected])
-                for _, state, _ in existing_versions_states_check_collected:
+                for _, state, _, _ in existing_versions_states_check_collected:
                     if state in ('Collected', 'Upgrading'):
                         is_collected_or_upgrading_in_db = True; break
 
-                # If no per-episode entry found, check if ANY sibling episode of the same
-                # season is Collected — season pack means all episodes are available.
-                # Uses pre-built O(1) set lookup instead of iterating all existing_episodes.
+                # If no per-episode entry found, check if a genuine season-pack file
+                # already covers this episode. Only trust this when every Collected/
+                # Upgrading episode we've seen for this season shares the SAME
+                # filled_by_torrent_id — that's the actual signature of one pack
+                # download containing multiple episodes. "Any sibling is Collected"
+                # alone is not proof: a partially-collected season built from several
+                # individually-downloaded episodes (each its own filled_by_torrent_id)
+                # previously got misread as "season already fully covered," silently
+                # skipping real gaps (e.g. missing episodes never re-requested).
                 if not is_collected_or_upgrading_in_db and imdb_id and season_number_check_collected is not None:
                     if (str(imdb_id), season_number_check_collected) in _collected_seasons:
                         is_collected_or_upgrading_in_db = True
@@ -490,7 +508,23 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         if new_source and new_detail and new_detail.lower() != 'unknown':
                             lookup_id = _get_existing_item_id_collected(conn, imdb_id, tmdb_id, item_type, item)
                             if lookup_id:
-                                pending_secondary_labels.append((lookup_id, new_source, new_detail))
+                                # Skip re-queuing if this source already has its label(s) applied —
+                                # without this check, the same handful of items get re-labelled
+                                # (a no-op write) on every wanted-items pass, needlessly.
+                                already_labelled = False
+                                try:
+                                    from utilities.plex_label_manager import parse_plex_labels, determine_labels_for_item
+                                    pl_row = conn.execute('SELECT plex_labels FROM media_items WHERE id = ?', (lookup_id,)).fetchone()
+                                    existing_plex_labels = parse_plex_labels(pl_row['plex_labels'] if pl_row else None)
+                                    expected_labels = determine_labels_for_item({'content_source': new_source, 'content_source_detail': new_detail})
+                                    already_labelled = bool(expected_labels) and all(
+                                        new_source in existing_plex_labels.get(lbl, {}).get('sources', [])
+                                        for lbl in expected_labels
+                                    )
+                                except Exception:
+                                    already_labelled = False
+                                if not already_labelled:
+                                    pending_secondary_labels.append((lookup_id, new_source, new_detail))
                                 # Write source+detail to content_sources so secondary-source label
                                 # re-processing can find it (add_label_to_item only writes source, no detail)
                                 try:
@@ -557,12 +591,12 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                 if imdb_id:
                     imdb_key_vs = (str(imdb_id), season_number_vs, episode_number_vs)
                     if imdb_key_vs in existing_episodes:
-                        for version_vs, state_vs, _ in existing_episodes[imdb_key_vs]:
+                        for version_vs, state_vs, _, _ in existing_episodes[imdb_key_vs]:
                             existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
                 if tmdb_id:
                     tmdb_key_vs = (str(tmdb_id), season_number_vs, episode_number_vs)
                     if tmdb_key_vs in existing_episodes and (not imdb_key_vs or imdb_key_vs != tmdb_key_vs):
-                        for version_vs, state_vs, _ in existing_episodes[tmdb_key_vs]:
+                        for version_vs, state_vs, _, _ in existing_episodes[tmdb_key_vs]:
                             existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
 
                 if not enable_granular_versions:
@@ -882,8 +916,12 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', episodes_to_insert)
 
-        if movies_to_insert or episodes_to_insert or updated_any_title:
-            conn.commit()
+        # Always commit here — the content_sources/source_position UPDATEs made
+        # above (line ~520) while scanning already-Collected items are on this
+        # same connection and would otherwise stay open into add_label_to_item
+        # below, which opens its OWN connection and self-deadlocks against the
+        # uncommitted write lock (each retry then burns ~870s before failing).
+        conn.commit()
 
         # Apply labels for secondary sources on already-Collected items
         if pending_secondary_labels:

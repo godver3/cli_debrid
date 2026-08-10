@@ -31,7 +31,7 @@ from typing import Dict, List, Optional, Tuple, Union, Any
 
 from ..base import (
     DebridProvider, TooManyDownloadsError, ProviderUnavailableError,
-    TorrentAdditionError
+    TorrentAdditionError, RateLimitError
 )
 from ..common import extract_hash_from_magnet, timed_lru_cache, is_video_file, is_unwanted_file
 from ..status import TorrentStatus, TorrentInfoStatus, TorrentFetchStatus
@@ -73,6 +73,7 @@ class PremiumizeProvider(DebridProvider):
         super().__init__()
         self._cached_torrent_ids: Dict[str, str] = {}   # hash → transfer_id
         self._all_torrent_ids:    Dict[str, str] = {}   # hash → transfer_id (alias expected by torrent_processor)
+        self._cached_torrent_titles: Dict[str, str] = {}  # hash → filename, from /cache/check
 
     # ── Auth ────────────────────────────────────────────────────────────────
 
@@ -220,7 +221,10 @@ class PremiumizeProvider(DebridProvider):
                     is_hit = bool(cached_arr[i]) if i < len(cached_arr) else False
                     results[h] = is_hit
                     if is_hit:
-                        logger.info(f"{log_prefix} CACHED: {h} → {filename_arr[i] if i < len(filename_arr) else ''}")
+                        _filename = filename_arr[i] if i < len(filename_arr) else ''
+                        if _filename:
+                            self._cached_torrent_titles[h.lower()] = _filename
+                        logger.info(f"{log_prefix} CACHED: {h} → {_filename}")
                     else:
                         logger.debug(f"{log_prefix} NOT cached: {h}")
         except Exception as e:
@@ -341,6 +345,9 @@ class PremiumizeProvider(DebridProvider):
 
         except TorrentAdditionError:
             raise
+        except RateLimitError as e:
+            logger.warning(f"Premiumize add_torrent rate-limited (429): {e}")
+            raise ProviderUnavailableError(f"429 Too Many Requests: {e}")
         except Exception as e:
             logger.error(f"Premiumize add_torrent error: {e}")
             raise TorrentAdditionError(f"Failed to add torrent: {e}")
@@ -606,6 +613,9 @@ class PremiumizeProvider(DebridProvider):
 
     def get_cached_torrent_id(self, hash_value: str) -> Optional[str]:
         return self._cached_torrent_ids.get((hash_value or '').lower())
+
+    def get_cached_torrent_title(self, hash_value: str) -> Optional[str]:
+        return self._cached_torrent_titles.get((hash_value or '').lower())
 
     def check_connectivity(self) -> Tuple[bool, Optional[Dict]]:
         try:

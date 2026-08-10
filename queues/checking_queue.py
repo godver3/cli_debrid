@@ -1212,6 +1212,7 @@ class CheckingQueue:
                                             if _dc2 and _dc2.is_enabled():
                                                 _dc2.register_cli_ids(_ih2, _cli_ids2)
                                                 logging.info(f'[CheckingQueue] Registered {len(_cli_ids2)} cli_debrid IDs for {_ih2}')
+                                                _dc2.push_tags_for_item(_ih2, next(iter(_cli_ids2.values())))
                                         except Exception as _r2:
                                             logging.debug(f'[CheckingQueue] cli_ids registration error: {_r2}')
                             except Exception as _r2e:
@@ -1372,6 +1373,7 @@ class CheckingQueue:
                                     _dc = _get_dc()
                                     if _dc and _dc.is_enabled():
                                         _dc.register_cli_ids(_infohash, _cli_ids)
+                                        _dc.push_tags_for_item(_infohash, next(iter(_cli_ids.values())))
                         except Exception as _cli_reg_err:
                             logging.debug(f'[CheckingQueue] cli_ids registration error: {_cli_reg_err}')
                     # --- End of restored Symlinked/Local processing logic ---

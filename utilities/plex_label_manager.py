@@ -1808,13 +1808,11 @@ def _fetch_live_imdb_ids_for_source(src_id: str, src_cfg: dict, all_settings: di
                 _ingest(items)
 
         elif src_type == 'MDBList':
-            from content_checkers.mdb_list import get_wanted_from_mdblists
-            # Schema key is 'urls', not 'mdblist_urls' or 'url'
-            mdblist_url = src_cfg.get('urls', '')
-            if mdblist_url:
-                results = get_wanted_from_mdblists(mdblist_url, versions)
-                for items, _ in results:
-                    _ingest(items)
+            from content_checkers.mdb_list import get_wanted_from_mdblist_source
+            # Honours the source's source_mode (public /json URL or one of the API endpoints)
+            results = get_wanted_from_mdblist_source(src_cfg, versions)
+            for items, _ in results:
+                _ingest(items)
 
         elif src_type == 'Trakt Watchlist':
             from content_checkers.trakt import get_wanted_from_trakt_watchlist

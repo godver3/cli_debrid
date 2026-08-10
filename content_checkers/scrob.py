@@ -1,12 +1,19 @@
 import json
 import logging
 import os
+import re
 from typing import List, Dict, Any, Tuple, Optional
 
 from routes.api_tracker import api
 from utilities.settings import get_setting
 
 REQUEST_TIMEOUT = 30
+
+# Some unmatched Scrob movie entries carry a filename-style imdb tag directly
+# in the title (e.g. "Top Gun (1986) - {imdb-tt0092099} - ...") instead of a
+# resolved tmdb_id — Scrob itself failed to match these against TMDB, but the
+# uploader's own naming convention already embeds a usable IMDb ID.
+_TITLE_IMDB_TAG_RE = re.compile(r'\{imdb-(tt\d+)\}')
 
 # Session JWT persisted to disk, mirroring content_checkers.trakt's
 # .pytrakt.json approach — Scrob's login cookie is a 7-day JWT (per Scrob's
@@ -232,6 +239,14 @@ def process_scrob_items(items: List[Dict[str, Any]], unblacklist: bool = False) 
             continue
 
         imdb_id = _tmdb_to_imdb(tmdb_id, media_type)
+        if not imdb_id and media_type == 'movie':
+            # Last-resort fallback: Scrob failed to match this file to TMDB at
+            # all, but the uploader's own filename-style title tag already has
+            # a usable IMDb ID — skip the TMDB round-trip entirely.
+            tag_match = _TITLE_IMDB_TAG_RE.search(media.get('title') or '')
+            if tag_match:
+                imdb_id = tag_match.group(1)
+                logging.info(f"Resolved Scrob item via imdb tag embedded in title: {media.get('title')} -> {imdb_id}")
         if not imdb_id:
             logging.warning(f"Skipping Scrob item due to unresolved imdb_id: {media.get('title') or media.get('show_title') or 'Unknown Title'} (tmdb_id={tmdb_id})")
             skipped_count += 1

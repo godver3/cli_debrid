@@ -424,12 +424,125 @@ class CliMountClient:
             logging.debug(f'[cli_mount] register_cli_ids_for_item error: {e}')
         return False
 
+    def push_tags_for_item(self, info_hash: str, item_id: int) -> bool:
+        """
+        Convenience wrapper: look up item_id's tags column and push immediately,
+        instead of waiting for the next periodic climount_sync cycle.
+        Safe to call from any rename/register path — errors are suppressed.
+        """
+        if not self.is_enabled() or not info_hash or not item_id:
+            return False
+        try:
+            from database.core import get_db_connection as _gdb
+            with _gdb() as conn:
+                row = conn.execute(
+                    'SELECT tags FROM media_items WHERE id = ?', (item_id,)
+                ).fetchone()
+                if row and row[0]:
+                    ok = self.push_tags(info_hash, row[0])
+                    if ok:
+                        import datetime as _dt
+                        conn.execute(
+                            'UPDATE media_items SET tags_pushed_at = ? WHERE id = ?',
+                            (_dt.datetime.now(), item_id)
+                        )
+                        conn.commit()
+                    return ok
+        except Exception as e:
+            logging.debug(f'[cli_mount] push_tags_for_item error: {e}')
+        return False
+
+    def _plex_mode_enabled(self) -> bool:
+        try:
+            from utilities.settings import get_setting as _gs
+            return _gs('File Management', 'file_collection_management', 'Plex') == 'Plex'
+        except Exception:
+            return False
+
+    def push_tags(self, info_hash: str, tags) -> bool:
+        """
+        Push tags onto a cli_mount Entry (NZB or debrid torrent) by its info_hash.
+        Uses the qBittorrent-compat POST /api/v2/torrents/addTags — cli_mount merges
+        the given tags into the entry's existing Tags list (dedup, no overwrite).
+        tags: comma-separated string or list/tuple of tag strings.
+        Plex-mode-only feature — no-op under Symlinked/Local.
+        Returns True on success, False otherwise.
+        """
+        if not self._plex_mode_enabled() or not self.is_enabled() or not info_hash or not tags:
+            return False
+        if isinstance(tags, (list, tuple, set)):
+            tags_str = ','.join(str(t).strip() for t in tags if str(t).strip())
+        else:
+            tags_str = str(tags).strip()
+        if not tags_str:
+            return False
+        try:
+            import requests as _req_tags
+            r = _req_tags.post(
+                f'{self.base_url}/api/v2/torrents/addTags',
+                headers=self._headers(),
+                data={'hashes': info_hash, 'tags': tags_str},
+                timeout=10,
+            )
+            if r.status_code in (200, 204):
+                logging.debug(f'[cli_mount] Pushed tags {tags_str!r} for {info_hash}')
+                return True
+            logging.debug(f'[cli_mount] push_tags returned {r.status_code} for {info_hash}')
+            return False
+        except Exception as e:
+            logging.debug(f'[cli_mount] push_tags error for {info_hash}: {e}')
+            return False
+
+    def remove_tags(self, info_hash: str, tags) -> bool:
+        """
+        Remove tags from a cli_mount Entry by its info_hash.
+        Uses the qBittorrent-compat POST /api/v2/torrents/removeTags — cli_mount
+        strips only the given tags, leaving any other existing tags intact.
+        tags: comma-separated string or list/tuple of tag strings.
+        Plex-mode-only feature — no-op under Symlinked/Local.
+        Returns True on success, False otherwise.
+        """
+        if not self._plex_mode_enabled() or not self.is_enabled() or not info_hash or not tags:
+            return False
+        if isinstance(tags, (list, tuple, set)):
+            tags_str = ','.join(str(t).strip() for t in tags if str(t).strip())
+        else:
+            tags_str = str(tags).strip()
+        if not tags_str:
+            return False
+        try:
+            import requests as _req_tags
+            r = _req_tags.post(
+                f'{self.base_url}/api/v2/torrents/removeTags',
+                headers=self._headers(),
+                data={'hashes': info_hash, 'tags': tags_str},
+                timeout=10,
+            )
+            if r.status_code in (200, 204):
+                logging.debug(f'[cli_mount] Removed tags {tags_str!r} for {info_hash}')
+                return True
+            logging.debug(f'[cli_mount] remove_tags returned {r.status_code} for {info_hash}')
+            return False
+        except Exception as e:
+            logging.debug(f'[cli_mount] remove_tags error for {info_hash}: {e}')
+            return False
+
     def rename_nzb(self, info_hash: str, new_name: str) -> bool:
         """
         Rename a cli_mount entry (NZB or debrid torrent) by its info_hash.
         Uses PATCH /api/browse/torrents/{hash}/rename — works for both ProtocolNZB
         and ProtocolTorrent entries since GetEntry() is protocol-agnostic.
         Returns True on success, False otherwise.
+        """
+        success, _not_found = self.rename_nzb_with_status(info_hash, new_name)
+        return success
+
+    def rename_nzb_with_status(self, info_hash: str, new_name: str) -> tuple:
+        """
+        Same as rename_nzb(), but also reports whether the failure was a 404
+        (entry doesn't exist in cli_mount at all — retrying won't help) versus
+        any other failure (worth retrying). Returns (success: bool, not_found: bool).
+        not_found is only meaningful when success is False.
         """
         try:
             import json as _json
@@ -442,12 +555,12 @@ class CliMountClient:
             )
             if r.status_code == 200:
                 logging.info(f'[cli_mount] Renamed entry {info_hash!r} -> {new_name!r}')
-                return True
+                return True, False
             logging.warning(f'[cli_mount] rename_nzb failed for {info_hash!r}: HTTP {r.status_code} {r.text[:100]}')
-            return False
+            return False, r.status_code == 404
         except Exception as exc:
             logging.warning(f'[cli_mount] rename_nzb error for {info_hash!r}: {exc}')
-            return False
+            return False, False
 
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """

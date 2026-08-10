@@ -52,7 +52,7 @@ from content_checkers.scrob import (
     get_wanted_from_scrob_collection,
     get_wanted_from_scrob_special
 )
-from content_checkers.mdb_list import get_wanted_from_mdblists
+from content_checkers.mdb_list import get_wanted_from_mdblist_source
 from content_checkers.content_source_detail import append_content_source_detail
 from database.not_wanted_magnets import purge_not_wanted_magnets_file
 import traceback
@@ -159,10 +159,15 @@ class ProgramRunner:
         self._task_schedule_file = _os.path.join(_db_dir, 'task_schedule.json')
         self._task_schedules = self._load_task_schedules()
 
-        # Persistent job store — survives restarts so task timers are not reset.
-        from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-        _scheduler_db = f"sqlite:///{_os.path.join(_db_dir, 'scheduler.db')}"
-        _jobstores = {'default': SQLAlchemyJobStore(url=_scheduler_db)}
+        # In-memory job store. Task next-run times are NOT restored from this store —
+        # that's handled separately by _load_task_schedules()/task_schedule.json above,
+        # which is the mechanism _schedule_task's initial_run branch actually reads from.
+        # A persistent (pickling) store like SQLAlchemyJobStore cannot be used here: every
+        # task's target is a bound method on this ProgramRunner instance, which itself
+        # holds self.scheduler, and APScheduler refuses to pickle a job whose bound-method
+        # owner carries a scheduler reference ("Schedulers cannot be serialized").
+        from apscheduler.jobstores.memory import MemoryJobStore
+        _jobstores = {'default': MemoryJobStore()}
 
         # Configure scheduler timezone using the local timezone helper
         try:
@@ -319,6 +324,7 @@ class ProgramRunner:
             'task_repair_broken_nzbs': 6 * 60 * 60, # Run every 6 hours
             'task_repair_broken_debrids': 6 * 60 * 60, # Run every 6 hours
             'task_sync_cli_mount_changes': 5 * 60, # Run every 5 minutes
+            'task_push_pending_climount_tags': 5 * 60, # Run every 5 minutes — catches tags changed on cli_debrid side only
             'task_nzb_health_check': 10,             # Run every 10 seconds — polls NZB items in Adding
             'task_backfill_plex_guids': 24 * 60 * 60,    # Run once (disabled by default)
             'task_backfill_plex_ms_item_id': 24 * 60 * 60, # Run once (disabled by default)
@@ -559,6 +565,7 @@ class ProgramRunner:
             'task_repair_broken_nzbs',
             'task_repair_broken_debrids',
             'task_sync_cli_mount_changes',
+            'task_push_pending_climount_tags',
         }
         logging.info("Initialized base enabled tasks.")
         # (The accurate default snapshot will be captured later, after content-source and conditional tasks.)
@@ -1051,9 +1058,12 @@ class ProgramRunner:
 
                 if target_func:
                     try:
-                        # Wrap the target function
-                        # For regular tasks, actual_job_id and task_name_for_logging are the same (job_id)
-                        wrapped_func = functools.partial(self._run_and_measure_task, job_id, task_name, target_func, args, kwargs)
+                        # For regular tasks, actual_job_id and task_name_for_logging are the same (job_id).
+                        # Pass the bound method + its args separately (not via functools.partial) —
+                        # APScheduler's SQLAlchemyJobStore pickles jobs on start()/add_job(), and
+                        # functools.partial objects can never be resolved to a serializable reference
+                        # (apscheduler.util.obj_to_ref unconditionally rejects partials), which crashes
+                        # scheduling with "This Job cannot be serialized...".
 
                         # *** START EDIT: Explicitly pass scheduler's timezone to add_job ***
                         # This should prevent the IntervalTrigger from calling tzlocal.get_localzone()
@@ -1115,7 +1125,8 @@ class ProgramRunner:
                         _executor = 'queue' if job_id in _QUEUE_TASKS else 'default'
 
                         add_job_kwargs = {
-                            'func': wrapped_func,
+                            'func': self._run_and_measure_task,
+                            'args': (job_id, task_name, target_func, args, kwargs),
                             'trigger': trigger,
                             'id': job_id,
                             'name': job_id,
@@ -1380,20 +1391,27 @@ class ProgramRunner:
         # Watchdog: ensure critical queue tasks are still scheduled.
         # APScheduler can silently drop jobs when misfire_grace_time=None and the thread
         # pool is saturated (e.g. task_nzb_health_check consuming 99% of runtime).
-        try:
-            _CRITICAL_QUEUES = {
-                'Scraping': 1,
-                'Adding': 1,
-                'Checking': 30,
-                'Wanted': 30,
-            }
-            _scheduled_job_ids = {job.id for job in self.scheduler.get_jobs()}
-            for _task_name, _interval in _CRITICAL_QUEUES.items():
-                if _task_name not in _scheduled_job_ids and _task_name in self.enabled_tasks:
-                    logging.warning(f'[Heartbeat] Watchdog: {_task_name!r} missing from scheduler — rescheduling')
-                    self._schedule_task(_task_name, _interval)
-        except Exception as _wd_err:
-            logging.debug(f'[Heartbeat] Watchdog error: {_wd_err}')
+        #
+        # Skipped while a reinitialize() is in progress: scheduler.shutdown(wait=True)
+        # blocks the executor's shutdown on this very task finishing, while get_jobs()
+        # below needs the same _jobstores_lock shutdown() already holds — calling it here
+        # during a reinit deadlocks task_heartbeat against reinitialize() forever, which is
+        # exactly what made adding/deleting a content source "take forever".
+        if not getattr(self, '_reinitializing', False):
+            try:
+                _CRITICAL_QUEUES = {
+                    'Scraping': 1,
+                    'Adding': 1,
+                    'Checking': 30,
+                    'Wanted': 30,
+                }
+                _scheduled_job_ids = {job.id for job in self.scheduler.get_jobs()}
+                for _task_name, _interval in _CRITICAL_QUEUES.items():
+                    if _task_name not in _scheduled_job_ids and _task_name in self.enabled_tasks:
+                        logging.warning(f'[Heartbeat] Watchdog: {_task_name!r} missing from scheduler — rescheduling')
+                        self._schedule_task(_task_name, _interval)
+            except Exception as _wd_err:
+                logging.debug(f'[Heartbeat] Watchdog error: {_wd_err}')
 
         # Scraping-queue stuck detector: if the in-memory Scraping queue has been at the
         # same size >= WANTED_THROTTLE_SCRAPING_SIZE (100) for more than 10 minutes without
@@ -1956,11 +1974,7 @@ class ProgramRunner:
             if source_type == 'Overseerr':
                 wanted_content = get_wanted_from_overseerr(versions_from_config)
             elif source_type == 'MDBList':
-                mdblist_urls = data.get('urls', '').split(',')
-                for mdblist_url in mdblist_urls:
-                    mdblist_url = mdblist_url.strip()
-                    if mdblist_url: # Ensure not empty
-                        wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions_from_config))
+                wanted_content = get_wanted_from_mdblist_source(data, versions_from_config)
             elif source_type == 'Trakt Watchlist':
                 try:
                     wanted_content = get_wanted_from_trakt_watchlist(versions_from_config, unblacklist=unblacklist_on_source_run)
@@ -2682,10 +2696,16 @@ class ProgramRunner:
             cpu_monitor_interval = 300.0  # Log CPU usage every 5 minutes
             loop_count = 0
             
-            while self._running:
+            while self._running or getattr(self, '_reinitializing', False):
                 try:
                     # Check scheduler status periodically
                     if not self.scheduler or not self.scheduler.running:
+                         if getattr(self, '_reinitializing', False):
+                             # reinitialize() intentionally shuts the scheduler down
+                             # (and its own __init__ call transiently resets _running)
+                             # before building a new one — this is expected, not a crash.
+                             time.sleep(1.0)
+                             continue
                          logging.error("APScheduler is not running. Stopping program.")
                          self.stop() # Trigger stop if scheduler died
                          break
@@ -4724,6 +4744,16 @@ class ProgramRunner:
                 self.resume_queue()
                 logging.info('[CMSync] Initial full sync complete — queue resumed')
 
+    def task_push_pending_climount_tags(self):
+        """Push tags for media_items rows whose tags changed on the cli_debrid
+        side only — sync_changes_from_climount can't detect these since it only
+        re-fetches entries cli_mount itself has changed."""
+        from usenet.climount_sync import push_pending_tags
+        try:
+            push_pending_tags()
+        except Exception as e:
+            logging.error(f'[CMSync] push_pending_tags task error: {e}', exc_info=True)
+
     def _is_system_idle_for_backup(self):
         """
         Check if the system is idle enough to run a database backup.
@@ -5280,22 +5310,46 @@ class ProgramRunner:
     def reinitialize(self):
         """Force reinitialization of the program runner to pick up new settings"""
         logging.info("Reinitializing ProgramRunner...")
-        # Need to shutdown and restart scheduler carefully
-        with self.scheduler_lock:
-            if self.scheduler and self.scheduler.running:
-                logging.info("Shutting down scheduler for reinitialization...")
-                self.scheduler.shutdown(wait=True)
-                logging.info("Scheduler stopped.")
+        # Tell the run() monitoring loop to tolerate a momentarily-stopped
+        # scheduler during this window, instead of treating it as a crash
+        # and tearing down the whole run loop out from under us.
+        self._reinitializing = True
+        was_running_before_reinit = self._running
+        try:
+            # Need to shutdown and restart scheduler carefully
+            with self.scheduler_lock:
+                if self.scheduler and self.scheduler.running:
+                    logging.info("Shutting down scheduler for reinitialization...")
+                    # wait=False: don't block here until every in-flight job finishes.
+                    # shutdown(wait=True) holds APScheduler's internal _jobstores_lock
+                    # while it waits — and any running task that itself calls back into
+                    # self.scheduler (e.g. task_heartbeat's watchdog, which calls
+                    # scheduler.get_jobs()) needs that same lock, deadlocking forever.
+                    # In-flight jobs aren't killed by wait=False, they just keep running
+                    # to completion on their own threads, detached from this call.
+                    self.scheduler.shutdown(wait=False)
+                    logging.info("Scheduler stopped.")
 
-        self._initialized_runner_attributes = False
-        self.__init__() # Re-runs init, including scheduling initial tasks
+            self._initialized_runner_attributes = False
+            self.__init__() # Re-runs init, including scheduling initial tasks
 
-        # Restart scheduler if it was running before
-        # self.start() will handle starting the scheduler
-        logging.info("ProgramRunner reinitialized successfully. Restarting...")
-        # The restart might need to happen externally depending on how reinit is called
-        # If called internally, we might need to call self.start() here,
-        # but need to be careful about threading/context.
+            # __init__ unconditionally resets _running to False — restore it so
+            # the still-alive run() loop (in the 'was already running' case)
+            # doesn't see _running=False and exit on its next iteration.
+            if was_running_before_reinit:
+                self._running = True
+
+                # __init__ only builds a fresh scheduler object, it doesn't start
+                # it — without this, jobs would be scheduled but never fire.
+                with self.scheduler_lock:
+                    if self.scheduler and not self.scheduler.running:
+                        start_paused = self._is_within_pause_schedule()
+                        self.scheduler.start(paused=start_paused)
+                        logging.info(f"Scheduler restarted after reinitialization. Paused: {start_paused}")
+
+            logging.info("ProgramRunner reinitialized successfully.")
+        finally:
+            self._reinitializing = False
 
     def handle_rate_limit(self):
         """Handle rate limit by pausing relevant jobs for a period."""
@@ -6644,6 +6698,11 @@ class ProgramRunner:
                                                             if not hasattr(_dc, 'rename_nzb'):
                                                                 return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                                             for _a in range(5):
+                                                                # This short loop (5 attempts x 10s = 50s total) isn't long
+                                                                # enough to distinguish "genuinely gone" from "cli_mount
+                                                                # hasn't finished its periodic sync yet" (can take ~10 min
+                                                                # per torrent_processor.py) — so a 404 here is never treated
+                                                                # as final, just run the fixed attempt budget like before.
                                                                 if _dc.rename_nzb(h, name):
                                                                     logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} (collected, attempt {_a+1})')
                                                                     if iid:
@@ -6653,6 +6712,7 @@ class ProgramRunner:
                                                                         except Exception as _db_err:
                                                                             logging.debug(f'[DebridNaming] DB update failed (collected): {_db_err}')
                                                                         _dc.register_cli_ids_for_item(h, iid)
+                                                                        _dc.push_tags_for_item(h, iid)
                                                                     return
                                                                 _t.sleep(10)
                                                             logging.warning(f'[DebridNaming] Could not rename {h!r} after 5 attempts (collected)')
@@ -7226,9 +7286,11 @@ class ProgramRunner:
                 manual_job_instance_id = f"manual_{job_id_base}_{uuid.uuid4()}"
                 
                 # Pass the unique manual_job_instance_id as the first arg (actual_job_id_from_scheduler)
-                # and job_id_base as the second arg (task_name_for_logging) to _run_and_measure_task
-                wrapped_func = functools.partial(self._run_and_measure_task, manual_job_instance_id, job_id_base, target_func, args, kwargs)
-                
+                # and job_id_base as the second arg (task_name_for_logging) to _run_and_measure_task.
+                # Pass the bound method + its args separately (not via functools.partial) — see the
+                # matching comment in _schedule_task for why partials break APScheduler's job store.
+                manual_job_args = (manual_job_instance_id, job_id_base, target_func, args, kwargs)
+
                 # Get timezone safely, with fallback if scheduler is None
                 if self.scheduler and hasattr(self.scheduler, 'timezone'):
                     scheduler_timezone = self.scheduler.timezone
@@ -7260,7 +7322,8 @@ class ProgramRunner:
                     }
                     _manual_executor = 'queue' if job_id_base in _QUEUE_TASKS_MANUAL else 'default'
                     self.scheduler.add_job(
-                        func=wrapped_func,
+                        func=self._run_and_measure_task,
+                        args=manual_job_args,
                         trigger='date',
                         run_date=run_now_date,
                         id=manual_job_instance_id,

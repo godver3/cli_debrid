@@ -1537,8 +1537,18 @@ def create_episode_item(metadata, title, year, version, torrent_id, magnet_link,
 
     if first_aired_str:
         try:
-            # Parse the UTC datetime string (expecting format like 2023-10-26T18:00:00.000Z)
-            first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+            # Parse the UTC datetime string — Trakt sends "2023-10-26T18:00:00.000Z"
+            # (fractional seconds + Z), Scrob sends "2022-04-09T14:00:00" (no
+            # fractional seconds, no Z) — try both instead of assuming one source's
+            # format.
+            for _fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S"):
+                try:
+                    first_aired_utc = datetime.strptime(first_aired_str, _fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                raise ValueError(f"time data {first_aired_str!r} does not match any known first_aired format")
             first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
 
             # Convert UTC to local timezone using the helper

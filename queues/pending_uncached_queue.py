@@ -201,8 +201,21 @@ class PendingUncachedQueue:
                                 _dc3 = get_climount_client()
                                 if not hasattr(_dc3, 'rename_nzb'):
                                     return  # active usenet provider (e.g. nzbdav) has no rename semantics
+                                # cli_mount only registers an entry as queryable-by-hash after its
+                                # own periodic sync (default ~10 min) — a 404 in the first several
+                                # attempts is expected, not proof the entry is gone. Only treat 404
+                                # as final once it's persisted for that long (20 attempts x 30s).
+                                _consecutive_404_3 = 0
                                 for _a3 in range(100):
-                                    if _dc3.rename_nzb(h, name):
+                                    _renamed3, _not_found3 = _dc3.rename_nzb_with_status(h, name)
+                                    if _not_found3:
+                                        _consecutive_404_3 += 1
+                                        if _consecutive_404_3 >= 20:
+                                            logging.warning(f'[DebridNaming] {h!r} not found in cli_mount (404) for {_consecutive_404_3} consecutive attempts — giving up (pending uncached)')
+                                            return
+                                    else:
+                                        _consecutive_404_3 = 0
+                                    if _renamed3:
                                         logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} (pending uncached)')
                                         if item_id:
                                             try:
@@ -211,6 +224,7 @@ class PendingUncachedQueue:
                                             except Exception as _db_err:
                                                 logging.debug(f'[DebridNaming] DB update failed (pending uncached): {_db_err}')
                                             _dc3.register_cli_ids_for_item(h, item_id)
+                                            _dc3.push_tags_for_item(h, item_id)
                                         return
                                     _t.sleep(30)
                                 logging.warning(f'[DebridNaming] Could not rename {h!r} after 100 attempts (pending uncached)')
