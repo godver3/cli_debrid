@@ -86,6 +86,14 @@ def _solve_challenge(url: str, timeout_seconds: int = 30) -> Optional[Dict]:
     # Chrome/Chromium refuses to start as root without --no-sandbox — cli_debrid's
     # Docker container runs as root by default (see Dockerfile PUID/PGID handling).
     launch_args = ['--no-sandbox'] if hasattr(os, 'geteuid') and os.geteuid() == 0 else []
+    # Chrome's crashpad_handler subprocess fails to initialize in this container
+    # environment (no writable crash-database dir / restricted IPC socket),
+    # which kills the whole browser context right after launch ("Target page,
+    # context or browser has been closed", crashpad recvmsg: Connection reset
+    # by peer). Playwright already passes --disable-breakpad by default, but
+    # that alone doesn't stop Chromium from spawning crashpad_handler —
+    # --disable-crash-reporter is the flag that actually suppresses it.
+    launch_args.append('--disable-crash-reporter')
     try:
         with sync_playwright() as p:
             try:
