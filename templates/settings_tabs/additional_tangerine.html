@@ -346,10 +346,11 @@
                 {% if key != 'tab' %}
                 <div class="settings-form-group">
                     <label for="trakt-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                    <input type="{% if value.sensitive %}password{% else %}{{ value.type }}{% endif %}"
+                    <input type="{% if value.sensitive or (key in ['client_id', 'client_secret'] and environment_mode != 'full') %}password{% else %}{{ value.type }}{% endif %}"
                            id="trakt-{{ key }}" name="Trakt.{{ key }}"
                            value="{{ settings.get('Trakt', {}).get(key, '') }}" class="settings-input"
-                           data-section="Trakt" data-key="{{ key }}">
+                           data-section="Trakt" data-key="{{ key }}"
+                           {% if environment_mode != 'full' and key in ['client_id', 'client_secret'] %}readonly disabled{% endif %}>
                     {% if value.description %}
                         <p class="settings-description">{{ value.description }}</p>
                     {% endif %}

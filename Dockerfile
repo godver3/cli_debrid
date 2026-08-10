@@ -40,7 +40,15 @@ RUN pip install --no-cache-dir -r requirements-linux.txt
 # Install Chromium for patchright (Cloudflare-challenge bypass browser, see
 # utilities/cloudflare_bypass.py). OS-level deps are installed explicitly above
 # (not via --with-deps, which fails on this base image — see comment above).
-RUN patchright install chromium
+# Installed to a fixed, UID-independent path instead of the default $HOME-based
+# cache: this RUN executes as root at build time ($HOME=/root), but the
+# entrypoint below runs the app as a separate `appuser` (HOME=/app) whenever a
+# custom PUID/PGID is set, which would otherwise look for the browser at
+# /app/.cache/ms-playwright — a path that was never populated — and fail with
+# "Executable doesn't exist".
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN patchright install chromium && \
+    chmod -R a+rX /ms-playwright
 
 # Copy the current directory contents into the container at /app
 COPY . .

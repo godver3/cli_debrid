@@ -639,7 +639,7 @@ class OverlayManager:
             conn = _get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id FROM media_items WHERE ms_item_id = ? AND type = 'episode'",
+                "SELECT id FROM media_items WHERE ms_item_id = ?",
                 (ms_item_id,)
             )
             sibling_ids = [row[0] for row in cursor.fetchall()]
@@ -647,8 +647,7 @@ class OverlayManager:
                 sibling_ids.append(media_item_id)
 
             cursor.execute(
-                "UPDATE media_items SET ms_item_id = NULL "
-                "WHERE ms_item_id = ? AND type = 'episode'",
+                "UPDATE media_items SET ms_item_id = NULL WHERE ms_item_id = ?",
                 (ms_item_id,)
             )
             cursor.executemany('''
