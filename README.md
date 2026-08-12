@@ -101,10 +101,11 @@ For detailed information on queue processing intervals, upgrading criteria, slee
 
 When paired with a compatible cli_mount, unreadable media detected by mounted
 playback probing is replaced per movie or episode. cli_debrid keeps a durable
-cleanup record and acknowledges the exact old file only after the replacement
-reaches `Collected`; healthy files sharing the old torrent or NZB are preserved.
-Missing-segment and unavailable-provider repairs continue to use their existing
-workflows.
+cleanup record and acknowledges the exact old file only after an NZB replacement
+reaches `Collected`, passes cli_mount's article and mounted playback checks, and
+all exact cleanup operations succeed. Healthy sibling files are preserved, while
+legacy missing-segment, unavailable-provider, and torrent workflows remain
+unchanged.
 
 ## Philosophy
 
