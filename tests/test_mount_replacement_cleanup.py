@@ -94,8 +94,8 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
 
-        with patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')), \
-                patch.object(cleanup, '_log_cleanup_activity'):
+        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '')), \
+                patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')):
             result = cleanup.process_pending_mount_cleanups(item_id=75299)
         self.assertEqual(1, result['completed'])
         conn = self.connect()
@@ -131,8 +131,8 @@ class MountReplacementCleanupTests(unittest.TestCase):
         )
         self.assertTrue(cleanup.queue_mount_replacement_cleanup(target))
 
-        with patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')), \
-                patch.object(cleanup, '_log_cleanup_activity'):
+        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '')), \
+                patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')):
             result = cleanup.process_pending_mount_cleanups(item_id=75300)
         self.assertEqual(1, result['completed'])
 
@@ -145,11 +145,12 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
 
-        with patch.object(cleanup, '_acknowledge', return_value=('retry', 'endpoint unavailable')):
+        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '')), \
+                patch.object(cleanup, '_acknowledge', return_value=('retry', 'endpoint unavailable')):
             result = cleanup.process_pending_mount_cleanups(item_id=75299)
         self.assertEqual(1, result['retried'])
         conn = self.connect()
-        row = conn.execute('SELECT status, attempts, next_attempt_at FROM mount_replacement_cleanups').fetchone()
+        row = conn.execute('SELECT status, attempts, next_attempt_at FROM mount_replacement_sagas').fetchone()
         conn.close()
         self.assertEqual('pending', row['status'])
         self.assertEqual(1, row['attempts'])
@@ -165,8 +166,8 @@ class MountReplacementCleanupTests(unittest.TestCase):
         target = self.target()
         self.assertTrue(cleanup.queue_mount_replacement_cleanup(target))
 
-        with patch.object(cleanup, '_acknowledge', return_value=('blocked', 'stale_target')), \
-                patch.object(cleanup, '_log_cleanup_activity'):
+        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '')), \
+                patch.object(cleanup, '_acknowledge', return_value=('blocked', 'stale_target')):
             result = cleanup.process_pending_mount_cleanups(item_id=75299)
         self.assertEqual(1, result['blocked'])
         self.assertTrue(cleanup.queue_mount_replacement_cleanup(target))
@@ -175,6 +176,122 @@ class MountReplacementCleanupTests(unittest.TestCase):
         row = conn.execute('SELECT status FROM mount_replacement_cleanups').fetchone()
         conn.close()
         self.assertEqual('blocked', row['status'])
+
+    def test_failed_candidate_is_not_acknowledged(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'nzb:first-bad', '', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+
+        with patch.object(cleanup, '_verify_replacement', return_value=('broken', 'media_probe_failed')), \
+                patch.object(cleanup, '_acknowledge') as acknowledge:
+            result = cleanup.process_pending_mount_cleanups(item_id=75299)
+        acknowledge.assert_not_called()
+        self.assertEqual(1, result['probe_failed'])
+        conn = self.connect()
+        saga = conn.execute('SELECT status, candidate_info_hash FROM mount_replacement_sagas').fetchone()
+        target = conn.execute('SELECT status FROM mount_replacement_cleanups').fetchone()
+        conn.close()
+        self.assertEqual('probe_failed', saga['status'])
+        self.assertEqual('first-bad', saga['candidate_info_hash'])
+        self.assertEqual('pending', target['status'])
+
+    def test_second_healthy_candidate_cleans_original_and_failed_candidate(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'nzb:first-bad', '', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+        with patch.object(cleanup, '_verify_replacement', return_value=('broken', 'media_probe_failed')):
+            cleanup.process_pending_mount_cleanups(item_id=75299)
+
+        failed_target = self.target(entry_name='First candidate', file_name='S03E01.bad.mkv',
+                                    info_hash='first-bad', failure_reason='media_probe_failed')
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(failed_target))
+        conn = self.connect()
+        conn.execute("UPDATE media_items SET filled_by_torrent_id='nzb:second-good' WHERE id=75299")
+        conn.commit()
+        conn.close()
+
+        acknowledged = []
+        def acknowledge(row):
+            acknowledged.append(row['old_info_hash'])
+            return 'complete', 'removed'
+
+        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '')), \
+                patch.object(cleanup, '_acknowledge', side_effect=acknowledge):
+            result = cleanup.process_pending_mount_cleanups(item_id=75299)
+        self.assertEqual({'old-id', 'first-bad'}, set(acknowledged))
+        self.assertEqual(2, result['completed'])
+        conn = self.connect()
+        saga = conn.execute('SELECT status, candidate_info_hash FROM mount_replacement_sagas').fetchone()
+        statuses = [r[0] for r in conn.execute('SELECT status FROM mount_replacement_cleanups').fetchall()]
+        conn.close()
+        self.assertEqual('complete', saga['status'])
+        self.assertEqual('second-good', saga['candidate_info_hash'])
+        self.assertEqual(['complete', 'complete'], statuses)
+
+    def test_source_change_during_probe_discards_result(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'nzb:first', '', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+
+        def verify(*_args):
+            conn = self.connect()
+            conn.execute("UPDATE media_items SET filled_by_torrent_id='nzb:second' WHERE id=75299")
+            conn.commit()
+            conn.close()
+            return 'healthy', ''
+
+        with patch.object(cleanup, '_verify_replacement', side_effect=verify), \
+                patch.object(cleanup, '_acknowledge') as acknowledge:
+            result = cleanup.process_pending_mount_cleanups(item_id=75299)
+        acknowledge.assert_not_called()
+        self.assertEqual(1, result['waiting'])
+
+    def test_one_activity_row_is_updated_across_candidates(self):
+        activity_calls = []
+        activity_module = types.ModuleType('database.nzb_repair_activity')
+        activity_module.log_repair_activity = lambda **kwargs: activity_calls.append(('create', kwargs)) or 44
+        activity_module.update_repair_activity = lambda activity_id, **kwargs: activity_calls.append(
+            ('update', activity_id, kwargs)) or True
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'nzb:first-bad', '', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+
+        with patch.dict(sys.modules, {'database.nzb_repair_activity': activity_module}):
+            self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+            with patch.object(cleanup, '_verify_replacement', return_value=('broken', 'media_probe_failed')):
+                cleanup.process_pending_mount_cleanups(item_id=75299)
+            self.assertTrue(cleanup.queue_mount_replacement_cleanup(
+                self.target(entry_name='First candidate', file_name='bad.mkv',
+                            info_hash='first-bad', failure_reason='media_probe_failed')))
+            conn = self.connect()
+            conn.execute("UPDATE media_items SET filled_by_torrent_id='nzb:second-good' WHERE id=75299")
+            conn.commit()
+            conn.close()
+            with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '')), \
+                    patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')):
+                cleanup.process_pending_mount_cleanups(item_id=75299)
+
+        creates = [call for call in activity_calls if call[0] == 'create']
+        updates = [call for call in activity_calls if call[0] == 'update']
+        self.assertEqual(1, len(creates))
+        self.assertTrue(all(call[1] == 44 for call in updates))
+        self.assertIn('replacement_probe_failed', [call[2].get('outcome') for call in updates])
+        self.assertEqual('replaced', updates[-1][2].get('outcome'))
 
 
 if __name__ == '__main__':

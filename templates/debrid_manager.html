@@ -4479,6 +4479,14 @@ function _buildOutcomeTooltip(r) {
             lines.push('Broken file successfully replaced with a new NZB download.');
             if (r.replacement_title) lines.push('New: ' + r.replacement_title);
             break;
+        case 'replacement_pending':
+            lines.push('Candidate collected; waiting for cli_mount read and ffprobe validation.');
+            lines.push('No old mounted files have been removed yet.');
+            break;
+        case 'replacement_probe_failed':
+            lines.push('The collected candidate failed mounted playback validation.');
+            lines.push('Old files remain and another exact replacement may be selected.');
+            break;
         case 'reinserted':
             lines.push('cli_mount link resolver re-triggered for this entry.');
             break;
@@ -4490,14 +4498,15 @@ function _buildOutcomeTooltip(r) {
     return lines.join('\n').replace(/"/g, '&quot;');
 }
 
-function _renderActivityCandidateCell(currentTitle, replacedTitle, nzb_id) {
+function _renderActivityCandidateCell(currentTitle, replacedTitle, nzb_id, outcome) {
     const badge = _renderActivityBadge(nzb_id);
     const current = _esc(currentTitle || '—');
     if (replacedTitle && replacedTitle !== '—') {
         // Show stacked: current (grey) on top, replacement (green) below — upgrade hub style
+        const candidateColor = outcome === 'replaced' ? '#00d4aa' : outcome === 'replacement_probe_failed' ? '#ff7043' : '#ffaa44';
         return `<div style="display:flex;flex-direction:column;gap:3px;min-width:0">
             <div style="font-size:12px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${current}">${current} ${badge}</div>
-            <div style="font-size:12px;color:#00d4aa;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(replacedTitle)}">${_esc(replacedTitle)}</div>
+            <div style="font-size:12px;color:${candidateColor};font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(replacedTitle)}">${_esc(replacedTitle)}</div>
         </div>`;
     }
     return `<div style="font-size:12px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${current}">${current} ${badge}</div>`;
@@ -4523,14 +4532,15 @@ function _usenetRenderActivity(rows, container, pagination) {
 
     rows.forEach((r, idx) => {
         const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
-        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : '#ff4444';
-        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : (r.outcome || '—');
+        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'replacement_pending' ? '#ffaa44' : r.outcome === 'replacement_probe_failed' ? '#ff7043' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : '#ff4444';
+        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'replacement_probe_failed' ? 'Playback validation failed' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : (r.outcome || '—');
         const outcomeTooltip = _buildOutcomeTooltip(r);
         const epSub = r.season_number ? `<br><span style="font-size:11px;color:#888">S${String(r.season_number).padStart(2,'0')}E${String(r.episode_number||0).padStart(2,'0')}</span>` : '';
-        const ts = r.created_at ? new Date(r.created_at + (r.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString() : '—';
+        const activityTime = r.updated_at || r.created_at;
+        const ts = activityTime ? new Date(activityTime + (activityTime.endsWith('Z') ? '' : 'Z')).toLocaleString() : '—';
         const brokenTitle = r.broken_nzb_title || r.broken_nzb_id || '—';
         const replTitle = (r.replacement_title && r.replacement_title !== '—') ? r.replacement_title : null;
-        const candidateCell = _renderActivityCandidateCell(brokenTitle, replTitle, r.broken_nzb_id);
+        const candidateCell = _renderActivityCandidateCell(brokenTitle, replTitle, r.broken_nzb_id, r.outcome);
         html += `<tr style="border-bottom:1px solid var(--border-color,#2a2a2a);background:${bg};">
             <td style="padding:8px 12px;white-space:nowrap;font-family:monospace;font-size:11px;color:var(--text-secondary,#888)">${ts}</td>
             <td style="padding:8px 12px;font-weight:500;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(r.title || '—')}${epSub}</td>
@@ -5168,10 +5178,14 @@ function _debridRenderActivity(rows, container, pagination) {
     rows.forEach((r, idx) => {
         const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
         const outcomeColor = r.outcome === 'replaced' ? '#00d4aa'
+            : r.outcome === 'replacement_pending' ? '#ffaa44'
+            : r.outcome === 'replacement_probe_failed' ? '#ff7043'
             : r.outcome === 'reinserted' ? '#a78bfa'
             : r.outcome === 'not_found'  ? '#ffaa44'
             : '#ff4444';
         const outcomeLabel = r.outcome === 'replaced'   ? 'Replaced'
+            : r.outcome === 'replacement_pending' ? 'Pending verification'
+            : r.outcome === 'replacement_probe_failed' ? 'Playback validation failed'
             : r.outcome === 'reinserted' ? 'Re-inserted'
             : r.outcome === 'not_found'  ? 'Not Found'
             : (r.outcome || '—');
@@ -5179,12 +5193,13 @@ function _debridRenderActivity(rows, container, pagination) {
         const epSub = r.season_number
             ? `<br><span style="font-size:11px;color:#888">S${String(r.season_number).padStart(2,'0')}E${String(r.episode_number||0).padStart(2,'0')}</span>`
             : '';
-        const ts = r.created_at
-            ? new Date(r.created_at + (r.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString()
+        const activityTime = r.updated_at || r.created_at;
+        const ts = activityTime
+            ? new Date(activityTime + (activityTime.endsWith('Z') ? '' : 'Z')).toLocaleString()
             : '—';
         const brokenTitle = r.broken_nzb_title || r.broken_nzb_id || '—';
         const replTitle = (r.replacement_title && r.replacement_title !== '—') ? r.replacement_title : null;
-        const candidateCell = _renderActivityCandidateCell(brokenTitle, replTitle, r.broken_nzb_id);
+        const candidateCell = _renderActivityCandidateCell(brokenTitle, replTitle, r.broken_nzb_id, r.outcome);
         html += `<tr style="border-bottom:1px solid var(--border-color,#2a2a2a);background:${bg};">
             <td style="padding:8px 12px;white-space:nowrap;font-family:monospace;font-size:11px;color:var(--text-secondary,#888)">${ts}</td>
             <td style="padding:8px 12px;font-weight:500;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(r.title || '—')}${epSub}</td>

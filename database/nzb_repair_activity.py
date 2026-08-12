@@ -35,7 +35,8 @@ def create_nzb_repair_activity_table() -> None:
                 repair_attempts      INTEGER DEFAULT 0,
                 last_repair_at       TIMESTAMP,
                 next_repair_at       TIMESTAMP,
-                created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_nzb_repair_created
                 ON nzb_repair_activity (created_at);
@@ -57,6 +58,11 @@ def create_nzb_repair_activity_table() -> None:
             pass
         try:
             conn.execute("ALTER TABLE nzb_repair_activity ADD COLUMN next_repair_at TIMESTAMP")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE nzb_repair_activity ADD COLUMN updated_at TIMESTAMP")
+            conn.execute("UPDATE nzb_repair_activity SET updated_at=created_at WHERE updated_at IS NULL")
         except Exception:
             pass
         conn.commit()
@@ -81,14 +87,14 @@ def log_repair_activity(
     triggered_by: str = 'scheduled',
     repair_attempts: int = 0,
     next_repair_at=None,
-) -> None:
+) -> int:
     """outcome: 'replaced' | 'not_found' | 'no_replacement' | 'submission_failed' |
                 'plex_deleted' | 'error' | 'skipped_backoff' | 'skipped_max_attempts'"""
     try:
         from datetime import datetime as _dt
         now = _dt.utcnow().strftime('%Y-%m-%d %H:%M:%S')
         conn = get_db_connection()
-        conn.execute(
+        cursor = conn.execute(
             """INSERT INTO nzb_repair_activity
                (item_id, title, media_type, season_number, episode_number,
                 broken_nzb_id, broken_nzb_title, replacement_nzb_id, replacement_title,
@@ -99,13 +105,43 @@ def log_repair_activity(
              outcome, triggered_by, repair_attempts, now, next_repair_at),
         )
         conn.commit()
+        activity_id = cursor.lastrowid
         conn.execute(
             f"DELETE FROM nzb_repair_activity WHERE created_at < datetime('now', '-{_PRUNE_DAYS} days')"
         )
         conn.commit()
         conn.close()
+        return activity_id
     except Exception as e:
         logger.debug(f"[NZBRepair] log_repair_activity error: {e}")
+        return None
+
+
+def update_repair_activity(activity_id: int, **changes) -> bool:
+    """Update one durable replacement activity row in-place."""
+    if not activity_id:
+        return False
+    allowed = {
+        'replacement_nzb_id', 'replacement_title', 'outcome', 'repair_attempts',
+        'last_repair_at', 'next_repair_at', 'triggered_by',
+    }
+    values = {key: value for key, value in changes.items() if key in allowed}
+    if not values:
+        return False
+    assignments = ', '.join(f'{key}=?' for key in values)
+    try:
+        conn = get_db_connection()
+        cursor = conn.execute(
+            f"UPDATE nzb_repair_activity SET {assignments}, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            [*values.values(), activity_id],
+        )
+        conn.commit()
+        changed = cursor.rowcount == 1
+        conn.close()
+        return changed
+    except Exception as e:
+        logger.debug(f"[NZBRepair] update_repair_activity error: {e}")
+        return False
 
 
 def get_repair_state(broken_nzb_id: str) -> dict:
@@ -182,7 +218,7 @@ def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None, 
             f"SELECT COUNT(*) FROM nzb_repair_activity {where}", params
         ).fetchone()[0]
         rows = conn.execute(
-            f"SELECT * FROM nzb_repair_activity {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            f"SELECT * FROM nzb_repair_activity {where} ORDER BY COALESCE(updated_at, created_at) DESC LIMIT ? OFFSET ?",
             params + [limit, offset],
         ).fetchall()
         return [dict(r) for r in rows], total

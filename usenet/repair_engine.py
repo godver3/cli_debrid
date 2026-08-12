@@ -1157,6 +1157,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
         'broken_found': 0,
         'matched': 0,
         'replaced': 0,
+        'pending_verification': 0,
         'no_replacement': 0,
         'submission_failed': 0,
         'skipped_backoff': 0,
@@ -1239,6 +1240,16 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             db_items = [i for i in db_items
                         if i.get('state') in ('Collected', 'Checking', 'Upgrading', 'Adding')]
 
+            # Create/attach the durable saga before any replacement decision.
+            # Backoff, no-result, and submission-failure paths then update this
+            # same activity instead of producing separate success-like rows.
+            if playback_cleanup and db_items:
+                from database.mount_replacement_cleanup import queue_mount_replacement_cleanup
+                if not queue_mount_replacement_cleanup(entry):
+                    logger.error(f'[NZBRepair] Could not persist exact replacement saga for {entry_name!r}')
+                    summary['errors'] += 1
+                    continue
+
             if playback_cleanup and db_items:
                 current_id = str(db_items[0].get('filled_by_torrent_id') or '')
                 current_hash = current_id[4:] if current_id.startswith('nzb:') else current_id
@@ -1314,7 +1325,10 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             _failure_reason = entry.get('failure_reason', '')
             # Skip readability check when cli_mount explicitly reports usenet_segment_missing
             # — that is a definitive diagnosis, not a transient server hiccup.
-            _skip_readability = _failure_reason == 'usenet_segment_missing'
+            # cli_mount's playback result is authoritative for exact cleanup
+            # targets: a file may allow a shallow read yet still fail tail I/O
+            # or ffprobe initialization.
+            _skip_readability = playback_cleanup or _failure_reason == 'usenet_segment_missing'
             if not _skip_readability:
                 # Also skip when location_on_disk points to a different version.
                 # Compare the parent folder against entry_name — mismatch means
@@ -1353,6 +1367,10 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                     f'requires manual intervention'
                 )
                 for db_item in db_items:
+                    if playback_cleanup:
+                        from database.mount_replacement_cleanup import update_mount_replacement_activity
+                        update_mount_replacement_activity(db_item.get('id'), repair_attempts=attempts)
+                        continue
                     log_repair_activity(
                         item_id=db_item.get('id'),
                         title=db_item.get('title'),
@@ -1398,6 +1416,13 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                     else:
                         _move_to_wanted(db_item)
                         logger.warning(f'[NZBRepair] No replacement found for {entry_name!r} — moving to Wanted (no file on disk)')
+                    if playback_cleanup:
+                        from database.mount_replacement_cleanup import update_mount_replacement_activity
+                        update_mount_replacement_activity(
+                            db_item.get('id'), repair_attempts=new_attempts,
+                            next_repair_at=next_repair_at,
+                        )
+                        continue
                     log_repair_activity(
                         item_id=db_item.get('id'),
                         title=db_item.get('title'),
@@ -1416,12 +1441,6 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
 
             # --- Step 5: Submit replacement and confirm in queue ---
             best = candidates[0]
-            if playback_cleanup:
-                from database.mount_replacement_cleanup import queue_mount_replacement_cleanup
-                if not queue_mount_replacement_cleanup(entry):
-                    logger.error(f'[NZBRepair] Could not persist exact cleanup target for {entry_name!r}; refusing to submit replacement')
-                    summary['errors'] += 1
-                    continue
             new_job_id, named_title = _submit_and_confirm_replacement(best, rep.get('title', ''), item=rep)
 
             if named_title:
@@ -1436,6 +1455,13 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 logger.warning(f'[NZBRepair] Replacement submission failed for {entry_name!r} — keeping Collected, will retry with backoff')
                 next_repair_at = calculate_next_repair_at(new_attempts)
                 for db_item in db_items:
+                    if playback_cleanup:
+                        from database.mount_replacement_cleanup import update_mount_replacement_activity
+                        update_mount_replacement_activity(
+                            db_item.get('id'),
+                            repair_attempts=new_attempts, next_repair_at=next_repair_at,
+                        )
+                        continue
                     log_repair_activity(
                         item_id=db_item.get('id'),
                         title=db_item.get('title'),
@@ -1476,26 +1502,41 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
 
                 # Step 8: Update DB in-place
                 _update_db_for_repair(db_item, new_job_id, best, candidates[1:])
-
-                log_repair_activity(
-                    item_id=item_id,
-                    title=db_item.get('title'),
-                    media_type=db_item.get('type'),
-                    season_number=db_item.get('season_number'),
-                    episode_number=db_item.get('episode_number'),
-                    broken_nzb_id=info_hash or entry_name,
-                    broken_nzb_title=broken_nzb_title,
-                    replacement_nzb_id=new_job_id,
-                    replacement_title=best.get('title'),
-                    outcome='replaced',
-                    triggered_by=triggered_by,
-                    repair_attempts=new_attempts,
-                )
-                summary['replaced'] += 1
-                logger.info(
-                    f'[NZBRepair] ✓ Repaired item {item_id} ({db_item.get("title")!r}) '
-                    f'→ {best.get("title")!r} (job_id={new_job_id})'
-                )
+                if playback_cleanup:
+                    from database.mount_replacement_cleanup import (
+                        set_mount_replacement_candidate,
+                        update_mount_replacement_activity,
+                    )
+                    set_mount_replacement_candidate(item_id, new_job_id, best.get('title'))
+                    update_mount_replacement_activity(
+                        item_id, 'replacement_pending', replacement_nzb_id=new_job_id,
+                        replacement_title=best.get('title'), repair_attempts=new_attempts,
+                    )
+                    logger.info(
+                        f'[NZBRepair] Replacement candidate for item {item_id} is pending mounted playback verification '
+                        f'(job_id={new_job_id})'
+                    )
+                    summary['pending_verification'] += 1
+                else:
+                    log_repair_activity(
+                        item_id=item_id,
+                        title=db_item.get('title'),
+                        media_type=db_item.get('type'),
+                        season_number=db_item.get('season_number'),
+                        episode_number=db_item.get('episode_number'),
+                        broken_nzb_id=info_hash or entry_name,
+                        broken_nzb_title=broken_nzb_title,
+                        replacement_nzb_id=new_job_id,
+                        replacement_title=best.get('title'),
+                        outcome='replaced',
+                        triggered_by=triggered_by,
+                        repair_attempts=new_attempts,
+                    )
+                    summary['replaced'] += 1
+                    logger.info(
+                        f'[NZBRepair] ✓ Repaired item {item_id} ({db_item.get("title")!r}) '
+                        f'→ {best.get("title")!r} (job_id={new_job_id})'
+                    )
 
         except Exception as e:
             logger.error(f'[NZBRepair] Unhandled error for entry {entry_name!r}: {e}', exc_info=True)
