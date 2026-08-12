@@ -129,6 +129,37 @@ def create_mount_replacement_cleanup_table() -> None:
                 "UPDATE mount_replacement_cleanups SET saga_id=? WHERE cli_debrid_id=? AND status='pending' AND saga_id IS NULL",
                 (saga_id, orphan['cli_debrid_id']),
             )
+        activity_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='nzb_repair_activity'"
+        ).fetchone()
+        if activity_table:
+            reconciled = conn.execute(
+                """UPDATE nzb_repair_activity
+                   SET replacement_nzb_id=(
+                         SELECT s.candidate_info_hash FROM mount_replacement_sagas s
+                         WHERE s.activity_id=nzb_repair_activity.id AND s.status='complete'
+                       ),
+                       replacement_title=COALESCE((
+                         SELECT NULLIF(s.candidate_title, '') FROM mount_replacement_sagas s
+                         WHERE s.activity_id=nzb_repair_activity.id AND s.status='complete'
+                       ), replacement_title),
+                       outcome='replaced',
+                       updated_at=COALESCE((
+                         SELECT s.completed_at FROM mount_replacement_sagas s
+                         WHERE s.activity_id=nzb_repair_activity.id AND s.status='complete'
+                       ), CURRENT_TIMESTAMP)
+                   WHERE outcome='replacement_pending'
+                     AND id IN (
+                       SELECT activity_id FROM mount_replacement_sagas
+                       WHERE status='complete' AND activity_id IS NOT NULL
+                         AND candidate_info_hash IS NOT NULL AND candidate_info_hash!=''
+                     )"""
+            )
+            if reconciled.rowcount:
+                logging.info(
+                    '[MountCleanup] Reconciled %s completed replacement activity row(s)',
+                    reconciled.rowcount,
+                )
         conn.commit()
     finally:
         conn.close()
@@ -515,12 +546,13 @@ def _acknowledge(row) -> tuple:
     return 'blocked', f'{code or response.status_code}: {message}'
 
 
-def _update_activity(activity_id: int, **changes) -> None:
+def _update_activity(activity_id: int, connection=None, **changes) -> bool:
     try:
         from database.nzb_repair_activity import update_repair_activity
-        update_repair_activity(activity_id, **changes)
+        return update_repair_activity(activity_id, connection=connection, **changes)
     except Exception as exc:
-        logging.debug('[MountCleanup] Could not update activity: %s', exc)
+        logging.warning('[MountCleanup] Could not update activity: %s', exc)
+        return False
 
 
 def _process_legacy_cleanups(item_id: int = None) -> dict:
@@ -676,17 +708,18 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
             continue
         conn = get_db_connection()
         try:
-            targets = conn.execute(
-                "SELECT * FROM mount_replacement_cleanups WHERE saga_id=? AND status='pending' ORDER BY id",
+            all_targets = conn.execute(
+                "SELECT * FROM mount_replacement_cleanups WHERE saga_id=? ORDER BY id",
                 (saga['id'],),
             ).fetchall()
         finally:
             conn.close()
-        if not targets:
+        if not all_targets:
             result['waiting'] += 1
             continue
+        targets = [row for row in all_targets if row['status'] == 'pending']
         current_hash = _current_source_hash(saga_dict, (saga['protocol'] or '').lower())
-        old_hashes = {(row['old_info_hash'] or '').lower() for row in targets}
+        old_hashes = {(row['old_info_hash'] or '').lower() for row in all_targets}
         if not current_hash or current_hash.lower() in old_hashes:
             result['waiting'] += 1
             continue
@@ -766,7 +799,10 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
         all_complete = _cleanup_failed_submission_jobs(saga['id'])
         if not all_complete:
             result['retried'] += 1
-        terminal_failure = None
+        blocked_target = next((row for row in all_targets if row['status'] == 'blocked'), None)
+        terminal_failure = blocked_target['last_error'] if blocked_target else None
+        if terminal_failure:
+            all_complete = False
         for target in targets:
             ack_status, ack_message = _acknowledge(target)
             update_conn = get_db_connection()
@@ -804,7 +840,10 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
                     "UPDATE mount_replacement_sagas SET status='blocked', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                     (terminal_failure[:1000], saga['id']),
                 )
-                _update_activity(saga['activity_id'], outcome='replacement_cleanup_stale')
+                if saga['activity_id'] and not _update_activity(
+                        saga['activity_id'], connection=finish_conn,
+                        outcome='replacement_cleanup_stale'):
+                    raise RuntimeError('linked replacement activity could not be finalized')
             elif all_complete:
                 final_title = (current_item.get('filled_by_title') or current_item.get('filled_by_file')
                                or saga['candidate_title'] or current_item.get('title'))
@@ -814,12 +853,23 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
                               next_attempt_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                     (current_hash, final_title, saga['id']),
                 )
-                _update_activity(saga['activity_id'], replacement_nzb_id=current_hash,
-                                 replacement_title=final_title, outcome='replaced')
+                if saga['activity_id'] and not _update_activity(
+                        saga['activity_id'], connection=finish_conn,
+                        replacement_nzb_id=current_hash,
+                        replacement_title=final_title, outcome='replaced'):
+                    raise RuntimeError('linked replacement activity could not be finalized')
                 refresh_item = current_item
             else:
                 _schedule_saga_retry(finish_conn, saga, 'one or more exact acknowledgements are pending')
             finish_conn.commit()
+        except Exception as exc:
+            finish_conn.rollback()
+            refresh_item = None
+            result['retried'] += 1
+            logging.warning(
+                '[MountCleanup] Replacement finalization rolled back for saga %s: %s',
+                saga['id'], exc,
+            )
         finally:
             finish_conn.close()
         if refresh_item is not None:

@@ -23,7 +23,17 @@ def _load_cleanup_module():
     return module
 
 
+def _load_activity_module():
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'database', 'nzb_repair_activity.py')
+    spec = importlib.util.spec_from_file_location('nzb_activity_under_test', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 cleanup = _load_cleanup_module()
+activity = _load_activity_module()
 
 
 class MountReplacementCleanupTests(unittest.TestCase):
@@ -124,6 +134,87 @@ class MountReplacementCleanupTests(unittest.TestCase):
         self.assertIn('saga_id', columns)
         self.assertIsNotNone(row['saga_id'])
         self.assertIn('idx_mount_cleanup_saga', indexes)
+
+    def test_startup_reconciles_only_completed_saga_pending_activity(self):
+        conn = self.connect()
+        conn.execute("""CREATE TABLE nzb_repair_activity (
+            id INTEGER PRIMARY KEY, replacement_nzb_id TEXT,
+            replacement_title TEXT, outcome TEXT, updated_at TIMESTAMP
+        )""")
+        conn.executemany(
+            "INSERT INTO nzb_repair_activity (id, outcome) VALUES (?, ?)",
+            [(1, 'replacement_pending'), (2, 'replaced'),
+             (3, 'replacement_pending'), (4, 'replacement_pending'),
+             (5, 'replacement_pending')],
+        )
+        conn.executemany(
+            """INSERT INTO mount_replacement_sagas
+               (cli_debrid_id, protocol, status, activity_id,
+                candidate_info_hash, candidate_title, completed_at)
+               VALUES (?, 'nzb', ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+            [
+                (1, 'complete', 1, 'working-id', 'Working.Release'),
+                (2, 'complete', 2, 'historical-id', 'Historical.Release'),
+                (3, 'pending', 3, 'pending-id', 'Pending.Release'),
+                (5, 'complete', 5, None, 'Missing.Hash'),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        cleanup.create_mount_replacement_cleanup_table()
+
+        conn = self.connect()
+        rows = {
+            row['id']: dict(row) for row in conn.execute(
+                'SELECT * FROM nzb_repair_activity ORDER BY id'
+            ).fetchall()
+        }
+        conn.close()
+        self.assertEqual('replaced', rows[1]['outcome'])
+        self.assertEqual('working-id', rows[1]['replacement_nzb_id'])
+        self.assertEqual('Working.Release', rows[1]['replacement_title'])
+        self.assertEqual('replaced', rows[2]['outcome'])
+        self.assertIsNone(rows[2]['replacement_nzb_id'])
+        self.assertEqual('replacement_pending', rows[3]['outcome'])
+        self.assertEqual('replacement_pending', rows[4]['outcome'])
+        self.assertEqual('replacement_pending', rows[5]['outcome'])
+
+    def test_activity_update_can_join_callers_transaction(self):
+        conn = self.connect()
+        conn.execute("""CREATE TABLE nzb_repair_activity (
+            id INTEGER PRIMARY KEY, replacement_nzb_id TEXT,
+            replacement_title TEXT, outcome TEXT, repair_attempts INTEGER,
+            last_repair_at TIMESTAMP, next_repair_at TIMESTAMP,
+            triggered_by TEXT, updated_at TIMESTAMP
+        )""")
+        conn.execute(
+            "INSERT INTO nzb_repair_activity (id, outcome) VALUES (44, 'replacement_pending')"
+        )
+        conn.commit()
+
+        self.assertTrue(activity.update_repair_activity(
+            44, connection=conn, replacement_nzb_id='working-id',
+            replacement_title='Working.Release', outcome='replaced',
+        ))
+        observer = self.connect()
+        self.assertEqual(
+            'replacement_pending',
+            observer.execute(
+                'SELECT outcome FROM nzb_repair_activity WHERE id=44'
+            ).fetchone()['outcome'],
+        )
+        observer.close()
+        conn.commit()
+        conn.close()
+        observer = self.connect()
+        row = observer.execute(
+            'SELECT * FROM nzb_repair_activity WHERE id=44'
+        ).fetchone()
+        observer.close()
+        self.assertEqual('replaced', row['outcome'])
+        self.assertEqual('working-id', row['replacement_nzb_id'])
+        self.assertEqual('Working.Release', row['replacement_title'])
 
     def test_collected_replacement_acknowledges_and_completes(self):
         conn = self.connect()
@@ -343,6 +434,46 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertEqual('pending', target['status'])
         self.assertEqual('pending', saga['status'])
+
+    def test_activity_failure_rolls_back_finalization_and_retries_without_recleanup(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'nzb:new-id', '', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+        conn = self.connect()
+        conn.execute('UPDATE mount_replacement_sagas SET activity_id=44')
+        conn.commit()
+        conn.close()
+
+        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+                patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')) as acknowledge, \
+                patch.object(cleanup, '_update_activity', return_value=False), \
+                patch.object(cleanup, '_refresh_verified_plex_item') as refresh:
+            first = cleanup.process_pending_mount_cleanups(item_id=75299)
+        self.assertEqual(1, acknowledge.call_count)
+        self.assertEqual(1, first['retried'])
+        refresh.assert_not_called()
+        conn = self.connect()
+        saga = conn.execute('SELECT status FROM mount_replacement_sagas').fetchone()
+        target = conn.execute('SELECT status FROM mount_replacement_cleanups').fetchone()
+        conn.close()
+        self.assertEqual('pending', saga['status'])
+        self.assertEqual('complete', target['status'])
+
+        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+                patch.object(cleanup, '_acknowledge') as acknowledge, \
+                patch.object(cleanup, '_update_activity', return_value=True), \
+                patch.object(cleanup, '_refresh_verified_plex_item') as refresh:
+            cleanup.process_pending_mount_cleanups(item_id=75299)
+        acknowledge.assert_not_called()
+        refresh.assert_called_once()
+        conn = self.connect()
+        saga = conn.execute('SELECT status FROM mount_replacement_sagas').fetchone()
+        conn.close()
+        self.assertEqual('complete', saga['status'])
 
     def test_source_change_during_probe_discards_result(self):
         conn = self.connect()

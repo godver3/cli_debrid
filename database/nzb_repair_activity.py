@@ -117,8 +117,8 @@ def log_repair_activity(
         return None
 
 
-def update_repair_activity(activity_id: int, **changes) -> bool:
-    """Update one durable replacement activity row in-place."""
+def update_repair_activity(activity_id: int, connection=None, **changes) -> bool:
+    """Update one durable replacement activity row, optionally in a caller transaction."""
     if not activity_id:
         return False
     allowed = {
@@ -129,19 +129,23 @@ def update_repair_activity(activity_id: int, **changes) -> bool:
     if not values:
         return False
     assignments = ', '.join(f'{key}=?' for key in values)
+    owns_connection = connection is None
+    conn = connection or get_db_connection()
     try:
-        conn = get_db_connection()
         cursor = conn.execute(
             f"UPDATE nzb_repair_activity SET {assignments}, updated_at=CURRENT_TIMESTAMP WHERE id=?",
             [*values.values(), activity_id],
         )
-        conn.commit()
+        if owns_connection:
+            conn.commit()
         changed = cursor.rowcount == 1
-        conn.close()
         return changed
     except Exception as e:
-        logger.debug(f"[NZBRepair] update_repair_activity error: {e}")
+        logger.warning(f"[NZBRepair] update_repair_activity error: {e}")
         return False
+    finally:
+        if owns_connection:
+            conn.close()
 
 
 def get_repair_state(broken_nzb_id: str) -> dict:
