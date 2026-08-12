@@ -8,10 +8,12 @@ from database.core import get_db_connection
 
 
 PLAYBACK_CLEANUP_REASONS = frozenset({
-    'mount_read_error',
     'media_probe_failed',
     'media_no_playable_stream',
 })
+# Older cli_mount builds persisted this reason as broken. Ignore it when
+# starting new repairs, while existing durable sagas remain able to finish.
+RETIRED_PLAYBACK_REASONS = frozenset({'mount_read_error'})
 NZB_INTERMEDIATE_REASONS = PLAYBACK_CLEANUP_REASONS | {'usenet_segment_missing'}
 
 _RETRY_SECONDS = (60, 300, 1800, 7200, 86400)
@@ -174,6 +176,8 @@ def split_playback_cleanup_targets(entries: list, protocol: str = '') -> list:
         ineligible = []
         for broken_file in broken_files:
             reason = broken_file.get('reason') or ''
+            if reason in RETIRED_PLAYBACK_REASONS:
+                continue
             item_id = int(broken_file.get('cli_debrid_id') or 0)
             protected_segment = reason == 'usenet_segment_missing' and _has_active_nzb_saga(item_id)
             (eligible if reason in PLAYBACK_CLEANUP_REASONS or protected_segment else ineligible).append(broken_file)
@@ -190,12 +194,12 @@ def split_playback_cleanup_targets(entries: list, protocol: str = '') -> list:
             })
             if not protocol or (target.get('protocol') or '').lower() == protocol.lower():
                 expanded.append(target)
-        if ineligible or not eligible:
+        if ineligible or (not eligible and not broken_files):
             legacy = dict(entry)
-            if eligible:
+            if broken_files:
                 legacy['broken_files'] = ineligible
-                if ineligible:
-                    legacy['failure_reason'] = ineligible[0].get('reason') or legacy.get('failure_reason', '')
+            if ineligible:
+                legacy['failure_reason'] = ineligible[0].get('reason') or legacy.get('failure_reason', '')
             expanded.append(legacy)
     return expanded
 

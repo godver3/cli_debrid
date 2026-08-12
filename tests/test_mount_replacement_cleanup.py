@@ -70,7 +70,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
             'file_name': 'S03E01.mkv',
             'info_hash': 'old-id',
             'cli_debrid_id': 75299,
-            'failure_reason': 'mount_read_error',
+            'failure_reason': 'media_probe_failed',
             'protocol': 'nzb',
             '_playback_cleanup': True,
         }
@@ -84,16 +84,21 @@ class MountReplacementCleanupTests(unittest.TestCase):
                 {'entry_name': 'pack', 'file_name': 'E01.mkv', 'info_hash': 'a',
                  'cli_debrid_id': 1, 'reason': 'mount_read_error'},
                 {'entry_name': 'pack', 'file_name': 'E02.mkv', 'info_hash': 'a',
-                 'cli_debrid_id': 2, 'reason': 'usenet_segment_missing'},
+                 'cli_debrid_id': 2, 'reason': 'media_probe_failed'},
+                {'entry_name': 'pack', 'file_name': 'E03.mkv', 'info_hash': 'a',
+                 'cli_debrid_id': 3, 'reason': 'usenet_segment_missing'},
             ],
         }]
         result = cleanup.split_playback_cleanup_targets(entries, protocol='nzb')
         self.assertEqual(2, len(result))
         exact = next(item for item in result if item.get('_playback_cleanup'))
         legacy = next(item for item in result if not item.get('_playback_cleanup'))
-        self.assertEqual(1, exact['cli_debrid_id'])
-        self.assertEqual('mount_read_error', exact['failure_reason'])
+        self.assertEqual(2, exact['cli_debrid_id'])
+        self.assertEqual('media_probe_failed', exact['failure_reason'])
         self.assertEqual('usenet_segment_missing', legacy['broken_files'][0]['reason'])
+        self.assertNotIn('mount_read_error', {
+            item.get('failure_reason') for item in result
+        })
 
     def test_migrates_legacy_cleanup_table_before_creating_saga_index(self):
         conn = self.connect()
