@@ -428,6 +428,16 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                 except Exception as e:
                     logging.error(f"Failed to run replace cleanup after collect: {str(e)}")
 
+            # A playback-probe repair keeps the old cli_mount file until the
+            # exact replacement is actually Collected. This call is durable and
+            # idempotent; transient failures remain queued for a later cycle.
+            if state == 'Collected':
+                try:
+                    from database.mount_replacement_cleanup import process_pending_mount_cleanups
+                    process_pending_mount_cleanups(item_id=item_id)
+                except Exception as e:
+                    logging.error(f"Failed to acknowledge collected mount replacement: {str(e)}")
+
             # Remove from Plex Watchlist if the setting is enabled and the item
             # came from a My Plex Watchlist or Other Plex Watchlist source.
             if state == 'Collected':

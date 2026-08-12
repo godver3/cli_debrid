@@ -99,6 +99,13 @@ Provides various debugging tools for advanced users — see [Debug Functions](ht
 
 For detailed information on queue processing intervals, upgrading criteria, sleep/wake mechanics, blacklisting, multi-pack processing and webhook support, see the **[Queue Operations](https://godver3.github.io/cli_docs/features/queues/)** documentation.
 
+When paired with a compatible cli_mount, unreadable media detected by mounted
+playback probing is replaced per movie or episode. cli_debrid keeps a durable
+cleanup record and acknowledges the exact old file only after the replacement
+reaches `Collected`; healthy files sharing the old torrent or NZB are preserved.
+Missing-segment and unavailable-provider repairs continue to use their existing
+workflows.
+
 ## Philosophy
 
 ### Database and "I Know What I Got"

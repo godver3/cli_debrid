@@ -1165,7 +1165,17 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
         'errors': 0,
     }
 
-    broken_entries = fetch_broken_items()
+    try:
+        from database.mount_replacement_cleanup import (
+            process_pending_mount_cleanups,
+            split_playback_cleanup_targets,
+        )
+        process_pending_mount_cleanups()
+    except Exception as cleanup_err:
+        logger.warning(f'[NZBRepair] Pending mount cleanup reconciliation failed: {cleanup_err}')
+        split_playback_cleanup_targets = lambda entries, protocol='': entries
+
+    broken_entries = split_playback_cleanup_targets(fetch_broken_items(), protocol='nzb')
     summary['broken_found'] = len(broken_entries)
 
     if not broken_entries:
@@ -1178,6 +1188,13 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
         entry_name = _entry_name(entry)
         info_hash = entry.get('info_hash') or entry.get('hash') or ''
         nzb_url = entry.get('nzb_url') or entry.get('url') or ''
+        playback_cleanup = bool(entry.get('_playback_cleanup'))
+        cli_debrid_id = int(entry.get('cli_debrid_id') or 0)
+
+        if playback_cleanup and (not info_hash or not entry.get('file_name') or cli_debrid_id <= 0):
+            logger.error(f'[NZBRepair] Exact playback repair target is incomplete for {entry_name!r}; leaving it broken')
+            summary['errors'] += 1
+            continue
 
         # Resolve job UUID from provider if not in health response
         if not info_hash and entry_name:
@@ -1190,13 +1207,18 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
         try:
             # --- Step 1: Match to CLI DB ---
             db_items = []
-            if info_hash:
+            if playback_cleanup:
+                from database.mount_replacement_cleanup import get_media_item_for_cleanup
+                single = get_media_item_for_cleanup(cli_debrid_id)
+                if single:
+                    db_items = [single]
+            elif info_hash:
                 single = _find_db_item_by_info_hash(info_hash)
                 if single:
                     db_items = [single]
 
             # Fuzzy fallback only when hash is not authoritative (nzbdav sets hash_is_authoritative)
-            if not db_items and entry_name and not entry.get('hash_is_authoritative'):
+            if not playback_cleanup and not db_items and entry_name and not entry.get('hash_is_authoritative'):
                 db_items = _find_db_items_by_entry_name(entry_name)
 
             if db_items is AMBIGUOUS:
@@ -1217,11 +1239,24 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             db_items = [i for i in db_items
                         if i.get('state') in ('Collected', 'Checking', 'Upgrading', 'Adding')]
 
+            if playback_cleanup and db_items:
+                current_id = str(db_items[0].get('filled_by_torrent_id') or '')
+                current_hash = current_id[4:] if current_id.startswith('nzb:') else current_id
+                if current_hash and current_hash != info_hash:
+                    from database.mount_replacement_cleanup import (
+                        process_pending_mount_cleanups,
+                        queue_mount_replacement_cleanup,
+                    )
+                    queue_mount_replacement_cleanup(entry)
+                    process_pending_mount_cleanups(item_id=cli_debrid_id)
+                    logger.info(f'[NZBRepair] Item {cli_debrid_id} already points to a replacement; queued exact old-file cleanup only')
+                    continue
+
             # For fuzzy-matched Collected items, skip any whose current filled_by_torrent_id
             # does NOT match the broken entry's job ID. This means the item was already
             # successfully re-collected under a different NZB — the stale debrid_folder_name
             # just happens to match the broken entry name.
-            if info_hash and db_items:
+            if not playback_cleanup and info_hash and db_items:
                 def _matches_broken(item):
                     if item.get('state') != 'Collected':
                         return True
@@ -1239,7 +1274,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 # Only attempt provider delete if we have a hash — name-search deletes
                 # are slow (one API call per orphan) and orphans with no hash are usually
                 # already gone from the provider queue.
-                if info_hash:
+                if info_hash and not playback_cleanup:
                     logger.warning(f'[NZBRepair] No repairable DB items for {entry_name!r} — orphan, deleting from provider')
                     _delete_from_provider(info_hash, entry_name)
                 else:
@@ -1381,6 +1416,12 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
 
             # --- Step 5: Submit replacement and confirm in queue ---
             best = candidates[0]
+            if playback_cleanup:
+                from database.mount_replacement_cleanup import queue_mount_replacement_cleanup
+                if not queue_mount_replacement_cleanup(entry):
+                    logger.error(f'[NZBRepair] Could not persist exact cleanup target for {entry_name!r}; refusing to submit replacement')
+                    summary['errors'] += 1
+                    continue
             new_job_id, named_title = _submit_and_confirm_replacement(best, rep.get('title', ''), item=rep)
 
             if named_title:
@@ -1419,10 +1460,13 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
 
             plex_results = _bulk_delete_from_plex(db_items)
 
-            # Step 7: Delete from provider (once, after Plex bulk delete)
-            provider_deleted = _delete_from_provider(info_hash, entry_name)
-            if not provider_deleted:
-                logger.warning(f'[NZBRepair] Provider delete failed for {entry_name!r} — continuing anyway')
+            # Playback-probe failures keep the exact old mounted file until the
+            # replacement reaches Collected. Legacy article/provider failures
+            # retain their existing entry-oriented deletion behavior.
+            if not playback_cleanup:
+                provider_deleted = _delete_from_provider(info_hash, entry_name)
+                if not provider_deleted:
+                    logger.warning(f'[NZBRepair] Provider delete failed for {entry_name!r} — continuing anyway')
 
             for db_item in db_items:
                 item_id = db_item['id']

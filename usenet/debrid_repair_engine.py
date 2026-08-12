@@ -754,7 +754,8 @@ def reinsert_entry(entry_name: str, info_hash: str) -> dict:
 # Replace entry (scrape + submit + delete broken + reset DB)
 # ---------------------------------------------------------------------------
 
-def replace_entry(entry_name: str, info_hash: str, version_override: str = None) -> dict:
+def replace_entry(entry_name: str, info_hash: str, version_override: str = None,
+                  cleanup_target: dict = None) -> dict:
     """
     Replace a broken torrent entry by calling CLI's existing rescrape_item endpoint.
     This handles: delete from Plex, delete from cli_mount, reset to Wanted, re-scrape.
@@ -763,7 +764,12 @@ def replace_entry(entry_name: str, info_hash: str, version_override: str = None)
     try:
         from database.nzb_repair_activity import log_repair_activity
 
-        db_items = _find_db_items_by_entry_name(entry_name, info_hash)
+        if cleanup_target:
+            from database.mount_replacement_cleanup import get_media_item_for_cleanup
+            exact_item = get_media_item_for_cleanup(int(cleanup_target.get('cli_debrid_id') or 0))
+            db_items = [exact_item] if exact_item else []
+        else:
+            db_items = _find_db_items_by_entry_name(entry_name, info_hash)
         if db_items is AMBIGUOUS:
             logger.warning(f'[DebridRepair] replace_entry {entry_name!r}: ambiguous multi-version match, skipping without deleting')
             log_repair_activity(
@@ -776,8 +782,10 @@ def replace_entry(entry_name: str, info_hash: str, version_override: str = None)
         db_items = [i for i in db_items if i.get('state') in ('Collected', 'Checking', 'Upgrading', 'Adding')]
 
         if not db_items:
-            # No DB item — just delete from cli_mount
-            _delete_from_climount(info_hash, entry_name)
+            # Exact playback targets are never allowed to fall back to an
+            # entry-wide delete when their registered item ID is missing.
+            if not cleanup_target:
+                _delete_from_climount(info_hash, entry_name)
             log_repair_activity(
                 broken_nzb_id=f'debrid:{info_hash}',
                 broken_nzb_title=entry_name,
@@ -788,6 +796,21 @@ def replace_entry(entry_name: str, info_hash: str, version_override: str = None)
 
         db_item = db_items[0]
         item_id = db_item.get('id')
+
+        if cleanup_target:
+            from database.mount_replacement_cleanup import (
+                media_item_source_hash,
+                process_pending_mount_cleanups,
+                queue_mount_replacement_cleanup,
+            )
+            current_hash = media_item_source_hash(db_item, 'torrent')
+            if current_hash and current_hash.lower() != info_hash.lower():
+                queue_mount_replacement_cleanup(cleanup_target)
+                process_pending_mount_cleanups(item_id=item_id)
+                return {'outcome': 'cleanup_pending', 'success': True,
+                        'message': 'Replacement already selected; exact old-file cleanup queued'}
+            if not queue_mount_replacement_cleanup(cleanup_target):
+                return {'outcome': 'error', 'message': 'Could not persist exact mount cleanup target'}
 
         # Orphan check — DB item already collected via a different provider
         if _is_orphan_entry(db_item, info_hash):
@@ -807,9 +830,12 @@ def replace_entry(entry_name: str, info_hash: str, version_override: str = None)
             )
             return {'outcome': 'plex_deleted', 'message': 'Orphan entry removed from cli_mount'}
 
-        # Delete from Plex and cli_mount first
+        # Playback-probe failures keep the exact old cli_mount file until the
+        # replacement reaches Collected. All legacy repair reasons retain the
+        # existing entry-oriented cli_mount deletion behavior.
         _delete_from_plex(db_item)
-        _delete_from_climount(info_hash, entry_name)
+        if not cleanup_target:
+            _delete_from_climount(info_hash, entry_name)
 
         # Move to Wanted using the existing move_item_to_wanted function
         # This resets all filled_by fields and triggers re-scrape
@@ -868,7 +894,16 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
             'errors': 0,
         }
 
-        broken = fetch_broken_items()
+        try:
+            from database.mount_replacement_cleanup import (
+                process_pending_mount_cleanups,
+                split_playback_cleanup_targets,
+            )
+            process_pending_mount_cleanups()
+            broken = split_playback_cleanup_targets(fetch_broken_items(), protocol='torrent')
+        except Exception as cleanup_err:
+            logger.warning(f'[DebridRepair] Pending mount cleanup reconciliation failed: {cleanup_err}')
+            broken = fetch_broken_items()
         summary['broken_found'] = len(broken)
 
         if not broken:
@@ -882,7 +917,13 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
             broken_files = entry.get('broken_files') or []
             info_hash = (entry.get('info_hash') or entry.get('hash') or
                          (broken_files[0].get('info_hash') if broken_files else '') or '')
-            failure_reason = entry.get('failure_reason') or (broken_files[0].get('failure_reason') if broken_files else '') or ''
+            failure_reason = entry.get('failure_reason') or (broken_files[0].get('reason') if broken_files else '') or ''
+            playback_cleanup = bool(entry.get('_playback_cleanup'))
+
+            if playback_cleanup and (not info_hash or not entry.get('file_name') or int(entry.get('cli_debrid_id') or 0) <= 0):
+                logger.error(f'[DebridRepair] Exact playback repair target is incomplete for {entry_name!r}; leaving it broken')
+                summary['errors'] += 1
+                continue
 
             if not entry_name:
                 logger.debug('[DebridRepair] Skipping entry with no name')
@@ -896,9 +937,12 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
                     else:
                         summary['errors'] += 1
                 else:
-                    result = replace_entry(entry_name, info_hash, version_override=version_override)
+                    result = replace_entry(
+                        entry_name, info_hash, version_override=version_override,
+                        cleanup_target=entry if playback_cleanup else None,
+                    )
                     outcome = result.get('outcome', 'error')
-                    if outcome == 'replaced':
+                    if outcome in ('replaced', 'cleanup_pending'):
                         summary['replaced'] += 1
                     elif outcome == 'not_found':
                         summary['not_found'] += 1
