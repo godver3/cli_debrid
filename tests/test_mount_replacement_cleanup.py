@@ -85,6 +85,46 @@ class MountReplacementCleanupTests(unittest.TestCase):
         self.assertEqual('mount_read_error', exact['failure_reason'])
         self.assertEqual('usenet_segment_missing', legacy['broken_files'][0]['reason'])
 
+    def test_migrates_legacy_cleanup_table_before_creating_saga_index(self):
+        conn = self.connect()
+        conn.execute('DROP TABLE mount_replacement_cleanups')
+        conn.execute('DROP TABLE mount_replacement_sagas')
+        conn.execute("""CREATE TABLE mount_replacement_cleanups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cli_debrid_id INTEGER NOT NULL,
+            protocol TEXT NOT NULL,
+            entry_name TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            old_info_hash TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at TIMESTAMP,
+            last_error TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            UNIQUE(cli_debrid_id, old_info_hash, file_name)
+        )""")
+        conn.execute(
+            """INSERT INTO mount_replacement_cleanups
+               (cli_debrid_id, protocol, entry_name, file_name, old_info_hash, reason)
+               VALUES (75299, 'nzb', 'Legacy Show', 'S01E01.mkv', 'old-id', 'mount_read_error')"""
+        )
+        conn.commit()
+        conn.close()
+
+        cleanup.create_mount_replacement_cleanup_table()
+
+        conn = self.connect()
+        columns = {row['name'] for row in conn.execute('PRAGMA table_info(mount_replacement_cleanups)')}
+        row = conn.execute('SELECT saga_id FROM mount_replacement_cleanups').fetchone()
+        indexes = {row['name'] for row in conn.execute("PRAGMA index_list('mount_replacement_cleanups')")}
+        conn.close()
+        self.assertIn('saga_id', columns)
+        self.assertIsNotNone(row['saga_id'])
+        self.assertIn('idx_mount_cleanup_saga', indexes)
+
     def test_collected_replacement_acknowledges_and_completes(self):
         conn = self.connect()
         conn.execute(

@@ -68,10 +68,14 @@ def create_mount_replacement_cleanup_table() -> None:
                 ON mount_replacement_cleanups(status, next_attempt_at);
             CREATE INDEX IF NOT EXISTS idx_mount_cleanup_item
                 ON mount_replacement_cleanups(cli_debrid_id);
-            CREATE INDEX IF NOT EXISTS idx_mount_cleanup_saga
-                ON mount_replacement_cleanups(saga_id);
         """)
+        # Existing installations have mount_replacement_cleanups without this
+        # column. Add it before creating any index that references it.
         _add_column(conn, 'mount_replacement_cleanups', 'saga_id INTEGER')
+        conn.execute(
+            'CREATE INDEX IF NOT EXISTS idx_mount_cleanup_saga '
+            'ON mount_replacement_cleanups(saga_id)'
+        )
         # Adopt pending rows created by the pre-verification cleanup handoff.
         # Completed/blocked history is left untouched.
         orphan_items = conn.execute(
