@@ -17,6 +17,7 @@ import sys
 import os
 import types
 import tempfile
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -128,6 +129,91 @@ class TestVerifyFileReadable(unittest.TestCase):
         self._stub_probe([False])
         re_mod._verify_file_readable(self.tmp.name, attempts=1)
         self.assertEqual(self.offsets, [None])  # start-read (no offset)
+
+
+class TestNZBPlaybackReplacementSelection(unittest.TestCase):
+    def _selection_modules(self, provisional=None):
+        attempts = []
+        cleanup_module = types.ModuleType('database.mount_replacement_cleanup')
+        cleanup_module.get_provisional_mount_attempt = lambda _item_id: provisional
+        cleanup_module.record_mount_replacement_attempt = (
+            lambda item_id, **values: attempts.append((item_id, values)) or True
+        )
+        usenet_module = types.ModuleType('usenet')
+        usenet_module.get_usenet_client = lambda: Mock()
+        return attempts, cleanup_module, usenet_module
+
+    def test_terminal_candidate_is_hidden_and_next_candidate_is_used(self):
+        attempts, cleanup_module, usenet_module = self._selection_modules()
+        candidates = [
+            {'title': 'first.failed', 'nzb_url': 'https://indexer/first'},
+            {'title': 'second.works', 'nzb_url': 'https://indexer/second'},
+        ]
+        submissions = [
+            ('failed-uuid', 'first.failed', 'failed'),
+            ('working-uuid', 'second.works', 'confirmed'),
+        ]
+        with patch.dict(sys.modules, {
+                'database.mount_replacement_cleanup': cleanup_module,
+                'usenet': usenet_module,
+        }), patch.object(re_mod, '_submit_and_confirm_replacement', side_effect=submissions), \
+                patch.object(re_mod, '_blacklist_broken_nzb') as blacklist:
+            selected, job_id, state = re_mod._select_confirmed_replacement(
+                candidates, 'Show', {'id': 75299},
+            )
+
+        self.assertEqual('working-uuid', job_id)
+        self.assertEqual('confirmed', state)
+        self.assertEqual('second.works', selected['title'])
+        self.assertEqual('failed_submission', attempts[0][1]['status'])
+        self.assertEqual('failed-uuid', attempts[0][1]['job_id'])
+        blacklist.assert_called_once()
+
+    def test_terminal_add_response_returns_uuid_as_failed_without_polling(self):
+        client = Mock()
+        client.add_nzb.return_value = 'failed-uuid'
+        client.last_submission_state = 'failed'
+        usenet_module = types.ModuleType('usenet')
+        usenet_module.reset_usenet_client = lambda: None
+        usenet_module.get_usenet_client = lambda: client
+        with patch.dict(sys.modules, {'usenet': usenet_module}), \
+                patch.object(re_mod.time, 'sleep') as sleep:
+            job_id, release_title, state = re_mod._submit_and_confirm_replacement(
+                {'title': 'first.failed', 'nzb_url': 'https://indexer/first'},
+                'Show', item=None,
+            )
+        self.assertEqual(('failed-uuid', 'first.failed', 'failed'),
+                         (job_id, release_title, state))
+        client.get_job_status.assert_not_called()
+        sleep.assert_not_called()
+
+    def test_inconclusive_candidate_blocks_duplicate_submission(self):
+        attempts, cleanup_module, usenet_module = self._selection_modules()
+        with patch.dict(sys.modules, {
+                'database.mount_replacement_cleanup': cleanup_module,
+                'usenet': usenet_module,
+        }), patch.object(
+                re_mod, '_submit_and_confirm_replacement',
+                return_value=('pending-uuid', 'pending.release', 'unconfirmed'),
+        ) as submit:
+            selected, job_id, state = re_mod._select_confirmed_replacement(
+                [{'title': 'pending'}, {'title': 'must.not.submit'}],
+                'Show', {'id': 75299},
+            )
+
+        self.assertIsNone(selected)
+        self.assertEqual('pending-uuid', job_id)
+        self.assertEqual('unconfirmed', state)
+        self.assertEqual(1, submit.call_count)
+        self.assertEqual('provisional', attempts[0][1]['status'])
+
+    def test_playback_repair_never_calls_plex_delete(self):
+        with patch.object(re_mod, '_bulk_delete_from_plex') as delete:
+            result = re_mod._prepare_plex_for_replacement(
+                [{'id': 75299}, {'id': 75300}], playback_cleanup=True,
+            )
+        delete.assert_not_called()
+        self.assertEqual({75299: True, 75300: True}, result)
 
 
 if __name__ == '__main__':

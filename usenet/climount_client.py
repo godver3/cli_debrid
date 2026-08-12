@@ -35,6 +35,8 @@ class CliMountClient:
         self.download_folder = cfg.get('download_folder', '')
         self.enabled = cfg.get('enabled', False)
         self.last_missing_segments = False  # set True by add_nzb_content on ARTICLE_NOT_FOUND
+        self.last_submission_job_id = ''
+        self.last_submission_state = ''
 
     def _headers(self) -> Dict[str, str]:
         h = {'Accept': 'application/json'}
@@ -60,6 +62,8 @@ class CliMountClient:
                         tags=None, tags_exclusive: bool = False) -> Optional[str]:
         """Submit NZB content directly as a file upload to avoid double-fetching."""
         self.last_missing_segments = False
+        self.last_submission_job_id = ''
+        self.last_submission_state = ''
         if not self.is_enabled():
             logging.warning('[cli_mount] Usenet provider is disabled or not configured')
             return None
@@ -83,11 +87,15 @@ class CliMountClient:
                     job = result[0]
                     job_id = job.get('id') or job.get('nzo_id') or job.get('hash', '')
                     if job.get('status') == 'error':
+                        self.last_submission_job_id = str(job_id or '')
+                        self.last_submission_state = 'failed'
                         err_msg = job.get('error', '')
                         logging.error(f'[cli_mount] add_nzb_content error: {err_msg}')
                         if 'ARTICLE_NOT_FOUND' in err_msg or 'article not found' in err_msg.lower():
                             self.last_missing_segments = True  # callers can check this flag
-                        return None
+                        return self.last_submission_job_id or None
+                    self.last_submission_job_id = str(job_id or '')
+                    self.last_submission_state = 'accepted'
                     logging.info(f'[cli_mount] NZB content submitted: id={job_id} title={title!r}')
                     return str(job_id) if job_id else 'submitted'
                 return 'submitted'
@@ -112,6 +120,8 @@ class CliMountClient:
         if not self.is_enabled():
             logging.warning('[cli_mount] Usenet provider is disabled or not configured')
             return None
+        self.last_submission_job_id = ''
+        self.last_submission_state = ''
 
         # Pre-fetch for known problematic indexers using a SABnzbd User-Agent they accept
         try:
@@ -146,8 +156,12 @@ class CliMountClient:
                     job = result[0]
                     job_id = job.get('id') or job.get('nzo_id') or job.get('hash', '')
                     if job.get('status') == 'error':
+                        self.last_submission_job_id = str(job_id or '')
+                        self.last_submission_state = 'failed'
                         logging.error(f'[cli_mount] add_nzb error: {job.get("error")}')
-                        return None
+                        return self.last_submission_job_id or None
+                    self.last_submission_job_id = str(job_id or '')
+                    self.last_submission_state = 'accepted'
                     logging.info(f'[cli_mount] NZB submitted: id={job_id} title={title!r}')
                     return str(job_id) if job_id else 'submitted'
                 return 'submitted'
@@ -362,6 +376,29 @@ class CliMountClient:
 
         logging.warning(f'[cli_mount] Could not remove NZB hash={info_hash!r} name={entry_name!r}')
         return False
+
+    def remove_nzb_exact(self, info_hash: str) -> bool:
+        """Remove one NZB strictly by UUID, without any name-search fallback."""
+        if not self.is_enabled() or not info_hash:
+            return False
+        try:
+            r = api.delete(
+                f'{self.base_url}/api/browse/torrents/{info_hash}',
+                headers=self._headers(), timeout=15,
+            )
+            if r.status_code in (200, 204, 404):
+                return True
+        except Exception as exc:
+            logging.debug(f'[cli_mount] exact browse delete error for {info_hash}: {exc}')
+        try:
+            r = api.delete(
+                f'{self.base_url}/api/torrents', params={'hashes': info_hash},
+                headers=self._headers(), timeout=15,
+            )
+            return r.status_code in (200, 204, 404)
+        except Exception as exc:
+            logging.debug(f'[cli_mount] exact queue delete error for {info_hash}: {exc}')
+            return False
 
     def register_cli_ids(self, info_hash: str, ids: dict) -> bool:
         """

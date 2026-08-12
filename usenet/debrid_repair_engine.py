@@ -842,31 +842,30 @@ def replace_entry(entry_name: str, info_hash: str, version_override: str = None,
         try:
             from routes.debug_routes import move_item_to_wanted
             move_item_to_wanted(item_id, None)
-            outcome = 'replacement_pending' if cleanup_target else 'replaced'
+            outcome = 'replaced'
             logger.info(f'[DebridRepair] replace_entry {entry_name!r}: item {item_id} moved to Wanted')
         except Exception as reset_err:
             # Fallback: direct DB update
             try:
                 from database.database_writing import update_media_item_state
                 update_media_item_state(item_id, 'Wanted')
-                outcome = 'replacement_pending' if cleanup_target else 'replaced'
+                outcome = 'replaced'
             except Exception as db_err:
                 logger.warning(f'[DebridRepair] DB reset failed for {entry_name!r}: {db_err}')
                 outcome = 'no_replacement'
 
-        if not cleanup_target:
-            log_repair_activity(
-                item_id=item_id,
-                title=db_item.get('title'),
-                media_type=db_item.get('type'),
-                season_number=db_item.get('season_number'),
-                episode_number=db_item.get('episode_number'),
-                broken_nzb_id=f'debrid:{info_hash}',
-                broken_nzb_title=entry_name,
-                outcome=outcome,
-                triggered_by='debrid_repair',
-            )
-        return {'outcome': outcome, 'success': outcome in ('replaced', 'replacement_pending')}
+        log_repair_activity(
+            item_id=item_id,
+            title=db_item.get('title'),
+            media_type=db_item.get('type'),
+            season_number=db_item.get('season_number'),
+            episode_number=db_item.get('episode_number'),
+            broken_nzb_id=f'debrid:{info_hash}',
+            broken_nzb_title=entry_name,
+            outcome=outcome,
+            triggered_by='debrid_repair',
+        )
+        return {'outcome': outcome, 'success': outcome == 'replaced'}
     except Exception as e:
         logger.error(f'[DebridRepair] replace_entry error for {entry_name!r}: {e}', exc_info=True)
         return {'outcome': 'error', 'message': str(e)}
@@ -891,7 +890,6 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
             'broken_found': 0,
             'reinserted': 0,
             'replaced': 0,
-            'pending_verification': 0,
             'not_found': 0,
             'errors': 0,
         }
@@ -944,10 +942,8 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
                         cleanup_target=entry if playback_cleanup else None,
                     )
                     outcome = result.get('outcome', 'error')
-                    if outcome == 'replaced':
+                    if outcome in ('replaced', 'cleanup_pending'):
                         summary['replaced'] += 1
-                    elif outcome in ('cleanup_pending', 'replacement_pending'):
-                        summary['pending_verification'] += 1
                     elif outcome == 'not_found':
                         summary['not_found'] += 1
                     else:

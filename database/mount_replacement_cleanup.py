@@ -12,6 +12,7 @@ PLAYBACK_CLEANUP_REASONS = frozenset({
     'media_probe_failed',
     'media_no_playable_stream',
 })
+NZB_INTERMEDIATE_REASONS = PLAYBACK_CLEANUP_REASONS | {'usenet_segment_missing'}
 
 _RETRY_SECONDS = (60, 300, 1800, 7200, 86400)
 def _add_column(conn, table: str, definition: str) -> None:
@@ -46,6 +47,25 @@ def create_mount_replacement_cleanup_table() -> None:
             CREATE INDEX IF NOT EXISTS idx_mount_saga_due
                 ON mount_replacement_sagas(status, next_attempt_at);
 
+            CREATE TABLE IF NOT EXISTS mount_replacement_attempts (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                saga_id          INTEGER NOT NULL,
+                cli_debrid_id    INTEGER NOT NULL,
+                job_id           TEXT,
+                segment_id       TEXT,
+                nzb_guid         TEXT,
+                release_title    TEXT,
+                normalized_title TEXT NOT NULL,
+                status           TEXT NOT NULL,
+                reason           TEXT,
+                created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                cleaned_at       TIMESTAMP,
+                UNIQUE(cli_debrid_id, normalized_title)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mount_attempt_saga
+                ON mount_replacement_attempts(saga_id, status);
+
             CREATE TABLE IF NOT EXISTS mount_replacement_cleanups (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 saga_id         INTEGER,
@@ -72,15 +92,26 @@ def create_mount_replacement_cleanup_table() -> None:
         # Existing installations have mount_replacement_cleanups without this
         # column. Add it before creating any index that references it.
         _add_column(conn, 'mount_replacement_cleanups', 'saga_id INTEGER')
+        _add_column(conn, 'mount_replacement_attempts', 'release_title TEXT')
         conn.execute(
             'CREATE INDEX IF NOT EXISTS idx_mount_cleanup_saga '
             'ON mount_replacement_cleanups(saga_id)'
+        )
+        # Verification is NZB-only. Keep torrent rows on the original direct
+        # Collected→acknowledge path even if an experimental build attached a saga.
+        conn.execute(
+            "UPDATE mount_replacement_cleanups SET saga_id=NULL "
+            "WHERE protocol!='nzb' AND status='pending'"
+        )
+        conn.execute(
+            "DELETE FROM mount_replacement_sagas "
+            "WHERE protocol!='nzb' AND status IN ('pending','probe_failed')"
         )
         # Adopt pending rows created by the pre-verification cleanup handoff.
         # Completed/blocked history is left untouched.
         orphan_items = conn.execute(
             """SELECT DISTINCT cli_debrid_id, protocol FROM mount_replacement_cleanups
-               WHERE status='pending' AND saga_id IS NULL"""
+               WHERE status='pending' AND saga_id IS NULL AND protocol='nzb'"""
         ).fetchall()
         for orphan in orphan_items:
             existing = conn.execute(
@@ -108,8 +139,13 @@ def split_playback_cleanup_targets(entries: list, protocol: str = '') -> list:
     expanded = []
     for entry in entries or []:
         broken_files = entry.get('broken_files') or []
-        eligible = [f for f in broken_files if (f.get('reason') or '') in PLAYBACK_CLEANUP_REASONS]
-        ineligible = [f for f in broken_files if (f.get('reason') or '') not in PLAYBACK_CLEANUP_REASONS]
+        eligible = []
+        ineligible = []
+        for broken_file in broken_files:
+            reason = broken_file.get('reason') or ''
+            item_id = int(broken_file.get('cli_debrid_id') or 0)
+            protected_segment = reason == 'usenet_segment_missing' and _has_active_nzb_saga(item_id)
+            (eligible if reason in PLAYBACK_CLEANUP_REASONS or protected_segment else ineligible).append(broken_file)
         for broken_file in eligible:
             target = dict(entry)
             target.update({
@@ -131,6 +167,21 @@ def split_playback_cleanup_targets(entries: list, protocol: str = '') -> list:
                     legacy['failure_reason'] = ineligible[0].get('reason') or legacy.get('failure_reason', '')
             expanded.append(legacy)
     return expanded
+
+
+def _has_active_nzb_saga(cli_debrid_id: int) -> bool:
+    if not cli_debrid_id:
+        return False
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM mount_replacement_sagas WHERE cli_debrid_id=? AND protocol='nzb' "
+            "AND status IN ('pending','probe_failed') LIMIT 1",
+            (cli_debrid_id,),
+        ).fetchone()
+        return bool(row)
+    finally:
+        conn.close()
 
 
 def get_media_item_for_cleanup(cli_debrid_id: int):
@@ -162,11 +213,88 @@ def _create_pending_activity(target: dict, item: dict) -> int:
         return None
 
 
+def _normalize_release_title(value: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '', (value or '').lower())
+
+
+def record_mount_replacement_attempt(cli_debrid_id: int, *, job_id: str = '',
+                                     title: str = '', segment_id: str = '',
+                                     nzb_guid: str = '', status: str,
+                                     reason: str = '') -> bool:
+    """Persist a rejected/probe-failed NZB without exposing it as success."""
+    normalized = _normalize_release_title(title)
+    if not cli_debrid_id or not normalized or status not in ('provisional', 'failed_submission', 'failed_collected'):
+        return False
+    conn = get_db_connection()
+    try:
+        saga = conn.execute(
+            "SELECT id FROM mount_replacement_sagas WHERE cli_debrid_id=? AND protocol='nzb' "
+            "AND status IN ('pending','probe_failed') LIMIT 1",
+            (cli_debrid_id,),
+        ).fetchone()
+        if not saga:
+            return False
+        conn.execute(
+            """INSERT INTO mount_replacement_attempts
+               (saga_id, cli_debrid_id, job_id, segment_id, nzb_guid,
+                release_title, normalized_title, status, reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(cli_debrid_id, normalized_title) DO UPDATE SET
+                 saga_id=excluded.saga_id,
+                 job_id=COALESCE(excluded.job_id, mount_replacement_attempts.job_id),
+                 segment_id=COALESCE(excluded.segment_id, mount_replacement_attempts.segment_id),
+                 nzb_guid=COALESCE(excluded.nzb_guid, mount_replacement_attempts.nzb_guid),
+                 release_title=COALESCE(excluded.release_title, mount_replacement_attempts.release_title),
+                 status=excluded.status, reason=excluded.reason,
+                 updated_at=CURRENT_TIMESTAMP""",
+            (saga['id'], cli_debrid_id, job_id or None, segment_id or None,
+             nzb_guid or None, title or None, normalized, status, reason or None),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def get_attempted_candidate_keys(cli_debrid_id: int) -> dict:
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """SELECT job_id, segment_id, nzb_guid, normalized_title
+               FROM mount_replacement_attempts WHERE cli_debrid_id=?""",
+            (cli_debrid_id,),
+        ).fetchall()
+        return {
+            'job_ids': {r['job_id'] for r in rows if r['job_id']},
+            'segment_ids': {r['segment_id'] for r in rows if r['segment_id']},
+            'guids': {r['nzb_guid'] for r in rows if r['nzb_guid']},
+            'titles': {r['normalized_title'] for r in rows if r['normalized_title']},
+        }
+    finally:
+        conn.close()
+
+
+def get_provisional_mount_attempt(cli_debrid_id: int):
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """SELECT * FROM mount_replacement_attempts
+               WHERE cli_debrid_id=? AND status='provisional'
+               ORDER BY updated_at DESC LIMIT 1""",
+            (cli_debrid_id,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def queue_mount_replacement_cleanup(target: dict) -> bool:
     """Attach an exact old mounted file to the item's one active saga."""
     reason = target.get('failure_reason') or target.get('reason') or ''
     cli_debrid_id = int(target.get('cli_debrid_id') or 0)
-    if reason not in PLAYBACK_CLEANUP_REASONS or not all((
+    protocol = (target.get('protocol') or '').lower()
+    allowed_reasons = NZB_INTERMEDIATE_REASONS if protocol == 'nzb' else PLAYBACK_CLEANUP_REASONS
+    if reason not in allowed_reasons or not all((
             cli_debrid_id, target.get('entry_name'), target.get('file_name'), target.get('info_hash'))):
         return False
     item = get_media_item_for_cleanup(cli_debrid_id) or {}
@@ -178,6 +306,20 @@ def queue_mount_replacement_cleanup(target: dict) -> bool:
             (cli_debrid_id, target.get('info_hash'), target.get('file_name')),
         ).fetchone()
         if prior and prior['status'] in ('complete', 'blocked'):
+            return True
+        # Torrent exact cleanup retains the pre-verification rollback behavior.
+        if protocol != 'nzb':
+            conn.execute(
+                """INSERT INTO mount_replacement_cleanups
+                   (cli_debrid_id, protocol, entry_name, file_name, old_info_hash, reason)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(cli_debrid_id, old_info_hash, file_name) DO UPDATE SET
+                     protocol=excluded.protocol, entry_name=excluded.entry_name,
+                     reason=excluded.reason, updated_at=CURRENT_TIMESTAMP""",
+                (cli_debrid_id, protocol, target['entry_name'], target['file_name'],
+                 target['info_hash'], reason),
+            )
+            conn.commit()
             return True
         saga = conn.execute(
             "SELECT * FROM mount_replacement_sagas WHERE cli_debrid_id=? AND status IN ('pending','probe_failed') LIMIT 1",
@@ -196,7 +338,7 @@ def queue_mount_replacement_cleanup(target: dict) -> bool:
             cursor = conn.execute(
                 """INSERT INTO mount_replacement_sagas
                    (cli_debrid_id, protocol, activity_id) VALUES (?, ?, ?)""",
-                (cli_debrid_id, target.get('protocol') or '', activity_id),
+                (cli_debrid_id, 'nzb', activity_id),
             )
             saga_id = cursor.lastrowid
         conn.execute(
@@ -310,28 +452,44 @@ def _mount_request(path: str, payload: dict, timeout: int) -> tuple:
 
 
 def _verify_replacement(cli_debrid_id: int, info_hash: str) -> tuple:
+    logging.info(
+        '[MountCleanup] Verifying NZB replacement: cli_debrid_id=%s info_hash=%s',
+        cli_debrid_id, info_hash,
+    )
     response, body, error = _mount_request(
         '/api/repair/replacements/verify',
         {'cli_debrid_id': cli_debrid_id, 'info_hash': info_hash},
         75,
     )
     if error:
-        return 'retry', error
+        return 'retry', error, {}
     if response.status_code == 200:
         status = body.get('status') if isinstance(body, dict) else None
         if status in ('healthy', 'broken', 'unknown'):
-            return status, body.get('reason', '')
-        return 'retry', 'invalid verification response'
+            logging.info(
+                '[MountCleanup] Verification result: cli_debrid_id=%s info_hash=%s '
+                'status=%s reason=%s entry=%r file=%r',
+                cli_debrid_id, info_hash, status, body.get('reason', ''),
+                body.get('entry_name', ''), body.get('file_name', ''),
+            )
+            return status, body.get('reason', ''), body
+        return 'retry', 'invalid verification response', body
     code = body.get('code', '') if isinstance(body, dict) else ''
     message = (body.get('message') if isinstance(body, dict) else None) or f'HTTP {response.status_code}'
     if response.status_code == 404:
-        return 'retry', 'cli_mount does not support replacement verification yet'
+        return 'retry', 'cli_mount does not support replacement verification yet', body
     if response.status_code >= 500 or code in ('repair_busy', 'replacement_not_ready'):
-        return 'retry', message
-    return 'blocked', f'{code or response.status_code}: {message}'
+        return 'retry', message, body
+    return 'blocked', f'{code or response.status_code}: {message}', body
 
 
 def _acknowledge(row) -> tuple:
+    logging.info(
+        '[MountCleanup] Acknowledging exact old file: cli_debrid_id=%s '
+        'info_hash=%s entry=%r file=%r reason=%s',
+        row['cli_debrid_id'], row['old_info_hash'], row['entry_name'],
+        row['file_name'], row['reason'],
+    )
     response, body, error = _mount_request(
         '/api/repair/replacements/ack',
         {'entry_name': row['entry_name'], 'file_name': row['file_name'],
@@ -342,6 +500,11 @@ def _acknowledge(row) -> tuple:
     if error:
         return 'retry', error
     if response.status_code == 200 and body.get('status') in ('removed', 'already_removed'):
+        logging.info(
+            '[MountCleanup] Exact old-file acknowledgement completed: '
+            'info_hash=%s file=%r status=%s',
+            row['old_info_hash'], row['file_name'], body.get('status'),
+        )
         return 'complete', body.get('status')
     code = body.get('code', '') if isinstance(body, dict) else ''
     message = (body.get('message') if isinstance(body, dict) else None) or f'HTTP {response.status_code}'
@@ -360,15 +523,142 @@ def _update_activity(activity_id: int, **changes) -> None:
         logging.debug('[MountCleanup] Could not update activity: %s', exc)
 
 
+def _process_legacy_cleanups(item_id: int = None) -> dict:
+    """Preserve the rollback's direct Collected→ack behavior for torrents."""
+    result = {'completed': 0, 'retried': 0, 'blocked': 0, 'waiting': 0}
+    conn = get_db_connection()
+    sql = """SELECT c.*, m.state, m.filled_by_torrent_id, m.filled_by_magnet
+             FROM mount_replacement_cleanups c
+             LEFT JOIN media_items m ON m.id=c.cli_debrid_id
+             WHERE c.status='pending' AND c.saga_id IS NULL
+               AND (c.next_attempt_at IS NULL OR c.next_attempt_at <= CURRENT_TIMESTAMP)"""
+    params = []
+    if item_id is not None:
+        sql += ' AND c.cli_debrid_id=?'
+        params.append(item_id)
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+    for row in rows:
+        if row['state'] != 'Collected':
+            result['waiting'] += 1
+            continue
+        current_hash = _current_source_hash(dict(row), (row['protocol'] or '').lower())
+        if not current_hash or current_hash.lower() == (row['old_info_hash'] or '').lower():
+            result['waiting'] += 1
+            continue
+        status, message = _acknowledge(row)
+        conn = get_db_connection()
+        try:
+            if status == 'complete':
+                conn.execute(
+                    """UPDATE mount_replacement_cleanups SET status='complete',
+                              completed_at=CURRENT_TIMESTAMP, next_attempt_at=NULL,
+                              last_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (row['id'],),
+                )
+                result['completed'] += 1
+            elif status == 'blocked':
+                conn.execute(
+                    "UPDATE mount_replacement_cleanups SET status='blocked', last_error=?, "
+                    "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (message[:1000], row['id']),
+                )
+                result['blocked'] += 1
+            else:
+                attempts = int(row['attempts'] or 0) + 1
+                delay = _RETRY_SECONDS[min(attempts - 1, len(_RETRY_SECONDS) - 1)]
+                next_attempt = datetime.now(timezone.utc) + timedelta(seconds=delay)
+                conn.execute(
+                    """UPDATE mount_replacement_cleanups SET attempts=?, next_attempt_at=?,
+                              last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (attempts, next_attempt.strftime('%Y-%m-%d %H:%M:%S'),
+                     message[:1000], row['id']),
+                )
+                result['retried'] += 1
+            conn.commit()
+        finally:
+            conn.close()
+    return result
+
+
+def _cleanup_failed_submission_jobs(saga_id: int) -> bool:
+    """Delete retained terminal jobs by exact UUID; never fall back to names."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """SELECT id, job_id FROM mount_replacement_attempts
+               WHERE saga_id=? AND status='failed_submission' AND cleaned_at IS NULL""",
+            (saga_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return True
+    from usenet import get_usenet_client
+    client = get_usenet_client()
+    for row in rows:
+        if not row['job_id'] or not hasattr(client, 'remove_nzb_exact') or not client.remove_nzb_exact(row['job_id']):
+            return False
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                "UPDATE mount_replacement_attempts SET cleaned_at=CURRENT_TIMESTAMP, "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (row['id'],),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return True
+
+
+def _mark_collected_attempt_cleaned(conn, saga_id: int, info_hash: str) -> None:
+    """Record exact cleanup completion for a mounted failed candidate."""
+    if not info_hash:
+        return
+    conn.execute(
+        """UPDATE mount_replacement_attempts
+           SET cleaned_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+           WHERE saga_id=? AND status='failed_collected' AND job_id=?""",
+        (saga_id, info_hash),
+    )
+
+
+def _refresh_verified_plex_item(item: dict) -> None:
+    """Refresh the retained Plex path without deleting its metadata item."""
+    path = item.get('location_on_disk') or ''
+    if not path:
+        logging.info('[MountCleanup] Plex refresh skipped for item %s: no location_on_disk', item.get('id'))
+        return
+    try:
+        from utilities.plex_functions import plex_update_item
+        refreshed = plex_update_item({
+            'full_path': path,
+            'location_on_disk': path,
+            'type': item.get('type') or 'movie',
+        })
+        logging.info(
+            '[MountCleanup] Targeted Plex refresh after exact cleanup: item=%s path=%r success=%s',
+            item.get('id'), path, bool(refreshed),
+        )
+    except Exception as exc:
+        logging.warning('[MountCleanup] Targeted Plex refresh failed for item %s: %s', item.get('id'), exc)
+
+
 def process_pending_mount_cleanups(item_id: int = None) -> dict:
     """Verify collected candidates, then acknowledge every exact old file."""
     result = {'completed': 0, 'retried': 0, 'blocked': 0, 'waiting': 0, 'probe_failed': 0}
+    legacy = _process_legacy_cleanups(item_id=item_id)
+    for key, value in legacy.items():
+        result[key] += value
     conn = get_db_connection()
     sql = """SELECT s.*, m.state, m.filled_by_torrent_id, m.filled_by_magnet,
                     m.title, m.type, m.season_number, m.episode_number
              FROM mount_replacement_sagas s
              LEFT JOIN media_items m ON m.id=s.cli_debrid_id
-             WHERE s.status IN ('pending','probe_failed')
+             WHERE s.protocol='nzb' AND s.status IN ('pending','probe_failed')
                AND (s.next_attempt_at IS NULL OR s.next_attempt_at <= CURRENT_TIMESTAMP)"""
     params = []
     if item_id is not None:
@@ -409,10 +699,10 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
             candidate_title = (candidate_item.get('filled_by_title') or candidate_item.get('filled_by_file')
                                or saga['candidate_title'])
             set_mount_replacement_candidate(saga['cli_debrid_id'], current_hash, candidate_title)
-            _update_activity(saga['activity_id'], replacement_nzb_id=current_hash,
-                             replacement_title=candidate_title, outcome='replacement_pending')
+            # Candidate details stay private until verification and cleanup
+            # both succeed; the activity row remains a neutral pending record.
 
-        verify_status, message = _verify_replacement(saga['cli_debrid_id'], current_hash)
+        verify_status, message, verify_details = _verify_replacement(saga['cli_debrid_id'], current_hash)
         # A collection/update may have won the race while cli_mount was probing.
         current_item = get_media_item_for_cleanup(saga['cli_debrid_id']) or {}
         if current_item.get('state') != 'Collected' or _current_source_hash(current_item, (saga['protocol'] or '').lower()).lower() != current_hash.lower():
@@ -422,14 +712,38 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
         update_conn = get_db_connection()
         try:
             if verify_status == 'broken':
+                failed_title = (current_item.get('filled_by_title') or current_item.get('filled_by_file')
+                                or candidate_title or current_hash)
+                record_mount_replacement_attempt(
+                    saga['cli_debrid_id'], job_id=current_hash, title=failed_title,
+                    segment_id=current_item.get('nzb_segment_id') or '',
+                    nzb_guid=current_item.get('filled_by_magnet') or '',
+                    status='failed_collected', reason=message,
+                )
+                queue_mount_replacement_cleanup({
+                    'entry_name': verify_details.get('entry_name') or '',
+                    'file_name': verify_details.get('file_name') or '',
+                    'info_hash': current_hash,
+                    'cli_debrid_id': saga['cli_debrid_id'],
+                    'failure_reason': message,
+                    'protocol': 'nzb',
+                })
+                try:
+                    from usenet.repair_engine import _blacklist_broken_nzb
+                    _blacklist_broken_nzb(
+                        current_item.get('filled_by_magnet') or '',
+                        segment_id=current_item.get('nzb_segment_id') or '',
+                    )
+                except Exception as exc:
+                    logging.warning('[MountCleanup] Could not blacklist failed collected candidate: %s', exc)
                 update_conn.execute(
                     """UPDATE mount_replacement_sagas SET status='probe_failed', candidate_info_hash=?,
                               last_error=?, next_attempt_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                     (current_hash, message[:1000], saga['id']),
                 )
                 update_conn.commit()
-                _update_activity(saga['activity_id'], replacement_nzb_id=current_hash,
-                                 replacement_title=saga['candidate_title'], outcome='replacement_probe_failed')
+                _update_activity(saga['activity_id'], replacement_nzb_id=None,
+                                 replacement_title=None, outcome='replacement_pending')
                 result['probe_failed'] += 1
                 continue
             if verify_status != 'healthy':
@@ -449,7 +763,9 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
         finally:
             update_conn.close()
 
-        all_complete = True
+        all_complete = _cleanup_failed_submission_jobs(saga['id'])
+        if not all_complete:
+            result['retried'] += 1
         terminal_failure = None
         for target in targets:
             ack_status, ack_message = _acknowledge(target)
@@ -460,6 +776,9 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
                         """UPDATE mount_replacement_cleanups SET status='complete', completed_at=CURRENT_TIMESTAMP,
                                   next_attempt_at=NULL, last_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                         (target['id'],),
+                    )
+                    _mark_collected_attempt_cleaned(
+                        update_conn, saga['id'], target['old_info_hash']
                     )
                     result['completed'] += 1
                 elif ack_status == 'blocked':
@@ -478,6 +797,7 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
                 update_conn.close()
 
         finish_conn = get_db_connection()
+        refresh_item = None
         try:
             if terminal_failure:
                 finish_conn.execute(
@@ -496,9 +816,12 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
                 )
                 _update_activity(saga['activity_id'], replacement_nzb_id=current_hash,
                                  replacement_title=final_title, outcome='replaced')
+                refresh_item = current_item
             else:
                 _schedule_saga_retry(finish_conn, saga, 'one or more exact acknowledgements are pending')
             finish_conn.commit()
         finally:
             finish_conn.close()
+        if refresh_item is not None:
+            _refresh_verified_plex_item(refresh_item)
     return result
