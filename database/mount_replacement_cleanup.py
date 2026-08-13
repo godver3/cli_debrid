@@ -42,6 +42,142 @@ def _add_column(conn, table: str, definition: str) -> None:
         pass
 
 
+def _table_columns(conn, table: str) -> set:
+    try:
+        return {row[1] for row in conn.execute(f'PRAGMA table_info({table})').fetchall()}
+    except Exception:
+        return set()
+
+
+def _ensure_activity_identity_columns(conn) -> bool:
+    columns = _table_columns(conn, 'nzb_repair_activity')
+    if not columns:
+        return False
+    if 'cleanup_cli_debrid_id' not in columns:
+        _add_column(conn, 'nzb_repair_activity', 'cleanup_cli_debrid_id INTEGER')
+    if 'cleanup_file_name' not in columns:
+        _add_column(conn, 'nzb_repair_activity', 'cleanup_file_name TEXT')
+    return True
+
+
+def _reconcile_stale_activity_rows(conn) -> int:
+    """Collapse duplicate stale UI rows without changing repair or media state."""
+    if not _activity_table_exists(conn) or not _ensure_activity_identity_columns(conn):
+        return 0
+    required = {
+        'id', 'title', 'media_type', 'season_number', 'episode_number',
+        'broken_nzb_id', 'outcome', 'created_at', 'updated_at',
+    }
+    if not required.issubset(_table_columns(conn, 'nzb_repair_activity')):
+        return 0
+
+    # Backfill exact target identity where a durable cleanup already owns the
+    # activity.  Legacy unresolved rows have no cleanup; those are collapsed
+    # below only when UUID and media identity are identical.
+    conn.execute(
+        """UPDATE nzb_repair_activity
+              SET cleanup_cli_debrid_id=(
+                    SELECT c.cli_debrid_id FROM mount_replacement_cleanups c
+                    WHERE c.activity_id=nzb_repair_activity.id LIMIT 1),
+                  cleanup_file_name=(
+                    SELECT c.file_name FROM mount_replacement_cleanups c
+                    WHERE c.activity_id=nzb_repair_activity.id LIMIT 1)
+            WHERE outcome IN ('stale_cleanup_pending','stale_entry_unresolved',
+                              'stale_entry_cleaned','replacement_cleanup_stale')
+              AND cleanup_cli_debrid_id IS NULL
+              AND id IN (SELECT activity_id FROM mount_replacement_cleanups
+                         WHERE activity_id IS NOT NULL)"""
+    )
+
+    exact_groups = conn.execute(
+        """SELECT cleanup_cli_debrid_id, lower(broken_nzb_id), cleanup_file_name,
+                  COUNT(*)
+             FROM nzb_repair_activity
+            WHERE outcome IN ('stale_cleanup_pending','stale_entry_unresolved',
+                              'stale_entry_cleaned','replacement_cleanup_stale')
+              AND cleanup_cli_debrid_id IS NOT NULL
+              AND cleanup_file_name IS NOT NULL
+            GROUP BY 1,2,3 HAVING COUNT(*)>1"""
+    ).fetchall()
+    removed = 0
+    for item_id, old_hash, file_name, _count in exact_groups:
+        rows = conn.execute(
+            """SELECT a.id,
+                      EXISTS(SELECT 1 FROM mount_replacement_sagas s
+                             WHERE s.activity_id=a.id) AS saga_linked,
+                      EXISTS(SELECT 1 FROM mount_replacement_cleanups c
+                             WHERE c.activity_id=a.id) AS cleanup_linked
+                 FROM nzb_repair_activity a
+                WHERE a.cleanup_cli_debrid_id=?
+                  AND lower(COALESCE(a.broken_nzb_id,''))=?
+                  AND a.cleanup_file_name=?
+                ORDER BY saga_linked DESC, cleanup_linked DESC,
+                         COALESCE(a.updated_at,a.created_at) DESC, a.id DESC""",
+            (item_id, old_hash, file_name),
+        ).fetchall()
+        keeper = rows[0]['id']
+        for row in rows[1:]:
+            conn.execute(
+                'UPDATE mount_replacement_sagas SET activity_id=? WHERE activity_id=?',
+                (keeper, row['id']),
+            )
+            conn.execute(
+                'UPDATE mount_replacement_cleanups SET activity_id=? WHERE activity_id=?',
+                (keeper, row['id']),
+            )
+            removed += max(conn.execute(
+                'DELETE FROM nzb_repair_activity WHERE id=?', (row['id'],),
+            ).rowcount, 0)
+
+    groups = conn.execute(
+        """SELECT COALESCE(title,''), COALESCE(media_type,''),
+                  COALESCE(season_number,-1), COALESCE(episode_number,-1),
+                  lower(COALESCE(broken_nzb_id,'')), COUNT(*)
+             FROM nzb_repair_activity
+            WHERE outcome IN ('stale_cleanup_pending','stale_entry_unresolved')
+              AND COALESCE(broken_nzb_id,'')!=''
+            GROUP BY 1,2,3,4,5 HAVING COUNT(*)>1"""
+    ).fetchall()
+    for title, media_type, season, episode, old_hash, _count in groups:
+        rows = conn.execute(
+            """SELECT a.id,
+                      EXISTS(SELECT 1 FROM mount_replacement_sagas s
+                             WHERE s.activity_id=a.id) AS saga_linked,
+                      EXISTS(SELECT 1 FROM mount_replacement_cleanups c
+                             WHERE c.activity_id=a.id) AS cleanup_linked
+                 FROM nzb_repair_activity a
+                WHERE a.outcome IN ('stale_cleanup_pending','stale_entry_unresolved')
+                  AND COALESCE(a.title,'')=? AND COALESCE(a.media_type,'')=?
+                  AND COALESCE(a.season_number,-1)=?
+                  AND COALESCE(a.episode_number,-1)=?
+                  AND lower(COALESCE(a.broken_nzb_id,''))=?
+                ORDER BY saga_linked DESC, cleanup_linked DESC,
+                         COALESCE(a.updated_at,a.created_at) DESC, a.id DESC""",
+            (title, media_type, season, episode, old_hash),
+        ).fetchall()
+        if len(rows) < 2:
+            continue
+        keeper = rows[0]['id']
+        for row in rows[1:]:
+            # Never delete a row referenced by durable state. Fold those links
+            # into the chosen canonical row first.
+            conn.execute(
+                'UPDATE mount_replacement_sagas SET activity_id=? WHERE activity_id=?',
+                (keeper, row['id']),
+            )
+            conn.execute(
+                'UPDATE mount_replacement_cleanups SET activity_id=? WHERE activity_id=?',
+                (keeper, row['id']),
+            )
+            deleted = conn.execute(
+                """DELETE FROM nzb_repair_activity WHERE id=?
+                     AND outcome IN ('stale_cleanup_pending','stale_entry_unresolved')""",
+                (row['id'],),
+            )
+            removed += max(deleted.rowcount, 0)
+    return removed
+
+
 def _requeue_registration_stale_sagas(conn) -> int:
     """Collapse duplicate registration-conflict sagas without reopening them."""
     rows = conn.execute(
@@ -189,6 +325,8 @@ def create_mount_replacement_cleanup_table() -> None:
         _add_column(conn, 'mount_replacement_sagas', 'verified_file_name TEXT')
         _add_column(conn, 'mount_replacement_sagas', 'verified_at TIMESTAMP')
         _add_column(conn, 'mount_replacement_cleanups', 'activity_id INTEGER')
+        _add_column(conn, 'nzb_repair_activity', 'cleanup_cli_debrid_id INTEGER')
+        _add_column(conn, 'nzb_repair_activity', 'cleanup_file_name TEXT')
         # Give sagas created by older builds one immediate reconciliation pass
         # instead of preserving a stale 24-hour retry deadline.
         conn.execute(
@@ -269,6 +407,44 @@ def create_mount_replacement_cleanup_table() -> None:
                 '[MountCleanup] Collapsed duplicate exact-registration saga groups: %s',
                 recovered,
             )
+        if activity_table:
+            duplicate_activities = _reconcile_stale_activity_rows(conn)
+            if duplicate_activities:
+                logging.info(
+                    '[MountCleanup] Removed %s duplicate stale activity row(s)',
+                    duplicate_activities,
+                )
+            # Exact target identity prevents concurrent/repeated health scans
+            # from creating another UI row for the same old mounted file.
+            activity_columns = _table_columns(conn, 'nzb_repair_activity')
+            if {'cleanup_cli_debrid_id', 'broken_nzb_id', 'cleanup_file_name',
+                    'outcome'}.issubset(activity_columns):
+                conn.execute(
+                    """CREATE UNIQUE INDEX IF NOT EXISTS idx_nzb_activity_exact_cleanup
+                         ON nzb_repair_activity(cleanup_cli_debrid_id, broken_nzb_id,
+                                                cleanup_file_name)
+                      WHERE cleanup_cli_debrid_id IS NOT NULL
+                        AND cleanup_file_name IS NOT NULL
+                        AND outcome IN ('stale_cleanup_pending','stale_entry_unresolved',
+                                        'stale_entry_cleaned','replacement_cleanup_stale')"""
+                )
+            # Old replacement sagas were all displayed as if a candidate were
+            # being probed. Distinguish those waiting for candidate selection.
+            if {'outcome', 'repair_attempts', 'updated_at'}.issubset(activity_columns):
+                conn.execute(
+                """UPDATE nzb_repair_activity
+                      SET outcome=CASE WHEN COALESCE(repair_attempts,0)>=3
+                                       THEN 'replacement_max_attempts'
+                                       ELSE 'replacement_awaiting_candidate' END,
+                          updated_at=CURRENT_TIMESTAMP
+                    WHERE outcome='replacement_pending'
+                      AND id IN (
+                        SELECT activity_id FROM mount_replacement_sagas
+                         WHERE status IN ('pending','probe_failed')
+                           AND COALESCE(candidate_info_hash,'')=''
+                           AND activity_id IS NOT NULL
+                      )"""
+                )
         conn.commit()
     finally:
         conn.close()
@@ -404,19 +580,44 @@ def _unique_collected_replacement(conn, broken_file: dict):
 
 
 def _canonical_stale_activity(conn, broken_file: dict, current_item: dict,
-                              outcome: str, detail: str = '') -> int:
+                              outcome: str, detail: str = '',
+                              preferred_activity_id: int = None) -> int:
     """Adopt one existing Not Found row and collapse only its exact duplicates."""
-    if not _activity_table_exists(conn):
+    if not _activity_table_exists(conn) or not _ensure_activity_identity_columns(conn):
         return None
     old_hash = str(broken_file.get('info_hash') or '')
     entry_name = str(broken_file.get('entry_name') or '')
+    old_item_id = int(broken_file.get('cli_debrid_id') or 0)
+    file_name = str(broken_file.get('file_name') or '')
     rows = conn.execute(
         """SELECT id, outcome FROM nzb_repair_activity
-            WHERE outcome IN ('not_found','stale_entry_unresolved','stale_cleanup_pending')
-              AND (broken_nzb_id=? OR broken_nzb_title=?)
-            ORDER BY COALESCE(updated_at, created_at) DESC, id DESC""",
-        (old_hash, entry_name),
+            WHERE cleanup_cli_debrid_id=? AND lower(COALESCE(broken_nzb_id,''))=lower(?)
+              AND cleanup_file_name=?
+            ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,
+                     COALESCE(updated_at, created_at) DESC, id DESC""",
+        (old_item_id, old_hash, file_name, preferred_activity_id or -1),
     ).fetchall()
+    if not rows and preferred_activity_id:
+        preferred = conn.execute(
+            'SELECT id, outcome FROM nzb_repair_activity WHERE id=?',
+            (preferred_activity_id,),
+        ).fetchone()
+        rows = [preferred] if preferred else []
+    if not rows:
+        # Adopt only a legacy row with the same UUID and exact media identity.
+        # Entry names are shared by season packs and are not sufficient proof.
+        rows = conn.execute(
+            """SELECT id, outcome FROM nzb_repair_activity
+                WHERE outcome IN ('not_found','stale_entry_unresolved','stale_cleanup_pending')
+                  AND lower(COALESCE(broken_nzb_id,''))=lower(?)
+                  AND COALESCE(title,'')=COALESCE(?, '')
+                  AND COALESCE(media_type,'')=COALESCE(?, '')
+                  AND COALESCE(season_number,-1)=COALESCE(?, -1)
+                  AND COALESCE(episode_number,-1)=COALESCE(?, -1)
+                ORDER BY COALESCE(updated_at, created_at) DESC, id DESC""",
+            (old_hash, current_item.get('title'), current_item.get('type'),
+             current_item.get('season_number'), current_item.get('episode_number')),
+        ).fetchall()
     if rows:
         activity_id = rows[0]['id']
         conn.execute(
@@ -424,31 +625,63 @@ def _canonical_stale_activity(conn, broken_file: dict, current_item: dict,
                   SET item_id=?, title=?, media_type=?, season_number=?, episode_number=?,
                       broken_nzb_id=?, broken_nzb_title=?, replacement_nzb_id=NULL,
                       replacement_title=NULL, outcome=?, triggered_by='stale_mount_cleanup',
+                      cleanup_cli_debrid_id=?, cleanup_file_name=?,
                       updated_at=CURRENT_TIMESTAMP
                 WHERE id=?""",
             (current_item.get('id'), current_item.get('title'), current_item.get('type'),
              current_item.get('season_number'), current_item.get('episode_number'),
-             old_hash, entry_name, outcome, activity_id),
+             old_hash, entry_name, outcome, old_item_id, file_name, activity_id),
         )
-        duplicate_ids = [row['id'] for row in rows[1:] if row['outcome'] == 'not_found']
+        duplicate_ids = [row['id'] for row in rows[1:]]
+        # Older orphan handling sometimes logged the exact entry name in both
+        # ID/title columns without media identity. It is the same health event,
+        # not a separate file-level activity row.
+        legacy_orphans = conn.execute(
+            """SELECT id FROM nzb_repair_activity
+                WHERE outcome='not_found' AND id!=?
+                  AND broken_nzb_id=? AND broken_nzb_title=?
+                  AND title IS NULL AND season_number IS NULL AND episode_number IS NULL""",
+            (activity_id, entry_name, entry_name),
+        ).fetchall()
+        duplicate_ids.extend(
+            row['id'] for row in legacy_orphans if row['id'] not in duplicate_ids
+        )
         if duplicate_ids:
             conn.executemany(
-                "DELETE FROM nzb_repair_activity WHERE id=? AND outcome='not_found'",
+                'UPDATE mount_replacement_sagas SET activity_id=? WHERE activity_id=?',
+                [(activity_id, value) for value in duplicate_ids],
+            )
+            conn.executemany(
+                'UPDATE mount_replacement_cleanups SET activity_id=? WHERE activity_id=?',
+                [(activity_id, value) for value in duplicate_ids],
+            )
+            conn.executemany(
+                """DELETE FROM nzb_repair_activity WHERE id=?
+                     AND outcome IN ('not_found','stale_entry_unresolved','stale_cleanup_pending')""",
                 [(value,) for value in duplicate_ids],
             )
         return activity_id
-    cursor = conn.execute(
-        """INSERT INTO nzb_repair_activity
+    conn.execute(
+        """INSERT OR IGNORE INTO nzb_repair_activity
            (item_id, title, media_type, season_number, episode_number,
             broken_nzb_id, broken_nzb_title, outcome, triggered_by,
-            last_repair_at, updated_at)
+            last_repair_at, updated_at, cleanup_cli_debrid_id, cleanup_file_name)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'stale_mount_cleanup',
-                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)""",
         (current_item.get('id'), current_item.get('title'), current_item.get('type'),
          current_item.get('season_number'), current_item.get('episode_number'),
-         old_hash, entry_name, outcome),
+         old_hash, entry_name, outcome, old_item_id, file_name),
     )
-    return cursor.lastrowid
+    row = conn.execute(
+        """SELECT id FROM nzb_repair_activity
+            WHERE cleanup_cli_debrid_id=? AND lower(COALESCE(broken_nzb_id,''))=lower(?)
+              AND cleanup_file_name=?
+            ORDER BY id LIMIT 1""",
+        (old_item_id, old_hash, file_name),
+    ).fetchone()
+    if row:
+        return row['id']
+    raise RuntimeError('exact stale activity could not be created')
 
 
 def _record_unresolved_stale_target(conn, broken_file: dict, detail: str) -> None:
@@ -487,6 +720,51 @@ def _queue_stale_replaced_file(broken_file: dict) -> str:
         return 'not_stale'
     conn = get_db_connection()
     try:
+        # Exact durable ownership takes precedence over reclassification. A
+        # repeated health scan must reuse this saga/activity even when it is
+        # blocked, rather than creating a second unresolved UI row.
+        owned = conn.execute(
+            """SELECT s.*, c.activity_id AS cleanup_activity_id
+                 FROM mount_replacement_cleanups c
+                 JOIN mount_replacement_sagas s ON s.id=c.saga_id
+                WHERE c.cli_debrid_id=? AND lower(c.old_info_hash)=lower(?)
+                  AND c.file_name=? AND s.protocol='nzb'
+                  AND s.status IN ('pending','probe_failed','blocked')
+                ORDER BY s.id LIMIT 1""",
+            (int(broken_file['cli_debrid_id']), broken_file['info_hash'],
+             broken_file['file_name']),
+        ).fetchone()
+        if owned:
+            activity_id = owned['activity_id'] or owned['cleanup_activity_id']
+            if not activity_id:
+                item = conn.execute(
+                    'SELECT * FROM media_items WHERE id=? LIMIT 1',
+                    (owned['cli_debrid_id'],),
+                ).fetchone()
+                item = dict(item) if item else {
+                    'id': None, 'title': None, 'type': None,
+                    'season_number': None, 'episode_number': None,
+                }
+                outcome = ('replacement_cleanup_stale' if owned['status'] == 'blocked'
+                           else 'stale_cleanup_pending')
+                activity_id = _canonical_stale_activity(
+                    conn, broken_file, item, outcome,
+                    preferred_activity_id=owned['activity_id'],
+                )
+            conn.execute(
+                'UPDATE mount_replacement_sagas SET activity_id=COALESCE(activity_id, ?) WHERE id=?',
+                (activity_id, owned['id']),
+            )
+            conn.execute(
+                """UPDATE mount_replacement_cleanups
+                      SET activity_id=COALESCE(activity_id, ?), updated_at=CURRENT_TIMESTAMP
+                    WHERE cli_debrid_id=? AND lower(old_info_hash)=lower(?) AND file_name=?""",
+                (activity_id, int(broken_file['cli_debrid_id']), broken_file['info_hash'],
+                 broken_file['file_name']),
+            )
+            conn.commit()
+            return 'unresolved' if owned['status'] == 'blocked' else 'queued'
+
         current_item, status, detail = _unique_collected_replacement(conn, broken_file)
         if status == 'not_found' or status == 'current_source':
             return status
@@ -501,9 +779,7 @@ def _queue_stale_replaced_file(broken_file: dict) -> str:
 
         current_id = int(current_item['id'])
         current_hash = _current_source_hash(current_item, 'nzb')
-        activity_id = _canonical_stale_activity(
-            conn, broken_file, current_item, 'stale_cleanup_pending',
-        )
+        activity_id = None
         # An exact target already owned by a saga always wins, including a
         # blocked saga.  This prevents later scans from creating a second saga
         # or activity row for the same old UUID/file while avoiding reuse of an
@@ -545,6 +821,11 @@ def _queue_stale_replaced_file(broken_file: dict) -> str:
             )
             conn.commit()
             return 'unresolved'
+
+        activity_id = _canonical_stale_activity(
+            conn, broken_file, current_item, 'stale_cleanup_pending',
+            preferred_activity_id=(saga['activity_id'] if saga else None),
+        )
 
         if saga:
             saga_id = saga['id']
@@ -651,7 +932,8 @@ def _create_pending_activity(target: dict, item: dict) -> int:
             item_id=target.get('cli_debrid_id'), title=item.get('title'),
             media_type=item.get('type'), season_number=item.get('season_number'),
             episode_number=item.get('episode_number'), broken_nzb_id=old_id,
-            broken_nzb_title=target.get('entry_name'), outcome='replacement_pending',
+            broken_nzb_title=target.get('entry_name'),
+            outcome='replacement_awaiting_candidate',
             triggered_by='mount_replacement_verification',
         )
     except Exception as exc:

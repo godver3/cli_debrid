@@ -507,6 +507,55 @@ class MountReplacementCleanupTests(unittest.TestCase):
         self.assertEqual('replacement_pending', rows[4]['outcome'])
         self.assertEqual('replacement_pending', rows[5]['outcome'])
 
+    def test_startup_relabels_candidate_less_sagas_and_collapses_stale_activity_duplicates(self):
+        self.create_stale_cleanup_fixture_schema()
+        conn = self.connect()
+        conn.executemany(
+            """INSERT INTO nzb_repair_activity
+               (id, item_id, title, media_type, season_number, episode_number,
+                broken_nzb_id, broken_nzb_title, outcome, repair_attempts)
+               VALUES (?, ?, 'Wicked Tuna', 'episode', 6, 10,
+                       'old-wicked-id', 'Wicked.Tuna.S06E10', ?, ?)""",
+            [(101, 7922, 'replacement_pending', 1),
+             (102, None, 'stale_entry_unresolved', 0),
+             (103, None, 'stale_cleanup_pending', 0)],
+        )
+        conn.execute(
+            """INSERT INTO mount_replacement_sagas
+               (cli_debrid_id, protocol, status, activity_id, candidate_info_hash)
+               VALUES (7922, 'nzb', 'pending', 101, NULL)"""
+        )
+        conn.execute(
+            """INSERT INTO nzb_repair_activity
+               (id, item_id, title, media_type, season_number, episode_number,
+                broken_nzb_id, broken_nzb_title, outcome, repair_attempts)
+               VALUES (104, 8907, 'Bar Rescue', 'episode', 8, 34,
+                       'old-bar-id', 'Bar.Rescue.S08E34', 'replacement_pending', 3)"""
+        )
+        conn.execute(
+            """INSERT INTO mount_replacement_sagas
+               (cli_debrid_id, protocol, status, activity_id, candidate_info_hash)
+               VALUES (8907, 'nzb', 'pending', 104, NULL)"""
+        )
+        conn.commit()
+        conn.close()
+
+        cleanup.create_mount_replacement_cleanup_table()
+
+        conn = self.connect()
+        outcomes = dict(conn.execute(
+            'SELECT id, outcome FROM nzb_repair_activity ORDER BY id'
+        ).fetchall())
+        stale_count = conn.execute(
+            """SELECT COUNT(*) FROM nzb_repair_activity
+                WHERE broken_nzb_id='old-wicked-id'
+                  AND outcome IN ('stale_entry_unresolved','stale_cleanup_pending')"""
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual('replacement_awaiting_candidate', outcomes[101])
+        self.assertEqual('replacement_max_attempts', outcomes[104])
+        self.assertEqual(1, stale_count)
+
     def test_activity_update_can_join_callers_transaction(self):
         conn = self.connect()
         conn.execute("""CREATE TABLE nzb_repair_activity (

@@ -1615,7 +1615,10 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 for db_item in db_items:
                     if playback_cleanup:
                         from database.mount_replacement_cleanup import update_mount_replacement_activity
-                        update_mount_replacement_activity(db_item.get('id'), repair_attempts=attempts)
+                        update_mount_replacement_activity(
+                            db_item.get('id'), 'replacement_max_attempts',
+                            repair_attempts=attempts, next_repair_at=None,
+                        )
                         continue
                     log_repair_activity(
                         item_id=db_item.get('id'),
@@ -1665,7 +1668,8 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                     if playback_cleanup:
                         from database.mount_replacement_cleanup import update_mount_replacement_activity
                         update_mount_replacement_activity(
-                            db_item.get('id'), repair_attempts=new_attempts,
+                            db_item.get('id'), 'replacement_awaiting_candidate',
+                            repair_attempts=new_attempts,
                             next_repair_at=next_repair_at,
                         )
                         continue
@@ -1702,6 +1706,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                         from database.mount_replacement_cleanup import update_mount_replacement_activity
                         update_mount_replacement_activity(
                             db_item.get('id'),
+                            'replacement_awaiting_candidate',
                             repair_attempts=new_attempts, next_repair_at=next_repair_at,
                         )
                         continue
