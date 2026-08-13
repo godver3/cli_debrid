@@ -635,6 +635,51 @@ class CliMountClient:
             logging.debug(f'[cli_mount] get_job_status exception: {exc}')
             return None
 
+    def get_exact_job(self, job_id: str) -> Dict[str, Any]:
+        """Return one cli_mount queue entry matching *job_id* exactly.
+
+        Unlike ``get_job_status``, absence is not treated as completion.  Saga
+        recovery needs to prove that the recorded candidate is still present
+        before restoring source ownership or registering a file against it.
+        """
+        if not self.is_enabled() or not job_id:
+            return {'status': 'unavailable', 'entry': None}
+        try:
+            r = api.get(
+                f'{self.base_url}/api/torrents',
+                params={'search': job_id, 'limit': 100},
+                headers=self._headers(),
+                timeout=10,
+            )
+            if r.status_code != 200:
+                return {'status': 'unavailable', 'entry': None,
+                        'http_status': r.status_code}
+            data = r.json()
+            torrents = data.get('torrents', data) if isinstance(data, dict) else data
+            matches = []
+            for entry in (torrents or []):
+                entry_id = str(entry.get('info_hash') or entry.get('id') or
+                               entry.get('nzo_id') or entry.get('hash') or '')
+                if entry_id.lower() == str(job_id).lower():
+                    matches.append(entry)
+            if not matches:
+                return {'status': 'missing', 'entry': None}
+            if len(matches) != 1:
+                return {'status': 'ambiguous', 'entry': None}
+            entry = matches[0]
+            states = {
+                _map_state(str(entry.get(key) or '').lower())
+                for key in ('state', 'status')
+            }
+            if 'failed' in states:
+                return {'status': 'failed', 'entry': entry}
+            if 'completed' not in states and not entry.get('is_complete', False):
+                return {'status': 'waiting', 'entry': entry}
+            return {'status': 'ready', 'entry': entry}
+        except Exception as exc:
+            logging.debug(f'[cli_mount] get_exact_job exception: {exc}')
+            return {'status': 'unavailable', 'entry': None, 'error': str(exc)}
+
     def trigger_health_check(self, entry_name: str) -> bool:
         """POST to start a repair health check. Returns True if accepted, False otherwise."""
         try:

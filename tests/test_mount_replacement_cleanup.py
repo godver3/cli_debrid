@@ -422,7 +422,17 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
         self.assertTrue(cleanup.set_mount_replacement_candidate(75299, 'working-id', 'Working.Release'))
-        with patch.object(cleanup, '_attempt_reconciliation', return_value=False), \
+        client = types.SimpleNamespace(
+            is_enabled=lambda: True,
+            get_exact_job=lambda _job_id: {
+                'status': 'ready',
+                'entry': {'files': {'Show.S03E01.mkv': {'size': 100}}},
+            },
+            register_cli_ids=lambda _job_id, _ids: True,
+        )
+        client_module = types.ModuleType('usenet.climount_client')
+        client_module.get_climount_client = lambda: client
+        with patch.dict(sys.modules, {'usenet.climount_client': client_module}), \
                 patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
                 patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')):
             cleanup.process_pending_mount_cleanups(item_id=75299)
@@ -432,6 +442,101 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertEqual('nzb:working-id', item['filled_by_torrent_id'])
         self.assertEqual('complete', saga['status'])
+
+    def test_exact_candidate_file_selection_rejects_ambiguous_episode_pack(self):
+        item = {'type': 'episode', 'season_number': 3, 'episode_number': 1}
+        self.assertEqual(
+            'Show.S03E01.mkv',
+            cleanup._select_candidate_file(item, {'files': {
+                'one': {'name': 'Show.S03E01.mkv', 'size': 100},
+                'two': {'name': 'Show.S03E02.mkv', 'size': 100},
+            }}),
+        )
+        self.assertEqual('', cleanup._select_candidate_file(item, {'files': {
+            'one': {'name': 'unknown-one.mkv', 'size': 100},
+            'two': {'name': 'unknown-two.mkv', 'size': 90},
+        }}))
+
+    def test_unavailable_old_saga_does_not_block_later_ready_saga(self):
+        conn = self.connect()
+        conn.executemany(
+            "INSERT INTO media_items VALUES (?, 'Collected', ?, '', 'Show', 'episode', 3, ?)",
+            [(75299, 'nzb:old-id', 1), (75300, 'nzb:new-two', 2)],
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+        self.assertTrue(cleanup.set_mount_replacement_candidate(75299, 'new-one', 'First'))
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target(
+            cli_debrid_id=75300, info_hash='old-two', file_name='S03E02.mkv')))
+        self.assertTrue(cleanup.set_mount_replacement_candidate(75300, 'new-two', 'Second'))
+
+        def recover(saga, *_args):
+            self.assertEqual(75299, saga['cli_debrid_id'])
+            return False, 'replacement_not_ready: exact candidate missing'
+
+        with patch.object(cleanup, '_recover_recorded_candidate', side_effect=recover), \
+                patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})) as verify, \
+                patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')), \
+                patch.object(cleanup, '_refresh_verified_plex_item'):
+            result = cleanup.process_pending_mount_cleanups()
+        verify.assert_called_once_with(75300, 'new-two')
+        self.assertGreaterEqual(result['retried'], 1)
+        conn = self.connect()
+        rows = conn.execute(
+            'SELECT cli_debrid_id, status, attempts FROM mount_replacement_sagas ORDER BY cli_debrid_id'
+        ).fetchall()
+        conn.close()
+        self.assertEqual('pending', rows[0]['status'])
+        self.assertEqual(0, rows[0]['attempts'])
+        self.assertEqual('complete', rows[1]['status'])
+
+    def test_targeted_restore_does_not_overwrite_concurrent_source_change(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'nzb:old-id', '', "
+            "'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+        self.assertTrue(cleanup.set_mount_replacement_candidate(75299, 'working-id', 'Working'))
+        conn = self.connect()
+        saga = conn.execute('SELECT * FROM mount_replacement_sagas').fetchone()
+        item = dict(conn.execute('SELECT * FROM media_items WHERE id=75299').fetchone())
+        conn.close()
+
+        def register(*_args):
+            update = self.connect()
+            update.execute(
+                "UPDATE media_items SET filled_by_torrent_id='nzb:other-id' WHERE id=75299"
+            )
+            update.commit()
+            update.close()
+            return True
+
+        client = types.SimpleNamespace(
+            is_enabled=lambda: True,
+            get_exact_job=lambda _job_id: {
+                'status': 'ready',
+                'entry': {'files': {'Show.S03E01.mkv': {'size': 100}}},
+            },
+            register_cli_ids=register,
+        )
+        client_module = types.ModuleType('usenet.climount_client')
+        client_module.get_climount_client = lambda: client
+        with patch.dict(sys.modules, {'usenet.climount_client': client_module}):
+            recovered, detail = cleanup._recover_recorded_candidate(
+                saga, item, {'old-id'},
+            )
+        self.assertFalse(recovered)
+        self.assertIn('source changed', detail)
+        conn = self.connect()
+        source = conn.execute(
+            'SELECT filled_by_torrent_id FROM media_items WHERE id=75299'
+        ).fetchone()['filled_by_torrent_id']
+        conn.close()
+        self.assertEqual('nzb:other-id', source)
 
     def test_duplicate_processor_is_single_flight(self):
         cleanup._PROCESS_LOCK.acquire()
@@ -453,7 +558,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertEqual('abandoned', saga['status'])
 
-    def test_torrent_source_supersedes_nzb_saga_without_cleanup(self):
+    def test_collected_torrent_cleans_old_nzb_then_refreshes_plex(self):
         conn = self.connect()
         conn.execute(
             "INSERT INTO media_items VALUES (75299, 'Collected', 'torrent-provider', "
@@ -462,13 +567,33 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.commit()
         conn.close()
         self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
-        with patch.object(cleanup, '_acknowledge') as acknowledge:
+        with patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')) as acknowledge, \
+                patch.object(cleanup, '_refresh_verified_plex_item') as refresh:
             cleanup.process_pending_mount_cleanups(item_id=75299)
-        acknowledge.assert_not_called()
+        acknowledge.assert_called_once()
+        refresh.assert_called_once()
         conn = self.connect()
         saga = conn.execute('SELECT status FROM mount_replacement_sagas').fetchone()
+        target = conn.execute('SELECT status FROM mount_replacement_cleanups').fetchone()
         conn.close()
         self.assertEqual('superseded', saga['status'])
+        self.assertEqual('complete', target['status'])
+
+    def test_uncollected_torrent_does_not_cleanup_or_refresh(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Adding', 'torrent-provider', "
+            "'magnet:?xt=urn:btih:ABCDEF', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+        with patch.object(cleanup, '_acknowledge') as acknowledge, \
+                patch.object(cleanup, '_refresh_verified_plex_item') as refresh:
+            result = cleanup.process_pending_mount_cleanups(item_id=75299)
+        acknowledge.assert_not_called()
+        refresh.assert_not_called()
+        self.assertEqual(1, result['waiting'])
 
     def test_failed_submission_without_job_id_does_not_block_completion(self):
         conn = self.connect()
@@ -740,6 +865,81 @@ class MountReplacementCleanupTests(unittest.TestCase):
         self.assertTrue(all(call[2].get('replacement_nzb_id') is None for call in updates[:-1]))
         self.assertTrue(all(call[2].get('replacement_title') is None for call in updates[:-1]))
         self.assertEqual('replaced', updates[-1][2].get('outcome'))
+
+
+class ExactCliMountJobLookupTests(unittest.TestCase):
+    @staticmethod
+    def client_and_module():
+        routes_pkg = types.ModuleType('routes')
+        routes_pkg.__path__ = []
+        tracker = types.ModuleType('routes.api_tracker')
+        tracker.api = types.SimpleNamespace(get=None)
+        utilities_pkg = types.ModuleType('utilities')
+        utilities_pkg.__path__ = []
+        settings = types.ModuleType('utilities.settings')
+        settings.get_setting = lambda *_args, **_kwargs: {}
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'usenet', 'climount_client.py')
+        spec = importlib.util.spec_from_file_location('exact_climount_client_under_test', path)
+        climount_client = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {
+            'routes': routes_pkg,
+            'routes.api_tracker': tracker,
+            'utilities': utilities_pkg,
+            'utilities.settings': settings,
+        }):
+            spec.loader.exec_module(climount_client)
+        client = object.__new__(climount_client.CliMountClient)
+        client.enabled = True
+        client.base_url = 'http://mount'
+        client.api_token = ''
+        return client, climount_client
+
+    def test_requires_exact_uuid_match(self):
+        client, module = self.client_and_module()
+        response = types.SimpleNamespace(
+            status_code=200,
+            json=lambda: {'torrents': [{
+                'info_hash': 'different-id', 'status': 'downloaded',
+                'is_complete': True,
+            }]},
+        )
+        with patch.object(module.api, 'get', return_value=response):
+            self.assertEqual('missing', client.get_exact_job('wanted-id')['status'])
+
+    def test_rejects_failed_and_ambiguous_exact_jobs(self):
+        client, module = self.client_and_module()
+        failed = types.SimpleNamespace(
+            status_code=200,
+            json=lambda: {'torrents': [{
+                'info_hash': 'wanted-id', 'state': 'error', 'status': 'downloaded',
+            }]},
+        )
+        with patch.object(module.api, 'get', return_value=failed):
+            self.assertEqual('failed', client.get_exact_job('wanted-id')['status'])
+        ambiguous = types.SimpleNamespace(
+            status_code=200,
+            json=lambda: {'torrents': [
+                {'info_hash': 'wanted-id', 'status': 'downloaded'},
+                {'info_hash': 'WANTED-ID', 'status': 'downloaded'},
+            ]},
+        )
+        with patch.object(module.api, 'get', return_value=ambiguous):
+            self.assertEqual('ambiguous', client.get_exact_job('wanted-id')['status'])
+
+    def test_accepts_completed_exact_job_with_files(self):
+        client, module = self.client_and_module()
+        entry = {
+            'info_hash': 'wanted-id', 'state': 'pausedUP', 'status': 'downloaded',
+            'is_complete': True, 'files': {'Episode.mkv': {'size': 100}},
+        }
+        response = types.SimpleNamespace(
+            status_code=200, json=lambda: {'torrents': [entry]},
+        )
+        with patch.object(module.api, 'get', return_value=response):
+            result = client.get_exact_job('wanted-id')
+        self.assertEqual('ready', result['status'])
+        self.assertIs(entry, result['entry'])
 
 
 if __name__ == '__main__':
