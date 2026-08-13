@@ -71,6 +71,11 @@ class MountReplacementCleanupTests(unittest.TestCase):
             cleanup, '_ensure_replacement_symlink', return_value=(True, '')
         )
         self.symlink_handoff_patch.start()
+        self.ownership_patch = patch.object(
+            cleanup, '_reconcile_verified_candidate',
+            side_effect=lambda item, _info_hash, _details: (True, item),
+        )
+        self.ownership_patch.start()
         cleanup.create_mount_replacement_cleanup_table()
         conn = connect()
         conn.execute("""CREATE TABLE media_items (
@@ -82,6 +87,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
 
     def tearDown(self):
+        self.ownership_patch.stop()
         self.symlink_handoff_patch.stop()
         self.cleanup_registration_patch.stop()
         self.registration_patch.stop()
@@ -101,6 +107,13 @@ class MountReplacementCleanupTests(unittest.TestCase):
         }
         value.update(overrides)
         return value
+
+    @staticmethod
+    def healthy_verification():
+        return ('healthy', '', {
+            'entry_name': 'Show.S03E01.Verified',
+            'file_name': 'Show.S03E01.Verified.mkv',
+        })
 
     def create_stale_cleanup_fixture_schema(self):
         conn = self.connect()
@@ -191,6 +204,42 @@ class MountReplacementCleanupTests(unittest.TestCase):
         self.assertEqual('stale_cleanup_pending', rows[0]['outcome'])
         self.assertEqual(19702, rows[0]['item_id'])
 
+    def test_repeated_scan_reuses_same_exact_blocked_stale_target(self):
+        self.create_stale_cleanup_fixture_schema()
+        self.seed_deleted_pitt_item_and_replacement(duplicate_activity=False)
+        self.assertEqual([], cleanup.adopt_stale_replaced_nzbs([
+            self.pitt_health_entry(),
+        ]))
+        conn = self.connect()
+        conn.execute(
+            """UPDATE mount_replacement_sagas
+                  SET status='blocked', last_error='stale_target: exact target changed'"""
+        )
+        conn.execute(
+            "UPDATE nzb_repair_activity SET outcome='stale_entry_unresolved'"
+        )
+        conn.commit()
+        conn.close()
+
+        self.assertEqual([], cleanup.adopt_stale_replaced_nzbs([
+            self.pitt_health_entry(),
+        ]))
+
+        conn = self.connect()
+        saga_count = conn.execute(
+            'SELECT COUNT(*) FROM mount_replacement_sagas'
+        ).fetchone()[0]
+        target_count = conn.execute(
+            'SELECT COUNT(*) FROM mount_replacement_cleanups'
+        ).fetchone()[0]
+        activity_count = conn.execute(
+            'SELECT COUNT(*) FROM nzb_repair_activity'
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(1, saga_count)
+        self.assertEqual(1, target_count)
+        self.assertEqual(1, activity_count)
+
     def test_stale_cleanup_verifies_new_nzb_acks_old_identity_and_refreshes(self):
         self.create_stale_cleanup_fixture_schema()
         self.seed_deleted_pitt_item_and_replacement()
@@ -198,7 +247,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
 
         with patch.object(activity, 'get_db_connection', side_effect=self.connect), \
                 patch.dict(sys.modules, {'database.nzb_repair_activity': activity}), \
-                patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})) as verify, \
+                patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()) as verify, \
                 patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')) as acknowledge, \
                 patch.object(cleanup, '_refresh_verified_plex_item', return_value=True) as refresh:
             result = cleanup.process_pending_mount_cleanups(item_id=19702)
@@ -227,7 +276,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
 
         with patch.object(activity, 'get_db_connection', side_effect=self.connect), \
                 patch.dict(sys.modules, {'database.nzb_repair_activity': activity}), \
-                patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})) as verify, \
+                patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()) as verify, \
                 patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')) as acknowledge, \
                 patch.object(cleanup, '_refresh_verified_plex_item', return_value=False):
             cleanup.process_pending_mount_cleanups(item_id=19702)
@@ -526,7 +575,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
 
-        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+        with patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()), \
                 patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')):
             result = cleanup.process_pending_mount_cleanups(item_id=75299)
         self.assertEqual(1, result['completed'])
@@ -534,6 +583,105 @@ class MountReplacementCleanupTests(unittest.TestCase):
         row = conn.execute('SELECT status FROM mount_replacement_cleanups').fetchone()
         conn.close()
         self.assertEqual('complete', row['status'])
+
+    def test_healthy_verification_is_reused_while_cleanup_retries(self):
+        with tempfile.TemporaryDirectory() as mount_root:
+            entry_name = 'Show.S03E01.Verified'
+            file_name = 'Show.S03E01.Verified.mkv'
+            source_dir = os.path.join(mount_root, '__all__', entry_name)
+            os.makedirs(source_dir)
+            source_path = os.path.join(source_dir, file_name)
+            with open(source_path, 'wb') as handle:
+                handle.write(b'video')
+
+            conn = self.connect()
+            conn.execute('ALTER TABLE media_items ADD COLUMN original_path_for_symlink TEXT')
+            conn.execute(
+                """INSERT INTO media_items
+                   (id, state, filled_by_torrent_id, filled_by_magnet, title, type,
+                    season_number, episode_number, original_path_for_symlink)
+                   VALUES (75299, 'Collected', 'nzb:new-id', '', 'Show', 'episode',
+                           3, 1, ?)""",
+                (source_path,),
+            )
+            conn.commit()
+            conn.close()
+            self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+
+            with patch.object(
+                    cleanup, '_verify_replacement',
+                    return_value=self.healthy_verification()) as verify, \
+                    patch.object(cleanup, '_ensure_cleanup_registration',
+                                 return_value=('retry', 'temporary registration failure')):
+                cleanup.process_pending_mount_cleanups(item_id=75299)
+            verify.assert_called_once()
+
+            conn = self.connect()
+            saga = conn.execute(
+                'SELECT verified_info_hash, verified_entry_name, verified_file_name '
+                'FROM mount_replacement_sagas'
+            ).fetchone()
+            conn.execute('UPDATE mount_replacement_sagas SET next_attempt_at=NULL')
+            conn.commit()
+            conn.close()
+            self.assertEqual('new-id', saga['verified_info_hash'])
+            self.assertEqual(entry_name, saga['verified_entry_name'])
+            self.assertEqual(file_name, saga['verified_file_name'])
+
+            with patch.object(cleanup, '_verify_replacement') as second_verify, \
+                    patch.object(cleanup, '_ensure_cleanup_registration',
+                                 return_value=('ready', '')), \
+                    patch.object(cleanup, '_acknowledge',
+                                 return_value=('complete', 'removed')):
+                cleanup.process_pending_mount_cleanups(item_id=75299)
+            second_verify.assert_not_called()
+            conn = self.connect()
+            saga = conn.execute('SELECT status FROM mount_replacement_sagas').fetchone()
+            conn.close()
+            self.assertEqual('complete', saga['status'])
+
+    def test_verified_identity_repairs_mixed_candidate_metadata_with_cas(self):
+        with tempfile.TemporaryDirectory() as mount_root:
+            entry_name = 'Breaking.Bad.S02E06.Verified'
+            file_name = 'Breaking.Bad.S02E06.Verified.mkv'
+            exact_dir = os.path.join(mount_root, '__all__', entry_name)
+            os.makedirs(exact_dir)
+            exact_path = os.path.join(exact_dir, file_name)
+            with open(exact_path, 'wb') as handle:
+                handle.write(b'video')
+            wrong_path = os.path.join(
+                mount_root, '__all__', 'Breaking.Bad.S02E06.Wrong', 'wrong.mkv'
+            )
+
+            conn = self.connect()
+            conn.execute('ALTER TABLE media_items ADD COLUMN filled_by_file TEXT')
+            conn.execute('ALTER TABLE media_items ADD COLUMN filled_by_title TEXT')
+            conn.execute('ALTER TABLE media_items ADD COLUMN original_path_for_symlink TEXT')
+            conn.execute(
+                """INSERT INTO media_items
+                   (id, state, filled_by_torrent_id, filled_by_magnet, title, type,
+                    season_number, episode_number, filled_by_file, filled_by_title,
+                    original_path_for_symlink)
+                   VALUES (7269, 'Collected', 'nzb:verified-id', '', 'Breaking Bad',
+                           'episode', 2, 6, 'wrong.mkv', 'Wrong.Release', ?)""",
+                (wrong_path,),
+            )
+            conn.commit()
+            item = dict(conn.execute('SELECT * FROM media_items WHERE id=7269').fetchone())
+            conn.close()
+
+            self.ownership_patch.stop()
+            try:
+                ok, refreshed = cleanup._reconcile_verified_candidate(
+                    item, 'verified-id',
+                    {'entry_name': entry_name, 'file_name': file_name},
+                )
+            finally:
+                self.ownership_patch.start()
+            self.assertTrue(ok)
+            self.assertEqual(entry_name, refreshed['filled_by_title'])
+            self.assertEqual(file_name, refreshed['filled_by_file'])
+            self.assertEqual(exact_path, refreshed['original_path_for_symlink'])
 
     def test_healthy_replacement_never_acknowledges_before_symlink_handoff(self):
         conn = self.connect()
@@ -544,7 +692,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
 
-        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+        with patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()), \
                 patch.object(cleanup, '_ensure_replacement_symlink',
                              return_value=(False, 'replacement_symlink_not_ready')), \
                 patch.object(cleanup, '_acknowledge') as acknowledge:
@@ -589,7 +737,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         )
         self.assertTrue(cleanup.queue_mount_replacement_cleanup(target))
 
-        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+        with patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()), \
                 patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')):
             result = cleanup.process_pending_mount_cleanups(item_id=75300)
         self.assertEqual(1, result['completed'])
@@ -632,7 +780,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
 
-        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+        with patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()), \
                 patch.object(cleanup, '_acknowledge', return_value=('retry', 'endpoint unavailable')):
             result = cleanup.process_pending_mount_cleanups(item_id=75299)
         self.assertEqual(1, result['retried'])
@@ -657,7 +805,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.execute('UPDATE mount_replacement_sagas SET last_reconciled_at=CURRENT_TIMESTAMP')
         conn.commit()
         conn.close()
-        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+        with patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()), \
                 patch.object(cleanup, '_acknowledge', return_value=('blocked', 'stale_target')):
             result = cleanup.process_pending_mount_cleanups(item_id=75299)
         self.assertEqual(1, result['blocked'])
@@ -771,7 +919,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         client_module = types.ModuleType('usenet.climount_client')
         client_module.get_climount_client = lambda: client
         with patch.dict(sys.modules, {'usenet.climount_client': client_module}), \
-                patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+                patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()), \
                 patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')):
             cleanup.process_pending_mount_cleanups(item_id=75299)
         conn = self.connect()
@@ -866,7 +1014,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
             return False, 'replacement_not_ready: exact candidate missing'
 
         with patch.object(cleanup, '_recover_recorded_candidate', side_effect=recover), \
-                patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})) as verify, \
+                patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()) as verify, \
                 patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')), \
                 patch.object(cleanup, '_refresh_verified_plex_item'):
             result = cleanup.process_pending_mount_cleanups()
@@ -1024,7 +1172,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         usenet_module = types.ModuleType('usenet')
         usenet_module.get_usenet_client = lambda: types.SimpleNamespace()
         with patch.dict(sys.modules, {'usenet': usenet_module}), \
-                patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+                patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()), \
                 patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')):
             cleanup.process_pending_mount_cleanups(item_id=75299)
         conn = self.connect()
@@ -1169,6 +1317,27 @@ class MountReplacementCleanupTests(unittest.TestCase):
         self.assertEqual('ready', status)
         self.assertEqual(1, len(calls))
 
+    def test_queue_visible_cleanup_reaches_acknowledgement_after_patch_404(self):
+        client = types.SimpleNamespace(
+            is_enabled=lambda: True,
+            get_exact_job=lambda _job_id: {
+                'status': 'ready',
+                'entry': {'files': {'S03E01.mkv': {'size': 10}}},
+            },
+            register_cli_ids_with_status=lambda _job_id, _ids: (False, True),
+        )
+        client_module = types.ModuleType('usenet.climount_client')
+        client_module.get_climount_client = lambda: client
+        self.cleanup_registration_patch.stop()
+        try:
+            with patch.dict(sys.modules, {'usenet.climount_client': client_module}):
+                status, message = cleanup._ensure_cleanup_registration({
+                    **self.target(), 'old_info_hash': 'old-id',
+                })
+        finally:
+            self.cleanup_registration_patch.start()
+        self.assertEqual(('ready', ''), (status, message))
+
     def test_missing_queue_transient_registration_failure_retries_before_ack(self):
         client = types.SimpleNamespace(
             is_enabled=lambda: True,
@@ -1207,7 +1376,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         self.assertEqual('retry', status)
         self.assertIn('ambiguous', message)
 
-    def test_startup_requeues_only_known_registration_conflicts(self):
+    def test_startup_does_not_reopen_registration_conflicts(self):
         conn = self.connect()
         conn.execute("""CREATE TABLE nzb_repair_activity (
             id INTEGER PRIMARY KEY, replacement_nzb_id TEXT,
@@ -1253,9 +1422,9 @@ class MountReplacementCleanupTests(unittest.TestCase):
             'SELECT id, outcome FROM nzb_repair_activity ORDER BY id'
         ).fetchall()
         conn.close()
-        self.assertEqual('pending', sagas[0]['status'])
+        self.assertEqual('blocked', sagas[0]['status'])
         self.assertEqual('blocked', sagas[1]['status'])
-        self.assertEqual('replacement_pending', activities[0]['outcome'])
+        self.assertEqual('replacement_cleanup_stale', activities[0]['outcome'])
         self.assertEqual('replacement_cleanup_stale', activities[1]['outcome'])
 
     def test_failed_candidate_is_not_acknowledged(self):
@@ -1304,7 +1473,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
             acknowledged.append(row['old_info_hash'])
             return 'complete', 'removed'
 
-        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+        with patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()), \
                 patch.object(cleanup, '_acknowledge', side_effect=acknowledge):
             result = cleanup.process_pending_mount_cleanups(item_id=75299)
         self.assertEqual({'old-id', 'first-bad'}, set(acknowledged))
@@ -1342,7 +1511,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
             return 'complete', 'removed'
 
         with patch.dict(sys.modules, {'usenet': usenet_module}), \
-                patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+                patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()), \
                 patch.object(cleanup, '_acknowledge', side_effect=acknowledge), \
                 patch.object(cleanup, '_refresh_verified_plex_item',
                              side_effect=lambda _item: events.append(('plex_refresh', 'working-id'))):
@@ -1398,7 +1567,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.commit()
         conn.close()
 
-        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+        with patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()), \
                 patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')) as acknowledge, \
                 patch.object(cleanup, '_update_activity', return_value=False), \
                 patch.object(cleanup, '_refresh_verified_plex_item') as refresh:
@@ -1413,7 +1582,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         self.assertEqual('pending', saga['status'])
         self.assertEqual('complete', target['status'])
 
-        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+        with patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()), \
                 patch.object(cleanup, '_acknowledge') as acknowledge, \
                 patch.object(cleanup, '_update_activity', return_value=True), \
                 patch.object(cleanup, '_refresh_verified_plex_item') as refresh:
@@ -1471,7 +1640,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
             conn.execute("UPDATE media_items SET filled_by_torrent_id='nzb:second-good' WHERE id=75299")
             conn.commit()
             conn.close()
-            with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+            with patch.object(cleanup, '_verify_replacement', return_value=self.healthy_verification()), \
                     patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')):
                 cleanup.process_pending_mount_cleanups(item_id=75299)
 

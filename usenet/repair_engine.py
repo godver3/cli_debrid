@@ -877,15 +877,19 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
 
         # Pre-fetch NZBs and filter globally- or item-scoped rejected candidates.
         filtered = []
+        seen_titles = set(attempted.get('titles', set()))
+        seen_guids = set(attempted.get('guids', set()))
+        seen_segments = set(attempted.get('segment_ids', set()))
         for r in nzb_results:
             nzb_url = r.get('nzb_url') or r.get('magnet', '')
             normalized_title = re.sub(r'[^a-z0-9]+', '', str(r.get('title') or '').lower())
-            if normalized_title and normalized_title in attempted.get('titles', set()):
+            if normalized_title and normalized_title in seen_titles:
                 logger.debug(f'[NZBRepair] Skipping previously attempted title: {r.get("title")}')
                 continue
             guid = extract_nzb_guid(nzb_url) if nzb_url else ''
-            if guid and guid in attempted.get('guids', set()):
+            if guid and guid in seen_guids:
                 continue
+            segment = ''
             if nzb_url:
                 try:
                     resp = requests.get(nzb_url, timeout=15, allow_redirects=True,
@@ -893,13 +897,19 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
                     if resp.status_code == 200 and '<nzb' in resp.text.lower():
                         segment = extract_nzb_segment_id(resp.text) or ''
                         if (is_nzb_segment_not_wanted(resp.text)
-                                or segment in attempted.get('segment_ids', set())):
+                                or segment in seen_segments):
                             logger.debug(f'[NZBRepair] Skipping blacklisted segment: {r.get("title")}')
                             continue
                         r['_prefetched_nzb'] = resp.text
                 except Exception:
                     pass
             filtered.append(r)
+            if normalized_title:
+                seen_titles.add(normalized_title)
+            if guid:
+                seen_guids.add(guid)
+            if segment:
+                seen_segments.add(segment)
 
         logger.info(f'[NZBRepair] Found {len(filtered)} usable replacement candidates for {item.get("title")!r}')
         return filtered
@@ -1034,6 +1044,7 @@ def _select_confirmed_replacement(candidates: list, title: str, item: dict):
                 item_id, job_id=provisional['job_id'], title=provisional_title,
                 segment_id=provisional.get('segment_id') or '',
                 nzb_guid=provisional.get('nzb_guid') or '',
+                source_title=provisional.get('normalized_title') or '',
                 status='failed_submission',
                 reason='submitted candidate does not match requested episode identity',
             )
@@ -1054,6 +1065,7 @@ def _select_confirmed_replacement(candidates: list, title: str, item: dict):
                 title=provisional.get('release_title') or provisional['normalized_title'],
                 segment_id=provisional.get('segment_id') or '',
                 nzb_guid=provisional.get('nzb_guid') or '',
+                source_title=provisional.get('normalized_title') or '',
                 status='failed_submission',
                 reason='terminal queue state',
             )
@@ -1078,7 +1090,8 @@ def _select_confirmed_replacement(candidates: list, title: str, item: dict):
             )
             record_mount_replacement_attempt(
                 item_id, job_id='', title=candidate_title,
-                segment_id='', nzb_guid=guid or '', status='rejected_identity',
+                segment_id='', nzb_guid=guid or '', source_title=candidate_title,
+                status='rejected_identity',
                 reason='candidate does not prove the requested episode identity',
             )
             continue
@@ -1092,13 +1105,15 @@ def _select_confirmed_replacement(candidates: list, title: str, item: dict):
             record_mount_replacement_attempt(
                 item_id, job_id=job_id or '', title=named_title or candidate.get('title') or '',
                 segment_id=segment_id or '', nzb_guid=guid or '',
+                source_title=candidate.get('title') or '',
                 status='failed_submission', reason='terminal queue state',
             )
             continue
         if state == 'unconfirmed':
             record_mount_replacement_attempt(
                 item_id, job_id=job_id or '', title=named_title or candidate.get('title') or '',
-                segment_id=segment_id or '', nzb_guid=guid or '', status='provisional',
+                segment_id=segment_id or '', nzb_guid=guid or '',
+                source_title=candidate.get('title') or '', status='provisional',
             )
             return None, job_id, state
         selected = dict(candidate)

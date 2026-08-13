@@ -172,6 +172,32 @@ class TestNZBPlaybackReplacementSelection(unittest.TestCase):
         self.assertEqual('failed-uuid', attempts[0][1]['job_id'])
         blacklist.assert_called_once()
 
+    def test_scrape_deduplicates_normalized_titles_within_one_attempt(self):
+        scraper_pkg = types.ModuleType('scraper')
+        scraper_module = types.ModuleType('scraper.scraper')
+        scraper_module.scrape = lambda **_kwargs: ([
+            {'protocol': 'nzb', 'title': 'Release.Name', 'nzb_url': 'https://one'},
+            {'protocol': 'nzb', 'title': 'release-name', 'nzb_url': 'https://two'},
+            {'protocol': 'nzb', 'title': 'Different.Release', 'nzb_url': 'https://three'},
+        ], None)
+        cleanup_module = types.ModuleType('database.mount_replacement_cleanup')
+        cleanup_module.get_attempted_candidate_keys = lambda _item_id: {
+            'segment_ids': set(), 'guids': set(), 'titles': set(),
+        }
+        response = types.SimpleNamespace(status_code=500, text='')
+        with patch.dict(sys.modules, {
+                'scraper': scraper_pkg,
+                'scraper.scraper': scraper_module,
+                'database.mount_replacement_cleanup': cleanup_module,
+        }), patch.object(re_mod.requests, 'get', return_value=response):
+            results = re_mod._scrape_for_replacement({
+                'id': 75299, 'title': 'Show', 'type': 'episode',
+                'season_number': 3, 'episode_number': 1,
+            }, '')
+        self.assertEqual(['Release.Name', 'Different.Release'], [
+            result['title'] for result in results
+        ])
+
     def test_terminal_add_response_returns_uuid_as_failed_without_polling(self):
         client = Mock()
         client.add_nzb.return_value = 'failed-uuid'
