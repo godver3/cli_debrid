@@ -21,6 +21,10 @@ _RETRY_SECONDS = (60, 300, 1800)
 _LEGACY_RETRY_SECONDS = (60, 300, 1800, 7200, 86400)
 _PROCESS_LOCK = threading.Lock()
 _VIDEO_EXTENSIONS = frozenset({'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'})
+_REGISTRATION_STALE_ERRORS = frozenset({
+    'stale_target: cli_debrid_id does not match the mounted file registration',
+    'stale_target: cli_debrid_id is registered to a different current provider source',
+})
 
 
 def _add_column(conn, table: str, definition: str) -> None:
@@ -28,6 +32,98 @@ def _add_column(conn, table: str, definition: str) -> None:
         conn.execute(f'ALTER TABLE {table} ADD COLUMN {definition}')
     except Exception:
         pass
+
+
+def _requeue_registration_stale_sagas(conn) -> int:
+    """Recover only the registration conflicts created by saga-aware sync.
+
+    These conflicts do not mean the replacement or cleanup target is stale. They
+    mean cli_mount received a filename from the media row belonging to the other
+    side of the replacement. Re-probing is safe after exact registration is
+    restored because no acknowledgement occurs until the probe is healthy.
+    """
+    rows = conn.execute(
+        """SELECT * FROM mount_replacement_sagas
+           WHERE protocol='nzb' AND status='blocked'
+             AND last_error IN (?, ?)
+             AND candidate_info_hash IS NOT NULL AND candidate_info_hash!=''
+           ORDER BY cli_debrid_id, id""",
+        tuple(_REGISTRATION_STALE_ERRORS),
+    ).fetchall()
+    if not rows:
+        return 0
+
+    activity_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='nzb_repair_activity'"
+    ).fetchone()
+    grouped = {}
+    for row in rows:
+        grouped.setdefault(row['cli_debrid_id'], []).append(row)
+
+    recovered = 0
+    for cli_debrid_id, item_rows in grouped.items():
+        # A blocked saga could previously fall out of the partial unique index,
+        # allowing the same repair to be queued again. Preserve the original
+        # activity row and fold exact targets/attempts from those duplicates into it.
+        active = conn.execute(
+            """SELECT * FROM mount_replacement_sagas
+               WHERE cli_debrid_id=? AND protocol='nzb'
+                 AND status IN ('pending','probe_failed')
+               ORDER BY id LIMIT 1""",
+            (cli_debrid_id,),
+        ).fetchone()
+        if active and not any(
+                str(row['candidate_info_hash'] or '').lower() ==
+                str(active['candidate_info_hash'] or '').lower()
+                for row in item_rows):
+            continue
+        keeper = active or item_rows[0]
+        for duplicate in item_rows:
+            if duplicate['id'] == keeper['id']:
+                continue
+            if (str(duplicate['candidate_info_hash'] or '').lower() !=
+                    str(keeper['candidate_info_hash'] or '').lower()):
+                continue
+            conn.execute(
+                'UPDATE mount_replacement_cleanups SET saga_id=? WHERE saga_id=?',
+                (keeper['id'], duplicate['id']),
+            )
+            conn.execute(
+                'UPDATE mount_replacement_attempts SET saga_id=? WHERE saga_id=?',
+                (keeper['id'], duplicate['id']),
+            )
+            if activity_table and duplicate['activity_id'] and duplicate['activity_id'] != keeper['activity_id']:
+                conn.execute(
+                    "DELETE FROM nzb_repair_activity WHERE id=? AND outcome='replacement_cleanup_stale'",
+                    (duplicate['activity_id'],),
+                )
+            conn.execute('DELETE FROM mount_replacement_sagas WHERE id=?', (duplicate['id'],))
+
+        conn.execute(
+            """UPDATE mount_replacement_cleanups
+               SET status='pending', attempts=0, next_attempt_at=NULL,
+                   last_error=NULL, updated_at=CURRENT_TIMESTAMP
+               WHERE saga_id=? AND status='blocked' AND last_error IN (?, ?)""",
+            (keeper['id'], *_REGISTRATION_STALE_ERRORS),
+        )
+        if keeper['status'] == 'blocked':
+            conn.execute(
+                """UPDATE mount_replacement_sagas
+                   SET status='pending', attempts=0, next_attempt_at=NULL,
+                       last_error=NULL, updated_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (keeper['id'],),
+            )
+        if activity_table and keeper['activity_id']:
+            conn.execute(
+                """UPDATE nzb_repair_activity
+                   SET replacement_nzb_id=NULL, replacement_title=NULL,
+                       outcome='replacement_pending', updated_at=CURRENT_TIMESTAMP
+                   WHERE id=? AND outcome='replacement_cleanup_stale'""",
+                (keeper['activity_id'],),
+            )
+        recovered += 1
+    return recovered
 
 
 def create_mount_replacement_cleanup_table() -> None:
@@ -175,6 +271,12 @@ def create_mount_replacement_cleanup_table() -> None:
                     '[MountCleanup] Reconciled %s completed replacement activity row(s)',
                     reconciled.rowcount,
                 )
+        recovered = _requeue_registration_stale_sagas(conn)
+        if recovered:
+            logging.info(
+                '[MountCleanup] Requeued %s replacement saga(s) after exact-registration repair',
+                recovered,
+            )
         conn.commit()
     finally:
         conn.close()
@@ -527,19 +629,124 @@ def _response_code(body: dict) -> str:
     return str(body.get('code') or body.get('reason') or '') if isinstance(body, dict) else ''
 
 
-def _ensure_candidate_registration(cli_debrid_id: int, info_hash: str) -> bool:
-    """Register the exact collected candidate before asking cli_mount to probe it."""
+def _exact_registration_map(entry: dict, file_name: str, cli_debrid_id: int) -> dict:
+    """Replace this item's stale filename while preserving healthy siblings."""
+    registered = dict((entry or {}).get('cli_debrid_ids') or {})
+    registered = {
+        name: item_id for name, item_id in registered.items()
+        if int(item_id or 0) != int(cli_debrid_id)
+    }
+    registered[file_name] = int(cli_debrid_id)
+    return registered
+
+
+def _registration_map_for_source(info_hash: str, file_name: str,
+                                 cli_debrid_id: int, entry: dict = None) -> dict:
+    """Build cli_mount's complete replacement map without a library sync.
+
+    The exact job API exposes mounted files but older cli_mount builds omit the
+    persisted ID map from that response. cli_debrid remains authoritative for
+    healthy siblings still owned by this source, while cleanup rows retain exact
+    filenames for siblings already moved to later candidates.
+    """
+    registered = dict((entry or {}).get('cli_debrid_ids') or {})
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """SELECT id, filled_by_file FROM media_items
+               WHERE filled_by_torrent_id IN (?, ?)
+                 AND state IN ('Checking','Collected','Upgrading')""",
+            (info_hash, f'nzb:{info_hash}'),
+        ).fetchall()
+        for row in rows:
+            if row['filled_by_file']:
+                registered[row['filled_by_file']] = row['id']
+        cleanup_rows = conn.execute(
+            """SELECT c.file_name, c.cli_debrid_id
+                 FROM mount_replacement_cleanups c
+                 JOIN mount_replacement_sagas s ON s.id=c.saga_id
+                WHERE lower(c.old_info_hash)=lower(?)
+                  AND c.status IN ('pending','blocked')
+                  AND s.protocol='nzb'
+                  AND (s.status IN ('pending','probe_failed') OR
+                       (s.status='blocked' AND s.last_error IN (?, ?)))""",
+            (info_hash, *_REGISTRATION_STALE_ERRORS),
+        ).fetchall()
+        for row in cleanup_rows:
+            if row['file_name']:
+                registered[row['file_name']] = row['cli_debrid_id']
+    except Exception:
+        # Minimal/legacy schemas can still safely register the one exact file.
+        pass
+    finally:
+        conn.close()
+    return _exact_registration_map(
+        {'cli_debrid_ids': registered}, file_name, cli_debrid_id,
+    )
+
+
+def _ensure_candidate_registration(cli_debrid_id: int, info_hash: str,
+                                   item: dict = None) -> bool:
+    """Register the exact mounted candidate before asking cli_mount to probe it."""
     try:
         from usenet.climount_client import get_climount_client
         client = get_climount_client()
-        return bool(client and client.is_enabled() and
-                    client.register_cli_ids_for_item(info_hash, cli_debrid_id))
+        if not client or not client.is_enabled():
+            return False
+        lookup = client.get_exact_job(info_hash)
+        if str(lookup.get('status') or '') != 'ready':
+            return False
+        entry = lookup.get('entry') or {}
+        candidate_file = _select_candidate_file(item or {}, entry)
+        if not candidate_file:
+            return False
+        return bool(client.register_cli_ids(
+            info_hash,
+            _registration_map_for_source(
+                info_hash, candidate_file, cli_debrid_id, entry,
+            ),
+        ))
     except Exception as exc:
         logging.warning(
             '[MountCleanup] Candidate registration failed: item=%s info_hash=%s error=%s',
             cli_debrid_id, info_hash, exc,
         )
         return False
+
+
+def _ensure_cleanup_registration(target) -> tuple:
+    """Restore one old file's exact ID mapping immediately before acknowledgement."""
+    try:
+        from usenet.climount_client import get_climount_client
+        client = get_climount_client()
+        if not client or not client.is_enabled():
+            return 'retry', 'cli_mount is unavailable'
+        lookup = client.get_exact_job(target['old_info_hash'])
+        status = str(lookup.get('status') or 'unavailable')
+        if status == 'missing':
+            # The acknowledgement endpoint will return already_removed if the
+            # mounted item disappeared with the provider entry.
+            return 'ready', ''
+        entry = lookup.get('entry') or {}
+        if status in ('unavailable', 'ambiguous') or not entry:
+            return 'retry', f'replacement_not_ready: cleanup target {status}'
+        ids = _registration_map_for_source(
+            target['old_info_hash'], target['file_name'],
+            int(target['cli_debrid_id']), entry,
+        )
+        if not client.register_cli_ids(target['old_info_hash'], ids):
+            return 'retry', 'replacement_not_ready: exact cleanup registration failed'
+        logging.info(
+            '[MountCleanup] Restored exact cleanup registration: item=%s info_hash=%s file=%r',
+            target['cli_debrid_id'], target['old_info_hash'], target['file_name'],
+        )
+        return 'ready', ''
+    except Exception as exc:
+        logging.warning(
+            '[MountCleanup] Exact cleanup registration failed: item=%s info_hash=%s error=%s',
+            target['cli_debrid_id'], target['old_info_hash'], exc,
+        )
+        return 'retry', str(exc)
 
 
 def _candidate_files(entry: dict) -> list:
@@ -620,7 +827,12 @@ def _recover_recorded_candidate(saga, item: dict, old_hashes: set) -> tuple:
     if not candidate_file:
         return False, 'replacement_not_ready: exact candidate file is missing or ambiguous'
     if not client.register_cli_ids(
-            candidate_hash, {candidate_file: int(saga['cli_debrid_id'])}):
+            candidate_hash,
+            _registration_map_for_source(
+                candidate_hash, candidate_file,
+                int(saga['cli_debrid_id']),
+                lookup.get('entry') or {},
+            )):
         return False, 'replacement_not_ready: exact candidate registration failed'
 
     restore_conn = get_db_connection()
@@ -901,6 +1113,12 @@ def _finish_torrent_supersession(saga, item: dict, all_targets: list,
     retry_message = None
     terminal_failure = None
     for target in (row for row in all_targets if row['status'] == 'pending'):
+        registration_status, registration_message = _ensure_cleanup_registration(target)
+        if registration_status != 'ready':
+            retry_message = registration_message
+            all_complete = False
+            result['retried'] += 1
+            continue
         ack_status, ack_message = _acknowledge(target)
         conn = get_db_connection()
         try:
@@ -1077,7 +1295,8 @@ def _process_pending_mount_cleanups(item_id: int = None) -> dict:
             # Candidate details stay private until verification and cleanup
             # both succeed; the activity row remains a neutral pending record.
 
-        if not _ensure_candidate_registration(saga['cli_debrid_id'], current_hash):
+        if not _ensure_candidate_registration(
+                saga['cli_debrid_id'], current_hash, saga_dict):
             retry_conn = get_db_connection()
             try:
                 _schedule_saga_retry(
@@ -1160,6 +1379,12 @@ def _process_pending_mount_cleanups(item_id: int = None) -> dict:
         if terminal_failure:
             all_complete = False
         for target in targets:
+            registration_status, registration_message = _ensure_cleanup_registration(target)
+            if registration_status != 'ready':
+                all_complete = False
+                retry_message = registration_message
+                result['retried'] += 1
+                continue
             ack_status, ack_message = _acknowledge(target)
             update_conn = get_db_connection()
             try:

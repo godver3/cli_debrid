@@ -63,6 +63,10 @@ class MountReplacementCleanupTests(unittest.TestCase):
             cleanup, '_ensure_candidate_registration', return_value=True
         )
         self.registration_patch.start()
+        self.cleanup_registration_patch = patch.object(
+            cleanup, '_ensure_cleanup_registration', return_value=('ready', '')
+        )
+        self.cleanup_registration_patch.start()
         cleanup.create_mount_replacement_cleanup_table()
         conn = connect()
         conn.execute("""CREATE TABLE media_items (
@@ -74,6 +78,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
 
     def tearDown(self):
+        self.cleanup_registration_patch.stop()
         self.registration_patch.stop()
         self.db_patch.stop()
         os.unlink(self.db_path)
@@ -640,6 +645,126 @@ class MountReplacementCleanupTests(unittest.TestCase):
             conn, 75299, {'protocol': 'torrent', 'info_hash': 'old-id'}
         ))
         conn.close()
+
+    def test_sync_uses_exact_old_cleanup_filename_not_current_candidate_filename(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'nzb:new-id', '', "
+            "'Show', 'episode', 3, 1)"
+        )
+        conn.execute("ALTER TABLE media_items ADD COLUMN filled_by_file TEXT")
+        conn.execute("UPDATE media_items SET filled_by_file='new-candidate.mkv' WHERE id=75299")
+        conn.execute("INSERT INTO mount_replacement_sagas (cli_debrid_id, protocol) VALUES (75299, 'nzb')")
+        saga_id = conn.execute('SELECT id FROM mount_replacement_sagas').fetchone()['id']
+        conn.execute(
+            """INSERT INTO mount_replacement_cleanups
+               (saga_id, cli_debrid_id, protocol, entry_name, file_name, old_info_hash, reason)
+               VALUES (?, 75299, 'nzb', 'Old Show', 'old-broken.mkv', 'old-id', 'media_probe_failed')""",
+            (saga_id,),
+        )
+        conn.commit()
+        ids = climount_sync._exact_cleanup_registration_ids(
+            conn, [75299], {'protocol': 'nzb', 'info_hash': 'old-id'},
+        )
+        conn.close()
+        self.assertEqual({'old-broken.mkv': 75299}, ids)
+
+    def test_exact_registration_replaces_only_same_item_stale_filename(self):
+        entry = {
+            'cli_debrid_ids': {
+                'stale-new-name.mkv': 75299,
+                'healthy-sibling.mkv': 75300,
+            },
+        }
+        self.assertEqual({
+            'old-broken.mkv': 75299,
+            'healthy-sibling.mkv': 75300,
+        }, cleanup._exact_registration_map(entry, 'old-broken.mkv', 75299))
+
+    def test_source_registration_preserves_healthy_pack_siblings(self):
+        conn = self.connect()
+        conn.execute("ALTER TABLE media_items ADD COLUMN filled_by_file TEXT")
+        conn.executemany(
+            """INSERT INTO media_items
+               (id, state, filled_by_torrent_id, filled_by_magnet, title, type,
+                season_number, episode_number, filled_by_file)
+               VALUES (?, 'Collected', ?, '', 'Show', 'episode', 3, ?, ?)""",
+            [
+                (75299, 'nzb:new-id', 1, 'new-candidate.mkv'),
+                (75300, 'nzb:old-id', 2, 'healthy-sibling.mkv'),
+            ],
+        )
+        conn.execute(
+            "INSERT INTO mount_replacement_sagas (cli_debrid_id, protocol) VALUES (75299, 'nzb')"
+        )
+        saga_id = conn.execute('SELECT id FROM mount_replacement_sagas').fetchone()['id']
+        conn.execute(
+            """INSERT INTO mount_replacement_cleanups
+               (saga_id, cli_debrid_id, protocol, entry_name, file_name, old_info_hash, reason)
+               VALUES (?, 75299, 'nzb', 'Old Show', 'old-broken.mkv', 'old-id', 'media_probe_failed')""",
+            (saga_id,),
+        )
+        conn.commit()
+        conn.close()
+
+        self.assertEqual({
+            'old-broken.mkv': 75299,
+            'healthy-sibling.mkv': 75300,
+        }, cleanup._registration_map_for_source(
+            'old-id', 'old-broken.mkv', 75299,
+            {'cli_debrid_ids': {'wrong-new-name.mkv': 75299}},
+        ))
+
+    def test_startup_requeues_only_known_registration_conflicts(self):
+        conn = self.connect()
+        conn.execute("""CREATE TABLE nzb_repair_activity (
+            id INTEGER PRIMARY KEY, replacement_nzb_id TEXT,
+            replacement_title TEXT, outcome TEXT, updated_at TIMESTAMP
+        )""")
+        conn.executemany(
+            "INSERT INTO nzb_repair_activity (id, outcome) VALUES (?, 'replacement_cleanup_stale')",
+            [(1,), (2,)],
+        )
+        conn.executemany(
+            """INSERT INTO mount_replacement_sagas
+               (cli_debrid_id, protocol, status, activity_id, candidate_info_hash, last_error)
+               VALUES (?, 'nzb', 'blocked', ?, 'new-id', ?)""",
+            [
+                (1, 1, 'stale_target: cli_debrid_id does not match the mounted file registration'),
+                (2, 2, 'stale_target: provider entry is missing while the mounted file is still active'),
+            ],
+        )
+        saga_ids = [row['id'] for row in conn.execute(
+            'SELECT id FROM mount_replacement_sagas ORDER BY cli_debrid_id'
+        ).fetchall()]
+        conn.executemany(
+            """INSERT INTO mount_replacement_cleanups
+               (saga_id, cli_debrid_id, protocol, entry_name, file_name, old_info_hash,
+                reason, status, last_error)
+               VALUES (?, ?, 'nzb', 'Old', 'old.mkv', 'old-id', 'media_probe_failed',
+                       'blocked', ?)""",
+            [
+                (saga_ids[0], 1, 'stale_target: cli_debrid_id does not match the mounted file registration'),
+                (saga_ids[1], 2, 'stale_target: provider entry is missing while the mounted file is still active'),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        cleanup.create_mount_replacement_cleanup_table()
+
+        conn = self.connect()
+        sagas = conn.execute(
+            'SELECT cli_debrid_id, status FROM mount_replacement_sagas ORDER BY cli_debrid_id'
+        ).fetchall()
+        activities = conn.execute(
+            'SELECT id, outcome FROM nzb_repair_activity ORDER BY id'
+        ).fetchall()
+        conn.close()
+        self.assertEqual('pending', sagas[0]['status'])
+        self.assertEqual('blocked', sagas[1]['status'])
+        self.assertEqual('replacement_pending', activities[0]['outcome'])
+        self.assertEqual('replacement_cleanup_stale', activities[1]['outcome'])
 
     def test_failed_candidate_is_not_acknowledged(self):
         conn = self.connect()

@@ -245,7 +245,11 @@ def _is_active_saga_old_source(conn, item_id: int, entry: dict) -> bool:
                  FROM mount_replacement_sagas s
                  JOIN mount_replacement_cleanups c ON c.saga_id=s.id
                 WHERE s.cli_debrid_id=? AND s.protocol='nzb'
-                  AND s.status IN ('pending','probe_failed')
+                  AND (s.status IN ('pending','probe_failed') OR
+                       (s.status='blocked' AND s.last_error IN (
+                         'stale_target: cli_debrid_id does not match the mounted file registration',
+                         'stale_target: cli_debrid_id is registered to a different current provider source'
+                       )))
                   AND lower(c.old_info_hash)=lower(?)
                 LIMIT 1""",
             (item_id, source),
@@ -254,6 +258,37 @@ def _is_active_saga_old_source(conn, item_id: int, entry: dict) -> bool:
     except Exception:
         # Schema initialization can briefly precede the additive saga tables.
         return False
+
+
+def _exact_cleanup_registration_ids(conn, item_ids: list, entry: dict) -> dict:
+    """Return authoritative old-file mappings for a retained saga entry."""
+    if entry.get('protocol') != 'nzb' or not item_ids:
+        return {}
+    source = str(entry.get('info_hash') or entry.get('provider_id') or '')
+    if source.startswith('nzb:'):
+        source = source[4:]
+    if not source:
+        return {}
+    placeholders = ','.join('?' for _ in item_ids)
+    try:
+        rows = conn.execute(
+            f"""SELECT c.file_name, c.cli_debrid_id
+                  FROM mount_replacement_sagas s
+                  JOIN mount_replacement_cleanups c ON c.saga_id=s.id
+                 WHERE c.cli_debrid_id IN ({placeholders})
+                   AND s.protocol='nzb'
+                   AND (s.status IN ('pending','probe_failed') OR
+                        (s.status='blocked' AND s.last_error IN (
+                          'stale_target: cli_debrid_id does not match the mounted file registration',
+                          'stale_target: cli_debrid_id is registered to a different current provider source'
+                        )))
+                   AND c.status IN ('pending','blocked')
+                   AND lower(c.old_info_hash)=lower(?)""",
+            (*item_ids, source),
+        ).fetchall()
+        return {row[0]: row[1] for row in rows if row[0] and row[1]}
+    except Exception:
+        return {}
 
 
 def sync_changes_from_climount(force_full: bool = False) -> dict:
@@ -359,6 +394,10 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                     summary['matched'] += len(item_ids)
                     logger.debug(f'[CMSync] Matched {len(item_ids)} row(s) for {entry.get("folder_name","?")}')
 
+                    protected_cleanup_ids = _exact_cleanup_registration_ids(
+                        conn, item_ids, entry,
+                    )
+
                     # Build size→filename map for filled_by_file matching
                     files = entry.get('files') or []
                     size_to_file: dict = {f['size']: f['name'] for f in files if f.get('size') and f.get('name')}
@@ -414,35 +453,48 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                     # Strategy 0 may return stale/duplicate items without a torrent_id.
                     import os as _os_sync
                     _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
-                    _torrent_id_val = ''
-                    for _iid in item_ids:
-                        _row = conn.execute(
-                            'SELECT filled_by_torrent_id FROM media_items WHERE id = ?', (_iid,)
-                        ).fetchone()
-                        if _row and _row[0]:
-                            _torrent_id_val = _row[0]
-                            break
-                    _sibs = conn.execute(
-                        "SELECT id, filled_by_file FROM media_items "
-                        "WHERE filled_by_torrent_id = ? "
-                        "AND state IN ('Checking','Collected','Upgrading')",
-                        (_torrent_id_val,)
-                    ).fetchall() if _torrent_id_val else []
-                    _cli_ids_to_register = {
-                        s[1]: s[0] for s in _sibs
-                        if s[1] and _os_sync.path.splitext(s[1])[1].lower() in _VIDEO_EXTS
-                    }
-                    # Fallback: use filled_by_file directly from each matched item_id
-                    if not _cli_ids_to_register:
+                    if protected_cleanup_ids:
+                        protected_item_ids = set(protected_cleanup_ids.values())
+                        _cli_ids_to_register = {
+                            name: registered_id
+                            for name, registered_id in (entry.get('cli_debrid_ids') or {}).items()
+                            if registered_id not in protected_item_ids
+                        }
+                        _cli_ids_to_register.update(protected_cleanup_ids)
+                        logger.info(
+                            '[CMSync] Preserved %s exact cleanup registration(s) for old NZB %s',
+                            len(protected_cleanup_ids), entry.get('info_hash') or entry.get('provider_id'),
+                        )
+                    else:
+                        _torrent_id_val = ''
                         for _iid in item_ids:
                             _row = conn.execute(
-                                'SELECT filled_by_file FROM media_items WHERE id = ?', (_iid,)
+                                'SELECT filled_by_torrent_id FROM media_items WHERE id = ?', (_iid,)
                             ).fetchone()
-                            if _row and _row[0] and _os_sync.path.splitext(_row[0])[1].lower() in _VIDEO_EXTS:
-                                _cli_ids_to_register[_row[0]] = _iid
-                    # Final fallback for single-file entries not yet collected
-                    if not _cli_ids_to_register and single_file and item_ids:
-                        _cli_ids_to_register = {single_file: item_ids[0]}
+                            if _row and _row[0]:
+                                _torrent_id_val = _row[0]
+                                break
+                        _sibs = conn.execute(
+                            "SELECT id, filled_by_file FROM media_items "
+                            "WHERE filled_by_torrent_id = ? "
+                            "AND state IN ('Checking','Collected','Upgrading')",
+                            (_torrent_id_val,)
+                        ).fetchall() if _torrent_id_val else []
+                        _cli_ids_to_register = {
+                            s[1]: s[0] for s in _sibs
+                            if s[1] and _os_sync.path.splitext(s[1])[1].lower() in _VIDEO_EXTS
+                        }
+                        # Fallback: use filled_by_file directly from each matched item_id
+                        if not _cli_ids_to_register:
+                            for _iid in item_ids:
+                                _row = conn.execute(
+                                    'SELECT filled_by_file FROM media_items WHERE id = ?', (_iid,)
+                                ).fetchone()
+                                if _row and _row[0] and _os_sync.path.splitext(_row[0])[1].lower() in _VIDEO_EXTS:
+                                    _cli_ids_to_register[_row[0]] = _iid
+                        # Final fallback for single-file entries not yet collected
+                        if not _cli_ids_to_register and single_file and item_ids:
+                            _cli_ids_to_register = {single_file: item_ids[0]}
 
                     # Register cli_debrid IDs with cli_mount — always send the complete map
                     _info_hash = entry.get('info_hash') or ''
