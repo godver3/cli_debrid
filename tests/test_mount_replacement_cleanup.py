@@ -67,6 +67,10 @@ class MountReplacementCleanupTests(unittest.TestCase):
             cleanup, '_ensure_cleanup_registration', return_value=('ready', '')
         )
         self.cleanup_registration_patch.start()
+        self.symlink_handoff_patch = patch.object(
+            cleanup, '_ensure_replacement_symlink', return_value=(True, '')
+        )
+        self.symlink_handoff_patch.start()
         cleanup.create_mount_replacement_cleanup_table()
         conn = connect()
         conn.execute("""CREATE TABLE media_items (
@@ -78,6 +82,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
 
     def tearDown(self):
+        self.symlink_handoff_patch.stop()
         self.cleanup_registration_patch.stop()
         self.registration_patch.stop()
         self.db_patch.stop()
@@ -246,6 +251,37 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertEqual('complete', saga['status'])
         self.assertEqual('complete', saga['plex_refresh_status'])
+
+    def test_completed_stale_mount_cleanup_repairs_symlink_before_plex_refresh(self):
+        self.create_stale_cleanup_fixture_schema()
+        self.seed_deleted_pitt_item_and_replacement(duplicate_activity=False)
+        cleanup.adopt_stale_replaced_nzbs([self.pitt_health_entry()])
+        conn = self.connect()
+        conn.execute(
+            "UPDATE mount_replacement_cleanups SET status='complete', completed_at=CURRENT_TIMESTAMP"
+        )
+        conn.execute("UPDATE mount_replacement_sagas SET plex_refresh_status='pending'")
+        conn.commit()
+        conn.close()
+
+        with patch.object(cleanup, '_ensure_replacement_symlink',
+                          return_value=(False, 'replacement_symlink_not_ready')) as handoff, \
+                patch.object(cleanup, '_refresh_verified_plex_item') as refresh:
+            result = cleanup.process_pending_mount_cleanups(item_id=19702)
+
+        handoff.assert_called_once()
+        refresh.assert_not_called()
+        self.assertEqual(1, result['retried'])
+        conn = self.connect()
+        saga = conn.execute(
+            'SELECT status, attempts, plex_refresh_status, last_error '
+            'FROM mount_replacement_sagas'
+        ).fetchone()
+        conn.close()
+        self.assertEqual('pending', saga['status'])
+        self.assertEqual(0, saga['attempts'])
+        self.assertEqual('pending', saga['plex_refresh_status'])
+        self.assertIn('replacement_symlink_not_ready', saga['last_error'])
 
     def test_ambiguous_historical_replacement_is_unresolved_without_cleanup(self):
         self.create_stale_cleanup_fixture_schema()
@@ -499,6 +535,32 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertEqual('complete', row['status'])
 
+    def test_healthy_replacement_never_acknowledges_before_symlink_handoff(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'nzb:new-id', '', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+
+        with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+                patch.object(cleanup, '_ensure_replacement_symlink',
+                             return_value=(False, 'replacement_symlink_not_ready')), \
+                patch.object(cleanup, '_acknowledge') as acknowledge:
+            result = cleanup.process_pending_mount_cleanups(item_id=75299)
+
+        acknowledge.assert_not_called()
+        self.assertEqual(1, result['retried'])
+        conn = self.connect()
+        saga = conn.execute('SELECT status, attempts, last_error FROM mount_replacement_sagas').fetchone()
+        target = conn.execute('SELECT status FROM mount_replacement_cleanups').fetchone()
+        conn.close()
+        self.assertEqual('pending', saga['status'])
+        self.assertEqual(0, saga['attempts'])
+        self.assertIn('replacement_symlink_not_ready', saga['last_error'])
+        self.assertEqual('pending', target['status'])
+
     def test_does_not_acknowledge_before_source_changes(self):
         conn = self.connect()
         conn.execute(
@@ -531,6 +593,35 @@ class MountReplacementCleanupTests(unittest.TestCase):
                 patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')):
             result = cleanup.process_pending_mount_cleanups(item_id=75300)
         self.assertEqual(1, result['completed'])
+
+    def test_legacy_torrent_cleanup_waits_for_symlink_handoff(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75300, 'Collected', 'provider-new', "
+            "'magnet:?xt=urn:btih:NEWHASH', 'Movie', 'movie', NULL, NULL)"
+        )
+        conn.commit()
+        conn.close()
+        target = self.target(
+            cli_debrid_id=75300, protocol='torrent', info_hash='oldhash',
+            entry_name='Movie', file_name='Movie.mkv',
+        )
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(target))
+
+        with patch.object(cleanup, '_ensure_replacement_symlink',
+                          return_value=(False, 'replacement_symlink_not_ready')), \
+                patch.object(cleanup, '_acknowledge') as acknowledge:
+            result = cleanup.process_pending_mount_cleanups(item_id=75300)
+        acknowledge.assert_not_called()
+        self.assertEqual(1, result['retried'])
+        conn = self.connect()
+        row = conn.execute(
+            'SELECT status, attempts, last_error FROM mount_replacement_cleanups'
+        ).fetchone()
+        conn.close()
+        self.assertEqual('pending', row['status'])
+        self.assertEqual(0, row['attempts'])
+        self.assertIn('replacement_symlink_not_ready', row['last_error'])
 
     def test_missing_cli_mount_endpoint_stays_pending(self):
         conn = self.connect()
@@ -825,6 +916,31 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertEqual('superseded', saga['status'])
         self.assertEqual('complete', target['status'])
+
+    def test_collected_torrent_does_not_cleanup_before_symlink_handoff(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'torrent-provider', "
+            "'magnet:?xt=urn:btih:ABCDEF', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+        with patch.object(cleanup, '_ensure_replacement_symlink',
+                          return_value=(False, 'replacement_symlink_not_ready')), \
+                patch.object(cleanup, '_acknowledge') as acknowledge, \
+                patch.object(cleanup, '_refresh_verified_plex_item') as refresh:
+            result = cleanup.process_pending_mount_cleanups(item_id=75299)
+        acknowledge.assert_not_called()
+        refresh.assert_not_called()
+        self.assertEqual(1, result['retried'])
+        conn = self.connect()
+        saga = conn.execute('SELECT status, attempts FROM mount_replacement_sagas').fetchone()
+        target = conn.execute('SELECT status FROM mount_replacement_cleanups').fetchone()
+        conn.close()
+        self.assertEqual('pending', saga['status'])
+        self.assertEqual(0, saga['attempts'])
+        self.assertEqual('pending', target['status'])
 
     def test_uncollected_torrent_does_not_cleanup_or_refresh(self):
         conn = self.connect()
@@ -1314,6 +1430,114 @@ class MountReplacementCleanupTests(unittest.TestCase):
         self.assertTrue(all(call[2].get('replacement_nzb_id') is None for call in updates[:-1]))
         self.assertTrue(all(call[2].get('replacement_title') is None for call in updates[:-1]))
         self.assertEqual('replaced', updates[-1][2].get('outcome'))
+
+
+class ReplacementSymlinkHandoffTests(unittest.TestCase):
+    @staticmethod
+    def item(source, destination):
+        return {
+            'id': 75299,
+            'original_path_for_symlink': source,
+            'location_on_disk': destination,
+        }
+
+    @staticmethod
+    def target(entry_name='Old.Release', file_name='Old.Episode.mkv'):
+        return {'entry_name': entry_name, 'file_name': file_name}
+
+    def test_missing_symlink_is_created_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_dir = os.path.join(directory, 'New.Release')
+            source = os.path.join(source_dir, 'New.Episode.mkv')
+            destination = os.path.join(directory, 'plex', 'Episode.mkv')
+            os.makedirs(source_dir)
+            with open(source, 'wb') as handle:
+                handle.write(b'media')
+
+            local_scan = types.ModuleType('utilities.local_library_scan')
+
+            def create_symlink(source_path, dest_path, media_item_id=None):
+                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                if os.path.lexists(dest_path):
+                    os.unlink(dest_path)
+                os.symlink(source_path, dest_path)
+                return media_item_id == 75299
+
+            local_scan.create_symlink = create_symlink
+            with patch.dict(sys.modules, {'utilities.local_library_scan': local_scan}):
+                ready, message = cleanup._ensure_replacement_symlink(
+                    self.item(source, destination), 'new-id', [self.target()],
+                )
+
+            self.assertTrue(ready, message)
+            self.assertTrue(os.path.islink(destination))
+            self.assertEqual(os.path.realpath(source), os.path.realpath(destination))
+
+    def test_stale_symlink_is_repointed_to_current_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old_dir = os.path.join(directory, 'Old.Release')
+            new_dir = os.path.join(directory, 'New.Release')
+            os.makedirs(old_dir)
+            os.makedirs(new_dir)
+            old_source = os.path.join(old_dir, 'Old.Episode.mkv')
+            source = os.path.join(new_dir, 'New.Episode.mkv')
+            destination = os.path.join(directory, 'plex', 'Episode.mkv')
+            for path in (old_source, source):
+                with open(path, 'wb') as handle:
+                    handle.write(b'media')
+            os.makedirs(os.path.dirname(destination))
+            os.symlink(old_source, destination)
+
+            local_scan = types.ModuleType('utilities.local_library_scan')
+
+            def create_symlink(source_path, dest_path, media_item_id=None):
+                os.unlink(dest_path)
+                os.symlink(source_path, dest_path)
+                return True
+
+            local_scan.create_symlink = create_symlink
+            with patch.dict(sys.modules, {'utilities.local_library_scan': local_scan}):
+                ready, message = cleanup._ensure_replacement_symlink(
+                    self.item(source, destination), 'new-id', [self.target()],
+                )
+
+            self.assertTrue(ready, message)
+            self.assertEqual(os.path.realpath(source), os.path.realpath(destination))
+
+    def test_old_cleanup_target_can_never_be_used_as_replacement_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old_dir = os.path.join(directory, 'Old.Release')
+            os.makedirs(old_dir)
+            source = os.path.join(old_dir, 'Old.Episode.mkv')
+            destination = os.path.join(directory, 'plex', 'Episode.mkv')
+            with open(source, 'wb') as handle:
+                handle.write(b'media')
+
+            ready, message = cleanup._ensure_replacement_symlink(
+                self.item(source, destination), 'new-id', [self.target()],
+            )
+
+            self.assertFalse(ready)
+            self.assertIn('old cleanup target', message)
+            self.assertFalse(os.path.lexists(destination))
+
+    def test_regular_file_at_plex_path_is_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, 'New.Episode.mkv')
+            destination = os.path.join(directory, 'Episode.mkv')
+            with open(source, 'wb') as handle:
+                handle.write(b'media')
+            with open(destination, 'wb') as handle:
+                handle.write(b'plex-file')
+
+            ready, message = cleanup._ensure_replacement_symlink(
+                self.item(source, destination), 'new-id', [self.target()],
+            )
+
+            self.assertFalse(ready)
+            self.assertIn('not a symlink', message)
+            with open(destination, 'rb') as handle:
+                self.assertEqual(b'plex-file', handle.read())
 
 
 class ExactCliMountJobLookupTests(unittest.TestCase):

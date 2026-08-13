@@ -1,6 +1,7 @@
 """Durable playback-verification and exact mount-cleanup saga."""
 
 import logging
+import os
 import re
 import threading
 from datetime import datetime, timedelta, timezone
@@ -833,6 +834,69 @@ def _current_source_hash(item: dict, protocol: str) -> str:
     return provider_id if not provider_id.startswith('nzb:') else ''
 
 
+def _ensure_replacement_symlink(item: dict, current_hash: str,
+                                old_targets: list) -> tuple:
+    """Fail closed unless Plex's path resolves to the current mounted file.
+
+    Verification proves that the replacement mounted file works, but Plex may
+    still have a missing or stale symlink to the old file.  Acknowledging that
+    old file first would turn the Plex path into a dangling link and the normal
+    symlink verifier could then remove the episode.  Repair the handoff before
+    any acknowledgement and verify it afterwards.
+    """
+    item_id = int(item.get('id') or 0)
+    source_path = str(item.get('original_path_for_symlink') or '')
+    plex_path = str(item.get('location_on_disk') or '')
+    if not item_id or not source_path or not plex_path:
+        return False, 'replacement_symlink_not_ready: current source or Plex path is missing'
+    if not os.path.isabs(source_path) or not os.path.isabs(plex_path):
+        return False, 'replacement_symlink_not_ready: replacement paths must be absolute'
+    if not os.path.exists(source_path):
+        return False, 'replacement_symlink_not_ready: current mounted source does not exist'
+
+    current_file = str(item.get('filled_by_file') or '')
+    if (current_file and
+            os.path.basename(source_path) != os.path.basename(current_file)):
+        return False, 'replacement_symlink_not_ready: mounted source does not match the current media file'
+
+    normalized_source = os.path.normcase(os.path.realpath(source_path))
+    for target in old_targets or ():
+        old_entry = str(target['entry_name'] or '')
+        old_file = str(target['file_name'] or '')
+        if (old_entry and old_file and
+                os.path.basename(source_path) == os.path.basename(old_file) and
+                os.path.basename(os.path.dirname(source_path)) == old_entry):
+            return False, 'replacement_symlink_not_ready: database source still points to the old cleanup target'
+
+    if os.path.lexists(plex_path) and not os.path.islink(plex_path):
+        return False, 'replacement_symlink_not_ready: Plex path exists but is not a symlink'
+
+    current_link = (os.path.normcase(os.path.realpath(plex_path))
+                    if os.path.islink(plex_path) else '')
+    if current_link != normalized_source:
+        try:
+            from utilities.local_library_scan import create_symlink
+            if not create_symlink(source_path, plex_path, media_item_id=item_id):
+                return False, 'replacement_symlink_not_ready: failed to create the replacement symlink'
+        except Exception as exc:
+            logging.warning(
+                '[MountCleanup] Replacement symlink handoff failed: item=%s '
+                'source=%r plex=%r error=%s',
+                item_id, source_path, plex_path, exc,
+            )
+            return False, f'replacement_symlink_not_ready: {exc}'
+
+    if (not os.path.islink(plex_path) or not os.path.exists(plex_path) or
+            os.path.normcase(os.path.realpath(plex_path)) != normalized_source):
+        return False, 'replacement_symlink_not_ready: replacement symlink verification failed'
+
+    logging.info(
+        '[MountCleanup] Replacement symlink handoff ready: item=%s provider=%s '
+        'plex=%r source=%r', item_id, current_hash, plex_path, source_path,
+    )
+    return True, ''
+
+
 def media_item_source_hash(item: dict, protocol: str) -> str:
     return _current_source_hash(item, protocol)
 
@@ -855,7 +919,7 @@ def _schedule_retry_for_result(conn, saga, message: str, details: dict = None) -
     code = _response_code(details or {}) or str(message or '').split(':', 1)[0]
     if code == 'repair_busy':
         _schedule_saga_retry(conn, saga, message, delay=15, increment_attempts=False)
-    elif code == 'replacement_not_ready':
+    elif code in ('replacement_not_ready', 'replacement_symlink_not_ready'):
         _schedule_saga_retry(conn, saga, message, delay=30, increment_attempts=False)
     elif code == 'stale_target':
         _schedule_saga_retry(conn, saga, message, delay=30, increment_attempts=False)
@@ -1292,6 +1356,31 @@ def _process_legacy_cleanups(item_id: int = None) -> dict:
         if not current_hash or current_hash.lower() == (row['old_info_hash'] or '').lower():
             result['waiting'] += 1
             continue
+        handoff_item = get_media_item_for_cleanup(row['cli_debrid_id']) or dict(row)
+        handoff_item['id'] = row['cli_debrid_id']
+        handoff_ready, handoff_message = _ensure_replacement_symlink(
+            handoff_item, current_hash, [row],
+        )
+        if not handoff_ready:
+            conn = get_db_connection()
+            try:
+                next_attempt = datetime.now(timezone.utc) + timedelta(seconds=30)
+                conn.execute(
+                    """UPDATE mount_replacement_cleanups
+                          SET next_attempt_at=?, last_error=?, updated_at=CURRENT_TIMESTAMP
+                        WHERE id=?""",
+                    (next_attempt.strftime('%Y-%m-%d %H:%M:%S'),
+                     handoff_message[:1000], row['id']),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            logging.warning(
+                '[MountCleanup] Exact cleanup deferred until replacement symlink is ready: '
+                'item=%s reason=%s', row['cli_debrid_id'], handoff_message,
+            )
+            result['retried'] += 1
+            continue
         status, message = _acknowledge(row)
         conn = get_db_connection()
         try:
@@ -1392,6 +1481,12 @@ def _refresh_verified_plex_item(item: dict) -> bool:
     if not path:
         logging.info('[MountCleanup] Plex refresh skipped for item %s: no location_on_disk', item.get('id'))
         return False
+    if not os.path.islink(path) or not os.path.exists(path):
+        logging.warning(
+            '[MountCleanup] Plex refresh refused for item %s: replacement symlink '
+            'is missing or unresolved at %r', item.get('id'), path,
+        )
+        return False
     try:
         from utilities.plex_functions import plex_update_item
         refreshed = plex_update_item({
@@ -1431,6 +1526,38 @@ def _update_stale_cleanup_activities(conn, saga_id: int, **changes) -> bool:
 def _finish_stale_plex_refresh(saga, item: dict, current_hash: str,
                                result: dict) -> None:
     """Finish retroactive cleanup only after Plex accepts the targeted refresh."""
+    conn = get_db_connection()
+    try:
+        targets = conn.execute(
+            'SELECT * FROM mount_replacement_cleanups WHERE saga_id=? ORDER BY id',
+            (saga['id'],),
+        ).fetchall()
+    finally:
+        conn.close()
+    handoff_ready, handoff_message = _ensure_replacement_symlink(
+        item, current_hash, targets,
+    )
+    if not handoff_ready:
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                "UPDATE mount_replacement_sagas SET plex_refresh_status='pending' WHERE id=?",
+                (saga['id'],),
+            )
+            _schedule_saga_retry(
+                conn, saga, handoff_message, delay=30,
+                increment_attempts=False,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        result['retried'] += 1
+        logging.warning(
+            '[MountCleanup] Stale cleanup Plex refresh deferred until the '
+            'replacement symlink is ready: saga=%s reason=%s',
+            saga['id'], handoff_message,
+        )
+        return
     refreshed = _refresh_verified_plex_item(item)
     final_title = (item.get('filled_by_title') or item.get('filled_by_file') or
                    saga['candidate_title'] or item.get('title'))
@@ -1482,6 +1609,27 @@ def _finish_stale_plex_refresh(saga, item: dict, current_hash: str,
 def _finish_torrent_supersession(saga, item: dict, all_targets: list,
                                  result: dict) -> None:
     """Remove exact failed NZB files after a torrent has reached Collected."""
+    current_hash = _current_source_hash(item, 'torrent')
+    handoff_ready, handoff_message = _ensure_replacement_symlink(
+        item, current_hash, all_targets,
+    )
+    if not handoff_ready:
+        conn = get_db_connection()
+        try:
+            _schedule_saga_retry(
+                conn, saga, handoff_message, delay=30,
+                increment_attempts=False,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        logging.warning(
+            '[MountCleanup] Torrent supersession cleanup deferred until the '
+            'replacement symlink is ready: saga=%s item=%s reason=%s',
+            saga['id'], saga['cli_debrid_id'], handoff_message,
+        )
+        result['retried'] += 1
+        return
     all_complete = _cleanup_failed_submission_jobs(saga['id'])
     retry_message = None
     terminal_failure = None
@@ -1525,6 +1673,14 @@ def _finish_torrent_supersession(saga, item: dict, all_targets: list,
     if blocked_target:
         terminal_failure = blocked_target['last_error'] or 'exact NZB cleanup is blocked'
         all_complete = False
+    if all_complete:
+        handoff_ready, handoff_message = _ensure_replacement_symlink(
+            item, current_hash, all_targets,
+        )
+        if not handoff_ready:
+            all_complete = False
+            retry_message = handoff_message
+            result['retried'] += 1
 
     finish_conn = get_db_connection()
     refresh_item = None
@@ -1782,6 +1938,27 @@ def _process_pending_mount_cleanups(item_id: int = None) -> dict:
         finally:
             update_conn.close()
 
+        handoff_ready, handoff_message = _ensure_replacement_symlink(
+            current_item, current_hash, all_targets,
+        )
+        if not handoff_ready:
+            handoff_conn = get_db_connection()
+            try:
+                _schedule_saga_retry(
+                    handoff_conn, saga, handoff_message, delay=30,
+                    increment_attempts=False,
+                )
+                handoff_conn.commit()
+            finally:
+                handoff_conn.close()
+            logging.warning(
+                '[MountCleanup] Healthy replacement cleanup deferred until the '
+                'replacement symlink is ready: saga=%s item=%s reason=%s',
+                saga['id'], saga['cli_debrid_id'], handoff_message,
+            )
+            result['retried'] += 1
+            continue
+
         all_complete = _cleanup_failed_submission_jobs(saga['id'])
         if not all_complete:
             result['retried'] += 1
@@ -1825,6 +2002,15 @@ def _process_pending_mount_cleanups(item_id: int = None) -> dict:
                 update_conn.commit()
             finally:
                 update_conn.close()
+
+        if all_complete:
+            handoff_ready, handoff_message = _ensure_replacement_symlink(
+                current_item, current_hash, all_targets,
+            )
+            if not handoff_ready:
+                all_complete = False
+                retry_message = handoff_message
+                result['retried'] += 1
 
         if all_complete and _is_stale_cleanup_saga(saga):
             mark_conn = get_db_connection()
