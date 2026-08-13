@@ -4479,6 +4479,9 @@ function _buildOutcomeTooltip(r) {
             lines.push('Broken file successfully replaced with a new NZB download.');
             if (r.replacement_title) lines.push('New: ' + r.replacement_title);
             break;
+        case 'replacement_pending':
+            lines.push('A candidate is being collected and must pass article and playback validation before cleanup.');
+            break;
         case 'reinserted':
             lines.push('cli_mount link resolver re-triggered for this entry.');
             break;
@@ -4523,11 +4526,12 @@ function _usenetRenderActivity(rows, container, pagination) {
 
     rows.forEach((r, idx) => {
         const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
-        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : '#ff4444';
-        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : (r.outcome || '—');
+        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'replacement_pending' ? '#ffaa44' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : '#ff4444';
+        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : (r.outcome || '—');
         const outcomeTooltip = _buildOutcomeTooltip(r);
         const epSub = r.season_number ? `<br><span style="font-size:11px;color:#888">S${String(r.season_number).padStart(2,'0')}E${String(r.episode_number||0).padStart(2,'0')}</span>` : '';
-        const ts = r.created_at ? new Date(r.created_at + (r.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString() : '—';
+        const activityTime = r.updated_at || r.created_at;
+        const ts = activityTime ? new Date(activityTime + (activityTime.endsWith('Z') ? '' : 'Z')).toLocaleString() : '—';
         const brokenTitle = r.broken_nzb_title || r.broken_nzb_id || '—';
         const replTitle = (r.replacement_title && r.replacement_title !== '—') ? r.replacement_title : null;
         const candidateCell = _renderActivityCandidateCell(brokenTitle, replTitle, r.broken_nzb_id);

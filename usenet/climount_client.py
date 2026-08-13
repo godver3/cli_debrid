@@ -35,6 +35,7 @@ class CliMountClient:
         self.download_folder = cfg.get('download_folder', '')
         self.enabled = cfg.get('enabled', False)
         self.last_missing_segments = False  # set True by add_nzb_content on ARTICLE_NOT_FOUND
+        self.last_failed_job_id = ''
 
     def _headers(self) -> Dict[str, str]:
         h = {'Accept': 'application/json'}
@@ -60,6 +61,7 @@ class CliMountClient:
                         tags=None, tags_exclusive: bool = False) -> Optional[str]:
         """Submit NZB content directly as a file upload to avoid double-fetching."""
         self.last_missing_segments = False
+        self.last_failed_job_id = ''
         if not self.is_enabled():
             logging.warning('[cli_mount] Usenet provider is disabled or not configured')
             return None
@@ -83,6 +85,7 @@ class CliMountClient:
                     job = result[0]
                     job_id = job.get('id') or job.get('nzo_id') or job.get('hash', '')
                     if job.get('status') == 'error':
+                        self.last_failed_job_id = str(job_id or '')
                         err_msg = job.get('error', '')
                         logging.error(f'[cli_mount] add_nzb_content error: {err_msg}')
                         if 'ARTICLE_NOT_FOUND' in err_msg or 'article not found' in err_msg.lower():
@@ -109,6 +112,7 @@ class CliMountClient:
         content and uploads it directly instead of passing the URL.
         Returns the job ID string on success, None on failure.
         """
+        self.last_failed_job_id = ''
         if not self.is_enabled():
             logging.warning('[cli_mount] Usenet provider is disabled or not configured')
             return None
@@ -146,6 +150,7 @@ class CliMountClient:
                     job = result[0]
                     job_id = job.get('id') or job.get('nzo_id') or job.get('hash', '')
                     if job.get('status') == 'error':
+                        self.last_failed_job_id = str(job_id or '')
                         logging.error(f'[cli_mount] add_nzb error: {job.get("error")}')
                         return None
                     logging.info(f'[cli_mount] NZB submitted: id={job_id} title={title!r}')
@@ -372,6 +377,7 @@ class CliMountClient:
         """
         if not self.is_enabled() or not info_hash or not ids:
             return False
+
         try:
             import requests as _req_patch
             r = _req_patch.patch(
@@ -388,6 +394,22 @@ class CliMountClient:
         except Exception as e:
             logging.debug(f'[cli_mount] register_cli_ids error for {info_hash}: {e}')
             return False
+
+    def remove_nzb_exact(self, info_hash: str) -> bool:
+        """Remove one exact UUID; never fall back to a release-name match."""
+        if not self.is_enabled() or not info_hash:
+            return False
+        try:
+            r = api.delete(
+                f'{self.base_url}/api/browse/torrents/{info_hash}',
+                headers=self._headers(), timeout=15,
+            )
+            if r.status_code in (200, 204, 404):
+                return True
+            logging.warning('[cli_mount] Exact job delete %s returned HTTP %s', info_hash, r.status_code)
+        except Exception as exc:
+            logging.warning('[cli_mount] Exact job delete %s failed: %s', info_hash, exc)
+        return False
 
     def register_cli_ids_for_item(self, info_hash: str, item_id: int) -> bool:
         """
@@ -671,7 +693,26 @@ class CliMountClient:
                 logging.warning(f'[cli_mount] /api/repair/health HTTP {r.status_code}')
                 return []
             all_entries = self._parse_health_entries(r.json())
-            broken = [e for e in all_entries if (e.get('status') or '').lower() == 'broken']
+            broken = []
+            for health in all_entries:
+                if (health.get('status') or '').lower() != 'broken':
+                    continue
+                files = health.get('broken_files') or []
+                if not files:
+                    broken.append(health)
+                    continue
+                # cli_mount health is entry-oriented, but playback replacement is
+                # deliberately file-oriented.  Promote the exact file identity so
+                # repair_engine never has to guess which episode in a pack failed.
+                for broken_file in files:
+                    item = dict(health)
+                    item['entry_name'] = health.get('entry_name') or health.get('name') or ''
+                    item['file_name'] = broken_file.get('file_name') or ''
+                    item['info_hash'] = broken_file.get('info_hash') or health.get('info_hash') or ''
+                    item['cli_debrid_id'] = broken_file.get('cli_debrid_id')
+                    item['failure_reason'] = broken_file.get('reason') or health.get('failure_reason') or ''
+                    item['hash_is_authoritative'] = bool(item['info_hash'])
+                    broken.append(item)
             if self._debrid_naming_enabled():
                 before = len(broken)
                 broken = [e for e in broken if (e.get('protocol') or '').lower() != 'torrent']

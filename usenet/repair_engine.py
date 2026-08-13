@@ -53,6 +53,14 @@ from database.not_wanted_magnets import (
     is_nzb_segment_not_wanted,
 )
 from utilities.settings import get_setting
+from database.nzb_playback_repair import (
+    ELIGIBLE_REASONS as PLAYBACK_REPAIR_REASONS,
+    begin_playback_repair,
+    candidate_is_excluded,
+    candidate_keys,
+    record_failed_candidate,
+    set_playback_candidate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +84,37 @@ def _client():
     """Active usenet client (climount or nzbdav) via the provider factory."""
     from usenet import get_usenet_client
     return get_usenet_client()
+
+
+def _find_db_item_by_id(item_id):
+    if not item_id:
+        return None
+    conn = get_db_connection()
+    try:
+        row = conn.execute('SELECT * FROM media_items WHERE id=?', (int(item_id),)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def _exact_playback_target(entry):
+    """Return the exact cli_mount file identity, or None for legacy repairs."""
+    reason = entry.get('failure_reason') or entry.get('reason') or ''
+    target = {
+        'entry_name': _entry_name(entry),
+        'file_name': entry.get('file_name') or '',
+        'info_hash': entry.get('info_hash') or entry.get('hash') or '',
+        'cli_debrid_id': entry.get('cli_debrid_id'),
+        'reason': reason,
+        'segment_id': entry.get('nzb_segment_id') or '',
+    }
+    if reason not in PLAYBACK_REPAIR_REASONS:
+        return None
+    if not all((target['entry_name'], target['file_name'], target['info_hash'],
+                target['cli_debrid_id'])):
+        logger.warning('[NZBPlayback] Ignoring incomplete exact target: %r', target)
+        return None
+    return target
 
 
 # ---------------------------------------------------------------------------
@@ -885,11 +924,14 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
 # Submit replacement and confirm in queue
 # ---------------------------------------------------------------------------
 
-def _submit_and_confirm_replacement(result: dict, title: str, item: dict = None) -> Tuple[Optional[str], str]:
+def _submit_and_confirm_replacement(result: dict, title: str, item: dict = None) -> Tuple[Optional[str], str, str]:
     """
     Submit replacement NZB to provider.
     Polls up to 30s to confirm it appears in the provider queue.
-    Returns (job_id, release_title) or (None, '') on failure.
+    Returns (job_id, release_title, disposition).  ``failed`` is reserved
+    for an explicit terminal provider response; callers may immediately try
+    the next distinct candidate.  ``provisional`` means the submission was
+    accepted but its status is inconclusive, so callers must not duplicate it.
     """
     try:
         from usenet import get_usenet_client, reset_usenet_client
@@ -937,14 +979,19 @@ def _submit_and_confirm_replacement(result: dict, title: str, item: dict = None)
                                     is_anime=_is_anime, media_type=_media_type,
                                     tags=_tags, tags_exclusive=False)
         else:
-            return None, ''
+            return None, '', 'rejected'
 
         if not job_id:
+            failed_job_id = getattr(client, 'last_failed_job_id', '') or ''
+            if failed_job_id:
+                logger.warning('[NZBRepair] Provider immediately failed job %s for %r', failed_job_id, release_title)
+                return failed_job_id, release_title, 'failed'
             logger.warning(f'[NZBRepair] Provider rejected submission for {release_title!r}')
-            return None, ''
+            return None, '', 'rejected'
 
         # Poll up to 30s to confirm job appears in provider queue
         confirmed = False
+        terminal_failure = False
         for attempt in range(6):
             time.sleep(5)
             try:
@@ -954,30 +1001,32 @@ def _submit_and_confirm_replacement(result: dict, title: str, item: dict = None)
                     break
                 if status and status.get('state') in ('failed', 'error'):
                     logger.warning(f'[NZBRepair] Replacement job {job_id} immediately failed: {status}')
+                    terminal_failure = True
                     break
             except Exception:
                 pass
 
         if confirmed:
             logger.info(f'[NZBRepair] Replacement confirmed in queue: job_id={job_id} title={release_title!r}')
-            return job_id, release_title
+            return job_id, release_title, 'accepted'
+        elif terminal_failure:
+            return job_id, release_title, 'failed'
         else:
-            # Job submitted but couldn't confirm — treat as submitted anyway
-            # (provider may have completed instantly if already cached)
-            logger.info(f'[NZBRepair] Replacement submitted (unconfirmed): job_id={job_id} title={release_title!r}')
-            return job_id, release_title
+            logger.info(f'[NZBRepair] Replacement submitted provisionally: job_id={job_id} title={release_title!r}')
+            return job_id, release_title, 'provisional'
 
     except Exception as e:
         logger.error(f'[NZBRepair] _submit_and_confirm_replacement error: {e}')
-        return None, ''
+        return None, '', 'rejected'
 
 
 # ---------------------------------------------------------------------------
 # DB update for repaired item
 # ---------------------------------------------------------------------------
 
-def _update_db_for_repair(item: dict, new_job_id: str, replacement_result: dict, all_results: list) -> bool:
-    """Update DB item in-place: state=Adding, new torrent_id, clear location.
+def _update_db_for_repair(item: dict, new_job_id: str, replacement_result: dict,
+                          all_results: list, preserve_location: bool = False) -> bool:
+    """Update DB item in-place for the accepted candidate.
     Also stores the replacement NZB segment ID so the next repair cycle can
     blacklist it without an extra HTTP fetch."""
     try:
@@ -992,7 +1041,12 @@ def _update_db_for_repair(item: dict, new_job_id: str, replacement_result: dict,
                 r = dict(r)
                 del r['_prefetched_nzb']
             return r
-        remaining = [_strip_prefetched(r) for r in all_results if r.get('title') != replacement_result.get('title')]
+        chosen_keys = candidate_keys(replacement_result)
+        remaining = [
+            _strip_prefetched(r) for r in all_results
+            if not (chosen_keys and candidate_keys(r) & chosen_keys)
+            and r.get('title') != replacement_result.get('title')
+        ]
 
         # Extract segment ID from the pre-fetched NZB XML (zero extra HTTP call)
         new_segment_id = ''
@@ -1015,7 +1069,10 @@ def _update_db_for_repair(item: dict, new_job_id: str, replacement_result: dict,
             scrape_results=remaining,
             **_seg_kwargs,
         )
-        update_media_item(item_id, location_on_disk=None, fall_back_to_single_scraper=False)
+        update_kwargs = {'fall_back_to_single_scraper': False}
+        if not preserve_location:
+            update_kwargs['location_on_disk'] = None
+        update_media_item(item_id, **update_kwargs)
         logger.info(f'[NZBRepair] DB updated item {item_id}: state=Adding torrent_id={new_torrent_id} segment={new_segment_id!r}')
         return True
     except Exception as e:
@@ -1178,6 +1235,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
         entry_name = _entry_name(entry)
         info_hash = entry.get('info_hash') or entry.get('hash') or ''
         nzb_url = entry.get('nzb_url') or entry.get('url') or ''
+        playback_target = _exact_playback_target(entry)
 
         # Resolve job UUID from provider if not in health response
         if not info_hash and entry_name:
@@ -1190,13 +1248,24 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
         try:
             # --- Step 1: Match to CLI DB ---
             db_items = []
-            if info_hash:
+            if playback_target:
+                exact_item = _find_db_item_by_id(playback_target['cli_debrid_id'])
+                if exact_item:
+                    current = str(exact_item.get('filled_by_torrent_id') or '')
+                    if current in (info_hash, f'nzb:{info_hash}'):
+                        db_items = [exact_item]
+                    else:
+                        logger.warning(
+                            '[NZBPlayback] Item %s no longer owns old UUID %s; refusing fuzzy repair',
+                            playback_target['cli_debrid_id'], info_hash,
+                        )
+            elif info_hash:
                 single = _find_db_item_by_info_hash(info_hash)
                 if single:
                     db_items = [single]
 
             # Fuzzy fallback only when hash is not authoritative (nzbdav sets hash_is_authoritative)
-            if not db_items and entry_name and not entry.get('hash_is_authoritative'):
+            if not playback_target and not db_items and entry_name and not entry.get('hash_is_authoritative'):
                 db_items = _find_db_items_by_entry_name(entry_name)
 
             if db_items is AMBIGUOUS:
@@ -1239,7 +1308,12 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 # Only attempt provider delete if we have a hash — name-search deletes
                 # are slow (one API call per orphan) and orphans with no hash are usually
                 # already gone from the provider queue.
-                if info_hash:
+                if playback_target:
+                    logger.warning(
+                        '[NZBPlayback] Exact item %s is unavailable or changed; leaving mounted file untouched',
+                        playback_target['cli_debrid_id'],
+                    )
+                elif info_hash:
                     logger.warning(f'[NZBRepair] No repairable DB items for {entry_name!r} — orphan, deleting from provider')
                     _delete_from_provider(info_hash, entry_name)
                 else:
@@ -1279,7 +1353,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             _failure_reason = entry.get('failure_reason', '')
             # Skip readability check when cli_mount explicitly reports usenet_segment_missing
             # — that is a definitive diagnosis, not a transient server hiccup.
-            _skip_readability = _failure_reason == 'usenet_segment_missing'
+            _skip_readability = bool(playback_target) or _failure_reason == 'usenet_segment_missing'
             if not _skip_readability:
                 # Also skip when location_on_disk points to a different version.
                 # Compare the parent folder against entry_name — mismatch means
@@ -1309,10 +1383,11 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 )
 
             # --- Step 2: Check backoff/attempt limit ---
-            repair_state = get_repair_state(info_hash or entry_name)
+            repair_state = ({'attempts': 0, 'give_up': False}
+                            if playback_target else get_repair_state(info_hash or entry_name))
             attempts = repair_state['attempts']
 
-            if repair_state['give_up']:
+            if not playback_target and repair_state['give_up']:
                 logger.warning(
                     f'[NZBRepair] {entry_name!r} — reached max attempts ({MAX_REPAIR_ATTEMPTS}), '
                     f'requires manual intervention'
@@ -1333,7 +1408,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 summary['skipped_max_attempts'] += 1
                 continue
 
-            if is_in_backoff(info_hash or entry_name):
+            if not playback_target and is_in_backoff(info_hash or entry_name):
                 logger.info(f'[NZBRepair] {entry_name!r} — in backoff period, skipping this cycle')
                 summary['skipped_backoff'] += 1
                 continue
@@ -1350,6 +1425,25 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             broken_nzb_title = rep.get('debrid_folder_name') or rep.get('filled_by_file') or entry_name
             candidates = _scrape_for_replacement(rep, broken_nzb_title, version_override=version_override)
 
+            if playback_target:
+                repair_id = begin_playback_repair(rep, playback_target, triggered_by=triggered_by)
+                if not repair_id:
+                    logger.error('[NZBPlayback] State persistence failed; submitting nothing for item %s', rep.get('id'))
+                    summary['errors'] += 1
+                    continue
+                unique_candidates = []
+                seen_keys = set()
+                for candidate in candidates:
+                    keys = candidate_keys(candidate)
+                    if not keys or keys & seen_keys:
+                        continue
+                    seen_keys |= keys
+                    if candidate_is_excluded(rep['id'], candidate):
+                        logger.info('[NZBPlayback] Excluding original/failed candidate %r', candidate.get('title'))
+                        continue
+                    unique_candidates.append(candidate)
+                candidates = unique_candidates
+
             if not candidates:
                 # No replacement found — leave Collected items in place (file may still be
                 # playable) and let the repair backoff handle retrying. Moving Collected items
@@ -1357,6 +1451,10 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 # doubling the spam. Non-Collected items (Checking/Adding) have no file on disk
                 # yet so they are moved to Wanted for a fresh scrape.
                 next_repair_at = calculate_next_repair_at(new_attempts)
+                if playback_target:
+                    logger.warning('[NZBPlayback] No distinct candidate for item %s; exact original remains mounted', rep['id'])
+                    summary['no_replacement'] += 1
+                    continue
                 for db_item in db_items:
                     if db_item.get('state') == 'Collected':
                         logger.warning(f'[NZBRepair] No replacement found for {entry_name!r} — keeping Collected, backoff until {next_repair_at}')
@@ -1380,14 +1478,39 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 continue
 
             # --- Step 5: Submit replacement and confirm in queue ---
-            best = candidates[0]
-            new_job_id, named_title = _submit_and_confirm_replacement(best, rep.get('title', ''), item=rep)
+            best = None
+            new_job_id = None
+            named_title = ''
+            candidates_to_try = candidates if playback_target else candidates[:1]
+            for candidate in candidates_to_try:
+                job_id, submitted_title, candidate_disposition = _submit_and_confirm_replacement(
+                    candidate, rep.get('title', ''), item=rep)
+                if playback_target and candidate_disposition in ('failed', 'rejected'):
+                    record_failed_candidate(rep['id'], candidate, job_id or '')
+                    logger.warning(
+                        '[NZBPlayback] Candidate rejected (%s); trying next distinct result: %r',
+                        candidate_disposition, candidate.get('title'),
+                    )
+                    continue
+                best = candidate
+                new_job_id = job_id
+                named_title = submitted_title
+                break
 
-            if named_title:
+            if best is not None and named_title:
                 best = dict(best)
+                # cli_mount may sanitize/rename the submitted release.  Keep
+                # the indexer's original title as the durable exclusion key so
+                # a later repair cycle cannot submit the same NZB again under
+                # its pre-submission name.
+                best.setdefault('original_title', best.get('title', ''))
                 best['title'] = named_title
 
             if not new_job_id:
+                if playback_target:
+                    logger.warning('[NZBPlayback] All distinct candidates failed submission for item %s', rep['id'])
+                    summary['submission_failed'] += 1
+                    continue
                 # Submission failed — keep item in Collected state (file still exists/plays).
                 # Moving to Wanted here causes re-scrape → re-submit → new cli_mount entry
                 # created each cycle, producing duplicate entries in the mount.
@@ -1409,6 +1532,27 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                         next_repair_at=next_repair_at,
                     )
                 summary['submission_failed'] += 1
+                continue
+
+            if playback_target:
+                # Submission/collection is provisional.  Keep Plex, its symlink,
+                # and every broken mounted file until the completion worker proves
+                # this exact UUID healthy and finishes exact acknowledgements.
+                if not set_playback_candidate(rep['id'], best, new_job_id, named_title or best.get('title', '')):
+                    record_failed_candidate(rep['id'], best, new_job_id)
+                    logger.error('[NZBPlayback] Could not persist accepted candidate %s; DB item unchanged', new_job_id)
+                    summary['errors'] += 1
+                    continue
+                if not _update_db_for_repair(rep, new_job_id, best, candidates, preserve_location=True):
+                    logger.error('[NZBPlayback] Could not move accepted candidate %s into Adding', new_job_id)
+                    summary['errors'] += 1
+                    continue
+                summary.setdefault('pending_verification', 0)
+                summary['pending_verification'] += 1
+                logger.info(
+                    '[NZBPlayback] Candidate %s accepted provisionally for item %s; old file and Plex retained',
+                    new_job_id, rep['id'],
+                )
                 continue
 
             # --- REPLACEMENT CONFIRMED — now safe to delete broken ---

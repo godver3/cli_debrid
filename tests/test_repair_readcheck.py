@@ -32,6 +32,7 @@ def _load():
     if 'requests' not in sys.modules:
         sys.modules['requests'] = _permissive_module('requests')
     for n in ['database', 'database.core', 'database.nzb_repair_activity',
+              'database.nzb_playback_repair',
               'database.not_wanted_magnets']:
         sys.modules[n] = _permissive_module(n)
     if 'utilities' not in sys.modules:
@@ -128,6 +129,35 @@ class TestVerifyFileReadable(unittest.TestCase):
         self._stub_probe([False])
         re_mod._verify_file_readable(self.tmp.name, attempts=1)
         self.assertEqual(self.offsets, [None])  # start-read (no offset)
+
+
+class TestReplacementSubmission(unittest.TestCase):
+    def test_explicit_failed_job_is_not_accepted(self):
+        class Client:
+            last_failed_job_id = ''
+
+            def add_nzb_content(self, **kwargs):
+                return 'failed-uuid'
+
+            def get_job_status(self, job_id):
+                return {'state': 'failed'}
+
+        client = Client()
+        usenet_mod = types.ModuleType('usenet')
+        usenet_mod.reset_usenet_client = lambda: None
+        usenet_mod.get_usenet_client = lambda: client
+        old = sys.modules.get('usenet')
+        sys.modules['usenet'] = usenet_mod
+        self.addCleanup(lambda: sys.modules.__setitem__('usenet', old) if old else sys.modules.pop('usenet', None))
+        import time
+        old_sleep = time.sleep
+        time.sleep = lambda *_: None
+        self.addCleanup(lambda: setattr(time, 'sleep', old_sleep))
+
+        job_id, title, disposition = re_mod._submit_and_confirm_replacement(
+            {'title': 'Bad.Release', '_prefetched_nzb': '<nzb />'}, 'Title')
+        self.assertEqual((job_id, title, disposition),
+                         ('failed-uuid', 'Bad.Release', 'failed'))
 
 
 if __name__ == '__main__':

@@ -4,6 +4,7 @@ from .torrent_tracking import create_torrent_tracking_table
 from .content_source_retry import create_retry_queue_table
 from .upgrade_hub_activity import create_upgrade_hub_activity_table
 from .nzb_repair_activity import create_nzb_repair_activity_table
+from .nzb_playback_repair import create_nzb_playback_repair_table
 import sqlite3
 import os
 
@@ -14,6 +15,7 @@ def create_database():
     create_retry_queue_table()
     create_upgrade_hub_activity_table()
     create_nzb_repair_activity_table()
+    create_nzb_playback_repair_table()
     #TODO: create_upgrading_table()
 
     # Add statistics-specific indexes
