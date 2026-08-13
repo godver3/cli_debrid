@@ -1273,15 +1273,26 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
 
     try:
         from database.mount_replacement_cleanup import (
+            adopt_stale_replaced_nzbs,
             process_pending_mount_cleanups,
             split_playback_cleanup_targets,
         )
         process_pending_mount_cleanups()
     except Exception as cleanup_err:
         logger.warning(f'[NZBRepair] Pending mount cleanup reconciliation failed: {cleanup_err}')
+        adopt_stale_replaced_nzbs = lambda entries: entries
+        process_pending_mount_cleanups = lambda *args, **kwargs: {}
         split_playback_cleanup_targets = lambda entries, protocol='': entries
 
-    broken_entries = split_playback_cleanup_targets(fetch_broken_items(), protocol='nzb')
+    health_entries = adopt_stale_replaced_nzbs(fetch_broken_items())
+    # Newly-adopted stale entries are already Collected under a different UUID,
+    # so let the durable verifier start immediately rather than waiting for the
+    # next scheduled repair pass.
+    try:
+        process_pending_mount_cleanups()
+    except Exception as cleanup_err:
+        logger.warning(f'[NZBRepair] Newly-adopted stale cleanup could not start: {cleanup_err}')
+    broken_entries = split_playback_cleanup_targets(health_entries, protocol='nzb')
     summary['broken_found'] = len(broken_entries)
 
     if not broken_entries:

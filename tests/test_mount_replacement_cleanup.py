@@ -97,6 +97,223 @@ class MountReplacementCleanupTests(unittest.TestCase):
         value.update(overrides)
         return value
 
+    def create_stale_cleanup_fixture_schema(self):
+        conn = self.connect()
+        conn.execute('ALTER TABLE media_items ADD COLUMN filled_by_file TEXT')
+        conn.execute('ALTER TABLE media_items ADD COLUMN filled_by_title TEXT')
+        conn.execute('ALTER TABLE media_items ADD COLUMN location_on_disk TEXT')
+        conn.execute('ALTER TABLE media_items ADD COLUMN nzb_segment_id TEXT')
+        conn.execute("""CREATE TABLE nzb_repair_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER, title TEXT, media_type TEXT,
+            season_number INTEGER, episode_number INTEGER,
+            broken_nzb_id TEXT, broken_nzb_title TEXT,
+            replacement_nzb_id TEXT, replacement_title TEXT,
+            outcome TEXT NOT NULL, triggered_by TEXT,
+            repair_attempts INTEGER DEFAULT 0,
+            last_repair_at TIMESTAMP, next_repair_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def pitt_health_entry(**overrides):
+        broken = {
+            'entry_name': 'The.Pitt.2025.S01E07.1.00.P.M.DUSKLiGHT',
+            'file_name': 'The.Pitt.2025.S01E07.1.00.P.M.DUSKLiGHT.mkv',
+            'info_hash': 'old-pitt-id',
+            'protocol': 'nzb',
+            'cli_debrid_id': 9278,
+            'reason': 'usenet_segment_missing',
+        }
+        broken.update(overrides)
+        return {
+            'entry_name': broken['entry_name'], 'protocol': 'nzb',
+            'status': 'broken', 'failure_reason': broken['reason'],
+            'broken_files': [broken],
+        }
+
+    def seed_deleted_pitt_item_and_replacement(self, duplicate_activity=True):
+        conn = self.connect()
+        conn.execute(
+            """INSERT INTO media_items
+               (id, state, filled_by_torrent_id, filled_by_magnet, title, type,
+                season_number, episode_number, filled_by_file, filled_by_title,
+                location_on_disk)
+               VALUES (19702, 'Collected', 'nzb:new-pitt-id', '', 'The Pitt',
+                       'episode', 1, 7, 'The.Pitt.S01E07.FLUX.mkv',
+                       'The.Pitt.S01E07.FLUX', '/library/The Pitt/S01E07.mkv')"""
+        )
+        conn.execute(
+            """INSERT INTO nzb_repair_activity
+               (item_id, title, media_type, season_number, episode_number,
+                broken_nzb_id, broken_nzb_title, outcome)
+               VALUES (9278, 'The Pitt', 'episode', 1, 7, 'old-pitt-id',
+                       'The.Pitt.2025.S01E07.1.00.P.M.DUSKLiGHT', 'not_found')"""
+        )
+        if duplicate_activity:
+            conn.execute(
+                """INSERT INTO nzb_repair_activity
+                   (item_id, title, media_type, season_number, episode_number,
+                    broken_nzb_id, broken_nzb_title, outcome)
+                   VALUES (NULL, NULL, NULL, NULL, NULL,
+                           'The.Pitt.2025.S01E07.1.00.P.M.DUSKLiGHT',
+                           'The.Pitt.2025.S01E07.1.00.P.M.DUSKLiGHT', 'not_found')"""
+            )
+        conn.commit()
+        conn.close()
+
+    def test_adopts_deleted_old_item_and_collapses_exact_not_found_duplicates(self):
+        self.create_stale_cleanup_fixture_schema()
+        self.seed_deleted_pitt_item_and_replacement()
+
+        remaining = cleanup.adopt_stale_replaced_nzbs([self.pitt_health_entry()])
+
+        self.assertEqual([], remaining)
+        conn = self.connect()
+        saga = conn.execute('SELECT * FROM mount_replacement_sagas').fetchone()
+        target = conn.execute('SELECT * FROM mount_replacement_cleanups').fetchone()
+        rows = conn.execute('SELECT * FROM nzb_repair_activity ORDER BY id').fetchall()
+        conn.close()
+        self.assertEqual(19702, saga['cli_debrid_id'])
+        self.assertEqual('stale_cleanup', saga['saga_kind'])
+        self.assertEqual('new-pitt-id', saga['candidate_info_hash'])
+        self.assertEqual(9278, target['cli_debrid_id'])
+        self.assertEqual('old-pitt-id', target['old_info_hash'])
+        self.assertEqual(1, len(rows))
+        self.assertEqual('stale_cleanup_pending', rows[0]['outcome'])
+        self.assertEqual(19702, rows[0]['item_id'])
+
+    def test_stale_cleanup_verifies_new_nzb_acks_old_identity_and_refreshes(self):
+        self.create_stale_cleanup_fixture_schema()
+        self.seed_deleted_pitt_item_and_replacement()
+        cleanup.adopt_stale_replaced_nzbs([self.pitt_health_entry()])
+
+        with patch.object(activity, 'get_db_connection', side_effect=self.connect), \
+                patch.dict(sys.modules, {'database.nzb_repair_activity': activity}), \
+                patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})) as verify, \
+                patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')) as acknowledge, \
+                patch.object(cleanup, '_refresh_verified_plex_item', return_value=True) as refresh:
+            result = cleanup.process_pending_mount_cleanups(item_id=19702)
+
+        verify.assert_called_once_with(19702, 'new-pitt-id')
+        acknowledged = acknowledge.call_args.args[0]
+        self.assertEqual(9278, acknowledged['cli_debrid_id'])
+        self.assertEqual('old-pitt-id', acknowledged['old_info_hash'])
+        refresh.assert_called_once()
+        self.assertEqual(1, result['completed'])
+        conn = self.connect()
+        saga = conn.execute('SELECT * FROM mount_replacement_sagas').fetchone()
+        target = conn.execute('SELECT * FROM mount_replacement_cleanups').fetchone()
+        row = conn.execute('SELECT * FROM nzb_repair_activity').fetchone()
+        conn.close()
+        self.assertEqual('complete', saga['status'])
+        self.assertEqual('complete', saga['plex_refresh_status'])
+        self.assertEqual('complete', target['status'])
+        self.assertEqual('stale_entry_cleaned', row['outcome'])
+        self.assertEqual('new-pitt-id', row['replacement_nzb_id'])
+
+    def test_stale_cleanup_retries_only_plex_after_mount_removal(self):
+        self.create_stale_cleanup_fixture_schema()
+        self.seed_deleted_pitt_item_and_replacement(duplicate_activity=False)
+        cleanup.adopt_stale_replaced_nzbs([self.pitt_health_entry()])
+
+        with patch.object(activity, 'get_db_connection', side_effect=self.connect), \
+                patch.dict(sys.modules, {'database.nzb_repair_activity': activity}), \
+                patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})) as verify, \
+                patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')) as acknowledge, \
+                patch.object(cleanup, '_refresh_verified_plex_item', return_value=False):
+            cleanup.process_pending_mount_cleanups(item_id=19702)
+        conn = self.connect()
+        conn.execute('UPDATE mount_replacement_sagas SET next_attempt_at=NULL')
+        conn.commit()
+        conn.close()
+        with patch.object(activity, 'get_db_connection', side_effect=self.connect), \
+                patch.dict(sys.modules, {'database.nzb_repair_activity': activity}), \
+                patch.object(cleanup, '_verify_replacement') as second_verify, \
+                patch.object(cleanup, '_acknowledge') as second_ack, \
+                patch.object(cleanup, '_refresh_verified_plex_item', return_value=True):
+            cleanup.process_pending_mount_cleanups(item_id=19702)
+
+        verify.assert_called_once()
+        acknowledge.assert_called_once()
+        second_verify.assert_not_called()
+        second_ack.assert_not_called()
+        conn = self.connect()
+        saga = conn.execute('SELECT status, plex_refresh_status FROM mount_replacement_sagas').fetchone()
+        conn.close()
+        self.assertEqual('complete', saga['status'])
+        self.assertEqual('complete', saga['plex_refresh_status'])
+
+    def test_ambiguous_historical_replacement_is_unresolved_without_cleanup(self):
+        self.create_stale_cleanup_fixture_schema()
+        self.seed_deleted_pitt_item_and_replacement(duplicate_activity=False)
+        conn = self.connect()
+        conn.execute(
+            """INSERT INTO media_items
+               (id, state, filled_by_torrent_id, filled_by_magnet, title, type,
+                season_number, episode_number, filled_by_file)
+               VALUES (29702, 'Collected', 'nzb:other-pitt-id', '', 'The Pitt',
+                       'episode', 1, 7, 'The.Pitt.S01E07.Other.mkv')"""
+        )
+        conn.commit()
+        conn.close()
+
+        remaining = cleanup.adopt_stale_replaced_nzbs([self.pitt_health_entry()])
+
+        self.assertEqual([], remaining)
+        conn = self.connect()
+        saga_count = conn.execute('SELECT COUNT(*) FROM mount_replacement_sagas').fetchone()[0]
+        cleanup_count = conn.execute('SELECT COUNT(*) FROM mount_replacement_cleanups').fetchone()[0]
+        row = conn.execute('SELECT outcome FROM nzb_repair_activity').fetchone()
+        conn.close()
+        self.assertEqual(0, saga_count)
+        self.assertEqual(0, cleanup_count)
+        self.assertEqual('stale_entry_unresolved', row['outcome'])
+
+    def test_genuinely_unmatched_broken_entry_remains_for_not_found_handling(self):
+        self.create_stale_cleanup_fixture_schema()
+        entry = self.pitt_health_entry(cli_debrid_id=99999)
+        self.assertEqual([entry], cleanup.adopt_stale_replaced_nzbs([entry]))
+
+    def test_current_old_uuid_is_not_adopted_as_stale(self):
+        self.create_stale_cleanup_fixture_schema()
+        conn = self.connect()
+        conn.execute(
+            """INSERT INTO media_items
+               (id, state, filled_by_torrent_id, filled_by_magnet, title, type,
+                season_number, episode_number)
+               VALUES (9278, 'Collected', 'nzb:old-pitt-id', '', 'The Pitt',
+                       'episode', 1, 7)"""
+        )
+        conn.commit()
+        conn.close()
+        entry = self.pitt_health_entry()
+        self.assertEqual([entry], cleanup.adopt_stale_replaced_nzbs([entry]))
+
+    def test_broken_current_replacement_never_acknowledges_old_file(self):
+        self.create_stale_cleanup_fixture_schema()
+        self.seed_deleted_pitt_item_and_replacement(duplicate_activity=False)
+        cleanup.adopt_stale_replaced_nzbs([self.pitt_health_entry()])
+        with patch.object(activity, 'get_db_connection', side_effect=self.connect), \
+                patch.dict(sys.modules, {'database.nzb_repair_activity': activity}), \
+                patch.object(cleanup, '_verify_replacement', return_value=(
+                    'broken', 'usenet_segment_missing', {})), \
+                patch.object(cleanup, '_acknowledge') as acknowledge, \
+                patch.object(cleanup, '_refresh_verified_plex_item') as refresh:
+            result = cleanup.process_pending_mount_cleanups(item_id=19702)
+        acknowledge.assert_not_called()
+        refresh.assert_not_called()
+        self.assertEqual(1, result['probe_failed'])
+        conn = self.connect()
+        saga = conn.execute('SELECT status FROM mount_replacement_sagas').fetchone()
+        target = conn.execute('SELECT status FROM mount_replacement_cleanups').fetchone()
+        conn.close()
+        self.assertEqual('pending', saga['status'])
+        self.assertEqual('pending', target['status'])
+
     def test_normalizes_only_playback_failures_per_file(self):
         entries = [{
             'entry_name': 'pack', 'protocol': 'nzb', 'status': 'broken',
@@ -417,6 +634,31 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
         self.assertEqual(0, saga['attempts'])
         self.assertEqual('replacement_not_ready', saga['last_error'])
+
+    def test_queue_missing_candidate_registers_exact_stored_file(self):
+        calls = []
+        client = types.SimpleNamespace(
+            is_enabled=lambda: True,
+            get_exact_job=lambda _job_id: {'status': 'missing', 'entry': None},
+            register_cli_ids_with_status=lambda job_id, ids: calls.append((job_id, ids)) or (True, False),
+        )
+        client_module = types.ModuleType('usenet.climount_client')
+        client_module.get_climount_client = lambda: client
+        self.registration_patch.stop()
+        try:
+            with patch.dict(sys.modules, {'usenet.climount_client': client_module}):
+                registered = cleanup._ensure_candidate_registration(
+                    19702, 'new-pitt-id', {
+                        'id': 19702, 'type': 'episode', 'season_number': 1,
+                        'episode_number': 7, 'filled_by_file': 'The.Pitt.S01E07.FLUX.mkv',
+                    },
+                )
+        finally:
+            self.registration_patch.start()
+        self.assertTrue(registered)
+        self.assertEqual([
+            ('new-pitt-id', {'The.Pitt.S01E07.FLUX.mkv': 19702}),
+        ], calls)
 
     def test_registered_candidate_restores_source_overwritten_by_old_target(self):
         conn = self.connect()

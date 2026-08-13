@@ -16,6 +16,7 @@ PLAYBACK_CLEANUP_REASONS = frozenset({
 # starting new repairs, while existing durable sagas remain able to finish.
 RETIRED_PLAYBACK_REASONS = frozenset({'mount_read_error'})
 NZB_INTERMEDIATE_REASONS = PLAYBACK_CLEANUP_REASONS | {'usenet_segment_missing'}
+STALE_CLEANUP_REASONS = NZB_INTERMEDIATE_REASONS
 
 _RETRY_SECONDS = (60, 300, 1800)
 _LEGACY_RETRY_SECONDS = (60, 300, 1800, 7200, 86400)
@@ -115,12 +116,15 @@ def _requeue_registration_stale_sagas(conn) -> int:
                 (keeper['id'],),
             )
         if activity_table and keeper['activity_id']:
+            pending_outcome = ('stale_cleanup_pending'
+                               if _is_stale_cleanup_saga(keeper)
+                               else 'replacement_pending')
             conn.execute(
                 """UPDATE nzb_repair_activity
                    SET replacement_nzb_id=NULL, replacement_title=NULL,
-                       outcome='replacement_pending', updated_at=CURRENT_TIMESTAMP
+                       outcome=?, updated_at=CURRENT_TIMESTAMP
                    WHERE id=? AND outcome='replacement_cleanup_stale'""",
-                (keeper['activity_id'],),
+                (pending_outcome, keeper['activity_id']),
             )
         recovered += 1
     return recovered
@@ -198,6 +202,9 @@ def create_mount_replacement_cleanup_table() -> None:
         _add_column(conn, 'mount_replacement_cleanups', 'saga_id INTEGER')
         _add_column(conn, 'mount_replacement_attempts', 'release_title TEXT')
         _add_column(conn, 'mount_replacement_sagas', 'last_reconciled_at TIMESTAMP')
+        _add_column(conn, "mount_replacement_sagas", "saga_kind TEXT NOT NULL DEFAULT 'replacement'")
+        _add_column(conn, "mount_replacement_sagas", "plex_refresh_status TEXT NOT NULL DEFAULT 'not_required'")
+        _add_column(conn, 'mount_replacement_cleanups', 'activity_id INTEGER')
         # Give sagas created by older builds one immediate reconciliation pass
         # instead of preserving a stale 24-hour retry deadline.
         conn.execute(
@@ -263,6 +270,7 @@ def create_mount_replacement_cleanup_table() -> None:
                      AND id IN (
                        SELECT activity_id FROM mount_replacement_sagas
                        WHERE status='complete' AND activity_id IS NOT NULL
+                         AND COALESCE(saga_kind, 'replacement')='replacement'
                          AND candidate_info_hash IS NOT NULL AND candidate_info_hash!=''
                      )"""
             )
@@ -343,6 +351,266 @@ def get_media_item_for_cleanup(cli_debrid_id: int):
         return dict(row) if row else None
     finally:
         conn.close()
+
+
+def _activity_table_exists(conn) -> bool:
+    return bool(conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='nzb_repair_activity'"
+    ).fetchone())
+
+
+def _historical_media_identity(conn, old_item_id: int):
+    """Recover the semantic identity of a deleted item from durable activity."""
+    if not old_item_id or not _activity_table_exists(conn):
+        return None
+    return conn.execute(
+        """SELECT title, media_type, season_number, episode_number
+             FROM nzb_repair_activity
+            WHERE item_id=? AND title IS NOT NULL AND title!=''
+              AND media_type IN ('movie','episode')
+            ORDER BY COALESCE(updated_at, created_at) DESC, id DESC LIMIT 1""",
+        (old_item_id,),
+    ).fetchone()
+
+
+def _unique_collected_replacement(conn, broken_file: dict):
+    """Return one exact current NZB replacement, plus a classification detail."""
+    old_item_id = int(broken_file.get('cli_debrid_id') or 0)
+    old_hash = str(broken_file.get('info_hash') or '')
+    direct = conn.execute(
+        'SELECT * FROM media_items WHERE id=? LIMIT 1', (old_item_id,),
+    ).fetchone()
+    if direct:
+        direct_item = dict(direct)
+        direct_hash = _current_source_hash(direct_item, 'nzb')
+        if direct_item.get('state') == 'Collected' and direct_hash:
+            if direct_hash.lower() == old_hash.lower():
+                return None, 'current_source', 'the registered media row still owns the broken UUID'
+            if str(direct_item.get('filled_by_torrent_id') or '').startswith('nzb:'):
+                return direct_item, 'resolved', ''
+
+    identity = _historical_media_identity(conn, old_item_id)
+    if not identity:
+        return None, 'not_found', 'no historical media identity exists for the registered item ID'
+    params = [identity['title'], identity['media_type']]
+    sql = """SELECT * FROM media_items
+              WHERE title=? COLLATE NOCASE AND type=? AND state='Collected'"""
+    if identity['media_type'] == 'episode':
+        if identity['season_number'] is None or identity['episode_number'] is None:
+            return None, 'unresolved', 'historical episode identity is incomplete'
+        sql += ' AND season_number=? AND episode_number=?'
+        params.extend([identity['season_number'], identity['episode_number']])
+    rows = conn.execute(sql, params).fetchall()
+    if len(rows) != 1:
+        return None, 'unresolved', (
+            f'historical identity matched {len(rows)} collected media rows; exact cleanup requires one'
+        )
+    current = dict(rows[0])
+    current_hash = _current_source_hash(current, 'nzb')
+    if not str(current.get('filled_by_torrent_id') or '').startswith('nzb:'):
+        return None, 'unresolved', 'the current replacement is not an NZB'
+    if not current_hash or current_hash.lower() == old_hash.lower():
+        return None, 'current_source', 'the collected media row does not use a different NZB UUID'
+    return current, 'resolved', ''
+
+
+def _canonical_stale_activity(conn, broken_file: dict, current_item: dict,
+                              outcome: str, detail: str = '') -> int:
+    """Adopt one existing Not Found row and collapse only its exact duplicates."""
+    if not _activity_table_exists(conn):
+        return None
+    old_hash = str(broken_file.get('info_hash') or '')
+    entry_name = str(broken_file.get('entry_name') or '')
+    rows = conn.execute(
+        """SELECT id, outcome FROM nzb_repair_activity
+            WHERE outcome IN ('not_found','stale_entry_unresolved')
+              AND (broken_nzb_id=? OR broken_nzb_title=?)
+            ORDER BY COALESCE(updated_at, created_at) DESC, id DESC""",
+        (old_hash, entry_name),
+    ).fetchall()
+    if rows:
+        activity_id = rows[0]['id']
+        conn.execute(
+            """UPDATE nzb_repair_activity
+                  SET item_id=?, title=?, media_type=?, season_number=?, episode_number=?,
+                      broken_nzb_id=?, broken_nzb_title=?, replacement_nzb_id=NULL,
+                      replacement_title=NULL, outcome=?, triggered_by='stale_mount_cleanup',
+                      updated_at=CURRENT_TIMESTAMP
+                WHERE id=?""",
+            (current_item.get('id'), current_item.get('title'), current_item.get('type'),
+             current_item.get('season_number'), current_item.get('episode_number'),
+             old_hash, entry_name, outcome, activity_id),
+        )
+        duplicate_ids = [row['id'] for row in rows[1:] if row['outcome'] == 'not_found']
+        if duplicate_ids:
+            conn.executemany(
+                "DELETE FROM nzb_repair_activity WHERE id=? AND outcome='not_found'",
+                [(value,) for value in duplicate_ids],
+            )
+        return activity_id
+    cursor = conn.execute(
+        """INSERT INTO nzb_repair_activity
+           (item_id, title, media_type, season_number, episode_number,
+            broken_nzb_id, broken_nzb_title, outcome, triggered_by,
+            last_repair_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'stale_mount_cleanup',
+                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+        (current_item.get('id'), current_item.get('title'), current_item.get('type'),
+         current_item.get('season_number'), current_item.get('episode_number'),
+         old_hash, entry_name, outcome),
+    )
+    return cursor.lastrowid
+
+
+def _record_unresolved_stale_target(conn, broken_file: dict, detail: str) -> None:
+    """Surface one unsafe stale target without producing repeated Not Found rows."""
+    placeholder = {
+        'id': None, 'title': None, 'type': None,
+        'season_number': None, 'episode_number': None,
+    }
+    old_item_id = int(broken_file.get('cli_debrid_id') or 0)
+    identity = _historical_media_identity(conn, old_item_id)
+    if identity:
+        placeholder.update({
+            'title': identity['title'], 'type': identity['media_type'],
+            'season_number': identity['season_number'],
+            'episode_number': identity['episode_number'],
+        })
+    activity_id = _canonical_stale_activity(
+        conn, broken_file, placeholder, 'stale_entry_unresolved', detail,
+    )
+    if activity_id:
+        conn.execute(
+            "UPDATE nzb_repair_activity SET next_repair_at=NULL WHERE id=?",
+            (activity_id,),
+        )
+
+
+def _queue_stale_replaced_file(broken_file: dict) -> str:
+    """Persist a verified-before-delete cleanup for one already-replaced old NZB."""
+    required = ('entry_name', 'file_name', 'info_hash', 'cli_debrid_id', 'reason')
+    if not all(broken_file.get(key) for key in required):
+        return 'not_found'
+    if broken_file.get('reason') not in STALE_CLEANUP_REASONS:
+        return 'not_stale'
+    conn = get_db_connection()
+    try:
+        current_item, status, detail = _unique_collected_replacement(conn, broken_file)
+        if status == 'not_found' or status == 'current_source':
+            return status
+        if status != 'resolved':
+            _record_unresolved_stale_target(conn, broken_file, detail)
+            conn.commit()
+            logging.warning(
+                '[MountCleanup] Stale old NZB requires attention: entry=%r file=%r reason=%s',
+                broken_file.get('entry_name'), broken_file.get('file_name'), detail,
+            )
+            return 'unresolved'
+
+        current_id = int(current_item['id'])
+        current_hash = _current_source_hash(current_item, 'nzb')
+        activity_id = _canonical_stale_activity(
+            conn, broken_file, current_item, 'stale_cleanup_pending',
+        )
+        saga = conn.execute(
+            """SELECT * FROM mount_replacement_sagas
+                WHERE cli_debrid_id=? AND protocol='nzb'
+                  AND status IN ('pending','probe_failed') LIMIT 1""",
+            (current_id,),
+        ).fetchone()
+        if saga and not _is_stale_cleanup_saga(saga):
+            _record_unresolved_stale_target(
+                conn, broken_file, 'an active replacement is still processing this media item',
+            )
+            conn.commit()
+            return 'unresolved'
+        if saga and str(saga['candidate_info_hash'] or '').lower() not in ('', current_hash.lower()):
+            _record_unresolved_stale_target(
+                conn, broken_file, 'another active replacement saga owns the current media item',
+            )
+            conn.commit()
+            return 'unresolved'
+
+        if saga:
+            saga_id = saga['id']
+            if not saga['activity_id']:
+                conn.execute(
+                    'UPDATE mount_replacement_sagas SET activity_id=? WHERE id=?',
+                    (activity_id, saga_id),
+                )
+        else:
+            candidate_title = (current_item.get('filled_by_title') or
+                               current_item.get('filled_by_file') or current_item.get('title'))
+            saga_id = conn.execute(
+                """INSERT INTO mount_replacement_sagas
+                   (cli_debrid_id, protocol, status, activity_id, candidate_info_hash,
+                    candidate_title, saga_kind, plex_refresh_status)
+                   VALUES (?, 'nzb', 'pending', ?, ?, ?, 'stale_cleanup', 'not_required')""",
+                (current_id, activity_id, current_hash, candidate_title),
+            ).lastrowid
+        conn.execute(
+            """INSERT INTO mount_replacement_cleanups
+               (saga_id, cli_debrid_id, protocol, entry_name, file_name,
+                old_info_hash, reason, activity_id)
+               VALUES (?, ?, 'nzb', ?, ?, ?, ?, ?)
+               ON CONFLICT(cli_debrid_id, old_info_hash, file_name) DO UPDATE SET
+                 saga_id=excluded.saga_id, entry_name=excluded.entry_name,
+                 reason=excluded.reason, activity_id=excluded.activity_id,
+                 status=CASE WHEN mount_replacement_cleanups.status='complete'
+                             THEN 'complete' ELSE 'pending' END,
+                 next_attempt_at=NULL, last_error=NULL,
+                 updated_at=CURRENT_TIMESTAMP""",
+            (saga_id, int(broken_file['cli_debrid_id']), broken_file['entry_name'],
+             broken_file['file_name'], broken_file['info_hash'], broken_file['reason'],
+             activity_id),
+        )
+        conn.execute(
+            """UPDATE mount_replacement_sagas
+                  SET candidate_info_hash=?, status='pending', next_attempt_at=NULL,
+                      last_error=NULL, updated_at=CURRENT_TIMESTAMP
+                WHERE id=?""",
+            (current_hash, saga_id),
+        )
+        conn.commit()
+        logging.info(
+            '[MountCleanup] Adopted stale replaced NZB: old_item=%s old_hash=%s '
+            'current_item=%s current_hash=%s file=%r',
+            broken_file['cli_debrid_id'], broken_file['info_hash'],
+            current_id, current_hash, broken_file['file_name'],
+        )
+        return 'queued'
+    except Exception as exc:
+        conn.rollback()
+        logging.warning('[MountCleanup] Could not classify stale old NZB: %s', exc)
+        return 'not_found'
+    finally:
+        conn.close()
+
+
+def adopt_stale_replaced_nzbs(entries: list) -> list:
+    """Remove safely-adopted stale files from the legacy Not Found workflow."""
+    remaining_entries = []
+    for entry in entries or []:
+        files = entry.get('broken_files') or []
+        if not files:
+            remaining_entries.append(entry)
+            continue
+        remaining_files = []
+        for raw_file in files:
+            broken_file = dict(raw_file)
+            broken_file.setdefault('entry_name', entry.get('entry_name') or '')
+            broken_file.setdefault('reason', entry.get('failure_reason') or '')
+            broken_file.setdefault('protocol', entry.get('protocol') or '')
+            classification = _queue_stale_replaced_file(broken_file)
+            if classification in ('queued', 'unresolved'):
+                continue
+            remaining_files.append(raw_file)
+        if remaining_files:
+            kept = dict(entry)
+            kept['broken_files'] = remaining_files
+            kept['failure_reason'] = remaining_files[0].get('reason') or kept.get('failure_reason', '')
+            remaining_entries.append(kept)
+    return remaining_entries
 
 
 def _create_pending_activity(target: dict, item: dict) -> int:
@@ -694,18 +962,31 @@ def _ensure_candidate_registration(cli_debrid_id: int, info_hash: str,
         if not client or not client.is_enabled():
             return False
         lookup = client.get_exact_job(info_hash)
-        if str(lookup.get('status') or '') != 'ready':
+        lookup_status = str(lookup.get('status') or '')
+        if lookup_status not in ('ready', 'missing'):
             return False
         entry = lookup.get('entry') or {}
         candidate_file = _select_candidate_file(item or {}, entry)
+        if not candidate_file and lookup_status == 'missing':
+            stored_file = str((item or {}).get('filled_by_file') or '')
+            if any(stored_file.lower().endswith(ext) for ext in _VIDEO_EXTENSIONS):
+                candidate_file = stored_file
         if not candidate_file:
             return False
-        return bool(client.register_cli_ids(
-            info_hash,
-            _registration_map_for_source(
-                info_hash, candidate_file, cli_debrid_id, entry,
-            ),
-        ))
+        ids = _registration_map_for_source(
+            info_hash, candidate_file, cli_debrid_id, entry,
+        )
+        if lookup_status == 'missing' and hasattr(client, 'register_cli_ids_with_status'):
+            registered, _entry_not_found = client.register_cli_ids_with_status(info_hash, ids)
+        else:
+            registered = client.register_cli_ids(info_hash, ids)
+        if lookup_status == 'missing':
+            logging.info(
+                '[MountCleanup] Candidate UUID absent from queue; attempted direct '
+                'storage registration: item=%s info_hash=%s file=%r success=%s',
+                cli_debrid_id, info_hash, candidate_file, bool(registered),
+            )
+        return bool(registered)
     except Exception as exc:
         logging.warning(
             '[MountCleanup] Candidate registration failed: item=%s info_hash=%s error=%s',
@@ -1105,12 +1386,12 @@ def _mark_collected_attempt_cleaned(conn, saga_id: int, info_hash: str) -> None:
     )
 
 
-def _refresh_verified_plex_item(item: dict) -> None:
+def _refresh_verified_plex_item(item: dict) -> bool:
     """Refresh the retained Plex path without deleting its metadata item."""
     path = item.get('location_on_disk') or ''
     if not path:
         logging.info('[MountCleanup] Plex refresh skipped for item %s: no location_on_disk', item.get('id'))
-        return
+        return False
     try:
         from utilities.plex_functions import plex_update_item
         refreshed = plex_update_item({
@@ -1122,8 +1403,80 @@ def _refresh_verified_plex_item(item: dict) -> None:
             '[MountCleanup] Targeted Plex refresh after exact cleanup: item=%s path=%r success=%s',
             item.get('id'), path, bool(refreshed),
         )
+        return bool(refreshed)
     except Exception as exc:
         logging.warning('[MountCleanup] Targeted Plex refresh failed for item %s: %s', item.get('id'), exc)
+        return False
+
+
+def _is_stale_cleanup_saga(saga) -> bool:
+    try:
+        return str(saga['saga_kind'] or '') == 'stale_cleanup'
+    except (IndexError, KeyError):
+        return False
+
+
+def _update_stale_cleanup_activities(conn, saga_id: int, **changes) -> bool:
+    rows = conn.execute(
+        """SELECT DISTINCT activity_id FROM mount_replacement_cleanups
+            WHERE saga_id=? AND activity_id IS NOT NULL""",
+        (saga_id,),
+    ).fetchall()
+    for row in rows:
+        if not _update_activity(row['activity_id'], connection=conn, **changes):
+            return False
+    return True
+
+
+def _finish_stale_plex_refresh(saga, item: dict, current_hash: str,
+                               result: dict) -> None:
+    """Finish retroactive cleanup only after Plex accepts the targeted refresh."""
+    refreshed = _refresh_verified_plex_item(item)
+    final_title = (item.get('filled_by_title') or item.get('filled_by_file') or
+                   saga['candidate_title'] or item.get('title'))
+    conn = get_db_connection()
+    try:
+        if refreshed:
+            conn.execute(
+                """UPDATE mount_replacement_sagas
+                      SET status='complete', candidate_info_hash=?, candidate_title=?,
+                          plex_refresh_status='complete', completed_at=CURRENT_TIMESTAMP,
+                          last_error=NULL, next_attempt_at=NULL,
+                          updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (current_hash, final_title, saga['id']),
+            )
+            if not _update_stale_cleanup_activities(
+                    conn, saga['id'],
+                    replacement_nzb_id=current_hash,
+                    replacement_title=final_title, outcome='stale_entry_cleaned'):
+                raise RuntimeError('linked stale-cleanup activity could not be finalized')
+            conn.commit()
+            logging.info(
+                '[MountCleanup] Stale old NZB cleanup completed: saga=%s current_item=%s '
+                'replacement=%s', saga['id'], saga['cli_debrid_id'], current_hash,
+            )
+            return
+        conn.execute(
+            "UPDATE mount_replacement_sagas SET plex_refresh_status='pending' WHERE id=?",
+            (saga['id'],),
+        )
+        _schedule_saga_retry(conn, saga, 'targeted Plex refresh is pending')
+        if not _update_stale_cleanup_activities(
+                conn, saga['id'],
+                replacement_nzb_id=None, replacement_title=None,
+                outcome='stale_cleanup_pending'):
+            raise RuntimeError('linked stale-cleanup activity could not be updated')
+        conn.commit()
+        result['retried'] += 1
+    except Exception as exc:
+        conn.rollback()
+        result['retried'] += 1
+        logging.warning(
+            '[MountCleanup] Stale cleanup Plex finalization rolled back for saga %s: %s',
+            saga['id'], exc,
+        )
+    finally:
+        conn.close()
 
 
 def _finish_torrent_supersession(saga, item: dict, all_targets: list,
@@ -1249,8 +1602,10 @@ def _process_pending_mount_cleanups(item_id: int = None) -> dict:
     for saga in sagas:
         saga_dict = dict(saga)
         if saga['state'] is None:
+            stale_cleanup = _is_stale_cleanup_saga(saga)
             if _close_terminal_saga(
-                    saga, status='abandoned', outcome='replacement_abandoned',
+                    saga, status='abandoned',
+                    outcome=('stale_entry_unresolved' if stale_cleanup else 'replacement_abandoned'),
                     message='media item no longer exists; no cleanup was attempted'):
                 result['blocked'] += 1
             else:
@@ -1303,6 +1658,13 @@ def _process_pending_mount_cleanups(item_id: int = None) -> dict:
                 if not candidate_hash or candidate_hash.lower() in old_hashes:
                     result['waiting'] += 1
                 continue
+        if (_is_stale_cleanup_saga(saga) and
+                all(row['status'] == 'complete' for row in all_targets)):
+            _finish_stale_plex_refresh(
+                saga, get_media_item_for_cleanup(saga['cli_debrid_id']) or saga_dict,
+                current_hash, result,
+            )
+            continue
         if saga['status'] == 'probe_failed' and current_hash.lower() == str(saga['candidate_info_hash'] or '').lower():
             result['waiting'] += 1
             continue
@@ -1315,8 +1677,9 @@ def _process_pending_mount_cleanups(item_id: int = None) -> dict:
             # Candidate details stay private until verification and cleanup
             # both succeed; the activity row remains a neutral pending record.
 
+        registration_item = get_media_item_for_cleanup(saga['cli_debrid_id']) or saga_dict
         if not _ensure_candidate_registration(
-                saga['cli_debrid_id'], current_hash, saga_dict):
+                saga['cli_debrid_id'], current_hash, registration_item):
             retry_conn = get_db_connection()
             try:
                 _schedule_saga_retry(
@@ -1339,6 +1702,23 @@ def _process_pending_mount_cleanups(item_id: int = None) -> dict:
         update_conn = get_db_connection()
         try:
             if verify_status == 'broken':
+                if _is_stale_cleanup_saga(saga):
+                    _schedule_saga_retry(
+                        update_conn, saga,
+                        f'replacement playback validation failed: {message}',
+                    )
+                    update_conn.commit()
+                    activity_conn = get_db_connection()
+                    try:
+                        _update_stale_cleanup_activities(
+                            activity_conn, saga['id'], replacement_nzb_id=None,
+                            replacement_title=None, outcome='stale_cleanup_pending',
+                        )
+                        activity_conn.commit()
+                    finally:
+                        activity_conn.close()
+                    result['probe_failed'] += 1
+                    continue
                 failed_title = (current_item.get('filled_by_title') or current_item.get('filled_by_file')
                                 or candidate_title or current_hash)
                 record_mount_replacement_attempt(
@@ -1380,7 +1760,19 @@ def _process_pending_mount_cleanups(item_id: int = None) -> dict:
                         (message[:1000], saga['id']),
                     )
                     update_conn.commit()
-                    _update_activity(saga['activity_id'], outcome='replacement_cleanup_stale')
+                    if _is_stale_cleanup_saga(saga):
+                        activity_conn = get_db_connection()
+                        try:
+                            _update_stale_cleanup_activities(
+                                activity_conn, saga['id'], outcome='stale_entry_unresolved',
+                            )
+                            activity_conn.commit()
+                        finally:
+                            activity_conn.close()
+                    else:
+                        _update_activity(
+                            saga['activity_id'], outcome='replacement_cleanup_stale',
+                        )
                     result['blocked'] += 1
                 else:
                     _schedule_retry_for_result(update_conn, saga, message, verify_details)
@@ -1434,6 +1826,21 @@ def _process_pending_mount_cleanups(item_id: int = None) -> dict:
             finally:
                 update_conn.close()
 
+        if all_complete and _is_stale_cleanup_saga(saga):
+            mark_conn = get_db_connection()
+            try:
+                mark_conn.execute(
+                    """UPDATE mount_replacement_sagas
+                          SET plex_refresh_status='pending', candidate_info_hash=?,
+                              updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (current_hash, saga['id']),
+                )
+                mark_conn.commit()
+            finally:
+                mark_conn.close()
+            _finish_stale_plex_refresh(saga, current_item, current_hash, result)
+            continue
+
         finish_conn = get_db_connection()
         refresh_item = None
         try:
@@ -1442,9 +1849,15 @@ def _process_pending_mount_cleanups(item_id: int = None) -> dict:
                     "UPDATE mount_replacement_sagas SET status='blocked', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                     (terminal_failure[:1000], saga['id']),
                 )
-                if saga['activity_id'] and not _update_activity(
+                if _is_stale_cleanup_saga(saga):
+                    activity_updated = _update_stale_cleanup_activities(
+                        finish_conn, saga['id'], outcome='stale_entry_unresolved',
+                    )
+                else:
+                    activity_updated = (not saga['activity_id'] or _update_activity(
                         saga['activity_id'], connection=finish_conn,
-                        outcome='replacement_cleanup_stale'):
+                        outcome='replacement_cleanup_stale'))
+                if not activity_updated:
                     raise RuntimeError('linked replacement activity could not be finalized')
             elif all_complete:
                 final_title = (current_item.get('filled_by_title') or current_item.get('filled_by_file')
