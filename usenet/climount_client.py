@@ -407,8 +407,13 @@ class CliMountClient:
         Uses PATCH /api/entries/{hash}/cli_ids — merges into existing map.
         Returns True on success, False otherwise.
         """
+        success, _not_found = self.register_cli_ids_with_status(info_hash, ids)
+        return success
+
+    def register_cli_ids_with_status(self, info_hash: str, ids: dict) -> tuple:
+        """Register IDs and distinguish a missing entry from transient failure."""
         if not self.is_enabled() or not info_hash or not ids:
-            return False
+            return False, False
         try:
             import requests as _req_patch
             r = _req_patch.patch(
@@ -419,12 +424,12 @@ class CliMountClient:
             )
             if r.status_code in (200, 204):
                 logging.debug(f'[cli_mount] Registered {len(ids)} cli_debrid IDs for {info_hash}')
-                return True
+                return True, False
             logging.debug(f'[cli_mount] register_cli_ids returned {r.status_code} for {info_hash}')
-            return False
+            return False, r.status_code == 404
         except Exception as e:
             logging.debug(f'[cli_mount] register_cli_ids error for {info_hash}: {e}')
-            return False
+            return False, False
 
     def register_cli_ids_for_item(self, info_hash: str, item_id: int) -> bool:
         """

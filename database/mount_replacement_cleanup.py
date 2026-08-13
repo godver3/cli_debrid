@@ -723,19 +723,39 @@ def _ensure_cleanup_registration(target) -> tuple:
             return 'retry', 'cli_mount is unavailable'
         lookup = client.get_exact_job(target['old_info_hash'])
         status = str(lookup.get('status') or 'unavailable')
-        if status == 'missing':
-            # The acknowledgement endpoint will return already_removed if the
-            # mounted item disappeared with the provider entry.
-            return 'ready', ''
         entry = lookup.get('entry') or {}
-        if status in ('unavailable', 'ambiguous') or not entry:
+        if status in ('unavailable', 'ambiguous'):
+            return 'retry', f'replacement_not_ready: cleanup target {status}'
+        if status != 'missing' and not entry:
             return 'retry', f'replacement_not_ready: cleanup target {status}'
         ids = _registration_map_for_source(
             target['old_info_hash'], target['file_name'],
             int(target['cli_debrid_id']), entry,
         )
-        if not client.register_cli_ids(target['old_info_hash'], ids):
+        if status == 'missing' and hasattr(client, 'register_cli_ids_with_status'):
+            registered, entry_not_found = client.register_cli_ids_with_status(
+                target['old_info_hash'], ids,
+            )
+        else:
+            registered = client.register_cli_ids(target['old_info_hash'], ids)
+            entry_not_found = False
+        if not registered and status != 'missing':
             return 'retry', 'replacement_not_ready: exact cleanup registration failed'
+        if status == 'missing':
+            # Retained storage entries are not always present in cli_mount's
+            # queue listing. PATCH still resolves them through persistent
+            # storage; if the entry truly disappeared, acknowledgement safely
+            # returns already_removed. It also preserves structured retry/error
+            # handling if PATCH failed for an infrastructure reason.
+            logging.info(
+                '[MountCleanup] Cleanup UUID absent from queue; attempted direct '
+                'storage registration: item=%s info_hash=%s file=%r success=%s',
+                target['cli_debrid_id'], target['old_info_hash'],
+                target['file_name'], bool(registered),
+            )
+            if registered or entry_not_found:
+                return 'ready', ''
+            return 'retry', 'replacement_not_ready: direct cleanup registration failed'
         logging.info(
             '[MountCleanup] Restored exact cleanup registration: item=%s info_hash=%s file=%r',
             target['cli_debrid_id'], target['old_info_hash'], target['file_name'],

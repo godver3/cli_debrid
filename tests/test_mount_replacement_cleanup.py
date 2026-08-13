@@ -715,6 +715,88 @@ class MountReplacementCleanupTests(unittest.TestCase):
             {'cli_debrid_ids': {'wrong-new-name.mkv': 75299}},
         ))
 
+    def test_missing_queue_cleanup_still_attempts_storage_registration(self):
+        client = types.SimpleNamespace(
+            is_enabled=lambda: True,
+            get_exact_job=lambda _job_id: {'status': 'missing', 'entry': None},
+            register_cli_ids=lambda job_id, ids: (
+                self.assertEqual('old-id', job_id) or
+                self.assertEqual({'S03E01.mkv': 75299}, ids) or True
+            ),
+        )
+        client_module = types.ModuleType('usenet.climount_client')
+        client_module.get_climount_client = lambda: client
+        self.cleanup_registration_patch.stop()
+        try:
+            with patch.dict(sys.modules, {'usenet.climount_client': client_module}):
+                status, message = cleanup._ensure_cleanup_registration({
+                    **self.target(), 'old_info_hash': 'old-id',
+                })
+        finally:
+            self.cleanup_registration_patch.start()
+        self.assertEqual('ready', status)
+        self.assertEqual('', message)
+
+    def test_truly_removed_cleanup_reaches_acknowledgement_after_patch_404(self):
+        calls = []
+        client = types.SimpleNamespace(
+            is_enabled=lambda: True,
+            get_exact_job=lambda _job_id: {'status': 'missing', 'entry': None},
+            register_cli_ids_with_status=lambda job_id, ids: (
+                calls.append((job_id, ids)) or (False, True)
+            ),
+        )
+        client_module = types.ModuleType('usenet.climount_client')
+        client_module.get_climount_client = lambda: client
+        self.cleanup_registration_patch.stop()
+        try:
+            with patch.dict(sys.modules, {'usenet.climount_client': client_module}):
+                status, _message = cleanup._ensure_cleanup_registration({
+                    **self.target(), 'old_info_hash': 'old-id',
+                })
+        finally:
+            self.cleanup_registration_patch.start()
+        self.assertEqual('ready', status)
+        self.assertEqual(1, len(calls))
+
+    def test_missing_queue_transient_registration_failure_retries_before_ack(self):
+        client = types.SimpleNamespace(
+            is_enabled=lambda: True,
+            get_exact_job=lambda _job_id: {'status': 'missing', 'entry': None},
+            register_cli_ids_with_status=lambda _job_id, _ids: (False, False),
+        )
+        client_module = types.ModuleType('usenet.climount_client')
+        client_module.get_climount_client = lambda: client
+        self.cleanup_registration_patch.stop()
+        try:
+            with patch.dict(sys.modules, {'usenet.climount_client': client_module}):
+                status, message = cleanup._ensure_cleanup_registration({
+                    **self.target(), 'old_info_hash': 'old-id',
+                })
+        finally:
+            self.cleanup_registration_patch.start()
+        self.assertEqual('retry', status)
+        self.assertIn('registration failed', message)
+
+    def test_ambiguous_cleanup_target_does_not_attempt_registration(self):
+        client = types.SimpleNamespace(
+            is_enabled=lambda: True,
+            get_exact_job=lambda _job_id: {'status': 'ambiguous', 'entry': None},
+            register_cli_ids=lambda *_args: self.fail('ambiguous target must not be registered'),
+        )
+        client_module = types.ModuleType('usenet.climount_client')
+        client_module.get_climount_client = lambda: client
+        self.cleanup_registration_patch.stop()
+        try:
+            with patch.dict(sys.modules, {'usenet.climount_client': client_module}):
+                status, message = cleanup._ensure_cleanup_registration({
+                    **self.target(), 'old_info_hash': 'old-id',
+                })
+        finally:
+            self.cleanup_registration_patch.start()
+        self.assertEqual('retry', status)
+        self.assertIn('ambiguous', message)
+
     def test_startup_requeues_only_known_registration_conflicts(self):
         conn = self.connect()
         conn.execute("""CREATE TABLE nzb_repair_activity (
