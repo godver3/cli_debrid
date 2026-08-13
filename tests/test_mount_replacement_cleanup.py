@@ -795,6 +795,58 @@ class MountReplacementCleanupTests(unittest.TestCase):
             'two': {'name': 'unknown-two.mkv', 'size': 90},
         }}))
 
+    def test_single_opaque_file_requires_exact_entry_episode_identity(self):
+        item = {'type': 'episode', 'season_number': 5, 'episode_number': 2}
+        mismatched = {
+            'name': 'Show.S05E01.Wrong',
+            'files': {'opaque.mkv': {'size': 100}},
+        }
+        matching = {
+            'name': 'Show.S05E02.Right',
+            'files': {'opaque.mkv': {'size': 100}},
+        }
+        self.assertEqual('', cleanup._select_candidate_file(item, mismatched))
+        self.assertEqual('opaque.mkv', cleanup._select_candidate_file(item, matching))
+
+    def test_renamed_file_cannot_override_conflicting_entry_identity(self):
+        item = {'type': 'episode', 'season_number': 5, 'episode_number': 2}
+        entry = {
+            'name': 'Show.S05E02.Renamed',
+            'original_filename': 'Show.S05E01.Wrong',
+            'files': {'renamed': {'name': 'Show.S05E02.mkv', 'size': 100}},
+        }
+        self.assertEqual('', cleanup._select_candidate_file(item, entry))
+
+    def test_episode_candidate_rejects_conflicting_original_identity(self):
+        item = {'type': 'episode', 'season_number': 5, 'episode_number': 2}
+        self.assertFalse(cleanup.candidate_matches_episode(item, result={
+            'title': 'Show.S05E02.Renamed',
+            'original_title': 'Show.S05E01.Wrong',
+            'parsed_info': {'seasons': [5], 'episodes': [2]},
+        }))
+        self.assertTrue(cleanup.candidate_matches_episode(item, result={
+            'title': 'Show.S05E02.Right',
+            'parsed_info': {'seasons': [5], 'episodes': [2]},
+        }))
+
+    def test_episode_pack_selects_only_exact_sibling_file(self):
+        item = {'type': 'episode', 'season_number': 5, 'episode_number': 2}
+        entry = {
+            'name': 'Show.S05.Season.Pack',
+            'files': {
+                'one': {'name': 'Show.S05E01.mkv', 'size': 100},
+                'two': {'name': 'Show.S05E02.mkv', 'size': 100},
+            },
+        }
+        self.assertEqual('Show.S05E02.mkv', cleanup._select_candidate_file(item, entry))
+
+    def test_multi_episode_candidate_can_prove_later_episode(self):
+        item = {'type': 'episode', 'season_number': 5, 'episode_number': 2}
+        self.assertTrue(cleanup.candidate_matches_episode(item, result={
+            'title': 'Show.S05E01-E02.Multi',
+            'parsed_info': {'seasons': [5], 'episodes': [1, 2]},
+        }))
+
     def test_unavailable_old_saga_does_not_block_later_ready_saga(self):
         conn = self.connect()
         conn.executemany(

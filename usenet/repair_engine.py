@@ -1013,12 +1013,31 @@ def _select_confirmed_replacement(candidates: list, title: str, item: dict):
     """Try different NZBs until one is live; never promote a terminal failure."""
     item_id = int(item.get('id') or 0)
     from database.mount_replacement_cleanup import (
+        candidate_matches_episode,
         get_provisional_mount_attempt,
         record_mount_replacement_attempt,
     )
     from usenet import get_usenet_client
 
     provisional = get_provisional_mount_attempt(item_id)
+    if provisional and provisional.get('job_id'):
+        provisional_title = (
+            provisional.get('release_title') or provisional['normalized_title']
+        )
+        if not candidate_matches_episode(item, result={'title': provisional_title}):
+            logger.warning(
+                '[NZBRepair] Rejected previously provisional job with mismatched '
+                'episode identity: item=%s job=%s candidate=%r',
+                item_id, provisional['job_id'], provisional_title,
+            )
+            record_mount_replacement_attempt(
+                item_id, job_id=provisional['job_id'], title=provisional_title,
+                segment_id=provisional.get('segment_id') or '',
+                nzb_guid=provisional.get('nzb_guid') or '',
+                status='failed_submission',
+                reason='submitted candidate does not match requested episode identity',
+            )
+            provisional = None
     if provisional and provisional.get('job_id'):
         try:
             status = get_usenet_client().get_job_status(provisional['job_id'])
@@ -1047,6 +1066,22 @@ def _select_confirmed_replacement(candidates: list, title: str, item: dict):
             return None, provisional['job_id'], 'unconfirmed'
 
     for candidate in candidates:
+        if not candidate_matches_episode(item, result=candidate):
+            candidate_title = candidate.get('title') or ''
+            candidate_url = candidate.get('nzb_url') or candidate.get('magnet', '')
+            guid = extract_nzb_guid(candidate_url) if candidate_url else ''
+            logger.warning(
+                '[NZBRepair] Rejected replacement with mismatched episode identity: '
+                'item=%s S%02dE%02d candidate=%r',
+                item_id, int(item.get('season_number') or 0),
+                int(item.get('episode_number') or 0), candidate_title,
+            )
+            record_mount_replacement_attempt(
+                item_id, job_id='', title=candidate_title,
+                segment_id='', nzb_guid=guid or '', status='rejected_identity',
+                reason='candidate does not prove the requested episode identity',
+            )
+            continue
         job_id, named_title, state = _submit_and_confirm_replacement(candidate, title, item=item)
         candidate_url = candidate.get('nzb_url') or candidate.get('magnet', '')
         prefetched = candidate.get('_prefetched_nzb', '')

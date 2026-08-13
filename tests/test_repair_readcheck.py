@@ -135,6 +135,9 @@ class TestNZBPlaybackReplacementSelection(unittest.TestCase):
     def _selection_modules(self, provisional=None):
         attempts = []
         cleanup_module = types.ModuleType('database.mount_replacement_cleanup')
+        cleanup_module.candidate_matches_episode = (
+            lambda _item, result=None, entry=None: True
+        )
         cleanup_module.get_provisional_mount_attempt = lambda _item_id: provisional
         cleanup_module.record_mount_replacement_attempt = (
             lambda item_id, **values: attempts.append((item_id, values)) or True
@@ -206,6 +209,71 @@ class TestNZBPlaybackReplacementSelection(unittest.TestCase):
         self.assertEqual('unconfirmed', state)
         self.assertEqual(1, submit.call_count)
         self.assertEqual('provisional', attempts[0][1]['status'])
+
+    def test_mismatched_provisional_candidate_is_rejected(self):
+        provisional = {
+            'job_id': 'wrong-uuid', 'release_title': 'Show.S05E01.Wrong',
+            'normalized_title': 'shows05e01wrong', 'segment_id': 'segment-one',
+            'nzb_guid': 'guid-one',
+        }
+        attempts, cleanup_module, usenet_module = self._selection_modules(provisional)
+        cleanup_module.candidate_matches_episode = (
+            lambda _item, result=None, entry=None:
+            (result or {}).get('title') != 'Show.S05E01.Wrong'
+        )
+        candidate = {'title': 'Show.S05E02.Right', 'nzb_url': 'https://indexer/right'}
+        with patch.dict(sys.modules, {
+                'database.mount_replacement_cleanup': cleanup_module,
+                'usenet': usenet_module,
+        }), patch.object(
+                re_mod, '_submit_and_confirm_replacement',
+                return_value=('working-uuid', 'Show.S05E02.Right', 'confirmed'),
+        ) as submit:
+            selected, job_id, state = re_mod._select_confirmed_replacement(
+                [candidate], 'Show', {
+                    'id': 75299, 'type': 'episode',
+                    'season_number': 5, 'episode_number': 2,
+                },
+            )
+
+        self.assertEqual(('working-uuid', 'confirmed'), (job_id, state))
+        self.assertEqual('Show.S05E02.Right', selected['title'])
+        submit.assert_called_once()
+        self.assertEqual('failed_submission', attempts[0][1]['status'])
+        self.assertEqual('wrong-uuid', attempts[0][1]['job_id'])
+
+    def test_mismatched_episode_candidate_is_rejected_before_submission(self):
+        attempts, cleanup_module, usenet_module = self._selection_modules()
+        cleanup_module.candidate_matches_episode = (
+            lambda _item, result=None, entry=None:
+            (result or {}).get('title') != 'Show.S05E01.Wrong'
+        )
+        candidates = [
+            {'title': 'Show.S05E01.Wrong', 'nzb_url': 'https://indexer/wrong'},
+            {'title': 'Show.S05E02.Right', 'nzb_url': 'https://indexer/right'},
+        ]
+        with patch.dict(sys.modules, {
+                'database.mount_replacement_cleanup': cleanup_module,
+                'usenet': usenet_module,
+        }), patch.object(
+                re_mod, '_submit_and_confirm_replacement',
+                return_value=('working-uuid', 'Show.S05E02.Right', 'confirmed'),
+        ) as submit:
+            selected, job_id, state = re_mod._select_confirmed_replacement(
+                candidates, 'Show', {
+                    'id': 75299, 'type': 'episode',
+                    'season_number': 5, 'episode_number': 2,
+                },
+            )
+
+        self.assertEqual('working-uuid', job_id)
+        self.assertEqual('confirmed', state)
+        self.assertEqual('Show.S05E02.Right', selected['title'])
+        submit.assert_called_once_with(candidates[1], 'Show', item={
+            'id': 75299, 'type': 'episode',
+            'season_number': 5, 'episode_number': 2,
+        })
+        self.assertEqual('rejected_identity', attempts[0][1]['status'])
 
     def test_playback_repair_never_calls_plex_delete(self):
         with patch.object(re_mod, '_bulk_delete_from_plex') as delete:

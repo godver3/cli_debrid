@@ -23,6 +23,12 @@ _RETRY_SECONDS = (60, 300, 1800)
 _LEGACY_RETRY_SECONDS = (60, 300, 1800, 7200, 86400)
 _PROCESS_LOCK = threading.Lock()
 _VIDEO_EXTENSIONS = frozenset({'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'})
+_EPISODE_TOKEN = re.compile(
+    r'(?i)(?:^|[^a-z0-9])s0*(\d{1,3})e0*(\d{1,3})(?![0-9])'
+)
+_SEASON_TOKEN = re.compile(
+    r'(?i)(?:^|[^a-z0-9])s0*(\d{1,3})(?![a-z0-9])'
+)
 _REGISTRATION_STALE_ERRORS = frozenset({
     'stale_target: cli_debrid_id does not match the mounted file registration',
     'stale_target: cli_debrid_id is registered to a different current provider source',
@@ -642,7 +648,9 @@ def record_mount_replacement_attempt(cli_debrid_id: int, *, job_id: str = '',
                                      reason: str = '') -> bool:
     """Persist a rejected/probe-failed NZB without exposing it as success."""
     normalized = _normalize_release_title(title)
-    if not cli_debrid_id or not normalized or status not in ('provisional', 'failed_submission', 'failed_collected'):
+    if (not cli_debrid_id or not normalized or status not in (
+            'provisional', 'failed_submission', 'failed_collected',
+            'rejected_identity')):
         return False
     conn = get_db_connection()
     try:
@@ -1141,6 +1149,99 @@ def _candidate_files(entry: dict) -> list:
     return files
 
 
+def _episode_tokens(value) -> tuple:
+    """Return explicit episode pairs and season-only tokens from a name."""
+    text = str(value or '')
+    episodes = set()
+    for match in _EPISODE_TOKEN.finditer(text):
+        season = int(match.group(1))
+        episodes.add((season, int(match.group(2))))
+        # Preserve multi-episode releases such as S05E01E02 or S05E01-E02.
+        remainder = text[match.end():]
+        while True:
+            extra = re.match(r'(?i)^[. _-]*e0*(\d{1,3})(?![0-9])', remainder)
+            if not extra:
+                break
+            episodes.add((season, int(extra.group(1))))
+            remainder = remainder[extra.end():]
+    seasons = {int(match.group(1)) for match in _SEASON_TOKEN.finditer(text)}
+    return episodes, seasons
+
+
+def candidate_matches_episode(item: dict, result: dict = None,
+                              entry: dict = None) -> bool:
+    """Require a candidate to prove it contains the requested episode.
+
+    Explicit conflicting episode information always wins over renamed/provider
+    metadata. A season pack is allowed here, but its mounted file must still be
+    selected by exact SxxExx identity in ``_select_candidate_file``.
+    """
+    if str((item or {}).get('type') or '').lower() != 'episode':
+        return True
+    try:
+        target = (int(item.get('season_number')), int(item.get('episode_number')))
+    except (TypeError, ValueError):
+        return False
+
+    proved_episode = False
+    proved_season_pack = False
+    parsed = ((result or {}).get('parsed_info') or {})
+    season_episode = parsed.get('season_episode_info') or {}
+    parsed_seasons = parsed.get('seasons') or season_episode.get('seasons') or []
+    parsed_episodes = parsed.get('episodes') or season_episode.get('episodes') or []
+    try:
+        seasons = {int(value) for value in parsed_seasons}
+        episodes = {int(value) for value in parsed_episodes}
+    except (TypeError, ValueError):
+        return False
+    if episodes:
+        if target[1] not in episodes or (seasons and target[0] not in seasons):
+            return False
+        proved_episode = True
+    elif seasons:
+        if target[0] not in seasons:
+            return False
+        proved_season_pack = True
+
+    values = []
+    for source in (result or {}, entry or {}):
+        for key in ('title', 'original_title', 'name', 'folder_name',
+                    'original_filename'):
+            value = source.get(key)
+            if value:
+                values.append(value)
+    for value in values:
+        explicit_episodes, explicit_seasons = _episode_tokens(value)
+        if explicit_episodes:
+            if target not in explicit_episodes:
+                return False
+            proved_episode = True
+        elif explicit_seasons:
+            if target[0] not in explicit_seasons:
+                return False
+            proved_season_pack = True
+
+    return proved_episode or proved_season_pack
+
+
+def _entry_conflicts_with_episode(item: dict, entry: dict) -> bool:
+    """Reject mounted-entry metadata that explicitly names a sibling episode."""
+    try:
+        target = (int(item.get('season_number')), int(item.get('episode_number')))
+    except (TypeError, ValueError):
+        return True
+    for key in ('name', 'folder_name', 'original_filename', 'original_title'):
+        value = (entry or {}).get(key)
+        if not value:
+            continue
+        episodes, seasons = _episode_tokens(value)
+        if episodes and target not in episodes:
+            return True
+        if not episodes and seasons and target[0] not in seasons:
+            return True
+    return False
+
+
 def _select_candidate_file(item: dict, entry: dict) -> str:
     """Select one exact candidate file without release-name matching."""
     files = _candidate_files(entry)
@@ -1151,13 +1252,28 @@ def _select_candidate_file(item: dict, entry: dict) -> str:
         episode = item.get('episode_number')
         if season is None or episode is None:
             return ''
+        if _entry_conflicts_with_episode(item, entry):
+            return ''
         pattern = re.compile(
             rf'(?i)(?:^|[^a-z0-9])s0*{int(season)}e0*{int(episode)}(?![0-9])'
         )
         matches = [value for value in files if pattern.search(value['name'])]
         if len(matches) == 1:
             return matches[0]['name']
-        return files[0]['name'] if len(files) == 1 else ''
+        if len(files) != 1 or not candidate_matches_episode(item, entry=entry):
+            return ''
+        # An opaque provider filename is safe only when the mounted entry itself
+        # proves this exact episode. A season-pack label is insufficient because
+        # it cannot identify which sibling the sole opaque file contains.
+        entry_values = [
+            (entry or {}).get(key)
+            for key in ('name', 'folder_name', 'original_filename', 'original_title')
+        ]
+        if any(
+                (int(season), int(episode)) in _episode_tokens(value)[0]
+                for value in entry_values if value):
+            return files[0]['name']
+        return ''
     if len(files) == 1:
         return files[0]['name']
     files.sort(key=lambda value: value['size'], reverse=True)
