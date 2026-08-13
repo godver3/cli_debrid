@@ -854,6 +854,10 @@ def verify_database():
     migrate_schema()
     create_torrent_tracking_table()
     create_nzb_repair_activity_table()
+    # verify_database() is the startup path for existing installations.
+    # create_database() is only used for a brand-new database, so keeping the
+    # playback table solely there leaves upgraded databases without it.
+    create_nzb_playback_repair_table()
 
     # Ensure overlay_removal_queue table exists (handles post-delete without restart)
     try:
