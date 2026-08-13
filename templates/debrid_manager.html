@@ -4482,10 +4482,23 @@ function _buildOutcomeTooltip(r) {
         case 'replacement_pending':
             lines.push('Waiting for a collected candidate to pass cli_mount article and playback validation.');
             lines.push('No old mounted files have been removed yet.');
+            if (r.replacement_status_detail) lines.push('Current status: ' + r.replacement_status_detail);
             break;
         case 'replacement_probe_failed':
             lines.push('The collected candidate failed mounted playback validation.');
             lines.push('Old files remain and another exact replacement may be selected.');
+            break;
+        case 'replacement_superseded':
+            lines.push('The active NZB repair was superseded by a torrent source.');
+            lines.push('No mounted files or Plex metadata were deleted by this saga.');
+            break;
+        case 'replacement_abandoned':
+            lines.push('The media database row no longer exists, so this repair was safely abandoned.');
+            lines.push('No mounted files or Plex metadata were deleted.');
+            break;
+        case 'replacement_cleanup_stale':
+            lines.push('Exact cleanup could not prove that the target is still valid.');
+            lines.push('No additional files were deleted; manual attention is required.');
             break;
         case 'reinserted':
             lines.push('cli_mount link resolver re-triggered for this entry.');
@@ -4532,8 +4545,8 @@ function _usenetRenderActivity(rows, container, pagination) {
 
     rows.forEach((r, idx) => {
         const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
-        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'replacement_pending' ? '#ffaa44' : r.outcome === 'replacement_probe_failed' ? '#ff7043' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : '#ff4444';
-        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'replacement_probe_failed' ? 'Playback validation failed' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : (r.outcome || '—');
+        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'replacement_pending' ? '#ffaa44' : r.outcome === 'replacement_probe_failed' ? '#ff7043' : r.outcome === 'replacement_superseded' ? '#a78bfa' : r.outcome === 'replacement_abandoned' ? '#888' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : '#ff4444';
+        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'replacement_probe_failed' ? 'Playback validation failed' : r.outcome === 'replacement_superseded' ? 'Superseded by torrent' : r.outcome === 'replacement_abandoned' ? 'Replacement abandoned' : r.outcome === 'replacement_cleanup_stale' ? 'Cleanup needs attention' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : (r.outcome || '—');
         const outcomeTooltip = _buildOutcomeTooltip(r);
         const epSub = r.season_number ? `<br><span style="font-size:11px;color:#888">S${String(r.season_number).padStart(2,'0')}E${String(r.episode_number||0).padStart(2,'0')}</span>` : '';
         const activityTime = r.updated_at || r.created_at;

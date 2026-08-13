@@ -230,6 +230,32 @@ def _build_update(entry: dict, existing: dict = None, file_name: str = None) -> 
     return sets, params
 
 
+def _is_active_saga_old_source(conn, item_id: int, entry: dict) -> bool:
+    """Keep retained old NZBs from reclaiming current-source ownership."""
+    if entry.get('protocol') != 'nzb':
+        return False
+    source = str(entry.get('info_hash') or entry.get('provider_id') or '')
+    if source.startswith('nzb:'):
+        source = source[4:]
+    if not source:
+        return False
+    try:
+        row = conn.execute(
+            """SELECT 1
+                 FROM mount_replacement_sagas s
+                 JOIN mount_replacement_cleanups c ON c.saga_id=s.id
+                WHERE s.cli_debrid_id=? AND s.protocol='nzb'
+                  AND s.status IN ('pending','probe_failed')
+                  AND lower(c.old_info_hash)=lower(?)
+                LIMIT 1""",
+            (item_id, source),
+        ).fetchone()
+        return bool(row)
+    except Exception:
+        # Schema initialization can briefly precede the additive saga tables.
+        return False
+
+
 def sync_changes_from_climount(force_full: bool = False) -> dict:
     """
     Poll cli_mount for changes since last sync and update CLI media_items.
@@ -364,6 +390,13 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                                         if abs(sz - size_bytes) / max(sz, 1) < 0.01:
                                             file_name = fn
                                             break
+                        if _is_active_saga_old_source(conn, item_id, entry):
+                            logger.info(
+                                '[CMSync] Preserved active replacement source for item %s; '
+                                'retained old NZB %s remains registration-only',
+                                item_id, entry.get('info_hash') or entry.get('provider_id'),
+                            )
+                            continue
                         sets, params = _build_update(entry, {}, file_name=file_name)
                         if not sets:
                             continue

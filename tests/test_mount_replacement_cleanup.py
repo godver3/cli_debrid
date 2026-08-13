@@ -32,8 +32,18 @@ def _load_activity_module():
     return module
 
 
+def _load_sync_module():
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'usenet', 'climount_sync.py')
+    spec = importlib.util.spec_from_file_location('climount_sync_under_test', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 cleanup = _load_cleanup_module()
 activity = _load_activity_module()
+climount_sync = _load_sync_module()
 
 
 class MountReplacementCleanupTests(unittest.TestCase):
@@ -49,6 +59,10 @@ class MountReplacementCleanupTests(unittest.TestCase):
         self.connect = connect
         self.db_patch = patch.object(cleanup, 'get_db_connection', side_effect=connect)
         self.db_patch.start()
+        self.registration_patch = patch.object(
+            cleanup, '_ensure_candidate_registration', return_value=True
+        )
+        self.registration_patch.start()
         cleanup.create_mount_replacement_cleanup_table()
         conn = connect()
         conn.execute("""CREATE TABLE media_items (
@@ -60,6 +74,7 @@ class MountReplacementCleanupTests(unittest.TestCase):
         conn.close()
 
     def tearDown(self):
+        self.registration_patch.stop()
         self.db_patch.stop()
         os.unlink(self.db_path)
 
@@ -221,6 +236,29 @@ class MountReplacementCleanupTests(unittest.TestCase):
         self.assertEqual('working-id', row['replacement_nzb_id'])
         self.assertEqual('Working.Release', row['replacement_title'])
 
+    def test_pending_activity_exposes_current_saga_retry_reason(self):
+        conn = self.connect()
+        conn.execute("""CREATE TABLE nzb_repair_activity (
+            id INTEGER PRIMARY KEY, broken_nzb_id TEXT, outcome TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        conn.execute(
+            "INSERT INTO nzb_repair_activity (id, broken_nzb_id, outcome) "
+            "VALUES (44, 'old-id', 'replacement_pending')"
+        )
+        conn.execute(
+            """INSERT INTO mount_replacement_sagas
+               (cli_debrid_id, protocol, activity_id, last_error)
+               VALUES (75299, 'nzb', 44, 'replacement_not_ready')"""
+        )
+        conn.commit()
+        conn.close()
+        with patch.object(activity, 'get_db_connection', side_effect=self.connect):
+            rows, total = activity.get_repair_activity(source='usenet')
+        self.assertEqual(1, total)
+        self.assertEqual('replacement_not_ready', rows[0]['replacement_status_detail'])
+
     def test_collected_replacement_acknowledges_and_completes(self):
         conn = self.connect()
         conn.execute(
@@ -302,6 +340,10 @@ class MountReplacementCleanupTests(unittest.TestCase):
         target = self.target()
         self.assertTrue(cleanup.queue_mount_replacement_cleanup(target))
 
+        conn = self.connect()
+        conn.execute('UPDATE mount_replacement_sagas SET last_reconciled_at=CURRENT_TIMESTAMP')
+        conn.commit()
+        conn.close()
         with patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
                 patch.object(cleanup, '_acknowledge', return_value=('blocked', 'stale_target')):
             result = cleanup.process_pending_mount_cleanups(item_id=75299)
@@ -312,6 +354,167 @@ class MountReplacementCleanupTests(unittest.TestCase):
         row = conn.execute('SELECT status FROM mount_replacement_cleanups').fetchone()
         conn.close()
         self.assertEqual('blocked', row['status'])
+
+    def test_mount_request_preserves_structured_conflict_body(self):
+        response = types.SimpleNamespace(
+            status_code=409, content=b'{}',
+            json=lambda: {'code': 'repair_busy', 'message': 'scan active'},
+        )
+        error = RuntimeError('409 conflict')
+        error.response = response
+        api_module = types.ModuleType('routes.api_tracker')
+        api_module.api = types.SimpleNamespace(post=lambda *_args, **_kwargs: (_ for _ in ()).throw(error))
+        settings_module = types.ModuleType('utilities.settings')
+        settings_module.get_setting = lambda *_args, **kwargs: 'http://mount' if _args[1] == 'url' else ''
+        with patch.dict(sys.modules, {
+            'routes.api_tracker': api_module,
+            'utilities.settings': settings_module,
+        }):
+            actual, body, request_error = cleanup._mount_request('/verify', {}, 10)
+        self.assertIs(response, actual)
+        self.assertEqual('repair_busy', body['code'])
+        self.assertIsNone(request_error)
+
+    def test_repair_busy_uses_short_retry_without_incrementing_attempts(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'nzb:new-id', '', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+        with patch.object(
+                cleanup, '_verify_replacement',
+                return_value=('retry', 'scan active', {'code': 'repair_busy'})):
+            result = cleanup.process_pending_mount_cleanups(item_id=75299)
+        self.assertEqual(1, result['retried'])
+        conn = self.connect()
+        saga = conn.execute('SELECT attempts, next_attempt_at FROM mount_replacement_sagas').fetchone()
+        conn.close()
+        self.assertEqual(0, saga['attempts'])
+        self.assertIsNotNone(saga['next_attempt_at'])
+
+    def test_registration_failure_does_not_probe(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'nzb:new-id', '', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+        with patch.object(cleanup, '_ensure_candidate_registration', return_value=False), \
+                patch.object(cleanup, '_verify_replacement') as verify:
+            result = cleanup.process_pending_mount_cleanups(item_id=75299)
+        verify.assert_not_called()
+        self.assertEqual(1, result['retried'])
+        conn = self.connect()
+        saga = conn.execute('SELECT attempts, last_error FROM mount_replacement_sagas').fetchone()
+        conn.close()
+        self.assertEqual(0, saga['attempts'])
+        self.assertEqual('replacement_not_ready', saga['last_error'])
+
+    def test_registered_candidate_restores_source_overwritten_by_old_target(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'nzb:old-id', '', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+        self.assertTrue(cleanup.set_mount_replacement_candidate(75299, 'working-id', 'Working.Release'))
+        with patch.object(cleanup, '_attempt_reconciliation', return_value=False), \
+                patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+                patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')):
+            cleanup.process_pending_mount_cleanups(item_id=75299)
+        conn = self.connect()
+        item = conn.execute('SELECT filled_by_torrent_id FROM media_items WHERE id=75299').fetchone()
+        saga = conn.execute('SELECT status FROM mount_replacement_sagas').fetchone()
+        conn.close()
+        self.assertEqual('nzb:working-id', item['filled_by_torrent_id'])
+        self.assertEqual('complete', saga['status'])
+
+    def test_duplicate_processor_is_single_flight(self):
+        cleanup._PROCESS_LOCK.acquire()
+        try:
+            result = cleanup.process_pending_mount_cleanups()
+        finally:
+            cleanup._PROCESS_LOCK.release()
+        self.assertEqual(1, result['busy'])
+
+    def test_missing_media_row_is_abandoned_without_cleanup(self):
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+        with patch.object(cleanup, '_acknowledge') as acknowledge, \
+                patch.object(cleanup, '_refresh_verified_plex_item') as refresh:
+            cleanup.process_pending_mount_cleanups(item_id=75299)
+        acknowledge.assert_not_called()
+        refresh.assert_not_called()
+        conn = self.connect()
+        saga = conn.execute('SELECT status FROM mount_replacement_sagas').fetchone()
+        conn.close()
+        self.assertEqual('abandoned', saga['status'])
+
+    def test_torrent_source_supersedes_nzb_saga_without_cleanup(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'torrent-provider', "
+            "'magnet:?xt=urn:btih:ABCDEF', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+        with patch.object(cleanup, '_acknowledge') as acknowledge:
+            cleanup.process_pending_mount_cleanups(item_id=75299)
+        acknowledge.assert_not_called()
+        conn = self.connect()
+        saga = conn.execute('SELECT status FROM mount_replacement_sagas').fetchone()
+        conn.close()
+        self.assertEqual('superseded', saga['status'])
+
+    def test_failed_submission_without_job_id_does_not_block_completion(self):
+        conn = self.connect()
+        conn.execute(
+            "INSERT INTO media_items VALUES (75299, 'Collected', 'nzb:new-id', '', 'Show', 'episode', 3, 1)"
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(cleanup.queue_mount_replacement_cleanup(self.target()))
+        self.assertTrue(cleanup.record_mount_replacement_attempt(
+            75299, title='failed.before.uuid', status='failed_submission', reason='error'
+        ))
+        usenet_module = types.ModuleType('usenet')
+        usenet_module.get_usenet_client = lambda: types.SimpleNamespace()
+        with patch.dict(sys.modules, {'usenet': usenet_module}), \
+                patch.object(cleanup, '_verify_replacement', return_value=('healthy', '', {})), \
+                patch.object(cleanup, '_acknowledge', return_value=('complete', 'removed')):
+            cleanup.process_pending_mount_cleanups(item_id=75299)
+        conn = self.connect()
+        saga = conn.execute('SELECT status FROM mount_replacement_sagas').fetchone()
+        attempt = conn.execute('SELECT cleaned_at FROM mount_replacement_attempts').fetchone()
+        conn.close()
+        self.assertEqual('complete', saga['status'])
+        self.assertIsNotNone(attempt['cleaned_at'])
+
+    def test_sync_guard_blocks_only_old_source_for_active_saga(self):
+        conn = self.connect()
+        conn.execute("INSERT INTO mount_replacement_sagas (cli_debrid_id, protocol) VALUES (75299, 'nzb')")
+        saga_id = conn.execute('SELECT id FROM mount_replacement_sagas').fetchone()['id']
+        conn.execute(
+            """INSERT INTO mount_replacement_cleanups
+               (saga_id, cli_debrid_id, protocol, entry_name, file_name, old_info_hash, reason)
+               VALUES (?, 75299, 'nzb', 'Show', 'E01.mkv', 'old-id', 'media_probe_failed')""",
+            (saga_id,),
+        )
+        conn.commit()
+        self.assertTrue(climount_sync._is_active_saga_old_source(
+            conn, 75299, {'protocol': 'nzb', 'info_hash': 'old-id'}
+        ))
+        self.assertFalse(climount_sync._is_active_saga_old_source(
+            conn, 75299, {'protocol': 'nzb', 'info_hash': 'new-id'}
+        ))
+        self.assertFalse(climount_sync._is_active_saga_old_source(
+            conn, 75299, {'protocol': 'torrent', 'info_hash': 'old-id'}
+        ))
+        conn.close()
 
     def test_failed_candidate_is_not_acknowledged(self):
         conn = self.connect()

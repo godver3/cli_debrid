@@ -2,6 +2,7 @@
 
 import logging
 import re
+import threading
 from datetime import datetime, timedelta, timezone
 
 from database.core import get_db_connection
@@ -16,7 +17,12 @@ PLAYBACK_CLEANUP_REASONS = frozenset({
 RETIRED_PLAYBACK_REASONS = frozenset({'mount_read_error'})
 NZB_INTERMEDIATE_REASONS = PLAYBACK_CLEANUP_REASONS | {'usenet_segment_missing'}
 
-_RETRY_SECONDS = (60, 300, 1800, 7200, 86400)
+_RETRY_SECONDS = (60, 300, 1800)
+_LEGACY_RETRY_SECONDS = (60, 300, 1800, 7200, 86400)
+_PROCESS_LOCK = threading.Lock()
+_RECONCILE_SECONDS = 300
+
+
 def _add_column(conn, table: str, definition: str) -> None:
     try:
         conn.execute(f'ALTER TABLE {table} ADD COLUMN {definition}')
@@ -95,6 +101,13 @@ def create_mount_replacement_cleanup_table() -> None:
         # column. Add it before creating any index that references it.
         _add_column(conn, 'mount_replacement_cleanups', 'saga_id INTEGER')
         _add_column(conn, 'mount_replacement_attempts', 'release_title TEXT')
+        _add_column(conn, 'mount_replacement_sagas', 'last_reconciled_at TIMESTAMP')
+        # Give sagas created by older builds one immediate reconciliation pass
+        # instead of preserving a stale 24-hour retry deadline.
+        conn.execute(
+            """UPDATE mount_replacement_sagas SET next_attempt_at=NULL
+               WHERE status IN ('pending','probe_failed') AND last_reconciled_at IS NULL"""
+        )
         conn.execute(
             'CREATE INDEX IF NOT EXISTS idx_mount_cleanup_saga '
             'ON mount_replacement_cleanups(saga_id)'
@@ -454,15 +467,30 @@ def media_item_source_hash(item: dict, protocol: str) -> str:
     return _current_source_hash(item, protocol)
 
 
-def _schedule_saga_retry(conn, saga, message: str) -> None:
-    attempts = int(saga['attempts'] or 0) + 1
-    delay = _RETRY_SECONDS[min(attempts - 1, len(_RETRY_SECONDS) - 1)]
+def _schedule_saga_retry(conn, saga, message: str, *, delay: int = None,
+                         increment_attempts: bool = True) -> None:
+    attempts = int(saga['attempts'] or 0) + (1 if increment_attempts else 0)
+    if delay is None:
+        retry_index = max(attempts - 1, 0)
+        delay = _RETRY_SECONDS[min(retry_index, len(_RETRY_SECONDS) - 1)]
     next_attempt = datetime.now(timezone.utc) + timedelta(seconds=delay)
     conn.execute(
         """UPDATE mount_replacement_sagas SET status='pending', attempts=?, next_attempt_at=?,
                   last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
         (attempts, next_attempt.strftime('%Y-%m-%d %H:%M:%S'), message[:1000], saga['id']),
     )
+
+
+def _schedule_retry_for_result(conn, saga, message: str, details: dict = None) -> None:
+    code = _response_code(details or {}) or str(message or '').split(':', 1)[0]
+    if code == 'repair_busy':
+        _schedule_saga_retry(conn, saga, message, delay=15, increment_attempts=False)
+    elif code == 'replacement_not_ready':
+        _schedule_saga_retry(conn, saga, message, delay=30, increment_attempts=False)
+    elif code == 'stale_target':
+        _schedule_saga_retry(conn, saga, message, delay=30, increment_attempts=False)
+    else:
+        _schedule_saga_retry(conn, saga, message)
 
 
 def _mount_request(path: str, payload: dict, timeout: int) -> tuple:
@@ -483,7 +511,101 @@ def _mount_request(path: str, payload: dict, timeout: int) -> tuple:
             body = {}
         return response, body, None
     except Exception as exc:
+        # APITracker raises for every non-2xx response. Preserve its response so
+        # replacement cleanup can classify cli_mount's structured 4xx codes.
+        response = getattr(exc, 'response', None)
+        if response is not None:
+            try:
+                body = response.json() if response.content else {}
+            except Exception:
+                body = {}
+            return response, body, None
         return None, {}, str(exc)
+
+
+def _response_code(body: dict) -> str:
+    return str(body.get('code') or body.get('reason') or '') if isinstance(body, dict) else ''
+
+
+def _ensure_candidate_registration(cli_debrid_id: int, info_hash: str) -> bool:
+    """Register the exact collected candidate before asking cli_mount to probe it."""
+    try:
+        from usenet.climount_client import get_climount_client
+        client = get_climount_client()
+        return bool(client and client.is_enabled() and
+                    client.register_cli_ids_for_item(info_hash, cli_debrid_id))
+    except Exception as exc:
+        logging.warning(
+            '[MountCleanup] Candidate registration failed: item=%s info_hash=%s error=%s',
+            cli_debrid_id, info_hash, exc,
+        )
+        return False
+
+
+def _attempt_reconciliation(saga) -> bool:
+    """Run at most one full cli_mount reconciliation per saga every five minutes."""
+    saga_data = dict(saga)
+    last_value = saga_data.get('last_reconciled_at')
+    if last_value:
+        try:
+            last_time = datetime.fromisoformat(str(last_value).replace('Z', '+00:00'))
+            if last_time.tzinfo is None:
+                last_time = last_time.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - last_time < timedelta(seconds=_RECONCILE_SECONDS):
+                return False
+        except (TypeError, ValueError):
+            pass
+
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE mount_replacement_sagas SET last_reconciled_at=CURRENT_TIMESTAMP, "
+            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (saga_data['id'],),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    logging.info('[MountCleanup] Running guarded cli_mount reconciliation for saga %s', saga_data['id'])
+    try:
+        from usenet.climount_sync import sync_changes_from_climount
+        sync_changes_from_climount(force_full=True)
+    except Exception as exc:
+        logging.warning('[MountCleanup] Reconciliation failed for saga %s: %s', saga_data['id'], exc)
+    return True
+
+
+def _source_is_torrent(item: dict) -> bool:
+    provider_id = str(item.get('filled_by_torrent_id') or '')
+    magnet = str(item.get('filled_by_magnet') or '')
+    return bool(provider_id and not provider_id.startswith('nzb:') and
+                re.search(r'urn:btih:[A-Za-z0-9]+', magnet, re.IGNORECASE))
+
+
+def _close_terminal_saga(saga, *, status: str, outcome: str, message: str) -> bool:
+    """Close an unsafe-to-continue saga without touching mount or Plex state."""
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """UPDATE mount_replacement_sagas SET status=?, last_error=?,
+                      next_attempt_at=NULL, completed_at=CURRENT_TIMESTAMP,
+                      updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (status, message[:1000], saga['id']),
+        )
+        if saga['activity_id'] and not _update_activity(
+                saga['activity_id'], connection=conn, outcome=outcome,
+                replacement_nzb_id=None, replacement_title=None):
+            raise RuntimeError('linked replacement activity could not be finalized')
+        conn.commit()
+        logging.warning('[MountCleanup] Closed saga %s as %s: %s', saga['id'], status, message)
+        return True
+    except Exception as exc:
+        conn.rollback()
+        logging.warning('[MountCleanup] Could not close saga %s: %s', saga['id'], exc)
+        return False
+    finally:
+        conn.close()
 
 
 def _verify_replacement(cli_debrid_id: int, info_hash: str) -> tuple:
@@ -546,7 +668,7 @@ def _acknowledge(row) -> tuple:
     if response.status_code == 404:
         return 'retry', 'cli_mount does not support replacement acknowledgement yet'
     if response.status_code >= 500 or code == 'repair_busy':
-        return 'retry', message
+        return 'retry', f'{code}: {message}' if code else message
     return 'blocked', f'{code or response.status_code}: {message}'
 
 
@@ -604,7 +726,9 @@ def _process_legacy_cleanups(item_id: int = None) -> dict:
                 result['blocked'] += 1
             else:
                 attempts = int(row['attempts'] or 0) + 1
-                delay = _RETRY_SECONDS[min(attempts - 1, len(_RETRY_SECONDS) - 1)]
+                delay = _LEGACY_RETRY_SECONDS[
+                    min(attempts - 1, len(_LEGACY_RETRY_SECONDS) - 1)
+                ]
                 next_attempt = datetime.now(timezone.utc) + timedelta(seconds=delay)
                 conn.execute(
                     """UPDATE mount_replacement_cleanups SET attempts=?, next_attempt_at=?,
@@ -635,7 +759,21 @@ def _cleanup_failed_submission_jobs(saga_id: int) -> bool:
     from usenet import get_usenet_client
     client = get_usenet_client()
     for row in rows:
-        if not row['job_id'] or not hasattr(client, 'remove_nzb_exact') or not client.remove_nzb_exact(row['job_id']):
+        if not row['job_id']:
+            # The submission failed before cli_mount returned an addressable job.
+            # There is no exact UUID to delete, so it must not hold the saga forever.
+            conn = get_db_connection()
+            try:
+                conn.execute(
+                    "UPDATE mount_replacement_attempts SET cleaned_at=CURRENT_TIMESTAMP, "
+                    "reason=COALESCE(reason, 'no_exact_job_id'), updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (row['id'],),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            continue
+        if not hasattr(client, 'remove_nzb_exact') or not client.remove_nzb_exact(row['job_id']):
             return False
         conn = get_db_connection()
         try:
@@ -683,7 +821,7 @@ def _refresh_verified_plex_item(item: dict) -> None:
         logging.warning('[MountCleanup] Targeted Plex refresh failed for item %s: %s', item.get('id'), exc)
 
 
-def process_pending_mount_cleanups(item_id: int = None) -> dict:
+def _process_pending_mount_cleanups(item_id: int = None) -> dict:
     """Verify collected candidates, then acknowledge every exact old file."""
     result = {'completed': 0, 'retried': 0, 'blocked': 0, 'waiting': 0, 'probe_failed': 0}
     legacy = _process_legacy_cleanups(item_id=item_id)
@@ -707,6 +845,22 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
 
     for saga in sagas:
         saga_dict = dict(saga)
+        if saga['state'] is None:
+            if _close_terminal_saga(
+                    saga, status='abandoned', outcome='replacement_abandoned',
+                    message='media item no longer exists; no cleanup was attempted'):
+                result['blocked'] += 1
+            else:
+                result['retried'] += 1
+            continue
+        if _source_is_torrent(saga_dict):
+            if _close_terminal_saga(
+                    saga, status='superseded', outcome='replacement_superseded',
+                    message='active NZB replacement was superseded by a torrent source'):
+                result['blocked'] += 1
+            else:
+                result['retried'] += 1
+            continue
         if saga['state'] != 'Collected':
             result['waiting'] += 1
             continue
@@ -725,8 +879,34 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
         current_hash = _current_source_hash(saga_dict, (saga['protocol'] or '').lower())
         old_hashes = {(row['old_info_hash'] or '').lower() for row in all_targets}
         if not current_hash or current_hash.lower() in old_hashes:
-            result['waiting'] += 1
-            continue
+            candidate_hash = str(saga['candidate_info_hash'] or '')
+            if candidate_hash and candidate_hash.lower() not in old_hashes:
+                _attempt_reconciliation(saga)
+                reconciled_item = get_media_item_for_cleanup(saga['cli_debrid_id']) or {}
+                reconciled_hash = _current_source_hash(reconciled_item, 'nzb')
+                if reconciled_item.get('state') == 'Collected' and reconciled_hash.lower() not in old_hashes:
+                    saga_dict.update(reconciled_item)
+                    current_hash = reconciled_hash
+                elif _ensure_candidate_registration(saga['cli_debrid_id'], candidate_hash):
+                    # The exact saga candidate is still mounted and registered. Restore
+                    # only source ownership when sync left the row on a known old target.
+                    restore_conn = get_db_connection()
+                    try:
+                        restored = restore_conn.execute(
+                            """UPDATE media_items SET filled_by_torrent_id=?
+                               WHERE id=? AND filled_by_torrent_id IN (?, ?)""",
+                            (f'nzb:{candidate_hash}', saga['cli_debrid_id'],
+                             current_hash, f'nzb:{current_hash}'),
+                        )
+                        restore_conn.commit()
+                    finally:
+                        restore_conn.close()
+                    if restored.rowcount == 1:
+                        current_hash = candidate_hash
+                        saga_dict['filled_by_torrent_id'] = f'nzb:{candidate_hash}'
+            if not current_hash or current_hash.lower() in old_hashes:
+                result['waiting'] += 1
+                continue
         if saga['status'] == 'probe_failed' and current_hash.lower() == str(saga['candidate_info_hash'] or '').lower():
             result['waiting'] += 1
             continue
@@ -738,6 +918,19 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
             set_mount_replacement_candidate(saga['cli_debrid_id'], current_hash, candidate_title)
             # Candidate details stay private until verification and cleanup
             # both succeed; the activity row remains a neutral pending record.
+
+        if not _ensure_candidate_registration(saga['cli_debrid_id'], current_hash):
+            retry_conn = get_db_connection()
+            try:
+                _schedule_saga_retry(
+                    retry_conn, saga, 'replacement_not_ready', delay=30,
+                    increment_attempts=False,
+                )
+                retry_conn.commit()
+            finally:
+                retry_conn.close()
+            result['retried'] += 1
+            continue
 
         verify_status, message, verify_details = _verify_replacement(saga['cli_debrid_id'], current_hash)
         # A collection/update may have won the race while cli_mount was probing.
@@ -785,15 +978,24 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
                 continue
             if verify_status != 'healthy':
                 if verify_status == 'blocked':
-                    update_conn.execute(
-                        "UPDATE mount_replacement_sagas SET status='blocked', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                        (message[:1000], saga['id']),
-                    )
-                    update_conn.commit()
-                    _update_activity(saga['activity_id'], outcome='replacement_cleanup_stale')
-                    result['blocked'] += 1
+                    code = _response_code(verify_details) or str(message).split(':', 1)[0]
+                    if code == 'stale_target' and _attempt_reconciliation(saga):
+                        _schedule_saga_retry(
+                            update_conn, saga, message, delay=30,
+                            increment_attempts=False,
+                        )
+                        update_conn.commit()
+                        result['retried'] += 1
+                    else:
+                        update_conn.execute(
+                            "UPDATE mount_replacement_sagas SET status='blocked', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                            (message[:1000], saga['id']),
+                        )
+                        update_conn.commit()
+                        _update_activity(saga['activity_id'], outcome='replacement_cleanup_stale')
+                        result['blocked'] += 1
                 else:
-                    _schedule_saga_retry(update_conn, saga, message)
+                    _schedule_retry_for_result(update_conn, saga, message, verify_details)
                     update_conn.commit()
                     result['retried'] += 1
                 continue
@@ -805,6 +1007,7 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
             result['retried'] += 1
         blocked_target = next((row for row in all_targets if row['status'] == 'blocked'), None)
         terminal_failure = blocked_target['last_error'] if blocked_target else None
+        retry_message = None
         if terminal_failure:
             all_complete = False
         for target in targets:
@@ -822,15 +1025,21 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
                     )
                     result['completed'] += 1
                 elif ack_status == 'blocked':
-                    update_conn.execute(
-                        "UPDATE mount_replacement_cleanups SET status='blocked', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                        (ack_message[:1000], target['id']),
-                    )
-                    terminal_failure = ack_message
-                    result['blocked'] += 1
-                    all_complete = False
+                    if str(ack_message).startswith('stale_target:') and _attempt_reconciliation(saga):
+                        retry_message = ack_message
+                        result['retried'] += 1
+                        all_complete = False
+                    else:
+                        update_conn.execute(
+                            "UPDATE mount_replacement_cleanups SET status='blocked', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                            (ack_message[:1000], target['id']),
+                        )
+                        terminal_failure = ack_message
+                        result['blocked'] += 1
+                        all_complete = False
                 else:
                     all_complete = False
+                    retry_message = ack_message
                     result['retried'] += 1
                 update_conn.commit()
             finally:
@@ -864,7 +1073,10 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
                     raise RuntimeError('linked replacement activity could not be finalized')
                 refresh_item = current_item
             else:
-                _schedule_saga_retry(finish_conn, saga, 'one or more exact acknowledgements are pending')
+                _schedule_retry_for_result(
+                    finish_conn, saga,
+                    retry_message or 'one or more exact acknowledgements are pending',
+                )
             finish_conn.commit()
         except Exception as exc:
             finish_conn.rollback()
@@ -879,3 +1091,15 @@ def process_pending_mount_cleanups(item_id: int = None) -> dict:
         if refresh_item is not None:
             _refresh_verified_plex_item(refresh_item)
     return result
+
+
+def process_pending_mount_cleanups(item_id: int = None) -> dict:
+    """Single-flight wrapper for all scheduled and post-processing callers."""
+    if not _PROCESS_LOCK.acquire(blocking=False):
+        logging.info('[MountCleanup] Cleanup processor already active; skipping duplicate invocation')
+        return {'completed': 0, 'retried': 0, 'blocked': 0,
+                'waiting': 1, 'probe_failed': 0, 'busy': 1}
+    try:
+        return _process_pending_mount_cleanups(item_id=item_id)
+    finally:
+        _PROCESS_LOCK.release()

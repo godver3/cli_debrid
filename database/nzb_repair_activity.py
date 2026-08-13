@@ -210,19 +210,29 @@ def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None, 
         conditions = []
         params = []
         if outcome:
-            conditions.append("outcome = ?")
+            conditions.append("a.outcome = ?")
             params.append(outcome)
         if source == 'usenet':
-            conditions.append("(broken_nzb_id NOT LIKE 'debrid:%' OR broken_nzb_id IS NULL OR broken_nzb_id = '')")
+            conditions.append("(a.broken_nzb_id NOT LIKE 'debrid:%' OR a.broken_nzb_id IS NULL OR a.broken_nzb_id = '')")
         elif source == 'debrid':
-            conditions.append("broken_nzb_id LIKE 'debrid:%'")
+            conditions.append("a.broken_nzb_id LIKE 'debrid:%'")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
+        has_sagas = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='mount_replacement_sagas'"
+        ).fetchone()
+        detail_column = """
+            , (SELECT s.last_error FROM mount_replacement_sagas s
+                WHERE s.activity_id=a.id ORDER BY s.id DESC LIMIT 1)
+              AS replacement_status_detail
+        """ if has_sagas else ", NULL AS replacement_status_detail"
+
         total = conn.execute(
-            f"SELECT COUNT(*) FROM nzb_repair_activity {where}", params
+            f"SELECT COUNT(*) FROM nzb_repair_activity a {where}", params
         ).fetchone()[0]
         rows = conn.execute(
-            f"SELECT * FROM nzb_repair_activity {where} ORDER BY COALESCE(updated_at, created_at) DESC LIMIT ? OFFSET ?",
+            f"""SELECT a.* {detail_column} FROM nzb_repair_activity a {where}
+                 ORDER BY COALESCE(a.updated_at, a.created_at) DESC LIMIT ? OFFSET ?""",
             params + [limit, offset],
         ).fetchall()
         return [dict(r) for r in rows], total
