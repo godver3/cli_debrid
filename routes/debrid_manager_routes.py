@@ -5412,6 +5412,16 @@ def usenet_run_repair():
     if _repair_thread and _repair_thread.is_alive():
         return jsonify(success=False, message='Repair already running')
 
+    # Scheduled health processing and the UI use the same engine lock but not
+    # the same Thread object. Check the authoritative lock before starting a
+    # short-lived UI thread that would only return {skipped: already_running}.
+    try:
+        from usenet.repair_engine import is_repair_running
+        if is_repair_running():
+            return jsonify(success=False, message='Repair already running')
+    except Exception as e:
+        logging.warning(f'[UsenetRepair] Could not inspect repair lock: {e}')
+
     body = request.get_json(silent=True) or {}
     version_override = body.get('version_override') or None
 
@@ -5423,8 +5433,13 @@ def usenet_run_repair():
         try:
             from usenet.repair_engine import run_repair
             summary = run_repair(triggered_by='manual', version_override=version_override)
-            _repair_progress['status'] = 'done'
-            _repair_progress['summary'] = summary
+            if summary.get('skipped') == 'already_running':
+                _repair_progress['status'] = 'already_running'
+                _repair_progress['summary'] = None
+                _repair_progress['error'] = None
+            else:
+                _repair_progress['status'] = 'done'
+                _repair_progress['summary'] = summary
         except Exception as e:
             logging.error(f'[UsenetRepair] run_repair thread error: {e}', exc_info=True)
             _repair_progress['status'] = 'error'

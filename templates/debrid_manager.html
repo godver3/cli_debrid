@@ -4849,7 +4849,7 @@ function _usenetPollRepairProgress() {
             } else if (d.status === 'done' && d.summary) {
                 barEl.style.width = '100%';
                 statusEl.textContent =
-                    `Done — ${d.summary.replaced} replaced, ${d.summary.not_found} not found, ${d.summary.errors} errors`;
+                    `Done — ${d.summary.replaced || 0} replaced, ${d.summary.not_found || 0} not found, ${d.summary.errors || 0} errors`;
                 fixBtn.disabled = false;
                 fixBtn.innerHTML = '<i class="fa-solid fa-check" style="color:#4ade80"></i> Done';
                 setTimeout(() => { fixBtn.innerHTML = '<i class="fa-solid fa-wrench" style="color:#e8601c"></i> Fix Broken'; }, 3000);
@@ -4863,6 +4863,11 @@ function _usenetPollRepairProgress() {
                             .then(r => r.json()).then(d => { if (d.success) { _usenetActivityOffset = 0; _usenetActivityTotal = d.total; _usenetRenderActivity(d.rows, c, p); }});
                     }
                 });
+            } else if (d.status === 'already_running') {
+                barEl.style.width = '60%';
+                statusEl.textContent = 'Repair already running';
+                fixBtn.disabled = false;
+                fixBtn.innerHTML = '<i class="fa-solid fa-wrench" style="color:#e8601c"></i> Fix Broken';
             } else if (d.status === 'error') {
                 barEl.style.width = '0%';
                 statusEl.textContent = 'Error: ' + (d.error || 'unknown');

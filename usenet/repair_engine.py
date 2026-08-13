@@ -1250,6 +1250,96 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
         _repair_lock.release()
 
 
+def is_repair_running() -> bool:
+    """Return whether any scheduled or manual NZB repair owns the run lock."""
+    return _repair_lock.locked()
+
+
+_PROTECTED_PLAYBACK_REASONS = frozenset({
+    'media_probe_failed',
+    'media_no_playable_stream',
+})
+
+
+def _entry_has_protected_playback_failure(entry: dict) -> bool:
+    """Recognize playback failures even if durable cleanup is unavailable."""
+    reasons = {
+        str(entry.get('failure_reason') or ''),
+        *(str(row.get('reason') or row.get('failure_reason') or '')
+          for row in (entry.get('broken_files') or [])),
+    }
+    return bool(reasons & _PROTECTED_PLAYBACK_REASONS)
+
+
+def _prepare_broken_entries_for_repair(summary: dict) -> list:
+    """Classify repair targets without ever failing playback entries open.
+
+    Durable cleanup processing can temporarily fail (for example, when SQLite
+    is busy).  Classification is independent of that processing and must still
+    run.  If the classifier itself is unavailable, playback failures are
+    deferred rather than passed to the legacy Plex/provider deletion path.
+    """
+    try:
+        from database.mount_replacement_cleanup import (
+            adopt_stale_replaced_nzbs,
+            process_pending_mount_cleanups,
+            split_playback_cleanup_targets,
+        )
+    except Exception as cleanup_err:
+        logger.error(
+            '[NZBRepair] Protected playback cleanup is unavailable; '
+            'deferring playback failures: %s', cleanup_err,
+        )
+        entries = fetch_broken_items()
+        deferred = [e for e in entries if _entry_has_protected_playback_failure(e)]
+        if deferred:
+            summary['errors'] += len(deferred)
+        return [e for e in entries if not _entry_has_protected_playback_failure(e)]
+
+    try:
+        process_pending_mount_cleanups()
+    except Exception as cleanup_err:
+        logger.warning(
+            '[NZBRepair] Pending mount cleanup reconciliation deferred: %s',
+            cleanup_err,
+        )
+
+    health_entries = fetch_broken_items()
+    try:
+        health_entries = adopt_stale_replaced_nzbs(health_entries)
+    except Exception as cleanup_err:
+        logger.warning(
+            '[NZBRepair] Stale cleanup adoption deferred: %s', cleanup_err,
+        )
+
+    try:
+        # Newly-adopted stale entries can start immediately. Failure here must
+        # not affect classification of new playback repair targets below.
+        process_pending_mount_cleanups()
+    except Exception as cleanup_err:
+        logger.warning(
+            '[NZBRepair] Newly-adopted stale cleanup deferred: %s', cleanup_err,
+        )
+
+    try:
+        return split_playback_cleanup_targets(health_entries, protocol='nzb')
+    except Exception as cleanup_err:
+        logger.error(
+            '[NZBRepair] Playback target classification failed; deferring '
+            'playback failures: %s', cleanup_err,
+        )
+        deferred = [
+            entry for entry in health_entries
+            if _entry_has_protected_playback_failure(entry)
+        ]
+        if deferred:
+            summary['errors'] += len(deferred)
+        return [
+            entry for entry in health_entries
+            if not _entry_has_protected_playback_failure(entry)
+        ]
+
+
 def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = None) -> dict:
     """Inner repair logic — called only when _repair_lock is held."""
     if version_override is None:
@@ -1271,28 +1361,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
         'errors': 0,
     }
 
-    try:
-        from database.mount_replacement_cleanup import (
-            adopt_stale_replaced_nzbs,
-            process_pending_mount_cleanups,
-            split_playback_cleanup_targets,
-        )
-        process_pending_mount_cleanups()
-    except Exception as cleanup_err:
-        logger.warning(f'[NZBRepair] Pending mount cleanup reconciliation failed: {cleanup_err}')
-        adopt_stale_replaced_nzbs = lambda entries: entries
-        process_pending_mount_cleanups = lambda *args, **kwargs: {}
-        split_playback_cleanup_targets = lambda entries, protocol='': entries
-
-    health_entries = adopt_stale_replaced_nzbs(fetch_broken_items())
-    # Newly-adopted stale entries are already Collected under a different UUID,
-    # so let the durable verifier start immediately rather than waiting for the
-    # next scheduled repair pass.
-    try:
-        process_pending_mount_cleanups()
-    except Exception as cleanup_err:
-        logger.warning(f'[NZBRepair] Newly-adopted stale cleanup could not start: {cleanup_err}')
-    broken_entries = split_playback_cleanup_targets(health_entries, protocol='nzb')
+    broken_entries = _prepare_broken_entries_for_repair(summary)
     summary['broken_found'] = len(broken_entries)
 
     if not broken_entries:
@@ -1307,6 +1376,17 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
         nzb_url = entry.get('nzb_url') or entry.get('url') or ''
         playback_cleanup = bool(entry.get('_playback_cleanup'))
         cli_debrid_id = int(entry.get('cli_debrid_id') or 0)
+
+        # Defense in depth: even if an upstream classifier regresses or a
+        # partially initialized database returns a raw health entry, playback
+        # failures can never enter the legacy early Plex/provider deletion path.
+        if _entry_has_protected_playback_failure(entry) and not playback_cleanup:
+            logger.error(
+                '[NZBRepair] Refusing unclassified playback repair for %r; '
+                'leaving the original file and Plex item untouched', entry_name,
+            )
+            summary['errors'] += 1
+            continue
 
         if playback_cleanup and (not info_hash or not entry.get('file_name') or cli_debrid_id <= 0):
             logger.error(f'[NZBRepair] Exact playback repair target is incomplete for {entry_name!r}; leaving it broken')

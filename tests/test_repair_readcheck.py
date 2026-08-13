@@ -216,5 +216,89 @@ class TestNZBPlaybackReplacementSelection(unittest.TestCase):
         self.assertEqual({75299: True, 75300: True}, result)
 
 
+class TestPlaybackRepairFailClosed(unittest.TestCase):
+    @staticmethod
+    def playback_entry():
+        return {
+            'entry_name': 'Show.S01E01.Broken',
+            'failure_reason': 'media_probe_failed',
+            'broken_files': [{
+                'entry_name': 'Show.S01E01.Broken',
+                'file_name': 'Show.S01E01.Broken.mkv',
+                'info_hash': 'old-uuid',
+                'cli_debrid_id': 75299,
+                'reason': 'media_probe_failed',
+            }],
+        }
+
+    def test_cleanup_processing_lock_does_not_disable_classification(self):
+        raw = self.playback_entry()
+        classified = dict(raw, _playback_cleanup=True, cli_debrid_id=75299,
+                          file_name='Show.S01E01.Broken.mkv', info_hash='old-uuid')
+        cleanup_module = types.ModuleType('database.mount_replacement_cleanup')
+        cleanup_module.process_pending_mount_cleanups = Mock(
+            side_effect=RuntimeError('database is locked')
+        )
+        cleanup_module.adopt_stale_replaced_nzbs = lambda entries: entries
+        cleanup_module.split_playback_cleanup_targets = Mock(
+            return_value=[classified]
+        )
+        summary = {'errors': 0}
+
+        with patch.dict(sys.modules, {
+                'database.mount_replacement_cleanup': cleanup_module,
+        }), patch.object(re_mod, 'fetch_broken_items', return_value=[raw]):
+            result = re_mod._prepare_broken_entries_for_repair(summary)
+
+        self.assertEqual([classified], result)
+        cleanup_module.split_playback_cleanup_targets.assert_called_once()
+        self.assertEqual(0, summary['errors'])
+
+    def test_classifier_failure_defers_playback_but_keeps_legacy_entries(self):
+        playback = self.playback_entry()
+        legacy = {
+            'entry_name': 'Show.S01E02.Missing',
+            'failure_reason': 'usenet_segment_missing',
+            'broken_files': [{'reason': 'usenet_segment_missing'}],
+        }
+        cleanup_module = types.ModuleType('database.mount_replacement_cleanup')
+        cleanup_module.process_pending_mount_cleanups = lambda *a, **k: {}
+        cleanup_module.adopt_stale_replaced_nzbs = lambda entries: entries
+        cleanup_module.split_playback_cleanup_targets = Mock(
+            side_effect=RuntimeError('database is locked')
+        )
+        summary = {'errors': 0}
+
+        with patch.dict(sys.modules, {
+                'database.mount_replacement_cleanup': cleanup_module,
+        }), patch.object(re_mod, 'fetch_broken_items',
+                         return_value=[playback, legacy]):
+            result = re_mod._prepare_broken_entries_for_repair(summary)
+
+        self.assertEqual([legacy], result)
+        self.assertEqual(1, summary['errors'])
+
+    def test_raw_playback_reason_is_always_recognized(self):
+        self.assertTrue(re_mod._entry_has_protected_playback_failure(
+            self.playback_entry()
+        ))
+        self.assertTrue(re_mod._entry_has_protected_playback_failure({
+            'broken_files': [{'reason': 'media_no_playable_stream'}],
+        }))
+        self.assertFalse(re_mod._entry_has_protected_playback_failure({
+            'failure_reason': 'usenet_segment_missing',
+        }))
+
+    def test_already_running_result_is_explicit(self):
+        self.assertTrue(re_mod._repair_lock.acquire(blocking=False))
+        try:
+            self.assertTrue(re_mod.is_repair_running())
+            self.assertEqual(
+                {'skipped': 'already_running'},
+                re_mod.run_repair(triggered_by='manual'),
+            )
+        finally:
+            re_mod._repair_lock.release()
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
