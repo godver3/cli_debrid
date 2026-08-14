@@ -1,3 +1,4 @@
+import json as _json_module
 import os
 import sqlite3
 import sys
@@ -92,6 +93,8 @@ class TestNZBPlaybackRepair(unittest.TestCase):
 
     def test_original_and_failed_candidate_stay_excluded(self):
         self.assertTrue(playback.begin_playback_repair(self.item, self.target))
+        self.assertTrue(playback.has_active_exact_repair(7, 'old-uuid', 'old.mkv'))
+        self.assertFalse(playback.has_active_exact_repair(7, 'old-uuid', 'other.mkv'))
         original = {'title': 'Original.Release'}
         failed = {'title': 'Another.Release', 'guid': 'GUID-1'}
         self.assertTrue(playback.candidate_is_excluded(7, original))
@@ -115,6 +118,13 @@ class TestNZBPlaybackRepair(unittest.TestCase):
 
     def test_healthy_candidate_cleans_exact_target_then_finalizes_activity(self):
         playback.begin_playback_repair(self.item, self.target)
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO nzb_repair_activity
+                   (broken_nzb_id,broken_nzb_title,outcome)
+                   VALUES ('old-uuid','Old.Release','not_found'),
+                          ('unrelated-uuid','Old.Release','not_found')"""
+            )
         candidate = {'title': 'Working.Release', 'guid': 'GUID-3'}
         playback.set_playback_candidate(7, candidate, 'new-uuid', 'Working.Release')
         with self.connect() as conn:
@@ -152,12 +162,93 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         playback.process_pending_playback_repairs()
         with self.connect() as conn:
             repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
-            activity = conn.execute('SELECT * FROM nzb_repair_activity').fetchone()
+            activity = conn.execute(
+                'SELECT * FROM nzb_repair_activity WHERE id=?',
+                (repair['activity_id'],),
+            ).fetchone()
+            duplicate = conn.execute(
+                """SELECT COUNT(*) FROM nzb_repair_activity
+                   WHERE broken_nzb_id='old-uuid' AND broken_nzb_title='Old.Release'
+                     AND outcome='not_found'"""
+            ).fetchone()[0]
+            unrelated = conn.execute(
+                """SELECT COUNT(*) FROM nzb_repair_activity
+                   WHERE broken_nzb_id='unrelated-uuid' AND outcome='not_found'"""
+            ).fetchone()[0]
         self.assertEqual(repair['status'], 'complete')
         self.assertEqual(activity['outcome'], 'replaced')
         self.assertEqual(activity['replacement_nzb_id'], 'new-uuid')
+        self.assertEqual(duplicate, 0)
+        self.assertEqual(unrelated, 1)
         self.assertEqual([call[0] for call in calls], [
             '/api/repair/replacements/verify', '/api/repair/replacements/ack'])
+
+
+    def test_undeletable_failed_job_is_abandoned_after_max_attempts(self):
+        playback.begin_playback_repair(self.item, self.target)
+        playback.set_playback_candidate(7, {'title': 'Candidate.Release', 'guid': 'GUID-2'}, 'bad-uuid', 'Candidate.Release')
+        with self.connect() as conn:
+            conn.execute("UPDATE media_items SET state='Adding',filled_by_torrent_id='nzb:bad-uuid'")
+        self.assertTrue(playback.reject_active_candidate(7, 'bad-uuid'))
+
+        playback.set_playback_candidate(7, {'title': 'Working.Release', 'guid': 'GUID-3'}, 'new-uuid', 'Working.Release')
+        with self.connect() as conn:
+            conn.execute("UPDATE media_items SET state='Collected',filled_by_torrent_id='nzb:new-uuid',filled_by_file='new.mkv'")
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        self.assertIn('bad-uuid', repair['failed_job_ids_json'])
+
+        class _UndeletableJobClient(_Client):
+            def remove_nzb_exact(self, info_hash):
+                self.deleted.append(info_hash)
+                return info_hash != 'bad-uuid'
+
+        client = _UndeletableJobClient()
+        usenet_module = types.ModuleType('usenet')
+        usenet_module.get_usenet_client = lambda: client
+        old_usenet = sys.modules.get('usenet')
+        sys.modules['usenet'] = usenet_module
+        self.addCleanup(lambda: sys.modules.__setitem__('usenet', old_usenet) if old_usenet else sys.modules.pop('usenet', None))
+        old_item = playback._media_item
+        old_symlink = playback._symlink_matches
+        old_request = playback._mount_request
+        playback._media_item = lambda _id: dict(self.connect().execute('SELECT * FROM media_items WHERE id=7').fetchone())
+        playback._symlink_matches = lambda *args: True
+
+        def request(path, payload, timeout):
+            if path.endswith('/verify'):
+                return 200, {'status': 'healthy', 'entry_name': 'Working.Release', 'file_name': 'new.mkv'}, ''
+            return 200, {'status': 'removed'}, ''
+
+        playback._mount_request = request
+        self.addCleanup(lambda: setattr(playback, '_media_item', old_item))
+        self.addCleanup(lambda: setattr(playback, '_symlink_matches', old_symlink))
+        self.addCleanup(lambda: setattr(playback, '_mount_request', old_request))
+        plex_module = types.ModuleType('utilities.plex_functions')
+        plex_module.plex_update_item = lambda item: True
+        old_plex = sys.modules.get('utilities.plex_functions')
+        sys.modules['utilities.plex_functions'] = plex_module
+        self.addCleanup(lambda: sys.modules.__setitem__('utilities.plex_functions', old_plex) if old_plex else sys.modules.pop('utilities.plex_functions', None))
+
+        for attempt in range(1, playback.FAILED_JOB_MAX_ATTEMPTS):
+            playback.process_pending_playback_repairs()
+            with self.connect() as conn:
+                repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+            self.assertNotEqual(repair['status'], 'complete', f'should not complete after attempt {attempt}')
+            self.assertIn('bad-uuid', repair['failed_job_ids_json'])
+            self.assertEqual(_json_module.loads(repair['failed_job_attempts_json'])['bad-uuid'], attempt)
+            # Simulate the 30s retry schedule elapsing so the next call re-claims it.
+            with self.connect() as conn:
+                conn.execute('UPDATE nzb_playback_repairs SET next_attempt_at=NULL')
+                conn.commit()
+
+        # The next attempt hits FAILED_JOB_MAX_ATTEMPTS and abandons the job,
+        # letting the repair proceed to its own old-file cleanup and finish.
+        playback.process_pending_playback_repairs()
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        self.assertEqual(repair['status'], 'complete')
+        self.assertEqual(repair['failed_job_ids_json'], '[]')
+        self.assertEqual(repair['failed_job_attempts_json'], '{}')
 
 
 if __name__ == '__main__':

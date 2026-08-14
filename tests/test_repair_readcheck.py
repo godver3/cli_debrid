@@ -132,6 +132,19 @@ class TestVerifyFileReadable(unittest.TestCase):
 
 
 class TestReplacementSubmission(unittest.TestCase):
+    def test_exact_active_repair_suppresses_duplicate_not_found(self):
+        original = re_mod.has_active_exact_repair
+        calls = []
+        re_mod.has_active_exact_repair = lambda item_id, old_uuid, filename: (
+            calls.append((item_id, old_uuid, filename)) or True
+        )
+        self.addCleanup(lambda: setattr(re_mod, 'has_active_exact_repair', original))
+
+        target = {'cli_debrid_id': 7, 'file_name': 'old.mkv'}
+        self.assertTrue(re_mod._has_pending_exact_playback_repair(target, 'old-uuid'))
+        self.assertEqual(calls, [(7, 'old-uuid', 'old.mkv')])
+        self.assertFalse(re_mod._has_pending_exact_playback_repair(None, 'old-uuid'))
+
     def test_explicit_failed_job_is_not_accepted(self):
         class Client:
             last_failed_job_id = ''

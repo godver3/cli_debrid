@@ -21,6 +21,25 @@ from utilities.settings import get_setting
 from routes.api_tracker import api
 
 
+def _delete_status(url, **kwargs):
+    """
+    DELETE via the shared api client and return (status_code, error).
+    api.delete() calls response.raise_for_status(), so an error response
+    (4xx/5xx) surfaces as a raised HTTPError rather than a returned Response
+    — without unwrapping it here, callers can never see e.g. a 404 and end
+    up treating "already gone" the same as a real failure.
+    status_code is None when the request never got a response at all
+    (timeout, connection error, etc).
+    """
+    try:
+        r = api.delete(url, **kwargs)
+        return r.status_code, None
+    except Exception as exc:
+        response = getattr(exc, 'response', None)
+        if response is not None:
+            return response.status_code, exc
+        return None, exc
+
 
 
 class CliMountClient:
@@ -311,37 +330,36 @@ class CliMountClient:
 
         # Primary: DELETE /api/browse/torrents/{hash} — removes from entries.db AND mount
         if info_hash:
-            try:
-                r = api.delete(
-                    f'{self.base_url}/api/browse/torrents/{info_hash}',
-                    headers=self._headers(), timeout=15,
-                )
-                if r.status_code in (200, 204):
-                    logging.info(f'[cli_mount] Removed NZB entry {info_hash} from storage and mount')
-                    return True
-                if r.status_code == 404:
-                    logging.info(f'[cli_mount] NZB entry {info_hash} already gone (404)')
-                    return True
-                logging.debug(f'[cli_mount] remove_nzb browse endpoint returned {r.status_code}')
-            except Exception as e:
-                logging.debug(f'[cli_mount] remove_nzb browse delete error: {e}')
+            status, exc = _delete_status(
+                f'{self.base_url}/api/browse/torrents/{info_hash}',
+                headers=self._headers(), timeout=15,
+            )
+            if status in (200, 204):
+                logging.info(f'[cli_mount] Removed NZB entry {info_hash} from storage and mount')
+                return True
+            if status == 404:
+                logging.info(f'[cli_mount] NZB entry {info_hash} already gone (404)')
+                return True
+            if status is not None:
+                logging.debug(f'[cli_mount] remove_nzb browse endpoint returned {status}')
+            else:
+                logging.debug(f'[cli_mount] remove_nzb browse delete error: {exc}')
 
         # Fallback: queue-only delete via hashes param
         if info_hash:
-            try:
-                r = api.delete(
-                    f'{self.base_url}/api/torrents',
-                    params={'hashes': info_hash},
-                    headers=self._headers(), timeout=15,
-                )
-                if r.status_code in (200, 204):
-                    logging.info(f'[cli_mount] Removed NZB job {info_hash} from queue')
-                    return True
-                if r.status_code == 404:
-                    logging.info(f'[cli_mount] NZB job {info_hash} already gone (404)')
-                    return True
-            except Exception as e:
-                logging.debug(f'[cli_mount] remove_nzb queue delete error: {e}')
+            status, exc = _delete_status(
+                f'{self.base_url}/api/torrents',
+                params={'hashes': info_hash},
+                headers=self._headers(), timeout=15,
+            )
+            if status in (200, 204):
+                logging.info(f'[cli_mount] Removed NZB job {info_hash} from queue')
+                return True
+            if status == 404:
+                logging.info(f'[cli_mount] NZB job {info_hash} already gone (404)')
+                return True
+            if status is None:
+                logging.debug(f'[cli_mount] remove_nzb queue delete error: {exc}')
 
         # Last resort: search by name and delete
         if entry_name:
@@ -355,11 +373,11 @@ class CliMountClient:
                     for t in r.json().get('torrents', []):
                         h = t.get('info_hash', '')
                         if h:
-                            d = api.delete(
+                            status, _exc = _delete_status(
                                 f'{self.base_url}/api/browse/torrents/{h}',
                                 headers=self._headers(), timeout=10,
                             )
-                            if d.status_code in (200, 204, 404):
+                            if status in (200, 204, 404):
                                 logging.info(f'[cli_mount] Removed NZB by name search: {entry_name!r}')
                                 return True
             except Exception as e:
@@ -399,15 +417,15 @@ class CliMountClient:
         """Remove one exact UUID; never fall back to a release-name match."""
         if not self.is_enabled() or not info_hash:
             return False
-        try:
-            r = api.delete(
-                f'{self.base_url}/api/browse/torrents/{info_hash}',
-                headers=self._headers(), timeout=15,
-            )
-            if r.status_code in (200, 204, 404):
-                return True
-            logging.warning('[cli_mount] Exact job delete %s returned HTTP %s', info_hash, r.status_code)
-        except Exception as exc:
+        status, exc = _delete_status(
+            f'{self.base_url}/api/browse/torrents/{info_hash}',
+            headers=self._headers(), timeout=15,
+        )
+        if status in (200, 204, 404):
+            return True
+        if status is not None:
+            logging.warning('[cli_mount] Exact job delete %s returned HTTP %s', info_hash, status)
+        else:
             logging.warning('[cli_mount] Exact job delete %s failed: %s', info_hash, exc)
         return False
 

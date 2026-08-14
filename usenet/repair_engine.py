@@ -58,6 +58,7 @@ from database.nzb_playback_repair import (
     begin_playback_repair,
     candidate_is_excluded,
     candidate_keys,
+    has_active_exact_repair,
     record_failed_candidate,
     set_playback_candidate,
 )
@@ -95,6 +96,16 @@ def _find_db_item_by_id(item_id):
         return dict(row) if row else None
     finally:
         conn.close()
+
+
+def _has_pending_exact_playback_repair(playback_target, info_hash):
+    """Whether a changed media row is already tracked by the exact repair lifecycle."""
+    if not playback_target:
+        return False
+    return has_active_exact_repair(
+        playback_target.get('cli_debrid_id'), info_hash,
+        playback_target.get('file_name'),
+    )
 
 
 def _exact_playback_target(entry):
@@ -1313,6 +1324,15 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                         '[NZBPlayback] Exact item %s is unavailable or changed; leaving mounted file untouched',
                         playback_target['cli_debrid_id'],
                     )
+                    if _has_pending_exact_playback_repair(playback_target, info_hash):
+                        logger.info(
+                            '[NZBPlayback] Exact old file already belongs to an active repair; '
+                            'retaining its canonical activity and suppressing duplicate Not Found '
+                            '(item=%s uuid=%s file=%s)',
+                            playback_target['cli_debrid_id'], info_hash,
+                            playback_target['file_name'],
+                        )
+                        continue
                 elif info_hash:
                     logger.warning(f'[NZBRepair] No repairable DB items for {entry_name!r} — orphan, deleting from provider')
                     _delete_from_provider(info_hash, entry_name)

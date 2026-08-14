@@ -527,6 +527,7 @@ class ProgramRunner:
             'task_update_queue_views',
             'task_send_notifications',
             'task_nzb_health_check',
+            'task_nzb_playback_repair_completion',
             # Essential Periodic Tasks
             'task_check_service_connectivity',
             'task_heartbeat',
