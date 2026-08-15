@@ -708,7 +708,10 @@ class TestNZBPlaybackRepair(unittest.TestCase):
     def test_source_mismatch_stops_without_cleanup_when_superseded_externally(self):
         """If the item now points at neither our candidate nor the original
         broken hash, something else already replaced it (e.g. the general
-        repair engine winning a race) — stop without guessing at cleanup."""
+        repair engine winning a race) — stop guessing at the NEW candidate,
+        but still hand the ORIGINAL broken file's cleanup (known exactly,
+        independent of whatever replaced it) to the background retry rather
+        than leaving it referenced nowhere."""
         self._prep_verifying_candidate()
         with self.connect() as conn:
             conn.execute("UPDATE media_items SET filled_by_torrent_id='nzb:someone-elses-uuid'")
@@ -726,10 +729,40 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         self.assertEqual(repair['status'], 'complete')
         self.assertEqual(repair['last_error'], 'superseded_externally')
         self.assertIsNone(repair['next_attempt_at'])
-        # Must not touch cleanup_targets_json — no cleanup attempt for a
-        # candidate this repair no longer owns.
+        # Handed off to the background cleanup retry, same as a normal
+        # successful repair — not left dangling with nothing watching it.
+        self.assertEqual(repair['cleanup_status'], 'pending')
+        self.assertIsNotNone(repair['cleanup_first_pending_at'])
         targets = _json_module.loads(repair['cleanup_targets_json'])
         self.assertEqual(targets[0]['status'], 'pending')
+
+    def test_superseded_externally_cleanup_is_picked_up_by_background_retry(self):
+        """The deferred cleanup queued by the superseded_externally path
+        must actually be reachable by retry_deferred_playback_cleanups,
+        not just flagged and forgotten."""
+        self._prep_verifying_candidate()
+        with self.connect() as conn:
+            conn.execute("UPDATE media_items SET filled_by_torrent_id='nzb:someone-elses-uuid'")
+            conn.commit()
+        for _ in range(playback.CANDIDATE_SOURCE_MISMATCH_MAX_ATTEMPTS):
+            playback.process_pending_playback_repairs()
+            with self.connect() as conn:
+                conn.execute('UPDATE nzb_playback_repairs SET next_attempt_at=NULL')
+                conn.commit()
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        self.assertEqual(repair['last_error'], 'superseded_externally')
+
+        old_request = playback._mount_request
+        playback._mount_request = lambda path, payload, timeout: (200, {'status': 'removed'}, '')
+        self.addCleanup(lambda: setattr(playback, '_mount_request', old_request))
+
+        playback.retry_deferred_playback_cleanups()
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        self.assertEqual(repair['cleanup_status'], 'complete')
+        targets = _json_module.loads(repair['cleanup_targets_json'])
+        self.assertEqual(targets[0]['status'], 'complete')
 
 
 if __name__ == '__main__':

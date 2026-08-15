@@ -651,14 +651,19 @@ def process_pending_playback_repairs():
                         # item (normally prevented by has_active_exact_repair
                         # guarding the general repair engine — this is the
                         # backstop for if that race happens some other way).
-                        # Don't guess at cleanup for a candidate we no longer
-                        # own; just stop, and let a fresh health scan pick
-                        # the original broken file back up if it's still
-                        # actually broken.
+                        # Don't guess at cleanup for the NEW candidate we no
+                        # longer own, but the ORIGINAL broken file this
+                        # repair started against is still known exactly
+                        # (cleanup_targets_json) and independent of whatever
+                        # replaced it — hand it to the same background
+                        # cleanup retry a normal successful repair uses,
+                        # rather than leaving it referenced nowhere.
                         conn = get_db_connection()
                         try:
                             conn.execute(
                                 """UPDATE nzb_playback_repairs SET status='complete',completed_at=CURRENT_TIMESTAMP,
+                                   cleanup_status='pending',
+                                   cleanup_first_pending_at=COALESCE(cleanup_first_pending_at,CURRENT_TIMESTAMP),
                                    next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
                                    last_error='superseded_externally',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                                 (repair['id'],),
@@ -668,7 +673,7 @@ def process_pending_playback_repairs():
                             conn.close()
                         log.warning(
                             '[NZBPlayback] Item %s replaced by something outside this repair (now %s); '
-                            'stopping without cleanup repair=%s',
+                            'deferring original old-file cleanup to background retry repair=%s',
                             repair['cli_debrid_id'], current_source, repair['id'],
                         )
                         continue
