@@ -2725,6 +2725,73 @@ class DeletionManager:
             else:
                 logging.info(f"[DELETE_MULTIPLE] Phase 0: No torrent/NZB IDs found for removal")
 
+        # PHASE 0.3: Content source removal (Trakt/Overseerr/etc.) - grouped, not per-item.
+        # For TV, a request/media record in a content source is tracked per SHOW, not per
+        # episode — so this must only fire when this batch covers every remaining kept
+        # episode of the show (no sibling outside the batch). Without this guard, deleting
+        # even a single episode or season through the generic multi-select path would
+        # remove the content source's request/media record for the ENTIRE show, wiping its
+        # availability status even though most of it is still collected. Movies don't have
+        # this ambiguity (one item = one removal target) and are handled per-item as before.
+        # Mirrors the existing show-level call already used by the dedicated /delete_show
+        # route, generalized here so every caller gets the same safety automatically.
+        if remove_from_content_source:
+            from database.database_reading import get_items_by_ids as _get_items_for_cs
+
+            content_source_results = {}
+            items_for_cs = _get_items_for_cs(item_ids)
+            _batch_id_set_cs = set(item_ids)
+
+            for movie_item in (it for it in items_for_cs if it.get('type') == 'movie'):
+                try:
+                    r = self.remove_from_content_source(movie_item)
+                    content_source_results[f"movie_{movie_item['id']}"] = r
+                except Exception as e:
+                    logging.error(f"[DELETE_MULTIPLE] Content source removal failed for movie {movie_item.get('id')}: {e}")
+
+            # Group episode items by show (imdb_id) - one removal attempt per show, not per episode
+            shows_seen = {}
+            for ep in (it for it in items_for_cs if it.get('type') == 'episode'):
+                imdb_id = ep.get('imdb_id')
+                if imdb_id and imdb_id not in shows_seen:
+                    shows_seen[imdb_id] = ep
+
+            for imdb_id, rep_episode in shows_seen.items():
+                try:
+                    from database import get_db_connection as _gdb_cs
+                    _conn_cs = _gdb_cs()
+                    try:
+                        _rows = _conn_cs.execute(
+                            "SELECT id FROM media_items WHERE imdb_id = ? AND type = 'episode' "
+                            "AND state IN ('Collected','Upgrading','Checking')",
+                            (imdb_id,)
+                        ).fetchall()
+                    finally:
+                        _conn_cs.close()
+                    has_external_sibling = any(r[0] not in _batch_id_set_cs for r in _rows)
+                except Exception as e:
+                    logging.warning(f"[DELETE_MULTIPLE] Sibling check failed for content source removal of show {imdb_id}, skipping to be safe: {e}")
+                    has_external_sibling = True
+
+                if has_external_sibling:
+                    logging.info(f"[DELETE_MULTIPLE] Skipping content source removal for show {imdb_id} — other episodes remain outside this batch (partial deletion)")
+                    continue
+
+                show_item = rep_episode.copy()
+                show_item['type'] = 'show'
+                try:
+                    r = self.remove_from_content_source(show_item)
+                    content_source_results[f"show_{imdb_id}"] = r
+                    logging.info(f"[DELETE_MULTIPLE] Removed show {imdb_id} from content sources (batch covers every remaining episode): {r.get('message')}")
+                except Exception as e:
+                    logging.error(f"[DELETE_MULTIPLE] Content source removal failed for show {imdb_id}: {e}")
+
+            aggregate_result['content_source_removal'] = content_source_results
+
+            # Already handled above, centrally and per-show/per-movie - never let the
+            # per-item loop below redundantly (and unsafely, for episodes) repeat this.
+            remove_from_content_source = False
+
         # PHASE 0.5: Batch cache clearing (if enabled) - BEFORE per-item loop
         # Opens each cache file once instead of once per item
         batch_cache_cleared = False
