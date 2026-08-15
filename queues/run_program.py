@@ -327,6 +327,7 @@ class ProgramRunner:
             'task_push_pending_climount_tags': 5 * 60, # Run every 5 minutes — catches tags changed on cli_debrid side only
             'task_nzb_health_check': 10,             # Run every 10 seconds — polls NZB items in Adding
             'task_nzb_playback_repair_completion': 15, # Confirm only already-started playback repairs
+            'task_nzb_playback_cleanup_retry': 20 * 60, # Background retry for old-file cleanup deferred after finalization
             'task_backfill_plex_guids': 24 * 60 * 60,    # Run once (disabled by default)
             'task_backfill_plex_ms_item_id': 24 * 60 * 60, # Run once (disabled by default)
             # --- END EDIT ---
@@ -528,6 +529,7 @@ class ProgramRunner:
             'task_send_notifications',
             'task_nzb_health_check',
             'task_nzb_playback_repair_completion',
+            'task_nzb_playback_cleanup_retry',
             # Essential Periodic Tasks
             'task_check_service_connectivity',
             'task_heartbeat',
@@ -4711,6 +4713,15 @@ class ProgramRunner:
             process_pending_playback_repairs()
         except Exception as exc:
             logging.error('[NZBPlayback] Completion task failed: %s', exc, exc_info=True)
+
+    def task_nzb_playback_cleanup_retry(self):
+        """Slow-cadence background retry for old-file cleanup deferred by the
+        fast completion worker — repairs already finalized as replaced."""
+        try:
+            from database.nzb_playback_repair import retry_deferred_playback_cleanups
+            retry_deferred_playback_cleanups()
+        except Exception as exc:
+            logging.error('[NZBPlayback] Cleanup retry task failed: %s', exc, exc_info=True)
 
     def task_repair_broken_nzbs(self, triggered_by: str = 'scheduled'):
         """Scan cli_mount for broken NZBs and attempt to repair them via re-scrape."""

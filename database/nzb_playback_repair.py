@@ -20,12 +20,20 @@ _worker_lock = threading.Lock()
 ELIGIBLE_REASONS = {
     'usenet_segment_missing', 'media_probe_failed', 'media_no_playable_stream',
 }
-# A stale_target ack response is only transient if the mount hasn't caught up
-# yet with a supersession decypharr already applied. If it's still stale
-# after this many exact-cleanup attempts, further retries won't help (the
-# target genuinely changed), so stop retrying and finish the repair without
-# the old-file cleanup rather than looping forever.
+# A stale_target ack response is usually just the mount not having caught up
+# yet with a supersession decypharr already applied, or transient contention
+# with a long-running decypharr health sweep touching the same entry — both
+# self-resolve, just not always within a couple of minutes. If it's still
+# stale after this many quick attempts, don't block the repair's own
+# finalization any further (the new file is already confirmed healthy) —
+# defer the old-file cleanup to the slower background retry
+# (retry_deferred_playback_cleanups) instead of abandoning it outright.
 STALE_TARGET_MAX_ATTEMPTS = 5
+# Once deferred, retry the same safety-checked ack on a much slower cadence
+# (minutes, not seconds) for a long time before concluding it's genuinely
+# unresolvable rather than just unlucky timing.
+CLEANUP_RETRY_BACKOFF_MINUTES = (15, 30, 60, 120)
+CLEANUP_GIVE_UP_HOURS = 48
 # A failed-job delete can be legitimately transient (mount briefly
 # unreachable), but a job that's simply gone from decypharr will never
 # succeed no matter how many times it's retried. Cap retries so a stale
@@ -118,6 +126,10 @@ def create_nzb_playback_repair_table():
             conn.execute(
                 "ALTER TABLE nzb_playback_repairs ADD COLUMN failed_job_attempts_json TEXT NOT NULL DEFAULT '{}'"
             )
+        if 'cleanup_status' not in columns:
+            conn.execute('ALTER TABLE nzb_playback_repairs ADD COLUMN cleanup_status TEXT')
+        if 'cleanup_first_pending_at' not in columns:
+            conn.execute('ALTER TABLE nzb_playback_repairs ADD COLUMN cleanup_first_pending_at TIMESTAMP')
         for column in ('old_guid', 'old_segment', 'old_normalized_title',
                        'candidate_guid', 'candidate_segment', 'candidate_normalized_title'):
             if column not in columns:
@@ -587,9 +599,9 @@ def process_pending_playback_repairs():
                     conn.close()
 
             targets = _json(repair['cleanup_targets_json'], [])
-            all_complete = True
+            all_actionable = True  # nothing left this fast pass needs to keep retrying
             for target in targets:
-                if target.get('status') == 'complete':
+                if target.get('status') == 'complete' or target.get('deferred'):
                     continue
                 log.info(
                     '[NZBPlayback] Requesting exact cleanup repair=%s old_uuid=%s file=%s',
@@ -602,7 +614,7 @@ def process_pending_playback_repairs():
                     body.get('code') or '', code, error or '',
                 )
                 if error or code >= 500 or (code == 409 and body.get('code') == 'repair_busy'):
-                    all_complete = False
+                    all_actionable = False
                     continue
                 if code == 200 and body.get('status') in ('removed', 'already_removed'):
                     target['status'] = 'complete'
@@ -611,29 +623,43 @@ def process_pending_playback_repairs():
                     attempts = target.get('stale_attempts', 0) + 1
                     target['stale_attempts'] = attempts
                     if attempts >= STALE_TARGET_MAX_ATTEMPTS:
+                        # New file is already confirmed healthy — don't hold the
+                        # repair's own finalization hostage to the old file's
+                        # cleanup any longer. Hand it off to the slower
+                        # background retry instead of abandoning it outright.
                         log.warning(
-                            '[NZBPlayback] Exact cleanup abandoning stale target repair=%s old_uuid=%s file=%s '
-                            'after %s attempts; finishing repair without old-file cleanup',
+                            '[NZBPlayback] Exact cleanup deferring stale target repair=%s old_uuid=%s file=%s '
+                            'to background retry after %s attempts; finalizing repair now',
                             repair['id'], target.get('info_hash') or '', target.get('file_name') or '', attempts,
                         )
-                        target['status'] = 'complete'
-                        target['skipped_cleanup'] = True
+                        target['deferred'] = True
+                        target['last_error'] = 'stale_target'
                         continue
-                    all_complete = False
+                    all_actionable = False
                     target['last_error'] = 'stale_target'
                     continue
-                all_complete = False
+                all_actionable = False
                 target['last_error'] = body.get('code') or f'HTTP {code}'
+            has_deferred = any(t.get('status') != 'complete' and t.get('deferred') for t in targets)
             conn = get_db_connection()
             try:
-                conn.execute(
-                    "UPDATE nzb_playback_repairs SET cleanup_targets_json=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (json.dumps(targets), 'cleanup_complete' if all_complete else 'verified', repair['id']),
-                )
+                if has_deferred:
+                    conn.execute(
+                        """UPDATE nzb_playback_repairs SET cleanup_targets_json=?,status=?,
+                           cleanup_status='pending',
+                           cleanup_first_pending_at=COALESCE(cleanup_first_pending_at,CURRENT_TIMESTAMP),
+                           updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                        (json.dumps(targets), 'cleanup_complete' if all_actionable else 'verified', repair['id']),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE nzb_playback_repairs SET cleanup_targets_json=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (json.dumps(targets), 'cleanup_complete' if all_actionable else 'verified', repair['id']),
+                    )
                 conn.commit()
             finally:
                 conn.close()
-            if not all_complete:
+            if not all_actionable:
                 _schedule(repair['id'], 'exact_cleanup_pending', 15)
                 continue
             if not _finish_activity(repair, candidate, repair.get('candidate_title') or item.get('filled_by_title')):
@@ -647,3 +673,107 @@ def process_pending_playback_repairs():
                 log.warning('[NZBPlayback] Post-cleanup Plex refresh failed: %s', exc)
     finally:
         _worker_lock.release()
+
+
+def retry_deferred_playback_cleanups():
+    """Background retry for old-file cleanup deferred by the fast completion
+    worker after it exhausted its quick attempts on a repair that has already
+    finalized as replaced. Runs on a much slower cadence (minutes, not
+    seconds) so it can keep patiently retrying the same safety-checked ack
+    call for up to CLEANUP_GIVE_UP_HOURS without blocking — or being blocked
+    by — repair finalization, which already happened.
+    """
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """SELECT * FROM nzb_playback_repairs
+               WHERE status='complete' AND cleanup_status='pending'
+                 AND (next_attempt_at IS NULL OR next_attempt_at<=CURRENT_TIMESTAMP)
+               ORDER BY updated_at LIMIT 12"""
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return
+
+    for raw in rows:
+        repair = dict(raw)
+        targets = _json(repair['cleanup_targets_json'], [])
+        pending = [t for t in targets if t.get('status') != 'complete']
+        if not pending:
+            conn = get_db_connection()
+            try:
+                conn.execute(
+                    "UPDATE nzb_playback_repairs SET cleanup_status='complete',next_attempt_at=NULL,"
+                    "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (repair['id'],),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            continue
+
+        expired = False
+        first_pending_at = repair.get('cleanup_first_pending_at')
+        if first_pending_at:
+            try:
+                first_dt = datetime.strptime(first_pending_at, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                expired = (datetime.now(timezone.utc) - first_dt) > timedelta(hours=CLEANUP_GIVE_UP_HOURS)
+            except Exception:
+                expired = False
+
+        for target in pending:
+            log.info(
+                '[NZBPlayback] Background retry: requesting exact cleanup repair=%s old_uuid=%s file=%s',
+                repair['id'], target.get('info_hash') or '', target.get('file_name') or '',
+            )
+            code, body, error = _mount_request('/api/repair/replacements/ack', target, 20)
+            log.info(
+                '[NZBPlayback] Background retry result repair=%s old_uuid=%s status=%s code=%s http=%s error=%s',
+                repair['id'], target.get('info_hash') or '', body.get('status') or '',
+                body.get('code') or '', code, error or '',
+            )
+            if code == 200 and body.get('status') in ('removed', 'already_removed'):
+                target['status'] = 'complete'
+                target.pop('deferred', None)
+                target.pop('last_error', None)
+                continue
+            target['last_error'] = body.get('code') or (error or f'HTTP {code}')
+            target['background_attempts'] = target.get('background_attempts', 0) + 1
+
+        still_pending = [t for t in targets if t.get('status') != 'complete']
+        conn = get_db_connection()
+        try:
+            if not still_pending:
+                log.info('[NZBPlayback] Background cleanup completed repair=%s after handoff', repair['id'])
+                conn.execute(
+                    "UPDATE nzb_playback_repairs SET cleanup_targets_json=?,cleanup_status='complete',"
+                    "next_attempt_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (json.dumps(targets), repair['id']),
+                )
+            elif expired:
+                log.warning(
+                    '[NZBPlayback] Giving up on background cleanup for repair=%s after %sh; '
+                    'old file(s) left behind: %s',
+                    repair['id'], CLEANUP_GIVE_UP_HOURS,
+                    [t.get('file_name') for t in still_pending],
+                )
+                conn.execute(
+                    "UPDATE nzb_playback_repairs SET cleanup_targets_json=?,cleanup_status='abandoned',"
+                    "next_attempt_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (json.dumps(targets), repair['id']),
+                )
+            else:
+                backoff_idx = min(
+                    max(t.get('background_attempts', 1) for t in still_pending) - 1,
+                    len(CLEANUP_RETRY_BACKOFF_MINUTES) - 1,
+                )
+                delay_minutes = CLEANUP_RETRY_BACKOFF_MINUTES[backoff_idx]
+                conn.execute(
+                    "UPDATE nzb_playback_repairs SET cleanup_targets_json=?,"
+                    "next_attempt_at=datetime('now',?),updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (json.dumps(targets), f'+{delay_minutes} minutes', repair['id']),
+                )
+            conn.commit()
+        finally:
+            conn.close()
