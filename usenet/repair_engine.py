@@ -1091,6 +1091,61 @@ def _update_db_for_repair(item: dict, new_job_id: str, replacement_result: dict,
         return False
 
 
+def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
+    """Re-run the same scrape/submit/exclude pipeline used for the initial
+    broken-entry repair, for a playback repair whose accepted candidate was
+    itself later found broken (status='awaiting_candidate'). Reuses
+    candidate_is_excluded/set_playback_candidate so a previously-failed
+    candidate (already recorded in excluded_keys_json by the caller) is
+    never re-tried. Returns an outcome string used only for retry
+    scheduling/logging by the completion worker — never raises.
+    """
+    item_id = item['id']
+    broken_nzb_title = (item.get('debrid_folder_name') or item.get('filled_by_file')
+                         or repair_row.get('old_entry_name') or item.get('title') or '')
+    candidates = _scrape_for_replacement(item, broken_nzb_title)
+    seen_keys = set()
+    unique_candidates = []
+    for candidate in candidates:
+        keys = candidate_keys(candidate)
+        if not keys or keys & seen_keys:
+            continue
+        seen_keys |= keys
+        if candidate_is_excluded(item_id, candidate):
+            continue
+        unique_candidates.append(candidate)
+    if not unique_candidates:
+        return 'no_replacement'
+
+    for candidate in unique_candidates:
+        job_id, submitted_title, disposition = _submit_and_confirm_replacement(
+            candidate, item.get('title', ''), item=item)
+        if disposition in ('failed', 'rejected'):
+            record_failed_candidate(item_id, candidate, job_id or '')
+            logger.warning(
+                '[NZBPlayback] Retry candidate rejected (%s); trying next distinct result: %r',
+                disposition, candidate.get('title'),
+            )
+            continue
+        best = dict(candidate)
+        best.setdefault('original_title', best.get('title', ''))
+        if submitted_title:
+            best['title'] = submitted_title
+        if not set_playback_candidate(item_id, best, job_id, submitted_title or best.get('title', '')):
+            record_failed_candidate(item_id, best, job_id)
+            logger.error('[NZBPlayback] Could not persist retry candidate %s for item %s', job_id, item_id)
+            return 'persist_failed'
+        if not _update_db_for_repair(item, job_id, best, unique_candidates, preserve_location=True):
+            logger.error('[NZBPlayback] Could not move retry candidate %s into Adding for item %s', job_id, item_id)
+            return 'db_update_failed'
+        logger.info(
+            '[NZBPlayback] Fresh candidate %s accepted for item %s after prior replacement also failed',
+            job_id, item_id,
+        )
+        return 'submitted'
+    return 'submission_failed'
+
+
 def _move_to_wanted(item: dict) -> None:
     """Move item back to Wanted without touching Plex or provider."""
     try:

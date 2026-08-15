@@ -450,7 +450,7 @@ def process_pending_playback_repairs():
         try:
             rows = conn.execute(
                 """SELECT * FROM nzb_playback_repairs
-                   WHERE status IN ('awaiting_collection','awaiting_verification','verified','cleanup_complete')
+                   WHERE status IN ('awaiting_candidate','awaiting_collection','awaiting_verification','verified','cleanup_complete')
                      AND (next_attempt_at IS NULL OR next_attempt_at<=CURRENT_TIMESTAMP)
                      AND (lease_until IS NULL OR lease_until<=CURRENT_TIMESTAMP)
                    ORDER BY updated_at LIMIT 12"""
@@ -463,7 +463,7 @@ def process_pending_playback_repairs():
             try:
                 claimed = conn.execute(
                     """UPDATE nzb_playback_repairs SET lease_owner=?,lease_until=datetime('now','+10 minutes')
-                       WHERE id=? AND status IN ('awaiting_collection','awaiting_verification','verified','cleanup_complete')
+                       WHERE id=? AND status IN ('awaiting_candidate','awaiting_collection','awaiting_verification','verified','cleanup_complete')
                          AND (lease_until IS NULL OR lease_until<=CURRENT_TIMESTAMP)""",
                     (lease_owner, repair['id']),
                 ).rowcount
@@ -478,6 +478,27 @@ def process_pending_playback_repairs():
                 repair.get('candidate_info_hash') or '',
             )
             item = _media_item(repair['cli_debrid_id'])
+            if repair['status'] == 'awaiting_candidate':
+                # The last accepted candidate was itself verified broken. Reuse
+                # the exact same scrape/submit/exclude pipeline that produced
+                # the first candidate to keep searching until a healthy
+                # replacement is found, instead of stalling here forever —
+                # nothing else in this module reads this status.
+                if not item:
+                    _schedule(repair['id'], 'item_missing', 300)
+                    continue
+                from usenet.repair_engine import find_and_submit_playback_candidate
+                outcome = find_and_submit_playback_candidate(repair, item)
+                log.info(
+                    '[NZBPlayback] Candidate search retry repair=%s item=%s outcome=%s',
+                    repair['id'], repair['cli_debrid_id'], outcome,
+                )
+                # set_playback_candidate() (called on a 'submitted' outcome)
+                # updates status but doesn't clear the lease this pass just
+                # took — always reschedule so the row isn't stuck holding
+                # that 10-minute claim lease before collection-wait can run.
+                _schedule(repair['id'], outcome, 15 if outcome == 'submitted' else 300)
+                continue
             if not item or item.get('state') != 'Collected':
                 log.debug(
                     '[NZBPlayback] Waiting for collection repair=%s item=%s state=%s',

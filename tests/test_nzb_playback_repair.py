@@ -154,6 +154,74 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         self.assertEqual(repair['status'], 'awaiting_candidate')
         self.assertIn('new-uuid', repair['failed_job_ids_json'])
 
+    def _install_fake_repair_engine(self, func):
+        usenet_module = sys.modules.get('usenet') or types.ModuleType('usenet')
+        repair_engine_module = types.ModuleType('usenet.repair_engine')
+        repair_engine_module.find_and_submit_playback_candidate = func
+        usenet_module.repair_engine = repair_engine_module
+        old_usenet = sys.modules.get('usenet')
+        old_repair_engine = sys.modules.get('usenet.repair_engine')
+        sys.modules['usenet'] = usenet_module
+        sys.modules['usenet.repair_engine'] = repair_engine_module
+        def _restore():
+            if old_usenet is not None:
+                sys.modules['usenet'] = old_usenet
+            else:
+                sys.modules.pop('usenet', None)
+            if old_repair_engine is not None:
+                sys.modules['usenet.repair_engine'] = old_repair_engine
+            else:
+                sys.modules.pop('usenet.repair_engine', None)
+        self.addCleanup(_restore)
+
+    def test_awaiting_candidate_reuses_search_pipeline_on_success(self):
+        """A candidate found broken must go back through the same search
+        pipeline automatically — status='awaiting_candidate' is not a
+        dead end — and a successful re-submission should be rescheduled
+        quickly rather than sitting on the claim's 10-minute lease."""
+        playback.begin_playback_repair(self.item, self.target)
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        self.assertEqual(repair['status'], 'awaiting_candidate')
+
+        calls = []
+
+        def fake_retry(repair_row, item):
+            calls.append((repair_row['id'], item['id']))
+            return 'submitted'
+
+        self._install_fake_repair_engine(fake_retry)
+        old_item = playback._media_item
+        playback._media_item = lambda _id: dict(self.item)
+        self.addCleanup(lambda: setattr(playback, '_media_item', old_item))
+
+        playback.process_pending_playback_repairs()
+
+        self.assertEqual(calls, [(repair['id'], 7)])
+        with self.connect() as conn:
+            updated = conn.execute('SELECT * FROM nzb_playback_repairs WHERE id=?', (repair['id'],)).fetchone()
+        self.assertEqual(updated['last_error'], 'submitted')
+        self.assertIsNotNone(updated['next_attempt_at'])
+        self.assertIsNone(updated['lease_until'])
+
+    def test_awaiting_candidate_reschedules_when_no_replacement_found(self):
+        playback.begin_playback_repair(self.item, self.target)
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+
+        self._install_fake_repair_engine(lambda repair_row, item: 'no_replacement')
+        old_item = playback._media_item
+        playback._media_item = lambda _id: dict(self.item)
+        self.addCleanup(lambda: setattr(playback, '_media_item', old_item))
+
+        playback.process_pending_playback_repairs()
+
+        with self.connect() as conn:
+            updated = conn.execute('SELECT * FROM nzb_playback_repairs WHERE id=?', (repair['id'],)).fetchone()
+        self.assertEqual(updated['status'], 'awaiting_candidate')
+        self.assertEqual(updated['last_error'], 'no_replacement')
+        self.assertIsNotNone(updated['next_attempt_at'])
+
     def test_healthy_candidate_cleans_exact_target_then_finalizes_activity(self):
         playback.begin_playback_repair(self.item, self.target)
         with self.connect() as conn:
