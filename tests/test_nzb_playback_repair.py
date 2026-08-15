@@ -678,6 +678,59 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         self.assertEqual(activity['outcome'], 'abandoned_after_retries')
         self.assertIsNone(updated['next_attempt_at'])
 
+    def test_source_mismatch_rejects_candidate_after_max_attempts_when_reverted(self):
+        """If the item is back on the original broken hash (not replaced by
+        anything else), a persistent candidate/source mismatch after the cap
+        is treated like a bad candidate: reject and resume searching."""
+        self._prep_verifying_candidate()
+        with self.connect() as conn:
+            conn.execute("UPDATE media_items SET filled_by_torrent_id='nzb:old-uuid'")
+            conn.commit()
+
+        for attempt in range(1, playback.CANDIDATE_SOURCE_MISMATCH_MAX_ATTEMPTS):
+            playback.process_pending_playback_repairs()
+            with self.connect() as conn:
+                repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+            self.assertNotEqual(repair['status'], 'awaiting_candidate', f'should not reject before attempt {attempt}')
+            self.assertEqual(repair['source_mismatch_attempts'], attempt)
+            with self.connect() as conn:
+                conn.execute('UPDATE nzb_playback_repairs SET next_attempt_at=NULL')
+                conn.commit()
+
+        playback.process_pending_playback_repairs()
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        self.assertEqual(repair['status'], 'awaiting_candidate')
+        self.assertIsNone(repair['candidate_info_hash'])
+        self.assertEqual(repair['last_error'], 'candidate_source_changed_max_attempts')
+        self.assertEqual(repair['source_mismatch_attempts'], 0)
+
+    def test_source_mismatch_stops_without_cleanup_when_superseded_externally(self):
+        """If the item now points at neither our candidate nor the original
+        broken hash, something else already replaced it (e.g. the general
+        repair engine winning a race) — stop without guessing at cleanup."""
+        self._prep_verifying_candidate()
+        with self.connect() as conn:
+            conn.execute("UPDATE media_items SET filled_by_torrent_id='nzb:someone-elses-uuid'")
+            conn.commit()
+
+        for _ in range(playback.CANDIDATE_SOURCE_MISMATCH_MAX_ATTEMPTS - 1):
+            playback.process_pending_playback_repairs()
+            with self.connect() as conn:
+                conn.execute('UPDATE nzb_playback_repairs SET next_attempt_at=NULL')
+                conn.commit()
+
+        playback.process_pending_playback_repairs()
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        self.assertEqual(repair['status'], 'complete')
+        self.assertEqual(repair['last_error'], 'superseded_externally')
+        self.assertIsNone(repair['next_attempt_at'])
+        # Must not touch cleanup_targets_json — no cleanup attempt for a
+        # candidate this repair no longer owns.
+        targets = _json_module.loads(repair['cleanup_targets_json'])
+        self.assertEqual(targets[0]['status'], 'pending')
+
 
 if __name__ == '__main__':
     unittest.main()

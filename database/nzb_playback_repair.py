@@ -58,6 +58,13 @@ VERIFY_BUSY_MAX_ATTEMPTS = 240     # ~60 min at the 15s 409 cadence
 CANDIDATE_SEARCH_VISIBILITY_ATTEMPTS = 24        # ~2h at the 5-minute search cadence
 CANDIDATE_SEARCH_SLOW_CADENCE_SECONDS = 1800     # 30 min, once past the visibility threshold
 CANDIDATE_SEARCH_GIVE_UP_DAYS = 7
+# A submitted candidate's info_hash can stop matching the item's current
+# filled_by_torrent_id if something outside this repair changes it —
+# normally prevented by has_active_exact_repair() guarding the general
+# repair engine, but kept as a backstop in case that race happens for some
+# other reason. ~5 min at the 30s mismatch cadence, matching
+# VERIFY_UNKNOWN_MAX_ATTEMPTS.
+CANDIDATE_SOURCE_MISMATCH_MAX_ATTEMPTS = 10
 
 
 def _now():
@@ -154,7 +161,7 @@ def create_nzb_playback_repair_table():
             if column not in columns:
                 conn.execute(f'ALTER TABLE nzb_playback_repairs ADD COLUMN {column} TEXT')
         for column in ('verify_unknown_attempts', 'verify_stale_target_attempts', 'verify_busy_attempts',
-                       'candidate_search_attempts'):
+                       'candidate_search_attempts', 'source_mismatch_attempts'):
             if column not in columns:
                 conn.execute(f'ALTER TABLE nzb_playback_repairs ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0')
         if 'candidate_search_stuck_since' not in columns:
@@ -312,7 +319,7 @@ def set_playback_candidate(item_id, result, job_id, title):
                    candidate_guid=?,candidate_segment=?,candidate_normalized_title=?,
                    status='awaiting_collection',next_attempt_at=NULL,last_error=NULL,
                    verify_unknown_attempts=0,verify_stale_target_attempts=0,verify_busy_attempts=0,
-                   candidate_search_attempts=0,candidate_search_stuck_since=NULL,
+                   candidate_search_attempts=0,candidate_search_stuck_since=NULL,source_mismatch_attempts=0,
                    updated_at=CURRENT_TIMESTAMP
                WHERE cli_debrid_id=? AND status!='complete'""",
             (job_id, title, json.dumps(sorted(keys)), guid, segment, normalized, item_id),
@@ -481,6 +488,7 @@ def _reject_verification_candidate(repair, reason):
                excluded_keys_json=?,candidate_info_hash=NULL,candidate_title=NULL,
                candidate_guid=NULL,candidate_segment=NULL,candidate_normalized_title=NULL,
                verify_unknown_attempts=0,verify_stale_target_attempts=0,verify_busy_attempts=0,
+               source_mismatch_attempts=0,
                next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
                last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
             (json.dumps(sorted(excluded)), reason, repair['id']),
@@ -635,6 +643,37 @@ def process_pending_playback_repairs():
                 continue
             candidate = repair.get('candidate_info_hash') or ''
             if not candidate or _source_uuid(item).lower() != candidate.lower():
+                attempts = _bump_attempt(repair['id'], 'source_mismatch_attempts')
+                if attempts >= CANDIDATE_SOURCE_MISMATCH_MAX_ATTEMPTS:
+                    current_source = _source_uuid(item).lower()
+                    if current_source and current_source != (repair['old_info_hash'] or '').lower():
+                        # Something outside this repair already replaced the
+                        # item (normally prevented by has_active_exact_repair
+                        # guarding the general repair engine — this is the
+                        # backstop for if that race happens some other way).
+                        # Don't guess at cleanup for a candidate we no longer
+                        # own; just stop, and let a fresh health scan pick
+                        # the original broken file back up if it's still
+                        # actually broken.
+                        conn = get_db_connection()
+                        try:
+                            conn.execute(
+                                """UPDATE nzb_playback_repairs SET status='complete',completed_at=CURRENT_TIMESTAMP,
+                                   next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
+                                   last_error='superseded_externally',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                                (repair['id'],),
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
+                        log.warning(
+                            '[NZBPlayback] Item %s replaced by something outside this repair (now %s); '
+                            'stopping without cleanup repair=%s',
+                            repair['cli_debrid_id'], current_source, repair['id'],
+                        )
+                        continue
+                    _reject_verification_candidate(repair, 'candidate_source_changed_max_attempts')
+                    continue
                 _schedule(repair['id'], 'candidate_source_changed', 30)
                 continue
             client = __import__('usenet', fromlist=['get_usenet_client']).get_usenet_client()

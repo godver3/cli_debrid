@@ -1402,6 +1402,26 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 summary['not_found'] += 1
                 continue
 
+            # An active exact-identity playback repair already owns this item —
+            # let it keep working the candidate it already submitted rather
+            # than launching a second, uncoordinated repair through this
+            # general pipeline. Without this, whichever candidate happens to
+            # collect first silently overwrites filled_by_torrent_id and
+            # orphans the other — leaving the minimal repair's own tracking
+            # row spinning on candidate_source_changed indefinitely, and
+            # wasting a full duplicate download in the meantime. Once the
+            # minimal repair finishes (success or eventual give-up), its row
+            # moves to status='complete' and has_active_exact_repair stops
+            # matching, so this falls through to the general pipeline again
+            # as a natural fallback.
+            if playback_target and _has_pending_exact_playback_repair(playback_target, info_hash):
+                logger.info(
+                    '[NZBPlayback] Item %s already has an active exact playback repair; '
+                    'skipping general repair to avoid a competing candidate (uuid=%s file=%s)',
+                    playback_target['cli_debrid_id'], info_hash, playback_target['file_name'],
+                )
+                continue
+
             # Skip if all items already in Adding (repair already in progress)
             if all(i.get('state') == 'Adding' for i in db_items):
                 logger.info(f'[NZBRepair] {entry_name!r} — all items already in Adding, skipping')
