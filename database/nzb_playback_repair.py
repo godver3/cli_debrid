@@ -39,6 +39,25 @@ CLEANUP_GIVE_UP_HOURS = 48
 # succeed no matter how many times it's retried. Cap retries so a stale
 # job ID doesn't block the repair's own old-file cleanup forever.
 FAILED_JOB_MAX_ATTEMPTS = 5
+# Verification-stage caps, before a candidate has been confirmed healthy —
+# unlike the cleanup-stage backstops above, there's no already-healthy new
+# file to protect here, so a candidate that can't be verified is rejected
+# (excluded, back to searching) rather than deferred.
+VERIFY_UNKNOWN_MAX_ATTEMPTS = 10   # ~5 min at the 30s unknown-status cadence
+VERIFY_STALE_TARGET_MAX_ATTEMPTS = 5    # ~75s at the 15s 409 cadence, matches STALE_TARGET_MAX_ATTEMPTS
+# repair_busy just means decypharr's own (possibly hours-long) sweep is
+# running — not a sign this candidate is bad, so give it a much longer
+# leash than stale_target before treating it as stuck.
+VERIFY_BUSY_MAX_ATTEMPTS = 240     # ~60 min at the 15s 409 cadence
+# The candidate-search retry loop (status='awaiting_candidate') never fully
+# gives up on its own — usenet content can reappear days after it's pulled —
+# but it should stop being silent about a title that isn't resolving.
+# First it becomes visible (skipped_max_attempts, matching the tooltip the
+# older debrid-side repair UI already uses) and slows down; only after a
+# much longer stretch with nothing found does it actually stop scheduling.
+CANDIDATE_SEARCH_VISIBILITY_ATTEMPTS = 24        # ~2h at the 5-minute search cadence
+CANDIDATE_SEARCH_SLOW_CADENCE_SECONDS = 1800     # 30 min, once past the visibility threshold
+CANDIDATE_SEARCH_GIVE_UP_DAYS = 7
 
 
 def _now():
@@ -134,6 +153,12 @@ def create_nzb_playback_repair_table():
                        'candidate_guid', 'candidate_segment', 'candidate_normalized_title'):
             if column not in columns:
                 conn.execute(f'ALTER TABLE nzb_playback_repairs ADD COLUMN {column} TEXT')
+        for column in ('verify_unknown_attempts', 'verify_stale_target_attempts', 'verify_busy_attempts',
+                       'candidate_search_attempts'):
+            if column not in columns:
+                conn.execute(f'ALTER TABLE nzb_playback_repairs ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0')
+        if 'candidate_search_stuck_since' not in columns:
+            conn.execute('ALTER TABLE nzb_playback_repairs ADD COLUMN candidate_search_stuck_since TIMESTAMP')
         conn.commit()
     finally:
         conn.close()
@@ -286,6 +311,8 @@ def set_playback_candidate(item_id, result, job_id, title):
                SET candidate_info_hash=?,candidate_title=?,candidate_keys_json=?,
                    candidate_guid=?,candidate_segment=?,candidate_normalized_title=?,
                    status='awaiting_collection',next_attempt_at=NULL,last_error=NULL,
+                   verify_unknown_attempts=0,verify_stale_target_attempts=0,verify_busy_attempts=0,
+                   candidate_search_attempts=0,candidate_search_stuck_since=NULL,
                    updated_at=CURRENT_TIMESTAMP
                WHERE cli_debrid_id=? AND status!='complete'""",
             (job_id, title, json.dumps(sorted(keys)), guid, segment, normalized, item_id),
@@ -439,6 +466,48 @@ def _finish_activity(repair, candidate_uuid, title):
         conn.close()
 
 
+def _reject_verification_candidate(repair, reason):
+    """Give up on the active candidate after it fails to verify within the
+    attempt cap for its failure mode, and fall back to candidate search —
+    same reset shape as the existing 'verification found broken' path, but
+    with nothing to add to cleanup_targets since no replacement was ever
+    confirmed healthy.
+    """
+    excluded = set(_json(repair['excluded_keys_json'], [])) | set(_json(repair['candidate_keys_json'], []))
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """UPDATE nzb_playback_repairs SET status='awaiting_candidate',
+               excluded_keys_json=?,candidate_info_hash=NULL,candidate_title=NULL,
+               candidate_guid=NULL,candidate_segment=NULL,candidate_normalized_title=NULL,
+               verify_unknown_attempts=0,verify_stale_target_attempts=0,verify_busy_attempts=0,
+               next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
+               last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (json.dumps(sorted(excluded)), reason, repair['id']),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    log.warning(
+        '[NZBPlayback] Rejecting candidate after repeated verification failures repair=%s item=%s reason=%s',
+        repair['id'], repair['cli_debrid_id'], reason,
+    )
+
+
+def _bump_attempt(repair_id, column):
+    """Increment one of the verify-stage attempt counters and return the new value."""
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            f"UPDATE nzb_playback_repairs SET {column}={column}+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (repair_id,),
+        )
+        conn.commit()
+        return conn.execute(f"SELECT {column} FROM nzb_playback_repairs WHERE id=?", (repair_id,)).fetchone()[0]
+    finally:
+        conn.close()
+
+
 def process_pending_playback_repairs():
     """Complete only already-started repairs; never scans or starts the backlog."""
     if not _worker_lock.acquire(blocking=False):
@@ -493,11 +562,68 @@ def process_pending_playback_repairs():
                     '[NZBPlayback] Candidate search retry repair=%s item=%s outcome=%s',
                     repair['id'], repair['cli_debrid_id'], outcome,
                 )
-                # set_playback_candidate() (called on a 'submitted' outcome)
-                # updates status but doesn't clear the lease this pass just
-                # took — always reschedule so the row isn't stuck holding
-                # that 10-minute claim lease before collection-wait can run.
-                _schedule(repair['id'], outcome, 15 if outcome == 'submitted' else 300)
+                if outcome == 'submitted':
+                    # set_playback_candidate() already reset the search-attempt
+                    # counters and updates status, but doesn't clear the lease
+                    # this pass just took — always reschedule so the row isn't
+                    # stuck holding that 10-minute claim lease before
+                    # collection-wait can run.
+                    _schedule(repair['id'], outcome, 15)
+                    continue
+
+                attempts = _bump_attempt(repair['id'], 'candidate_search_attempts')
+                stuck_since = repair.get('candidate_search_stuck_since')
+                if attempts >= CANDIDATE_SEARCH_VISIBILITY_ATTEMPTS and not stuck_since:
+                    stuck_since = _now()
+                    conn = get_db_connection()
+                    try:
+                        conn.execute(
+                            "UPDATE nzb_playback_repairs SET candidate_search_stuck_since=? WHERE id=?",
+                            (stuck_since, repair['id']),
+                        )
+                        if repair.get('activity_id'):
+                            conn.execute(
+                                """UPDATE nzb_repair_activity SET outcome='skipped_max_attempts',
+                                   updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                                (repair['activity_id'],),
+                            )
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    log.warning(
+                        '[NZBPlayback] No healthy candidate found after %s attempts, flagging for visibility '
+                        'repair=%s item=%s',
+                        attempts, repair['id'], repair['cli_debrid_id'],
+                    )
+
+                if stuck_since:
+                    stuck_dt = datetime.strptime(stuck_since, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                    if datetime.now(timezone.utc) - stuck_dt >= timedelta(days=CANDIDATE_SEARCH_GIVE_UP_DAYS):
+                        conn = get_db_connection()
+                        try:
+                            if repair.get('activity_id'):
+                                conn.execute(
+                                    """UPDATE nzb_repair_activity SET outcome='abandoned_after_retries',
+                                       updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                                    (repair['activity_id'],),
+                                )
+                            conn.execute(
+                                """UPDATE nzb_playback_repairs SET status='complete',completed_at=CURRENT_TIMESTAMP,
+                                   next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
+                                   last_error='abandoned_after_retries',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                                (repair['id'],),
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
+                        log.warning(
+                            '[NZBPlayback] Giving up after %s days with no healthy candidate found repair=%s item=%s',
+                            CANDIDATE_SEARCH_GIVE_UP_DAYS, repair['id'], repair['cli_debrid_id'],
+                        )
+                        continue
+                    _schedule(repair['id'], outcome, CANDIDATE_SEARCH_SLOW_CADENCE_SECONDS)
+                    continue
+                _schedule(repair['id'], outcome, 300)
                 continue
             if not item or item.get('state') != 'Collected':
                 log.debug(
@@ -533,10 +659,25 @@ def process_pending_playback_repairs():
                     _schedule(repair['id'], error or f'HTTP {code}', 60)
                     continue
                 if code == 409:
-                    _schedule(repair['id'], body.get('code') or 'repair_busy', 15)
+                    busy_code = body.get('code') or 'repair_busy'
+                    if busy_code == 'stale_target':
+                        attempts = _bump_attempt(repair['id'], 'verify_stale_target_attempts')
+                        if attempts >= VERIFY_STALE_TARGET_MAX_ATTEMPTS:
+                            _reject_verification_candidate(repair, 'verify_stale_target_max_attempts')
+                            continue
+                    else:
+                        attempts = _bump_attempt(repair['id'], 'verify_busy_attempts')
+                        if attempts >= VERIFY_BUSY_MAX_ATTEMPTS:
+                            _reject_verification_candidate(repair, 'verify_busy_max_attempts')
+                            continue
+                    _schedule(repair['id'], busy_code, 15)
                     continue
                 status = body.get('status')
                 if status == 'unknown':
+                    attempts = _bump_attempt(repair['id'], 'verify_unknown_attempts')
+                    if attempts >= VERIFY_UNKNOWN_MAX_ATTEMPTS:
+                        _reject_verification_candidate(repair, body.get('reason') or 'verify_unknown_max_attempts')
+                        continue
                     _schedule(repair['id'], body.get('reason') or 'verification_unknown', 30)
                     continue
                 if status == 'broken':

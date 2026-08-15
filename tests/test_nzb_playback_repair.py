@@ -475,6 +475,151 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         self.assertEqual(repair['cleanup_status'], 'abandoned')
         self.assertIsNone(repair['next_attempt_at'])
 
+    def _prep_verifying_candidate(self):
+        playback.begin_playback_repair(self.item, self.target)
+        candidate = {'title': 'Working.Release', 'guid': 'GUID-3'}
+        playback.set_playback_candidate(7, candidate, 'new-uuid', 'Working.Release')
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE media_items SET state='Collected',filled_by_torrent_id='nzb:new-uuid',filled_by_file='new.mkv'")
+
+        client = _Client()
+        usenet_module = types.ModuleType('usenet')
+        usenet_module.get_usenet_client = lambda: client
+        old_usenet = sys.modules.get('usenet')
+        sys.modules['usenet'] = usenet_module
+        self.addCleanup(lambda: sys.modules.__setitem__('usenet', old_usenet) if old_usenet else sys.modules.pop('usenet', None))
+        old_item = playback._media_item
+        playback._media_item = lambda _id: dict(self.connect().execute('SELECT * FROM media_items WHERE id=7').fetchone())
+        self.addCleanup(lambda: setattr(playback, '_media_item', old_item))
+
+    def test_verify_stale_target_rejects_candidate_after_max_attempts(self):
+        """A verify-stage stale_target that never clears must not loop
+        forever — unlike the ack-stage stale_target case, there's no
+        confirmed-healthy replacement to protect yet, so the candidate
+        itself is rejected and search resumes."""
+        self._prep_verifying_candidate()
+        old_request = playback._mount_request
+        playback._mount_request = lambda path, payload, timeout: (409, {'code': 'stale_target'}, '')
+        self.addCleanup(lambda: setattr(playback, '_mount_request', old_request))
+
+        for attempt in range(1, playback.VERIFY_STALE_TARGET_MAX_ATTEMPTS):
+            playback.process_pending_playback_repairs()
+            with self.connect() as conn:
+                repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+            self.assertNotEqual(repair['status'], 'awaiting_candidate', f'should not reject before attempt {attempt}')
+            self.assertEqual(repair['verify_stale_target_attempts'], attempt)
+            with self.connect() as conn:
+                conn.execute('UPDATE nzb_playback_repairs SET next_attempt_at=NULL')
+                conn.commit()
+
+        playback.process_pending_playback_repairs()
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        self.assertEqual(repair['status'], 'awaiting_candidate')
+        self.assertIsNone(repair['candidate_info_hash'])
+        self.assertEqual(repair['last_error'], 'verify_stale_target_max_attempts')
+        self.assertEqual(repair['verify_stale_target_attempts'], 0)
+
+    def test_verify_unknown_rejects_candidate_after_max_attempts(self):
+        self._prep_verifying_candidate()
+        old_request = playback._mount_request
+        playback._mount_request = lambda path, payload, timeout: (
+            200, {'status': 'unknown', 'reason': 'replacement_not_ready'}, '')
+        self.addCleanup(lambda: setattr(playback, '_mount_request', old_request))
+
+        for attempt in range(1, playback.VERIFY_UNKNOWN_MAX_ATTEMPTS):
+            playback.process_pending_playback_repairs()
+            with self.connect() as conn:
+                repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+            self.assertNotEqual(repair['status'], 'awaiting_candidate', f'should not reject before attempt {attempt}')
+            self.assertEqual(repair['verify_unknown_attempts'], attempt)
+            with self.connect() as conn:
+                conn.execute('UPDATE nzb_playback_repairs SET next_attempt_at=NULL')
+                conn.commit()
+
+        playback.process_pending_playback_repairs()
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        self.assertEqual(repair['status'], 'awaiting_candidate')
+        self.assertIsNone(repair['candidate_info_hash'])
+        self.assertEqual(repair['last_error'], 'replacement_not_ready')
+        self.assertEqual(repair['verify_unknown_attempts'], 0)
+
+    def test_verify_busy_does_not_reject_within_short_window(self):
+        """repair_busy just means decypharr's own sweep is running — a few
+        attempts of that must not burn through the same short fuse as a
+        genuinely stale candidate."""
+        self._prep_verifying_candidate()
+        old_request = playback._mount_request
+        playback._mount_request = lambda path, payload, timeout: (409, {'code': 'repair_busy'}, '')
+        self.addCleanup(lambda: setattr(playback, '_mount_request', old_request))
+
+        for _ in range(playback.VERIFY_STALE_TARGET_MAX_ATTEMPTS + 5):
+            playback.process_pending_playback_repairs()
+            with self.connect() as conn:
+                conn.execute('UPDATE nzb_playback_repairs SET next_attempt_at=NULL')
+                conn.commit()
+
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        self.assertNotEqual(repair['status'], 'awaiting_candidate')
+        self.assertIsNotNone(repair['candidate_info_hash'])
+        self.assertEqual(repair['verify_busy_attempts'], playback.VERIFY_STALE_TARGET_MAX_ATTEMPTS + 5)
+
+    def test_candidate_search_flags_visibility_then_gives_up_after_days(self):
+        """No healthy candidate ever found: stays silent until the
+        visibility threshold, then flags itself in the activity log and
+        slows down, then eventually stops scheduling after the hard
+        give-up window rather than retrying forever."""
+        playback.begin_playback_repair(self.item, self.target)
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+
+        self._install_fake_repair_engine(lambda repair_row, item: 'no_replacement')
+        old_item = playback._media_item
+        playback._media_item = lambda _id: dict(self.item)
+        self.addCleanup(lambda: setattr(playback, '_media_item', old_item))
+
+        for attempt in range(1, playback.CANDIDATE_SEARCH_VISIBILITY_ATTEMPTS):
+            playback.process_pending_playback_repairs()
+            with self.connect() as conn:
+                conn.execute('UPDATE nzb_playback_repairs SET next_attempt_at=NULL')
+                conn.commit()
+        with self.connect() as conn:
+            updated = conn.execute('SELECT * FROM nzb_playback_repairs WHERE id=?', (repair['id'],)).fetchone()
+            activity = conn.execute('SELECT * FROM nzb_repair_activity WHERE id=?', (repair['activity_id'],)).fetchone()
+        self.assertIsNone(updated['candidate_search_stuck_since'])
+        self.assertEqual(activity['outcome'], 'replacement_pending')
+
+        # The attempt that reaches the visibility threshold must flag the
+        # activity log so this isn't silently invisible, without stopping.
+        playback.process_pending_playback_repairs()
+        with self.connect() as conn:
+            updated = conn.execute('SELECT * FROM nzb_playback_repairs WHERE id=?', (repair['id'],)).fetchone()
+            activity = conn.execute('SELECT * FROM nzb_repair_activity WHERE id=?', (repair['activity_id'],)).fetchone()
+        self.assertIsNotNone(updated['candidate_search_stuck_since'])
+        self.assertEqual(activity['outcome'], 'skipped_max_attempts')
+        self.assertEqual(updated['status'], 'awaiting_candidate')
+        self.assertIsNotNone(updated['next_attempt_at'])
+
+        # Force the stuck-since timestamp far enough in the past to cross
+        # the hard give-up threshold, then confirm it stops scheduling.
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE nzb_playback_repairs SET candidate_search_stuck_since=datetime('now', ?),"
+                "next_attempt_at=NULL WHERE id=?",
+                (f'-{playback.CANDIDATE_SEARCH_GIVE_UP_DAYS + 1} days', repair['id']),
+            )
+            conn.commit()
+        playback.process_pending_playback_repairs()
+        with self.connect() as conn:
+            updated = conn.execute('SELECT * FROM nzb_playback_repairs WHERE id=?', (repair['id'],)).fetchone()
+            activity = conn.execute('SELECT * FROM nzb_repair_activity WHERE id=?', (repair['activity_id'],)).fetchone()
+        self.assertEqual(updated['status'], 'complete')
+        self.assertEqual(activity['outcome'], 'abandoned_after_retries')
+        self.assertIsNone(updated['next_attempt_at'])
+
 
 if __name__ == '__main__':
     unittest.main()
