@@ -582,19 +582,33 @@ input, textarea, [contenteditable="true"] {
     gap: 1rem;
     overflow-x: auto;
     overflow-y: hidden;
-    padding-bottom: 0.5rem;
+    padding-bottom: 0.75rem;
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
 }
 
-/* Hide scrollbar but keep functionality */
+/* Visible horizontal scrollbar, styled to match the site's scrollbar theme */
 .category-grid {
-    scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none; /* IE/Edge */
+    scrollbar-width: thin; /* Firefox */
+    scrollbar-color: #5a5a5a #2c2c2c; /* Firefox: thumb track */
 }
 
 .category-grid::-webkit-scrollbar {
-    display: none; /* Chrome, Safari, Opera */
+    height: 8px;
+}
+
+.category-grid::-webkit-scrollbar-track {
+    background: #2c2c2c;
+    border-radius: 4px;
+}
+
+.category-grid::-webkit-scrollbar-thumb {
+    background: #5a5a5a;
+    border-radius: 4px;
+}
+
+.category-grid::-webkit-scrollbar-thumb:hover {
+    background: #707070;
 }
 
 /* Fixed width for items in horizontal scroll */
