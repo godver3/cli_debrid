@@ -446,6 +446,64 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         targets = _json_module.loads(repair['cleanup_targets_json'])
         self.assertEqual(targets[0]['status'], 'complete')
 
+    def test_persistent_generic_cleanup_failure_also_defers_after_max_attempts(self):
+        """A persistent non-stale, non-5xx cleanup failure (e.g. an
+        unexpected 4xx) must be treated the same as stale_target — capped
+        and deferred to the background retry — instead of retrying inline
+        forever, since it sits in the same fallback branch."""
+        playback.begin_playback_repair(self.item, self.target)
+        candidate = {'title': 'Working.Release', 'guid': 'GUID-3'}
+        playback.set_playback_candidate(7, candidate, 'new-uuid', 'Working.Release')
+        with self.connect() as conn:
+            conn.execute("UPDATE media_items SET state='Collected',filled_by_torrent_id='nzb:new-uuid',filled_by_file='new.mkv'")
+
+        client = _Client()
+        usenet_module = types.ModuleType('usenet')
+        usenet_module.get_usenet_client = lambda: client
+        old_usenet = sys.modules.get('usenet')
+        sys.modules['usenet'] = usenet_module
+        self.addCleanup(lambda: sys.modules.__setitem__('usenet', old_usenet) if old_usenet else sys.modules.pop('usenet', None))
+        old_item = playback._media_item
+        old_symlink = playback._symlink_matches
+        old_request = playback._mount_request
+        playback._media_item = lambda _id: dict(self.connect().execute('SELECT * FROM media_items WHERE id=7').fetchone())
+        playback._symlink_matches = lambda *args: True
+
+        def request(path, payload, timeout):
+            if path.endswith('/verify'):
+                return 200, {'status': 'healthy', 'entry_name': 'Working.Release', 'file_name': 'new.mkv'}, ''
+            return 400, {'code': 'bad_request'}, ''
+
+        playback._mount_request = request
+        self.addCleanup(lambda: setattr(playback, '_media_item', old_item))
+        self.addCleanup(lambda: setattr(playback, '_symlink_matches', old_symlink))
+        self.addCleanup(lambda: setattr(playback, '_mount_request', old_request))
+        plex_module = types.ModuleType('utilities.plex_functions')
+        plex_module.plex_update_item = lambda item: True
+        old_plex = sys.modules.get('utilities.plex_functions')
+        sys.modules['utilities.plex_functions'] = plex_module
+        self.addCleanup(lambda: sys.modules.__setitem__('utilities.plex_functions', old_plex) if old_plex else sys.modules.pop('utilities.plex_functions', None))
+
+        for attempt in range(1, playback.STALE_TARGET_MAX_ATTEMPTS):
+            playback.process_pending_playback_repairs()
+            with self.connect() as conn:
+                repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+            self.assertNotEqual(repair['status'], 'complete', f'should not complete after attempt {attempt}')
+            targets = _json_module.loads(repair['cleanup_targets_json'])
+            self.assertEqual(targets[0]['generic_attempts'], attempt)
+            with self.connect() as conn:
+                conn.execute('UPDATE nzb_playback_repairs SET next_attempt_at=NULL')
+                conn.commit()
+
+        playback.process_pending_playback_repairs()
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        self.assertEqual(repair['status'], 'complete')
+        self.assertEqual(repair['cleanup_status'], 'pending')
+        targets = _json_module.loads(repair['cleanup_targets_json'])
+        self.assertTrue(targets[0]['deferred'])
+        self.assertEqual(targets[0]['last_error'], 'bad_request')
+
     def test_expired_deferred_cleanup_is_abandoned_not_retried_forever(self):
         playback.begin_playback_repair(self.item, self.target)
         candidate = {'title': 'Working.Release', 'guid': 'GUID-3'}

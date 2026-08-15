@@ -800,8 +800,26 @@ def process_pending_playback_repairs():
                     all_actionable = False
                     target['last_error'] = 'stale_target'
                     continue
+                attempts = target.get('generic_attempts', 0) + 1
+                target['generic_attempts'] = attempts
+                reason = body.get('code') or f'HTTP {code}'
+                if attempts >= STALE_TARGET_MAX_ATTEMPTS:
+                    # Same reasoning as the stale_target case above: the new
+                    # file is already confirmed healthy, so a persistent
+                    # non-stale, non-5xx cleanup failure shouldn't hold the
+                    # repair's own finalization hostage either — defer to
+                    # the slower background retry instead of retrying
+                    # inline forever.
+                    log.warning(
+                        '[NZBPlayback] Exact cleanup deferring persistent failure repair=%s old_uuid=%s file=%s '
+                        'reason=%s to background retry after %s attempts; finalizing repair now',
+                        repair['id'], target.get('info_hash') or '', target.get('file_name') or '', reason, attempts,
+                    )
+                    target['deferred'] = True
+                    target['last_error'] = reason
+                    continue
                 all_actionable = False
-                target['last_error'] = body.get('code') or f'HTTP {code}'
+                target['last_error'] = reason
             has_deferred = any(t.get('status') != 'complete' and t.get('deferred') for t in targets)
             conn = get_db_connection()
             try:
