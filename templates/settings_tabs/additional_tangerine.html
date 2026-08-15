@@ -1006,6 +1006,22 @@ document.addEventListener('DOMContentLoaded', function() {
             <p class="settings-description">Name of the documentary TV shows folder</p>
         </div>
 
+        <div class="settings-form-group">
+            <label for="additional-anime_renaming_using_anidb" class="settings-title">Use AniDB for Anime Renaming:</label>
+            <input type="checkbox" id="additional-anime_renaming_using_anidb" name="Debug.anime_renaming_using_anidb"
+                   data-section="Debug" data-key="anime_renaming_using_anidb"
+                   {% if settings.get('Debug', {}).get('anime_renaming_using_anidb') %}checked{% endif %}>
+            <p class="settings-description">Use AniDB to rename anime episodes instead of Trakt metadata (symlinking only)</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-use_symlinks_on_windows" class="settings-title">Use Symlinks on Windows:</label>
+            <input type="checkbox" id="additional-use_symlinks_on_windows" name="Debug.use_symlinks_on_windows"
+                   data-section="Debug" data-key="use_symlinks_on_windows"
+                   {% if settings.get('Debug', {}).get('use_symlinks_on_windows') %}checked{% endif %}>
+            <p class="settings-description">Allow the use of symlinks on Windows. WARNING: Creating symlinks on Windows requires administrator privileges or Developer Mode to be enabled.</p>
+        </div>
+
         <div class="settings-form-group example-paths-container" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #444;">
             <h5 class="settings-title" style="margin-bottom: 10px;">Example Symlink Paths (Based on Current Settings):</h5>
             
