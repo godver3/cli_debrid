@@ -367,10 +367,25 @@ def _source_uuid(item):
 
 
 def _symlink_matches(item, entry_name, file_name):
+    """Confirm location_on_disk actually points at the given replacement file.
+
+    Symlinked/Local mode: location_on_disk is a cli_debrid-created symlink (or,
+    on Windows, a hardlink — os.path.islink() is False for those too) whose
+    target reveals the real mounted path.
+
+    Plex mode: location_on_disk is already the real mounted file path as
+    reported by Plex's own API — there is no cli_debrid-owned symlink to
+    resolve, so it's checked directly.
+    """
     link = item.get('location_on_disk') or ''
-    if not link or not os.path.islink(link):
+    if not link:
         return False
-    target = os.path.normpath(os.path.realpath(link))
+    if os.path.islink(link):
+        target = os.path.normpath(os.path.realpath(link))
+    elif os.path.exists(link):
+        target = os.path.normpath(link)
+    else:
+        return False
     return os.path.basename(target) == file_name and os.path.basename(os.path.dirname(target)) == entry_name
 
 

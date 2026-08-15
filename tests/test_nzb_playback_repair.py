@@ -38,6 +38,44 @@ class _Client:
         return True
 
 
+class TestSymlinkMatches(unittest.TestCase):
+    """_symlink_matches must work for both Symlinked/Local (symlink) and
+    Plex mode (real file path reported by Plex's API, never a symlink)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__('shutil').rmtree(self.tmpdir, ignore_errors=True))
+        self.entry_dir = os.path.join(self.tmpdir, 'Show.S01E01.Entry.Name')
+        os.makedirs(self.entry_dir)
+        self.real_file = os.path.join(self.entry_dir, 'Show.S01E01.mkv')
+        with open(self.real_file, 'w') as f:
+            f.write('data')
+
+    def test_symlinked_local_mode(self):
+        link = os.path.join(self.tmpdir, 'link.mkv')
+        os.symlink(self.real_file, link)
+        self.assertTrue(playback._symlink_matches(
+            {'location_on_disk': link}, 'Show.S01E01.Entry.Name', 'Show.S01E01.mkv'))
+
+    def test_plex_mode_real_file_no_symlink(self):
+        # Plex mode: location_on_disk is the real mounted path directly, as
+        # reported by Plex's API — never a symlink.
+        self.assertTrue(playback._symlink_matches(
+            {'location_on_disk': self.real_file}, 'Show.S01E01.Entry.Name', 'Show.S01E01.mkv'))
+
+    def test_plex_mode_wrong_file_does_not_match(self):
+        self.assertFalse(playback._symlink_matches(
+            {'location_on_disk': self.real_file}, 'Show.S01E01.Entry.Name', 'Different.File.mkv'))
+
+    def test_missing_path_returns_false(self):
+        self.assertFalse(playback._symlink_matches(
+            {'location_on_disk': os.path.join(self.tmpdir, 'does-not-exist.mkv')},
+            'Show.S01E01.Entry.Name', 'Show.S01E01.mkv'))
+
+    def test_empty_location_returns_false(self):
+        self.assertFalse(playback._symlink_matches({}, 'Show.S01E01.Entry.Name', 'Show.S01E01.mkv'))
+
+
 class TestNZBPlaybackRepair(unittest.TestCase):
     def test_candidate_keys_prefer_original_release_title(self):
         keys = playback.candidate_keys({
