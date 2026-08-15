@@ -301,7 +301,16 @@ class ScrapingQueue:
                         finally:
                             _cconn.close()
                         import re as _re_coal
-                        if _sibling_nzb and not _re_coal.search(r'[Ss]\d{2}[Ee]\d{2}', _sibling_nzb[1] or ''):
+                        # Check the original scraped release title first — it reflects what was
+                        # actually searched/matched and isn't obfuscated. filled_by_file (the
+                        # downloaded filename) is only a fallback: it's frequently an obfuscated
+                        # hex string for single-episode NZBs, which was wrongly read as "not a
+                        # normal episode filename, must be an unresolved pack" and caused
+                        # coalescing to fire for genuinely single-episode releases.
+                        _coal_check_title = _sibling_nzb[4] if _sibling_nzb else None  # original_scraped_torrent_title
+                        if not _coal_check_title and _sibling_nzb:
+                            _coal_check_title = _sibling_nzb[1]  # fall back to filled_by_file
+                        if _sibling_nzb and not _re_coal.search(r'[Ss]\d{2}[Ee]\d{2}', _coal_check_title or ''):
                             _job_id = _sibling_nzb[0]
                             _job_url = _sibling_nzb[2] or ''
                             _job_title = _sibling_nzb[3] or ''
