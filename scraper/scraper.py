@@ -1299,11 +1299,9 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     titles_to_try.append(('country_alias', alias))
                     tried_titles_lower.add(alias.lower())
 
-        # Execute scraping based on the determined titles with threading and deduplication protection
+        # Execute scraping based on the determined titles with threading
         logging.info(f"Will search with {len(titles_to_try)} titles: {[source for source, _ in titles_to_try]}")
-        
-        # Track already scraped episode formats to avoid duplicates
-        scraped_episode_formats = set()
+
         all_results_lock = threading.Lock()
         
         # Aggregate per-segment timings across all title searches
@@ -1311,19 +1309,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         timing_reports_count = 0
         
         def scrape_single_title(args):
-            """Helper function to scrape a single title with deduplication protection"""
+            """Helper function to scrape a single title. titles_to_try is already
+            deduplicated by tried_titles_lower at build time, so every call here
+            is for a genuinely distinct title — no further dedup needed."""
             source, search_title = args
-            
-            # For anime, check if we've already scraped this episode format
-            if is_anime and episode_formats:
-                # Create a key based on the episode formats to avoid duplicate scraping
-                format_key = tuple(sorted(episode_formats.values()))
-                with all_results_lock:
-                    if format_key in scraped_episode_formats:
-                        logging.info(f"Skipping duplicate episode format scrape for {source}: {search_title}")
-                        return [], [], {}
-                    scraped_episode_formats.add(format_key)
-            
+
             logging.info(f"Scraping with {source}: {search_title}")
             logging.debug(f"[scrape_main] Calling _do_scrape for '{search_title}' (source: {source}).")
 
