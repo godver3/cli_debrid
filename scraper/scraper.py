@@ -1214,35 +1214,31 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     aliases = metadata.get('aliases', {})
                     romanized_found = False
                     
-                    # Look for romanized titles in aliases (prioritize Japanese romanization patterns)
+                    # Look for a romanized title specifically among Japan-sourced aliases.
+                    # Previously this scanned every country's aliases and guessed "is this
+                    # Japanese?" from short substring patterns (e.g. 'ta', 'na', 'ri') — far
+                    # too permissive to be reliable, since those substrings show up
+                    # constantly in other languages too. Confirmed live: "Angriff auf Titan"
+                    # (German for "Attack on Titan") matched the pattern for 'ri' (in
+                    # "Angriff") and 'ta' (in "Titan") and got misfiled as a "Japanese
+                    # romanized alias," triggering a second, pointless scrape. The alias
+                    # dict is already keyed by the country/language it actually came from —
+                    # use that directly instead of guessing from the text.
                     for country_code, alias_list in aliases.items():
+                        if country_code.lower() != 'jp':
+                            continue
                         if isinstance(alias_list, list):
                             for alias in alias_list:
-                                # Check if this alias looks like a romanized Japanese title
+                                # Only the Latin-script form of a Japan-sourced alias is a
+                                # useful search query — the native kanji/kana form isn't.
                                 if alias and re.match(r'^[a-zA-Z\s\-]+$', alias) and alias.lower() not in tried_titles_lower:
                                     # Skip if it's just the English title again
                                     if alias.lower() != title.lower():
-                                        # Check for Japanese romanization patterns (common Japanese words/patterns)
-                                        japanese_patterns = [
-                                            r'\bno\b',  # "no" particle is very common in Japanese titles
-                                            r'(yama|kawa|saki|mura|hara|da|ta|ka|na|ma|sa|ra|wa|ga|zu|ji|chi|shi|ki|mi|ni|hi|ri|ai|ei|ou|uu)',  # Common Japanese syllable patterns
-                                            r'\w+(?:gami|kami|sama|chan|kun|san)\b',  # Japanese honorifics
-                                            r'\w+(?:ya|ko|ro|to|go|bo|po|zo|do|ba|pa)\b'  # Common Japanese ending patterns
-                                        ]
-                                        
-                                        # Check if it matches Japanese romanization patterns
-                                        is_likely_japanese = any(re.search(pattern, alias.lower()) for pattern in japanese_patterns)
-                                        
-                                        # Also check if it's NOT common English words
-                                        common_english_words = ['drugstore', 'soliloquy', 'pharmacy', 'apothecary', 'diary', 'diaries', 'story', 'tale', 'chronicles']
-                                        has_english_words = any(word in alias.lower() for word in common_english_words)
-                                        
-                                        if is_likely_japanese and not has_english_words:
-                                            logging.info(f"Adding Japanese romanized alias for anime: {alias}")
-                                            titles_to_try.append(('romanized_alias', alias))
-                                            tried_titles_lower.add(alias.lower())
-                                            romanized_found = True
-                                            break
+                                        logging.info(f"Adding Japanese romanized alias for anime: {alias}")
+                                        titles_to_try.append(('romanized_alias', alias))
+                                        tried_titles_lower.add(alias.lower())
+                                        romanized_found = True
+                                        break
                         if romanized_found:
                             break
                     
