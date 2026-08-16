@@ -1199,9 +1199,36 @@ def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
     # deleting by it silently no-ops. The item's own filled_by_torrent_id
     # ("nzb:<uuid>") is the CURRENT, authoritative job ID for whatever's
     # still sitting on the mount right now, so prefer that.
+    #
+    # But that torrent_id may be a season pack shared with sibling episodes
+    # (coalescing assigns the same job to every episode in the pack) — unlike
+    # the automated NZBRepair path, which only ever deletes an entry that
+    # cli_mount's own health check already independently confirmed dead,
+    # nothing here has verified this job is actually broken beyond "the one
+    # episode the user retried looked stuck." Deleting it unconditionally
+    # would take the whole pack down for every sibling still relying on it.
+    # Match the same sibling check the manual "Delete item" UI route uses
+    # before it removes anything from cli_mount.
     torrent_id = item.get('filled_by_torrent_id') or ''
     provider_job_id = torrent_id[4:] if torrent_id.startswith('nzb:') else (torrent_id or broken_nzb_id)
-    if provider_job_id:
+    if provider_job_id and torrent_id:
+        conn = get_db_connection()
+        try:
+            sibling_count = conn.execute(
+                "SELECT COUNT(*) FROM media_items "
+                "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                (torrent_id, item_id)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        if sibling_count == 0:
+            _delete_from_provider(provider_job_id, provider_job_id)
+        else:
+            logger.info(
+                f'[NZBRepair] Manual retry: skipping provider delete for {provider_job_id!r} — '
+                f'{sibling_count} sibling(s) still rely on it'
+            )
+    elif provider_job_id:
         _delete_from_provider(provider_job_id, provider_job_id)
 
     _move_to_wanted(item)
