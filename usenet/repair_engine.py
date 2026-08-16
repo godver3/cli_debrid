@@ -1652,11 +1652,35 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
 
             # --- REPLACEMENT CONFIRMED — now safe to delete broken ---
 
-            # Step 6: Bulk delete all items from Plex in ONE request (avoids WAL bloat)
+            # Step 6: Bulk delete all items from Plex in ONE request (Symlinked/Local only)
             # Step 7: Delete broken from provider (once per entry)
             # Step 8: Update DB to Adding with new torrent_id
+            #
+            # Symlinked/Local mode: get_symlink_path is deterministic
+            # (title/season/episode/version, not the specific release), so a
+            # replacement always lands at the exact same symlink path as the
+            # broken original — the rescan the Checking queue already
+            # triggers once the new symlink exists updates the existing Plex
+            # item in place (keeping addedAt/watch history) instead of it
+            # reappearing as a fresh "recently added" entry. Deleting first
+            # only orphans that match. Same reasoning already applied to
+            # retry_exhausted_item's manual-retry path.
+            #
+            # Plex mode is NOT the same: per _symlink_matches (database/
+            # nzb_playback_repair.py), location_on_disk there is the real
+            # mounted file path as Plex's own API reports it — there is no
+            # cli_debrid-owned symlink or deterministic path to key off, so a
+            # different replacement release genuinely is a different path
+            # from Plex's perspective. Skipping the delete there would risk
+            # leaving the dead entry orphaned alongside the new one instead
+            # of fixing anything, so Plex mode keeps the existing
+            # delete-then-recreate behavior.
+            symlinked_local = get_setting('File Management', 'file_collection_management') == 'Symlinked/Local'
 
-            plex_results = _bulk_delete_from_plex(db_items)
+            if not symlinked_local:
+                plex_results = _bulk_delete_from_plex(db_items)
+            else:
+                plex_results = {}
 
             # Step 7: Delete from provider (once, after Plex bulk delete)
             provider_deleted = _delete_from_provider(info_hash, entry_name)
@@ -1665,9 +1689,10 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
 
             for db_item in db_items:
                 item_id = db_item['id']
-                plex_deleted = plex_results.get(item_id, False)
-                if not plex_deleted:
-                    logger.warning(f'[NZBRepair] Plex delete failed/skipped for item {item_id} ({db_item.get("title")!r})')
+                if not symlinked_local:
+                    plex_deleted = plex_results.get(item_id, False)
+                    if not plex_deleted:
+                        logger.warning(f'[NZBRepair] Plex delete failed/skipped for item {item_id} ({db_item.get("title")!r})')
 
                 # Step 8: Update DB in-place
                 _update_db_for_repair(db_item, new_job_id, best, candidates[1:])
