@@ -214,7 +214,14 @@ def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None, 
                 if r.get('outcome') in retryable_outcomes and r.get('item_id') in states:
                     state, filled_by_title = states[r['item_id']]
                     r['current_item_state'] = state
-                    if state == 'Collected' and filled_by_title:
+                    # state='Collected' alone doesn't mean this row got fixed —
+                    # the give_up gate never touches DB state, so a
+                    # skipped_max_attempts item can sit at 'Collected' forever
+                    # while still pointing at the exact same dead file. Only
+                    # count it as resolved if the current title actually
+                    # differs from the one that was broken in this row.
+                    broken_title = r.get('broken_nzb_title') or r.get('broken_nzb_id') or ''
+                    if state == 'Collected' and filled_by_title and filled_by_title != broken_title:
                         r['current_replacement_title'] = filled_by_title
 
         return result, total

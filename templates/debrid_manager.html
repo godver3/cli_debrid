@@ -4486,7 +4486,7 @@ function _buildOutcomeTooltip(r) {
             lines.push('cli_mount link resolver re-triggered for this entry.');
             break;
         case 'skipped_max_attempts':
-            if (r.current_item_state === 'Collected') {
+            if (r.current_replacement_title) {
                 lines.push('Maximum repair attempts were reached, but the item has since been resolved (retried or fixed another way).');
             } else {
                 lines.push('Maximum repair attempts reached — requires manual intervention.');
@@ -4495,7 +4495,7 @@ function _buildOutcomeTooltip(r) {
             break;
         case 'manual_retry':
             lines.push('Manually retried after exhausting automatic repair attempts.');
-            if (r.current_item_state === 'Collected') {
+            if (r.current_replacement_title) {
                 lines.push('A replacement was found and collected successfully.');
             } else {
                 lines.push('Item moved to Wanted for a fresh scrape.');
@@ -4539,7 +4539,7 @@ function _usenetRenderActivity(rows, container, pagination) {
 
     rows.forEach((r, idx) => {
         const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
-        const resolvedElsewhere = (r.outcome === 'manual_retry' || r.outcome === 'skipped_max_attempts') && r.current_item_state === 'Collected';
+        const resolvedElsewhere = (r.outcome === 'manual_retry' || r.outcome === 'skipped_max_attempts') && !!r.current_replacement_title;
         const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'replacement_pending' ? '#ffaa44' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : resolvedElsewhere ? '#00d4aa' : r.outcome === 'manual_retry' ? '#4488ff' : '#ff4444';
         const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : resolvedElsewhere ? 'Replaced' : r.outcome === 'manual_retry' ? 'Retrying…' : r.outcome === 'skipped_max_attempts' ? 'Max Attempts' : (r.outcome || '—');
         const outcomeTooltip = _buildOutcomeTooltip(r);
