@@ -279,10 +279,26 @@ class ScrapingQueue:
                 # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] PASSED alternate scrape window check.")
                 pass
 
+            # A manual retry (usenet/repair_engine.retry_exhausted_item) skips
+            # coalescing on its very next scrape pass — it was retried
+            # specifically to get away from a broken job, and blindly
+            # coalescing into a sibling that still points at that same (or
+            # another dead) job can loop it forever. Every other item's
+            # coalescing behavior below is completely unchanged.
+            _skip_coalesce_manual_retry = False
+            try:
+                from usenet.repair_engine import _manual_retry_pending, _manual_retry_pending_lock
+                with _manual_retry_pending_lock:
+                    if item_to_process.get('id') in _manual_retry_pending:
+                        _manual_retry_pending.discard(item_to_process.get('id'))
+                        _skip_coalesce_manual_retry = True
+            except Exception:
+                pass
+
             # --- NZB season pack coalescing: if another episode of the same show/season
             # is already in Adding or Checking with an NZB job, reuse that job directly
             # instead of scraping again (which would pick a different season pack NZB).
-            if item_to_process.get('type') == 'episode':
+            if item_to_process.get('type') == 'episode' and not _skip_coalesce_manual_retry:
                 _coalesce_imdb = item_to_process.get('imdb_id')
                 _coalesce_season = item_to_process.get('season_number')
                 if _coalesce_imdb and _coalesce_season is not None:

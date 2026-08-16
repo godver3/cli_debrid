@@ -1164,6 +1164,16 @@ def _move_to_wanted(item: dict) -> None:
         logger.error(f'[NZBRepair] _move_to_wanted error for item {item.get("id")}: {e}')
 
 
+# Item IDs that were just moved to Wanted by a manual retry, consumed
+# (popped) by scraping_queue's season-pack coalescing check on that item's
+# very next scrape pass. Lets a manual retry skip coalescing for exactly one
+# attempt — e.g. so it can't loop forever re-coalescing into a sibling's
+# ghost job the way it was retried to get away from — without touching
+# coalescing behavior for every other (non-retried) item that scrapes.
+_manual_retry_pending: set = set()
+_manual_retry_pending_lock = _threading.Lock()
+
+
 def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
     """Manually retry an item stuck at 'skipped_max_attempts' (give_up).
 
@@ -1195,6 +1205,9 @@ def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
         _delete_from_provider(provider_job_id, provider_job_id)
 
     _move_to_wanted(item)
+
+    with _manual_retry_pending_lock:
+        _manual_retry_pending.add(item_id)
 
     # _move_to_wanted resets identity fields but leaves collected_at from the
     # OLD (broken) collection in place. The Adding queue's season-pack dedup
