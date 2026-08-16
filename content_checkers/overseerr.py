@@ -506,36 +506,74 @@ def remove_from_overseerr_by_tmdb_id(tmdb_id: int, media_type: str, imdb_id: str
                 'request_id': None
             }
 
-        # Step 1: Lookup request ID
+        # Step 1: Look up the media record and any request on it. The media record's
+        # id (mediaInfo.id) is distinct from the request id, and is what actually
+        # drives Overseerr/Jellyseerr's "Available"/"Partially Available" status and
+        # blocks re-requesting — deleting only the request leaves that status intact.
+        details = get_overseerr_details(overseerr_url, api_key, tmdb_id, media_type)
+        media_info = (details or {}).get('mediaInfo') or {}
+        media_id = media_info.get('id')
         request_id = get_overseerr_request_id(overseerr_url, api_key, tmdb_id, media_type)
 
-        if not request_id:
+        if not request_id and not media_id:
             return {
                 'success': False,
-                'message': f'No request found for TMDB ID {tmdb_id}',
+                'message': f'No request or media record found for TMDB ID {tmdb_id}',
                 'request_id': None,
                 'not_found': True  # Flag to indicate item wasn't in Overseerr
             }
 
-        # Step 2: Delete the request
-        url = f"{overseerr_url}/api/v1/request/{request_id}"
         headers = get_overseerr_headers(api_key)
+        request_deleted = False
+        request_error = None
 
-        response = api.delete(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        # Step 2: Delete the request, if one exists
+        if request_id:
+            url = f"{overseerr_url}/api/v1/request/{request_id}"
+            response = api.delete(url, headers=headers, timeout=REQUEST_TIMEOUT)
 
-        if response.status_code == 204:
-            logging.info(f"Successfully deleted Overseerr request {request_id} for TMDB {tmdb_id}")
+            if response.status_code == 204:
+                logging.info(f"Successfully deleted Overseerr request {request_id} for TMDB {tmdb_id}")
+                request_deleted = True
+            else:
+                error_text = response.text if hasattr(response, 'text') else 'Unknown error'
+                logging.error(f"Failed to delete Overseerr request {request_id}: HTTP {response.status_code} - {error_text}")
+                request_error = f'HTTP {response.status_code}: {error_text}'
+
+        # Step 3: Delete the media record itself so availability status actually
+        # clears (this is the same call Overseerr's own "Remove from Overseerr"
+        # button makes). Do this even if there was no request to delete, and even
+        # if the request delete above failed — the media record is independent.
+        media_deleted = False
+        media_error = None
+
+        if media_id:
+            media_url = f"{overseerr_url}/api/v1/media/{media_id}"
+            media_response = api.delete(media_url, headers=headers, timeout=REQUEST_TIMEOUT)
+
+            if media_response.status_code in (200, 204):
+                logging.info(f"Successfully deleted Overseerr media record {media_id} for TMDB {tmdb_id}")
+                media_deleted = True
+            else:
+                error_text = media_response.text if hasattr(media_response, 'text') else 'Unknown error'
+                logging.error(f"Failed to delete Overseerr media record {media_id}: HTTP {media_response.status_code} - {error_text}")
+                media_error = f'HTTP {media_response.status_code}: {error_text}'
+
+        if request_deleted or media_deleted:
+            message_parts = []
+            if request_deleted:
+                message_parts.append(f'request {request_id}')
+            if media_deleted:
+                message_parts.append(f'media record {media_id}')
             return {
                 'success': True,
-                'message': f'Removed request {request_id}',
+                'message': f"Removed {' and '.join(message_parts)}",
                 'request_id': request_id
             }
         else:
-            error_text = response.text if hasattr(response, 'text') else 'Unknown error'
-            logging.error(f"Failed to delete Overseerr request {request_id}: HTTP {response.status_code} - {error_text}")
             return {
                 'success': False,
-                'message': f'HTTP {response.status_code}: {error_text}',
+                'message': request_error or media_error or 'Unknown error',
                 'request_id': request_id
             }
 
