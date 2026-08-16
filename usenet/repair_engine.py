@@ -1702,9 +1702,40 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 plex_results = {}
 
             # Step 7: Delete from provider (once, after Plex bulk delete)
-            provider_deleted = _delete_from_provider(info_hash, entry_name)
-            if not provider_deleted:
-                logger.warning(f'[NZBRepair] Provider delete failed for {entry_name!r} — continuing anyway')
+            #
+            # info_hash here is whatever cli_mount's health check reported for
+            # THIS specific broken entry — but that can be a season-pack job
+            # hash shared by files cli_mount never flagged as broken (e.g. one
+            # file in a multi-episode NZB loses its segments while the rest
+            # of the post is still intact). db_items only covers the item(s)
+            # this specific entry matched; other live items can still be
+            # relying on the exact same torrent_id. Confirmed live: deleting
+            # unconditionally took out an entire otherwise-healthy 10-episode
+            # season pack over one flagged file. Same sibling check already
+            # applied to retry_exhausted_item's manual-retry path.
+            _repair_ids = {d['id'] for d in db_items}
+            _sibling_count = 0
+            if info_hash:
+                conn = get_db_connection()
+                try:
+                    _placeholders = ','.join('?' * len(_repair_ids)) if _repair_ids else '0'
+                    _sibling_count = conn.execute(
+                        f"SELECT COUNT(*) FROM media_items WHERE filled_by_torrent_id = ? "
+                        f"AND state IN ('Collected','Upgrading','Checking','Adding') AND id NOT IN ({_placeholders})",
+                        (f'nzb:{info_hash}', *_repair_ids)
+                    ).fetchone()[0]
+                finally:
+                    conn.close()
+
+            if _sibling_count == 0:
+                provider_deleted = _delete_from_provider(info_hash, entry_name)
+                if not provider_deleted:
+                    logger.warning(f'[NZBRepair] Provider delete failed for {entry_name!r} — continuing anyway')
+            else:
+                logger.info(
+                    f'[NZBRepair] Skipping provider delete for {info_hash!r} — '
+                    f'{_sibling_count} sibling(s) still rely on it'
+                )
 
             for db_item in db_items:
                 item_id = db_item['id']
