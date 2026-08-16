@@ -1435,9 +1435,12 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             _probe_section = 'Usenet Provider' if _is_nzb_for_probe else 'Debrid Provider'
             _probe_key = 'ffprobe_all_nzbs' if _is_nzb_for_probe else 'ffprobe_all_debrid_additions'
             if get_setting(_probe_section, _probe_key, False):
+                logging.info(f"[ffprobe] Running playability check ({_probe_key}) on '{source_file}'")
                 from usenet.repair_engine import _verify_file_readable
-                if not _verify_file_readable(source_file):
-                    logging.warning(f"Ffprobe playability check failed for '{source_file}' — rejecting and reverting to Wanted")
+                if _verify_file_readable(source_file):
+                    logging.info(f"[ffprobe] Playability check passed for '{source_file}'")
+                else:
+                    logging.warning(f"[ffprobe] Playability check FAILED for '{source_file}' — rejecting and reverting to Wanted")
                     _reject_unplayable_source(item, _is_nzb_for_probe)
                     return False
 
