@@ -1144,12 +1144,26 @@ def _reject_unplayable_source(item: Dict[str, Any], is_nzb: bool) -> None:
             if nzb_url:
                 add_to_not_wanted_nzb_guid(nzb_url)
         else:
-            from database.not_wanted_magnets import add_to_not_wanted
+            from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
             from debrid.common import extract_hash_from_magnet
             magnet = item.get('filled_by_magnet', '')
             hash_value = extract_hash_from_magnet(magnet) if magnet else None
             if hash_value:
                 add_to_not_wanted(hash_value)
+            # Also blacklist the raw URL itself (mirrors torrent_processor.py's
+            # add_to_not_wanted_urls alongside add_to_not_wanted). Needed because
+            # `magnet` here is frequently an unresolved Jackett indexer redirect
+            # link, not a real magnet: URI — is_magnet_not_wanted's hash-based
+            # comparison can never match that at scrape-filter time (it doesn't
+            # follow redirects), so a re-scrape can pick the exact same broken
+            # torrent again via a different indexer wrapping the same release.
+            # is_url_not_wanted is already checked everywhere is_magnet_not_wanted
+            # is, and both indexer links for the same release carry the same
+            # `file=` query param, so this closes the gap using the matching
+            # mechanism that already exists for it — no changes needed to the
+            # comparison logic itself.
+            if magnet and magnet.startswith('http'):
+                add_to_not_wanted_urls(magnet)
     except Exception as e:
         logging.warning(f"[ffprobe] Failed to add unplayable source to not-wanted: {e}")
 
