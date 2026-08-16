@@ -51,6 +51,9 @@ from database.not_wanted_magnets import (
     add_to_not_wanted_nzb_segment,
     extract_nzb_segment_id,
     is_nzb_segment_not_wanted,
+    is_magnet_not_wanted,
+    is_url_not_wanted,
+    is_nzb_guid_not_wanted,
 )
 from utilities.settings import get_setting
 from database.nzb_playback_repair import (
@@ -891,6 +894,22 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
         )
 
         nzb_results = [r for r in (results or []) if r.get('protocol') == 'nzb']
+
+        # Filter out not-wanted magnets/URLs/guids. Unlike scraping_queue.py's
+        # normal scrape path, this repair-specific search never went through
+        # that filtering at all — meaning a replacement candidate blacklisted
+        # for being dead (including via _blacklist_broken_nzb below, on the
+        # very entry this function is trying to replace) could still be
+        # picked again here. Same filter expression scraping_queue.py uses
+        # at its own call sites.
+        nzb_results = [
+            r for r in nzb_results
+            if not (
+                is_magnet_not_wanted(r.get('magnet') or r.get('nzb_url')) or
+                is_url_not_wanted(r.get('magnet') or r.get('nzb_url')) or
+                (r.get('nzb_url') and is_nzb_guid_not_wanted(r.get('parsed_info', {}).get('guid') or r.get('nzb_url')))
+            )
+        ]
 
         # Filter out broken release by both structured title and raw release name
         if broken_nzb_title:
