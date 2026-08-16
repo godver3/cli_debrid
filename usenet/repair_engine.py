@@ -1192,7 +1192,14 @@ def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
     if nzb_url:
         _blacklist_broken_nzb(nzb_url, item.get('nzb_segment_id', '') or '')
 
-    _delete_from_plex(item)
+    # Deliberately NOT calling _delete_from_plex(item) here. get_symlink_path
+    # is deterministic (based on title/season/episode/version, not the
+    # specific release), so a replacement always lands at the exact same
+    # path as before — a normal rescan updates the existing Plex item in
+    # place (keeping addedAt/watch history) once the new symlink exists.
+    # Deleting first just orphans that match, so the replacement shows up
+    # as a fresh "recently added" item instead. ffprobe's rejection path
+    # (_reject_unplayable_source) never touches Plex for the same reason.
 
     # broken_nzb_id (from the activity row logged back when this item first
     # failed) is often just the release title, not a real provider job ID —
