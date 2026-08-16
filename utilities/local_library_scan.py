@@ -1133,6 +1133,32 @@ def _apply_nzb_naming(source_file: str, item: Dict[str, Any]) -> str:
         return source_file
 
 
+def _reject_unplayable_source(item: Dict[str, Any], is_nzb: bool) -> None:
+    """Mark a confirmed-unplayable file's source as not-wanted and revert the item
+    to Wanted so it gets rescraped, mirroring the existing missing-segments/
+    checking-timeout rejection pattern used elsewhere in the queue processing."""
+    try:
+        if is_nzb:
+            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid
+            nzb_url = item.get('filled_by_magnet', '')
+            if nzb_url:
+                add_to_not_wanted_nzb_guid(nzb_url)
+        else:
+            from database.not_wanted_magnets import add_to_not_wanted
+            from debrid.common import extract_hash_from_magnet
+            magnet = item.get('filled_by_magnet', '')
+            hash_value = extract_hash_from_magnet(magnet) if magnet else None
+            if hash_value:
+                add_to_not_wanted(hash_value)
+    except Exception as e:
+        logging.warning(f"[ffprobe] Failed to add unplayable source to not-wanted: {e}")
+
+    try:
+        update_media_item_state(item.get('id'), 'Wanted')
+    except Exception as e:
+        logging.error(f"[ffprobe] Failed to revert item {item.get('id')} to Wanted after failed playability check: {e}")
+
+
 def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file: str, old_filename: str) -> None:
     """Remove the old symlink (and notify the media server) after a successful upgrade.
 
@@ -1400,6 +1426,23 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             
             # For NZB items in Plex mode with NZB naming enabled: move file to organised structure
             source_file = _apply_nzb_naming(source_file, item)
+
+            # Optional playability verification, gated by protocol-specific toggles
+            # (off by default). Only meaningful here in Symlinked/Local mode, which
+            # is the only mode that reaches this function with a real source_file.
+            _torrent_id_for_probe = str(item.get('filled_by_torrent_id', '') or '')
+            _is_nzb_for_probe = _torrent_id_for_probe.startswith('nzb:')
+            _probe_section = 'Usenet Provider' if _is_nzb_for_probe else 'Debrid Provider'
+            _probe_key = 'ffprobe_all_nzbs' if _is_nzb_for_probe else 'ffprobe_all_debrid_additions'
+            if get_setting(_probe_section, _probe_key, False):
+                logging.info(f"[ffprobe] Running playability check ({_probe_key}) on '{source_file}'")
+                from usenet.repair_engine import _verify_file_readable
+                if _verify_file_readable(source_file):
+                    logging.info(f"[ffprobe] Playability check passed for '{source_file}'")
+                else:
+                    logging.warning(f"[ffprobe] Playability check FAILED for '{source_file}' — rejecting and reverting to Wanted")
+                    _reject_unplayable_source(item, _is_nzb_for_probe)
+                    return False
 
             # Get destination path based on settings (using the found source_file)
             dest_file = get_symlink_path(item, source_file, skip_jikan_lookup=False)

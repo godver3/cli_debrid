@@ -303,6 +303,11 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Include the content source display name in the debrid folder name when Debrid File Naming is enabled.",
             "default": False
+        },
+        "ffprobe_all_debrid_additions": {
+            "type": "boolean",
+            "description": "Before collecting a debrid (Real-Debrid/etc.) file, probe it with ffprobe to confirm it's actually playable, on top of the normal checks. Symlinked/Local mode only. Requires ffprobe to be installed. This will slow down how long it takes items to reach Collected.",
+            "default": False
         }
     },
     "Usenet Provider": {
@@ -310,6 +315,11 @@ SETTINGS_SCHEMA = {
         "enabled": {
             "type": "boolean",
             "description": "Enable usenet as a download source via cli_mount",
+            "default": False
+        },
+        "ffprobe_all_nzbs": {
+            "type": "boolean",
+            "description": "Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Symlinked/Local mode only. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.",
             "default": False
         },
         "url": {
