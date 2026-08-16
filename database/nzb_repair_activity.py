@@ -197,17 +197,25 @@ def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None, 
         # instead of the repair engine, so there's no follow-up activity row
         # when it resolves. Enrich with the item's *current* state (computed
         # live, not stored) so the UI can show whether the retry actually
-        # landed instead of leaving an ambiguous "Retried" forever.
-        retry_item_ids = [r['item_id'] for r in result if r.get('outcome') == 'manual_retry' and r.get('item_id')]
+        # landed instead of leaving an ambiguous "Retried" forever. Also
+        # applies to skipped_max_attempts rows: the Retry button on an old
+        # row shouldn't stick around once a *later* retry already resolved
+        # the same item — the activity log is append-only, so an old row has
+        # no way to know a subsequent event fixed it.
+        retryable_outcomes = ('manual_retry', 'skipped_max_attempts')
+        retry_item_ids = [r['item_id'] for r in result if r.get('outcome') in retryable_outcomes and r.get('item_id')]
         if retry_item_ids:
             placeholders = ','.join('?' * len(retry_item_ids))
             state_rows = conn.execute(
-                f"SELECT id, state FROM media_items WHERE id IN ({placeholders})", retry_item_ids
+                f"SELECT id, state, filled_by_title FROM media_items WHERE id IN ({placeholders})", retry_item_ids
             ).fetchall()
-            states = {sr[0]: sr[1] for sr in state_rows}
+            states = {sr[0]: (sr[1], sr[2]) for sr in state_rows}
             for r in result:
-                if r.get('outcome') == 'manual_retry' and r.get('item_id') in states:
-                    r['current_item_state'] = states[r['item_id']]
+                if r.get('outcome') in retryable_outcomes and r.get('item_id') in states:
+                    state, filled_by_title = states[r['item_id']]
+                    r['current_item_state'] = state
+                    if state == 'Collected' and filled_by_title:
+                        r['current_replacement_title'] = filled_by_title
 
         return result, total
     except Exception as e:

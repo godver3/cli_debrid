@@ -4486,8 +4486,12 @@ function _buildOutcomeTooltip(r) {
             lines.push('cli_mount link resolver re-triggered for this entry.');
             break;
         case 'skipped_max_attempts':
-            lines.push('Maximum repair attempts reached — requires manual intervention.');
-            if (r.repair_attempts) lines.push('Attempts made: ' + r.repair_attempts);
+            if (r.current_item_state === 'Collected') {
+                lines.push('Maximum repair attempts were reached, but the item has since been resolved (retried or fixed another way).');
+            } else {
+                lines.push('Maximum repair attempts reached — requires manual intervention.');
+                if (r.repair_attempts) lines.push('Attempts made: ' + r.repair_attempts);
+            }
             break;
         case 'manual_retry':
             lines.push('Manually retried after exhausting automatic repair attempts.');
@@ -4535,17 +4539,19 @@ function _usenetRenderActivity(rows, container, pagination) {
 
     rows.forEach((r, idx) => {
         const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
-        const retryCollected = r.outcome === 'manual_retry' && r.current_item_state === 'Collected';
-        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'replacement_pending' ? '#ffaa44' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : retryCollected ? '#00d4aa' : r.outcome === 'manual_retry' ? '#4488ff' : '#ff4444';
-        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : retryCollected ? 'Replaced' : r.outcome === 'manual_retry' ? 'Retrying…' : r.outcome === 'skipped_max_attempts' ? 'Max Attempts' : (r.outcome || '—');
+        const resolvedElsewhere = (r.outcome === 'manual_retry' || r.outcome === 'skipped_max_attempts') && r.current_item_state === 'Collected';
+        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'replacement_pending' ? '#ffaa44' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : resolvedElsewhere ? '#00d4aa' : r.outcome === 'manual_retry' ? '#4488ff' : '#ff4444';
+        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : resolvedElsewhere ? 'Replaced' : r.outcome === 'manual_retry' ? 'Retrying…' : r.outcome === 'skipped_max_attempts' ? 'Max Attempts' : (r.outcome || '—');
         const outcomeTooltip = _buildOutcomeTooltip(r);
         const epSub = r.season_number ? `<br><span style="font-size:11px;color:#888">S${String(r.season_number).padStart(2,'0')}E${String(r.episode_number||0).padStart(2,'0')}</span>` : '';
         const activityTime = r.updated_at || r.created_at;
         const ts = activityTime ? new Date(activityTime + (activityTime.endsWith('Z') ? '' : 'Z')).toLocaleString() : '—';
         const brokenTitle = r.broken_nzb_title || r.broken_nzb_id || '—';
-        const replTitle = (r.replacement_title && r.replacement_title !== '—') ? r.replacement_title : null;
+        const replTitle = resolvedElsewhere && r.current_replacement_title
+            ? r.current_replacement_title
+            : (r.replacement_title && r.replacement_title !== '—') ? r.replacement_title : null;
         const candidateCell = _renderActivityCandidateCell(brokenTitle, replTitle, r.broken_nzb_id);
-        const retryBtn = r.outcome === 'skipped_max_attempts'
+        const retryBtn = (r.outcome === 'skipped_max_attempts' && !resolvedElsewhere)
             ? `<button class="dm-btn dm-btn-secondary dm-btn-xs" style="margin-left:8px"
                        data-item-id="${_esc(r.item_id)}" data-broken-id="${_esc(r.broken_nzb_id || '')}"
                        onclick="retryExhaustedRepair(this)" title="Move back to Wanted and try to find another replacement">Retry</button>`
