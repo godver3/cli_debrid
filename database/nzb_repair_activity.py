@@ -88,7 +88,8 @@ def log_repair_activity(
     next_repair_at=None,
 ) -> None:
     """outcome: 'replaced' | 'not_found' | 'no_replacement' | 'submission_failed' |
-                'plex_deleted' | 'error' | 'skipped_backoff' | 'skipped_max_attempts'"""
+                'plex_deleted' | 'error' | 'skipped_backoff' | 'skipped_max_attempts' |
+                'manual_retry'"""
     try:
         from datetime import datetime as _dt
         now = _dt.utcnow().strftime('%Y-%m-%d %H:%M:%S')

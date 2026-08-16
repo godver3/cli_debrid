@@ -5404,6 +5404,24 @@ def usenet_fix_single():
         return jsonify(success=False, error=str(e))
 
 
+@debrid_manager_bp.route('/api/usenet/repair/retry_exhausted', methods=['POST'])
+def usenet_retry_exhausted():
+    """Manually retry an item stuck at skipped_max_attempts: clean up the dead
+    entry, blacklist it, and move the item back to Wanted for a fresh scrape."""
+    try:
+        body = request.get_json(silent=True) or {}
+        item_id = body.get('item_id')
+        broken_nzb_id = body.get('broken_nzb_id', '') or ''
+        if not item_id:
+            return jsonify(success=False, error='item_id required'), 400
+        from usenet.repair_engine import retry_exhausted_item
+        result = retry_exhausted_item(int(item_id), broken_nzb_id)
+        return jsonify(success=result.get('outcome') == 'ok', result=result)
+    except Exception as e:
+        logging.error(f'[UsenetRepair] retry_exhausted error: {e}', exc_info=True)
+        return jsonify(success=False, error=str(e))
+
+
 @debrid_manager_bp.route('/api/usenet/repair/run', methods=['POST'])
 def usenet_run_repair():
     """Kick off a repair run in background. Accepts optional version_override in JSON body."""

@@ -1164,6 +1164,46 @@ def _move_to_wanted(item: dict) -> None:
         logger.error(f'[NZBRepair] _move_to_wanted error for item {item.get("id")}: {e}')
 
 
+def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
+    """Manually retry an item stuck at 'skipped_max_attempts' (give_up).
+
+    The give_up gate short-circuits before Plex/provider deletion ever runs,
+    so the dead entry is likely still sitting there — clean it up here,
+    blacklist it so re-scrape can't just pick the same dead release again,
+    then move the item back to Wanted. Also logs a fresh activity row with
+    repair_attempts=0 so a later get_repair_state() lookup for this
+    broken_nzb_id derives give_up=False again, in case it resurfaces.
+    """
+    item = _find_db_item_by_id(item_id)
+    if not item:
+        return {'outcome': 'error', 'message': f'No DB item found for id {item_id}'}
+
+    nzb_url = item.get('filled_by_magnet', '')
+    if nzb_url:
+        _blacklist_broken_nzb(nzb_url, item.get('nzb_segment_id', '') or '')
+
+    _delete_from_plex(item)
+    if broken_nzb_id:
+        _delete_from_provider(broken_nzb_id, broken_nzb_id)
+
+    _move_to_wanted(item)
+
+    log_repair_activity(
+        item_id=item_id,
+        title=item.get('title'),
+        media_type=item.get('type'),
+        season_number=item.get('season_number'),
+        episode_number=item.get('episode_number'),
+        broken_nzb_id=broken_nzb_id,
+        broken_nzb_title=item.get('filled_by_file', ''),
+        outcome='manual_retry',
+        triggered_by='manual',
+        repair_attempts=0,
+    )
+    logger.info(f'[NZBRepair] Manual retry: item {item_id} reset to Wanted (was skipped_max_attempts)')
+    return {'outcome': 'ok', 'message': 'Item reset to Wanted for re-scrape'}
+
+
 # ---------------------------------------------------------------------------
 # Settings helpers
 # ---------------------------------------------------------------------------
