@@ -299,7 +299,7 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
 
             logger.info(f'[CMSync] Built maps — torrent: {len(torrent_map)}, nzb: {len(nzb_map)}, location: {len(location_map)}')
 
-            _BATCH_SIZE = 500
+            _BATCH_SIZE = 50
             _batch_count = 0
 
             for entry in changes:
@@ -341,6 +341,10 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                     # Handle bad flag — trigger immediate re-insertion if cli_mount marked entry bad
                     if entry.get('bad'):
                         try:
+                            # Never hold a SQLite write transaction across provider HTTP.
+                            if _batch_count:
+                                conn.commit()
+                                _batch_count = 0
                             from usenet.debrid_repair_engine import reinsert_entry
                             folder_name = entry.get('folder_name', '')
                             info_hash = entry.get('info_hash', '')
@@ -415,6 +419,9 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                     _info_hash = entry.get('info_hash') or ''
                     if _cli_ids_to_register and _info_hash:
                         try:
+                            if _batch_count:
+                                conn.commit()
+                                _batch_count = 0
                             from usenet.climount_client import get_climount_client as _get_dc_sync
                             _dc_sync = _get_dc_sync()
                             if _dc_sync and _dc_sync.is_enabled():
@@ -430,6 +437,9 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                                 'SELECT tags FROM media_items WHERE id = ?', (item_ids[0],)
                             ).fetchone()
                             if _tags_row and _tags_row[0]:
+                                if _batch_count:
+                                    conn.commit()
+                                    _batch_count = 0
                                 from usenet.climount_client import get_climount_client as _get_dc_tags
                                 _dc_tags = _get_dc_tags()
                                 if _dc_tags and _dc_tags.is_enabled():
@@ -442,6 +452,7 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                                             'UPDATE media_items SET tags_pushed_at = ? WHERE id = ?',
                                             (_dt_tags.now(), item_ids[0])
                                         )
+                                        _batch_count += 1
                                     else:
                                         logger.warning(f"[CMSync] Tag push returned false for {_info_hash} (tags='{_tags_row[0]}')")
                                 else:

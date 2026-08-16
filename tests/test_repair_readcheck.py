@@ -32,6 +32,7 @@ def _load():
     if 'requests' not in sys.modules:
         sys.modules['requests'] = _permissive_module('requests')
     for n in ['database', 'database.core', 'database.nzb_repair_activity',
+              'database.nzb_playback_repair',
               'database.not_wanted_magnets']:
         sys.modules[n] = _permissive_module(n)
     if 'utilities' not in sys.modules:
@@ -128,6 +129,90 @@ class TestVerifyFileReadable(unittest.TestCase):
         self._stub_probe([False])
         re_mod._verify_file_readable(self.tmp.name, attempts=1)
         self.assertEqual(self.offsets, [None])  # start-read (no offset)
+
+
+class TestReplacementSubmission(unittest.TestCase):
+    def test_exact_active_repair_suppresses_duplicate_not_found(self):
+        original = re_mod.has_active_exact_repair
+        calls = []
+        re_mod.has_active_exact_repair = lambda item_id, old_uuid, filename: (
+            calls.append((item_id, old_uuid, filename)) or True
+        )
+        self.addCleanup(lambda: setattr(re_mod, 'has_active_exact_repair', original))
+
+        target = {'cli_debrid_id': 7, 'file_name': 'old.mkv'}
+        self.assertTrue(re_mod._has_pending_exact_playback_repair(target, 'old-uuid'))
+        self.assertEqual(calls, [(7, 'old-uuid', 'old.mkv')])
+        self.assertFalse(re_mod._has_pending_exact_playback_repair(None, 'old-uuid'))
+
+    def test_general_repair_skips_item_with_active_exact_repair(self):
+        """The general repair engine must not launch a second, competing
+        repair for an item the minimal exact-playback-repair system is
+        already actively working — even though the item still has a live,
+        matching DB row (not an orphan). Regression test for the race where
+        two independent candidates got submitted for the same broken file."""
+        original_reasons = re_mod.PLAYBACK_REPAIR_REASONS
+        re_mod.PLAYBACK_REPAIR_REASONS = {'usenet_segment_missing', 'media_probe_failed', 'media_no_playable_stream'}
+        self.addCleanup(lambda: setattr(re_mod, 'PLAYBACK_REPAIR_REASONS', original_reasons))
+
+        original_has_active = re_mod.has_active_exact_repair
+        re_mod.has_active_exact_repair = lambda item_id, old_uuid, filename: True
+        self.addCleanup(lambda: setattr(re_mod, 'has_active_exact_repair', original_has_active))
+
+        original_fetch = re_mod.fetch_broken_items
+        re_mod.fetch_broken_items = lambda *a, **k: [{
+            'entry_name': 'Old.Release', 'file_name': 'old.mkv', 'info_hash': 'old-uuid',
+            'cli_debrid_id': 42, 'reason': 'usenet_segment_missing',
+        }]
+        self.addCleanup(lambda: setattr(re_mod, 'fetch_broken_items', original_fetch))
+
+        original_find = re_mod._find_db_item_by_id
+        re_mod._find_db_item_by_id = lambda item_id: {
+            'id': 42, 'state': 'Collected', 'filled_by_torrent_id': 'nzb:old-uuid', 'title': 'Old Show',
+        }
+        self.addCleanup(lambda: setattr(re_mod, '_find_db_item_by_id', original_find))
+
+        activity_calls = []
+        original_log = re_mod.log_repair_activity
+        re_mod.log_repair_activity = lambda **kwargs: activity_calls.append(kwargs)
+        self.addCleanup(lambda: setattr(re_mod, 'log_repair_activity', original_log))
+
+        summary = re_mod._run_repair_inner(triggered_by='test')
+
+        # No repair activity logged, no replacement/not_found counted — the
+        # item was skipped entirely and left for the minimal repair to
+        # finish, not double-handled.
+        self.assertEqual(activity_calls, [])
+        self.assertEqual(summary.get('replaced', 0), 0)
+        self.assertEqual(summary.get('not_found', 0), 0)
+        self.assertEqual(summary.get('errors', 0), 0)
+
+    def test_explicit_failed_job_is_not_accepted(self):
+        class Client:
+            last_failed_job_id = ''
+
+            def add_nzb_content(self, **kwargs):
+                return 'failed-uuid'
+
+            def get_job_status(self, job_id):
+                return {'state': 'failed'}
+
+        client = Client()
+        usenet_mod = types.ModuleType('usenet')
+        usenet_mod.reset_usenet_client = lambda: None
+        usenet_mod.get_usenet_client = lambda: client
+        old = sys.modules.get('usenet')
+        sys.modules['usenet'] = usenet_mod
+        self.addCleanup(lambda: sys.modules.__setitem__('usenet', old) if old else sys.modules.pop('usenet', None))
+        import time
+        old_sleep = time.sleep
+        time.sleep = lambda *_: None
+        self.addCleanup(lambda: setattr(time, 'sleep', old_sleep))
+
+        job_id, title, disposition = re_mod._submit_and_confirm_replacement(
+            {'title': 'Bad.Release', '_prefetched_nzb': '<nzb />'}, 'Title')
+        self.assertEqual((job_id, title, disposition),
+                         ('failed-uuid', 'Bad.Release', 'failed'))
 
 
 if __name__ == '__main__':

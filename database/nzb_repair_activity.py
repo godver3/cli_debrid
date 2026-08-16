@@ -35,6 +35,7 @@ def create_nzb_repair_activity_table() -> None:
                 repair_attempts      INTEGER DEFAULT 0,
                 last_repair_at       TIMESTAMP,
                 next_repair_at       TIMESTAMP,
+                updated_at           TIMESTAMP,
                 created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_nzb_repair_created
@@ -57,6 +58,10 @@ def create_nzb_repair_activity_table() -> None:
             pass
         try:
             conn.execute("ALTER TABLE nzb_repair_activity ADD COLUMN next_repair_at TIMESTAMP")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE nzb_repair_activity ADD COLUMN updated_at TIMESTAMP")
         except Exception:
             pass
         conn.commit()

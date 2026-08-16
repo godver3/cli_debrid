@@ -326,6 +326,8 @@ class ProgramRunner:
             'task_sync_cli_mount_changes': 5 * 60, # Run every 5 minutes
             'task_push_pending_climount_tags': 5 * 60, # Run every 5 minutes — catches tags changed on cli_debrid side only
             'task_nzb_health_check': 10,             # Run every 10 seconds — polls NZB items in Adding
+            'task_nzb_playback_repair_completion': 15, # Confirm only already-started playback repairs
+            'task_nzb_playback_cleanup_retry': 20 * 60, # Background retry for old-file cleanup deferred after finalization
             'task_backfill_plex_guids': 24 * 60 * 60,    # Run once (disabled by default)
             'task_backfill_plex_ms_item_id': 24 * 60 * 60, # Run once (disabled by default)
             # --- END EDIT ---
@@ -526,6 +528,8 @@ class ProgramRunner:
             'task_update_queue_views',
             'task_send_notifications',
             'task_nzb_health_check',
+            'task_nzb_playback_repair_completion',
+            'task_nzb_playback_cleanup_retry',
             # Essential Periodic Tasks
             'task_check_service_connectivity',
             'task_heartbeat',
@@ -3574,6 +3578,19 @@ class ProgramRunner:
                         logging.debug(f'[NZB] {torrent_id} still queued/unknown — waiting')
                         continue
                     elif progress == -2:
+                        try:
+                            from database.nzb_playback_repair import reject_active_candidate
+                            if reject_active_candidate(item_id, job_id, 'provider_job_missing'):
+                                logging.warning(
+                                    '[NZBPlayback] Provisional candidate %s disappeared; original retained and candidate excluded',
+                                    job_id,
+                                )
+                                adding_queue.remove_item(item)
+                                continue
+                        except Exception as _playback_ghost_err:
+                            logging.error('[NZBPlayback] Could not persist missing candidate %s: %s',
+                                          job_id, _playback_ghost_err, exc_info=True)
+                            continue
                         # Ghost job — never existed in cli_mount or already purged.
                         # Move primary item AND all siblings to Wanted (not retry in Adding)
                         # so they re-scrape fresh. Do NOT retry from scrape_results here
@@ -3603,6 +3620,19 @@ class ProgramRunner:
                                 logging.error(f'[NZB] Failed to move ghost item {_gi.get("id")} to Wanted: {_gi_err}')
                         continue
                     elif progress == -1:
+                        try:
+                            from database.nzb_playback_repair import reject_active_candidate
+                            if reject_active_candidate(item_id, job_id, 'provider_job_failed'):
+                                logging.warning(
+                                    '[NZBPlayback] Provisional candidate %s failed; original retained and candidate excluded',
+                                    job_id,
+                                )
+                                adding_queue.remove_item(item)
+                                continue
+                        except Exception as _playback_fail_err:
+                            logging.error('[NZBPlayback] Could not persist failed candidate %s: %s',
+                                          job_id, _playback_fail_err, exc_info=True)
+                            continue
                         logging.warning(f'[NZB] {torrent_id} failed in cli_mount — adding to not-wanted and moving back to Scraping')
                         try:
                             from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid, add_to_not_wanted_nzb_segment as _add_seg
@@ -3734,6 +3764,19 @@ class ProgramRunner:
                             except Exception:
                                 pass
                             logging.debug(f'[NZB] {torrent_id} progress={progress}% — waiting')
+                            continue
+                        try:
+                            from database.nzb_playback_repair import reject_active_candidate
+                            if reject_active_candidate(item_id, job_id, 'provider_job_timeout'):
+                                logging.warning(
+                                    '[NZBPlayback] Provisional candidate %s timed out; original retained and candidate excluded',
+                                    job_id,
+                                )
+                                adding_queue.remove_item(item)
+                                continue
+                        except Exception as _playback_timeout_err:
+                            logging.error('[NZBPlayback] Could not persist timed-out candidate %s: %s',
+                                          job_id, _playback_timeout_err, exc_info=True)
                             continue
                         # Download timed out — treat like a failed job: add URL to not-wanted,
                         # delete from cli_mount, try next scrape result or move to Wanted.
@@ -4662,6 +4705,23 @@ class ProgramRunner:
 
         except Exception as e:
             logging.error(f'[PlexGUIDBackfill] Task error: {e}', exc_info=True)
+
+    def task_nzb_playback_repair_completion(self):
+        """Verify and clean only active NZB playback repairs; never scans the backlog."""
+        try:
+            from database.nzb_playback_repair import process_pending_playback_repairs
+            process_pending_playback_repairs()
+        except Exception as exc:
+            logging.error('[NZBPlayback] Completion task failed: %s', exc, exc_info=True)
+
+    def task_nzb_playback_cleanup_retry(self):
+        """Slow-cadence background retry for old-file cleanup deferred by the
+        fast completion worker — repairs already finalized as replaced."""
+        try:
+            from database.nzb_playback_repair import retry_deferred_playback_cleanups
+            retry_deferred_playback_cleanups()
+        except Exception as exc:
+            logging.error('[NZBPlayback] Cleanup retry task failed: %s', exc, exc_info=True)
 
     def task_repair_broken_nzbs(self, triggered_by: str = 'scheduled'):
         """Scan cli_mount for broken NZBs and attempt to repair them via re-scrape."""
@@ -10279,4 +10339,3 @@ def run_program():
 
 if __name__ == "__main__":
     run_program()
-

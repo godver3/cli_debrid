@@ -8,11 +8,14 @@ import logging
 import time
 import random
 import uuid
+import threading
 from datetime import datetime
 
 # --- Constants ---
 MAX_STORED_NOTIFICATIONS = 50 # Define max notifications to keep in DB
 DEFAULT_LONG_EXECUTION_THRESHOLD_SECONDS = 1.0 # Define a default threshold
+_wal_init_lock = threading.Lock()
+_wal_initialized_paths = set()
 
 # --- String Normalization ---
 def normalize_string(input_str):
@@ -183,8 +186,14 @@ def get_db_connection(db_path=None):
     # Increased timeout to 30 seconds for better concurrent access handling
     conn = sqlite3.connect(db_path, timeout=30)
 
-    # Enable WAL mode for concurrent reads during writes
-    conn.execute('PRAGMA journal_mode=WAL')
+    # journal_mode mutates database state and can itself contend with writers.
+    # Initialize it once per database path instead of on every connection.
+    normalized_db_path = os.path.abspath(db_path)
+    if normalized_db_path not in _wal_initialized_paths:
+        with _wal_init_lock:
+            if normalized_db_path not in _wal_initialized_paths:
+                conn.execute('PRAGMA journal_mode=WAL')
+                _wal_initialized_paths.add(normalized_db_path)
 
     # Set busy timeout at connection level (30 seconds)
     conn.execute('PRAGMA busy_timeout = 30000')
