@@ -5574,6 +5574,20 @@ def debrid_repair_activity():
         return jsonify(success=False, error=str(e))
 
 
+@debrid_manager_bp.route('/api/debrid/repair/activity/clear', methods=['POST'])
+def debrid_repair_activity_clear():
+    """Clear the debrid repair activity log. Shares the nzb_repair_activity
+    table with the NZB log, scoped by the same broken_nzb_id prefix the
+    debrid engine's own reads use."""
+    try:
+        from database.nzb_repair_activity import clear_repair_activity
+        deleted = clear_repair_activity(source='debrid')
+        return jsonify(success=True, deleted=deleted)
+    except Exception as e:
+        logging.error(f'[DebridRepair] activity clear error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
 @debrid_manager_bp.route('/api/debrid/repair/scan_status')
 def debrid_scan_status():
     """Check if cli_mount is currently running a health sweep."""

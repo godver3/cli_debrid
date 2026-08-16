@@ -901,6 +901,7 @@
                         <option value="error">Error</option>
                     </select>
                     <button onclick="debridLoadActivity(document.getElementById('dr-filter-select').value||null)" class="un-btn"><i class="fa-solid fa-rotate" style="color:#CE93D8"></i> Refresh</button>
+                    <button onclick="debridClearActivity()" class="un-btn"><i class="fa-solid fa-trash" style="color:#ff4444"></i> Clear Log</button>
                 </div>
             </div>
             <div id="dr-activity-container">
@@ -5151,6 +5152,23 @@ async function debridLoadActivity(filter) {
     const sel = document.getElementById('dr-filter-select');
     if (sel) sel.value = filter || '';
     await _debridFetchActivity();
+}
+
+async function debridClearActivity() {
+    if (!confirm('Clear the entire debrid repair activity log?\n\nThis only deletes the log history — it does not touch any media, Plex entries, or provider jobs.\n\nContinue?')) return;
+    try {
+        const r = await fetch('/debrid_manager/api/debrid/repair/activity/clear', {method: 'POST'});
+        const d = await r.json();
+        if (d.success) {
+            _debridActivityOffset = 0;
+            await _debridFetchActivity();
+        } else {
+            alert('Failed to clear activity log: ' + (d.error || 'unknown error'));
+        }
+    } catch(e) {
+        console.error('[Debrid] activity clear error', e);
+        alert('Failed to clear activity log');
+    }
 }
 
 async function _debridFetchActivity() {
