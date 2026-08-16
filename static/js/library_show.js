@@ -2320,7 +2320,10 @@ async function handleDeleteSeason(event) {
         if (result && result.success) {
             // Refresh immediately - see comment on the single-episode delete path
             // for why this doesn't wait on the popup being closed.
-            loadShowData();
+            await loadShowData();
+            // Re-render defaults back to season 1 - switch back to the season that
+            // was just deleted so its now-missing state is visible.
+            switchTab(seasonNumber);
 
             // Build deletion report using shared utility
             const reportMessage = buildDeletionReport(result, seasonTitle);
@@ -2570,7 +2573,10 @@ async function handleBulkDeleteEpisodes(checkboxes, seasonNumber) {
 
     // Refresh immediately - see comment on the single-episode delete path for why
     // this doesn't wait on the popup being closed.
-    loadShowData();
+    await loadShowData();
+    // Re-render defaults back to season 1 - switch back to the season these
+    // episodes were actually deleted from.
+    switchTab(seasonNumber);
 
     showPopup({
         type: failed.length === 0 ? POPUP_TYPES.SUCCESS : POPUP_TYPES.WARNING,
@@ -2790,7 +2796,10 @@ async function handleDeleteEpisode(event) {
             // user happens to dismiss the popup below (which was racy: onclick set
             // after the popup exists could lose to an already-attached default
             // close handler if the user closed it fast enough).
-            loadShowData();
+            await loadShowData();
+            // Re-render defaults back to season 1 - switch back to the season the
+            // deleted episode was actually in.
+            switchTab(seasonNumber);
 
             // Build detailed deletion report
             const reportMessage = buildDeletionReport(result, episodeTitle);
