@@ -1192,14 +1192,24 @@ def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
     if nzb_url:
         _blacklist_broken_nzb(nzb_url, item.get('nzb_segment_id', '') or '')
 
-    # Deliberately NOT calling _delete_from_plex(item) here. get_symlink_path
-    # is deterministic (based on title/season/episode/version, not the
-    # specific release), so a replacement always lands at the exact same
-    # path as before — a normal rescan updates the existing Plex item in
+    # Symlinked/Local mode: deliberately NOT calling _delete_from_plex(item).
+    # get_symlink_path is deterministic (based on title/season/episode/version,
+    # not the specific release), so a replacement always lands at the exact
+    # same path as before — a normal rescan updates the existing Plex item in
     # place (keeping addedAt/watch history) once the new symlink exists.
     # Deleting first just orphans that match, so the replacement shows up
     # as a fresh "recently added" item instead. ffprobe's rejection path
     # (_reject_unplayable_source) never touches Plex for the same reason.
+    #
+    # Plex mode is different: per _symlink_matches (database/
+    # nzb_playback_repair.py), location_on_disk there is the real mounted
+    # file path as Plex's own API reports it — no cli_debrid-owned symlink
+    # or deterministic path to key off, so a different replacement release
+    # genuinely is a different path from Plex's perspective. Skipping the
+    # delete there risks leaving the dead entry orphaned alongside the new
+    # one, so Plex mode keeps the original delete-then-recreate behavior.
+    if get_setting('File Management', 'file_collection_management') != 'Symlinked/Local':
+        _delete_from_plex(item)
 
     # broken_nzb_id (from the activity row logged back when this item first
     # failed) is often just the release title, not a real provider job ID —
