@@ -1283,7 +1283,28 @@ class CheckingQueue:
                                             if directory:
                                                 # Store item type with directory for proper section matching
                                                 item_type = updated_item_data.get('type', 'episode')  # Default to episode for shows
-                                                directories_to_scan[directory] = item_type
+
+                                                # If this item was ffprobe-verified (playability check enabled
+                                                # for its protocol), scan its directory immediately instead of
+                                                # waiting for the batched scan at the end of this torrent
+                                                # group - a confirmed-playable file should show up in Plex
+                                                # right away. Leaves the batched path below completely
+                                                # untouched for every item where the setting is off.
+                                                _torrent_id_for_scan = str(updated_item_data.get('filled_by_torrent_id', '') or '')
+                                                _is_nzb_for_scan = _torrent_id_for_scan.startswith('nzb:')
+                                                _ffprobe_scan_section = 'Usenet Provider' if _is_nzb_for_scan else 'Debrid Provider'
+                                                _ffprobe_scan_key = 'ffprobe_all_nzbs' if _is_nzb_for_scan else 'ffprobe_all_debrid_additions'
+                                                if get_setting(_ffprobe_scan_section, _ffprobe_scan_key, False):
+                                                    try:
+                                                        if use_jellyfin:
+                                                            emby_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
+                                                        elif use_plex:
+                                                            plex_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
+                                                        logging.info(f"[ffprobe] Triggered immediate media server scan for verified directory: {directory}")
+                                                    except Exception as _ffprobe_scan_err:
+                                                        logging.warning(f"[ffprobe] Immediate scan failed for {directory}: {_ffprobe_scan_err}")
+                                                else:
+                                                    directories_to_scan[directory] = item_type
 
                                 conn = get_db_connection()
                                 cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_in_torrent_group['id'],))
