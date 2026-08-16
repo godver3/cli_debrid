@@ -2103,22 +2103,22 @@ async function handleDeleteShow(event) {
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     message: reportMessage,
-                    autoClose: false,  // Require user to close manually
-                    onConfirm: () => {
-                        // Redirect to library page after user closes notification
-                        window.location.href = '/library';
-                    }
+                    autoClose: false  // Require user to close manually
                 });
 
-                // Add close button callback for redirect
-                setTimeout(() => {
-                    const closeButton = document.querySelector('.universal-popup #popupClose');
-                    if (closeButton) {
-                        closeButton.onclick = () => {
-                            window.location.href = '/library';
-                        };
-                    }
-                }, 100);
+                // Redirect once the user closes the report. showPopup's onConfirm
+                // isn't invoked for SUCCESS-type popups (only CONFIRM/PROMPT), so
+                // wire the close button directly - synchronously, right here, since
+                // the popup and its default close handler already exist in the DOM
+                // by the time showPopup() returns (no setTimeout delay needed, and
+                // a delay here previously raced the default handler: closing fast
+                // enough left the user stranded on the now-deleted show's page).
+                const closeButton = document.querySelector('.universal-popup #popupClose');
+                if (closeButton) {
+                    closeButton.onclick = () => {
+                        window.location.href = '/library';
+                    };
+                }
             } else {
                 throw new Error(result.error || 'Failed to delete show');
             }
@@ -2318,28 +2318,18 @@ async function handleDeleteSeason(event) {
         hideDeletionLoading();
 
         if (result && result.success) {
+            // Refresh immediately - see comment on the single-episode delete path
+            // for why this doesn't wait on the popup being closed.
+            loadShowData();
+
             // Build deletion report using shared utility
             const reportMessage = buildDeletionReport(result, seasonTitle);
 
             showPopup({
                 type: POPUP_TYPES.SUCCESS,
                 message: reportMessage,
-                autoClose: false,  // Require user to close manually
-                onConfirm: () => {
-                    // Reload show data after user closes notification
-                    loadShowData();
-                }
+                autoClose: false  // Require user to close manually
             });
-
-            // Add close button callback for reload
-            setTimeout(() => {
-                const closeButton = document.querySelector('.universal-popup #popupClose');
-                if (closeButton) {
-                    closeButton.onclick = () => {
-                        loadShowData();
-                    };
-                }
-            }, 100);
         } else {
             throw new Error(result.error || 'Failed to delete season');
         }
@@ -2578,19 +2568,15 @@ async function handleBulkDeleteEpisodes(checkboxes, seasonNumber) {
         failed.forEach(f => reportLines.push(`✗ ${f.label}: ${escapeHtml(f.error)}`));
     }
 
+    // Refresh immediately - see comment on the single-episode delete path for why
+    // this doesn't wait on the popup being closed.
+    loadShowData();
+
     showPopup({
         type: failed.length === 0 ? POPUP_TYPES.SUCCESS : POPUP_TYPES.WARNING,
         message: reportLines.join('\n'),
-        autoClose: false,
-        onConfirm: () => loadShowData()
+        autoClose: false
     });
-
-    setTimeout(() => {
-        const closeButton = document.querySelector('.universal-popup #popupClose');
-        if (closeButton) {
-            closeButton.onclick = () => loadShowData();
-        }
-    }, 100);
 }
 
 async function handleDeleteEpisode(event) {
@@ -2799,23 +2785,21 @@ async function handleDeleteEpisode(event) {
         hideDeletionLoading();
 
         if (result && result.success) {
+            // Refresh immediately so the deleted episode's row updates (e.g. to a
+            // "Missing" phantom row) right away, instead of depending on how the
+            // user happens to dismiss the popup below (which was racy: onclick set
+            // after the popup exists could lose to an already-attached default
+            // close handler if the user closed it fast enough).
+            loadShowData();
+
             // Build detailed deletion report
             const reportMessage = buildDeletionReport(result, episodeTitle);
 
             showPopup({
                 type: POPUP_TYPES.SUCCESS,
                 message: reportMessage,
-                autoClose: false,
-                onConfirm: () => loadShowData()
+                autoClose: false
             });
-
-            // Add close button callback
-            setTimeout(() => {
-                const closeButton = document.querySelector('.universal-popup #popupClose');
-                if (closeButton) {
-                    closeButton.onclick = () => loadShowData();
-                }
-            }, 100);
         } else {
             throw new Error(result.error || 'Failed to delete episode');
         }
