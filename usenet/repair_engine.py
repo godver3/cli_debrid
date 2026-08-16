@@ -1196,6 +1196,21 @@ def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
 
     _move_to_wanted(item)
 
+    # _move_to_wanted resets identity fields but leaves collected_at from the
+    # OLD (broken) collection in place. The Adding queue's season-pack dedup
+    # check (run_program.py's "self_collected" shortcut) sees that stale
+    # timestamp, assumes this item already has a file in place from earlier
+    # in the same cycle, and marks it Collected without ever running the
+    # Checking queue's symlink creation — leaving it 'Collected' in the DB
+    # with location_on_disk still None and nothing actually playable. Only
+    # clearing it here (not in _move_to_wanted itself, which the automated
+    # repair loop also calls) keeps this scoped to manual retries.
+    try:
+        from database.database_writing import update_media_item
+        update_media_item(item_id, collected_at=None)
+    except Exception as e:
+        logger.warning(f'[NZBRepair] Could not clear stale collected_at for item {item_id}: {e}')
+
     log_repair_activity(
         item_id=item_id,
         title=item.get('title'),
