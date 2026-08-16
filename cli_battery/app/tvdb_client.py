@@ -8,6 +8,7 @@ Rate limiting: No preemptive tracking; 429s handled with exponential backoff.
 """
 
 import json
+import re
 import time
 import logging
 import threading
@@ -745,6 +746,36 @@ def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
     # rather than a true localization, so it must not override the primary name here —
     # it's still captured separately via _extract_aliases() for search matching.
     title = raw.get('name', '')
+
+    # Exception: some series (commonly anime) have their primary TVDB name stored
+    # partly or entirely in non-Latin script (e.g. Japanese/Chinese/Korean), with no
+    # romanized or English form at all. Storing that as the canonical title breaks
+    # every ASCII-dependent downstream consumer — scraper query normalization strips
+    # it to an empty (or badly mangled) string, and symlink path generation strips it
+    # down too. Fall back to the English nameTranslations entry instead, when the
+    # primary name actually contains non-Latin script.
+    #
+    # Detected via the presence of CJK/Kana/Hangul characters, not "lacks a Latin
+    # letter" — a title can contain both, e.g. Naruto's TVDB primary name is
+    # 'NARUTO－ナルト－' (has plenty of Latin letters, but still half Japanese
+    # katakana); requiring the *absence* of Latin letters missed this case entirely.
+    # Also not just "any ASCII survives encoding" — a title like '怪獣8号' has a
+    # literal ASCII digit in it, so that check would call it "representable" too.
+    _non_latin_script = re.compile(
+        r'[぀-ヿ'   # Hiragana + Katakana
+        r'㐀-䶿'    # CJK Extension A
+        r'一-鿿'    # CJK Unified Ideographs
+        r'가-힣]'   # Hangul syllables
+    )
+    if title and _non_latin_script.search(title):
+        for t in (raw.get('translations', {}).get('nameTranslations') or []):
+            if t.get('language') == 'eng' and t.get('name'):
+                logger.info(
+                    f"TVDB primary name {title!r} has no Latin-representable content — "
+                    f"using English translation {t['name']!r} instead"
+                )
+                title = t['name']
+                break
 
     # Airs info
     airs = {}
