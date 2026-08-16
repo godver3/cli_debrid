@@ -788,6 +788,7 @@
                         <option value="error">Error</option>
                     </select>
                     <button onclick="usenetLoadActivity(document.getElementById('usenet-filter-select').value||null)" class="un-btn"><i class="fa-solid fa-rotate" style="color:#e8601c"></i> Refresh</button>
+                    <button onclick="usenetClearActivity()" class="un-btn"><i class="fa-solid fa-trash" style="color:#ff4444"></i> Clear Log</button>
                 </div>
             </div>
             <div id="usenet-activity-container">
@@ -4421,6 +4422,23 @@ async function usenetLoadActivity(filter) {
     const sel = document.getElementById('usenet-filter-select');
     if (sel) sel.value = filter || '';
     await _usenetFetchActivity();
+}
+
+async function usenetClearActivity() {
+    if (!confirm('Clear the entire NZB repair activity log?\n\nThis only deletes the log history — it does not touch any media, Plex entries, or provider jobs.\n\nContinue?')) return;
+    try {
+        const r = await fetch('/debrid_manager/api/usenet/repair/activity/clear', {method: 'POST'});
+        const d = await r.json();
+        if (d.success) {
+            _usenetActivityOffset = 0;
+            await _usenetFetchActivity();
+        } else {
+            alert('Failed to clear activity log: ' + (d.error || 'unknown error'));
+        }
+    } catch(e) {
+        console.error('[Usenet] activity clear error', e);
+        alert('Failed to clear activity log');
+    }
 }
 
 async function _usenetFetchActivity() {

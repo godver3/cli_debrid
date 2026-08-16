@@ -162,6 +162,32 @@ def is_in_backoff(broken_nzb_id: str) -> bool:
         return False
 
 
+def clear_repair_activity(source: str = None) -> int:
+    """
+    Delete repair activity log entries.
+    source='usenet'  → only NZB entries (broken_nzb_id NOT LIKE 'debrid:%')
+    source='debrid'  → only debrid entries (broken_nzb_id LIKE 'debrid:%')
+    source=None      → all entries
+    Returns the number of rows deleted.
+    """
+    conn = get_db_connection()
+    try:
+        if source == 'usenet':
+            where = "WHERE (broken_nzb_id NOT LIKE 'debrid:%' OR broken_nzb_id IS NULL OR broken_nzb_id = '')"
+        elif source == 'debrid':
+            where = "WHERE broken_nzb_id LIKE 'debrid:%'"
+        else:
+            where = ""
+        cur = conn.execute(f"DELETE FROM nzb_repair_activity {where}")
+        conn.commit()
+        return cur.rowcount
+    except Exception as e:
+        logger.error(f"[NZBRepair] clear_repair_activity error: {e}")
+        return 0
+    finally:
+        conn.close()
+
+
 def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None, source: str = None):
     """
     Get repair activity log entries.

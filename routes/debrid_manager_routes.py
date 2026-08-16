@@ -5319,6 +5319,18 @@ def usenet_repair_activity():
         return jsonify(success=False, error=str(e))
 
 
+@debrid_manager_bp.route('/api/usenet/repair/activity/clear', methods=['POST'])
+def usenet_repair_activity_clear():
+    """Clear the NZB repair activity log."""
+    try:
+        from database.nzb_repair_activity import clear_repair_activity
+        deleted = clear_repair_activity(source='usenet')
+        return jsonify(success=True, deleted=deleted)
+    except Exception as e:
+        logging.error(f'[UsenetRepair] activity clear error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
 @debrid_manager_bp.route('/api/usenet/repair/scan_status')
 def usenet_scan_status():
     """Check if cli_mount is currently running a health sweep (active_run != null and running)."""
