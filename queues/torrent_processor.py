@@ -548,8 +548,12 @@ class TorrentProcessor:
                                 _mem_item.get('version', 'Default') != _item_version or
                                 not str(_mem_item.get('filled_by_torrent_id', '')).startswith('nzb:')):
                             continue
-                        _mem_file = _mem_item.get('filled_by_file') or ''
-                        _mem_is_pack = not _re_mem.search(r'[Ss]\d{2}[Ee]\d{2}', _mem_file)
+                        # Prefer the original scraped release title over filled_by_file, which
+                        # is frequently an obfuscated hex string for single-episode usenet
+                        # releases and was wrongly read as "not a normal episode filename,
+                        # must be an unresolved pack".
+                        _mem_check_title = _mem_item.get('original_scraped_torrent_title') or _mem_item.get('filled_by_file') or ''
+                        _mem_is_pack = not _re_mem.search(r'[Ss]\d{2}[Ee]\d{2}', _mem_check_title)
                         _mem_job = _mem_item.get('filled_by_torrent_id')
                         _mem_id = _mem_job[4:] if _mem_job and _mem_job.startswith('nzb:') else _mem_job
                         if _is_pack and _mem_is_pack:
@@ -577,7 +581,7 @@ class TorrentProcessor:
                     _sibling_ver = (item.get('version') or '').rstrip('*')
                     try:
                         _sibling = _conn.execute(
-                            "SELECT filled_by_torrent_id, filled_by_file FROM media_items "
+                            "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title FROM media_items "
                             "WHERE imdb_id=? AND season_number=? AND type='episode' "
                             "AND id!=? AND filled_by_torrent_id LIKE 'nzb:%' "
                             "AND REPLACE(COALESCE(version,''),'*','')=? "
@@ -587,7 +591,12 @@ class TorrentProcessor:
                     finally:
                         _conn.close()
                     if _sibling:
-                        _sibling_is_pack = not _re_dedup.search(r'[Ss]\d{2}[Ee]\d{2}', _sibling[1] or '')
+                        # Prefer the original scraped release title (not obfuscated) over
+                        # filled_by_file, which is frequently an obfuscated hex string for
+                        # single-episode usenet releases and was wrongly read as "not a normal
+                        # episode filename, must be an unresolved pack".
+                        _sibling_check_title = _sibling[2] or _sibling[1] or ''
+                        _sibling_is_pack = not _re_dedup.search(r'[Ss]\d{2}[Ee]\d{2}', _sibling_check_title)
                         if _is_pack and _sibling_is_pack:
                             # New result is a pack, existing job is a pack — reuse existing
                             _existing_job = _sibling[0]
