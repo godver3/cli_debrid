@@ -1671,6 +1671,35 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
 
             # --- REPLACEMENT CONFIRMED — now safe to delete broken ---
 
+            # When more than one db item was matched to this one broken entry (a
+            # season-pack-scope repair), the candidate search above was still scoped
+            # to just rep's single episode — so `best` can be a single-episode file
+            # that only actually covers one of the matched items, not all of them.
+            # Applying it to every matched item would silently mark siblings
+            # "replaced" while pointing at the wrong episode's content. Narrow the
+            # update to only the item(s) `best` genuinely covers; a real season-pack
+            # candidate (no specific episode numbers) still satisfies everyone, and
+            # any item left out here simply stays untouched for its own repair on a
+            # future cycle — never guessed at.
+            matched_items = db_items
+            if len(db_items) > 1:
+                _best_parsed = best.get('parsed_info', {}) or {}
+                _best_is_pack = bool(_best_parsed.get('seasons')) and not _best_parsed.get('episodes')
+                if not _best_is_pack:
+                    _covered_eps = set(_best_parsed.get('episodes') or [])
+                    if _covered_eps:
+                        _scoped = [d for d in db_items if d.get('episode_number') in _covered_eps]
+                        matched_items = _scoped or [rep]
+                    else:
+                        matched_items = [rep]
+                    if len(matched_items) < len(db_items):
+                        logger.info(
+                            f'[NZBRepair] {best.get("title")!r} only covers item(s) '
+                            f'{[d["id"] for d in matched_items]} of the {len(db_items)} matched to '
+                            f'{entry_name!r} — leaving the rest untouched for their own repair cycle'
+                        )
+            db_items = matched_items
+
             # Step 6: Bulk delete all items from Plex in ONE request (Symlinked/Local only)
             # Step 7: Delete broken from provider (once per entry)
             # Step 8: Update DB to Adding with new torrent_id
