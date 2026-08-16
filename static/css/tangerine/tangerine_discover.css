@@ -364,19 +364,32 @@ body[data-theme="tangerine"] .discover-subtitle {
     gap: 1rem;
     overflow-x: auto;
     overflow-y: hidden;
-    padding-bottom: 0.5rem;
+    padding-bottom: 0.75rem;
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
 }
 
-/* Hide scrollbar but keep functionality */
+/* Visible horizontal scrollbar - matches filter-drawer/filter-content styling */
 .category-grid {
-    scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none; /* IE/Edge */
+    scrollbar-width: thin; /* Firefox */
+    scrollbar-color: rgba(255, 255, 255, 0.1) rgba(255, 255, 255, 0.02);
 }
 
 .category-grid::-webkit-scrollbar {
-    display: none; /* Chrome, Safari, Opera */
+    height: 6px;
+}
+
+.category-grid::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.category-grid::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+.category-grid::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 107, 53, 0.3);
 }
 
 /* Fixed width for items in horizontal scroll */
