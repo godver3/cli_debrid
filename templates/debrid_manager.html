@@ -4491,7 +4491,12 @@ function _buildOutcomeTooltip(r) {
             break;
         case 'manual_retry':
             lines.push('Manually retried after exhausting automatic repair attempts.');
-            lines.push('Item moved to Wanted for a fresh scrape.');
+            if (r.current_item_state === 'Collected') {
+                lines.push('A replacement was found and collected successfully.');
+            } else {
+                lines.push('Item moved to Wanted for a fresh scrape.');
+                if (r.current_item_state) lines.push('Current state: ' + r.current_item_state);
+            }
             break;
     }
     return lines.join('\n').replace(/"/g, '&quot;');
@@ -4530,8 +4535,9 @@ function _usenetRenderActivity(rows, container, pagination) {
 
     rows.forEach((r, idx) => {
         const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
-        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'replacement_pending' ? '#ffaa44' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : r.outcome === 'manual_retry' ? '#4488ff' : '#ff4444';
-        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : r.outcome === 'manual_retry' ? 'Retried' : r.outcome === 'skipped_max_attempts' ? 'Max Attempts' : (r.outcome || '—');
+        const retryCollected = r.outcome === 'manual_retry' && r.current_item_state === 'Collected';
+        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'replacement_pending' ? '#ffaa44' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : retryCollected ? '#00d4aa' : r.outcome === 'manual_retry' ? '#4488ff' : '#ff4444';
+        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : retryCollected ? 'Replaced' : r.outcome === 'manual_retry' ? 'Retrying…' : r.outcome === 'skipped_max_attempts' ? 'Max Attempts' : (r.outcome || '—');
         const outcomeTooltip = _buildOutcomeTooltip(r);
         const epSub = r.season_number ? `<br><span style="font-size:11px;color:#888">S${String(r.season_number).padStart(2,'0')}E${String(r.episode_number||0).padStart(2,'0')}</span>` : '';
         const activityTime = r.updated_at || r.created_at;

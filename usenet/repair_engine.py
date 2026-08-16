@@ -1183,8 +1183,16 @@ def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
         _blacklist_broken_nzb(nzb_url, item.get('nzb_segment_id', '') or '')
 
     _delete_from_plex(item)
-    if broken_nzb_id:
-        _delete_from_provider(broken_nzb_id, broken_nzb_id)
+
+    # broken_nzb_id (from the activity row logged back when this item first
+    # failed) is often just the release title, not a real provider job ID —
+    # deleting by it silently no-ops. The item's own filled_by_torrent_id
+    # ("nzb:<uuid>") is the CURRENT, authoritative job ID for whatever's
+    # still sitting on the mount right now, so prefer that.
+    torrent_id = item.get('filled_by_torrent_id') or ''
+    provider_job_id = torrent_id[4:] if torrent_id.startswith('nzb:') else (torrent_id or broken_nzb_id)
+    if provider_job_id:
+        _delete_from_provider(provider_job_id, provider_job_id)
 
     _move_to_wanted(item)
 

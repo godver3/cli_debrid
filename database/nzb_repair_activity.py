@@ -191,7 +191,25 @@ def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None, 
             f"SELECT * FROM nzb_repair_activity {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
             params + [limit, offset],
         ).fetchall()
-        return [dict(r) for r in rows], total
+        result = [dict(r) for r in rows]
+
+        # manual_retry hands the item back to the normal scrape pipeline
+        # instead of the repair engine, so there's no follow-up activity row
+        # when it resolves. Enrich with the item's *current* state (computed
+        # live, not stored) so the UI can show whether the retry actually
+        # landed instead of leaving an ambiguous "Retried" forever.
+        retry_item_ids = [r['item_id'] for r in result if r.get('outcome') == 'manual_retry' and r.get('item_id')]
+        if retry_item_ids:
+            placeholders = ','.join('?' * len(retry_item_ids))
+            state_rows = conn.execute(
+                f"SELECT id, state FROM media_items WHERE id IN ({placeholders})", retry_item_ids
+            ).fetchall()
+            states = {sr[0]: sr[1] for sr in state_rows}
+            for r in result:
+                if r.get('outcome') == 'manual_retry' and r.get('item_id') in states:
+                    r['current_item_state'] = states[r['item_id']]
+
+        return result, total
     except Exception as e:
         logger.debug(f"[NZBRepair] get_repair_activity error: {e}")
         return [], 0
