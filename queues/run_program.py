@@ -6128,6 +6128,19 @@ class ProgramRunner:
             Returns True if the item should proceed, False if it was rejected
             (already reverted to Wanted; caller should skip further processing).
             """
+            # In Symlinked/Local mode, check_local_file_for_item is already the
+            # authoritative ffprobe gate for this item - it runs synchronously
+            # in the same pass that creates the symlink. task_check_plex_files
+            # can run concurrently with that (e.g. update_plex_on_file_discovery
+            # enabled alongside Symlinked/Local, a supported combination) and
+            # would otherwise independently re-resolve and re-probe the same
+            # file with no coordination between the two - the same class of
+            # redundant/racing double-verification already fixed elsewhere this
+            # session. Leave this task's role in that mode as pure Plex
+            # notification, same as before this change.
+            if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                return True
+
             item = dict(item_dict)
             torrent_id = str(item.get('filled_by_torrent_id') or '')
             is_nzb = torrent_id.startswith('nzb:')
