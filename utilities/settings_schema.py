@@ -306,7 +306,7 @@ SETTINGS_SCHEMA = {
         },
         "ffprobe_all_debrid_additions": {
             "type": "boolean",
-            "description": "Before collecting a debrid (Real-Debrid/etc.) file, probe it with ffprobe to confirm it's actually playable, on top of the normal checks. Symlinked/Local mode only. Requires ffprobe to be installed. This will slow down how long it takes items to reach Collected.",
+            "description": "Before collecting a debrid (Real-Debrid/etc.) file, probe it with ffprobe to confirm it's actually playable, on top of the normal checks. Works in both Symlinked/Local and Plex mode — in Plex mode it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes items to reach Collected.",
             "default": False
         }
     },
@@ -319,7 +319,7 @@ SETTINGS_SCHEMA = {
         },
         "ffprobe_all_nzbs": {
             "type": "boolean",
-            "description": "Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Symlinked/Local mode only. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.",
+            "description": "Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Plex mode — in Plex mode it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.",
             "default": False
         },
         "url": {
