@@ -1448,7 +1448,27 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             _is_nzb_for_probe = _torrent_id_for_probe.startswith('nzb:')
             _probe_section = 'Usenet Provider' if _is_nzb_for_probe else 'Debrid Provider'
             _probe_key = 'ffprobe_all_nzbs' if _is_nzb_for_probe else 'ffprobe_all_debrid_additions'
-            if get_setting(_probe_section, _probe_key, False):
+            # An item that's an active playback-repair replacement candidate
+            # (NZB-only — there's no debrid equivalent of VerifyReplacement)
+            # already gets ffprobed by cli_mount's own VerifyReplacement
+            # before it's accepted, on a code path that's synchronized with
+            # when the old file's cleanup can proceed. Running ffprobe_all_nzbs
+            # here too would be a second, independent, uncoordinated check on
+            # the exact same file — skip it and let VerifyReplacement be the
+            # sole authority for replacement candidates specifically.
+            _skip_probe_for_replacement = False
+            if _is_nzb_for_probe:
+                try:
+                    from database.nzb_playback_repair import has_pending_playback_repair
+                    if has_pending_playback_repair(item.get('id')):
+                        _skip_probe_for_replacement = True
+                        logging.info(
+                            f"[ffprobe] Skipping {_probe_key} for '{source_file}' — active playback-repair "
+                            f"replacement candidate, already verified by cli_mount's own check"
+                        )
+                except Exception:
+                    pass
+            if get_setting(_probe_section, _probe_key, False) and not _skip_probe_for_replacement:
                 logging.info(f"[ffprobe] Running playability check ({_probe_key}) on '{source_file}'")
                 from usenet.repair_engine import _verify_file_readable
                 if _verify_file_readable(source_file):

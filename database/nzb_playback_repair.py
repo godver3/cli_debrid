@@ -264,6 +264,26 @@ def candidate_is_excluded(item_id, result):
         conn.close()
 
 
+def has_pending_playback_repair(item_id):
+    """Return whether this item currently has an active (non-complete)
+    playback repair in progress — i.e. it's a replacement candidate whose
+    playability decypharr's own VerifyReplacement already ffprobes before
+    accepting it. Used to skip the redundant ffprobe_all_nzbs check on the
+    same file during Adding/Checking, instead of running two independent,
+    uncoordinated ffprobe checks on the same replacement candidate."""
+    if not item_id:
+        return False
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM nzb_playback_repairs WHERE cli_debrid_id=? AND status!='complete' LIMIT 1",
+            (int(item_id),),
+        ).fetchone()
+        return bool(row)
+    finally:
+        conn.close()
+
+
 def has_active_exact_repair(item_id, old_info_hash, old_file_name):
     """Return whether the exact old mounted file already has an active repair."""
     if not item_id or not old_info_hash or not old_file_name:
