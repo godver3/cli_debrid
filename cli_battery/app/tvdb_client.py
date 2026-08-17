@@ -703,6 +703,113 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
     return show_data
 
 
+def _extract_tmdb_id_from_remote_ids(raw: dict) -> Optional[int]:
+    """Pull the TMDB ID out of a TVDB series/movie response's own remoteIds,
+    when present - more reliable than re-resolving it independently via
+    TMDB's /find endpoint (which can fail to link an IMDb ID that TVDB's own
+    cross-reference already has)."""
+    remote_ids = raw.get('remoteIds', []) or raw.get('remote_ids', [])
+    if not isinstance(remote_ids, list):
+        return None
+    for rid in remote_ids:
+        if isinstance(rid, dict):
+            source = (rid.get('sourceName', '') or '').lower()
+            if 'tmdb' in source or 'themoviedb' in source:
+                try:
+                    return int(rid.get('id', ''))
+                except (ValueError, TypeError):
+                    return None
+    return None
+
+
+def _fetch_tmdb_title_only(tmdb_id: Optional[int], imdb_id: str, api_key: str, media_type: str) -> Optional[str]:
+    """Minimal TMDB lookup for just a title - avoids the overhead of the full
+    _fetch_tmdb_show_data / _fetch_tmdb_movie_data fallback fetchers below,
+    which build out seasons/episodes/genres/etc. that aren't needed here.
+    Falls back to resolving the TMDB ID from the IMDb ID only if the caller
+    doesn't already have one from TVDB's own remoteIds."""
+    if not tmdb_id:
+        tmdb_id = _resolve_tmdb_id_from_imdb(imdb_id, api_key, media_type=media_type)
+    if not tmdb_id:
+        return None
+    endpoint = 'tv' if media_type == 'show' else 'movie'
+    try:
+        resp = requests.get(
+            f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}",
+            params={'api_key': api_key},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return None
+        raw = resp.json()
+        return raw.get('name') if media_type == 'show' else raw.get('title')
+    except Exception as e:
+        logger.debug(f"TMDB title-only lookup failed for {imdb_id}: {e}")
+        return None
+
+
+def _resolve_display_title(title: str, raw: dict, imdb_id: str, media_type: str) -> str:
+    """When `title` (TVDB's primary name) contains non-Latin script, try to find
+    a usable Latin-script title instead, in order:
+      1. A TVDB nameTranslations 'eng' entry that's itself actually Latin-clean -
+         not just the first 'eng' entry array-order, since TVDB's community data
+         sometimes has the non-Latin name copied verbatim into the eng slot, or a
+         mixed-script entry (e.g. a stray non-Latin word left in an otherwise
+         English translation), ahead of a genuinely clean one further down.
+      2. TMDB's own title for the same item, when TVDB has no clean translation -
+         TMDB's editorial title is often present even when TVDB's
+         community-contributed translations are missing or unusable.
+
+    Detected via the presence of any non-Latin *letter*, not "lacks a Latin
+    letter" — a title can contain both, e.g. Naruto's TVDB primary name is
+    'NARUTO－ナルト－' (has plenty of Latin letters, but still half Japanese
+    katakana); requiring the *absence* of Latin letters missed this case
+    entirely. Also not just "any ASCII survives encoding" — a title like
+    '怪獣8号' has a literal ASCII digit in it, so that check would call it
+    "representable" too. Script-agnostic (Japanese, Korean, Chinese, Hindi,
+    Cyrillic, Arabic, etc.) rather than enumerating specific scripts one at a
+    time - see utilities.text_utils.has_non_latin_letter.
+
+    Falls through to the original non-Latin title if nothing usable is found
+    anywhere - the symlink-path layer (utilities/local_library_scan.py) has its
+    own independent ID-based fallback for that case, so this never risks a
+    folder collision either way, only display/scraping accuracy.
+    """
+    from utilities.text_utils import has_non_latin_letter
+    if not title or not has_non_latin_letter(title):
+        return title
+
+    for t in (raw.get('translations', {}).get('nameTranslations') or []):
+        candidate = t.get('name')
+        if t.get('language') == 'eng' and candidate and not has_non_latin_letter(candidate):
+            logger.info(
+                f"TVDB primary name {title!r} is non-Latin — using clean TVDB "
+                f"English translation {candidate!r} instead"
+            )
+            return candidate
+
+    try:
+        tmdb_api_key = _get_tmdb_api_key()
+        if tmdb_api_key:
+            tmdb_id = _extract_tmdb_id_from_remote_ids(raw)
+            tmdb_title = _fetch_tmdb_title_only(tmdb_id, imdb_id, tmdb_api_key, media_type)
+            if tmdb_title and not has_non_latin_letter(tmdb_title):
+                logger.info(
+                    f"TVDB primary name {title!r} is non-Latin with no clean TVDB "
+                    f"translation — using TMDB title {tmdb_title!r} instead"
+                )
+                return tmdb_title
+    except Exception as e:
+        logger.debug(f"TMDB title fallback failed for {imdb_id}: {e}")
+
+    logger.warning(
+        f"TVDB primary name {title!r} is non-Latin and no clean English title "
+        f"found via TVDB or TMDB — leaving as-is (symlink layer will use its "
+        f"own ID-based fallback)"
+    )
+    return title
+
+
 def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
     """Build a Trakt-compatible show metadata dict from TVDB series data."""
     ids = {
@@ -751,27 +858,9 @@ def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
     # romanized or English form at all. Storing that as the canonical title breaks
     # every ASCII-dependent downstream consumer — scraper query normalization strips
     # it to an empty (or badly mangled) string, and symlink path generation strips it
-    # down too. Fall back to the English nameTranslations entry instead, when the
-    # primary name actually contains non-Latin script.
-    #
-    # Detected via the presence of any non-Latin letter, not "lacks a Latin
-    # letter" — a title can contain both, e.g. Naruto's TVDB primary name is
-    # 'NARUTO－ナルト－' (has plenty of Latin letters, but still half Japanese
-    # katakana); requiring the *absence* of Latin letters missed this case entirely.
-    # Also not just "any ASCII survives encoding" — a title like '怪獣8号' has a
-    # literal ASCII digit in it, so that check would call it "representable" too.
-    # Script-agnostic (Japanese, Korean, Chinese, Hindi, Cyrillic, Arabic, etc.)
-    # rather than enumerating specific scripts one at a time.
-    from utilities.text_utils import has_non_latin_letter
-    if title and has_non_latin_letter(title):
-        for t in (raw.get('translations', {}).get('nameTranslations') or []):
-            if t.get('language') == 'eng' and t.get('name'):
-                logger.info(
-                    f"TVDB primary name {title!r} has no Latin-representable content — "
-                    f"using English translation {t['name']!r} instead"
-                )
-                title = t['name']
-                break
+    # down too. Fall back to a usable Latin-script title instead, when the primary
+    # name actually contains non-Latin script.
+    title = _resolve_display_title(title, raw, imdb_id, media_type='show')
 
     # Airs info
     airs = {}
@@ -1140,13 +1229,17 @@ def _build_movie_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
             except ValueError:
                 pass
 
-    # Find English overview/title
+    # Find title/overview. Unlike overview (always fine to prefer the English
+    # translation when present), the primary name must NOT be unconditionally
+    # replaced — a TVDB 'eng' nameTranslations entry is sometimes a wrong
+    # marketing AKA rather than a true localization (e.g. "Gangs of Manila" for
+    # "Batang Quiapo"), so only fall back to it when the primary name actually
+    # contains non-Latin script and can't be used as-is. See
+    # _resolve_display_title's docstring for the full detection/fallback chain
+    # (TVDB clean translation, then TMDB, then leave as-is).
     title = raw.get('name', '')
     overview = raw.get('overview', '')
-    for t in raw.get('translations', {}).get('nameTranslations', []) or []:
-        if t.get('language') == 'eng' and t.get('name'):
-            title = t['name']
-            break
+    title = _resolve_display_title(title, raw, imdb_id, media_type='movie')
     for t in raw.get('translations', {}).get('overviewTranslations', []) or []:
         if t.get('language') == 'eng':
             overview = t.get('overview', overview)
