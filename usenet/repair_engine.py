@@ -51,6 +51,9 @@ from database.not_wanted_magnets import (
     add_to_not_wanted_nzb_segment,
     extract_nzb_segment_id,
     is_nzb_segment_not_wanted,
+    is_magnet_not_wanted,
+    is_url_not_wanted,
+    is_nzb_guid_not_wanted,
 )
 from utilities.settings import get_setting
 from database.nzb_playback_repair import (
@@ -892,6 +895,22 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
 
         nzb_results = [r for r in (results or []) if r.get('protocol') == 'nzb']
 
+        # Filter out not-wanted magnets/URLs/guids. Unlike scraping_queue.py's
+        # normal scrape path, this repair-specific search never went through
+        # that filtering at all — meaning a replacement candidate blacklisted
+        # for being dead (including via _blacklist_broken_nzb below, on the
+        # very entry this function is trying to replace) could still be
+        # picked again here. Same filter expression scraping_queue.py uses
+        # at its own call sites.
+        nzb_results = [
+            r for r in nzb_results
+            if not (
+                is_magnet_not_wanted(r.get('magnet') or r.get('nzb_url')) or
+                is_url_not_wanted(r.get('magnet') or r.get('nzb_url')) or
+                (r.get('nzb_url') and is_nzb_guid_not_wanted(r.get('parsed_info', {}).get('guid') or r.get('nzb_url')))
+            )
+        ]
+
         # Filter out broken release by both structured title and raw release name
         if broken_nzb_title:
             _raw_broken = broken_nzb_title
@@ -1652,22 +1671,107 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
 
             # --- REPLACEMENT CONFIRMED — now safe to delete broken ---
 
-            # Step 6: Bulk delete all items from Plex in ONE request (avoids WAL bloat)
+            # When more than one db item was matched to this one broken entry (a
+            # season-pack-scope repair), the candidate search above was still scoped
+            # to just rep's single episode — so `best` can be a single-episode file
+            # that only actually covers one of the matched items, not all of them.
+            # Applying it to every matched item would silently mark siblings
+            # "replaced" while pointing at the wrong episode's content. Narrow the
+            # update to only the item(s) `best` genuinely covers; a real season-pack
+            # candidate (no specific episode numbers) still satisfies everyone, and
+            # any item left out here simply stays untouched for its own repair on a
+            # future cycle — never guessed at.
+            matched_items = db_items
+            if len(db_items) > 1:
+                _best_parsed = best.get('parsed_info', {}) or {}
+                _best_is_pack = bool(_best_parsed.get('seasons')) and not _best_parsed.get('episodes')
+                if not _best_is_pack:
+                    _covered_eps = set(_best_parsed.get('episodes') or [])
+                    if _covered_eps:
+                        _scoped = [d for d in db_items if d.get('episode_number') in _covered_eps]
+                        matched_items = _scoped or [rep]
+                    else:
+                        matched_items = [rep]
+                    if len(matched_items) < len(db_items):
+                        logger.info(
+                            f'[NZBRepair] {best.get("title")!r} only covers item(s) '
+                            f'{[d["id"] for d in matched_items]} of the {len(db_items)} matched to '
+                            f'{entry_name!r} — leaving the rest untouched for their own repair cycle'
+                        )
+            db_items = matched_items
+
+            # Step 6: Bulk delete all items from Plex in ONE request (Symlinked/Local only)
             # Step 7: Delete broken from provider (once per entry)
             # Step 8: Update DB to Adding with new torrent_id
+            #
+            # Symlinked/Local mode: get_symlink_path is deterministic
+            # (title/season/episode/version, not the specific release), so a
+            # replacement always lands at the exact same symlink path as the
+            # broken original — the rescan the Checking queue already
+            # triggers once the new symlink exists updates the existing Plex
+            # item in place (keeping addedAt/watch history) instead of it
+            # reappearing as a fresh "recently added" entry. Deleting first
+            # only orphans that match. Same reasoning already applied to
+            # retry_exhausted_item's manual-retry path.
+            #
+            # Plex mode is NOT the same: per _symlink_matches (database/
+            # nzb_playback_repair.py), location_on_disk there is the real
+            # mounted file path as Plex's own API reports it — there is no
+            # cli_debrid-owned symlink or deterministic path to key off, so a
+            # different replacement release genuinely is a different path
+            # from Plex's perspective. Skipping the delete there would risk
+            # leaving the dead entry orphaned alongside the new one instead
+            # of fixing anything, so Plex mode keeps the existing
+            # delete-then-recreate behavior.
+            symlinked_local = get_setting('File Management', 'file_collection_management') == 'Symlinked/Local'
 
-            plex_results = _bulk_delete_from_plex(db_items)
+            if not symlinked_local:
+                plex_results = _bulk_delete_from_plex(db_items)
+            else:
+                plex_results = {}
 
             # Step 7: Delete from provider (once, after Plex bulk delete)
-            provider_deleted = _delete_from_provider(info_hash, entry_name)
-            if not provider_deleted:
-                logger.warning(f'[NZBRepair] Provider delete failed for {entry_name!r} — continuing anyway')
+            #
+            # info_hash here is whatever cli_mount's health check reported for
+            # THIS specific broken entry — but that can be a season-pack job
+            # hash shared by files cli_mount never flagged as broken (e.g. one
+            # file in a multi-episode NZB loses its segments while the rest
+            # of the post is still intact). db_items only covers the item(s)
+            # this specific entry matched; other live items can still be
+            # relying on the exact same torrent_id. Confirmed live: deleting
+            # unconditionally took out an entire otherwise-healthy 10-episode
+            # season pack over one flagged file. Same sibling check already
+            # applied to retry_exhausted_item's manual-retry path.
+            _repair_ids = {d['id'] for d in db_items}
+            _sibling_count = 0
+            if info_hash:
+                conn = get_db_connection()
+                try:
+                    _placeholders = ','.join('?' * len(_repair_ids)) if _repair_ids else '0'
+                    _sibling_count = conn.execute(
+                        f"SELECT COUNT(*) FROM media_items WHERE filled_by_torrent_id = ? "
+                        f"AND state IN ('Collected','Upgrading','Checking','Adding') AND id NOT IN ({_placeholders})",
+                        (f'nzb:{info_hash}', *_repair_ids)
+                    ).fetchone()[0]
+                finally:
+                    conn.close()
+
+            if _sibling_count == 0:
+                provider_deleted = _delete_from_provider(info_hash, entry_name)
+                if not provider_deleted:
+                    logger.warning(f'[NZBRepair] Provider delete failed for {entry_name!r} — continuing anyway')
+            else:
+                logger.info(
+                    f'[NZBRepair] Skipping provider delete for {info_hash!r} — '
+                    f'{_sibling_count} sibling(s) still rely on it'
+                )
 
             for db_item in db_items:
                 item_id = db_item['id']
-                plex_deleted = plex_results.get(item_id, False)
-                if not plex_deleted:
-                    logger.warning(f'[NZBRepair] Plex delete failed/skipped for item {item_id} ({db_item.get("title")!r})')
+                if not symlinked_local:
+                    plex_deleted = plex_results.get(item_id, False)
+                    if not plex_deleted:
+                        logger.warning(f'[NZBRepair] Plex delete failed/skipped for item {item_id} ({db_item.get("title")!r})')
 
                 # Step 8: Update DB in-place
                 _update_db_for_repair(db_item, new_job_id, best, candidates[1:])
