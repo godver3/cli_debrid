@@ -788,6 +788,7 @@
                         <option value="error">Error</option>
                     </select>
                     <button onclick="usenetLoadActivity(document.getElementById('usenet-filter-select').value||null)" class="un-btn"><i class="fa-solid fa-rotate" style="color:#e8601c"></i> Refresh</button>
+                    <button onclick="usenetClearActivity()" class="un-btn"><i class="fa-solid fa-trash" style="color:#ff4444"></i> Clear Log</button>
                 </div>
             </div>
             <div id="usenet-activity-container">
@@ -900,6 +901,7 @@
                         <option value="error">Error</option>
                     </select>
                     <button onclick="debridLoadActivity(document.getElementById('dr-filter-select').value||null)" class="un-btn"><i class="fa-solid fa-rotate" style="color:#CE93D8"></i> Refresh</button>
+                    <button onclick="debridClearActivity()" class="un-btn"><i class="fa-solid fa-trash" style="color:#ff4444"></i> Clear Log</button>
                 </div>
             </div>
             <div id="dr-activity-container">
@@ -4423,6 +4425,23 @@ async function usenetLoadActivity(filter) {
     await _usenetFetchActivity();
 }
 
+async function usenetClearActivity() {
+    if (!confirm('Clear the entire NZB repair activity log?\n\nThis only deletes the log history — it does not touch any media, Plex entries, or provider jobs.\n\nContinue?')) return;
+    try {
+        const r = await fetch('/debrid_manager/api/usenet/repair/activity/clear', {method: 'POST'});
+        const d = await r.json();
+        if (d.success) {
+            _usenetActivityOffset = 0;
+            await _usenetFetchActivity();
+        } else {
+            alert('Failed to clear activity log: ' + (d.error || 'unknown error'));
+        }
+    } catch(e) {
+        console.error('[Usenet] activity clear error', e);
+        alert('Failed to clear activity log');
+    }
+}
+
 async function _usenetFetchActivity() {
     const container = document.getElementById('usenet-activity-container');
     const pagination = document.getElementById('usenet-activity-pagination');
@@ -5133,6 +5152,23 @@ async function debridLoadActivity(filter) {
     const sel = document.getElementById('dr-filter-select');
     if (sel) sel.value = filter || '';
     await _debridFetchActivity();
+}
+
+async function debridClearActivity() {
+    if (!confirm('Clear the entire debrid repair activity log?\n\nThis only deletes the log history — it does not touch any media, Plex entries, or provider jobs.\n\nContinue?')) return;
+    try {
+        const r = await fetch('/debrid_manager/api/debrid/repair/activity/clear', {method: 'POST'});
+        const d = await r.json();
+        if (d.success) {
+            _debridActivityOffset = 0;
+            await _debridFetchActivity();
+        } else {
+            alert('Failed to clear activity log: ' + (d.error || 'unknown error'));
+        }
+    } catch(e) {
+        console.error('[Debrid] activity clear error', e);
+        alert('Failed to clear activity log');
+    }
 }
 
 async function _debridFetchActivity() {
