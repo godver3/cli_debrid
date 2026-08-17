@@ -88,7 +88,8 @@ def log_repair_activity(
     next_repair_at=None,
 ) -> None:
     """outcome: 'replaced' | 'not_found' | 'no_replacement' | 'submission_failed' |
-                'plex_deleted' | 'error' | 'skipped_backoff' | 'skipped_max_attempts'"""
+                'plex_deleted' | 'error' | 'skipped_backoff' | 'skipped_max_attempts' |
+                'manual_retry'"""
     try:
         from datetime import datetime as _dt
         now = _dt.utcnow().strftime('%Y-%m-%d %H:%M:%S')
@@ -216,7 +217,40 @@ def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None, 
             f"SELECT * FROM nzb_repair_activity {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
             params + [limit, offset],
         ).fetchall()
-        return [dict(r) for r in rows], total
+        result = [dict(r) for r in rows]
+
+        # manual_retry hands the item back to the normal scrape pipeline
+        # instead of the repair engine, so there's no follow-up activity row
+        # when it resolves. Enrich with the item's *current* state (computed
+        # live, not stored) so the UI can show whether the retry actually
+        # landed instead of leaving an ambiguous "Retried" forever. Also
+        # applies to skipped_max_attempts rows: the Retry button on an old
+        # row shouldn't stick around once a *later* retry already resolved
+        # the same item — the activity log is append-only, so an old row has
+        # no way to know a subsequent event fixed it.
+        retryable_outcomes = ('manual_retry', 'skipped_max_attempts')
+        retry_item_ids = [r['item_id'] for r in result if r.get('outcome') in retryable_outcomes and r.get('item_id')]
+        if retry_item_ids:
+            placeholders = ','.join('?' * len(retry_item_ids))
+            state_rows = conn.execute(
+                f"SELECT id, state, filled_by_title FROM media_items WHERE id IN ({placeholders})", retry_item_ids
+            ).fetchall()
+            states = {sr[0]: (sr[1], sr[2]) for sr in state_rows}
+            for r in result:
+                if r.get('outcome') in retryable_outcomes and r.get('item_id') in states:
+                    state, filled_by_title = states[r['item_id']]
+                    r['current_item_state'] = state
+                    # state='Collected' alone doesn't mean this row got fixed —
+                    # the give_up gate never touches DB state, so a
+                    # skipped_max_attempts item can sit at 'Collected' forever
+                    # while still pointing at the exact same dead file. Only
+                    # count it as resolved if the current title actually
+                    # differs from the one that was broken in this row.
+                    broken_title = r.get('broken_nzb_title') or r.get('broken_nzb_id') or ''
+                    if state == 'Collected' and filled_by_title and filled_by_title != broken_title:
+                        r['current_replacement_title'] = filled_by_title
+
+        return result, total
     except Exception as e:
         logger.debug(f"[NZBRepair] get_repair_activity error: {e}")
         return [], 0

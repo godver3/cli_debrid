@@ -1183,6 +1183,126 @@ def _move_to_wanted(item: dict) -> None:
         logger.error(f'[NZBRepair] _move_to_wanted error for item {item.get("id")}: {e}')
 
 
+# Item IDs that were just moved to Wanted by a manual retry, consumed
+# (popped) by scraping_queue's season-pack coalescing check on that item's
+# very next scrape pass. Lets a manual retry skip coalescing for exactly one
+# attempt — e.g. so it can't loop forever re-coalescing into a sibling's
+# ghost job the way it was retried to get away from — without touching
+# coalescing behavior for every other (non-retried) item that scrapes.
+_manual_retry_pending: set = set()
+_manual_retry_pending_lock = _threading.Lock()
+
+
+def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
+    """Manually retry an item stuck at 'skipped_max_attempts' (give_up).
+
+    The give_up gate short-circuits before Plex/provider deletion ever runs,
+    so the dead entry is likely still sitting there — clean it up here,
+    blacklist it so re-scrape can't just pick the same dead release again,
+    then move the item back to Wanted. Also logs a fresh activity row with
+    repair_attempts=0 so a later get_repair_state() lookup for this
+    broken_nzb_id derives give_up=False again, in case it resurfaces.
+    """
+    item = _find_db_item_by_id(item_id)
+    if not item:
+        return {'outcome': 'error', 'message': f'No DB item found for id {item_id}'}
+
+    nzb_url = item.get('filled_by_magnet', '')
+    if nzb_url:
+        _blacklist_broken_nzb(nzb_url, item.get('nzb_segment_id', '') or '')
+
+    # Symlinked/Local mode: deliberately NOT calling _delete_from_plex(item).
+    # get_symlink_path is deterministic (based on title/season/episode/version,
+    # not the specific release), so a replacement always lands at the exact
+    # same path as before — a normal rescan updates the existing Plex item in
+    # place (keeping addedAt/watch history) once the new symlink exists.
+    # Deleting first just orphans that match, so the replacement shows up
+    # as a fresh "recently added" item instead. ffprobe's rejection path
+    # (_reject_unplayable_source) never touches Plex for the same reason.
+    #
+    # Plex mode is different: per _symlink_matches (database/
+    # nzb_playback_repair.py), location_on_disk there is the real mounted
+    # file path as Plex's own API reports it — no cli_debrid-owned symlink
+    # or deterministic path to key off, so a different replacement release
+    # genuinely is a different path from Plex's perspective. Skipping the
+    # delete there risks leaving the dead entry orphaned alongside the new
+    # one, so Plex mode keeps the original delete-then-recreate behavior.
+    if get_setting('File Management', 'file_collection_management') != 'Symlinked/Local':
+        _delete_from_plex(item)
+
+    # broken_nzb_id (from the activity row logged back when this item first
+    # failed) is often just the release title, not a real provider job ID —
+    # deleting by it silently no-ops. The item's own filled_by_torrent_id
+    # ("nzb:<uuid>") is the CURRENT, authoritative job ID for whatever's
+    # still sitting on the mount right now, so prefer that.
+    #
+    # But that torrent_id may be a season pack shared with sibling episodes
+    # (coalescing assigns the same job to every episode in the pack) — unlike
+    # the automated NZBRepair path, which only ever deletes an entry that
+    # cli_mount's own health check already independently confirmed dead,
+    # nothing here has verified this job is actually broken beyond "the one
+    # episode the user retried looked stuck." Deleting it unconditionally
+    # would take the whole pack down for every sibling still relying on it.
+    # Match the same sibling check the manual "Delete item" UI route uses
+    # before it removes anything from cli_mount.
+    torrent_id = item.get('filled_by_torrent_id') or ''
+    provider_job_id = torrent_id[4:] if torrent_id.startswith('nzb:') else (torrent_id or broken_nzb_id)
+    if provider_job_id and torrent_id:
+        conn = get_db_connection()
+        try:
+            sibling_count = conn.execute(
+                "SELECT COUNT(*) FROM media_items "
+                "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                (torrent_id, item_id)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        if sibling_count == 0:
+            _delete_from_provider(provider_job_id, provider_job_id)
+        else:
+            logger.info(
+                f'[NZBRepair] Manual retry: skipping provider delete for {provider_job_id!r} — '
+                f'{sibling_count} sibling(s) still rely on it'
+            )
+    elif provider_job_id:
+        _delete_from_provider(provider_job_id, provider_job_id)
+
+    _move_to_wanted(item)
+
+    with _manual_retry_pending_lock:
+        _manual_retry_pending.add(item_id)
+
+    # _move_to_wanted resets identity fields but leaves collected_at from the
+    # OLD (broken) collection in place. The Adding queue's season-pack dedup
+    # check (run_program.py's "self_collected" shortcut) sees that stale
+    # timestamp, assumes this item already has a file in place from earlier
+    # in the same cycle, and marks it Collected without ever running the
+    # Checking queue's symlink creation — leaving it 'Collected' in the DB
+    # with location_on_disk still None and nothing actually playable. Only
+    # clearing it here (not in _move_to_wanted itself, which the automated
+    # repair loop also calls) keeps this scoped to manual retries.
+    try:
+        from database.database_writing import update_media_item
+        update_media_item(item_id, collected_at=None)
+    except Exception as e:
+        logger.warning(f'[NZBRepair] Could not clear stale collected_at for item {item_id}: {e}')
+
+    log_repair_activity(
+        item_id=item_id,
+        title=item.get('title'),
+        media_type=item.get('type'),
+        season_number=item.get('season_number'),
+        episode_number=item.get('episode_number'),
+        broken_nzb_id=broken_nzb_id,
+        broken_nzb_title=item.get('filled_by_file', ''),
+        outcome='manual_retry',
+        triggered_by='manual',
+        repair_attempts=0,
+    )
+    logger.info(f'[NZBRepair] Manual retry: item {item_id} reset to Wanted (was skipped_max_attempts)')
+    return {'outcome': 'ok', 'message': 'Item reset to Wanted for re-scrape'}
+
+
 # ---------------------------------------------------------------------------
 # Settings helpers
 # ---------------------------------------------------------------------------
