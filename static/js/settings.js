@@ -115,6 +115,28 @@ function togglePlexSection() {
                 element.style.display = 'none';
             });
         }
+
+        // The ffprobe playability checks (NZB/debrid additions) only ever run in
+        // Symlinked/Local mode server-side — Plex mode never reaches a resolvable
+        // local file path for them, so they're a silent no-op there regardless of
+        // this setting's stored value. Lock the controls in Plex mode so that's
+        // obvious in the UI too, instead of letting someone toggle a checkbox that
+        // does nothing. This only affects interactivity, not the saved setting —
+        // switching back to Symlinked/Local re-enables the control showing
+        // whatever value was already stored.
+        // IDs vary by theme (tangerine uses underscores, default theme uses a
+        // literal space), so check both.
+        const ffprobeCheckboxIds = [
+            'usenet_provider-ffprobe_all_nzbs', 'usenet provider-ffprobe_all_nzbs',
+            'debrid_provider-ffprobe_all_debrid_additions', 'debrid provider-ffprobe_all_debrid_additions',
+        ];
+        ffprobeCheckboxIds.forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.disabled = !isSymlinked;
+            const group = el.closest('.settings-form-group');
+            if (group) group.classList.toggle('settings-disabled-plex-mode', !isSymlinked);
+        });
     }
 }
 

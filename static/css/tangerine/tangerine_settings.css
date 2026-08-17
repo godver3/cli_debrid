@@ -630,6 +630,17 @@
     border-color: rgba(255, 255, 255, 0.08);
 }
 
+/* ffprobe playability checks only run in Symlinked/Local mode — locked and
+   dimmed in Plex mode since toggling them there would be a silent no-op. */
+.settings-form-group.settings-disabled-plex-mode {
+    opacity: 0.5;
+}
+
+.settings-form-group.settings-disabled-plex-mode:hover {
+    background-color: transparent;
+    border-color: rgba(255, 255, 255, 0.05);
+}
+
 /* Checkbox specific styles */
 .settings-form-group:has(input[type="checkbox"]) {
     margin-bottom: 0;

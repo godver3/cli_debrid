@@ -41,6 +41,17 @@
     border-radius: 4px;
 }
 
+/* ffprobe playability checks only run in Symlinked/Local mode — locked and
+   dimmed in Plex mode since toggling them there would be a silent no-op. */
+.settings-form-group.settings-disabled-plex-mode {
+    opacity: 0.5;
+}
+
+.settings-form-group.settings-disabled-plex-mode .settings-title,
+.settings-form-group.settings-disabled-plex-mode .settings-description {
+    cursor: not-allowed;
+}
+
 /* Checkbox specific styles */
 .settings-form-group:has(input[type="checkbox"]) {
     margin-bottom: 0;
