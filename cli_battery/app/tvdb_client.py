@@ -8,7 +8,6 @@ Rate limiting: No preemptive tracking; 429s handled with exponential backoff.
 """
 
 import json
-import re
 import time
 import logging
 import threading
@@ -755,19 +754,16 @@ def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
     # down too. Fall back to the English nameTranslations entry instead, when the
     # primary name actually contains non-Latin script.
     #
-    # Detected via the presence of CJK/Kana/Hangul characters, not "lacks a Latin
+    # Detected via the presence of any non-Latin letter, not "lacks a Latin
     # letter" — a title can contain both, e.g. Naruto's TVDB primary name is
     # 'NARUTO－ナルト－' (has plenty of Latin letters, but still half Japanese
     # katakana); requiring the *absence* of Latin letters missed this case entirely.
     # Also not just "any ASCII survives encoding" — a title like '怪獣8号' has a
     # literal ASCII digit in it, so that check would call it "representable" too.
-    _non_latin_script = re.compile(
-        r'[぀-ヿ'   # Hiragana + Katakana
-        r'㐀-䶿'    # CJK Extension A
-        r'一-鿿'    # CJK Unified Ideographs
-        r'가-힣]'   # Hangul syllables
-    )
-    if title and _non_latin_script.search(title):
+    # Script-agnostic (Japanese, Korean, Chinese, Hindi, Cyrillic, Arabic, etc.)
+    # rather than enumerating specific scripts one at a time.
+    from utilities.text_utils import has_non_latin_letter
+    if title and has_non_latin_letter(title):
         for t in (raw.get('translations', {}).get('nameTranslations') or []):
             if t.get('language') == 'eng' and t.get('name'):
                 logger.info(
