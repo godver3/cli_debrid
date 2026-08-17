@@ -796,16 +796,12 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         # titled shows released the same year landing in the same directory and silently
         # interleaving episode files. Fall back to a stable, unique identifier whenever
         # the title contains any non-Latin script at all, rather than only when nothing
-        # survives — checked via presence of CJK/Kana/Hangul characters, matching the
+        # survives — checked via presence of any non-Latin letter (script-agnostic:
+        # Japanese, Korean, Chinese, Hindi, Cyrillic, Arabic, etc. all match), the
         # same detection used for the TVDB-side fix for this same underlying issue.
-        _non_latin_script = re.compile(
-            r'[぀-ヿ'   # Hiragana + Katakana
-            r'㐀-䶿'    # CJK Extension A
-            r'一-鿿'    # CJK Unified Ideographs
-            r'가-힣]'   # Hangul syllables
-        )
+        from utilities.text_utils import has_non_latin_letter
         effective_title = raw_title
-        if raw_title and raw_title.strip() and _non_latin_script.search(raw_title):
+        if raw_title and raw_title.strip() and has_non_latin_letter(raw_title):
             effective_title = imdb_id or item.get('tmdb_id', '') or 'unknown'
             logging.warning(
                 f"[SymlinkPath] Title {raw_title!r} has no ASCII-safe representation — "
