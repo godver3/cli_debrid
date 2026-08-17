@@ -560,6 +560,23 @@ def check_tmdb_connection():
         return {'name': 'TMDB', 'connected': False, 'error': str(e), 'details': {}}
 
 
+def check_scrob_connection():
+    """Check Scrob connection if URL and API key are configured."""
+    from content_checkers.scrob import get_scrob_config, _scrob_get
+    config = get_scrob_config()
+    if not config:
+        return None
+    try:
+        data = _scrob_get('/lists')
+        if data is not None:
+            return {'name': 'Scrob', 'connected': True, 'error': None,
+                    'details': {'url': config['base_url']}}
+        return {'name': 'Scrob', 'connected': False,
+                'error': 'Failed to connect to Scrob API', 'details': {}}
+    except Exception as e:
+        return {'name': 'Scrob', 'connected': False, 'error': str(e), 'details': {}}
+
+
 def check_climount_connection():
     """Check usenet provider connection if usenet is enabled and URL is set.
 
@@ -1415,6 +1432,7 @@ def api_check_system():
     tasks['tvdb_status'] = check_tvdb_connection
     tasks['tmdb_status'] = check_tmdb_connection
     tasks['climount_status'] = check_climount_connection
+    tasks['scrob_status'] = check_scrob_connection
     results = {}
     with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
         future_to_task = {executor.submit(func): name for name, func in tasks.items()}
@@ -1435,6 +1453,7 @@ def api_check_system():
     results.setdefault('tvdb_status', None)
     results.setdefault('tmdb_status', None)
     results.setdefault('climount_status', None)
+    results.setdefault('scrob_status', None)
     return jsonify(results)
 
 
@@ -1662,6 +1681,7 @@ def index():
         'jellyfin_status': None, 'mounted_files_status': None,
         'phalanx_db_status': None,
         'tvdb_status': None, 'tmdb_status': None, 'climount_status': None,
+        'scrob_status': None,
         'scraper_statuses': skeleton_scrapers,
         'content_source_statuses': skeleton_sources,
     }
@@ -1686,6 +1706,7 @@ def index():
                          tvdb_status=results['tvdb_status'],
                          tmdb_status=results['tmdb_status'],
                          climount_status=results['climount_status'],
+                         scrob_status=results['scrob_status'],
                          scraper_statuses=results['scraper_statuses'],
                          content_source_statuses=results['content_source_statuses'],
                          failing_connections=failing_connections,

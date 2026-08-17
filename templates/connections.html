@@ -296,6 +296,18 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
                 <span class="conn-card-spinner"></span><span>Checking…</span>
             </div>
         </div>
+
+        <!-- Scrob -->
+        <div class="connection-card" data-service="scrob" {% if not scrob_status %}style="display:none"{% endif %}>
+            <div class="connection-header">
+                <i class="fas fa-list"></i>
+                <span class="connection-title">Scrob</span>
+                <div class="status-indicator {% if scrob_status %}{{ 'connected' if scrob_status.connected else 'disconnected' }}{% else %}checking{% endif %}"></div>
+            </div>
+            <div class="conn-card-footer" data-ts="">
+                <span class="conn-card-spinner"></span><span>Checking…</span>
+            </div>
+        </div>
     </div>
 
     <!-- Scraper Cards -->
@@ -498,6 +510,7 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
                 'tvdb_status': 'tvdb',
                 'tmdb_status': 'tmdb',
                 'climount_status': 'climount',
+                'scrob_status': 'scrob',
             };
             for (const [key, service] of Object.entries(map)) {
                 if (data[key]) {
