@@ -743,9 +743,13 @@ class CliMountClient:
             return []
 
     def get_health_summary(self) -> dict:
-        """Counts by status from cli_mount /api/repair/health.
-        When debrid naming is enabled, excludes torrent protocol entries
-        to avoid showing false positives in the broken count.
+        """Counts by status from cli_mount /api/repair/health, usenet entries only.
+
+        /api/repair/health is protocol-agnostic (nzb + torrent together); this
+        is the usenet-only view, so torrent entries always need excluding
+        here regardless of any other setting — debrid_repair_engine's own
+        get_health_summary is the symmetric torrent-only counterpart. Mirrors
+        the same always-filter fix already applied to fetch_broken_items.
         """
         if not self.is_enabled():
             return {}
@@ -754,8 +758,7 @@ class CliMountClient:
             if r.status_code != 200:
                 return {}
             entries = self._parse_health_entries(r.json())
-            if self._debrid_naming_enabled():
-                entries = [e for e in entries if (e.get('protocol') or '').lower() != 'torrent']
+            entries = [e for e in entries if (e.get('protocol') or '').lower() != 'torrent']
             counts: Dict[str, int] = {}
             for e in entries:
                 s = (e.get('status') or 'unknown').lower()

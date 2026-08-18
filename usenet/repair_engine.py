@@ -158,17 +158,18 @@ def fetch_broken_items(annotate_mount: bool = False) -> list:
         logger.error(f'[NZBRepair] fetch_broken_items error: {e}')
         return []
 
-    # Filter out debrid torrent entries when debrid naming is enabled,
-    # as renaming causes false positives in cli_mount health checks.
-    try:
-        from utilities.settings import get_setting as _gs
-        if _gs('Debrid Provider', 'enable_debrid_naming', False):
-            before = len(items)
-            items = [e for e in items if (e.get('protocol') or '').lower() != 'torrent']
-            if len(items) < before:
-                logger.info(f'[NZBRepair] Skipped {before - len(items)} debrid torrent entries (debrid naming enabled)')
-    except Exception:
-        pass
+    # cli_mount's /api/repair/health is protocol-agnostic (nzb + torrent
+    # entries together); this function is the usenet-only view, so torrent
+    # entries always need excluding here regardless of any other setting —
+    # debrid_repair_engine.fetch_broken_items() is the symmetric torrent-only
+    # counterpart. This used to only filter when enable_debrid_naming was on,
+    # which left torrent entries (and their broken files, since climount_client
+    # flattens one row per broken file) leaking into the Usenet tab whenever
+    # that unrelated setting was off.
+    before = len(items)
+    items = [e for e in items if (e.get('protocol') or '').lower() != 'torrent']
+    if len(items) < before:
+        logger.info(f'[NZBRepair] Skipped {before - len(items)} debrid torrent entries')
 
     if not annotate_mount or not items:
         return items
