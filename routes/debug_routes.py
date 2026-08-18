@@ -5042,6 +5042,120 @@ def run_bulk_subtitle_scan():
     task_id = task_queue.add_task(async_run_bulk_subs)
     return jsonify({'task_id': task_id}), 202
 
+@debug_bp.route('/api/scan_duplicate_symlinks', methods=['POST'])
+@admin_required
+def scan_duplicate_symlinks():
+    """Read-only scan: find TV episode symlinks that point at the same underlying
+    file. Usually means a season pack was mismatched during collection and
+    multiple "different" episodes actually got symlinked to the same single
+    file instead of their own - so playing S01E04 actually plays S01E01, etc.
+    Makes no changes; rescraping affected items is a separate explicit action."""
+    import os
+    from collections import defaultdict
+    from database import get_db_connection
+
+    try:
+        symlink_root = get_setting('File Management', 'symlinked_files_path', '')
+        tv_root = os.path.join(symlink_root, 'TV Shows') if symlink_root else ''
+        if not symlink_root or not os.path.isdir(tv_root):
+            return jsonify({'success': False, 'error': f'TV Shows symlink folder not found (checked: {tv_root or "no symlinked_files_path configured"})'}), 400
+
+        by_target = defaultdict(list)
+        scanned = 0
+        for dirpath, dirnames, filenames in os.walk(tv_root):
+            for name in filenames:
+                full = os.path.join(dirpath, name)
+                if not os.path.islink(full):
+                    continue
+                scanned += 1
+                try:
+                    target = os.readlink(full)
+                except OSError:
+                    continue
+                by_target[target].append(full)
+
+        dupe_groups = {t: paths for t, paths in by_target.items() if len(paths) > 1}
+
+        conn = get_db_connection()
+        groups_out = []
+        for target, paths in dupe_groups.items():
+            items = []
+            for p in paths:
+                row = conn.execute(
+                    "SELECT id, title, year, season_number, episode_number FROM media_items WHERE location_on_disk = ?",
+                    (p,)
+                ).fetchone()
+                items.append({
+                    'path': p,
+                    'item_id': row['id'] if row else None,
+                    'title': row['title'] if row else None,
+                    'year': row['year'] if row else None,
+                    'season_number': row['season_number'] if row else None,
+                    'episode_number': row['episode_number'] if row else None,
+                })
+            groups_out.append({'target': target, 'items': items})
+        conn.close()
+
+        groups_out.sort(key=lambda g: -len(g['items']))
+
+        return jsonify({
+            'success': True,
+            'scanned': scanned,
+            'group_count': len(groups_out),
+            'affected_count': sum(len(g['items']) for g in groups_out),
+            'groups': groups_out,
+        })
+    except Exception as e:
+        logging.error(f"Error scanning for duplicate symlink targets: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/rescrape_duplicate_symlinks', methods=['POST'])
+@admin_required
+def rescrape_duplicate_symlinks():
+    """Move the given item IDs back to Wanted so they get rescraped fresh -
+    same cleanup /statistics/move_to_wanted already does for a single item."""
+    from database import get_db_connection
+
+    try:
+        data = request.get_json(silent=True) or {}
+        item_ids = data.get('item_ids') or []
+        if not item_ids:
+            return jsonify({'success': False, 'error': 'No item_ids provided'}), 400
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        now = datetime.now()
+        moved = 0
+        for item_id in item_ids:
+            cursor.execute('''
+                UPDATE media_items
+                SET state = 'Wanted',
+                    filled_by_file = NULL,
+                    filled_by_title = NULL,
+                    filled_by_magnet = NULL,
+                    filled_by_torrent_id = NULL,
+                    collected_at = NULL,
+                    last_updated = ?,
+                    disable_not_wanted_check = TRUE,
+                    location_on_disk = NULL,
+                    original_path_for_symlink = NULL,
+                    original_scraped_torrent_title = NULL,
+                    upgrading_from = NULL,
+                    version = TRIM(version, '*'),
+                    upgrading = NULL
+                WHERE id = ?
+                AND state NOT IN ('Wanted', 'Scraping', 'Adding')
+            ''', (now, item_id))
+            moved += cursor.rowcount
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'moved': moved})
+    except Exception as e:
+        logging.error(f"Error rescraping duplicate-symlink items: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @debug_bp.route('/api/fix_zurg_symlinks', methods=['POST'])
 @admin_required
 def fix_zurg_symlinks():
