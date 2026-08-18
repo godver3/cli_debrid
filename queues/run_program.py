@@ -6103,7 +6103,7 @@ class ProgramRunner:
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file, type, imdb_id, tmdb_id, season_number, episode_number, year, version, original_scraped_torrent_title, real_debrid_original_title, debrid_folder_name, last_updated, upgrading_from, upgrading_from_torrent_id FROM media_items WHERE state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)').fetchall()
+            items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file, filled_by_torrent_id, filled_by_magnet, type, imdb_id, tmdb_id, season_number, episode_number, year, version, original_scraped_torrent_title, real_debrid_original_title, debrid_folder_name, last_updated, upgrading_from, upgrading_from_torrent_id FROM media_items WHERE state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)').fetchall()
         except sqlite3.Error as db_err:
             logging.error(f"Database error fetching items for Plex check: {db_err}")
             conn.close()
@@ -6113,6 +6113,67 @@ class ProgramRunner:
             if conn: conn.close()
 
         logging.info(f"Found {len(items)} media items in Checking state to verify against Plex location '{plex_file_location}'")
+
+        if not hasattr(self, 'plex_scan_tick_counts'):
+            self.plex_scan_tick_counts = {}
+
+        def _ffprobe_gate_or_reject(item_dict, actual_file_path, cache_key):
+            """Optional playability check for Plex mode, gated by the same
+            ffprobe_all_nzbs / ffprobe_all_debrid_additions toggles used by
+            check_local_file_for_item in Symlinked/Local mode. Runs the moment
+            a real on-disk path is resolved here, before this item is ever
+            surfaced to Plex (scanned or searched for) — so a confirmed-broken
+            file is rejected and re-scraped before Plex has any chance to add
+            it, avoiding a "recently added" flicker.
+            Returns True if the item should proceed, False if it was rejected
+            (already reverted to Wanted; caller should skip further processing).
+            """
+            # In Symlinked/Local mode, check_local_file_for_item is already the
+            # authoritative ffprobe gate for this item - it runs synchronously
+            # in the same pass that creates the symlink. task_check_plex_files
+            # can run concurrently with that (e.g. update_plex_on_file_discovery
+            # enabled alongside Symlinked/Local, a supported combination) and
+            # would otherwise independently re-resolve and re-probe the same
+            # file with no coordination between the two - the same class of
+            # redundant/racing double-verification already fixed elsewhere this
+            # session. Leave this task's role in that mode as pure Plex
+            # notification, same as before this change.
+            if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                return True
+
+            item = dict(item_dict)
+            torrent_id = str(item.get('filled_by_torrent_id') or '')
+            is_nzb = torrent_id.startswith('nzb:')
+            probe_section = 'Usenet Provider' if is_nzb else 'Debrid Provider'
+            probe_key = 'ffprobe_all_nzbs' if is_nzb else 'ffprobe_all_debrid_additions'
+            if not get_setting(probe_section, probe_key, False):
+                return True
+
+            if is_nzb:
+                try:
+                    from database.nzb_playback_repair import has_pending_playback_repair
+                    if has_pending_playback_repair(item.get('id')):
+                        logging.info(f"[ffprobe] Skipping {probe_key} for item {item.get('id')} — active playback-repair replacement candidate, already verified by cli_mount's own check")
+                        return True
+                except Exception:
+                    pass
+
+            logging.info(f"[ffprobe] Running playability check ({probe_key}) on '{actual_file_path}'")
+            from usenet.repair_engine import _verify_file_readable
+            if _verify_file_readable(actual_file_path):
+                logging.info(f"[ffprobe] Playability check passed for '{actual_file_path}'")
+                return True
+
+            logging.warning(f"[ffprobe] Playability check FAILED for '{actual_file_path}' — rejecting and reverting item {item.get('id')} to Wanted")
+            from utilities.local_library_scan import _reject_unplayable_source
+            _reject_unplayable_source(item, is_nzb)
+            try:
+                self.queue_manager.move_to_wanted(item, 'Checking')
+            except Exception as e_wanted:
+                logging.error(f"[ffprobe] Failed to move item {item.get('id')} back to Wanted after failed probe: {e_wanted}")
+            if cache_key in self.plex_scan_tick_counts:
+                del self.plex_scan_tick_counts[cache_key]
+            return False
 
         # Check if Plex library checks are disabled (file discovery only)
         if get_setting('Plex', 'disable_plex_library_checks', default=False):
@@ -6259,6 +6320,9 @@ class ProgramRunner:
                 if file_found_on_disk:
                     logging.info(f"Confirmed file exists on disk: {actual_file_path} for item {item_id}") # Log actual path found
                     self.file_location_cache[cache_key] = 'exists'
+
+                    if not _ffprobe_gate_or_reject(item_dict, actual_file_path, cache_key):
+                        continue
 
                     # --- START EDIT: Add Tick Check and Scan Path Gathering ---
                     should_trigger_scan = False
@@ -6525,6 +6589,9 @@ class ProgramRunner:
                     self.file_location_cache[cache_key] = 'exists'
                     current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
                     self.plex_scan_tick_counts[cache_key] = current_tick
+
+                    if not _ffprobe_gate_or_reject(item_dict, actual_file_path, cache_key):
+                        continue
 
                     # Option C: Direct Plex library lookup.
                     # Try 1: file path search (most reliable — checks exact file Plex should have indexed).
