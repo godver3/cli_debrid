@@ -1273,7 +1273,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
         </div>
         <div class="debug_item">
             <h3>Duplicate Symlink Targets</h3>
-            <p class="description">Scans TV Shows symlinks for episodes pointing at the same underlying file - usually means a season pack was mismatched and multiple "different" episodes are actually playing identical content. Read-only scan; nothing changes until you choose to rescrape.</p>
+            <p class="description">Scans TV Shows symlinks for episodes pointing at the same underlying file - usually means a season pack was mismatched and multiple "different" episodes are actually playing identical content. Read-only scan; rescraping fully deletes the affected episode(s) - symlink, source file/debrid download, media server entry - before moving them back to Wanted.</p>
             <button type="button" id="scan-duplicate-symlinks-btn">Scan for Duplicates</button>
             <div id="duplicate-symlinks-results" class="results-area" style="margin-top: 15px;"></div>
         </div>
@@ -3551,8 +3551,8 @@ if (document.readyState === 'loading') {
             if (!itemIds.length) return;
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
-                message: `Move ${itemIds.length} episode(s) back to Wanted for rescraping? This clears their current symlink/collection state.`,
-                title: 'Confirm Rescrape',
+                message: `Delete ${itemIds.length} episode(s) - symlink, source file/debrid download, media server entry - and move them back to Wanted for rescraping?`,
+                title: 'Confirm Delete & Rescrape',
                 onConfirm: () => {
                     Loading.show();
                     fetch('/debug/api/rescrape_duplicate_symlinks', {
@@ -3564,7 +3564,7 @@ if (document.readyState === 'loading') {
                     .then(data => {
                         Loading.hide();
                         if (data.success) {
-                            showPopup({ type: POPUP_TYPES.SUCCESS, message: `Moved ${data.moved} item(s) back to Wanted.`, title: 'Rescrape Queued', autoClose: true });
+                            showPopup({ type: POPUP_TYPES.SUCCESS, message: `Deleted and moved ${data.moved} item(s) back to Wanted.`, title: 'Rescrape Queued', autoClose: true });
                             if (scanDupeBtn) scanDupeBtn.click();
                         } else {
                             throw new Error(data.error || 'An unknown error occurred.');

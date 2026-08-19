@@ -5119,11 +5119,14 @@ def scan_duplicate_symlinks():
 @debug_bp.route('/api/rescrape_duplicate_symlinks', methods=['POST'])
 @admin_required
 def rescrape_duplicate_symlinks():
-    """Move the given item IDs back to Wanted so they get rescraped fresh -
-    same cleanup /statistics/move_to_wanted already does for a single item.
-    Doesn't touch the symlink file or the debrid/usenet source - the new
-    symlink created by the fresh scrape overwrites the stale one at the same
-    destination path once it lands."""
+    """Fully delete the given items (media server entry, symlink, source file/
+    debrid-or-usenet download, cache) the same way deleting an episode from the
+    library does, then move them back to Wanted so they get rescraped fresh.
+    Deletion runs as one batch via DeletionManager.delete_multiple_items, whose
+    sibling guard already excludes other items in the same batch when deciding
+    whether a shared season-pack torrent/NZB is still needed elsewhere - so
+    rescraping an entire duplicate-target group in one go won't have the items
+    block each other's cleanup."""
     from database import get_db_connection
 
     try:
@@ -5131,6 +5134,26 @@ def rescrape_duplicate_symlinks():
         item_ids = data.get('item_ids') or []
         if not item_ids:
             return jsonify({'success': False, 'error': 'No item_ids provided'}), 400
+
+        debrid_provider = get_debrid_provider()
+        deletion_manager = DeletionManager(debrid_provider=debrid_provider)
+        result = deletion_manager.delete_multiple_items(
+            item_ids=item_ids,
+            blacklist=False,
+            blacklist_sources=False,
+            delete_from_media_server=True,
+            delete_files=True,
+            delete_from_debrid=True,
+            delete_symlinks=True,
+            clear_cache=True,
+            remove_from_content_source=False,
+            skip_database=True  # We reset state to Wanted ourselves below instead of deleting the row
+        )
+
+        if not result.get('success'):
+            errors_list = result.get('errors', ['Deletion failed'])
+            logging.error(f"Error deleting duplicate-symlink items before rescrape: {errors_list}")
+            return jsonify({'success': False, 'error': errors_list[0] if errors_list else 'Deletion failed', 'errors': errors_list}), 500
 
         conn = get_db_connection()
         cursor = conn.cursor()

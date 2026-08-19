@@ -553,7 +553,12 @@ class TorrentProcessor:
                         # releases and was wrongly read as "not a normal episode filename,
                         # must be an unresolved pack".
                         _mem_check_title = _mem_item.get('original_scraped_torrent_title') or _mem_item.get('filled_by_file') or ''
-                        _mem_is_pack = not _re_mem.search(r'[Ss]\d{2}[Ee]\d{2}', _mem_check_title)
+                        # An empty title here usually means this sibling's own submission
+                        # (earlier this same tick) hasn't been reflected back into this
+                        # in-memory snapshot yet - not evidence it's a pack. Defaulting to
+                        # "is a pack" in that case caused a different episode's individual
+                        # NZB job to be reused here, symlinking the wrong file to this item.
+                        _mem_is_pack = bool(_mem_check_title) and not _re_mem.search(r'[Ss]\d{2}[Ee]\d{2}', _mem_check_title)
                         _mem_job = _mem_item.get('filled_by_torrent_id')
                         _mem_id = _mem_job[4:] if _mem_job and _mem_job.startswith('nzb:') else _mem_job
                         if _is_pack and _mem_is_pack:
@@ -596,7 +601,9 @@ class TorrentProcessor:
                         # single-episode usenet releases and was wrongly read as "not a normal
                         # episode filename, must be an unresolved pack".
                         _sibling_check_title = _sibling[2] or _sibling[1] or ''
-                        _sibling_is_pack = not _re_dedup.search(r'[Ss]\d{2}[Ee]\d{2}', _sibling_check_title)
+                        # Empty title is not evidence of a pack - see matching comment in the
+                        # in-memory check above. Defaulting True here risks the same wrong-job-reuse.
+                        _sibling_is_pack = bool(_sibling_check_title) and not _re_dedup.search(r'[Ss]\d{2}[Ee]\d{2}', _sibling_check_title)
                         if _is_pack and _sibling_is_pack:
                             # New result is a pack, existing job is a pack — reuse existing
                             _existing_job = _sibling[0]
