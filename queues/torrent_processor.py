@@ -577,6 +577,15 @@ class TorrentProcessor:
                 self.debrid_provider = provider
                 info = dict(info)
                 info['original_scraped_torrent_title'] = check_title
+                # debrid_folder_name must reflect the provider's OWN real mount folder name
+                # (info['filename']/'original_filename'), not the indexer's cosmetic display
+                # title (check_title) - those two frequently differ (e.g. a release named
+                # "[Fuchs] Mushoku Tensei - S02 (BD 1080p HEVC Opus 2.0)..." by the indexer but
+                # actually stored on the mount as "Mushoku.Tensei.S02.1080p.BluRay...-Fuchs" by
+                # whoever uploaded it). check_local_file_for_item's first folder-name guess
+                # (debrid_folder_name) needs the real one to succeed without depending on the
+                # other, title-based fallback guesses also happening to match by luck.
+                info['debrid_folder_name'] = info.get('filename') or info.get('original_filename') or check_title
                 logging.info(f"[{item.get('title', 'Unknown')}] Season pack already submitted for "
                              f"S{_season:02d} (torrent_id={torrent_id}) — reusing instead of duplicate submission")
                 # chosen_result_info must reflect THIS reused torrent's own title, not None -
@@ -721,7 +730,12 @@ class TorrentProcessor:
         from database import get_media_item_by_id as _gmi_con
         from utilities.local_library_scan import check_local_file_for_item as _clffi_con
 
-        new_debrid_folder_name = torrent_info.get('debrid_folder_name') or torrent_info.get('title')
+        new_debrid_folder_name = (
+            torrent_info.get('debrid_folder_name')
+            or torrent_info.get('filename')
+            or torrent_info.get('original_filename')
+            or torrent_info.get('title')
+        )
         old_torrent_ids_touched = set()
 
         for sib in siblings:
