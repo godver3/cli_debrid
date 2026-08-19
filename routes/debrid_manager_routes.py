@@ -3610,7 +3610,23 @@ def api_symlink_audit_delete():
 
     symlink_dir = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
     rclone_dir  = get_setting('File Management', 'original_files_path',  '/mnt/zurg/__all__')
-    deleted, failed, errors = 0, 0, []
+    deleted, failed, errors, skipped = 0, 0, [], 0
+
+    # Re-verify against the CURRENT filesystem state right before deleting -
+    # the caller's path list came from a cached scan that may be stale (a new
+    # symlink may have been created pointing at one of these paths since the
+    # scan ran, e.g. by normal ongoing collection activity). Trusting the
+    # cache blindly can delete a file a real, currently-active symlink now
+    # depends on.
+    current_linked_targets = set()
+    for root, dirs, files in os.walk(symlink_dir, followlinks=False):
+        for name in files:
+            full = os.path.join(root, name)
+            if os.path.islink(full):
+                raw = os.readlink(full)
+                target = raw if os.path.isabs(raw) else os.path.normpath(
+                    os.path.join(os.path.dirname(full), raw))
+                current_linked_targets.add(target)
 
     for p in paths:
         if not isinstance(p, str):
@@ -3619,6 +3635,9 @@ def api_symlink_audit_delete():
         if not (p.startswith(symlink_dir) or p.startswith(rclone_dir)):
             errors.append(f'Refused: {p}')
             failed += 1
+            continue
+        if p in current_linked_targets:
+            skipped += 1
             continue
         try:
             os.remove(p)
@@ -3639,7 +3658,7 @@ def api_symlink_audit_delete():
         except Exception:
             pass
 
-    return jsonify({'success': True, 'deleted': deleted, 'failed': failed, 'errors': errors[:20]})
+    return jsonify({'success': True, 'deleted': deleted, 'failed': failed, 'skipped': skipped, 'errors': errors[:20]})
 
 
 # ---------------------------------------------------------------------------

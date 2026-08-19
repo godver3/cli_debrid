@@ -7364,7 +7364,7 @@ async function _slDeleteAll(kind) {
                 });
                 const d = await r.json();
                 if (d.success) {
-                    showPopup({ type: 'success', title: 'Success', message: `Deleted ${d.deleted}${d.failed ? `, failed ${d.failed}` : ''}`, autoClose: 4000 });
+                    showPopup({ type: 'success', title: 'Success', message: `Deleted ${d.deleted}${d.skipped ? `, skipped ${d.skipped} (now in use)` : ''}${d.failed ? `, failed ${d.failed}` : ''}`, autoClose: 4000 });
                     // Re-scan to refresh
                     await _slStartScan();
                 } else {
