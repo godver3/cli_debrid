@@ -5056,23 +5056,32 @@ def scan_duplicate_symlinks():
 
     try:
         symlink_root = get_setting('File Management', 'symlinked_files_path', '')
-        tv_root = os.path.join(symlink_root, 'TV Shows') if symlink_root else ''
-        if not symlink_root or not os.path.isdir(tv_root):
-            return jsonify({'success': False, 'error': f'TV Shows symlink folder not found (checked: {tv_root or "no symlinked_files_path configured"})'}), 400
+        if not symlink_root:
+            return jsonify({'success': False, 'error': 'no symlinked_files_path configured'}), 400
+
+        tv_folder_names = [get_setting('Debug', 'tv_shows_folder_name', 'TV Shows')]
+        if get_setting('Debug', 'enable_separate_anime_folders', False):
+            tv_folder_names.append(get_setting('Debug', 'anime_tv_shows_folder_name', 'Anime TV Shows'))
+
+        tv_roots = [os.path.join(symlink_root, name) for name in tv_folder_names]
+        existing_roots = [r for r in tv_roots if os.path.isdir(r)]
+        if not existing_roots:
+            return jsonify({'success': False, 'error': f'No TV symlink folders found (checked: {", ".join(tv_roots)})'}), 400
 
         by_target = defaultdict(list)
         scanned = 0
-        for dirpath, dirnames, filenames in os.walk(tv_root):
-            for name in filenames:
-                full = os.path.join(dirpath, name)
-                if not os.path.islink(full):
-                    continue
-                scanned += 1
-                try:
-                    target = os.readlink(full)
-                except OSError:
-                    continue
-                by_target[target].append(full)
+        for tv_root in existing_roots:
+            for dirpath, dirnames, filenames in os.walk(tv_root):
+                for name in filenames:
+                    full = os.path.join(dirpath, name)
+                    if not os.path.islink(full):
+                        continue
+                    scanned += 1
+                    try:
+                        target = os.readlink(full)
+                    except OSError:
+                        continue
+                    by_target[target].append(full)
 
         dupe_groups = {t: paths for t, paths in by_target.items() if len(paths) > 1}
 
