@@ -561,6 +561,18 @@ class TorrentProcessor:
                         _mem_is_pack = bool(_mem_check_title) and not _re_mem.search(r'[Ss]\d{2}[Ee]\d{2}', _mem_check_title)
                         _mem_job = _mem_item.get('filled_by_torrent_id')
                         _mem_id = _mem_job[4:] if _mem_job and _mem_job.startswith('nzb:') else _mem_job
+                        if _mem_is_pack:
+                            # Verify the shared pack job is still actually queryable on the
+                            # provider before reusing it - a job that completed and was since
+                            # cleaned up (or never existed) will ghost every retry forever if
+                            # reused blindly, since nothing else ever re-checks it afterward.
+                            try:
+                                from usenet.climount_client import is_nzb_job_alive as _is_job_alive
+                                if not _is_job_alive(_mem_id):
+                                    logging.warning(f'[{item_identifier}] [Memory] Sibling job {_mem_job} no longer alive on provider - not reusing')
+                                    continue
+                            except Exception:
+                                pass  # unknown due to error - don't block a legitimate reuse
                         if _is_pack and _mem_is_pack:
                             logging.info(f'[{item_identifier}] [Memory] Season pack already submitted for S{_season:02d} '
                                          f'(job={_mem_job}) — reusing')
@@ -604,6 +616,19 @@ class TorrentProcessor:
                         # Empty title is not evidence of a pack - see matching comment in the
                         # in-memory check above. Defaulting True here risks the same wrong-job-reuse.
                         _sibling_is_pack = bool(_sibling_check_title) and not _re_dedup.search(r'[Ss]\d{2}[Ee]\d{2}', _sibling_check_title)
+                        if _sibling_is_pack:
+                            # Verify the shared pack job is still actually queryable on the
+                            # provider before reusing it - a job that completed and was since
+                            # cleaned up (or never existed) will ghost every retry forever if
+                            # reused blindly, since nothing else ever re-checks it afterward.
+                            try:
+                                from usenet.climount_client import is_nzb_job_alive as _is_job_alive
+                                _sib_job_hash = _sibling[0][4:] if _sibling[0].startswith('nzb:') else _sibling[0]
+                                if not _is_job_alive(_sib_job_hash):
+                                    logging.warning(f'[{item_identifier}] Sibling job {_sibling[0]} no longer alive on provider - not reusing, submitting fresh')
+                                    _sibling_is_pack = False
+                            except Exception:
+                                pass  # unknown due to error - don't block a legitimate reuse
                         if _is_pack and _sibling_is_pack:
                             # New result is a pack, existing job is a pack — reuse existing
                             _existing_job = _sibling[0]

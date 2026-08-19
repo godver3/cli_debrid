@@ -326,25 +326,42 @@ class ScrapingQueue:
                         _coal_check_title = _sibling_nzb[4] if _sibling_nzb else None  # original_scraped_torrent_title
                         if not _coal_check_title and _sibling_nzb:
                             _coal_check_title = _sibling_nzb[1]  # fall back to filled_by_file
-                        if _sibling_nzb and not _re_coal.search(r'[Ss]\d{2}[Ee]\d{2}', _coal_check_title or ''):
+                        # An empty title here is not evidence of a pack - it usually just means
+                        # the sibling's own submission hasn't finished writing back yet. Requiring
+                        # a real title before concluding "pack" avoids wrongly coalescing this item
+                        # into an unrelated individual episode's job.
+                        if _sibling_nzb and _coal_check_title and not _re_coal.search(r'[Ss]\d{2}[Ee]\d{2}', _coal_check_title):
                             _job_id = _sibling_nzb[0]
-                            _job_url = _sibling_nzb[2] or ''
-                            _job_title = _sibling_nzb[3] or ''
-                            _job_orig = _sibling_nzb[4] or ''
-                            _job_seg = _sibling_nzb[5] or ''
-                            logging.info(f'[NZBPack] {item_identifier}: season pack already submitted (job={_job_id}), coalescing into same job')
-                            from database.database_writing import update_media_item, update_media_item_state
-                            update_media_item_state(item_to_process['id'], 'Adding')
-                            _coal_seg_kwargs = {'nzb_segment_id': _job_seg} if _job_seg else {}
-                            update_media_item(item_to_process['id'],
-                                filled_by_torrent_id=_job_id,
-                                filled_by_magnet=_job_url,
-                                filled_by_title=_job_title,
-                                original_scraped_torrent_title=_job_orig,
-                                **_coal_seg_kwargs,
-                            )
-                            self.remove_item(item_to_process)
-                            return True
+                            # Verify the shared job is still actually queryable on the provider
+                            # before reusing it - a job that completed and was since cleaned up
+                            # (or never existed) will ghost every retry forever if reused blindly,
+                            # since nothing else ever re-checks it once it's written to this item.
+                            _job_hash_for_check = _job_id[4:] if str(_job_id).startswith('nzb:') else _job_id
+                            try:
+                                from usenet.climount_client import is_nzb_job_alive as _is_job_alive
+                                _coalesce_job_alive = _is_job_alive(_job_hash_for_check)
+                            except Exception:
+                                _coalesce_job_alive = True  # unknown due to error - don't block a legitimate reuse
+                            if not _coalesce_job_alive:
+                                logging.warning(f'[NZBPack] {item_identifier}: sibling job {_job_id} no longer alive on provider - not coalescing, submitting fresh')
+                            else:
+                                _job_url = _sibling_nzb[2] or ''
+                                _job_title = _sibling_nzb[3] or ''
+                                _job_orig = _sibling_nzb[4] or ''
+                                _job_seg = _sibling_nzb[5] or ''
+                                logging.info(f'[NZBPack] {item_identifier}: season pack already submitted (job={_job_id}), coalescing into same job')
+                                from database.database_writing import update_media_item, update_media_item_state
+                                update_media_item_state(item_to_process['id'], 'Adding')
+                                _coal_seg_kwargs = {'nzb_segment_id': _job_seg} if _job_seg else {}
+                                update_media_item(item_to_process['id'],
+                                    filled_by_torrent_id=_job_id,
+                                    filled_by_magnet=_job_url,
+                                    filled_by_title=_job_title,
+                                    original_scraped_torrent_title=_job_orig,
+                                    **_coal_seg_kwargs,
+                                )
+                                self.remove_item(item_to_process)
+                                return True
                     except Exception as _ce:
                         logging.debug(f'[NZBPack] Season pack coalesce check failed: {_ce}')
 

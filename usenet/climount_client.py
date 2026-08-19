@@ -901,6 +901,31 @@ def get_climount_client():
     return _client_instance
 
 
+def is_nzb_job_alive(job_hash: str) -> bool:
+    """
+    Check whether a shared season-pack job is still queryable on the usenet
+    provider before reusing its reference for a different episode. A job that
+    completed and was later cleaned up server-side (or genuinely never
+    existed) returns no populated status - reusing it anyway just produces
+    another dead reference that will ghost every retry forever, since nothing
+    else ever re-verifies it. Result is cached briefly so many sibling
+    episodes checking the same job within one pass don't each re-query it.
+    """
+    from debrid.common.cache import timed_lru_cache
+
+    @timed_lru_cache(seconds=20)
+    def _check(_job_hash: str) -> bool:
+        try:
+            status = get_climount_client().get_job_status(_job_hash)
+            return bool(status and status.get('raw'))
+        except Exception as exc:
+            logging.debug(f'[cli_mount] is_nzb_job_alive check failed for {_job_hash!r}: {exc}')
+            # Unknown due to a transient error - don't block a legitimate reuse over it.
+            return True
+
+    return _check(job_hash)
+
+
 def reset_climount_client() -> None:
     global _client_instance
     _client_instance = None
