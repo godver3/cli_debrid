@@ -579,7 +579,19 @@ class TorrentProcessor:
                 info['original_scraped_torrent_title'] = check_title
                 logging.info(f"[{item.get('title', 'Unknown')}] Season pack already submitted for "
                              f"S{_season:02d} (torrent_id={torrent_id}) — reusing instead of duplicate submission")
-                return info, magnet, None
+                # chosen_result_info must reflect THIS reused torrent's own title, not None -
+                # adding_queue.py falls back to results[0] (the fresh scrape's top candidate,
+                # unrelated to what we're actually reusing) whenever this is falsy, which writes
+                # a mismatched title into original_scraped_torrent_title. That's usually masked by
+                # debrid_folder_name (set separately from this torrent's own info) still letting
+                # check_local_file_for_item resolve the file via a different fallback attempt, but
+                # not always - live-reproduced as "not found in any checked location" recurring
+                # once something else also disrupted that fallback.
+                chosen_result_info = {
+                    'title': check_title,
+                    'original_scraped_torrent_title': check_title,
+                }
+                return info, magnet, chosen_result_info
             return None
 
         # In-memory check first: catches a sibling submitted this same tick, before it's
