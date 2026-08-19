@@ -1476,6 +1476,17 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 else:
                     logging.warning(f"[ffprobe] Playability check FAILED for '{source_file}' — rejecting and reverting to Wanted")
                     _reject_unplayable_source(item, _is_nzb_for_probe)
+                    # _reject_unplayable_source only updates the DB row - without also
+                    # moving the item out of the in-memory CheckingQueue, the DB says
+                    # Wanted while the queue still holds it with its stale filled_by_*
+                    # fields, until the next queue refresh reconciles them. The Plex-mode
+                    # equivalent (run_program.py's _ffprobe_gate_or_reject) already does
+                    # this; mirror it here for parity.
+                    try:
+                        from queues.queue_manager import QueueManager
+                        QueueManager().move_to_wanted(item, 'Checking')
+                    except Exception as e_wanted:
+                        logging.error(f"[ffprobe] Failed to move item {item.get('id')} back to Wanted after failed probe: {e_wanted}")
                     return False
 
             # Get destination path based on settings (using the found source_file)
