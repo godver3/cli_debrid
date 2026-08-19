@@ -3591,6 +3591,9 @@ if (document.readyState === 'loading') {
             html += `<button type="button" id="rescrape-all-dupe-groups-btn" style="margin-bottom:10px;">Rescrape All (${data.affected_count})</button>`;
             data.groups.forEach((group, gIdx) => {
                 html += `<div class="dupe-group" style="margin-bottom:16px;border:1px solid #444;padding:10px;border-radius:6px;">`;
+                if (group.is_multi_episode_release) {
+                    html += `<div style="display:inline-block;background:#2d5f3f;color:#9fe6b8;font-size:0.75em;padding:2px 8px;border-radius:10px;margin-bottom:6px;">Possible multi-episode release &mdash; filename appears to cover all episodes below</div>`;
+                }
                 html += `<div class="path-cell" style="word-break:break-all;color:#aaa;font-size:0.85em;margin-bottom:6px;">Target: ${group.target}</div>`;
                 html += `<button type="button" class="rescrape-dupe-group-btn" data-group="${gIdx}" style="margin-bottom:8px;">Rescrape This Group (${group.items.length})</button>`;
                 html += `<table class="preview-results-table"><thead><tr><th>Show</th><th>Season/Episode</th><th>Path</th></tr></thead><tbody>`;

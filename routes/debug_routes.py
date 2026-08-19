@@ -5108,7 +5108,28 @@ def scan_duplicate_symlinks():
                     'episode_number': row['episode_number'],
                 })
             if len(items) > 1:
-                groups_out.append({'target': target, 'items': items})
+                # Distinguish a genuine mismatch (different episodes wrongly sharing a file)
+                # from a legitimate combined multi-episode release file (e.g. a premiere
+                # packaged as one S01E01E02.mkv covering both episodes) - same episode/season
+                # numbers on both sides is the signal either way, but only the latter is
+                # expected/harmless. Reuse the same title parser the scraper already uses for
+                # ranking (parse_with_ptt) rather than writing new episode-detection logic.
+                is_multi_episode_release = False
+                try:
+                    from scraper.functions.ptt_parser import parse_with_ptt
+                    target_basename = os.path.basename(target)
+                    parsed = parse_with_ptt(target_basename)
+                    parsed_episodes = set(parsed.get('episodes') or [])
+                    group_episodes = {i['episode_number'] for i in items if i.get('episode_number') is not None}
+                    if group_episodes and parsed_episodes == group_episodes:
+                        is_multi_episode_release = True  # "possible" - PTT parsing isn't infallible, still shown for review either way
+                except Exception as e:
+                    logging.debug(f"Multi-episode release detection failed for {target}: {e}")
+                groups_out.append({
+                    'target': target,
+                    'items': items,
+                    'is_multi_episode_release': is_multi_episode_release,
+                })
         conn.close()
 
         groups_out.sort(key=lambda g: -len(g['items']))
