@@ -9562,7 +9562,7 @@ async function requestContent(content, selectedVersions, selectedFolder = null, 
         hideLoadingMessage();
 
         if (result.success) {
-            showPopup({ type: 'success', title: 'Success', message: `Successfully requested ${content.title}` });
+            showPopup({ type: 'success', title: 'Success', message: result.message || `Successfully requested ${content.title}` });
         } else {
             showPopup({ type: 'error', title: 'Error', message: result.error || 'Failed to request content' });
         }

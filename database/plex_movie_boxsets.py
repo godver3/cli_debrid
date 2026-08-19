@@ -316,26 +316,37 @@ def build_boxset_list(name_pattern: str, min_movies: int = 2) -> List[dict]:
     conn = _get_db()
     try:
         rows = conn.execute(
-            """SELECT tmdb_collection_id, tmdb_collection_name,
-                      GROUP_CONCAT(imdb_id) as imdb_ids,
-                      GROUP_CONCAT(ms_item_id) as ms_item_ids
+            """SELECT tmdb_collection_id, tmdb_collection_name, imdb_id, tmdb_id, ms_item_id
                FROM media_items
                WHERE type = 'movie'
                  AND tmdb_collection_id != ''
                  AND tmdb_collection_id IS NOT NULL
                  AND state = 'Collected'
-                 AND ms_item_id IS NOT NULL
-               GROUP BY tmdb_collection_id""",
+                 AND ms_item_id IS NOT NULL""",
         ).fetchall()
     finally:
         conn.close()
 
-    boxsets = []
+    # Group individual movie rows by collection in Python rather than GROUP_CONCAT —
+    # GROUP_CONCAT across multiple columns doesn't guarantee correlated ordering, and
+    # sync_plex_collections() needs each movie's imdb_id/tmdb_id kept together (not
+    # just independent sets) to resolve section-local ratingKeys correctly.
+    collections_grouped: Dict[str, dict] = {}
     for row in rows:
         coll_id = row['tmdb_collection_id']
-        tmdb_name = row['tmdb_collection_name'] or ''
-        owned_imdb_ids = set(i for i in (row['imdb_ids'] or '').split(',') if i)
-        owned_ms_ids = set(i for i in (row['ms_item_ids'] or '').split(',') if i)
+        entry = collections_grouped.setdefault(coll_id, {'name': row['tmdb_collection_name'], 'movies': []})
+        entry['movies'].append({
+            'imdb_id': row['imdb_id'],
+            'tmdb_id': row['tmdb_id'],
+            'ms_item_id': row['ms_item_id'],
+        })
+
+    boxsets = []
+    for coll_id, grouped in collections_grouped.items():
+        tmdb_name = grouped['name'] or ''
+        owned_movies = grouped['movies']
+        owned_imdb_ids = set(m['imdb_id'] for m in owned_movies if m['imdb_id'])
+        owned_ms_ids = set(m['ms_item_id'] for m in owned_movies if m['ms_item_id'])
 
         if len(owned_ms_ids) < min_movies:
             logger.debug(f"[BoxSets] Collection {coll_id} has {len(owned_ms_ids)} owned movie(s), below threshold {min_movies} — skipping")
@@ -396,6 +407,7 @@ def build_boxset_list(name_pattern: str, min_movies: int = 2) -> List[dict]:
             'poster_path': poster_path,
             'owned_imdb_ids': owned_imdb_ids,
             'owned_ms_ids': owned_ms_ids,
+            'owned_movies': owned_movies,
             'all_parts': all_parts,
         })
 
@@ -412,12 +424,38 @@ def sync_plex_collections(boxsets: List[dict], plex_url: str, token: str,
     For each boxset, find or create a Plex collection and ensure all owned
     movies are members. Returns {collection_id: plex_rating_key}.
     """
+    from database.plex_collections import _get_section_id_map
+
     plex_map = {}
+
+    # Resolve section-local ratingKeys — a movie's stored ms_item_id may come from a
+    # different Plex library section (e.g. a split HD/4K setup), or be stale after a
+    # library re-add. Fetch all items in this section keyed by IMDB/TMDB ID so we only
+    # add items that actually exist here, using the correct ratingKey — the same
+    # pattern plex_collections.py uses for the non-boxset collections feature.
+    id_map = _get_section_id_map(plex_url, token, section_key, 'movie')
+    if not id_map:
+        logger.warning(f"[BoxSets] Section {section_key} id_map empty (fetch failed?), skipping sync to avoid data loss")
+        return plex_map
 
     for bs in boxsets:
         display_name = bs['display_name']
-        owned_ms_ids = list(bs['owned_ms_ids'])
         coll_id = bs['collection_id']
+
+        desired_rks = []
+        for m in bs['owned_movies']:
+            imdb = m.get('imdb_id') or ''
+            tmdb = str(m.get('tmdb_id') or '')
+            local_rk = id_map.get(imdb) or (id_map.get('tmdb:' + tmdb) if tmdb else None)
+            if local_rk:
+                desired_rks.append(local_rk)
+
+        if not desired_rks:
+            logger.warning(f"[BoxSets] '{display_name}': none of the {len(bs['owned_movies'])} owned movie(s) found in Plex section {section_key} — skipping (wrong library section?)")
+            continue
+
+        if len(desired_rks) < len(bs['owned_movies']):
+            logger.info(f"[BoxSets] '{display_name}': resolved {len(desired_rks)}/{len(bs['owned_movies'])} owned movie(s) to local ratingKeys in section {section_key}")
 
         try:
             collection_rk = _get_or_create_collection(plex_url, token, section_key, display_name, sort_order)
@@ -428,13 +466,13 @@ def sync_plex_collections(boxsets: List[dict], plex_url: str, token: str,
 
             # Find which owned movies are not yet in the collection
             existing_rks = _get_collection_item_ratingkeys(plex_url, token, collection_rk)
-            to_add = [rk for rk in owned_ms_ids if rk not in existing_rks]
+            to_add = [rk for rk in desired_rks if rk not in existing_rks]
 
             if to_add:
                 _add_items_to_collection(plex_url, token, machine_id, collection_rk, to_add)
                 logger.info(f"[BoxSets] '{display_name}': added {len(to_add)} movies to Plex collection (rk={collection_rk})")
             else:
-                logger.info(f"[BoxSets] '{display_name}': all {len(owned_ms_ids)} movies already in collection (rk={collection_rk})")
+                logger.info(f"[BoxSets] '{display_name}': all {len(desired_rks)} movies already in collection (rk={collection_rk})")
 
         except Exception as e:
             logger.error(f"[BoxSets] Failed to sync Plex collection '{display_name}': {e}", exc_info=True)

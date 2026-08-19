@@ -784,9 +784,33 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         imdb_id = item.get('imdb_id', '')
         if imdb_id == 'tt0000000':
             imdb_id = ''
-            
+
+        raw_title = item.get('title', 'Unknown')
+        # sanitize_filename ASCII-encodes and drops anything it can't represent — for a
+        # title that's partly or entirely non-Latin script, that can strip it down to
+        # nothing (or to a short, non-distinguishing fragment — e.g. '怪獣8号' survives
+        # as just "8", 'NARUTO－ナルト－' survives as "NARUTO", which happens to be fine
+        # here but isn't guaranteed to be unique for some other mixed-script title). The
+        # show-level folder template ('{title} ({year})') has no other uniqueness anchor,
+        # so a collapsed or barely-distinguishing title risks two different non-Latin
+        # titled shows released the same year landing in the same directory and silently
+        # interleaving episode files. Fall back to a stable, unique identifier whenever
+        # the title contains any non-Latin script at all, rather than only when nothing
+        # survives — checked via presence of any non-Latin letter (script-agnostic:
+        # Japanese, Korean, Chinese, Hindi, Cyrillic, Arabic, etc. all match), the
+        # same detection used for the TVDB-side fix for this same underlying issue.
+        from utilities.text_utils import has_non_latin_letter
+        effective_title = raw_title
+        if raw_title and raw_title.strip() and has_non_latin_letter(raw_title):
+            effective_title = imdb_id or item.get('tmdb_id', '') or 'unknown'
+            logging.warning(
+                f"[SymlinkPath] Title {raw_title!r} has no ASCII-safe representation — "
+                f"falling back to {effective_title!r} to avoid colliding with other "
+                f"items released in {item.get('year', '')!r}"
+            )
+
         template_vars = {
-            'title': item.get('title', 'Unknown'),
+            'title': effective_title,
             'year': item.get('year', ''),
             'imdb_id': imdb_id,
             'tmdb_id': item.get('tmdb_id', ''),
@@ -1476,6 +1500,17 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 else:
                     logging.warning(f"[ffprobe] Playability check FAILED for '{source_file}' — rejecting and reverting to Wanted")
                     _reject_unplayable_source(item, _is_nzb_for_probe)
+                    # _reject_unplayable_source only updates the DB row - without also
+                    # moving the item out of the in-memory CheckingQueue, the DB says
+                    # Wanted while the queue still holds it with its stale filled_by_*
+                    # fields, until the next queue refresh reconciles them. The Plex-mode
+                    # equivalent (run_program.py's _ffprobe_gate_or_reject) already does
+                    # this; mirror it here for parity.
+                    try:
+                        from queues.queue_manager import QueueManager
+                        QueueManager().move_to_wanted(item, 'Checking')
+                    except Exception as e_wanted:
+                        logging.error(f"[ffprobe] Failed to move item {item.get('id')} back to Wanted after failed probe: {e_wanted}")
                     return False
 
             # Get destination path based on settings (using the found source_file)

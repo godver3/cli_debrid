@@ -1657,6 +1657,35 @@ class CheckingQueue:
         # Iterate over a copy of self.items for safety if handlers modify it.
         items_for_stalled_torrent = [item for item in list(self.items) if item.get('filled_by_torrent_id') == torrent_id]
 
+        # Debrid season-pack sibling reuse means a sibling episode can already be Collected
+        # on this same torrent_id while another sibling is still stuck stalling in this
+        # queue - such a sibling has left self.items entirely, so it's invisible to the
+        # in-memory check above. Removing the torrent here would silently break that
+        # already-Collected episode's playback. Check the DB for any such episode first.
+        if not str(torrent_id).startswith('nzb:'):
+            try:
+                from database import get_db_connection as _gdb_stall
+                _known_ids = {i['id'] for i in items_for_stalled_torrent}
+                _conn = _gdb_stall()
+                try:
+                    _placeholders = ','.join('?' * len(_known_ids)) if _known_ids else 'NULL'
+                    _other = _conn.execute(
+                        f"SELECT 1 FROM media_items WHERE filled_by_torrent_id=? "
+                        f"AND state IN ('Collected','Upgrading') "
+                        f"AND id NOT IN ({_placeholders}) LIMIT 1",
+                        (torrent_id, *_known_ids)
+                    ).fetchone()
+                finally:
+                    _conn.close()
+                if _other:
+                    logging.info(f"Torrent {torrent_id} has a Collected/Upgrading sibling outside this queue's stalled check — not removing, only handling the items stalled here")
+                    for item_to_move in items_for_stalled_torrent:
+                        if self.contains_item_id(item_to_move['id']):
+                            queue_manager.move_to_wanted(item_to_move, "Checking")
+                    return
+            except Exception as e:
+                logging.warning(f"Could not check for Collected siblings of torrent {torrent_id}: {e} — proceeding with normal stalled handling")
+
         if not items_for_stalled_torrent:
             logging.warning(f"No items found for stalled torrent {torrent_id} at the moment of handling.")
             # Clean up strike counter if it exists, as there are no items to process

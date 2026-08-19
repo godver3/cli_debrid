@@ -5181,12 +5181,15 @@ class ProgramRunner:
                     logging.error(f"[REPLACE] Error in reconciliation replace hook: {_replace_err}")
             # --- End Step 1b ---
 
-            # --- Step 1c: Collect stranded NZB coalesced items in Adding state ---
+            # --- Step 1c: Resolve stranded NZB coalesced items in Adding state ---
             # When a season pack NZB is submitted, only the initiator episode goes through
             # health check → Checking → _resolve_nzb_file_info → Collected.
             # The coalesced siblings sit in Adding with filled_by_torrent_id=nzb:xxx but no
-            # filled_by_file. If a sibling is already Collected (via Plex scan), collect them
-            # immediately with proper file info copied from the Collected sibling.
+            # filled_by_file. If a sibling is already Collected, look up the pack's actual
+            # file listing on cli_mount and match each stranded item to its own episode file
+            # by SxxEyy (same matching checking_queue._resolve_nzb_file_info uses) before
+            # moving it into Checking - never straight to Collected, since that would mark
+            # an item done with no real file/symlink ever created for it.
             try:
                 stranded_rows = cursor.execute("""
                     SELECT a.id, a.imdb_id, a.season_number, a.episode_number, a.title
@@ -5199,7 +5202,7 @@ class ProgramRunner:
                 """).fetchall()
 
                 if stranded_rows:
-                    stranded_collected = []
+                    stranded_matches = []
                     for row in stranded_rows:
                         # Prefer the initiator row (has nzb torrent_id + folder info),
                         # fall back to any Collected sibling with a filled_by_file.
@@ -5216,17 +5219,52 @@ class ProgramRunner:
                             LIMIT 1
                         """, (row['imdb_id'], row['season_number'], row['id'])).fetchone()
                         if sibling:
-                            stranded_collected.append((row['id'], dict(sibling), dict(row)))
+                            stranded_matches.append((row['id'], dict(sibling), dict(row)))
 
-                    if stranded_collected:
-                        for item_id, sib, item in stranded_collected:
-                            # Use filled_by_title as location_basename (folder name) — sibling's
-                            # location_basename may be a filename if set before the fix.
+                    if stranded_matches:
+                        import re as _re_sc
+                        from usenet.climount_client import get_climount_client as _get_dc_sc
+                        _dc_sc = _get_dc_sc()
+                        _folder_files_cache = {}  # folder_name -> video_files list, avoid repeat lookups
+
+                        for item_id, sib, item in stranded_matches:
                             folder_name = sib['filled_by_title'] or sib['debrid_folder_name'] or sib['location_basename']
+                            if not folder_name:
+                                continue
+
+                            if folder_name not in _folder_files_cache:
+                                try:
+                                    _result = _dc_sc.get_nzb_folder_all_files(folder_name)
+                                    _folder_files_cache[folder_name] = _result[1] if _result else []
+                                except Exception as _lookup_err:
+                                    logging.warning(f"[NZBCoalesce] Folder lookup failed for {folder_name!r}: {_lookup_err}")
+                                    _folder_files_cache[folder_name] = []
+                            video_files = _folder_files_cache[folder_name]
+
+                            season = item['season_number']
+                            episode = item['episode_number']
+                            matched_file = None
+                            if season is not None and episode is not None:
+                                ep_pat = _re_sc.compile(rf'[Ss]{season:02d}[Ee]{episode:02d}(?![0-9])', _re_sc.IGNORECASE)
+                                for vf in video_files:
+                                    if ep_pat.search(vf):
+                                        matched_file = vf
+                                        break
+
+                            if not matched_file:
+                                # Can't confirm this item's own file exists in the pack folder yet -
+                                # leave it in Adding rather than falsely marking it done.
+                                reconciliation_logger.debug(
+                                    f"[NZBCoalesce] Stranded item {item_id} '{item['title']}' "
+                                    f"S{item['season_number']}E{item['episode_number']} — no matching file "
+                                    f"found yet in folder {folder_name!r}, leaving in Adding"
+                                )
+                                continue
+
                             cursor.execute("""
                                 UPDATE media_items SET
-                                    state = 'Collected',
-                                    collected_at = ?,
+                                    state = 'Checking',
+                                    filled_by_file = ?,
                                     filled_by_torrent_id = ?,
                                     filled_by_title = ?,
                                     debrid_folder_name = ?,
@@ -5235,7 +5273,7 @@ class ProgramRunner:
                                     real_debrid_original_title = ?
                                 WHERE id = ?
                             """, (
-                                now_str,
+                                matched_file,
                                 sib['filled_by_torrent_id'],
                                 folder_name,
                                 folder_name,
@@ -5245,9 +5283,9 @@ class ProgramRunner:
                                 item_id,
                             ))
                             reconciliation_logger.info(
-                                f"[NZBCoalesce] Collected stranded Adding item {item_id} "
+                                f"[NZBCoalesce] Resolved stranded Adding item {item_id} "
                                 f"'{item['title']}' S{item['season_number']}E{item['episode_number']} "
-                                f"— sibling {sib['id']} already Collected"
+                                f"→ {matched_file!r}, moved to Checking (sibling {sib['id']} already Collected)"
                             )
             except Exception as _sc_err:
                 logging.error(f"[NZBCoalesce] Step 1c error: {_sc_err}", exc_info=True)

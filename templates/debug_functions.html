@@ -403,6 +403,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
     'Fix Zurg Symlinks':'symlink',
     'Modify Symlink Base Paths':'symlink',
     'Resync Symlinks with New Settings':'symlink',
+    'Duplicate Symlink Targets':'symlink',
     'Rclone Mount to Symlinks':'symlink',
     'Current Rate Limit State':'monitoring',
     'Plex Token Status':'monitoring',
@@ -1270,6 +1271,12 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                 <button type="submit">Resync Symlinks</button>
                 <div id="resync-symlinks-results" class="results-area" style="margin-top: 15px;"></div>
             </form>
+        </div>
+        <div class="debug_item">
+            <h3>Duplicate Symlink Targets</h3>
+            <p class="description">Scans TV Shows symlinks for episodes pointing at the same underlying file - usually means a season pack was mismatched and multiple "different" episodes are actually playing identical content. Read-only scan; rescraping fully deletes the affected episode(s) - symlink, source file/debrid download, media server entry - before moving them back to Wanted.</p>
+            <button type="button" id="scan-duplicate-symlinks-btn">Scan for Duplicates</button>
+            <div id="duplicate-symlinks-results" class="results-area" style="margin-top: 15px;"></div>
         </div>
         <div class="debug_item">
             <h3>Rclone Mount to Symlinks</h3>
@@ -3537,6 +3544,111 @@ if (document.readyState === 'loading') {
         // --- End Rclone Mount to Symlinks Logic ---
 
         // --- Fix Zurg Symlinks Logic ---
+        const scanDupeBtn = document.getElementById('scan-duplicate-symlinks-btn');
+        const dupeResultsDiv = document.getElementById('duplicate-symlinks-results');
+        let dupeGroupsData = [];
+
+        function rescrapeDupeItems(itemIds) {
+            if (!itemIds.length) return;
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                message: `Delete ${itemIds.length} episode(s) - symlink, source file/debrid download, media server entry - and move them back to Wanted for rescraping?`,
+                title: 'Confirm Delete & Rescrape',
+                onConfirm: () => {
+                    Loading.show();
+                    fetch('/debug/api/rescrape_duplicate_symlinks', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ item_ids: itemIds })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        Loading.hide();
+                        if (data.success) {
+                            showPopup({ type: POPUP_TYPES.SUCCESS, message: `Deleted and moved ${data.moved} item(s) back to Wanted.`, title: 'Rescrape Queued', autoClose: true });
+                            if (scanDupeBtn) scanDupeBtn.click();
+                        } else {
+                            throw new Error(data.error || 'An unknown error occurred.');
+                        }
+                    })
+                    .catch(error => {
+                        Loading.hide();
+                        showPopup({ type: POPUP_TYPES.ERROR, message: error.message, title: 'Error', autoClose: false });
+                    });
+                }
+            });
+        }
+
+        function renderDupeGroups(data) {
+            dupeGroupsData = data.groups;
+            let html = `<h4>Results:</h4>`;
+            html += `<p>Symlinks scanned: ${data.scanned} &middot; Duplicate groups: ${data.group_count} &middot; Episodes affected: ${data.affected_count}</p>`;
+            if (data.group_count === 0) {
+                html += `<p>No duplicate targets found - every episode points to its own distinct file.</p>`;
+                dupeResultsDiv.innerHTML = html;
+                return;
+            }
+            html += `<button type="button" id="rescrape-all-dupe-groups-btn" style="margin-bottom:10px;">Rescrape All (${data.affected_count})</button>`;
+            data.groups.forEach((group, gIdx) => {
+                html += `<div class="dupe-group" style="margin-bottom:16px;border:1px solid #444;padding:10px;border-radius:6px;">`;
+                if (group.is_multi_episode_release) {
+                    html += `<div style="display:inline-block;background:#2d5f3f;color:#9fe6b8;font-size:0.75em;padding:2px 8px;border-radius:10px;margin-bottom:6px;">Possible multi-episode release &mdash; filename appears to cover all episodes below</div>`;
+                }
+                html += `<div class="path-cell" style="word-break:break-all;color:#aaa;font-size:0.85em;margin-bottom:6px;">Target: ${group.target}</div>`;
+                html += `<button type="button" class="rescrape-dupe-group-btn" data-group="${gIdx}" style="margin-bottom:8px;">Rescrape This Group (${group.items.length})</button>`;
+                html += `<table class="preview-results-table"><thead><tr><th>Show</th><th>Season/Episode</th><th>Path</th></tr></thead><tbody>`;
+                group.items.forEach(item => {
+                    const showLabel = `${item.title || 'Unknown'} (${item.year || ''})`;
+                    const se = `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`;
+                    html += `<tr>
+                        <td class="title-cell">${showLabel}</td>
+                        <td>${se}</td>
+                        <td class="path-cell">${item.path}</td>
+                    </tr>`;
+                });
+                html += `</tbody></table></div>`;
+            });
+            dupeResultsDiv.innerHTML = html;
+
+            document.querySelectorAll('.rescrape-dupe-group-btn').forEach(btn => {
+                btn.addEventListener('click', function () {
+                    const gIdx = parseInt(this.dataset.group, 10);
+                    const ids = dupeGroupsData[gIdx].items.filter(i => i.item_id).map(i => i.item_id);
+                    rescrapeDupeItems(ids);
+                });
+            });
+            const rescrapeAllBtn = document.getElementById('rescrape-all-dupe-groups-btn');
+            if (rescrapeAllBtn) {
+                rescrapeAllBtn.addEventListener('click', function () {
+                    const ids = [];
+                    dupeGroupsData.forEach(g => g.items.forEach(i => { if (i.item_id) ids.push(i.item_id); }));
+                    rescrapeDupeItems(ids);
+                });
+            }
+        }
+
+        if (scanDupeBtn) {
+            scanDupeBtn.addEventListener('click', function () {
+                Loading.show();
+                dupeResultsDiv.innerHTML = '';
+                fetch('/debug/api/scan_duplicate_symlinks', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        Loading.hide();
+                        if (data.success) {
+                            renderDupeGroups(data);
+                        } else {
+                            throw new Error(data.error || 'An unknown error occurred.');
+                        }
+                    })
+                    .catch(error => {
+                        Loading.hide();
+                        showPopup({ type: POPUP_TYPES.ERROR, message: error.message, title: 'Error', autoClose: false });
+                        dupeResultsDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                    });
+            });
+        }
+
         const fixZurgForm = document.getElementById('fix-zurg-symlinks-form');
         const fixZurgResultsDiv = document.getElementById('fix-zurg-results');
 
