@@ -554,7 +554,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                     for version_vs, state_vs, _ in existing_movies[tmdb_id]:
                         existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
 
-                if not enable_granular_versions:
+                if not (enable_granular_versions or is_user_initiated_add):
                     if existing_versions_set_vs:
                         skip = True
                         if imdb_id and imdb_id in existing_movies: skip_stats['existing_movie_imdb'] += 1
@@ -599,7 +599,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         for version_vs, state_vs, _, _ in existing_episodes[tmdb_key_vs]:
                             existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
 
-                if not enable_granular_versions:
+                if not (enable_granular_versions or is_user_initiated_add):
                     if existing_versions_set_vs:
                         skip = True
                         if imdb_key_vs and imdb_key_vs in existing_episodes: skip_stats['existing_episode_imdb'] += 1

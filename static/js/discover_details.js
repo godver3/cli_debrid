@@ -1156,7 +1156,7 @@ if (selTags) payload.selected_tags = selTags;
             window.showPopup({
                 type: window.POPUP_TYPES.SUCCESS,
                 title: 'Success',
-                message: `Successfully requested ${contentData.title}`,
+                message: result.message || `Successfully requested ${contentData.title}`,
                 autoClose: 3000
             });
         } else {
@@ -1202,7 +1202,7 @@ async function requestContentDirectly(data) {
             window.showPopup({
                 type: window.POPUP_TYPES.SUCCESS,
                 title: 'Success',
-                message: `Successfully requested ${data.title}`,
+                message: result.message || `Successfully requested ${data.title}`,
                 autoClose: 3000
             });
         } else {

@@ -259,7 +259,14 @@ def request_content():
             track_action('library_add_manual', detail=_detail, user_id=_uid)
         except Exception:
             pass
-        return jsonify({'success': True, 'item': wanted_item})
+        if items_added == 0:
+            return jsonify({
+                'success': True,
+                'item': wanted_item,
+                'items_added': 0,
+                'message': f"Already have {data.get('title', 'this title')} in the requested version(s)"
+            })
+        return jsonify({'success': True, 'item': wanted_item, 'items_added': items_added})
         
     except Exception as e:
         logging.error(f"Error processing content request: {str(e)}")

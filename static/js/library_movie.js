@@ -1274,7 +1274,7 @@ async function submitRequest(selectedVersions) {
         const data = await response.json();
 
         if (data.success || response.ok) {
-            showPopup({ message: `Successfully requested: ${movieData.title}`, type: POPUP_TYPES.SUCCESS });
+            showPopup({ message: data.message || `Successfully requested: ${movieData.title}`, type: POPUP_TYPES.SUCCESS });
         } else {
             throw new Error(data.error || 'Request failed');
         }
