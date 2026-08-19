@@ -3594,9 +3594,8 @@ if (document.readyState === 'loading') {
                 html += `<button type="button" class="rescrape-dupe-group-btn" data-group="${gIdx}" style="margin-bottom:8px;">Rescrape This Group (${group.items.length})</button>`;
                 html += `<table class="preview-results-table"><thead><tr><th>Show</th><th>Season/Episode</th><th>Path</th></tr></thead><tbody>`;
                 group.items.forEach(item => {
-                    const matched = item.item_id !== null && item.item_id !== undefined;
-                    const showLabel = matched ? `${item.title || 'Unknown'} (${item.year || ''})` : '<i>Not matched to a database item</i>';
-                    const se = matched ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}` : '-';
+                    const showLabel = `${item.title || 'Unknown'} (${item.year || ''})`;
+                    const se = `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`;
                     html += `<tr>
                         <td class="title-cell">${showLabel}</td>
                         <td>${se}</td>

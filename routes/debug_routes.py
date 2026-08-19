@@ -5085,15 +5085,21 @@ def scan_duplicate_symlinks():
                     "SELECT id, title, year, season_number, episode_number FROM media_items WHERE location_on_disk = ?",
                     (p,)
                 ).fetchone()
+                # Only items matched to a real database row are actionable from
+                # this UI (nothing to safely rescrape otherwise) - drop the rest
+                # rather than showing an inert "not matched" row.
+                if not row:
+                    continue
                 items.append({
                     'path': p,
-                    'item_id': row['id'] if row else None,
-                    'title': row['title'] if row else None,
-                    'year': row['year'] if row else None,
-                    'season_number': row['season_number'] if row else None,
-                    'episode_number': row['episode_number'] if row else None,
+                    'item_id': row['id'],
+                    'title': row['title'],
+                    'year': row['year'],
+                    'season_number': row['season_number'],
+                    'episode_number': row['episode_number'],
                 })
-            groups_out.append({'target': target, 'items': items})
+            if len(items) > 1:
+                groups_out.append({'target': target, 'items': items})
         conn.close()
 
         groups_out.sort(key=lambda g: -len(g['items']))
@@ -5114,7 +5120,10 @@ def scan_duplicate_symlinks():
 @admin_required
 def rescrape_duplicate_symlinks():
     """Move the given item IDs back to Wanted so they get rescraped fresh -
-    same cleanup /statistics/move_to_wanted already does for a single item."""
+    same cleanup /statistics/move_to_wanted already does for a single item.
+    Doesn't touch the symlink file or the debrid/usenet source - the new
+    symlink created by the fresh scrape overwrites the stale one at the same
+    destination path once it lands."""
     from database import get_db_connection
 
     try:
