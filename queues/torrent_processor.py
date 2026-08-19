@@ -509,6 +509,124 @@ class TorrentProcessor:
                 except Exception as e:
                     logging.error(f"Error cleaning up temp file {temp_file}: {e}")
                     
+    def _check_sibling_debrid_pack(self, item: Optional[Dict] = None, adding_queue_items: Optional[list] = None) -> Optional[Tuple]:
+        """If another episode of the same show/season/version already has a debrid season-pack
+        job, reuse it instead of independently scraping and adding a duplicate pack.
+
+        Mirrors _process_nzb_result's sibling-reuse logic, adapted for the debrid path, which
+        previously had no equivalent check at all - every episode of a whole-show/whole-season
+        request scraped and submitted completely independently, and since a successful add
+        immediately blacklists that release's hash via add_to_not_wanted(), each subsequent
+        sibling's scrape fell through to the next-best *distinct* pack (often a different
+        release group) instead of reusing the one already grabbed. Confirmed live: this
+        downloaded ~12 different season-pack torrents for one anime show before this fix.
+
+        Unlike NZB reuse (which returns an empty files list and defers resolution to a separate
+        reconciliation task), debrid's get_torrent_info() is synchronous and already returns the
+        full file listing - so this returns a real, populated torrent_info dict and rides the
+        existing _parse_file_info -> find_best_match_from_parsed -> find_related_items pipeline
+        in adding_queue.py completely unmodified to resolve this episode's own file.
+        """
+        if not item or item.get('type') != 'episode':
+            return None
+        _imdb = item.get('imdb_id')
+        _season = item.get('season_number')
+        if not _imdb or _season is None:
+            return None
+
+        import re as _re_sib
+        _item_version = (item.get('version') or '').rstrip('*')
+
+        def _is_pack_title(title: str) -> bool:
+            return bool(title) and not _re_sib.search(r'[Ss]\d{2}[Ee]\d{2}', title)
+
+        _episode = item.get('episode_number')
+        _ep_pattern = (
+            _re_sib.compile(rf'[Ss]{_season:02d}[Ee]{_episode:02d}(?!\d)')
+            if _episode is not None else None
+        )
+
+        def _try_reuse(torrent_id: str, check_title: str, magnet: Optional[str]) -> Optional[Tuple]:
+            if not _is_pack_title(check_title):
+                return None
+            for provider in self._providers:
+                try:
+                    info = provider.get_torrent_info(torrent_id)
+                except Exception as e:
+                    logging.debug(f"[{provider.PROVIDER_NAME}] get_torrent_info failed for sibling reuse {torrent_id}: {e}")
+                    continue
+                if not (info and info.get('files')):
+                    continue
+                # Verify this specific episode is actually present in the candidate pack before
+                # reusing it - some season "packs" only cover part of the season (e.g. a
+                # "Part 1"/"Part 2" split, common for long anime seasons). Blindly reusing a
+                # pack that doesn't contain this episode stuck it in a permanent loop: every
+                # retry re-hit this same sibling check, got pointed at the same non-containing
+                # pack again, failed to match, and never got a chance to scrape fresh for the
+                # pack that actually has it.
+                if _ep_pattern is not None:
+                    _files = info.get('files', [])
+                    _has_episode = any(
+                        _ep_pattern.search(f.get('path') or f.get('filename') or '')
+                        for f in _files
+                    )
+                    if not _has_episode:
+                        logging.info(f"[{item.get('title', 'Unknown')}] Sibling pack {torrent_id} does not "
+                                     f"contain S{_season:02d}E{_episode:02d} — not reusing, trying next candidate")
+                        return None
+                self.debrid_provider = provider
+                info = dict(info)
+                info['original_scraped_torrent_title'] = check_title
+                logging.info(f"[{item.get('title', 'Unknown')}] Season pack already submitted for "
+                             f"S{_season:02d} (torrent_id={torrent_id}) — reusing instead of duplicate submission")
+                return info, magnet, None
+            return None
+
+        # In-memory check first: catches a sibling submitted this same tick, before it's
+        # written back to the DB.
+        if adding_queue_items:
+            for _mem_item in adding_queue_items:
+                if (_mem_item.get('id') == item.get('id') or
+                        _mem_item.get('imdb_id') != _imdb or
+                        _mem_item.get('season_number') != _season or
+                        (_mem_item.get('version') or '').rstrip('*') != _item_version):
+                    continue
+                _mem_torrent_id = _mem_item.get('filled_by_torrent_id')
+                if not _mem_torrent_id or str(_mem_torrent_id).startswith('nzb:'):
+                    continue
+                _mem_check_title = _mem_item.get('original_scraped_torrent_title') or _mem_item.get('filled_by_file') or ''
+                reused = _try_reuse(_mem_torrent_id, _mem_check_title, _mem_item.get('filled_by_magnet'))
+                if reused:
+                    return reused
+
+        # DB check second - covers siblings resolved on a prior tick.
+        try:
+            from database import get_db_connection as _gdb
+            _conn = _gdb()
+            try:
+                _siblings = _conn.execute(
+                    "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title, filled_by_magnet "
+                    "FROM media_items "
+                    "WHERE imdb_id=? AND season_number=? AND type='episode' "
+                    "AND id!=? AND filled_by_torrent_id IS NOT NULL AND filled_by_torrent_id NOT LIKE 'nzb:%' "
+                    "AND REPLACE(COALESCE(version,''),'*','')=? "
+                    "AND state IN ('Adding','Checking','Collected','Upgrading') LIMIT 5",
+                    (_imdb, _season, item.get('id', -1), _item_version)
+                ).fetchall()
+            finally:
+                _conn.close()
+        except Exception as e:
+            logging.debug(f"Sibling debrid-pack DB check failed: {e}")
+            return None
+
+        for _sib in _siblings:
+            _sib_check_title = _sib[2] or _sib[1] or ''
+            reused = _try_reuse(_sib[0], _sib_check_title, _sib[3])
+            if reused:
+                return reused
+
+        return None
+
     def _process_nzb_result(self, result: Dict, item: Optional[Dict] = None, adding_queue_items: Optional[list] = None) -> Optional[Tuple]:
         """Submit an NZB result to cli_mount and return a synthetic torrent_info tuple."""
         from usenet.climount_client import get_climount_client, reset_climount_client
@@ -953,7 +1071,11 @@ class TorrentProcessor:
         """
         item_identifier = item.get('title', 'Unknown') if item else 'Unknown'
         logging.info(f"[{item_identifier}] Starting to process {len(results)} results (accept_uncached={accept_uncached})")
-        
+
+        sibling_pack = self._check_sibling_debrid_pack(item, adding_queue_items=adding_queue_items)
+        if sibling_pack:
+            return sibling_pack
+
         for idx, result in enumerate(results, 1):
             chosen_result_for_return = None # Initialize variable to hold the chosen result
             try:

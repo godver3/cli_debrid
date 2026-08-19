@@ -93,6 +93,35 @@ class AddingQueue:
         else:
             logging.error("Attempted to remove item without ID from queue")
         
+    def _torrent_has_other_active_owner(self, torrent_id: str, exclude_item_id) -> bool:
+        """True if another media_items row still actively depends on this torrent_id.
+
+        Debrid season-pack sibling reuse (torrent_processor.py's _check_sibling_debrid_pack)
+        means multiple episodes can now legitimately share the same torrent_id — something
+        that never happened before that fix, since every debrid torrent used to belong to
+        exactly one item. Callers that remove a torrent from the debrid service in response
+        to *this* item's own failure (no matching files, filter match, etc.) must check this
+        first: removing a still-needed shared pack breaks every sibling relying on it, even
+        though only one of them actually failed.
+        """
+        if not torrent_id or str(torrent_id).startswith('nzb:'):
+            return False
+        try:
+            from database import get_db_connection
+            conn = get_db_connection()
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM media_items WHERE filled_by_torrent_id=? AND id!=? "
+                    "AND state IN ('Adding','Checking','Collected','Upgrading') LIMIT 1",
+                    (torrent_id, exclude_item_id)
+                ).fetchone()
+            finally:
+                conn.close()
+            return row is not None
+        except Exception as e:
+            logging.warning(f"Could not check for other owners of torrent {torrent_id}: {e} — assuming shared, skipping removal to be safe")
+            return True
+
     def remove_unwanted_torrent(self, torrent_id: str, is_nzb: bool = False):
         """
         Remove an unwanted torrent from the debrid service and track the removal
@@ -866,8 +895,10 @@ class AddingQueue:
                 # --- START EDIT: Check if failure was due to filter and remove torrent ---
                 if "matched filter-out list" in error:
                     logging.info(f"Upgrade for {item_identifier} failed due to filename filter. Attempting to remove torrent.")
-                    if item.get('torrent_id'):
+                    if item.get('torrent_id') and not self._torrent_has_other_active_owner(item['torrent_id'], item.get('id')):
                         self.remove_unwanted_torrent(item['torrent_id'], is_nzb=is_nzb)
+                    elif item.get('torrent_id'):
+                        logging.info(f"Torrent {item['torrent_id']} still needed by other episode(s) sharing this pack — not removing")
                 # --- END EDIT ---
 
                 # Remove from Adding queue memory regardless of restore success for upgrades
@@ -881,9 +912,12 @@ class AddingQueue:
                "No matching files found in parsed files" in error or \
                "No valid video files found in torrent" in error:
                 logging.info(f"Media matching failed for {item_identifier}, moving back to Wanted queue. Error: {error}")
-                # Remove torrent if ID is present
-                if item.get('torrent_id'):
+                # Remove torrent if ID is present — but only if no sibling episode sharing this
+                # (season-pack-reused) torrent still actively needs it.
+                if item.get('torrent_id') and not self._torrent_has_other_active_owner(item['torrent_id'], item.get('id')):
                     self.remove_unwanted_torrent(item['torrent_id'])
+                elif item.get('torrent_id'):
+                    logging.info(f"Torrent {item['torrent_id']} still needed by other episode(s) sharing this pack — not removing")
                 queue_manager.move_to_wanted(item, "Adding")
                 # move_to_wanted handles removing from self.items
                 return
@@ -891,8 +925,10 @@ class AddingQueue:
             # --- NEW: Handle filename/title filter match ---
             elif "matched filter-out list" in error:
                 logging.info(f"Item {item_identifier} matched filename/title filter, moving back to Wanted queue. Error: {error}")
-                if item.get('torrent_id'):
+                if item.get('torrent_id') and not self._torrent_has_other_active_owner(item['torrent_id'], item.get('id')):
                     self.remove_unwanted_torrent(item['torrent_id'], is_nzb=is_nzb)
+                elif item.get('torrent_id'):
+                    logging.info(f"Torrent {item['torrent_id']} still needed by other episode(s) sharing this pack — not removing")
                 queue_manager.move_to_wanted(item, "Adding")
                 # move_to_wanted handles removing from self.items
                 return
