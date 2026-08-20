@@ -8,6 +8,13 @@ set_permissions() {
     echo "Permissions set successfully"
 }
 
+# Xorg requires this shared socket directory to be owned by root and writable
+# with the sticky bit. Create it before dropping to a custom PUID/PGID so Xvfb
+# does not leave unusable user-owned sockets behind.
+mkdir -p /tmp/.X11-unix
+chown root:root /tmp/.X11-unix
+chmod 1777 /tmp/.X11-unix
+
 if [ $PUID != 0 ] || [ $PGID != 0 ]; then
     echo "Starting with custom user - PUID: $PUID, PGID: $PGID"
     groupadd -g $PGID appuser

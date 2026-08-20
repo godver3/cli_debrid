@@ -33,6 +33,21 @@ _MAX_COOKIE_AGE_SECONDS = 2 * 60 * 60  # 2 hours
 _refresh_lock = Lock()
 
 
+def _browser_environment(user_data_dir: str) -> Dict[str, str]:
+    """Return an environment where Chromium can initialize its profile.
+
+    ``gosu`` changes the process UID but preserves the container's root HOME.
+    Chromium then cannot create its crashpad database under ``/root`` and
+    aborts before Patchright can connect. Keep all browser-owned state inside
+    the already-private, writable temporary profile instead.
+    """
+    browser_env = os.environ.copy()
+    browser_env['HOME'] = user_data_dir
+    browser_env['XDG_CONFIG_HOME'] = os.path.join(user_data_dir, '.config')
+    browser_env['XDG_CACHE_HOME'] = os.path.join(user_data_dir, '.cache')
+    return browser_env
+
+
 def _clean_stale_x11_sockets():
     """Remove orphaned /tmp/.X11-unix/X<N> sockets left behind by a Xvfb
     process that died abnormally (crash, container restart, kill) without
@@ -121,32 +136,23 @@ def _solve_challenge(url: str, timeout_seconds: int = 30) -> Optional[Dict]:
     # Chrome/Chromium refuses to start as root without --no-sandbox — cli_debrid's
     # Docker container runs as root by default (see Dockerfile PUID/PGID handling).
     launch_args = ['--no-sandbox'] if hasattr(os, 'geteuid') and os.geteuid() == 0 else []
-    # Chrome's crashpad_handler subprocess fails to initialize in this container
-    # environment (no writable crash-database dir / restricted IPC socket),
-    # which kills the whole browser context right after launch ("Target page,
-    # context or browser has been closed", crashpad recvmsg: Connection reset
-    # by peer). Playwright already passes --disable-breakpad by default, but
-    # that alone doesn't stop Chromium from spawning crashpad_handler —
-    # --disable-crash-reporter is the flag that actually suppresses it.
-    launch_args.append('--disable-crash-reporter')
+    browser_env = _browser_environment(user_data_dir)
     try:
         with sync_playwright() as p:
             try:
                 context = p.chromium.launch_persistent_context(
                     user_data_dir,
                     headless=False,  # headed mode under Xvfb is required — headless fails the challenge
-                    channel="chrome",
                     no_viewport=True,
                     args=launch_args,
+                    env=browser_env,
                 )
-            except Exception:
-                # Real Chrome channel not installed — fall back to bundled Chromium.
-                context = p.chromium.launch_persistent_context(
-                    user_data_dir,
-                    headless=False,
-                    no_viewport=True,
-                    args=launch_args,
-                )
+            except Exception as e:
+                # The image installs Patchright's bundled Chromium, not the
+                # system "chrome" channel. Log launch failures directly rather
+                # than hiding the useful first exception behind a fallback.
+                logging.warning(f"[CloudflareBypass] Failed to launch bundled Chromium: {e}")
+                return None
 
             try:
                 page = context.new_page()
