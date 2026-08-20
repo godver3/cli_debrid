@@ -714,7 +714,11 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         than leaving it referenced nowhere."""
         self._prep_verifying_candidate()
         with self.connect() as conn:
-            conn.execute("UPDATE media_items SET filled_by_torrent_id='nzb:someone-elses-uuid'")
+            conn.execute(
+                """UPDATE media_items SET filled_by_torrent_id='nzb:someone-elses-uuid',
+                   filled_by_file='external.mkv',filled_by_title='External.Release',
+                   debrid_folder_name='External.Release'"""
+            )
             conn.commit()
 
         for _ in range(playback.CANDIDATE_SOURCE_MISMATCH_MAX_ATTEMPTS - 1):
@@ -726,9 +730,15 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         playback.process_pending_playback_repairs()
         with self.connect() as conn:
             repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+            activity = conn.execute(
+                'SELECT * FROM nzb_repair_activity WHERE id=?', (repair['activity_id'],)
+            ).fetchone()
         self.assertEqual(repair['status'], 'complete')
         self.assertEqual(repair['last_error'], 'superseded_externally')
         self.assertIsNone(repair['next_attempt_at'])
+        self.assertEqual(activity['outcome'], 'replaced')
+        self.assertEqual(activity['replacement_nzb_id'], 'someone-elses-uuid')
+        self.assertEqual(activity['replacement_title'], 'External.Release')
         # Handed off to the background cleanup retry, same as a normal
         # successful repair — not left dangling with nothing watching it.
         self.assertEqual(repair['cleanup_status'], 'pending')
