@@ -15,6 +15,108 @@ from .torrent_processor import TorrentProcessor
 from .media_matcher import MediaMatcher
 from database.torrent_tracking import update_adding_error
 
+
+def torrent_has_other_active_owner(torrent_id: str, exclude_item_id) -> bool:
+    """True if another media_items row still actively depends on this torrent_id.
+
+    Debrid season-pack sibling reuse (torrent_processor.py's _check_sibling_debrid_pack)
+    means multiple episodes can now legitimately share the same torrent_id — something
+    that never happened before that fix, since every debrid torrent used to belong to
+    exactly one item. Callers that remove a torrent from the debrid service in response
+    to *this* item's own failure (no matching files, filter match, failed playability
+    check, etc.) must check this first: removing a still-needed shared pack breaks every
+    sibling relying on it, even though only one of them actually failed.
+    """
+    if not torrent_id or str(torrent_id).startswith('nzb:'):
+        return False
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM media_items WHERE filled_by_torrent_id=? AND id!=? "
+                "AND state IN ('Adding','Checking','Collected','Upgrading') LIMIT 1",
+                (torrent_id, exclude_item_id)
+            ).fetchone()
+        finally:
+            conn.close()
+        return row is not None
+    except Exception as e:
+        logging.warning(f"Could not check for other owners of torrent {torrent_id}: {e} — assuming shared, skipping removal to be safe")
+        return True
+
+
+def remove_unwanted_torrent(torrent_id: str, is_nzb: bool = False, debrid_provider=None, removal_reason: str = "Removed due to unwanted media item"):
+    """
+    Remove an unwanted torrent from the debrid service and track the removal.
+
+    Args:
+        torrent_id: ID of the torrent to remove. May be an 'nzb:'-prefixed or bare
+            cli_mount job ID rather than a real debrid torrent ID — pass is_nzb=True
+            (or use the 'nzb:' prefix) so it's routed to cli_mount instead of the
+            debrid provider.
+        is_nzb: True if torrent_id identifies a cli_mount NZB job, not a debrid torrent.
+        debrid_provider: Provider instance to use; fetched fresh via get_debrid_provider()
+            if not supplied (callers that already hold one, e.g. AddingQueue, should pass
+            it to avoid a redundant re-init).
+    """
+    if not torrent_id:
+        logging.warning("Attempted to remove torrent with empty ID")
+        return
+
+    # NZB job IDs are never valid debrid torrent IDs — calling
+    # get_torrent_info/remove_torrent on one 404s against the debrid provider.
+    # Cancel the cli_mount job instead.
+    if is_nzb or str(torrent_id).startswith('nzb:'):
+        job_hash = torrent_id[4:] if str(torrent_id).startswith('nzb:') else torrent_id
+        try:
+            from usenet.climount_client import get_climount_client
+            get_climount_client().remove_nzb(job_hash)
+            logging.info(f"Cancelled unwanted NZB job {job_hash}")
+        except Exception as e:
+            logging.warning(f"Could not cancel NZB job {job_hash}: {e}")
+        return
+
+    if debrid_provider is None:
+        debrid_provider = get_debrid_provider()
+
+    hash_value = None # Initialize hash_value
+    try:
+        # Get torrent info before removal to record hash
+        try:
+            info = debrid_provider.get_torrent_info(torrent_id)
+            if info:
+                hash_value = info.get('hash', '').lower()
+                if hash_value:
+                    from database.not_wanted_magnets import add_to_not_wanted
+                    try:
+                        add_to_not_wanted(hash_value)
+                        logging.info(f"Added hash {hash_value} to not wanted list")
+                    except Exception as e:
+                        logging.error(f"Failed to add to not wanted list: {str(e)}")
+        except Exception as e:
+            logging.warning(f"Could not get torrent info before removal: {str(e)}")
+
+        # Remove the torrent with a descriptive reason
+        debrid_provider.remove_torrent(
+            torrent_id,
+            removal_reason=removal_reason
+        )
+        logging.info(f"Successfully removed unwanted torrent {torrent_id}")
+
+        # Update tracking record with adding error (use hash if available)
+        if hash_value:
+            try:
+                update_adding_error(hash_value)
+            except Exception as e:
+                logging.debug(f"Failed to update tracking record for adding error: {str(e)}")
+        else:
+             logging.warning(f"Could not update adding error count as hash was not found for torrent {torrent_id}")
+
+    except Exception as e:
+        logging.error(f"Failed to remove unwanted torrent {torrent_id}: {str(e)}", exc_info=True)
+
+
 class AddingQueue:
     """Manages the queue of items being added to the debrid service"""
     
@@ -94,98 +196,17 @@ class AddingQueue:
             logging.error("Attempted to remove item without ID from queue")
         
     def _torrent_has_other_active_owner(self, torrent_id: str, exclude_item_id) -> bool:
-        """True if another media_items row still actively depends on this torrent_id.
-
-        Debrid season-pack sibling reuse (torrent_processor.py's _check_sibling_debrid_pack)
-        means multiple episodes can now legitimately share the same torrent_id — something
-        that never happened before that fix, since every debrid torrent used to belong to
-        exactly one item. Callers that remove a torrent from the debrid service in response
-        to *this* item's own failure (no matching files, filter match, etc.) must check this
-        first: removing a still-needed shared pack breaks every sibling relying on it, even
-        though only one of them actually failed.
-        """
-        if not torrent_id or str(torrent_id).startswith('nzb:'):
-            return False
-        try:
-            from database import get_db_connection
-            conn = get_db_connection()
-            try:
-                row = conn.execute(
-                    "SELECT 1 FROM media_items WHERE filled_by_torrent_id=? AND id!=? "
-                    "AND state IN ('Adding','Checking','Collected','Upgrading') LIMIT 1",
-                    (torrent_id, exclude_item_id)
-                ).fetchone()
-            finally:
-                conn.close()
-            return row is not None
-        except Exception as e:
-            logging.warning(f"Could not check for other owners of torrent {torrent_id}: {e} — assuming shared, skipping removal to be safe")
-            return True
+        return torrent_has_other_active_owner(torrent_id, exclude_item_id)
 
     def remove_unwanted_torrent(self, torrent_id: str, is_nzb: bool = False):
-        """
-        Remove an unwanted torrent from the debrid service and track the removal
+        """Remove an unwanted torrent from the debrid service and track the removal."""
+        remove_unwanted_torrent(
+            torrent_id,
+            is_nzb=is_nzb,
+            debrid_provider=self.debrid_provider,
+            removal_reason="Removed due to no matching files for media item"
+        )
 
-        Args:
-            torrent_id: ID of the torrent to remove. May be an 'nzb:'-prefixed or bare
-                cli_mount job ID rather than a real debrid torrent ID — pass is_nzb=True
-                (or use the 'nzb:' prefix) so it's routed to cli_mount instead of the
-                debrid provider.
-            is_nzb: True if torrent_id identifies a cli_mount NZB job, not a debrid torrent.
-        """
-        if not torrent_id:
-            logging.warning("Attempted to remove torrent with empty ID")
-            return
-
-        # NZB job IDs are never valid debrid torrent IDs — calling
-        # get_torrent_info/remove_torrent on one 404s against the debrid provider.
-        # Cancel the cli_mount job instead.
-        if is_nzb or str(torrent_id).startswith('nzb:'):
-            job_hash = torrent_id[4:] if str(torrent_id).startswith('nzb:') else torrent_id
-            try:
-                from usenet.climount_client import get_climount_client
-                get_climount_client().remove_nzb(job_hash)
-                logging.info(f"Cancelled unwanted NZB job {job_hash}")
-            except Exception as e:
-                logging.warning(f"Could not cancel NZB job {job_hash}: {e}")
-            return
-
-        hash_value = None # Initialize hash_value
-        try:
-            # Get torrent info before removal to record hash
-            try:
-                info = self.debrid_provider.get_torrent_info(torrent_id)
-                if info:
-                    hash_value = info.get('hash', '').lower()
-                    if hash_value:
-                        from database.not_wanted_magnets import add_to_not_wanted
-                        try:
-                            add_to_not_wanted(hash_value)
-                            logging.info(f"Added hash {hash_value} to not wanted list")
-                        except Exception as e:
-                            logging.error(f"Failed to add to not wanted list: {str(e)}")
-            except Exception as e:
-                logging.warning(f"Could not get torrent info before removal: {str(e)}")
-                
-            # Remove the torrent with a descriptive reason
-            self.debrid_provider.remove_torrent(
-                torrent_id,
-                removal_reason="Removed due to no matching files for media item"
-            )
-            logging.info(f"Successfully removed unwanted torrent {torrent_id}")
-            
-            # Update tracking record with adding error (use hash if available)
-            if hash_value:
-                try:
-                    update_adding_error(hash_value)
-                except Exception as e:
-                    logging.debug(f"Failed to update tracking record for adding error: {str(e)}")
-            else:
-                 logging.warning(f"Could not update adding error count as hash was not found for torrent {torrent_id}")
-            
-        except Exception as e:
-            logging.error(f"Failed to remove unwanted torrent {torrent_id}: {str(e)}", exc_info=True)
-                
     def process(self, queue_manager: Any, ignore_upgrade_lock: bool = False) -> bool:
         """
         Process items in the queue
@@ -939,37 +960,9 @@ class AddingQueue:
 
             if not fall_back_to_single_scraper and get_setting('Scraping', 'fallback_to_single_enabled', default=True):
                 logging.info(f"Falling back to single scraper for {item_identifier} due to error: {error}")
-                if item_id: update_media_item(item_id, fall_back_to_single_scraper=True)
-
-                # Update related items (keep existing logic)
-                if item_id and item.get('type') == 'episode':
-                    series_title = item.get('series_title', '') or item.get('title', '')
-                    season = item.get('season') or item.get('season_number')
-                    current_episode = item.get('episode') or item.get('episode_number')
-                    version = item.get('version')
-
-                    # Stream items from DB to avoid loading entire table into memory
-                    from database import stream_all_media_items  # Local import
-
-                    for candidate in stream_all_media_items(state=None, media_type='episode'):
-                        try:
-                            if ((candidate.get('series_title', '') or candidate.get('title', '')) != series_title):
-                                continue
-                            if (candidate.get('season') or candidate.get('season_number')) != season:
-                                continue
-                            if (candidate.get('episode') or candidate.get('episode_number', -1)) <= current_episode:
-                                continue
-                            if candidate.get('version') != version:
-                                continue
-                            if candidate.get('fall_back_to_single_scraper'):
-                                continue
-
-                            match_id = candidate.get('id')
-                            if match_id:
-                                update_media_item(match_id, fall_back_to_single_scraper=True)
-                                logging.debug(f"Enabled single scraper fallback for related item ID: {match_id} ({candidate.get('title')})")
-                        except Exception as iter_err:
-                            logging.error(f"Error while streaming candidate items for single scraper fallback: {iter_err}")
+                if item_id:
+                    from database.database_writing import enable_fallback_to_single_scraper
+                    enable_fallback_to_single_scraper({**item, 'id': item_id}, reason=f"Adding-queue error: {error}")
 
                 queue_manager.move_to_scraping(item, "Adding")
                 # move_to_scraping handles removal from self.items

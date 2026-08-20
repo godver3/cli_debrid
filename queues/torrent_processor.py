@@ -549,6 +549,7 @@ class TorrentProcessor:
         def _try_reuse(torrent_id: str, check_title: str, magnet: Optional[str]) -> Optional[Tuple]:
             if not _is_pack_title(check_title):
                 return None
+            from utilities.session_bad_torrents import is_torrent_known_unplayable
             for provider in self._providers:
                 try:
                     info = provider.get_torrent_info(torrent_id)
@@ -566,13 +567,24 @@ class TorrentProcessor:
                 # pack that actually has it.
                 if _ep_pattern is not None:
                     _files = info.get('files', [])
-                    _has_episode = any(
-                        _ep_pattern.search(f.get('path') or f.get('filename') or '')
-                        for f in _files
-                    )
-                    if not _has_episode:
+                    _matched_file = None
+                    for f in _files:
+                        _fpath = f.get('path') or f.get('filename') or ''
+                        if _ep_pattern.search(_fpath):
+                            _matched_file = _fpath
+                            break
+                    if _matched_file is None:
                         logging.info(f"[{item.get('title', 'Unknown')}] Sibling pack {torrent_id} does not "
                                      f"contain S{_season:02d}E{_episode:02d} — not reusing, trying next candidate")
+                        return None
+                    # Per-file, not per-torrent: a season pack can be a mix of playable
+                    # and broken files, so only skip the specific file already proven
+                    # dead this session - a different file in the same torrent may be
+                    # completely fine.
+                    if is_torrent_known_unplayable(torrent_id, _matched_file):
+                        logging.info(f"[{item.get('title', 'Unknown')}] Sibling pack {torrent_id}'s "
+                                     f"S{_season:02d}E{_episode:02d} file already confirmed unplayable "
+                                     f"this session — not reusing, trying next candidate")
                         return None
                 self.debrid_provider = provider
                 info = dict(info)
@@ -795,6 +807,7 @@ class TorrentProcessor:
     def _process_nzb_result(self, result: Dict, item: Optional[Dict] = None, adding_queue_items: Optional[list] = None) -> Optional[Tuple]:
         """Submit an NZB result to cli_mount and return a synthetic torrent_info tuple."""
         from usenet.climount_client import get_climount_client, reset_climount_client
+        from utilities.session_bad_torrents import has_any_known_unplayable_file
         reset_climount_client()
         client = get_climount_client()
 
@@ -856,18 +869,26 @@ class TorrentProcessor:
                                     continue
                             except Exception:
                                 pass  # unknown due to error - don't block a legitimate reuse
-                        if _is_pack and _mem_is_pack:
-                            logging.info(f'[{item_identifier}] [Memory] Season pack already submitted for S{_season:02d} '
-                                         f'(job={_mem_job}) — reusing')
-                            return {'id': _mem_id, 'filename': title, 'original_title': title,
-                                    'status': 'downloading', 'files': [], 'progress': 0,
-                                    '_provider': 'cli_mount', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
-                        elif not _is_pack and _mem_is_pack:
-                            logging.info(f'[{item_identifier}] [Memory] Season pack already submitted for S{_season:02d} '
-                                         f'(job={_mem_job}) — skipping individual episode submission')
-                            return {'id': _mem_id, 'filename': title, 'original_title': title,
-                                    'status': 'downloading', 'files': [], 'progress': 0,
-                                    '_provider': 'cli_mount', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                        if (_is_pack and _mem_is_pack) or (not _is_pack and _mem_is_pack):
+                            # Job-level check, not per-file: unlike the debrid reuse path, the
+                            # specific file within this job for THIS episode isn't resolved yet
+                            # at this point (that happens later, downstream) - so this can only
+                            # block reuse of the whole job, not a single file within it.
+                            if has_any_known_unplayable_file(_mem_job):
+                                logging.info(f'[{item_identifier}] [Memory] Sibling job {_mem_job} has a file already '
+                                             f'confirmed unplayable this session — not reusing')
+                            elif _is_pack:
+                                logging.info(f'[{item_identifier}] [Memory] Season pack already submitted for S{_season:02d} '
+                                             f'(job={_mem_job}) — reusing')
+                                return {'id': _mem_id, 'filename': title, 'original_title': title,
+                                        'status': 'downloading', 'files': [], 'progress': 0,
+                                        '_provider': 'cli_mount', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                            else:
+                                logging.info(f'[{item_identifier}] [Memory] Season pack already submitted for S{_season:02d} '
+                                             f'(job={_mem_job}) — skipping individual episode submission')
+                                return {'id': _mem_id, 'filename': title, 'original_title': title,
+                                        'status': 'downloading', 'files': [], 'progress': 0,
+                                        '_provider': 'cli_mount', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
                         elif _is_pack and not _mem_is_pack:
                             # New result is a pack, existing job is individual — fall through to submit pack
                             break
@@ -912,29 +933,34 @@ class TorrentProcessor:
                                     _sibling_is_pack = False
                             except Exception:
                                 pass  # unknown due to error - don't block a legitimate reuse
-                        if _is_pack and _sibling_is_pack:
-                            # New result is a pack, existing job is a pack — reuse existing
+                        if (_is_pack and _sibling_is_pack) or (not _is_pack and _sibling_is_pack):
                             _existing_job = _sibling[0]
-                            _existing_file = title
-                            _existing_id = _existing_job[4:] if _existing_job.startswith('nzb:') else _existing_job
-                            logging.info(f'[{item_identifier}] Season pack already submitted for S{_season:02d} '
-                                         f'(job={_existing_job}) — reusing instead of duplicate submission')
-                            return {'id': _existing_id, 'filename': _existing_file,
-                                    'original_title': _existing_file, 'status': 'downloading',
-                                    'files': [], 'progress': 0,
-                                    '_provider': 'cli_mount', '_is_nzb': True,
-                                    '_nzb_url': nzb_url}, nzb_url, result
-                        elif not _is_pack and _sibling_is_pack:
-                            # New result is individual episode, existing job is a season pack — skip individual
-                            _existing_job = _sibling[0]
-                            _existing_id = _existing_job[4:] if _existing_job.startswith('nzb:') else _existing_job
-                            logging.info(f'[{item_identifier}] Season pack already submitted for S{_season:02d} '
-                                         f'(job={_existing_job}) — skipping individual episode submission')
-                            return {'id': _existing_id, 'filename': title,
-                                    'original_title': title, 'status': 'downloading',
-                                    'files': [], 'progress': 0,
-                                    '_provider': 'cli_mount', '_is_nzb': True,
-                                    '_nzb_url': nzb_url}, nzb_url, result
+                            # Job-level check, not per-file — see matching comment in the
+                            # in-memory check above.
+                            if has_any_known_unplayable_file(_existing_job):
+                                logging.info(f'[{item_identifier}] Sibling job {_existing_job} has a file already '
+                                             f'confirmed unplayable this session — not reusing, submitting fresh')
+                            elif _is_pack:
+                                # New result is a pack, existing job is a pack — reuse existing
+                                _existing_file = title
+                                _existing_id = _existing_job[4:] if _existing_job.startswith('nzb:') else _existing_job
+                                logging.info(f'[{item_identifier}] Season pack already submitted for S{_season:02d} '
+                                             f'(job={_existing_job}) — reusing instead of duplicate submission')
+                                return {'id': _existing_id, 'filename': _existing_file,
+                                        'original_title': _existing_file, 'status': 'downloading',
+                                        'files': [], 'progress': 0,
+                                        '_provider': 'cli_mount', '_is_nzb': True,
+                                        '_nzb_url': nzb_url}, nzb_url, result
+                            else:
+                                # New result is individual episode, existing job is a season pack — skip individual
+                                _existing_id = _existing_job[4:] if _existing_job.startswith('nzb:') else _existing_job
+                                logging.info(f'[{item_identifier}] Season pack already submitted for S{_season:02d} '
+                                             f'(job={_existing_job}) — skipping individual episode submission')
+                                return {'id': _existing_id, 'filename': title,
+                                        'original_title': title, 'status': 'downloading',
+                                        'files': [], 'progress': 0,
+                                        '_provider': 'cli_mount', '_is_nzb': True,
+                                        '_nzb_url': nzb_url}, nzb_url, result
                         elif _is_pack and not _sibling_is_pack:
                             # New result is a pack, existing jobs are individual episodes.
                             # Cancel the individual cli_mount jobs so we don't end up with

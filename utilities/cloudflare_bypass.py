@@ -33,6 +33,40 @@ _MAX_COOKIE_AGE_SECONDS = 2 * 60 * 60  # 2 hours
 _refresh_lock = Lock()
 
 
+def _clean_stale_x11_sockets():
+    """Remove orphaned /tmp/.X11-unix/X<N> sockets left behind by a Xvfb
+    process that died abnormally (crash, container restart, kill) without
+    unlinking its own socket file. A genuinely running Xvfb always has both
+    the socket AND a matching /tmp/.X<N>-lock file (containing its PID); a
+    socket with no matching lock file is unambiguously dead. Left alone,
+    every subsequent Display() attempt collides with the same stale socket
+    and fails with "server already running" forever, since nothing else
+    ever cleans it up.
+    """
+    x11_dir = '/tmp/.X11-unix'
+    if not os.path.isdir(x11_dir):
+        return
+    try:
+        for name in os.listdir(x11_dir):
+            if not name.startswith('X'):
+                continue
+            try:
+                display_nr = int(name[1:])
+            except ValueError:
+                continue
+            lock_path = f'/tmp/.X{display_nr}-lock'
+            if os.path.exists(lock_path):
+                continue  # a real lock file exists - assume it's live, don't touch it
+            stale_socket = os.path.join(x11_dir, name)
+            try:
+                os.remove(stale_socket)
+                logging.info(f"[CloudflareBypass] Removed stale X11 socket {stale_socket} (no matching lock file)")
+            except OSError as e:
+                logging.debug(f"[CloudflareBypass] Could not remove stale X11 socket {stale_socket}: {e}")
+    except Exception as e:
+        logging.debug(f"[CloudflareBypass] Error scanning {x11_dir} for stale sockets: {e}")
+
+
 def _load_cache() -> Optional[Dict]:
     try:
         with open(_CACHE_FILE, 'r') as f:
@@ -73,6 +107,7 @@ def _solve_challenge(url: str, timeout_seconds: int = 30) -> Optional[Dict]:
     display = None
     try:
         from pyvirtualdisplay import Display
+        _clean_stale_x11_sockets()
         display = Display(visible=False, size=(1280, 800))
         display.start()
     except ImportError:
@@ -150,8 +185,10 @@ def _solve_challenge(url: str, timeout_seconds: int = 30) -> Optional[Dict]:
         if display:
             try:
                 display.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                # Swallowing this silently is exactly what let stale sockets
+                # accumulate unnoticed - log it so a failed cleanup is visible.
+                logging.debug(f"[CloudflareBypass] display.stop() failed (may leave a stale X11 socket): {e}")
 
 
 def get_clearance(domain: str, challenge_url: str, force_refresh: bool = False) -> Optional[Dict]:

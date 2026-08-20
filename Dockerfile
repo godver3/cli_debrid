@@ -18,7 +18,13 @@ RUN apt-get update && \
     xvfb fonts-liberation fonts-unifont libnss3 libnspr4 libatk1.0-0 \
     libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
     libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 \
-    libcairo2 libatspi2.0-0 && \
+    libcairo2 libatspi2.0-0 \
+    # DejaVu Sans — last-resort system-font fallback for poster overlay text
+    # (see overlays/font_manager.py's _LOCAL_FONT_MAP). Without this package
+    # the fallback path was silently unreachable: the font_manager fell
+    # through to trying a Google Fonts download for "DejaVuSans-Bold", which
+    # isn't a real Google Fonts family name and always failed.
+    fonts-dejavu-core && \
     # Cleanup
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
