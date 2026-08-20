@@ -1191,6 +1191,17 @@ def _reject_unplayable_source(item: Dict[str, Any], is_nzb: bool) -> None:
     except Exception as e:
         logging.warning(f"[ffprobe] Failed to add unplayable source to not-wanted: {e}")
 
+    # not_wanted only stops a *fresh scrape* from picking this release again -
+    # sibling-reuse (debrid and NZB) picks a candidate straight from a known
+    # torrent_id without ever consulting it, so without this a sibling episode
+    # would keep reusing (and re-failing) this exact torrent for the rest of
+    # the season. See utilities/session_bad_torrents.py.
+    try:
+        from utilities.session_bad_torrents import mark_torrent_unplayable
+        mark_torrent_unplayable(item.get('filled_by_torrent_id'), item.get('filled_by_file'))
+    except Exception as e:
+        logging.warning(f"[ffprobe] Failed to mark torrent as known-unplayable: {e}")
+
     try:
         update_media_item_state(item.get('id'), 'Wanted')
     except Exception as e:
