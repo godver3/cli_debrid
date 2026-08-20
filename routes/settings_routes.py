@@ -1902,6 +1902,14 @@ def update_settings():
         # Update the main config object with the new settings
         update_nested_dict(config, new_settings)
 
+        # Clearing either Trakt credential disables the integration. Remove
+        # OAuth state from both config.json and the legacy .pytrakt.json so a
+        # stale refresh token cannot keep running after the fields are blank.
+        from utilities.trakt_auth_cleanup import clear_stale_trakt_auth
+        trakt_config_changed, trakt_legacy_changed = clear_stale_trakt_auth(config)
+        if trakt_config_changed or trakt_legacy_changed:
+            logging.info("Cleared stale Trakt OAuth state because Trakt credentials are incomplete")
+
         # Restore collections (prevent main save from overwriting with empty dict)
         if 'Plex Smart Collections' in config:
             if not isinstance(config['Plex Smart Collections'].get('collections'), dict) or not config['Plex Smart Collections'].get('collections'):
