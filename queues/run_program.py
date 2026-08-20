@@ -6196,6 +6196,29 @@ class ProgramRunner:
                 except Exception:
                     pass
 
+                # An item reaches Checking as soon as its NZB job is *matched*
+                # (file list known from NZB/par2 metadata), not once the job has
+                # actually finished downloading - unlike Symlinked/Local mode
+                # (confirmed working, left untouched), Plex mode's file-discovery
+                # here has no extra settle/retry delay before the probe fires, so
+                # it's more exposed to catching the file mid-download. The
+                # readability probe samples a random point 20-80% into the file's
+                # duration - if that point hasn't downloaded yet, the read fails
+                # cleanly (not an inconclusive/timeout case), so the probe's own
+                # conservative "assume readable" fallback never catches this and
+                # a genuinely-fine file gets wrongly rejected. Defer the probe
+                # until cli_mount reports the job at/near complete instead of
+                # judging a file that isn't fully there yet.
+                try:
+                    job_hash = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
+                    from usenet.climount_client import get_climount_client
+                    job_status = get_climount_client().get_job_status(job_hash)
+                    if job_status and job_status.get('state') != 'completed' and job_status.get('progress', 100) < 95:
+                        logging.info(f"[ffprobe] Deferring {probe_key} for item {item.get('id')} — job {job_hash} still downloading ({job_status.get('progress', 0)}%)")
+                        return True
+                except Exception as e:
+                    logging.debug(f"[ffprobe] Could not check job download progress for {torrent_id}: {e}")
+
             logging.info(f"[ffprobe] Running playability check ({probe_key}) on '{actual_file_path}'")
             from usenet.repair_engine import _verify_file_readable
             if _verify_file_readable(actual_file_path):
