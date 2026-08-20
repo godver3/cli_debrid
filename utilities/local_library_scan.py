@@ -1202,6 +1202,38 @@ def _reject_unplayable_source(item: Dict[str, Any], is_nzb: bool) -> None:
     except Exception as e:
         logging.warning(f"[ffprobe] Failed to mark torrent as known-unplayable: {e}")
 
+    # Actually remove the dead torrent/NZB job from the debrid service / cli_mount,
+    # not just blacklist it locally - otherwise it sits there forever taking up
+    # space even though nothing will ever reuse it. Skipped if another item still
+    # actively depends on the same torrent_id (a shared season pack where only one
+    # sibling episode's file was bad) - removing it would break that sibling too.
+    try:
+        torrent_id = item.get('filled_by_torrent_id')
+        if torrent_id:
+            from queues.adding_queue import torrent_has_other_active_owner, remove_unwanted_torrent
+            if not torrent_has_other_active_owner(torrent_id, item.get('id')):
+                remove_unwanted_torrent(
+                    torrent_id,
+                    is_nzb=is_nzb,
+                    removal_reason="Removed due to failed ffprobe playability check"
+                )
+            else:
+                logging.info(f"[ffprobe] Torrent {torrent_id} still needed by other episode(s) sharing this pack — not removing")
+    except Exception as e:
+        logging.warning(f"[ffprobe] Failed to remove unplayable torrent from debrid service: {e}")
+
+    # An episode stuck in forced multi-pack scraping (queues/scraping_queue.py,
+    # any scrape >7 days old) that fails here via ffprobe - rather than the
+    # Adding-queue matching-failure path that normally sets this flag - would
+    # otherwise never get single-episode candidates and could loop on this
+    # rejection indefinitely if the only multi-pack result available keeps
+    # getting filtered out for an unrelated reason.
+    try:
+        from database.database_writing import enable_fallback_to_single_scraper
+        enable_fallback_to_single_scraper(item, reason="ffprobe playability check failed")
+    except Exception as e:
+        logging.warning(f"[ffprobe] Failed to enable single scraper fallback: {e}")
+
     try:
         update_media_item_state(item.get('id'), 'Wanted')
     except Exception as e:

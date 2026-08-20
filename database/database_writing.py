@@ -501,6 +501,52 @@ def update_media_item(item_id: int, **kwargs):
         if conn:
             conn.close()
 
+def enable_fallback_to_single_scraper(item: dict, reason: str = ""):
+    """Sets fall_back_to_single_scraper=True for `item` and every other pending
+    episode of the same series/season/version, regardless of episode number.
+
+    Multi-pack mode (queues/scraping_queue.py) is forced on for any episode
+    scrape older than 7 days - a single stuck-in-multi episode (e.g. episode 1,
+    since nothing "before" it can ever propagate the flag to it) can otherwise
+    be starved of single-episode candidates forever if the only multi-pack
+    result available gets filtered out for an unrelated reason (bad language,
+    wrong group, etc.), since forcing multi-pack rejects every single-episode
+    result outright. Previously this only propagated to *later* episodes
+    (episode_number > current), which is exactly what let episode 1 get stuck.
+    """
+    item_id = item.get('id')
+    if not item_id or item.get('fall_back_to_single_scraper'):
+        return
+    update_media_item(item_id, fall_back_to_single_scraper=True)
+    logging.info(f"Enabled single scraper fallback for item ID {item_id} ({item.get('title')}){f': {reason}' if reason else ''}")
+
+    if item.get('type') != 'episode':
+        return
+    series_title = item.get('series_title', '') or item.get('title', '')
+    season = item.get('season') or item.get('season_number')
+    version = item.get('version')
+    current_id = item_id
+
+    from .database_reading import stream_all_media_items
+    for candidate in stream_all_media_items(state=None, media_type='episode'):
+        try:
+            if candidate.get('id') == current_id:
+                continue
+            if (candidate.get('series_title', '') or candidate.get('title', '')) != series_title:
+                continue
+            if (candidate.get('season') or candidate.get('season_number')) != season:
+                continue
+            if candidate.get('version') != version:
+                continue
+            if candidate.get('fall_back_to_single_scraper'):
+                continue
+            match_id = candidate.get('id')
+            if match_id:
+                update_media_item(match_id, fall_back_to_single_scraper=True)
+                logging.debug(f"Enabled single scraper fallback for related item ID: {match_id} ({candidate.get('title')})")
+        except Exception as iter_err:
+            logging.error(f"Error while streaming candidate items for single scraper fallback: {iter_err}")
+
 @retry_on_db_lock()
 def update_blacklisted_date(item_id: int, blacklisted_date: datetime | None):
     conn = get_db_connection()
