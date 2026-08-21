@@ -2597,7 +2597,8 @@ async function loadTrending() {
 }
 
 /**
- * Load personalised Trakt recommendations
+ * Load personalised recommendations from the best connected provider.
+ * The backend prefers Trakt and automatically falls back to Scrob For You.
  */
 let _trendingLoaded = false; // Only fetch once per page load
 let _recLoaded = false;  // Only fetch once per page load
@@ -2614,24 +2615,36 @@ async function loadRecommendations() {
     try {
         setLoadingFlag();
 
-        const noTraktMsg = document.getElementById('rec-no-trakt');
+        const noProviderMsg = document.getElementById('rec-no-provider');
+        const noResultsMsg = document.getElementById('rec-no-results');
 
-        const resp = await fetch('/discover/api/trakt/special/recommendations?type=all');
+        const resp = await fetch('/discover/api/recommendations?type=all');
         if (!resp.ok) throw new Error('HTTP error fetching recommendations');
         const data = await resp.json();
 
-        // Trakt not authenticated
-        if (!data.success && data.error && data.error.includes('not authenticated')) {
-            if (noTraktMsg) noTraktMsg.style.display = 'block';
+        if (!data.success) {
+            if (noProviderMsg) noProviderMsg.style.display = 'block';
+            if (noResultsMsg) noResultsMsg.style.display = 'none';
             if (document.getElementById('rec-movies-section')) document.getElementById('rec-movies-section').style.display = 'none';
             if (document.getElementById('rec-shows-section'))  document.getElementById('rec-shows-section').style.display  = 'none';
             _recLoaded = true;
             return;
         }
 
-        if (noTraktMsg) noTraktMsg.style.display = 'none';
+        if (noProviderMsg) noProviderMsg.style.display = 'none';
 
         const all    = filterValidResults(data.results || []);
+        if (all.length === 0) {
+            if (noResultsMsg) noResultsMsg.style.display = 'block';
+            if (document.getElementById('rec-movies-section')) document.getElementById('rec-movies-section').style.display = 'none';
+            if (document.getElementById('rec-shows-section')) document.getElementById('rec-shows-section').style.display = 'none';
+            _recLoaded = true;
+            return;
+        }
+
+        if (noResultsMsg) noResultsMsg.style.display = 'none';
+        if (document.getElementById('rec-movies-section')) document.getElementById('rec-movies-section').style.display = 'block';
+        if (document.getElementById('rec-shows-section')) document.getElementById('rec-shows-section').style.display = 'block';
         const movies = all.filter(i => i.media_type === 'movie');
         const shows  = all.filter(i => i.media_type === 'tv');
 
@@ -9938,4 +9951,3 @@ function bindPersonalEvents() {
 document.addEventListener('DOMContentLoaded', function() {
     setTimeout(initPersonal, 150);
 });
-

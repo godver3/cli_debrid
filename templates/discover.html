@@ -1107,10 +1107,17 @@
                 </div>
                 <div class="category-grid" id="rec-shows-grid"></div>
             </div>
-            <!-- No Trakt message -->
-            <div id="rec-no-trakt" style="display:none; text-align:center; padding:40px; color:#888;">
-                <p>Recommendations require a connected Trakt account.</p>
-                <p>Authenticate with Trakt in Settings → Content Sources.</p>
+            <!-- No recommendation provider message -->
+            <div id="rec-no-provider" style="display:none; text-align:center; padding:40px; color:#888;">
+                <p>Recommendations require an authenticated Trakt account or a configured Scrob connection.</p>
+                <p>Connect either one—or both—in Settings → Additional Settings. No content-source entry is required.</p>
+                <p>For Scrob, customize Favourite Movie Genres and/or Favourite Show Genres in your profile. Content Language and Disliked Genres further refine the results.</p>
+                <p>To exclude your existing Plex library and watched titles, connect Plex under Scrob → Connections → Media Players, enable Plex → Scrob Collection Status and Watched Status, then run a manual pull or enable automatic pulls. Playback Events and the Plex webhook are optional and only needed for real-time activity.</p>
+            </div>
+            <div id="rec-no-results" style="display:none; text-align:center; padding:40px; color:#888;">
+                <p>No personalized recommendations are available yet.</p>
+                <p>For Scrob, confirm the connection and customize Favourite Movie Genres and/or Favourite Show Genres in your profile. Content Language and Disliked Genres further refine the results.</p>
+                <p>To exclude your existing Plex library and watched titles, connect Plex under Scrob → Connections → Media Players, enable Plex → Scrob Collection Status and Watched Status, then run a manual pull or enable automatic pulls. Playback Events and the Plex webhook are optional and only needed for real-time activity.</p>
             </div>
         </div>
 

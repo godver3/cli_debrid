@@ -12,10 +12,11 @@ import gzip
 import io
 import threading
 from datetime import datetime, timedelta
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, redirect, url_for
 from flask_login import current_user
 from utilities.tmdb_cache import cache_response, get_cached_db_statuses, get_cached_episode_info
 from utilities.settings import get_setting
+from utilities.recommendation_provider import get_recommendation_provider
 from utilities.reverse_parser import get_default_version
 from utilities.mdblist_api import (
     is_mdblist_configured,
@@ -1009,115 +1010,37 @@ def tmdb_shows(list_type):
 @discover_bp.route('/api/recommendations')
 @user_required
 def recommendations():
+    """Route the Discover recommendations tab to the best connected provider.
+
+    Trakt remains preferred to preserve the existing recommendations. Scrob's
+    personalized ``For You`` feed is the automatic fallback. Content-source
+    entries are intentionally irrelevant here; they control automatic Wanted
+    ingestion, while this endpoint only displays recommendations.
     """
-    Personalised recommendations via Trakt. Gets TMDB IDs from Trakt then
-    enriches with full TMDB data using the same pattern as Top 10/MDBList.
-    """
-    try:
-        from content_checkers.trakt import get_trakt_config
-        from concurrent.futures import ThreadPoolExecutor
+    media_type = request.args.get('type', 'all')
+    if media_type not in ('all', 'movie', 'tv'):
+        media_type = 'all'
 
-        trakt_config = get_trakt_config()
-        access_token = trakt_config.get('OAUTH_TOKEN', '')
-        client_id = trakt_config.get('CLIENT_ID', '') or get_setting('Trakt', 'client_id', '')
+    provider = get_recommendation_provider()
+    if provider == 'trakt':
+        return redirect(url_for(
+            '.trakt_special_list',
+            list_type='recommendations',
+            type=media_type,
+        ))
+    if provider == 'scrob':
+        return redirect(url_for(
+            '.scrob_special_list',
+            list_type='For You',
+            type=media_type,
+        ))
 
-        if not access_token or not client_id:
-            return jsonify({'results': [], 'error': 'Trakt not authenticated', 'total_results': 0})
-
-        trakt_headers = {
-            'Content-Type': 'application/json',
-            'trakt-api-version': '2',
-            'trakt-api-key': client_id,
-            'Authorization': f'Bearer {access_token}',
-        }
-
-        tmdb_api_key = get_setting('TMDB', 'api_key', '')
-        media_type = request.args.get('type', 'movie')
-        endpoint_type = 'movies' if media_type == 'movie' else 'shows'
-
-        resp = requests.get(
-            f'https://api.trakt.tv/recommendations/{endpoint_type}?limit=40',
-            headers=trakt_headers, timeout=15
-        )
-        resp.raise_for_status()
-        trakt_items = resp.json()
-        logging.info(f"Recommendations: {media_type} — Trakt returned {len(trakt_items)} items")
-
-        # Build list of TMDB IDs, filtering watched items
-        import os as _os
-        _wh_path = _os.path.join(_os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'watch_history.db')
-        exclude_imdb, exclude_tmdb = set(), set()
-        if _os.path.exists(_wh_path):
-            try:
-                from database import get_db_connection as _gdc
-                _wc = _gdc(_wh_path)
-                exclude_imdb = {r[0] for r in _wc.execute("SELECT DISTINCT imdb_id FROM watch_history WHERE imdb_id IS NOT NULL").fetchall()}
-                exclude_tmdb = {str(r[0]) for r in _wc.execute("SELECT DISTINCT tmdb_id FROM watch_history WHERE tmdb_id IS NOT NULL").fetchall()}
-                _wc.close()
-            except Exception:
-                pass
-
-        # Default Trakt response (no extended param): each item IS the media object
-        # {ids: {tmdb, imdb, trakt, slug}, title, year}
-        candidate_tmdb_ids = []
-        for item in trakt_items:
-            ids = item.get('ids', {})
-            tmdb_id = ids.get('tmdb')
-            imdb_id = ids.get('imdb', '')
-            if not tmdb_id:
-                continue
-            if imdb_id in exclude_imdb or str(tmdb_id) in exclude_tmdb:
-                continue
-            candidate_tmdb_ids.append(tmdb_id)
-
-        candidate_tmdb_ids = candidate_tmdb_ids[:20]
-        logging.info(f"Recommendations: enriching {len(candidate_tmdb_ids)} TMDB IDs")
-
-        if not tmdb_api_key or not candidate_tmdb_ids:
-            return jsonify({'results': [], 'total_results': 0})
-
-        tmdb_endpoint = 'movie' if media_type == 'movie' else 'tv'
-
-        def fetch_tmdb_item(tmdb_id):
-            try:
-                r = requests.get(
-                    f'https://api.themoviedb.org/3/{tmdb_endpoint}/{tmdb_id}?api_key={tmdb_api_key}&language=en-US',
-                    timeout=5
-                )
-                if not r.ok:
-                    return None
-                d = r.json()
-                genre_ids = [g['id'] for g in d.get('genres', [])]
-                return {
-                    'id': tmdb_id,
-                    'title': d.get('title') or d.get('name', ''),
-                    'name': d.get('name') or d.get('title', ''),
-                    'overview': d.get('overview', ''),
-                    'poster_path': d.get('poster_path'),
-                    'backdrop_path': d.get('backdrop_path'),
-                    'release_date': d.get('release_date', ''),
-                    'first_air_date': d.get('first_air_date', ''),
-                    'vote_average': d.get('vote_average', 0),
-                    'vote_count': d.get('vote_count', 0),
-                    'media_type': media_type,
-                    'genre_ids': genre_ids,
-                    'original_language': d.get('original_language', ''),
-                }
-            except Exception:
-                return None
-
-        with ThreadPoolExecutor(max_workers=8) as ex:
-            enriched = list(ex.map(fetch_tmdb_item, candidate_tmdb_ids))
-
-        results = [r for r in enriched if r is not None]
-        add_db_status_and_episode_info(results, use_battery=False)
-
-        logging.info(f"Recommendations: {media_type}, returned {len(results)} results")
-        return jsonify({'results': results, 'total_results': len(results)})
-
-    except Exception as e:
-        logging.error(f"Recommendations error: {e}", exc_info=True)
-        return jsonify({'results': [], 'error': str(e), 'total_results': 0}), 500
+    return jsonify({
+        'success': False,
+        'results': [],
+        'total_results': 0,
+        'error': 'No recommendation provider configured',
+    })
 
 
 @discover_bp.route('/api/genres')
@@ -3362,7 +3285,10 @@ def scrob_special_list(list_type):
         if media_type_filter in ('all', 'movie') and api_paths.get('movies'):
             endpoints_to_call.append(api_paths['movies'])
         if media_type_filter in ('all', 'tv') and api_paths.get('shows'):
-            endpoints_to_call.append(api_paths['shows'])
+            # Scrob's For You endpoint returns both media types. Avoid calling
+            # the same endpoint twice when Discover requests the combined feed.
+            if api_paths['shows'] not in endpoints_to_call:
+                endpoints_to_call.append(api_paths['shows'])
 
         raw_items = []
         for endpoint_path, endpoint_params in endpoints_to_call:
