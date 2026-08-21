@@ -784,6 +784,10 @@ def add_media_item(item: dict, user_initiated: bool = False) -> int:
             except Exception:
                 pass
 
+        if item_type == 'movie':
+            from .movie_release_overrides import apply_movie_release_override_to_item
+            apply_movie_release_override_to_item(item, conn=conn)
+
         # GHOSTLIST/BLACKLIST CHECK
         if imdb_id or tmdb_id:
             # Build query to check for ghostlisted/blacklisted entries

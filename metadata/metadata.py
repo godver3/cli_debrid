@@ -1255,6 +1255,20 @@ def refresh_release_dates():
                     else:
                         new_release_date = fetched_release_date
 
+                from database.movie_release_overrides import get_movie_release_override
+                release_override = get_movie_release_override(
+                    imdb_id=imdb_id,
+                    tmdb_id=item_dict.get('tmdb_id'),
+                )
+                if release_override:
+                    new_release_date = release_override['release_date']
+                    logging.info(
+                        "Applying manual release-date override for %s (%s): %s",
+                        title,
+                        imdb_id,
+                        new_release_date,
+                    )
+
                 item_dict['early_release_original'] = item_dict.get('early_release', False)
                 item_dict['physical_release_date_original'] = item_dict.get('physical_release_date')
                 item_dict['theatrical_release_date_original'] = item_dict.get('theatrical_release_date')

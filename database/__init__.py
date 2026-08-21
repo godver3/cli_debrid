@@ -17,7 +17,8 @@ submodules = [
     'database_reading',
     'database_writing',
     'maintenance',
-    'not_wanted_magnets'
+    'not_wanted_magnets',
+    'movie_release_overrides',
 ]
 
 # Import all submodules

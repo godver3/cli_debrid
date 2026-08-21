@@ -87,6 +87,7 @@ function attachEventListeners() {
     const btnSettings = document.getElementById('btn-settings');
     const btnSearchMovie = document.getElementById('btn-search-movie');
     const btnRequestMovie = document.getElementById('btn-request-movie');
+    const editReleaseDateBtn = document.getElementById('edit-release-date-btn');
 
     if (btnGetMissing) {
         btnGetMissing.addEventListener('click', handleGetMissing);
@@ -112,6 +113,17 @@ function attachEventListeners() {
         btnRequestMovie.addEventListener('click', handleRequestMovie);
     }
 
+    if (editReleaseDateBtn) {
+        editReleaseDateBtn.addEventListener('click', openReleaseDateOverrideModal);
+    }
+
+    document.getElementById('saveReleaseDateOverride')?.addEventListener('click', saveReleaseDateOverride);
+    document.getElementById('clearReleaseDateOverride')?.addEventListener('click', clearReleaseDateOverride);
+    document.getElementById('cancelReleaseDateOverride')?.addEventListener('click', closeReleaseDateOverrideModal);
+    document.getElementById('releaseDateModal')?.addEventListener('click', event => {
+        if (event.target.id === 'releaseDateModal') closeReleaseDateOverrideModal();
+    });
+
     // Close overlay when pressing Escape key
     const overlay = document.getElementById('overlay');
     window.addEventListener('keydown', function(event) {
@@ -119,6 +131,7 @@ function attachEventListeners() {
             if (overlay && overlay.style.display === 'flex') {
                 closeOverlay();
             }
+            closeReleaseDateOverrideModal();
         }
     });
 
@@ -372,6 +385,10 @@ function renderMovieHeader(movie) {
     const releaseDateEl = document.getElementById('movie-release-date');
     if (releaseDateEl) {
         releaseDateEl.textContent = movie.release_date ? formatDate(movie.release_date) : '-';
+    }
+    const manualReleaseBadge = document.getElementById('movie-release-date-manual');
+    if (manualReleaseBadge) {
+        manualReleaseBadge.style.display = movie.release_date_override ? 'inline-flex' : 'none';
     }
 
     const runtimeEl = document.getElementById('movie-runtime');
@@ -1002,6 +1019,91 @@ async function handleFilePacks() {
         genres, // genre_ids - pass genres for auto-select
         version
     );
+}
+
+function openReleaseDateOverrideModal() {
+    if (!movieData) return;
+    const modal = document.getElementById('releaseDateModal');
+    const input = document.getElementById('releaseDateOverrideInput');
+    const clearButton = document.getElementById('clearReleaseDateOverride');
+    if (!modal || !input) return;
+
+    input.value = movieData.release_date_override || movieData.release_date || '';
+    if (clearButton) {
+        clearButton.style.display = movieData.release_date_override ? '' : 'none';
+    }
+    modal.style.display = 'flex';
+    input.focus();
+}
+
+function closeReleaseDateOverrideModal() {
+    const modal = document.getElementById('releaseDateModal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function saveReleaseDateOverride() {
+    if (!movieData) return;
+    const input = document.getElementById('releaseDateOverrideInput');
+    const button = document.getElementById('saveReleaseDateOverride');
+    const releaseDate = input?.value || '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(releaseDate)) {
+        moviePopup({type: window.POPUP_TYPES.ERROR, message: 'Choose a valid release date.', autoClose: 4000});
+        return;
+    }
+
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    if (releaseDate <= today && !window.confirm('This date can move eligible versions to Wanted and allow scraping. Continue?')) {
+        return;
+    }
+
+    const mediaId = movieData.imdb_id || movieData.tmdb_id || movieData.id;
+    if (button) button.disabled = true;
+    try {
+        const response = await fetch(`/library/movie/${encodeURIComponent(mediaId)}/release-date-override`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({release_date: releaseDate})
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save release date');
+        closeReleaseDateOverrideModal();
+        await loadMovieData();
+        moviePopup({
+            type: window.POPUP_TYPES.SUCCESS,
+            message: `Manual release date saved for ${data.affected_count} version(s).`,
+            autoClose: 4000
+        });
+    } catch (error) {
+        moviePopup({type: window.POPUP_TYPES.ERROR, message: error.message, autoClose: 5000});
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+async function clearReleaseDateOverride() {
+    if (!movieData || !window.confirm('Remove the manual date and restore the latest provider date?')) return;
+    const button = document.getElementById('clearReleaseDateOverride');
+    const mediaId = movieData.imdb_id || movieData.tmdb_id || movieData.id;
+    if (button) button.disabled = true;
+    try {
+        const response = await fetch(`/library/movie/${encodeURIComponent(mediaId)}/release-date-override`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to restore provider date');
+        closeReleaseDateOverrideModal();
+        await loadMovieData();
+        moviePopup({
+            type: window.POPUP_TYPES.SUCCESS,
+            message: `Provider release date restored: ${data.release_date}.`,
+            autoClose: 4000
+        });
+    } catch (error) {
+        moviePopup({type: window.POPUP_TYPES.ERROR, message: error.message, autoClose: 5000});
+    } finally {
+        if (button) button.disabled = false;
+    }
 }
 
 function handleRefreshTMDB() {
