@@ -1036,7 +1036,11 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     logging.debug(f"Finished processing. Prepared {len(processed_items['movies'])} movies and {len(processed_items['episodes'])} episodes for database operations.")
     return processed_items
 
-def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = None) -> str:
+def get_release_date(
+    media_details: Dict[str, Any],
+    imdb_id: Optional[str] = None,
+    release_date_cache_max_age: Optional[timedelta] = None,
+) -> str:
     if not media_details:
         logging.warning("No media details provided for release date")
         return 'Unknown'
@@ -1045,7 +1049,13 @@ def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = Non
         logging.warning("Attempted to get release date with None IMDB ID")
         return media_details.get('released', 'Unknown')
 
-    release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id)
+    if release_date_cache_max_age is None:
+        release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id)
+    else:
+        release_dates, _ = DirectAPI.get_movie_release_dates(
+            imdb_id,
+            max_cache_age=release_date_cache_max_age,
+        )
     logging.debug(f"Processing release dates for IMDb ID: {imdb_id}")
 
     if not release_dates:
@@ -1214,7 +1224,22 @@ def refresh_release_dates():
                     new_theatrical_release_date = None
                 else:
                     logging.info("Getting release date, physical release date, and theatrical release date")
-                    fetched_release_date = get_release_date(metadata, imdb_id)
+                    release_date_cache_max_age = (
+                        timedelta(days=1)
+                        if item_dict.get('state') == 'Unreleased'
+                        else None
+                    )
+                    if release_date_cache_max_age is not None:
+                        logging.info(
+                            "Applying daily release-date metadata recheck for %s (%s)",
+                            title,
+                            imdb_id,
+                        )
+                    fetched_release_date = get_release_date(
+                        metadata,
+                        imdb_id,
+                        release_date_cache_max_age=release_date_cache_max_age,
+                    )
                     new_physical_release_date = get_physical_release_date(imdb_id)
                     new_theatrical_release_date = get_theatrical_release_date(imdb_id)
                     logging.info(f"Physical release date: {new_physical_release_date}")

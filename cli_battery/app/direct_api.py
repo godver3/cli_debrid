@@ -10,7 +10,7 @@ import json
 import logging
 import concurrent.futures
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session as SqlAlchemySession, selectinload
@@ -29,7 +29,7 @@ from .database import (
 from . import trakt_client
 from . import tvdb_client
 from . import trakt_auth
-from .staleness import is_stale, should_recheck_null_airdate, is_tmdb_mapping_stale
+from .staleness import is_stale, is_older_than, should_recheck_null_airdate, is_tmdb_mapping_stale
 from .xem_utils import fetch_xem_mapping
 
 # Special-case: Lego Masters US season renumbering
@@ -689,7 +689,15 @@ class DirectAPI:
             return None, None
 
     @staticmethod
-    def get_movie_release_dates(imdb_id: str) -> Tuple[Optional[dict], Optional[str]]:
+    def get_movie_release_dates(
+        imdb_id: str,
+        max_cache_age: Optional[timedelta] = None,
+    ) -> Tuple[Optional[dict], Optional[str]]:
+        """Return movie release dates, optionally using a shorter cache lifetime.
+
+        ``max_cache_age`` only affects this release-date record. Other movie
+        metadata keeps its normal staleness policy.
+        """
         try:
             with managed_session() as session:
                 item = session.query(Item).options(
@@ -704,11 +712,23 @@ class DirectAPI:
                     md = next((m for m in item.item_metadata if m.key == 'release_dates'), None)
                     if md:
                         stale_value = md.value
-                    if md and not is_stale('movie', item.media_status, item.last_trakt_fetch):
+                    cache_is_fresh = md and (
+                        not is_older_than(md.last_updated, max_cache_age)
+                        if max_cache_age is not None
+                        else not is_stale('movie', item.media_status, item.last_trakt_fetch)
+                    )
+                    if cache_is_fresh:
                         try:
                             return json.loads(md.value), 'battery'
                         except (json.JSONDecodeError, TypeError):
                             pass
+
+                    if md and max_cache_age is not None and not cache_is_fresh:
+                        logging.info(
+                            "Release-date cache for %s is older than %s; refreshing provider metadata",
+                            imdb_id,
+                            max_cache_age,
+                        )
 
                 # Fetch from metadata provider (may open nested sessions, detaching item)
                 releases = _get_metadata_client().get_movie_release_dates(imdb_id)
