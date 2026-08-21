@@ -48,6 +48,40 @@ def _browser_environment(user_data_dir: str) -> Dict[str, str]:
     return browser_env
 
 
+def _read_page_title(page) -> Optional[str]:
+    """Read a page title without failing a solve during a redirect.
+
+    Cloudflare may replace the challenge document between ``goto`` completing
+    and the title poll. Patchright reports that normal navigation race as a
+    destroyed execution context. Returning ``None`` keeps the existing bounded
+    polling loop alive; unrelated browser errors still propagate.
+    """
+    try:
+        return page.title().lower()
+    except Exception as exc:
+        if 'execution context was destroyed' not in str(exc).lower():
+            raise
+        logging.debug(
+            "[CloudflareBypass] Page navigated while reading its title; "
+            "waiting for the new document"
+        )
+        return None
+
+
+def _wait_for_challenge_resolution(page, timeout_seconds: int) -> bool:
+    """Wait for Cloudflare's interstitial to finish within a fixed deadline."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        title = _read_page_title(page)
+        if title is None:
+            time.sleep(0.25)
+            continue
+        if 'moment' not in title and 'loading' not in title and 'checking' not in title:
+            return True
+        time.sleep(1)
+    return False
+
+
 def _clean_stale_x11_sockets():
     """Remove orphaned /tmp/.X11-unix/X<N> sockets left behind by a Xvfb
     process that died abnormally (crash, container restart, kill) without
@@ -158,13 +192,7 @@ def _solve_challenge(url: str, timeout_seconds: int = 30) -> Optional[Dict]:
                 page = context.new_page()
                 page.goto(url, timeout=timeout_seconds * 1000, wait_until="domcontentloaded")
 
-                deadline = time.time() + timeout_seconds
-                while time.time() < deadline:
-                    title = page.title().lower()
-                    if 'moment' not in title and 'loading' not in title and 'checking' not in title:
-                        break
-                    time.sleep(1)
-                else:
+                if not _wait_for_challenge_resolution(page, timeout_seconds):
                     logging.warning(f"[CloudflareBypass] Challenge for {url} did not resolve within {timeout_seconds}s")
                     context.close()
                     return None

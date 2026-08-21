@@ -1,8 +1,12 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from utilities.cloudflare_bypass import _browser_environment
+from utilities.cloudflare_bypass import (
+    _browser_environment,
+    _read_page_title,
+    _wait_for_challenge_resolution,
+)
 
 
 class TestBrowserEnvironment(unittest.TestCase):
@@ -22,6 +26,44 @@ class TestBrowserEnvironment(unittest.TestCase):
             _browser_environment('/tmp/cf-profile')
             self.assertEqual(os.environ['HOME'], '/root')
             self.assertNotIn('XDG_CONFIG_HOME', os.environ)
+
+
+class TestPageTitleNavigation(unittest.TestCase):
+    def test_returns_lowercase_title(self):
+        page = Mock()
+        page.title.return_value = 'Just a moment...'
+
+        self.assertEqual(_read_page_title(page), 'just a moment...')
+
+    def test_navigation_context_error_is_retryable(self):
+        page = Mock()
+        page.title.side_effect = RuntimeError(
+            'Page.title: Execution context was destroyed, most likely because of a navigation.'
+        )
+
+        self.assertIsNone(_read_page_title(page))
+
+    def test_unrelated_browser_error_is_not_hidden(self):
+        page = Mock()
+        page.title.side_effect = RuntimeError('Target page has been closed')
+
+        with self.assertRaisesRegex(RuntimeError, 'Target page has been closed'):
+            _read_page_title(page)
+
+    @patch('utilities.cloudflare_bypass.time.sleep')
+    @patch('utilities.cloudflare_bypass.time.monotonic', side_effect=[100, 100, 101])
+    def test_navigation_during_poll_is_retried(self, _monotonic, sleep):
+        page = Mock()
+        page.title.side_effect = [
+            RuntimeError(
+                'Page.title: Execution context was destroyed, most likely because of a navigation.'
+            ),
+            'FlixPatrol Top 10',
+        ]
+
+        self.assertTrue(_wait_for_challenge_resolution(page, timeout_seconds=30))
+        self.assertEqual(page.title.call_count, 2)
+        sleep.assert_called_once_with(0.25)
 
 
 if __name__ == '__main__':
