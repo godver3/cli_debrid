@@ -1,1 +1,2 @@
-branch_id merge=ours 
+branch_id merge=ours
+entrypoint.sh text eol=lf
