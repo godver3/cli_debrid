@@ -135,7 +135,7 @@ def _save_cache(data: Dict):
     os.replace(tmp_path, _CACHE_FILE)
 
 
-def _solve_challenge(url: str, timeout_seconds: int = 30) -> Optional[Dict]:
+def _solve_challenge(url: str, timeout_seconds: int = 60) -> Optional[Dict]:
     """
     Launch a real, headed Chrome (via Xvfb) to solve the Cloudflare challenge
     for `url`'s domain. Returns {'cookies': {name: value}, 'user_agent': str}
