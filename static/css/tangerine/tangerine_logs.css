@@ -230,6 +230,13 @@
         scrollbar-color: #3d3d3d #1a1a1a;
     }
 
+    #climount-last-polled {
+        font-size: 11px;
+        color: #9ca3af;
+        white-space: nowrap;
+        font-family: 'Inter', sans-serif;
+    }
+
     #pause-indicator {
         /* position: absolute;
         top: 46px;
@@ -267,7 +274,49 @@
         font-size: 0.3em;
     }
 
-    #share-logs-btn {
+    .log-source-tabs {
+        display: flex;
+        gap: 4px;
+        padding: 8px 10px 0;
+    }
+
+    .log-source-tab {
+        padding: 6px 14px;
+        background: transparent;
+        color: #9ca3af;
+        border: 1px solid transparent;
+        border-radius: 4px 4px 0 0;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 500;
+        font-family: 'Inter', sans-serif;
+        transition: all .15s;
+    }
+
+    .log-source-tab:hover {
+        color: #f97316;
+        border-color: #c2500f;
+    }
+
+    .log-source-tab.active {
+        color: #f97316;
+        border-color: #c2500f;
+        background: #c2500f22;
+    }
+
+    .share-button-group {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .share-item {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+    }
+
+    #share-logs-btn, #share-climount-logs-btn, #share-both-logs-btn {
         padding: 0 14px;
         height: 30px;
         background: transparent;
@@ -284,12 +333,12 @@
         white-space: nowrap;
     }
 
-    #share-logs-btn:hover {
+    #share-logs-btn:hover, #share-climount-logs-btn:hover, #share-both-logs-btn:hover {
         background: #c2500f22;
         border-color: #f97316;
     }
 
-    #share-logs-btn:disabled {
+    #share-logs-btn:disabled, #share-climount-logs-btn:disabled, #share-both-logs-btn:disabled {
         opacity: .5;
         cursor: not-allowed;
     }
@@ -303,7 +352,7 @@
         transition: width 0.3s ease-in-out;
     }
 
-    #share-url {
+    .share-result-url {
         color: #60a5fa;
         text-decoration: none;
         font-family: 'JetBrains Mono', monospace;
@@ -316,15 +365,15 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 280px;
+        max-width: 200px;
     }
 
-    #share-url:hover {
+    .share-result-url:hover {
         background: #1e40af44;
         text-decoration: underline;
     }
 
-    #copy-url-btn {
+    .copy-url-btn {
         background: none;
         border: none;
         color: #60a5fa;
@@ -335,9 +384,9 @@
         line-height: 1;
     }
 
-    #copy-url-btn:hover { color: #93c5fd; }
+    .copy-url-btn:hover { color: #93c5fd; }
 
-    #copy-url-btn svg {
+    .copy-url-btn svg {
         width: 15px;
         height: 15px;
         vertical-align: middle;
