@@ -10,7 +10,7 @@ from utilities.settings import get_setting, get_nas_paths
 from debrid import get_debrid_provider
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from .discover_routes import get_digital_release_date, get_certification
 from .poster_cache import load_cache, save_cache
 
@@ -2010,6 +2010,161 @@ def refresh_show_metadata(media_id):
             'success': False,
             'error': str(e)
         }), 500
+
+@library_bp.route('/movie/<media_id>/release-date-override', methods=['PUT'])
+@admin_required
+def set_movie_release_date_override_route(media_id):
+    """Set one durable release-date override for every version of a movie."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        release_date = str(payload.get('release_date') or '').strip()
+        try:
+            datetime.strptime(release_date, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({'success': False, 'error': 'release_date must use YYYY-MM-DD'}), 400
+
+        from database.movie_release_overrides import set_movie_release_override
+
+        updated_by = 'local-admin'
+        if getattr(current_user, 'is_authenticated', False):
+            updated_by = str(
+                getattr(current_user, 'username', None)
+                or getattr(current_user, 'id', None)
+                or 'admin'
+            )
+        result = set_movie_release_override(media_id, release_date, updated_by=updated_by)
+        logging.info(
+            "Manual release-date override set for %s: %s (%s row(s))",
+            result['media_key'],
+            result['release_date'],
+            result['affected_count'],
+        )
+        return jsonify({'success': True, **result})
+    except LookupError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except Exception as exc:
+        logging.error("Failed to set movie release-date override: %s", exc, exc_info=True)
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+
+@library_bp.route('/movie/<media_id>/release-date-override', methods=['DELETE'])
+@admin_required
+def clear_movie_release_date_override_route(media_id):
+    """Clear an override and immediately restore freshly resolved provider data."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        value = str(media_id).strip()
+        if value.lower().startswith('tt'):
+            row = conn.execute(
+                "SELECT imdb_id FROM media_items WHERE imdb_id = ? AND type = 'movie' LIMIT 1",
+                (value,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT imdb_id FROM media_items WHERE tmdb_id = ? AND type = 'movie' LIMIT 1",
+                (value,),
+            ).fetchone()
+            if not row and value.isdigit():
+                row = conn.execute(
+                    "SELECT imdb_id FROM media_items WHERE id = ? AND type = 'movie' LIMIT 1",
+                    (int(value),),
+                ).fetchone()
+        if not row:
+            return jsonify({'success': False, 'error': 'Movie not found'}), 404
+        imdb_id = row['imdb_id']
+    finally:
+        if conn:
+            conn.close()
+
+    try:
+        provider_release_date = 'Unknown'
+        if imdb_id:
+            from metadata.metadata import get_release_date
+
+            provider_release_date = get_release_date(
+                {'released': 'Unknown'},
+                imdb_id,
+                release_date_cache_max_age=timedelta(0),
+            )
+
+        from database.movie_release_overrides import clear_movie_release_override
+
+        result = clear_movie_release_override(media_id, provider_release_date)
+        logging.info(
+            "Manual release-date override cleared for %s; provider date restored to %s",
+            result['media_key'],
+            result['release_date'],
+        )
+        return jsonify({'success': True, **result})
+    except LookupError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 404
+    except Exception as exc:
+        logging.error("Failed to clear movie release-date override: %s", exc, exc_info=True)
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+
+@library_bp.route('/movie/<media_id>/refresh-release-date', methods=['POST'])
+@admin_required
+def refresh_movie_release_date_route(media_id):
+    """Re-fetch just the release date from the provider, bypassing the metadata cache."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        value = str(media_id).strip()
+        if value.lower().startswith('tt'):
+            row = conn.execute(
+                "SELECT imdb_id FROM media_items WHERE imdb_id = ? AND type = 'movie' LIMIT 1",
+                (value,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT imdb_id FROM media_items WHERE tmdb_id = ? AND type = 'movie' LIMIT 1",
+                (value,),
+            ).fetchone()
+            if not row and value.isdigit():
+                row = conn.execute(
+                    "SELECT imdb_id FROM media_items WHERE id = ? AND type = 'movie' LIMIT 1",
+                    (int(value),),
+                ).fetchone()
+        if not row:
+            return jsonify({'success': False, 'error': 'Movie not found'}), 404
+        imdb_id = row['imdb_id']
+    finally:
+        if conn:
+            conn.close()
+
+    try:
+        provider_release_date = 'Unknown'
+        if imdb_id:
+            from metadata.metadata import get_release_date
+
+            provider_release_date = get_release_date(
+                {'released': 'Unknown'},
+                imdb_id,
+                release_date_cache_max_age=timedelta(0),
+            )
+
+        from database.movie_release_overrides import refresh_movie_release_date
+
+        result = refresh_movie_release_date(media_id, provider_release_date)
+        logging.info(
+            "Release date refreshed from provider for %s: %s (%s row(s))",
+            result['media_key'],
+            result['release_date'],
+            result['affected_count'],
+        )
+        return jsonify({'success': True, **result})
+    except LookupError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 409
+    except Exception as exc:
+        logging.error("Failed to refresh movie release date from provider: %s", exc, exc_info=True)
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
 
 @library_bp.route('/refresh_metadata/movie/<media_id>', methods=['POST'])
 @user_required
@@ -4644,11 +4799,20 @@ def movie_detail_data(media_id):
         # Get auto-ghostlist setting
         auto_ghostlist_enabled = get_setting('Library Manager', 'ghostlist_mode', False)
 
+        from database.movie_release_overrides import get_movie_release_override
+        release_override = get_movie_release_override(
+            imdb_id=movie_data['imdb_id'],
+            tmdb_id=movie_data['tmdb_id'],
+        )
+
         # Fetch digital release date from TMDB (prioritizes digital, falls back to theatrical)
         tmdb_api_key = get_setting('TMDB', 'api_key', default='')
         clean_release_date = None
         release_type = 'theatrical'  # Default to theatrical
-        if movie_data['tmdb_id'] and tmdb_api_key:
+        if release_override:
+            clean_release_date = release_override['release_date']
+            release_type = 'manual'
+        elif movie_data['tmdb_id'] and tmdb_api_key:
             # Try to get digital release date from TMDB
             release_info = get_digital_release_date(movie_data['tmdb_id'], 'movie', tmdb_api_key)
             if release_info and release_info.get('date'):
@@ -4684,6 +4848,7 @@ def movie_detail_data(media_id):
                 'rclone_path': rclone_movies_path,
                 'release_date': clean_release_date,
                 'release_type': release_type,
+                'release_date_override': release_override['release_date'] if release_override else None,
                 'poster_url': poster_url,
                 'backdrop_url': backdrop_url,
                 'overview': overview,

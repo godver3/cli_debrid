@@ -680,6 +680,16 @@ def process_pending_playback_repairs():
                         # rather than leaving it referenced nowhere.
                         conn = get_db_connection()
                         try:
+                            replacement_title = (
+                                item.get('filled_by_title') or item.get('debrid_folder_name') or
+                                item.get('filled_by_file') or current_source
+                            )
+                            if repair.get('activity_id'):
+                                conn.execute(
+                                    """UPDATE nzb_repair_activity SET replacement_nzb_id=?,replacement_title=?,
+                                       outcome='replaced',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                                    (current_source, replacement_title, repair['activity_id']),
+                                )
                             conn.execute(
                                 """UPDATE nzb_playback_repairs SET status='complete',completed_at=CURRENT_TIMESTAMP,
                                    cleanup_status='pending',
@@ -693,7 +703,8 @@ def process_pending_playback_repairs():
                             conn.close()
                         log.warning(
                             '[NZBPlayback] Item %s replaced by something outside this repair (now %s); '
-                            'deferring original old-file cleanup to background retry repair=%s',
+                            'finalized activity as replaced and deferring original old-file cleanup '
+                            'to background retry repair=%s',
                             repair['cli_debrid_id'], current_source, repair['id'],
                         )
                         continue

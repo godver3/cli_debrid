@@ -47,6 +47,7 @@ function addToRealDebrid(magnetLink, torrent) {
                 formData.append('episode_nzb_urls', JSON.stringify(torrent.episode_nzb_urls || {}));
                 formData.append('fallback_nzb_urls', JSON.stringify(torrent.fallback_nzb_urls || {}));
                 formData.append('episode_filenames', JSON.stringify(torrent.episode_filenames || {}));
+                formData.append('pack_waterfall_level', torrent.waterfall_level || '');
             } else if (isNzb) {
                 formData.append('protocol', 'nzb');
                 formData.append('nzb_url', torrent.nzb_url || magnetLink || '');

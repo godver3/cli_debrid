@@ -1193,6 +1193,15 @@ def is_refresh_token_expired() -> bool:
 
 def ensure_trakt_auth():
     logging.debug("Checking Trakt authentication")
+
+    # The settings file is authoritative. A legacy .pytrakt.json may outlive
+    # credentials that the user cleared in the UI; never let those stale tokens
+    # initiate an OAuth refresh without both current application credentials.
+    client_id = get_setting('Trakt', 'client_id', '')
+    client_secret = get_setting('Trakt', 'client_secret', '')
+    if not str(client_id or '').strip() or not str(client_secret or '').strip():
+        logging.debug("Trakt is not configured; skipping Trakt authentication")
+        return None
     
     # Read config directly from file like the battery does
     trakt_config = get_trakt_config()

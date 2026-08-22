@@ -565,9 +565,20 @@ def _resolve_tvdb_id_via_tmdb(imdb_id: str, tmdb_api_key: str) -> Optional[int]:
 def _get_trakt_status(imdb_id: str) -> Optional[str]:
     """Lightweight Trakt status check — fetches only show summary, returns status string or None.
 
+    Trakt is optional enrichment here. Do not initialize or refresh legacy OAuth
+    state when the current Trakt Client ID is blank.
+
     Skips immediately if the GlobalTraktCoordinator reports an active cooldown —
     avoids blocking the caller (e.g. a web request) for the full cooldown period.
     """
+    try:
+        from utilities.settings import get_setting
+        if not str(get_setting('Trakt', 'client_id', '') or '').strip():
+            logger.debug(f"TVDB: Trakt not configured; skipping status cross-check for {imdb_id}")
+            return None
+    except Exception:
+        return None
+
     try:
         from utilities.trakt_coordinator import GlobalTraktCoordinator
         cooldown = GlobalTraktCoordinator.get_instance().get_cooldown_status()

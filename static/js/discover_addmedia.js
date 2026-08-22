@@ -7,6 +7,60 @@
 (function() {
     'use strict';
 
+    function buildClassicSeasonResults(data, mediaData, allowSpecials) {
+        mediaData.title = data.title || mediaData.title;
+        mediaData.year = data.year || mediaData.year;
+        mediaData.vote_average = Number(data.vote_average) || mediaData.vote_average;
+        mediaData.genre_ids = Array.isArray(data.genres) && data.genres.length
+            ? data.genres
+            : mediaData.genre_ids;
+        mediaData.backdrop_path = data.backdrop_path || mediaData.backdrop_path;
+        mediaData.overview = data.overview || mediaData.overview;
+
+        return (Array.isArray(data.seasons) ? data.seasons : [])
+            .filter(season => allowSpecials || Number(season.season_number) !== 0)
+            .map(season => ({
+                id: mediaData.media_id,
+                title: mediaData.title,
+                season_id: season.id || season.season_number,
+                season_num: Number(season.season_number),
+                year: mediaData.year,
+                media_type: 'tv',
+                poster_path: season.poster_path || data.poster_path || '',
+                air_date: season.air_date || null,
+                season_overview: season.overview || '',
+                episode_count: Number(season.episode_count) || 0,
+                multi: true
+            }))
+            .filter(season => Number.isInteger(season.season_num))
+            .sort((a, b) => a.season_num - b.season_num);
+    }
+
+    function buildClassicEpisodeResults(data, show) {
+        return (Array.isArray(data.episodes) ? data.episodes : []).map(ep => ({
+            id: show.mediaId,
+            title: show.title,
+            episode_title: ep.name || `Episode ${ep.episode_number}`,
+            season_num: Number(show.season),
+            episode_num: Number(ep.episode_number),
+            year: show.year,
+            media_type: show.mediaType || 'tv',
+            still_path: ep.still_path || '',
+            air_date: ep.air_date || null,
+            vote_average: Number(ep.vote_average) || 0,
+            multi: false
+        }));
+    }
+
+    // Keep the provider response adapters directly testable without a browser.
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = { buildClassicSeasonResults, buildClassicEpisodeResults };
+    }
+
+    if (typeof document === 'undefined') {
+        return;
+    }
+
     // Initialize on DOM load
     document.addEventListener('DOMContentLoaded', function() {
         console.log('🎬 Discover Add Media page loaded');
@@ -35,27 +89,17 @@
             seasonResults.innerHTML = '<div class="loading">Loading seasons...</div>';
         }
 
-        // Fetch seasons
-        const formData = new FormData();
-        formData.append('media_id', mediaData.media_id);
-        formData.append('title', mediaData.title);
-        formData.append('year', mediaData.year);
-        formData.append('media_type', mediaData.media_type);
-        formData.append('multi', 'True');
-        formData.append('version', 'Any');
-        formData.append('allow_specials', allow_specials);
-        if (mediaData.rating) formData.append('rating', mediaData.rating);
-        if (mediaData.vote_average) formData.append('vote_average', mediaData.vote_average);
-        if (mediaData.genre_ids && mediaData.genre_ids.length > 0) {
-            // Convert array to comma-separated string
-            formData.append('genre_ids', mediaData.genre_ids.join(','));
-        }
-
-        fetch('/scraper/select_season', {
-            method: 'POST',
-            body: formData
+        // Reuse the provider-neutral Discover details API. It uses TVDB for
+        // authoritative season structure when configured and TMDB as the
+        // baseline/fallback, so Classic view does not require Trakt.
+        fetch(`/discover/details/${encodeURIComponent(mediaData.media_id)}/tv/data`)
+        .then(async response => {
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || `Could not load show details (${response.status})`);
+            }
+            return data;
         })
-        .then(response => response.json())
         .then(data => {
             if (data.error) {
                 console.error('Error loading season data:', data.error);
@@ -67,8 +111,11 @@
 
             console.log('Season data loaded successfully');
 
-            // Get season results
-            const seasonData = data.episode_results || data.results;
+            // Prefer the provider response over the abbreviated Discover-card
+            // parameters so the Add Media controls use the same metadata shown
+            // by the normal Discover details page.
+            const seasonData = buildClassicSeasonResults(data, mediaData, allow_specials);
+
             if (!seasonData || seasonData.length === 0) {
                 if (seasonResults) {
                     seasonResults.innerHTML = '<div class="error">No season results found</div>';
@@ -135,7 +182,7 @@
         .catch(error => {
             console.error('Error loading media:', error);
             if (seasonResults) {
-                seasonResults.innerHTML = '<div class="error">Failed to load media data</div>';
+                seasonResults.innerHTML = `<div class="error">Error: ${error.message || 'Failed to load media data'}</div>`;
             }
         });
     });
@@ -302,24 +349,14 @@
             episodeResults.innerHTML = '<div class="loading">Loading episodes...</div>';
         }
 
-        const formData = new FormData();
-        formData.append('media_id', mediaId);
-        formData.append('title', title);
-        formData.append('year', year);
-        formData.append('media_type', mediaType);
-        formData.append('season', season);
-        formData.append('multi', multi || 'True');
-        formData.append('version', 'Any');
-        formData.append('allow_specials', allow_specials);
-        if (genre_ids && Array.isArray(genre_ids)) {
-            formData.append('genre_ids', genre_ids.join(','));
-        }
-
-        fetch('/scraper/select_episode', {
-            method: 'POST',
-            body: formData
+        fetch(`/discover/details/${encodeURIComponent(mediaId)}/tv/season/${encodeURIComponent(season)}`)
+        .then(async response => {
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || `Could not load season ${season} (${response.status})`);
+            }
+            return data;
         })
-        .then(response => response.json())
         .then(data => {
             if (data.error) {
                 console.error('Error loading episodes:', data.error);
@@ -329,13 +366,19 @@
                 return;
             }
 
-            const episodes = data.episode_results || [];
+            const episodes = buildClassicEpisodeResults(data, {
+                mediaId,
+                title,
+                year,
+                mediaType,
+                season
+            });
             displayEpisodeResults(episodes, title, year, 'Any', mediaId, mediaType, season, null, genre_ids);
         })
         .catch(error => {
             console.error('Error fetching episodes:', error);
             if (episodeResults) {
-                episodeResults.innerHTML = '<div class="error">Failed to load episodes</div>';
+                episodeResults.innerHTML = `<div class="error">Error: ${error.message || 'Failed to load episodes'}</div>`;
             }
         });
     }

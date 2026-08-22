@@ -33,6 +33,55 @@ _MAX_COOKIE_AGE_SECONDS = 2 * 60 * 60  # 2 hours
 _refresh_lock = Lock()
 
 
+def _browser_environment(user_data_dir: str) -> Dict[str, str]:
+    """Return an environment where Chromium can initialize its profile.
+
+    ``gosu`` changes the process UID but preserves the container's root HOME.
+    Chromium then cannot create its crashpad database under ``/root`` and
+    aborts before Patchright can connect. Keep all browser-owned state inside
+    the already-private, writable temporary profile instead.
+    """
+    browser_env = os.environ.copy()
+    browser_env['HOME'] = user_data_dir
+    browser_env['XDG_CONFIG_HOME'] = os.path.join(user_data_dir, '.config')
+    browser_env['XDG_CACHE_HOME'] = os.path.join(user_data_dir, '.cache')
+    return browser_env
+
+
+def _read_page_title(page) -> Optional[str]:
+    """Read a page title without failing a solve during a redirect.
+
+    Cloudflare may replace the challenge document between ``goto`` completing
+    and the title poll. Patchright reports that normal navigation race as a
+    destroyed execution context. Returning ``None`` keeps the existing bounded
+    polling loop alive; unrelated browser errors still propagate.
+    """
+    try:
+        return page.title().lower()
+    except Exception as exc:
+        if 'execution context was destroyed' not in str(exc).lower():
+            raise
+        logging.debug(
+            "[CloudflareBypass] Page navigated while reading its title; "
+            "waiting for the new document"
+        )
+        return None
+
+
+def _wait_for_challenge_resolution(page, timeout_seconds: int) -> bool:
+    """Wait for Cloudflare's interstitial to finish within a fixed deadline."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        title = _read_page_title(page)
+        if title is None:
+            time.sleep(0.25)
+            continue
+        if 'moment' not in title and 'loading' not in title and 'checking' not in title:
+            return True
+        time.sleep(1)
+    return False
+
+
 def _clean_stale_x11_sockets():
     """Remove orphaned /tmp/.X11-unix/X<N> sockets left behind by a Xvfb
     process that died abnormally (crash, container restart, kill) without
@@ -86,7 +135,7 @@ def _save_cache(data: Dict):
     os.replace(tmp_path, _CACHE_FILE)
 
 
-def _solve_challenge(url: str, timeout_seconds: int = 30) -> Optional[Dict]:
+def _solve_challenge(url: str, timeout_seconds: int = 60) -> Optional[Dict]:
     """
     Launch a real, headed Chrome (via Xvfb) to solve the Cloudflare challenge
     for `url`'s domain. Returns {'cookies': {name: value}, 'user_agent': str}
@@ -121,44 +170,42 @@ def _solve_challenge(url: str, timeout_seconds: int = 30) -> Optional[Dict]:
     # Chrome/Chromium refuses to start as root without --no-sandbox — cli_debrid's
     # Docker container runs as root by default (see Dockerfile PUID/PGID handling).
     launch_args = ['--no-sandbox'] if hasattr(os, 'geteuid') and os.geteuid() == 0 else []
-    # Chrome's crashpad_handler subprocess fails to initialize in this container
-    # environment (no writable crash-database dir / restricted IPC socket),
-    # which kills the whole browser context right after launch ("Target page,
-    # context or browser has been closed", crashpad recvmsg: Connection reset
-    # by peer). Playwright already passes --disable-breakpad by default, but
-    # that alone doesn't stop Chromium from spawning crashpad_handler —
-    # --disable-crash-reporter is the flag that actually suppresses it.
+    # Chrome's crashpad_handler subprocess has been observed failing to
+    # initialize in this container environment ("Target page, context or
+    # browser has been closed", "crashpad recvmsg: Connection reset by peer").
+    # The originally identified cause was a non-writable crash-database dir,
+    # which _browser_environment's HOME/XDG fix now addresses - but the
+    # original investigation also flagged a possible restricted-IPC-socket
+    # cause that fix doesn't touch. Keep suppressing crash-reporter outright:
+    # nothing in this headless Cloudflare-solving flow consumes its crash
+    # reports, so there's no downside to disabling it, and doing so closes
+    # off any crashpad failure mode regardless of which cause is real on a
+    # given host. Playwright already passes --disable-breakpad by default,
+    # but that alone doesn't stop Chromium from spawning crashpad_handler.
     launch_args.append('--disable-crash-reporter')
+    browser_env = _browser_environment(user_data_dir)
     try:
         with sync_playwright() as p:
             try:
                 context = p.chromium.launch_persistent_context(
                     user_data_dir,
                     headless=False,  # headed mode under Xvfb is required — headless fails the challenge
-                    channel="chrome",
                     no_viewport=True,
                     args=launch_args,
+                    env=browser_env,
                 )
-            except Exception:
-                # Real Chrome channel not installed — fall back to bundled Chromium.
-                context = p.chromium.launch_persistent_context(
-                    user_data_dir,
-                    headless=False,
-                    no_viewport=True,
-                    args=launch_args,
-                )
+            except Exception as e:
+                # The image installs Patchright's bundled Chromium, not the
+                # system "chrome" channel. Log launch failures directly rather
+                # than hiding the useful first exception behind a fallback.
+                logging.warning(f"[CloudflareBypass] Failed to launch bundled Chromium: {e}")
+                return None
 
             try:
                 page = context.new_page()
                 page.goto(url, timeout=timeout_seconds * 1000, wait_until="domcontentloaded")
 
-                deadline = time.time() + timeout_seconds
-                while time.time() < deadline:
-                    title = page.title().lower()
-                    if 'moment' not in title and 'loading' not in title and 'checking' not in title:
-                        break
-                    time.sleep(1)
-                else:
+                if not _wait_for_challenge_resolution(page, timeout_seconds):
                     logging.warning(f"[CloudflareBypass] Challenge for {url} did not resolve within {timeout_seconds}s")
                     context.close()
                     return None

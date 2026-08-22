@@ -37,6 +37,16 @@ def is_stale(item_type: str, media_status: str | None, last_trakt_fetch: datetim
     return age >= _MOVIE_THRESHOLD
 
 
+def is_older_than(checked_at: datetime | None, max_age: timedelta) -> bool:
+    """Return whether a cached value is missing or older than ``max_age``."""
+    if checked_at is None:
+        return True
+    now = datetime.now(timezone.utc)
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=timezone.utc)
+    return (now - checked_at) >= max_age
+
+
 def should_recheck_null_airdate(checked_at: datetime | None) -> bool:
     """Should we re-query Trakt for an episode whose first_aired is NULL?"""
     if checked_at is None:

@@ -2304,6 +2304,20 @@ def main():
         logging.info("Set blank upgrading_percentage_threshold to default value of 0.1")
 
     ensure_settings_file()
+
+    # Repair existing installations where config credentials were cleared but
+    # OAuth tokens remained in config.json or the legacy .pytrakt.json file.
+    try:
+        from utilities.trakt_auth_cleanup import clear_stale_trakt_auth
+        config = load_config()
+        trakt_config_changed, trakt_legacy_changed = clear_stale_trakt_auth(config)
+        if trakt_config_changed:
+            save_config(config)
+        if trakt_config_changed or trakt_legacy_changed:
+            logging.info("Startup cleanup removed stale Trakt OAuth state")
+    except Exception as e:
+        logging.warning(f"Startup cleanup could not remove stale Trakt OAuth state: {e}")
+
     # verify_database() # No longer needed here
     validate_not_wanted_entries()
 

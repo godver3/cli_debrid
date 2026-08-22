@@ -263,6 +263,7 @@ def add_torrent_to_debrid():
         episode_nzb_urls_raw = request.form.get('episode_nzb_urls', '')
         fallback_nzb_urls_raw = request.form.get('fallback_nzb_urls', '')
         episode_filenames_raw = request.form.get('episode_filenames', '')
+        pack_waterfall_level_raw = request.form.get('pack_waterfall_level', '')
         if protocol == 'nzb' or (nzb_url and not magnet_link) or episode_nzb_urls_raw:
             # Virtual season pack — per-episode NZB URLs
             if episode_nzb_urls_raw:
@@ -275,6 +276,10 @@ def add_torrent_to_debrid():
                     fallback_nzb_urls = {}
                     episode_filenames_ui = {}
                 if episode_nzb_urls:
+                    try:
+                        pack_waterfall_level = int(pack_waterfall_level_raw) if pack_waterfall_level_raw else None
+                    except (ValueError, TypeError):
+                        pack_waterfall_level = None
                     return _add_nzb_pack_to_usenet(
                         episode_nzb_urls=episode_nzb_urls,
                         fallback_nzb_urls=fallback_nzb_urls,
@@ -287,6 +292,7 @@ def add_torrent_to_debrid():
                         selected_folder=selected_folder,
                         selected_folder_is_custom=selected_folder_is_custom,
                         selected_tags=selected_tags,
+                        waterfall_level=pack_waterfall_level,
                     )
             return _add_nzb_to_usenet(
                 nzb_url=nzb_url or magnet_link,
@@ -2194,12 +2200,19 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
                              genres=None, current_score=0.0,
                              selected_folder=None, selected_folder_is_custom=False,
                              selected_tags=None,
-                             existing_items=None):
+                             existing_items=None,
+                             waterfall_level=None):
     """Submit a virtual NZB season pack — one NZB per episode with health-check + retry.
 
     existing_items: optional dict {ep_num: item_dict} of existing DB items to reuse instead of
                     creating new ones. When provided, those items are updated in-place (state →
                     Adding) preserving their IDs and history. Used by scraping_queue batch path.
+
+    waterfall_level: the group-matching level scrape_newznab_season_aggregate used to build this
+                    pack (1 = same release group for every episode; 2/3 = episodes may come from
+                    different groups merged under a looser key). Only level 1 guarantees that an
+                    expired episode's retention issue applies to the rest of the pack — None
+                    (unknown) is treated the same as level 1 for safety.
     """
     from usenet.climount_client import get_climount_client, reset_climount_client
     from database.not_wanted_magnets import add_to_not_wanted_nzb_segment, extract_nzb_segment_id
@@ -2341,8 +2354,12 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
                 client, url, ep_label, is_anime=_is_anime, media_type='episode',
                 tags=selected_tags, tags_exclusive=False)
             if expired:
-                # Missing segments on this URL — no point trying more fallbacks from same release
-                pack_expired = True
+                # Missing segments on this URL — no point trying more fallbacks from same release.
+                # Only abort the rest of the pack when every episode came from the same release
+                # group (waterfall level 1) — otherwise a different episode's release may have
+                # entirely different retention and shouldn't be given up on.
+                if waterfall_level is None or waterfall_level == 1:
+                    pack_expired = True
                 break
             if not job_id:
                 continue

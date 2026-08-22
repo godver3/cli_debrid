@@ -1565,7 +1565,10 @@ def filter_results(
                 # article, unlike per-episode/aggregate results which only re-grab the
                 # affected episode. When disabled, reject NZB packs outright rather than
                 # scoring/selecting them — movies and non-NZB (torrent) packs are unaffected.
-                if disable_nzb_season_packs and is_identified_as_pack and result.get('protocol') == 'nzb':
+                # NZB Aggregate virtual packs (is_nzb_season_pack) are exempt: they're built
+                # from separate per-episode NZBs, so a repair only re-grabs the one episode.
+                if disable_nzb_season_packs and is_identified_as_pack and result.get('protocol') == 'nzb' \
+                        and not result.get('is_nzb_season_pack'):
                     result['filter_reason'] = "NZB season packs disabled"
                     logging.info(f"Rejected: NZB season pack disabled by setting for '{original_title}' (Size: {result['size']:.2f}GB)")
                     continue
