@@ -707,6 +707,7 @@ def scrape_newznab_season_aggregate(
             'episode_filenames': episode_filenames,
             'episode_count': len(_ep_list),
             'parsed_info': enriched_pi,
+            'waterfall_level': lvl,
         })
 
     logging.info(f'[NZBAggregate] {title} S{season:02d}: {len(virtual_packs)} complete virtual packs found')
