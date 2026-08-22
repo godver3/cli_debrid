@@ -391,7 +391,7 @@ SETTINGS_SCHEMA = {
         },
     },
     "TMDB": {
-        "tab": "Additional Settings",
+        "tab": "Required Settings",
         "api_key": {
             "type": "string",
             "description": "TMDB API key - used for poster retrieval and release date supplementation when TVDB is primary metadata source (not 'API Read Access Token')",
@@ -406,7 +406,7 @@ SETTINGS_SCHEMA = {
         }
     },
     "TVDB": {
-        "tab": "Additional Settings",
+        "tab": "Required Settings",
         "api_key": {
             "type": "string",
             "description": "TVDB v4 API key - when set, uses TVDB instead of Trakt for metadata lookups. A TMDB API key is also required for full release date support (digital/physical). Get a key at <a href='https://thetvdb.com/api-information' target='_blank'>thetvdb.com/api-information</a>",

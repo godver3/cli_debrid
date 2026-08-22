@@ -185,6 +185,49 @@
 </script>
 {% endif %}
 
+{% if environment_mode == 'full' %}
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Metadata Providers</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {% for section in ['TMDB', 'TVDB'] %}
+            {% for key, value in settings_schema[section].items() %}
+                {% if key != 'tab' %}
+                <div class="settings-form-group">
+                    <label for="{{ section|lower }}-{{ key }}" class="settings-title">{{ section }} {{ key|replace('_', ' ')|title }}:</label>
+                    {% if value.type == 'boolean' %}
+                        <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}"
+                               data-section="{{ section }}" data-key="{{ key }}"
+                               {% if settings.get(section, {}).get(key) %}checked{% endif %}>
+                    {% elif value.choices %}
+                        <select id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" class="settings-input"
+                                data-section="{{ section }}" data-key="{{ key }}">
+                            {% for choice in value.choices %}
+                                <option value="{{ choice }}" {% if settings.get(section, {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                            {% endfor %}
+                        </select>
+                    {% else %}
+                        <input type="{% if value.sensitive %}password{% else %}{{ value.type }}{% endif %}" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}"
+                               value="{{ settings.get(section, {}).get(key, '') }}" class="settings-input"
+                               data-section="{{ section }}" data-key="{{ key }}">
+                    {% endif %}
+                    {% if value.description %}
+                        <p class="settings-description">{{ value.description|safe }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
 <!-- Usenet Provider (cli_mount) -->
 <div class="settings-section settings-card">
     <div class="settings-section-header">
