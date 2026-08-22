@@ -2106,6 +2106,66 @@ def clear_movie_release_date_override_route(media_id):
         return jsonify({'success': False, 'error': str(exc)}), 500
 
 
+@library_bp.route('/movie/<media_id>/refresh-release-date', methods=['POST'])
+@admin_required
+def refresh_movie_release_date_route(media_id):
+    """Re-fetch just the release date from the provider, bypassing the metadata cache."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        value = str(media_id).strip()
+        if value.lower().startswith('tt'):
+            row = conn.execute(
+                "SELECT imdb_id FROM media_items WHERE imdb_id = ? AND type = 'movie' LIMIT 1",
+                (value,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT imdb_id FROM media_items WHERE tmdb_id = ? AND type = 'movie' LIMIT 1",
+                (value,),
+            ).fetchone()
+            if not row and value.isdigit():
+                row = conn.execute(
+                    "SELECT imdb_id FROM media_items WHERE id = ? AND type = 'movie' LIMIT 1",
+                    (int(value),),
+                ).fetchone()
+        if not row:
+            return jsonify({'success': False, 'error': 'Movie not found'}), 404
+        imdb_id = row['imdb_id']
+    finally:
+        if conn:
+            conn.close()
+
+    try:
+        provider_release_date = 'Unknown'
+        if imdb_id:
+            from metadata.metadata import get_release_date
+
+            provider_release_date = get_release_date(
+                {'released': 'Unknown'},
+                imdb_id,
+                release_date_cache_max_age=timedelta(0),
+            )
+
+        from database.movie_release_overrides import refresh_movie_release_date
+
+        result = refresh_movie_release_date(media_id, provider_release_date)
+        logging.info(
+            "Release date refreshed from provider for %s: %s (%s row(s))",
+            result['media_key'],
+            result['release_date'],
+            result['affected_count'],
+        )
+        return jsonify({'success': True, **result})
+    except LookupError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 409
+    except Exception as exc:
+        logging.error("Failed to refresh movie release date from provider: %s", exc, exc_info=True)
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+
 @library_bp.route('/refresh_metadata/movie/<media_id>', methods=['POST'])
 @user_required
 def refresh_movie_metadata(media_id):

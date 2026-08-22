@@ -264,3 +264,36 @@ def clear_movie_release_override(
         raise
     finally:
         conn.close()
+
+
+def refresh_movie_release_date(
+    media_id,
+    provider_release_date: Optional[str],
+    as_of: Optional[date] = None,
+) -> Dict:
+    """Apply a freshly-fetched provider date without disturbing a manual override."""
+    effective_date = provider_release_date or 'Unknown'
+    conn = get_db_connection()
+    try:
+        ensure_movie_release_override_table(conn)
+        movie = _resolve_movie(conn, media_id)
+        if not movie:
+            raise LookupError('Movie not found')
+        key = _media_key(movie.get('imdb_id'), movie.get('tmdb_id'))
+        if key and get_movie_release_override(movie.get('imdb_id'), movie.get('tmdb_id'), conn=conn):
+            raise ValueError('A manual release date override is active; clear it to use the provider date')
+        affected = _apply_effective_date(conn, movie, effective_date, as_of or date.today())
+        conn.commit()
+        return {
+            'media_key': key,
+            'release_date': effective_date,
+            'affected_count': affected,
+            'title': movie.get('title'),
+            'imdb_id': movie.get('imdb_id'),
+            'tmdb_id': movie.get('tmdb_id'),
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

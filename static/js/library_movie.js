@@ -88,6 +88,7 @@ function attachEventListeners() {
     const btnSearchMovie = document.getElementById('btn-search-movie');
     const btnRequestMovie = document.getElementById('btn-request-movie');
     const editReleaseDateBtn = document.getElementById('edit-release-date-btn');
+    const refreshReleaseDateBtn = document.getElementById('refresh-release-date-btn');
 
     if (btnGetMissing) {
         btnGetMissing.addEventListener('click', handleGetMissing);
@@ -115,6 +116,10 @@ function attachEventListeners() {
 
     if (editReleaseDateBtn) {
         editReleaseDateBtn.addEventListener('click', openReleaseDateOverrideModal);
+    }
+
+    if (refreshReleaseDateBtn) {
+        refreshReleaseDateBtn.addEventListener('click', handleRefreshReleaseDate);
     }
 
     document.getElementById('saveReleaseDateOverride')?.addEventListener('click', saveReleaseDateOverride);
@@ -1103,6 +1108,38 @@ async function clearReleaseDateOverride() {
         moviePopup({type: window.POPUP_TYPES.ERROR, message: error.message, autoClose: 5000});
     } finally {
         if (button) button.disabled = false;
+    }
+}
+
+async function handleRefreshReleaseDate() {
+    if (!movieData) return;
+    const btn = document.getElementById('refresh-release-date-btn');
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<svg class="spin" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>';
+    }
+
+    const mediaId = movieData.imdb_id || movieData.tmdb_id || movieData.id;
+    try {
+        const response = await fetch(`/library/movie/${encodeURIComponent(mediaId)}/refresh-release-date`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to refresh release date');
+        await loadMovieData();
+        moviePopup({
+            type: window.POPUP_TYPES.SUCCESS,
+            message: `Release date refreshed from provider: ${data.release_date}.`,
+            autoClose: 4000
+        });
+    } catch (error) {
+        moviePopup({type: window.POPUP_TYPES.ERROR, message: error.message, autoClose: 5000});
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
     }
 }
 
