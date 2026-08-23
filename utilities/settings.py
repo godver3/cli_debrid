@@ -102,6 +102,28 @@ def load_config():
                         except Exception as _me:
                             logging.warning(f"Settings migration: could not persist rename: {_me}")
 
+                    # One-time migration: force 'Disable NZB Season Packs' on for existing
+                    # installs. A single damaged article previously took down a whole NZB
+                    # season pack (repairs re-grab the entire pack); this flips the setting
+                    # to match the new default so existing installs get the safer behavior
+                    # too, not just fresh ones. Gated by a migration-run marker (not by the
+                    # setting's own value) so it only ever applies once per install — a user
+                    # who explicitly re-enables season packs afterward is never overridden
+                    # again on a later load.
+                    _migrations = config.setdefault('_migrations', {})
+                    if not _migrations.get('force_disable_nzb_season_packs_2026_08_23'):
+                        config.setdefault('Usenet Provider', {})['disable_nzb_season_packs'] = True
+                        _migrations['force_disable_nzb_season_packs_2026_08_23'] = True
+                        logging.info(
+                            "Settings migration: forced 'Disable NZB Season Packs' on "
+                            "(new default; one-time for existing installs)"
+                        )
+                        try:
+                            with open(config_file_path, 'w') as _mf:
+                                json.dump(config, _mf, indent=4)
+                        except Exception as _me:
+                            logging.warning(f"Settings migration: could not persist disable_nzb_season_packs force: {_me}")
+
                     # Parse string representations in Content Sources (Keep this logic)
                     if 'Content Sources' in config:
                         for key, value in config['Content Sources'].items():
