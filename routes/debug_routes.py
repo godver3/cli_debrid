@@ -294,7 +294,11 @@ def bulk_delete_by_imdb():
 @admin_required
 def refresh_release_dates_route():
     from metadata.metadata import refresh_release_dates # Added import here
-    refresh_release_dates()
+    # Manual trigger: bypass the periodic task's 24h-per-item cache floor so
+    # this always forces a real provider re-fetch, not just a re-read of
+    # whatever was already cached (which could be minutes old and still
+    # showing 'Unknown').
+    refresh_release_dates(force_bypass_cache=True)
     return jsonify({'success': True, 'message': 'Release dates refreshed successfully'})
 
 @debug_bp.route('/reset_battery_show_cache', methods=['POST'])
