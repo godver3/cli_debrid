@@ -106,7 +106,12 @@ def filter_results(
     filter_out = version_settings.get('filter_out', [])
     enable_hdr = version_settings.get('enable_hdr', False)
     disable_adult = get_setting('Scraping', 'disable_adult', False)
-    disable_nzb_season_packs = get_setting('Usenet Provider', 'disable_nzb_season_packs', False)
+    # Fallback only matters for a config missing this key entirely (e.g. a pre-0.6.08
+    # install whose settings.json predates this field and was never backfilled —
+    # ensure_settings_file() only populates schema defaults when the whole config
+    # file is missing, not individual missing keys in an existing one). Kept in sync
+    # with the schema default in utilities/settings_schema.py.
+    disable_nzb_season_packs = get_setting('Usenet Provider', 'disable_nzb_season_packs', True)
     
     #logging.debug(f"Starting filter_results with {len(results)} results")
     #logging.debug(f"Version settings: resolution={max_resolution}({resolution_wanted}), size={min_size_gb}-{max_size_gb}GB, HDR={enable_hdr}")
