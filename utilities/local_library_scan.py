@@ -2001,33 +2001,36 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                     try:
                                         # First, check if there's an existing entry for this movie/episode that's blacklisted or ghostlisted
                                         # This prevents creating duplicate entries when a blacklisted version already exists
+                                        # (media_items has no plain 'blacklisted' boolean column — blacklisted-ness is
+                                        # represented by blacklisted_date being set, same convention used in
+                                        # queues/blacklisted_queue.py and routes/debug_routes.py)
                                         if item_type == 'episode':
                                             existing_movie_check = conn.execute('''
-                                                SELECT id, state, blacklisted, ghostlisted
+                                                SELECT id, state, blacklisted_date, ghostlisted
                                                 FROM media_items
                                                 WHERE imdb_id = ? AND type = ? AND version = ?
                                                 AND season_number = ? AND episode_number = ?
-                                                AND (blacklisted = 1 OR ghostlisted = 1)
+                                                AND (blacklisted_date IS NOT NULL OR ghostlisted = 1)
                                                 LIMIT 1
                                             ''', (item.get('imdb_id'), item_type, item.get('version'),
                                                   item.get('season_number'), item.get('episode_number'))).fetchone()
                                         else:  # movie
                                             existing_movie_check = conn.execute('''
-                                                SELECT id, state, blacklisted, ghostlisted
+                                                SELECT id, state, blacklisted_date, ghostlisted
                                                 FROM media_items
                                                 WHERE imdb_id = ? AND type = ? AND version = ?
-                                                AND (blacklisted = 1 OR ghostlisted = 1)
+                                                AND (blacklisted_date IS NOT NULL OR ghostlisted = 1)
                                                 LIMIT 1
                                             ''', (item.get('imdb_id'), item_type, item.get('version'))).fetchone()
 
                                         if existing_movie_check:
-                                            logging.info(f"[MultiFile] Skipping additional file {additional_filename} - found existing blacklisted/ghostlisted entry (ID: {existing_movie_check['id']}, blacklisted: {existing_movie_check['blacklisted']}, ghostlisted: {existing_movie_check['ghostlisted']})")
+                                            logging.info(f"[MultiFile] Skipping additional file {additional_filename} - found existing blacklisted/ghostlisted entry (ID: {existing_movie_check['id']}, blacklisted_date: {existing_movie_check['blacklisted_date']}, ghostlisted: {existing_movie_check['ghostlisted']})")
                                             conn.close()
                                             continue
 
                                         # Check if this specific file already exists in the database
                                         cursor = conn.execute(
-                                            'SELECT id, blacklisted, ghostlisted FROM media_items WHERE filled_by_file = ? AND type = ?',
+                                            'SELECT id, blacklisted_date, ghostlisted FROM media_items WHERE filled_by_file = ? AND type = ?',
                                             (additional_filename, item_type)
                                         )
                                         existing = cursor.fetchone()
@@ -2035,7 +2038,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
 
                                         if existing:
                                             # Check if the existing entry is blacklisted or ghostlisted
-                                            if existing['blacklisted'] == 1 or existing['ghostlisted'] == 1:
+                                            if existing['blacklisted_date'] is not None or existing['ghostlisted'] == 1:
                                                 logging.info(f"[MultiFile] Skipping update for {additional_filename} - existing entry (ID: {existing['id']}) is blacklisted/ghostlisted")
                                                 conn.close()
                                                 continue
