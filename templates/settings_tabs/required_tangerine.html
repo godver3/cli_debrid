@@ -427,13 +427,6 @@
                    data-section="Usenet Provider" data-key="enabled"
                    {% if settings.get('Usenet Provider', {}).get('enabled') %}checked{% endif %}>
         </div>
-        <div class="settings-form-group">
-            <label for="usenet_provider-ffprobe_all_nzbs" class="settings-title">Ffprobe All NZBs:</label>
-            <input type="checkbox" id="usenet_provider-ffprobe_all_nzbs" name="Usenet Provider.ffprobe_all_nzbs"
-                   data-section="Usenet Provider" data-key="ffprobe_all_nzbs"
-                   {% if settings.get('Usenet Provider', {}).get('ffprobe_all_nzbs') %}checked{% endif %}>
-            <p class="settings-description">Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Plex mode — in Plex mode it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.</p>
-        </div>
         {% set _provider = settings.get('Usenet Provider', {}).get('provider', 'climount') %}
         <div class="settings-form-group">
             <label for="usenet_provider-provider" class="settings-title">Provider:</label>
@@ -540,6 +533,13 @@
                    data-section="Usenet Provider" data-key="disable_nzb_season_packs"
                    {% if settings.get('Usenet Provider', {}).get('disable_nzb_season_packs') %}checked{% endif %}>
             <p class="settings-description">Reject NZB season packs entirely (movies are unaffected). A single damaged article in a season pack repairs the whole pack via a fresh grab; with this enabled, only aggregate/single-episode NZB results are considered, so a bad file only affects that one episode.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-ffprobe_all_nzbs" class="settings-title">Ffprobe All NZBs:</label>
+            <input type="checkbox" id="usenet_provider-ffprobe_all_nzbs" name="Usenet Provider.ffprobe_all_nzbs"
+                   data-section="Usenet Provider" data-key="ffprobe_all_nzbs"
+                   {% if settings.get('Usenet Provider', {}).get('ffprobe_all_nzbs') %}checked{% endif %}>
+            <p class="settings-description">Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Plex mode — in Plex mode it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.</p>
         </div>
         {% if settings.get('File Management', {}).get('file_collection_management', '') != 'Symlinked/Local' %}
         <div class="settings-form-group">
