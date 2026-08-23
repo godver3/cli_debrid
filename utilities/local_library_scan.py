@@ -1724,10 +1724,17 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 current_time = datetime.now()
                 
                 # Prepare update values
+                # original_collected_at is meant to be the item's first-ever collection
+                # time (matches the COALESCE(original_collected_at, ...) pattern used in
+                # database/collected_items.py's Plex-mode collection path) — preserve it
+                # across repair-driven re-collections instead of overwriting it every
+                # time, otherwise a repair looks identical to a first-time collection to
+                # both the notification gate below and notifications.py's own dedup-by-
+                # original_collected_at logic.
                 update_values = {
                         'location_on_disk': dest_file,
                     'collected_at': current_time,
-                    'original_collected_at': current_time,
+                    'original_collected_at': item.get('original_collected_at') or current_time,
                     'original_path_for_symlink': source_file,
                     'state': new_state,
                     'filled_by_title': item.get('filled_by_title'),
@@ -1844,7 +1851,14 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 previous_state = item.get('state')
 
                 if not item.get('upgrading_from'): # This indicates a regular collection, where new_state is 'Collected'
-                    if previous_state != 'Collected':
+                    # previous_state alone doesn't catch a repair-driven re-collection: NZBRepair/
+                    # torrent-replace flows intentionally bounce the item out of 'Collected' (into
+                    # 'Adding'/'Upgrading') before resubmitting, so previous_state != 'Collected' is
+                    # true on every repair attempt too, not just the first-ever collection. Gate on
+                    # original_collected_at as well — it's preserved (not overwritten) once first set,
+                    # so its presence means this item has genuinely been collected before, regardless
+                    # of what state it was bounced through for the repair.
+                    if previous_state != 'Collected' and not item.get('original_collected_at'):
                         from database.database_writing import add_to_collected_notifications
                         notification_item = item.copy()
                         notification_item.update(update_values)
@@ -1853,7 +1867,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         add_to_collected_notifications(notification_item)
                         logging.info(f"Added collection notification for item: {item_identifier}")
                     else:
-                        logging.info(f"Item {item_identifier} was already 'Collected'. Skipping redundant collection notification.")
+                        logging.info(f"Item {item_identifier} was already collected previously (previous_state={previous_state!r}, original_collected_at={item.get('original_collected_at')!r}). Skipping redundant collection notification.")
                 # Add notification for upgrades
                 elif item.get('upgrading_from'): # This indicates an upgrade, notification_item['new_state'] will be 'Upgraded'
                     # An item is 'Upgraded' from a previous version. Its state before this specific upgrade
