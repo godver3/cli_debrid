@@ -58,7 +58,7 @@
     </div>
     <div class="settings-section-content">
         {# Advanced settings hidden: 'disable_initialization', 'auto_run_program' #}
-        {% for key in ['logging_level', 'timezone_override', 'enable_tracemalloc', 'tracemalloc_sample_rate', 'check_for_updates', 'use_symlinks_on_windows'] %}
+        {% for key in ['logging_level', 'timezone_override', 'enable_tracemalloc', 'tracemalloc_sample_rate', 'check_for_updates'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">

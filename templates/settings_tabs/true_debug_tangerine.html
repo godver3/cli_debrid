@@ -202,15 +202,6 @@
         </div>
     </div>
     <div class="settings-section-content">
-        <!-- Use Symlinks on Windows -->
-        <div class="settings-form-group">
-            <label for="debug-use_symlinks_on_windows" class="settings-title">Allow Symlinks on Windows:</label>
-            <input type="checkbox" id="debug-use_symlinks_on_windows" name="Debug.use_symlinks_on_windows"
-                   data-section="Debug" data-key="use_symlinks_on_windows"
-                   {% if settings.get('Debug', {}).get('use_symlinks_on_windows', False) %}checked{% endif %}>
-            <p class="settings-description">Allow the use of symlinks on Windows. WARNING: Creating symlinks on Windows requires administrator privileges or Developer Mode to be enabled.</p>
-        </div>
-
         <!-- Timezone Override -->
         <div class="settings-form-group">
             <label for="debug-timezone_override-tangerine" class="settings-title">Timezone Override:</label>
