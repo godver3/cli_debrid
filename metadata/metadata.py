@@ -1396,7 +1396,12 @@ def refresh_release_dates(force_bypass_cache: bool = False):
                 new_airtime = None
 
             elif media_type == 'episode':
-                metadata, source = DirectAPI.get_show_metadata(imdb_id)
+                if force_bypass_cache:
+                    logging.info(
+                        "Forcing release-date cache bypass for %s S%sE%s (%s)",
+                        title, season_number, episode_number, imdb_id,
+                    )
+                metadata, source = DirectAPI.get_show_metadata(imdb_id, force_refresh=force_bypass_cache)
                 logging.info(f"Processing metadata for {title} S{season_number}E{episode_number}")
 
                 new_airtime = get_episode_airtime(imdb_id, season_number, episode_number)

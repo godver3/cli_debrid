@@ -876,7 +876,7 @@ class DirectAPI:
     # ── Shows ─────────────────────────────────────────────────────────────
 
     @staticmethod
-    def get_show_metadata(imdb_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    def get_show_metadata(imdb_id: str, force_refresh: bool = False) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         # Guard: Prevent None or invalid imdb_id from reaching database
         if not imdb_id or imdb_id == 'None' or not isinstance(imdb_id, str) or not imdb_id.strip():
             logger.warning(f"DirectAPI.get_show_metadata called with invalid imdb_id: {repr(imdb_id)}")
@@ -889,7 +889,7 @@ class DirectAPI:
                     selectinload(Item.seasons).selectinload(Season.episodes),
                 ).filter_by(imdb_id=imdb_id).first()
 
-                if item and not is_stale(item.type or 'show', item.media_status, item.last_trakt_fetch):
+                if item and not is_stale(item.type or 'show', item.media_status, item.last_trakt_fetch, force=force_refresh):
                     logging.debug(f"get_show_metadata {imdb_id}: cache HIT")
                     md = _build_show_metadata_dict(item)
                     _fetch_and_store_xem(item, session, md)
