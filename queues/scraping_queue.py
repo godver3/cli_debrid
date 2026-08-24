@@ -317,20 +317,28 @@ class ScrapingQueue:
                         finally:
                             _cconn.close()
                         import re as _re_coal
-                        # Check the original scraped release title first — it reflects what was
-                        # actually searched/matched and isn't obfuscated. filled_by_file (the
-                        # downloaded filename) is only a fallback: it's frequently an obfuscated
-                        # hex string for single-episode NZBs, which was wrongly read as "not a
-                        # normal episode filename, must be an unresolved pack" and caused
-                        # coalescing to fire for genuinely single-episode releases.
-                        _coal_check_title = _sibling_nzb[4] if _sibling_nzb else None  # original_scraped_torrent_title
-                        if not _coal_check_title and _sibling_nzb:
-                            _coal_check_title = _sibling_nzb[1]  # fall back to filled_by_file
-                        # An empty title here is not evidence of a pack - it usually just means
-                        # the sibling's own submission hasn't finished writing back yet. Requiring
-                        # a real title before concluding "pack" avoids wrongly coalescing this item
+                        # A sibling job is only safe to reuse as a "season pack" if NEITHER the
+                        # scraped release title NOR the actual downloaded filename reveal a
+                        # specific episode marker anywhere. Checking the title alone is not
+                        # enough: some indexers (e.g. DrunkenSlug REPACK releases) publish a
+                        # genuinely single-episode NZB under a season-level release name like
+                        # "Show.S03.REPACK.WEB-DL...", with the real episode number appearing
+                        # only in the inner filename once downloaded. Trusting a title-less match
+                        # by itself caused every other episode of that season to silently reuse
+                        # that one episode's file. Checking the filename too catches this case:
+                        # once the sibling has actually downloaded, its filled_by_file (e.g.
+                        # "Show.S03E01....mkv") carries the real episode marker even when the
+                        # scraped title never did.
+                        _coal_title = (_sibling_nzb[4] or '') if _sibling_nzb else ''  # original_scraped_torrent_title
+                        _coal_file = (_sibling_nzb[1] or '') if _sibling_nzb else ''  # filled_by_file
+                        _coal_title_has_ep = bool(_re_coal.search(r'[Ss]\d{2}[Ee]\d{2}', _coal_title))
+                        _coal_file_has_ep = bool(_re_coal.search(r'[Ss]\d{2}[Ee]\d{2}', _coal_file))
+                        # An entirely empty title/filename is not evidence of a pack either - it
+                        # usually just means the sibling's own submission hasn't finished writing
+                        # back yet. Requiring at least one real (non-empty) field, with neither
+                        # field showing a specific episode, avoids wrongly coalescing this item
                         # into an unrelated individual episode's job.
-                        if _sibling_nzb and _coal_check_title and not _re_coal.search(r'[Ss]\d{2}[Ee]\d{2}', _coal_check_title):
+                        if _sibling_nzb and (_coal_title or _coal_file) and not _coal_title_has_ep and not _coal_file_has_ep:
                             _job_id = _sibling_nzb[0]
                             # Verify the shared job is still actually queryable on the provider
                             # before reusing it - a job that completed and was since cleaned up
