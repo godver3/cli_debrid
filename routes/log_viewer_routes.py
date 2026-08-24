@@ -61,19 +61,35 @@ def api_logs():
     except Exception as e:
         return jsonify({'error': 'An error occurred while fetching logs'}), 500
 
+_climount_client_cache = {'client': None, 'expires': 0.0}
+_CLIMOUNT_CLIENT_CACHE_TTL = 10  # seconds; the cli_mount log tab polls every 2s
+
+
 def _get_active_climount_client():
-    """Return a connected CliMountClient if cli_mount is the enabled Usenet provider, else None."""
+    """Return a connected CliMountClient if cli_mount is the enabled Usenet provider, else None.
+
+    Cached briefly since the cli_mount log tab polls this on a 2s interval and
+    each build previously did two full settings.json reads (one here, one in
+    CliMountClient.__init__) for values that don't change mid-session.
+    """
+    now = time.monotonic()
+    if now < _climount_client_cache['expires']:
+        return _climount_client_cache['client']
     try:
         from utilities.settings import get_setting
         cfg = get_setting('Usenet Provider') or {}
         if not cfg.get('enabled') or cfg.get('provider', 'climount') != 'climount':
-            return None
-        from usenet.climount_client import CliMountClient
-        client = CliMountClient()
-        return client if client.is_enabled() else None
+            client = None
+        else:
+            from usenet.climount_client import CliMountClient
+            candidate = CliMountClient()
+            client = candidate if candidate.is_enabled() else None
     except Exception as e:
         logging.error(f"Error building cli_mount client: {e}")
-        return None
+        client = None
+    _climount_client_cache['client'] = client
+    _climount_client_cache['expires'] = now + _CLIMOUNT_CLIENT_CACHE_TTL
+    return client
 
 
 @logs_bp.route('/api/climount/logs')
