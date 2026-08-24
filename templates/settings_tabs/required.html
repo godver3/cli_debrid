@@ -267,7 +267,6 @@
 </div>
 {% endif %}
 
-{% if environment_mode == 'full' %}
 <div class="settings-section">
     <div class="settings-section-header">
         <h4>Metadata Providers</h4>
@@ -291,10 +290,12 @@
                             {% endfor %}
                         </select>
                     {% else %}
-                        <input type="{% if value.sensitive %}password{% else %}{{ value.type }}{% endif %}" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}"
+                        {# TMDB's api_key stays locked (visible, read-only) in restricted environment modes,
+                           matching the field's old behavior when it lived under Additional Settings. #}
+                        <input type="{% if value.sensitive or (section == 'TMDB' and key == 'api_key' and environment_mode != 'full') %}password{% else %}{{ value.type }}{% endif %}" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}"
                                value="{{ settings.get(section, {}).get(key, '') }}" class="settings-input"
                                data-section="{{ section }}" data-key="{{ key }}"
-                               {% if value.sensitive %}type="password"{% endif %}>
+                               {% if section == 'TMDB' and key == 'api_key' and environment_mode != 'full' %}readonly disabled{% endif %}>
                     {% endif %}
                     {% if value.description %}
                         <p class="settings-description">{{ value.description|safe }}</p>
@@ -305,7 +306,6 @@
         {% endfor %}
     </div>
 </div>
-{% endif %}
 
 <script>
 // Global function for updating media server settings
