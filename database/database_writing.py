@@ -177,7 +177,7 @@ def update_release_date_and_state(
             conn.close()
     
 @retry_on_db_lock()
-def update_media_item_state(item_id, state, **kwargs):
+def update_media_item_state(item_id, state, skip_state_change_hook=False, **kwargs):
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
@@ -233,11 +233,17 @@ def update_media_item_state(item_id, state, **kwargs):
         if updated_item_row:
             item_dict = dict(updated_item_row)
 
-            # Handle post-processing based on state
-            if state == 'Collected':
-                handle_state_change(item_dict)
-            elif state == 'Upgrading':
-                handle_state_change(item_dict)
+            # Handle post-processing based on state. Callers that already ran
+            # handle_state_change() for this exact state transition themselves
+            # (e.g. checking_queue.py, after local_library_scan.py's explicit
+            # call) pass skip_state_change_hook=True to avoid double-running
+            # CineSync, the subtitle downloader, and any custom post-processing
+            # script for the same item in the same cycle.
+            if not skip_state_change_hook:
+                if state == 'Collected':
+                    handle_state_change(item_dict)
+                elif state == 'Upgrading':
+                    handle_state_change(item_dict)
 
         logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
 

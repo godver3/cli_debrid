@@ -1316,7 +1316,10 @@ class CheckingQueue:
                                     logging.info(f"Item {item_in_torrent_group['id']} is marked for upgrading, keeping in Upgrading state after local check.")
                                 elif current_item_state == 'Collected':
                                     logging.info(f"Item {item_in_torrent_group['id']} state confirmed as Collected after local check.")
-                                    queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True)
+                                    # check_local_file_for_item() above already ran handle_state_change()
+                                    # for this exact state transition (via local_library_scan.py); avoid
+                                    # re-running CineSync/subtitles/custom-script a second time here.
+                                    queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True, skip_state_change_hook=True)
                                     # Sync labels now that item is detected in Plex
                                     try:
                                         from utilities.plex_label_manager import sync_labels_to_plex_for_item, is_plex_labels_enabled_anywhere
@@ -1326,7 +1329,10 @@ class CheckingQueue:
                                         logging.error(f"Error syncing labels for item {item_in_torrent_group['id']}: {e}")
                                 elif current_item_state:
                                     logging.warning(f"Item {item_in_torrent_group['id']} processed locally but state is '{current_item_state}'. Moving to Collected.")
-                                    queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True)
+                                    # check_local_file_for_item() above already ran handle_state_change()
+                                    # for this exact state transition (via local_library_scan.py); avoid
+                                    # re-running CineSync/subtitles/custom-script a second time here.
+                                    queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True, skip_state_change_hook=True)
                                     # Sync labels now that item is detected in Plex
                                     try:
                                         from utilities.plex_label_manager import sync_labels_to_plex_for_item, is_plex_labels_enabled_anywhere

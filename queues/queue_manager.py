@@ -1026,7 +1026,7 @@ class QueueManager:
             })
             return None
 
-    def move_to_collected(self, item: Dict[str, Any], from_queue: str, skip_notification: bool = False):
+    def move_to_collected(self, item: Dict[str, Any], from_queue: str, skip_notification: bool = False, skip_state_change_hook: bool = False):
         """Move an item to the Collected state after symlink is created."""
         item_identifier = self.generate_identifier(item)
 
@@ -1111,7 +1111,7 @@ class QueueManager:
         _kwargs = {'collected_at': collected_at}
         if not item.get('original_filename') and item.get('filled_by_file'):
             _kwargs['original_filename'] = item['filled_by_file']
-        update_media_item_state(item['id'], 'Collected', **_kwargs)
+        update_media_item_state(item['id'], 'Collected', skip_state_change_hook=skip_state_change_hook, **_kwargs)
         
         # Get the updated item
         updated_item = get_media_item_by_id(item['id'])
