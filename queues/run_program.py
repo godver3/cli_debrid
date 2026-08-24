@@ -3671,11 +3671,26 @@ class ProgramRunner:
                             ]
                             for _ds in _dead_siblings:
                                 try:
+                                    _ds_id = _ds['id']
                                     _ds_url = _ds.get('filled_by_magnet', '')
                                     if _ds_url:
                                         _add_guid(_ds_url)
-                                    self.queue_manager.move_to_wanted(_ds, 'Adding')
-                                    logging.info(f'[NZB] Cleaned up dead sibling {_ds["id"]} from Adding')
+                                    # Cap repeats for coalesced siblings the same way the primary
+                                    # item below is capped. Without this, a sibling sharing the
+                                    # dead job reference (e.g. a coalesced season pack) keeps
+                                    # getting reset to Wanted every cycle with nothing ever
+                                    # incrementing for it, reproducing the exact unbounded
+                                    # Wanted->Scraping->Adding loop this cap exists to close -
+                                    # just for the sibling instead of the primary item.
+                                    _ds_fail_count = self._nzb_ghost_repeat_counts.get(_ds_id, 0) + 1
+                                    self._nzb_ghost_repeat_counts[_ds_id] = _ds_fail_count
+                                    if _ds_fail_count >= self._NZB_GHOST_BLACKLIST_THRESHOLD:
+                                        logging.warning(f'[NZB] Sibling {_ds_id} failed-in-cli_mount {_ds_fail_count}x — blacklisting instead of retrying again')
+                                        self._nzb_ghost_repeat_counts.pop(_ds_id, None)
+                                        self.queue_manager.move_to_blacklisted(_ds, 'Adding')
+                                    else:
+                                        self.queue_manager.move_to_wanted(_ds, 'Adding')
+                                        logging.info(f'[NZB] Cleaned up dead sibling {_ds_id} from Adding (failure count {_ds_fail_count}/{self._NZB_GHOST_BLACKLIST_THRESHOLD})')
                                 except Exception:
                                     pass
                         except Exception:
@@ -3747,26 +3762,19 @@ class ProgramRunner:
                             # cap repeats of the identical outcome for this item before giving up.
                             _fail_count = self._nzb_ghost_repeat_counts.get(item_id, 0) + 1
                             self._nzb_ghost_repeat_counts[item_id] = _fail_count
+                            try:
+                                from database.database_writing import update_media_item as _umi_nw
+                                _umi_nw(item_id, filled_by_torrent_id=None, filled_by_file=None,
+                                        filled_by_title=None, filled_by_magnet=None,
+                                        scrape_results=None, fall_back_to_single_scraper=False)
+                            except Exception:
+                                pass
                             if _fail_count >= self._NZB_GHOST_BLACKLIST_THRESHOLD:
                                 logging.warning(f'[NZB] Item {item_id} failed-in-cli_mount {_fail_count}x with no new results each time — blacklisting instead of retrying again')
                                 self._nzb_ghost_repeat_counts.pop(item_id, None)
-                                try:
-                                    from database.database_writing import update_media_item as _umi_nw
-                                    _umi_nw(item_id, filled_by_torrent_id=None, filled_by_file=None,
-                                            filled_by_title=None, filled_by_magnet=None,
-                                            scrape_results=None, fall_back_to_single_scraper=False)
-                                except Exception:
-                                    pass
                                 self.queue_manager.move_to_blacklisted(item, 'Adding')
                             else:
                                 logging.info(f'[NZB] {torrent_id} no remaining results — moving to Wanted for fresh scrape (failure count {_fail_count}/{self._NZB_GHOST_BLACKLIST_THRESHOLD})')
-                                try:
-                                    from database.database_writing import update_media_item as _umi_nw
-                                    _umi_nw(item_id, filled_by_torrent_id=None, filled_by_file=None,
-                                            filled_by_title=None, filled_by_magnet=None,
-                                            scrape_results=None, fall_back_to_single_scraper=False)
-                                except Exception:
-                                    pass
                                 self.queue_manager.move_to_wanted(item, 'Adding')
                         continue
                     elif progress < 100:

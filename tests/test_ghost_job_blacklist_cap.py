@@ -338,6 +338,24 @@ class TestSourceShapeRegression(unittest.TestCase):
         self.assertIn('_NZB_GHOST_BLACKLIST_THRESHOLD', fail_branch)
         self.assertIn('move_to_blacklisted', fail_branch)
 
+    def test_dead_sibling_cleanup_is_counted_not_just_the_primary_item(self):
+        """The progress==-1 branch's _dead_siblings loop (coalesced-pack
+        siblings sharing the primary item's dead job) must apply the same
+        counter/threshold/blacklist logic as the primary item a few lines
+        below it - not just move straight to Wanted every cycle. Scoped
+        strictly to the _dead_siblings loop body itself (not the whole
+        progress==-1 branch, which also contains the primary item's own
+        counting code further down and would pass this assertion even if
+        the sibling loop had none at all - the actual gap this test closes)."""
+        src = self._read('queues/run_program.py')
+        siblings_start = src.index("_dead_siblings = [")
+        siblings_end = src.index("# Try next result from scrape_results", siblings_start)
+        siblings_region = src[siblings_start:siblings_end]
+        self.assertIn('_nzb_ghost_repeat_counts', siblings_region)
+        self.assertIn('_NZB_GHOST_BLACKLIST_THRESHOLD', siblings_region)
+        self.assertIn('move_to_blacklisted', siblings_region)
+        self.assertIn('move_to_wanted', siblings_region)
+
     def test_success_path_pops_counter_for_primary_and_siblings(self):
         """Both places an item can successfully clear Adding into Checking
         (the primary item and a coalesced sibling moved with it) must clear
