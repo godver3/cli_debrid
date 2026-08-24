@@ -1149,7 +1149,16 @@ class QueueManager:
             if not skip_notification:
                 updated_item_dict = dict(updated_item)
                 updated_item_dict['is_upgrade'] = False  # Not an upgrade since it's a new collection
-                updated_item_dict['original_collected_at'] = collected_at
+                # Don't stamp 'now' here — this function never persists
+                # original_collected_at, so updated_item_dict already carries
+                # whatever's actually in the DB (None for a genuine first
+                # collection, or the real first-collection time if this item
+                # was collected before, e.g. via a repair). Overwriting it
+                # with collected_at would mislabel a re-collection as a first
+                # collection to any downstream consumer (consolidate_items()
+                # groups notifications by this field; a future notification
+                # gate keyed on it, like the one local_library_scan.py added,
+                # would also be defeated).
                 add_to_collected_notifications(updated_item_dict)
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
