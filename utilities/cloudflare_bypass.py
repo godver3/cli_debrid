@@ -82,15 +82,36 @@ def _wait_for_challenge_resolution(page, timeout_seconds: int) -> bool:
     return False
 
 
+def _lock_file_pid_alive(lock_path: str) -> bool:
+    """Check whether the PID recorded in a Xvfb /tmp/.X<N>-lock file still
+    refers to a live process. The lock file's existence alone isn't enough -
+    Xvfb dying hard (OOM-killed, kill -9, crash) commonly leaves BOTH the
+    socket and this lock file behind without either being cleaned up. If a
+    process happens to be re-using that PID for something unrelated
+    (theoretically possible after a PID wraparound) this returns a false
+    positive and skips cleanup, which just falls back to the pre-existing
+    "assume it's live" behavior rather than making anything worse.
+    """
+    try:
+        with open(lock_path, 'r') as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        # Unreadable or malformed lock file content - can't confirm it's
+        # alive, so don't touch it (same conservative default as before).
+        return True
+    return os.path.exists(f'/proc/{pid}')
+
+
 def _clean_stale_x11_sockets():
     """Remove orphaned /tmp/.X11-unix/X<N> sockets left behind by a Xvfb
     process that died abnormally (crash, container restart, kill) without
     unlinking its own socket file. A genuinely running Xvfb always has both
     the socket AND a matching /tmp/.X<N>-lock file (containing its PID); a
-    socket with no matching lock file is unambiguously dead. Left alone,
-    every subsequent Display() attempt collides with the same stale socket
-    and fails with "server already running" forever, since nothing else
-    ever cleans it up.
+    socket with no matching lock file, or with a lock file whose recorded
+    PID is no longer running, is unambiguously dead. Left alone, every
+    subsequent Display() attempt collides with the same stale socket and
+    fails with "server already running" forever, since nothing else ever
+    cleans it up.
     """
     x11_dir = '/tmp/.X11-unix'
     if not os.path.isdir(x11_dir):
@@ -104,12 +125,18 @@ def _clean_stale_x11_sockets():
             except ValueError:
                 continue
             lock_path = f'/tmp/.X{display_nr}-lock'
-            if os.path.exists(lock_path):
-                continue  # a real lock file exists - assume it's live, don't touch it
             stale_socket = os.path.join(x11_dir, name)
+            if os.path.exists(lock_path):
+                if _lock_file_pid_alive(lock_path):
+                    continue  # lock file's PID is genuinely running - leave it alone
+                try:
+                    os.remove(lock_path)
+                    logging.info(f"[CloudflareBypass] Removed stale X11 lock file {lock_path} (recorded PID no longer running)")
+                except OSError as e:
+                    logging.debug(f"[CloudflareBypass] Could not remove stale X11 lock file {lock_path}: {e}")
             try:
                 os.remove(stale_socket)
-                logging.info(f"[CloudflareBypass] Removed stale X11 socket {stale_socket} (no matching lock file)")
+                logging.info(f"[CloudflareBypass] Removed stale X11 socket {stale_socket}")
             except OSError as e:
                 logging.debug(f"[CloudflareBypass] Could not remove stale X11 socket {stale_socket}: {e}")
     except Exception as e:
