@@ -91,10 +91,17 @@ def trakt_auth_status():
                 'status': 'authorized', 
                 'battery_push_status': 'success' if success else 'failed'
             })
-        elif response.status_code == 400:
+        elif response.status_code in (400, 429) or response.status_code >= 500:
+            # 400 = pending (user hasn't entered the code yet); 429 = polling
+            # too fast ("slow_down"); 5xx = a transient hiccup on Trakt's end.
+            # None of these mean the device code is actually invalid, so keep
+            # polling instead of ending the flow and forcing the user to
+            # restart it over one bad response.
             return jsonify({'status': 'pending'})
         else:
-            return jsonify({'status': 'error', 'message': response.text}), response.status_code
+            # Terminal per Trakt's device-auth docs: 404 not found, 409
+            # already used, 410 expired, 418 denied by the user.
+            return jsonify({'status': 'error', 'message': response.text or f'Trakt returned HTTP {response.status_code}'}), response.status_code
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
