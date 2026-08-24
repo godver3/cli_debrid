@@ -64,7 +64,7 @@ from flask import Response, stream_with_context
 import sqlite3
 from utilities.local_library_scan import convert_item_to_symlink, get_symlink_path, create_symlink, resync_symlinks_with_new_settings
 from scraper.functions.ptt_parser import parse_with_ptt
-from database.database_writing import add_media_item
+from database.database_writing import add_media_item, RESET_COLLECTION_STATE_SQL
 from routes.program_operation_routes import get_program_runner
 from utilities.plex_removal_cache import cache_plex_removal
 import subprocess
@@ -1566,15 +1566,14 @@ def move_item_to_wanted(item_id, current_original_scraped_title=None):
                     cur_lookup.close()
 
         cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE media_items 
-            SET state = 'Wanted', 
-                filled_by_file = NULL, 
-                filled_by_title = NULL, 
-                filled_by_magnet = NULL, 
+        cursor.execute(f'''
+            UPDATE media_items
+            SET state = 'Wanted',
+                filled_by_file = NULL,
+                filled_by_title = NULL,
+                filled_by_magnet = NULL,
                 filled_by_torrent_id = NULL,
-                collected_at = NULL,
-                original_collected_at = NULL,
+                {RESET_COLLECTION_STATE_SQL},
                 last_updated = ?,
                 location_on_disk = NULL,
                 original_path_for_symlink = NULL,
@@ -2284,15 +2283,14 @@ def convert_to_symlinks():
                                 logging.info(f"Deleted item {item_dict['title']} as duplicate exists")
                             else:
                                 # Update the item to Wanted state
-                                cursor.execute("""
-                                    UPDATE media_items 
+                                cursor.execute(f"""
+                                    UPDATE media_items
                                     SET state = 'Wanted',
                                         filled_by_file = NULL,
                                         filled_by_title = NULL,
                                         filled_by_magnet = NULL,
                                         filled_by_torrent_id = NULL,
-                                        collected_at = NULL,
-                                        original_collected_at = NULL,
+                                        {RESET_COLLECTION_STATE_SQL},
                                         location_on_disk = NULL,
                                         last_updated = CURRENT_TIMESTAMP,
                                         version = TRIM(version, '*')
@@ -5196,15 +5194,14 @@ def rescrape_duplicate_symlinks():
         now = datetime.now()
         moved = 0
         for item_id in item_ids:
-            cursor.execute('''
+            cursor.execute(f'''
                 UPDATE media_items
                 SET state = 'Wanted',
                     filled_by_file = NULL,
                     filled_by_title = NULL,
                     filled_by_magnet = NULL,
                     filled_by_torrent_id = NULL,
-                    collected_at = NULL,
-                    original_collected_at = NULL,
+                    {RESET_COLLECTION_STATE_SQL},
                     last_updated = ?,
                     disable_not_wanted_check = TRUE,
                     location_on_disk = NULL,

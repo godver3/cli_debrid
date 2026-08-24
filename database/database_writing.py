@@ -9,6 +9,15 @@ from utilities.post_processing import handle_state_change
 from typing import List
 import sqlite3
 
+# original_collected_at records an item's first-ever collection time and must
+# never be reset without also resetting collected_at (and vice versa) — every
+# site that sends an item back to 'Wanted' for a genuine re-download needs
+# both cleared together, or the item permanently loses its "first collection"
+# notification (see queue_manager.move_to_collected and local_library_scan.py,
+# which both key off original_collected_at being unset). Interpolate this
+# into each reset UPDATE's SET clause instead of hand-typing the two columns.
+RESET_COLLECTION_STATE_SQL = "collected_at = NULL, original_collected_at = NULL"
+
 @retry_on_db_lock()
 def bulk_delete_by_id(id_value, id_type):
     conn = get_db_connection()
