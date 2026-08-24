@@ -13,7 +13,7 @@ _add_collected_lock = threading.Lock()
 import os
 from datetime import datetime, timezone, timedelta
 import json
-from .database_writing import add_to_collected_notifications, update_media_item_state
+from .database_writing import add_to_collected_notifications, update_media_item_state, RESET_COLLECTION_STATE_SQL
 from utilities.reverse_parser import parser_approximation
 from utilities.settings import get_setting
 from typing import Dict, Any, List, Optional
@@ -1254,14 +1254,14 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                     conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
                                 else:
                                     logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {file_to_log}). No other matching version found. Moving to 'Wanted'.")
-                                    conn.execute('''
+                                    conn.execute(f'''
                                         UPDATE media_items
                                         SET state = 'Wanted',
                                             filled_by_file = NULL,
                                             filled_by_title = NULL,
                                             filled_by_magnet = NULL,
                                             filled_by_torrent_id = NULL,
-                                            collected_at = NULL,
+                                            {RESET_COLLECTION_STATE_SQL},
                                             last_updated = ?,
                                             version = TRIM(version, '*')
                                         WHERE id = ?

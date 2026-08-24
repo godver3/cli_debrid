@@ -1162,10 +1162,20 @@ def get_imdb_id_if_missing(item: Dict[str, Any]) -> Optional[str]:
     imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type=api_media_type)
     return imdb_id
 
-def refresh_release_dates():
+def refresh_release_dates(force_bypass_cache: bool = False):
+    """Recheck release dates for all in-flight movies/episodes.
+
+    force_bypass_cache: when False (the default, used by the periodic
+    task_refresh_release_dates scheduled job), Unreleased movies are only
+    rechecked against the provider once per 24h (see a0df2b31) to avoid
+    hammering TMDB/TVDB every ~10h10m run. When True (used by the manual
+    "Refresh Release Dates" debug-page button), that floor is skipped
+    entirely so a manual click always forces a real provider re-fetch,
+    even for an item whose cache was written minutes ago.
+    """
     from database import get_all_media_items, update_release_date_and_state
     import content_checkers.trakt as trakt
-    logging.info("Starting refresh_release_dates function")
+    logging.info("Starting refresh_release_dates function (force_bypass_cache=%s)", force_bypass_cache)
 
     # Load IMDB→Trakt ID cache
     imdb_trakt_cache = trakt.load_imdb_trakt_cache()
@@ -1224,17 +1234,25 @@ def refresh_release_dates():
                     new_theatrical_release_date = None
                 else:
                     logging.info("Getting release date, physical release date, and theatrical release date")
-                    release_date_cache_max_age = (
-                        timedelta(days=1)
-                        if item_dict.get('state') == 'Unreleased'
-                        else None
-                    )
-                    if release_date_cache_max_age is not None:
+                    if force_bypass_cache:
+                        release_date_cache_max_age = timedelta(0)
                         logging.info(
-                            "Applying daily release-date metadata recheck for %s (%s)",
+                            "Forcing release-date cache bypass for %s (%s)",
                             title,
                             imdb_id,
                         )
+                    else:
+                        release_date_cache_max_age = (
+                            timedelta(days=1)
+                            if item_dict.get('state') == 'Unreleased'
+                            else None
+                        )
+                        if release_date_cache_max_age is not None:
+                            logging.info(
+                                "Applying daily release-date metadata recheck for %s (%s)",
+                                title,
+                                imdb_id,
+                            )
                     fetched_release_date = get_release_date(
                         metadata,
                         imdb_id,
@@ -1378,7 +1396,12 @@ def refresh_release_dates():
                 new_airtime = None
 
             elif media_type == 'episode':
-                metadata, source = DirectAPI.get_show_metadata(imdb_id)
+                if force_bypass_cache:
+                    logging.info(
+                        "Forcing release-date cache bypass for %s S%sE%s (%s)",
+                        title, season_number, episode_number, imdb_id,
+                    )
+                metadata, source = DirectAPI.get_show_metadata(imdb_id, force_refresh=force_bypass_cache)
                 logging.info(f"Processing metadata for {title} S{season_number}E{episode_number}")
 
                 new_airtime = get_episode_airtime(imdb_id, season_number, episode_number)

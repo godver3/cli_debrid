@@ -686,7 +686,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
     /* Snapshot the list before we start moving nodes */
     const items = Array.from(document.querySelectorAll('.debug_item'));
 
-    const SKIP_CARDS = new Set(['Manual Blacklist', 'Refresh Release Dates', 'Torrent Tracking']);
+    const SKIP_CARDS = new Set(['Manual Blacklist', 'Torrent Tracking']);
 
     items.forEach(item => {
       const h3 = item.querySelector('h3');
@@ -1468,6 +1468,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
         </div>
         <div class="debug_item">
             <h3>Refresh Release Dates</h3>
+            <p class="description">Force a fresh release-date lookup from your metadata providers for active queue items, bypassing cached values. Useful when a date is unknown or outdated.</p>
             <form action="{{ url_for('debug.refresh_release_dates_route') }}" method="POST" id="refresh-release-dates-form">
                 <button type="submit">Refresh Release Dates</button>
             </form>

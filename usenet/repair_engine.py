@@ -851,9 +851,20 @@ def _blacklist_broken_nzb(nzb_url: str, segment_id: str = '') -> None:
     segment_id should be passed from the DB item's nzb_segment_id column —
     no extra HTTP fetch needed."""
     try:
-        from database.not_wanted_magnets import add_to_not_wanted_nzb_guid, add_to_not_wanted_nzb_segment
+        from database.not_wanted_magnets import (
+            add_to_not_wanted_nzb_guid,
+            add_to_not_wanted_nzb_segment,
+            add_to_not_wanted_urls,
+        )
         if nzb_url:
             add_to_not_wanted_nzb_guid(nzb_url)
+            # Also blacklist the raw URL as a backstop for indexers whose NZB
+            # links extract_nzb_guid() can't cleanly parse (e.g. malformed
+            # query strings missing '?') — is_url_not_wanted() does an exact
+            # base-filename match, which works as long as the indexer serves
+            # a stable URL for the same content (true for static-API-key
+            # indexers), independent of guid extraction succeeding.
+            add_to_not_wanted_urls(nzb_url)
             logger.info(f'[NZBRepair] Blacklisted NZB URL: {nzb_url[:80]}')
         if segment_id:
             add_to_not_wanted_nzb_segment(segment_id)

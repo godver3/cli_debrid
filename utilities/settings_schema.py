@@ -317,11 +317,6 @@ SETTINGS_SCHEMA = {
             "description": "Enable usenet as a download source via cli_mount",
             "default": False
         },
-        "ffprobe_all_nzbs": {
-            "type": "boolean",
-            "description": "Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Plex mode — in Plex mode it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.",
-            "default": False
-        },
         "url": {
             "type": "string",
             "description": "cli_mount URL — must not conflict with Phalanx DB (port 8888). Use the actual cli_mount host/port (e.g. http://192.168.1.x:8888 or http://climount:8888)",
@@ -366,6 +361,11 @@ SETTINGS_SCHEMA = {
         "disable_nzb_season_packs": {
             "type": "boolean",
             "description": "Reject NZB season packs entirely (movies are unaffected). A single damaged article in a season pack repairs the whole pack via a fresh grab; with this enabled, only aggregate/single-episode NZB results are considered, so a bad file only affects that one episode.",
+            "default": True
+        },
+        "ffprobe_all_nzbs": {
+            "type": "boolean",
+            "description": "Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Plex mode — in Plex mode it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.",
             "default": False
         },
         "provider": {
@@ -391,7 +391,7 @@ SETTINGS_SCHEMA = {
         },
     },
     "TMDB": {
-        "tab": "Additional Settings",
+        "tab": "Required Settings",
         "api_key": {
             "type": "string",
             "description": "TMDB API key - used for poster retrieval and release date supplementation when TVDB is primary metadata source (not 'API Read Access Token')",
@@ -406,7 +406,7 @@ SETTINGS_SCHEMA = {
         }
     },
     "TVDB": {
-        "tab": "Additional Settings",
+        "tab": "Required Settings",
         "api_key": {
             "type": "string",
             "description": "TVDB v4 API key - when set, uses TVDB instead of Trakt for metadata lookups. A TMDB API key is also required for full release date support (digital/physical). Get a key at <a href='https://thetvdb.com/api-information' target='_blank'>thetvdb.com/api-information</a>",

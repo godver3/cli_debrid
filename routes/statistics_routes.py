@@ -18,6 +18,7 @@ from functools import wraps
 # Provider-agnostic: avoid direct Real-Debrid import
 from typing import Optional, Dict, List, Any
 import calendar
+from database.database_writing import RESET_COLLECTION_STATE_SQL
 
 def format_file_size(size_gb):
     """Format file size from GB to human-readable format (GB, MB, etc.)"""
@@ -1380,14 +1381,14 @@ def move_to_wanted():
         # Build query based on item type
         if season_number is not None and episode_number is not None:
             # Episode — no item_id scoping here since episode rows group all versions together
-            query = """
+            query = f"""
                 UPDATE media_items
                 SET state = 'Wanted',
                     filled_by_file = NULL,
                     filled_by_title = NULL,
                     filled_by_magnet = NULL,
                     filled_by_torrent_id = NULL,
-                    collected_at = NULL,
+                    {RESET_COLLECTION_STATE_SQL},
                     last_updated = ?,
                     disable_not_wanted_check = TRUE,
                     location_on_disk = NULL,
@@ -1404,14 +1405,14 @@ def move_to_wanted():
             params = (datetime.now(), imdb_id, tmdb_id, season_number, episode_number)
         elif item_id:
             # Movie with specific row ID — only move this exact version
-            query = """
+            query = f"""
                 UPDATE media_items
                 SET state = 'Wanted',
                     filled_by_file = NULL,
                     filled_by_title = NULL,
                     filled_by_magnet = NULL,
                     filled_by_torrent_id = NULL,
-                    collected_at = NULL,
+                    {RESET_COLLECTION_STATE_SQL},
                     last_updated = ?,
                     disable_not_wanted_check = TRUE,
                     location_on_disk = NULL,
@@ -1427,14 +1428,14 @@ def move_to_wanted():
             params = (datetime.now(), item_id)
         else:
             # Movie fallback (no item_id) — move all versions
-            query = """
+            query = f"""
                 UPDATE media_items
                 SET state = 'Wanted',
                     filled_by_file = NULL,
                     filled_by_title = NULL,
                     filled_by_magnet = NULL,
                     filled_by_torrent_id = NULL,
-                    collected_at = NULL,
+                    {RESET_COLLECTION_STATE_SQL},
                     last_updated = ?,
                     disable_not_wanted_check = TRUE,
                     location_on_disk = NULL,

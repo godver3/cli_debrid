@@ -34,356 +34,6 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
         </svg>
         <div class="settings-header-left">
-            <h4>Debrid Provider</h4>
-        </div>
-    </div>
-    <div class="settings-section-content">
-        {% for key, value in settings_schema['Debrid Provider'].items() %}
-            {% if key != 'tab' %}
-            <div class="settings-form-group">
-                <label for="debrid provider-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                {% if value.type == 'boolean' %}
-                    <input type="checkbox" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}"
-                           data-section="Debrid Provider" data-key="{{ key }}"
-                           {% if settings.get('Debrid Provider', {}).get(key) %}checked{% endif %}>
-                {% elif value.choices %}
-                    <select id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" class="settings-input"
-                            data-section="Debrid Provider" data-key="{{ key }}">
-                        {% for choice in value.choices %}
-                            <option value="{{ choice }}" {% if settings.get('Debrid Provider', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
-                        {% endfor %}
-                    </select>
-                {% else %}
-                    <input type="{% if value.sensitive %}password{% else %}{{ value.type }}{% endif %}" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}"
-                           value="{{ settings.get('Debrid Provider', {}).get(key, '') }}" class="settings-input"
-                           data-section="Debrid Provider" data-key="{{ key }}">
-                {% endif %}
-                {% if value.description %}
-                    <p class="settings-description">{{ value.description }}</p>
-                {% endif %}
-            </div>
-            {% endif %}
-        {% endfor %}
-
-        <script>
-        (function() {
-            // Show/hide debrid naming sub-options based on enable_debrid_naming toggle
-            const mainCb = document.getElementById('debrid provider-enable_debrid_naming');
-            const subIds = ['debrid provider-include_version_in_debrid_naming', 'debrid provider-include_content_source_in_debrid_naming'];
-            function applyDebridNamingVis() {
-                if (!mainCb) return;
-                subIds.forEach(function(id) {
-                    const el = document.getElementById(id);
-                    if (el) {
-                        const row = el.closest('.settings-form-group');
-                        if (row) row.style.display = mainCb.checked ? '' : 'none';
-                    }
-                });
-            }
-            if (mainCb) {
-                mainCb.addEventListener('change', applyDebridNamingVis);
-                applyDebridNamingVis();
-            }
-        })();
-        </script>
-
-        <!-- Fallback Providers -->
-        <div class="settings-form-group" style="margin-top:16px">
-            <label class="settings-title">Fallback Providers</label>
-            <p class="settings-description">Additional debrid services tried in order when the primary provider fails (e.g. 451 DMCA block, rate limit). Each fallback needs its own API key.</p>
-        </div>
-        <div id="fallback-providers-list">
-            {% set fallbacks = settings.get('Debrid Provider', {}).get('fallback_providers', []) %}
-            {% for fb in fallbacks %}
-            <div class="fallback-provider-row settings-form-group" style="display: flex;flex-direction: column;gap: 8px;align-items: baseline;margin-bottom: 8px;">
-                <select class="settings-input fallback-provider-name" style="flex:0 0 150px">
-                    {% for choice in ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink'] %}
-                    <option value="{{ choice }}" {% if fb.provider == choice %}selected{% endif %}>{{ choice }}</option>
-                    {% endfor %}
-                </select>
-                <input type="password" class="settings-input fallback-provider-key" placeholder="API key" value="{{ fb.api_key }}" style="flex:1;min-width:0">
-                <button type="button" class="delete-version-btn btn-danger fallback-provider-remove">
-                    <i class="fa-solid fa-trash"></i>
-                    <span class="btn-text">Remove</span>
-                </button>
-            </div>
-            {% endfor %}
-        </div>
-        <button type="button" id="add-fallback-provider-btn" class="add-version-link btn-primary">
-            <i class="fa-solid fa-plus"></i> Add Fallback Provider
-        </button>
-    </div>
-</div>
-
-<script>
-(function() {
-    const PROVIDER_CHOICES = ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink'];
-
-    function buildRow(name, key) {
-        const row = document.createElement('div');
-        row.className = 'fallback-provider-row settings-form-group';
-        row.style.cssText = 'display:flex;flex-direction:column;gap:8px;align-items:baseline;margin-bottom:8px';
-        const sel = document.createElement('select');
-        sel.className = 'settings-input fallback-provider-name';
-        sel.style.cssText = 'flex:0 0 150px';
-        PROVIDER_CHOICES.forEach(c => {
-            const o = document.createElement('option');
-            o.value = c; o.textContent = c;
-            if (c === name) o.selected = true;
-            sel.appendChild(o);
-        });
-        const inp = document.createElement('input');
-        inp.type = 'password'; inp.className = 'settings-input fallback-provider-key';
-        inp.placeholder = 'API key'; inp.value = key || '';
-        inp.style.cssText = 'flex:1;min-width:0';
-        const btn = document.createElement('button');
-        btn.type = 'button'; btn.className = 'delete-version-btn btn-danger fallback-provider-remove';
-        btn.innerHTML = '<i class="fa-solid fa-trash"></i> <span class="btn-text">Remove</span>';
-        btn.addEventListener('click', () => { row.remove(); saveFallbacks(); });
-        sel.addEventListener('change', saveFallbacks);
-        inp.addEventListener('change', saveFallbacks);
-        row.appendChild(sel); row.appendChild(inp); row.appendChild(btn);
-        return row;
-    }
-
-    function saveFallbacks() {
-        const rows = document.querySelectorAll('#fallback-providers-list .fallback-provider-row');
-        const fallbacks = [];
-        rows.forEach(row => {
-            const name = row.querySelector('.fallback-provider-name')?.value;
-            const key  = row.querySelector('.fallback-provider-key')?.value;
-            if (name && key) fallbacks.push({provider: name, api_key: key});
-        });
-        // Store as JSON in a hidden input that the settings save picks up
-        let hidden = document.getElementById('fallback-providers-hidden');
-        if (!hidden) {
-            hidden = document.createElement('input');
-            hidden.type = 'hidden'; hidden.id = 'fallback-providers-hidden';
-            hidden.name = 'Debrid Provider.fallback_providers';
-            hidden.dataset.section = 'Debrid Provider';
-            hidden.dataset.key = 'fallback_providers';
-            hidden.dataset.jsonList = 'true';
-            document.getElementById('fallback-providers-list').after(hidden);
-        }
-        hidden.value = JSON.stringify(fallbacks);
-    }
-
-    document.querySelectorAll('#fallback-providers-list .fallback-provider-remove').forEach(btn => {
-        btn.addEventListener('click', () => { btn.closest('.fallback-provider-row').remove(); saveFallbacks(); });
-    });
-    document.querySelectorAll('#fallback-providers-list .fallback-provider-name, #fallback-providers-list .fallback-provider-key').forEach(el => {
-        el.addEventListener('change', saveFallbacks);
-    });
-    document.getElementById('add-fallback-provider-btn')?.addEventListener('click', () => {
-        const row = buildRow('Torbox', '');
-        document.getElementById('fallback-providers-list').appendChild(row);
-        saveFallbacks();
-    });
-    // Initialize hidden input on load
-    saveFallbacks();
-})();
-</script>
-{% endif %}
-
-<!-- Usenet Provider (cli_mount) -->
-<div class="settings-section settings-card">
-    <div class="settings-section-header">
-        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-        <div class="settings-header-left">
-            <h4>Usenet Provider</h4>
-        </div>
-    </div>
-    <div class="settings-section-content">
-        <div class="info-banner info-banner-blue" style="margin-bottom: 16px;">
-            <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-            </svg>
-            <div class="info-banner-content">Connect a usenet backend — <strong>cli_mount</strong> (custom API, default port 8888) or <strong>NzbDAV</strong> (SAB-compatible API, default port 3000). Both handle NNTP and serve files via the rclone mount.</div>
-        </div>
-        <div class="settings-form-group">
-            <label for="usenet_provider-enabled" class="settings-title">Enable Usenet:</label>
-            <input type="checkbox" id="usenet_provider-enabled" name="Usenet Provider.enabled"
-                   data-section="Usenet Provider" data-key="enabled"
-                   {% if settings.get('Usenet Provider', {}).get('enabled') %}checked{% endif %}>
-        </div>
-        <div class="settings-form-group">
-            <label for="usenet_provider-ffprobe_all_nzbs" class="settings-title">Ffprobe All NZBs:</label>
-            <input type="checkbox" id="usenet_provider-ffprobe_all_nzbs" name="Usenet Provider.ffprobe_all_nzbs"
-                   data-section="Usenet Provider" data-key="ffprobe_all_nzbs"
-                   {% if settings.get('Usenet Provider', {}).get('ffprobe_all_nzbs') %}checked{% endif %}>
-            <p class="settings-description">Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Plex mode — in Plex mode it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.</p>
-        </div>
-        {% set _provider = settings.get('Usenet Provider', {}).get('provider', 'climount') %}
-        <div class="settings-form-group">
-            <label for="usenet_provider-provider" class="settings-title">Provider:</label>
-            <select id="usenet_provider-provider" name="Usenet Provider.provider"
-                    data-section="Usenet Provider" data-key="provider"
-                    class="settings-input">
-                <option value="climount" {% if _provider == 'climount' %}selected{% endif %}>cli_mount</option>
-                <option value="nzbdav"    {% if _provider == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
-            </select>
-            <p class="settings-description">Backend type. cli_mount uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Both expose the same client interface internally.</p>
-        </div>
-        <details data-provider-only="nzbdav" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
-            <summary style="cursor:pointer;font-weight:600;">How to set up NzbDAV (click to expand)</summary>
-            <p class="settings-description" style="margin-top:8px;"><strong>Two containers, one backend (same pattern as zurg + zurg_rclone):</strong> the <code>nzbdav</code> container is the downloader + WebDAV server; an <code>rclone</code> container mounts that WebDAV as a normal folder (e.g. <code>/mnt/nzbdav</code>) so Plex and cli-debrid can read the files as a path. You need both — cli_mount only looked simpler because it bundled the mount internally.</p>
-            <p class="settings-description"><strong>Don't write these by hand:</strong> use the <strong>setup helper</strong> below — it generates the <code>docker-compose.yml</code> (both containers) + <code>rclone.conf</code> + the config block for you, and can test the connection and create the required categories. The steps below are what it sets up:</p>
-            <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
-                <li><strong>Deploy the NzbDAV stack</strong> (nzbdav + rclone) — copy the files from the setup helper below, then <code>docker compose up -d</code>.</li>
-                <li><strong>In NzbDAV:</strong> add your usenet (NNTP) provider + indexers, then copy the SAB <strong>API key</strong> (NzbDAV → Settings → API).</li>
-                <li><strong>Add the categories cli-debrid uses</strong> — NzbDAV → Settings → Categories: <code>movies</code>, <code>shows</code>, <code>movies_1080p_264</code>, <code>shows_1080p_264</code>, <code>__unplayable__</code>. Missing categories ⇒ grabs are rejected and loop in "Wanted".</li>
-                <li><strong>Fill the fields below:</strong> Provider URL (e.g. <code>http://host:3000</code>), API Token (the key from step 2), Download Folder = <code>__unplayable__</code>, NzbDAV Mount Path (where the rclone mount appears in this container, e.g. <code>/mnt/nzbdav</code>).</li>
-                <li><strong>Bind the mount + Plex:</strong> bind the nzbdav rclone mount into this container at that path, and add the <code>content/movies</code>, <code>content/shows</code> (+ <code>_1080p_264</code>) folders to your Plex libraries.</li>
-                <li><strong>Verify</strong> with the helper's <em>Test connection &amp; ensure categories</em> button below, then toggle <em>Enable Usenet</em> above.</li>
-            </ol>
-            <p class="settings-description" style="margin-top:4px;"><strong>Switching from cli_mount?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing cli_mount files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). To move existing downloads across, use <strong>Debug → Library → "Migrate between usenet providers"</strong> (in-app, both directions). For the cli_mount→NzbDAV direction it reads cli_mount's stored <code>.nzb</code> files, so bind cli_mount's appdata into cli-debrid (set <em>cli_mount Data Path</em> below) and the tool reads them from <code>&lt;data_path&gt;/usenet/nzbs</code>. (The host CLI <code>nzbdav_setup.py migrate-files</code> does the same from the shell.)</p>
-        </details>
-        {% include '_nzbdav_setup_helper.html' %}
-        <details data-provider-only="climount" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
-            <summary style="cursor:pointer;font-weight:600;">How to set up cli_mount (click to expand)</summary>
-            <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
-                <li>Run cli_mount with its rclone mount; configure your usenet provider + indexers in cli_mount.</li>
-                <li>Fill below: cli_mount URL (host:8888 — not localhost, conflicts with Phalanx DB), API Token (if auth enabled), Download Folder (leave empty for cli_mount's default).</li>
-                <li>Set the cli_mount Data Path (bind cli_mount's appdata to <code>/cli_mount_data</code>) if you want backup/restore/cleanup tools.</li>
-                <li>Toggle <em>Enable Usenet</em> above.</li>
-            </ol>
-        </details>
-        <div class="settings-form-group">
-            <label for="usenet_provider-url" class="settings-title">Provider URL:</label>
-            <input type="text" id="usenet_provider-url" name="Usenet Provider.url"
-                   value="{{ settings.get('Usenet Provider', {}).get('url', '') }}"
-                   class="settings-input" data-section="Usenet Provider" data-key="url"
-                   placeholder="e.g. http://192.168.1.x:8888 (cli_mount) or http://192.168.1.x:3000 (nzbdav)">
-            <p class="settings-description" data-provider-only="climount">Do not use localhost:8888 — that conflicts with Phalanx DB. Use the cli_mount host IP or container name.</p>
-            <p class="settings-description" data-provider-only="nzbdav">Use the NzbDAV host IP or container name with its port (default 3000), e.g. <code>http://192.168.1.x:3000</code>. Do not append <code>/sabnzbd</code> — NzbDAV serves its SAB-compatible API at the root <code>/api</code>.</p>
-        </div>
-        <div class="settings-form-group">
-            <label for="usenet_provider-api_token" class="settings-title">API Token:</label>
-            <input type="password" id="usenet_provider-api_token" name="Usenet Provider.api_token"
-                   value="{{ settings.get('Usenet Provider', {}).get('api_token', '') }}"
-                   class="settings-input" data-section="Usenet Provider" data-key="api_token"
-                   placeholder="Leave empty if auth is disabled">
-        </div>
-        <div class="settings-form-group">
-            <label for="usenet_provider-download_folder" class="settings-title"><span data-provider-only="nzbdav">Fallback Category <span style="color:#888;font-size:0.85em;">(rarely used)</span></span><span data-provider-only="climount">Download Folder / Category</span>:</label>
-            <input type="text" id="usenet_provider-download_folder" name="Usenet Provider.download_folder"
-                   value="{{ settings.get('Usenet Provider', {}).get('download_folder', '') }}"
-                   class="settings-input" data-section="Usenet Provider" data-key="download_folder"
-                   placeholder="cli_mount: blank for default · nzbdav: __unplayable__">
-            <p class="settings-description" data-provider-only="climount">Category/folder in cli_mount for downloads. Leave empty to use cli_mount's default download folder.</p>
-            <p class="settings-description" data-provider-only="nzbdav">This is <strong>not</strong> a download destination — it's the <strong>fallback category</strong> used only if the per-release title heuristic can't classify a grab. In practice the heuristic classifies everything (it auto-routes to <code>movies</code> / <code>shows</code> / <code>music</code> and the <code>*_1080p_264</code> variants), so this almost never fires. Recommended value: <code>__unplayable__</code> — a category Plex doesn't scan, so any unclassifiable grab parks there harmlessly instead of polluting a library. This name (and every category the heuristic emits) must exist in NzbDAV's <code>api.categories</code> — use the setup helper's "ensure categories" button above, or add them in NzbDAV → Settings → Categories.</p>
-        </div>
-        <div class="settings-form-group" data-provider-only="climount">
-            <label for="usenet_provider-data_path" class="settings-title">cli_mount Data Path:</label>
-            <input type="text" id="usenet_provider-data_path" name="Usenet Provider.data_path"
-                   value="{{ settings.get('Usenet Provider', {}).get('data_path', '/climount_data') }}"
-                   class="settings-input" data-section="Usenet Provider" data-key="data_path"
-                   placeholder="/cli_mount_data">
-            <p class="settings-description">Path to cli_mount's data directory inside the container. Add <code>- /path/to/cli_mount/appdata:/cli_mount_data</code> to your docker-compose volumes, then set this to <code>/cli_mount_data</code>. Required for cli_mount DB backup, restore, and cleanup tools — and lets the in-app provider migration (<strong>Debug → Library</strong>) read cli_mount's stored <code>.nzb</code> files from <code>&lt;data_path&gt;/usenet/nzbs</code>.</p>
-        </div>
-        <div class="settings-form-group" data-provider-only="nzbdav">
-            <label for="usenet_provider-mounted_file_location" class="settings-title">NzbDAV Mount Path:</label>
-            <input type="text" id="usenet_provider-mounted_file_location" name="Usenet Provider.mounted_file_location"
-                   value="{{ settings.get('Usenet Provider', {}).get('mounted_file_location', '') }}"
-                   class="settings-input" data-section="Usenet Provider" data-key="mounted_file_location"
-                   placeholder="/mnt/nzbdav">
-            <p class="settings-description">Path inside <em>this</em> container where the NzbDAV rclone-mount appears. NzbDAV has no <code>/browse</code> API, so folder lookups walk the filesystem under <code>&lt;this path&gt;/content/&lt;category&gt;/</code>. Bind-mount the nzbdav-rclone mount into the cli-debrid container at this same path. A trailing <code>/__all__</code> is stripped automatically (zurg-path compatibility). Effectively required when provider is NzbDAV.</p>
-        </div>
-        <div class="settings-form-group" data-provider-only="nzbdav">
-            <label for="usenet_provider-owned_categories" class="settings-title">Repair: Owned Categories <span style="color: #888; font-size: 0.85em;">(advanced)</span>:</label>
-            <input type="text" id="usenet_provider-owned_categories" name="Usenet Provider.owned_categories"
-                   value="{{ settings.get('Usenet Provider', {}).get('owned_categories', '') }}"
-                   class="settings-input" data-section="Usenet Provider" data-key="owned_categories"
-                   placeholder="auto: movies,shows,movies_1080p_264,shows_1080p_264,__unplayable__">
-            <p class="settings-description">Comma-separated NzbDAV categories the broken-NZB repair tool may act on. NzbDAV history is shared with other SAB clients (e.g. Lidarr music) — repair only re-acquires content cli-debrid manages, so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (plus the Download Folder fallback). Set only if your category names differ.</p>
-        </div>
-        <div class="settings-form-group" data-provider-only="nzbdav">
-            <label for="usenet_provider-exclude_categories" class="settings-title">Repair: Exclude Categories <span style="color: #888; font-size: 0.85em;">(advanced)</span>:</label>
-            <input type="text" id="usenet_provider-exclude_categories" name="Usenet Provider.exclude_categories"
-                   value="{{ settings.get('Usenet Provider', {}).get('exclude_categories', '') }}"
-                   class="settings-input" data-section="Usenet Provider" data-key="exclude_categories"
-                   placeholder="e.g. music,lidarr (optional)">
-            <p class="settings-description">Comma-separated NzbDAV categories the repair tool must ignore (subtracted from the owned set). Use this if you point Radarr/Sonarr at the same NzbDAV and don't want cli-debrid touching their categories.</p>
-        </div>
-        <div class="settings-form-group">
-            <label for="usenet_provider-retention_days" class="settings-title">Usenet Retention Days:</label>
-            <input type="number" id="usenet_provider-retention_days" name="Usenet Provider.retention_days"
-                   value="{{ settings.get('Usenet Provider', {}).get('retention_days', 1500) }}"
-                   class="settings-input" data-section="Usenet Provider" data-key="retention_days"
-                   min="0" placeholder="1500">
-            <p class="settings-description">Maximum age of NZB results in days. Results older than this are filtered out at search time and never submitted to the Usenet provider. Set to 0 to disable. Applies everywhere NZB indexers are searched (queue, scraper results, upgrade hub, repair).</p>
-        </div>
-        <div class="settings-form-group">
-            <label for="usenet_provider-disable_nzb_season_packs" class="settings-title">Disable NZB Season Packs:</label>
-            <input type="checkbox" id="usenet_provider-disable_nzb_season_packs" name="Usenet Provider.disable_nzb_season_packs"
-                   data-section="Usenet Provider" data-key="disable_nzb_season_packs"
-                   {% if settings.get('Usenet Provider', {}).get('disable_nzb_season_packs') %}checked{% endif %}>
-            <p class="settings-description">Reject NZB season packs entirely (movies are unaffected). A single damaged article in a season pack repairs the whole pack via a fresh grab; with this enabled, only aggregate/single-episode NZB results are considered, so a bad file only affects that one episode.</p>
-        </div>
-        {% if settings.get('File Management', {}).get('file_collection_management', '') != 'Symlinked/Local' %}
-        <div class="settings-form-group">
-            <label for="usenet_provider-enable_nzb_naming" class="settings-title">Enable NZB File Naming:</label>
-            <input type="checkbox" id="usenet_provider-enable_nzb_naming" name="Usenet Provider.enable_nzb_naming"
-                   data-section="Usenet Provider" data-key="enable_nzb_naming"
-                   {% if settings.get('Usenet Provider', {}).get('enable_nzb_naming') %}checked{% endif %}>
-            <p class="settings-description">Names NZB jobs submitted to the Usenet provider using a structured format: <code>{title} ({year}) - {imdb-id} - {version} - (original)</code> for movies and <code>{title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original)</code> for episodes. This becomes the folder and filename in the provider.</p>
-        </div>
-        <div id="nzb-naming-suboptions" style="{% if not settings.get('Usenet Provider', {}).get('enable_nzb_naming') %}display:none;{% endif %}padding-left:18px;border-left:2px solid rgba(255,255,255,0.1);margin-bottom:8px;">
-            <div class="settings-form-group">
-                <label class="settings-title">
-                    <input type="checkbox" id="usenet_provider-include_version_in_nzb_naming" name="Usenet Provider.include_version_in_nzb_naming"
-                           data-section="Usenet Provider" data-key="include_version_in_nzb_naming"
-                           {% if settings.get('Usenet Provider', {}).get('include_version_in_nzb_naming', True) %}checked{% endif %}>
-                    Include Version in NZB Name
-                </label>
-                <p class="settings-description">Include the version (e.g. Default, 4K Remux) in the NZB job title.</p>
-            </div>
-            <div class="settings-form-group">
-                <label class="settings-title">
-                    <input type="checkbox" id="usenet_provider-include_content_source_in_nzb_naming" name="Usenet Provider.include_content_source_in_nzb_naming"
-                           data-section="Usenet Provider" data-key="include_content_source_in_nzb_naming"
-                           {% if settings.get('Usenet Provider', {}).get('include_content_source_in_nzb_naming') %}checked{% endif %}>
-                    Include Content Source in NZB Name
-                </label>
-                <p class="settings-description">Include the content source display name in the NZB job title.</p>
-            </div>
-        </div>
-        {% endif %}
-        <script>
-        // Provider-aware field visibility (climount vs nzbdav).
-        // Watches the Provider <select> and hides fields tagged data-provider-only=*.
-        (function() {
-            const sel = document.getElementById('usenet_provider-provider');
-            if (!sel) return;
-            const apply = () => {
-                document.querySelectorAll('[data-provider-only]').forEach(el => {
-                    el.style.display = (el.dataset.providerOnly === sel.value) ? '' : 'none';
-                });
-            };
-            sel.addEventListener('change', apply);
-            apply();
-        })();
-        // NZB naming sub-options show/hide
-        (function() {
-            const cb = document.getElementById('usenet_provider-enable_nzb_naming');
-            const sub = document.getElementById('nzb-naming-suboptions');
-            if (cb && sub) {
-                cb.addEventListener('change', function() { sub.style.display = this.checked ? '' : 'none'; });
-            }
-        })();
-        </script>
-    </div>
-</div>
-
-{% if environment_mode == 'full' %}
-<div class="settings-section settings-card">
-    <div class="settings-section-header">
-        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-        <div class="settings-header-left">
             <h4>File Management</h4>
         </div>
     </div>
@@ -595,6 +245,400 @@
     </div>
 </div>
 {% endif %}
+
+{% if environment_mode == 'full' %}
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Debrid Provider</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {% for key, value in settings_schema['Debrid Provider'].items() %}
+            {% if key != 'tab' %}
+            <div class="settings-form-group">
+                <label for="debrid provider-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}"
+                           data-section="Debrid Provider" data-key="{{ key }}"
+                           {% if settings.get('Debrid Provider', {}).get(key) %}checked{% endif %}>
+                {% elif value.choices %}
+                    <select id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" class="settings-input"
+                            data-section="Debrid Provider" data-key="{{ key }}">
+                        {% for choice in value.choices %}
+                            <option value="{{ choice }}" {% if settings.get('Debrid Provider', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{% if value.sensitive %}password{% else %}{{ value.type }}{% endif %}" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}"
+                           value="{{ settings.get('Debrid Provider', {}).get(key, '') }}" class="settings-input"
+                           data-section="Debrid Provider" data-key="{{ key }}">
+                {% endif %}
+                {% if value.description %}
+                    <p class="settings-description">{{ value.description }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+
+        <script>
+        (function() {
+            // Show/hide debrid naming sub-options based on enable_debrid_naming toggle
+            const mainCb = document.getElementById('debrid provider-enable_debrid_naming');
+            const subIds = ['debrid provider-include_version_in_debrid_naming', 'debrid provider-include_content_source_in_debrid_naming'];
+            function applyDebridNamingVis() {
+                if (!mainCb) return;
+                subIds.forEach(function(id) {
+                    const el = document.getElementById(id);
+                    if (el) {
+                        const row = el.closest('.settings-form-group');
+                        if (row) row.style.display = mainCb.checked ? '' : 'none';
+                    }
+                });
+            }
+            if (mainCb) {
+                mainCb.addEventListener('change', applyDebridNamingVis);
+                applyDebridNamingVis();
+            }
+        })();
+        </script>
+
+        <!-- Fallback Providers -->
+        <div class="settings-form-group" style="margin-top:16px">
+            <label class="settings-title">Fallback Providers</label>
+            <p class="settings-description">Additional debrid services tried in order when the primary provider fails (e.g. 451 DMCA block, rate limit). Each fallback needs its own API key.</p>
+        </div>
+        <div id="fallback-providers-list">
+            {% set fallbacks = settings.get('Debrid Provider', {}).get('fallback_providers', []) %}
+            {% for fb in fallbacks %}
+            <div class="fallback-provider-row settings-form-group" style="display: flex;flex-direction: column;gap: 8px;align-items: baseline;margin-bottom: 8px;">
+                <select class="settings-input fallback-provider-name" style="flex:0 0 150px">
+                    {% for choice in ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink'] %}
+                    <option value="{{ choice }}" {% if fb.provider == choice %}selected{% endif %}>{{ choice }}</option>
+                    {% endfor %}
+                </select>
+                <input type="password" class="settings-input fallback-provider-key" placeholder="API key" value="{{ fb.api_key }}" style="flex:1;min-width:0">
+                <button type="button" class="delete-version-btn btn-danger fallback-provider-remove">
+                    <i class="fa-solid fa-trash"></i>
+                    <span class="btn-text">Remove</span>
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+        <button type="button" id="add-fallback-provider-btn" class="add-version-link btn-primary">
+            <i class="fa-solid fa-plus"></i> Add Fallback Provider
+        </button>
+    </div>
+</div>
+
+<script>
+(function() {
+    const PROVIDER_CHOICES = ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink'];
+
+    function buildRow(name, key) {
+        const row = document.createElement('div');
+        row.className = 'fallback-provider-row settings-form-group';
+        row.style.cssText = 'display:flex;flex-direction:column;gap:8px;align-items:baseline;margin-bottom:8px';
+        const sel = document.createElement('select');
+        sel.className = 'settings-input fallback-provider-name';
+        sel.style.cssText = 'flex:0 0 150px';
+        PROVIDER_CHOICES.forEach(c => {
+            const o = document.createElement('option');
+            o.value = c; o.textContent = c;
+            if (c === name) o.selected = true;
+            sel.appendChild(o);
+        });
+        const inp = document.createElement('input');
+        inp.type = 'password'; inp.className = 'settings-input fallback-provider-key';
+        inp.placeholder = 'API key'; inp.value = key || '';
+        inp.style.cssText = 'flex:1;min-width:0';
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'delete-version-btn btn-danger fallback-provider-remove';
+        btn.innerHTML = '<i class="fa-solid fa-trash"></i> <span class="btn-text">Remove</span>';
+        btn.addEventListener('click', () => { row.remove(); saveFallbacks(); });
+        sel.addEventListener('change', saveFallbacks);
+        inp.addEventListener('change', saveFallbacks);
+        row.appendChild(sel); row.appendChild(inp); row.appendChild(btn);
+        return row;
+    }
+
+    function saveFallbacks() {
+        const rows = document.querySelectorAll('#fallback-providers-list .fallback-provider-row');
+        const fallbacks = [];
+        rows.forEach(row => {
+            const name = row.querySelector('.fallback-provider-name')?.value;
+            const key  = row.querySelector('.fallback-provider-key')?.value;
+            if (name && key) fallbacks.push({provider: name, api_key: key});
+        });
+        // Store as JSON in a hidden input that the settings save picks up
+        let hidden = document.getElementById('fallback-providers-hidden');
+        if (!hidden) {
+            hidden = document.createElement('input');
+            hidden.type = 'hidden'; hidden.id = 'fallback-providers-hidden';
+            hidden.name = 'Debrid Provider.fallback_providers';
+            hidden.dataset.section = 'Debrid Provider';
+            hidden.dataset.key = 'fallback_providers';
+            hidden.dataset.jsonList = 'true';
+            document.getElementById('fallback-providers-list').after(hidden);
+        }
+        hidden.value = JSON.stringify(fallbacks);
+    }
+
+    document.querySelectorAll('#fallback-providers-list .fallback-provider-remove').forEach(btn => {
+        btn.addEventListener('click', () => { btn.closest('.fallback-provider-row').remove(); saveFallbacks(); });
+    });
+    document.querySelectorAll('#fallback-providers-list .fallback-provider-name, #fallback-providers-list .fallback-provider-key').forEach(el => {
+        el.addEventListener('change', saveFallbacks);
+    });
+    document.getElementById('add-fallback-provider-btn')?.addEventListener('click', () => {
+        const row = buildRow('Torbox', '');
+        document.getElementById('fallback-providers-list').appendChild(row);
+        saveFallbacks();
+    });
+    // Initialize hidden input on load
+    saveFallbacks();
+})();
+</script>
+{% endif %}
+
+<!-- Usenet Provider (cli_mount) -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Usenet Provider</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="info-banner info-banner-blue" style="margin-bottom: 16px;">
+            <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div class="info-banner-content">Connect a usenet backend — <strong>cli_mount</strong> (custom API, default port 8888) or <strong>NzbDAV</strong> (SAB-compatible API, default port 3000). Both handle NNTP and serve files via the rclone mount.</div>
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-enabled" class="settings-title">Enable Usenet:</label>
+            <input type="checkbox" id="usenet_provider-enabled" name="Usenet Provider.enabled"
+                   data-section="Usenet Provider" data-key="enabled"
+                   {% if settings.get('Usenet Provider', {}).get('enabled') %}checked{% endif %}>
+        </div>
+        {% set _provider = settings.get('Usenet Provider', {}).get('provider', 'climount') %}
+        <div class="settings-form-group">
+            <label for="usenet_provider-provider" class="settings-title">Provider:</label>
+            <select id="usenet_provider-provider" name="Usenet Provider.provider"
+                    data-section="Usenet Provider" data-key="provider"
+                    class="settings-input">
+                <option value="climount" {% if _provider == 'climount' %}selected{% endif %}>cli_mount</option>
+                <option value="nzbdav"    {% if _provider == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
+            </select>
+            <p class="settings-description">Backend type. cli_mount uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Both expose the same client interface internally.</p>
+        </div>
+        <details data-provider-only="nzbdav" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
+            <summary style="cursor:pointer;font-weight:600;">How to set up NzbDAV (click to expand)</summary>
+            <p class="settings-description" style="margin-top:8px;"><strong>Two containers, one backend (same pattern as zurg + zurg_rclone):</strong> the <code>nzbdav</code> container is the downloader + WebDAV server; an <code>rclone</code> container mounts that WebDAV as a normal folder (e.g. <code>/mnt/nzbdav</code>) so Plex and cli-debrid can read the files as a path. You need both — cli_mount only looked simpler because it bundled the mount internally.</p>
+            <p class="settings-description"><strong>Don't write these by hand:</strong> use the <strong>setup helper</strong> below — it generates the <code>docker-compose.yml</code> (both containers) + <code>rclone.conf</code> + the config block for you, and can test the connection and create the required categories. The steps below are what it sets up:</p>
+            <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
+                <li><strong>Deploy the NzbDAV stack</strong> (nzbdav + rclone) — copy the files from the setup helper below, then <code>docker compose up -d</code>.</li>
+                <li><strong>In NzbDAV:</strong> add your usenet (NNTP) provider + indexers, then copy the SAB <strong>API key</strong> (NzbDAV → Settings → API).</li>
+                <li><strong>Add the categories cli-debrid uses</strong> — NzbDAV → Settings → Categories: <code>movies</code>, <code>shows</code>, <code>movies_1080p_264</code>, <code>shows_1080p_264</code>, <code>__unplayable__</code>. Missing categories ⇒ grabs are rejected and loop in "Wanted".</li>
+                <li><strong>Fill the fields below:</strong> Provider URL (e.g. <code>http://host:3000</code>), API Token (the key from step 2), Download Folder = <code>__unplayable__</code>, NzbDAV Mount Path (where the rclone mount appears in this container, e.g. <code>/mnt/nzbdav</code>).</li>
+                <li><strong>Bind the mount + Plex:</strong> bind the nzbdav rclone mount into this container at that path, and add the <code>content/movies</code>, <code>content/shows</code> (+ <code>_1080p_264</code>) folders to your Plex libraries.</li>
+                <li><strong>Verify</strong> with the helper's <em>Test connection &amp; ensure categories</em> button below, then toggle <em>Enable Usenet</em> above.</li>
+            </ol>
+            <p class="settings-description" style="margin-top:4px;"><strong>Switching from cli_mount?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing cli_mount files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). To move existing downloads across, use <strong>Debug → Library → "Migrate between usenet providers"</strong> (in-app, both directions). For the cli_mount→NzbDAV direction it reads cli_mount's stored <code>.nzb</code> files, so bind cli_mount's appdata into cli-debrid (set <em>cli_mount Data Path</em> below) and the tool reads them from <code>&lt;data_path&gt;/usenet/nzbs</code>. (The host CLI <code>nzbdav_setup.py migrate-files</code> does the same from the shell.)</p>
+        </details>
+        {% include '_nzbdav_setup_helper.html' %}
+        <details data-provider-only="climount" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
+            <summary style="cursor:pointer;font-weight:600;">How to set up cli_mount (click to expand)</summary>
+            <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
+                <li>Run cli_mount with its rclone mount; configure your usenet provider + indexers in cli_mount.</li>
+                <li>Fill below: cli_mount URL (host:8888 — not localhost, conflicts with Phalanx DB), API Token (if auth enabled), Download Folder (leave empty for cli_mount's default).</li>
+                <li>Set the cli_mount Data Path (bind cli_mount's appdata to <code>/cli_mount_data</code>) if you want backup/restore/cleanup tools.</li>
+                <li>Toggle <em>Enable Usenet</em> above.</li>
+            </ol>
+        </details>
+        <div class="settings-form-group">
+            <label for="usenet_provider-url" class="settings-title">Provider URL:</label>
+            <input type="text" id="usenet_provider-url" name="Usenet Provider.url"
+                   value="{{ settings.get('Usenet Provider', {}).get('url', '') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="url"
+                   placeholder="e.g. http://192.168.1.x:8888 (cli_mount) or http://192.168.1.x:3000 (nzbdav)">
+            <p class="settings-description" data-provider-only="climount">Do not use localhost:8888 — that conflicts with Phalanx DB. Use the cli_mount host IP or container name.</p>
+            <p class="settings-description" data-provider-only="nzbdav">Use the NzbDAV host IP or container name with its port (default 3000), e.g. <code>http://192.168.1.x:3000</code>. Do not append <code>/sabnzbd</code> — NzbDAV serves its SAB-compatible API at the root <code>/api</code>.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-api_token" class="settings-title">API Token:</label>
+            <input type="password" id="usenet_provider-api_token" name="Usenet Provider.api_token"
+                   value="{{ settings.get('Usenet Provider', {}).get('api_token', '') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="api_token"
+                   placeholder="Leave empty if auth is disabled">
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-download_folder" class="settings-title"><span data-provider-only="nzbdav">Fallback Category <span style="color:#888;font-size:0.85em;">(rarely used)</span></span><span data-provider-only="climount">Download Folder / Category</span>:</label>
+            <input type="text" id="usenet_provider-download_folder" name="Usenet Provider.download_folder"
+                   value="{{ settings.get('Usenet Provider', {}).get('download_folder', '') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="download_folder"
+                   placeholder="cli_mount: blank for default · nzbdav: __unplayable__">
+            <p class="settings-description" data-provider-only="climount">Category/folder in cli_mount for downloads. Leave empty to use cli_mount's default download folder.</p>
+            <p class="settings-description" data-provider-only="nzbdav">This is <strong>not</strong> a download destination — it's the <strong>fallback category</strong> used only if the per-release title heuristic can't classify a grab. In practice the heuristic classifies everything (it auto-routes to <code>movies</code> / <code>shows</code> / <code>music</code> and the <code>*_1080p_264</code> variants), so this almost never fires. Recommended value: <code>__unplayable__</code> — a category Plex doesn't scan, so any unclassifiable grab parks there harmlessly instead of polluting a library. This name (and every category the heuristic emits) must exist in NzbDAV's <code>api.categories</code> — use the setup helper's "ensure categories" button above, or add them in NzbDAV → Settings → Categories.</p>
+        </div>
+        <div class="settings-form-group" data-provider-only="climount">
+            <label for="usenet_provider-data_path" class="settings-title">cli_mount Data Path:</label>
+            <input type="text" id="usenet_provider-data_path" name="Usenet Provider.data_path"
+                   value="{{ settings.get('Usenet Provider', {}).get('data_path', '/climount_data') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="data_path"
+                   placeholder="/cli_mount_data">
+            <p class="settings-description">Path to cli_mount's data directory inside the container. Add <code>- /path/to/cli_mount/appdata:/cli_mount_data</code> to your docker-compose volumes, then set this to <code>/cli_mount_data</code>. Required for cli_mount DB backup, restore, and cleanup tools — and lets the in-app provider migration (<strong>Debug → Library</strong>) read cli_mount's stored <code>.nzb</code> files from <code>&lt;data_path&gt;/usenet/nzbs</code>.</p>
+        </div>
+        <div class="settings-form-group" data-provider-only="nzbdav">
+            <label for="usenet_provider-mounted_file_location" class="settings-title">NzbDAV Mount Path:</label>
+            <input type="text" id="usenet_provider-mounted_file_location" name="Usenet Provider.mounted_file_location"
+                   value="{{ settings.get('Usenet Provider', {}).get('mounted_file_location', '') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="mounted_file_location"
+                   placeholder="/mnt/nzbdav">
+            <p class="settings-description">Path inside <em>this</em> container where the NzbDAV rclone-mount appears. NzbDAV has no <code>/browse</code> API, so folder lookups walk the filesystem under <code>&lt;this path&gt;/content/&lt;category&gt;/</code>. Bind-mount the nzbdav-rclone mount into the cli-debrid container at this same path. A trailing <code>/__all__</code> is stripped automatically (zurg-path compatibility). Effectively required when provider is NzbDAV.</p>
+        </div>
+        <div class="settings-form-group" data-provider-only="nzbdav">
+            <label for="usenet_provider-owned_categories" class="settings-title">Repair: Owned Categories <span style="color: #888; font-size: 0.85em;">(advanced)</span>:</label>
+            <input type="text" id="usenet_provider-owned_categories" name="Usenet Provider.owned_categories"
+                   value="{{ settings.get('Usenet Provider', {}).get('owned_categories', '') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="owned_categories"
+                   placeholder="auto: movies,shows,movies_1080p_264,shows_1080p_264,__unplayable__">
+            <p class="settings-description">Comma-separated NzbDAV categories the broken-NZB repair tool may act on. NzbDAV history is shared with other SAB clients (e.g. Lidarr music) — repair only re-acquires content cli-debrid manages, so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (plus the Download Folder fallback). Set only if your category names differ.</p>
+        </div>
+        <div class="settings-form-group" data-provider-only="nzbdav">
+            <label for="usenet_provider-exclude_categories" class="settings-title">Repair: Exclude Categories <span style="color: #888; font-size: 0.85em;">(advanced)</span>:</label>
+            <input type="text" id="usenet_provider-exclude_categories" name="Usenet Provider.exclude_categories"
+                   value="{{ settings.get('Usenet Provider', {}).get('exclude_categories', '') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="exclude_categories"
+                   placeholder="e.g. music,lidarr (optional)">
+            <p class="settings-description">Comma-separated NzbDAV categories the repair tool must ignore (subtracted from the owned set). Use this if you point Radarr/Sonarr at the same NzbDAV and don't want cli-debrid touching their categories.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-retention_days" class="settings-title">Usenet Retention Days:</label>
+            <input type="number" id="usenet_provider-retention_days" name="Usenet Provider.retention_days"
+                   value="{{ settings.get('Usenet Provider', {}).get('retention_days', 1500) }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="retention_days"
+                   min="0" placeholder="1500">
+            <p class="settings-description">Maximum age of NZB results in days. Results older than this are filtered out at search time and never submitted to the Usenet provider. Set to 0 to disable. Applies everywhere NZB indexers are searched (queue, scraper results, upgrade hub, repair).</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-disable_nzb_season_packs" class="settings-title">Disable NZB Season Packs:</label>
+            <input type="checkbox" id="usenet_provider-disable_nzb_season_packs" name="Usenet Provider.disable_nzb_season_packs"
+                   data-section="Usenet Provider" data-key="disable_nzb_season_packs"
+                   {% if settings.get('Usenet Provider', {}).get('disable_nzb_season_packs') %}checked{% endif %}>
+            <p class="settings-description">Reject NZB season packs entirely (movies are unaffected). A single damaged article in a season pack repairs the whole pack via a fresh grab; with this enabled, only aggregate/single-episode NZB results are considered, so a bad file only affects that one episode.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-ffprobe_all_nzbs" class="settings-title">Ffprobe All NZBs:</label>
+            <input type="checkbox" id="usenet_provider-ffprobe_all_nzbs" name="Usenet Provider.ffprobe_all_nzbs"
+                   data-section="Usenet Provider" data-key="ffprobe_all_nzbs"
+                   {% if settings.get('Usenet Provider', {}).get('ffprobe_all_nzbs') %}checked{% endif %}>
+            <p class="settings-description">Before collecting an NZB file, probe it with ffprobe to confirm it's actually playable, on top of the existing missing-article/segment health check. Works in both Symlinked/Local and Plex mode — in Plex mode it runs the moment the file is found on the mount, before cli_debrid tells Plex about it, so a confirmed-broken file is rejected and re-scraped before it ever shows up in Plex. Requires ffprobe to be installed. This will slow down how long it takes NZB items to reach Collected.</p>
+        </div>
+        {% if settings.get('File Management', {}).get('file_collection_management', '') != 'Symlinked/Local' %}
+        <div class="settings-form-group">
+            <label for="usenet_provider-enable_nzb_naming" class="settings-title">Enable NZB File Naming:</label>
+            <input type="checkbox" id="usenet_provider-enable_nzb_naming" name="Usenet Provider.enable_nzb_naming"
+                   data-section="Usenet Provider" data-key="enable_nzb_naming"
+                   {% if settings.get('Usenet Provider', {}).get('enable_nzb_naming') %}checked{% endif %}>
+            <p class="settings-description">Names NZB jobs submitted to the Usenet provider using a structured format: <code>{title} ({year}) - {imdb-id} - {version} - (original)</code> for movies and <code>{title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original)</code> for episodes. This becomes the folder and filename in the provider.</p>
+        </div>
+        <div id="nzb-naming-suboptions" style="{% if not settings.get('Usenet Provider', {}).get('enable_nzb_naming') %}display:none;{% endif %}padding-left:18px;border-left:2px solid rgba(255,255,255,0.1);margin-bottom:8px;">
+            <div class="settings-form-group">
+                <label class="settings-title">
+                    <input type="checkbox" id="usenet_provider-include_version_in_nzb_naming" name="Usenet Provider.include_version_in_nzb_naming"
+                           data-section="Usenet Provider" data-key="include_version_in_nzb_naming"
+                           {% if settings.get('Usenet Provider', {}).get('include_version_in_nzb_naming', True) %}checked{% endif %}>
+                    Include Version in NZB Name
+                </label>
+                <p class="settings-description">Include the version (e.g. Default, 4K Remux) in the NZB job title.</p>
+            </div>
+            <div class="settings-form-group">
+                <label class="settings-title">
+                    <input type="checkbox" id="usenet_provider-include_content_source_in_nzb_naming" name="Usenet Provider.include_content_source_in_nzb_naming"
+                           data-section="Usenet Provider" data-key="include_content_source_in_nzb_naming"
+                           {% if settings.get('Usenet Provider', {}).get('include_content_source_in_nzb_naming') %}checked{% endif %}>
+                    Include Content Source in NZB Name
+                </label>
+                <p class="settings-description">Include the content source display name in the NZB job title.</p>
+            </div>
+        </div>
+        {% endif %}
+        <script>
+        // Provider-aware field visibility (climount vs nzbdav).
+        // Watches the Provider <select> and hides fields tagged data-provider-only=*.
+        (function() {
+            const sel = document.getElementById('usenet_provider-provider');
+            if (!sel) return;
+            const apply = () => {
+                document.querySelectorAll('[data-provider-only]').forEach(el => {
+                    el.style.display = (el.dataset.providerOnly === sel.value) ? '' : 'none';
+                });
+            };
+            sel.addEventListener('change', apply);
+            apply();
+        })();
+        // NZB naming sub-options show/hide
+        (function() {
+            const cb = document.getElementById('usenet_provider-enable_nzb_naming');
+            const sub = document.getElementById('nzb-naming-suboptions');
+            if (cb && sub) {
+                cb.addEventListener('change', function() { sub.style.display = this.checked ? '' : 'none'; });
+            }
+        })();
+        </script>
+    </div>
+</div>
+
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Metadata Providers</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {% for section in ['TMDB', 'TVDB'] %}
+            {% for key, value in settings_schema[section].items() %}
+                {% if key != 'tab' %}
+                <div class="settings-form-group">
+                    <label for="{{ section|lower }}-{{ key }}" class="settings-title">{{ section }} {{ key|replace('_', ' ')|title }}:</label>
+                    {% if value.type == 'boolean' %}
+                        <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}"
+                               data-section="{{ section }}" data-key="{{ key }}"
+                               {% if settings.get(section, {}).get(key) %}checked{% endif %}>
+                    {% elif value.choices %}
+                        <select id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" class="settings-input"
+                                data-section="{{ section }}" data-key="{{ key }}">
+                            {% for choice in value.choices %}
+                                <option value="{{ choice }}" {% if settings.get(section, {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                            {% endfor %}
+                        </select>
+                    {% else %}
+                        {# TMDB's api_key stays locked (visible, read-only) in restricted environment modes,
+                           matching the field's old behavior when it lived under Additional Settings. #}
+                        <input type="{% if value.sensitive or (section == 'TMDB' and key == 'api_key' and environment_mode != 'full') %}password{% else %}{{ value.type }}{% endif %}" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}"
+                               value="{{ settings.get(section, {}).get(key, '') }}" class="settings-input"
+                               data-section="{{ section }}" data-key="{{ key }}"
+                               {% if section == 'TMDB' and key == 'api_key' and environment_mode != 'full' %}readonly disabled{% endif %}>
+                    {% endif %}
+                    {% if value.description %}
+                        <p class="settings-description">{{ value.description|safe }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+        {% endfor %}
+    </div>
+</div>
 
 <script>
 // Global function for updating media server settings

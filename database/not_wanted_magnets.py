@@ -91,6 +91,11 @@ def extract_nzb_guid(url_or_guid: str) -> str:
       - https://api.nzbgeek.info/api?t=get&id=ed914f26...
       - https://nzbgeek.info/geekseek.php?guid=ed914f26...
       - https://api.althub.co.za/getnzb/ed914f26...nzb
+      - https://drunkenslug.com/getnzb/ed914f26....nzb&i=...&r=... (no '?'
+        before the query params — some indexers' newznab feeds serve links
+        like this; urlparse can't isolate a query string from it, so the
+        whole "&i=...&r=..." tail ends up appended to the path segment
+        instead)
       - Plain guid string: ed914f26add1db0a7cc6a19c6358e5b0
     Returns normalized lowercase guid or empty string.
     """
@@ -107,10 +112,12 @@ def extract_nzb_guid(url_or_guid: str) -> str:
         # Path-based: /getnzb/GUID.nzb or /getnzb/GUID&...
         path = parsed.path.rstrip('/')
         last = path.split('/')[-1]
+        # Strip query string remnants (althub appends &i=... to path;
+        # drunkenslug appends it with no leading '?' at all, which also
+        # lands here since urlparse had nowhere else to put it)
+        last = last.split('&')[0].split('?')[0]
         # Strip .nzb extension
         last = re.sub(r'\.nzb$', '', last, flags=re.IGNORECASE)
-        # Strip query string remnants (althub appends &i=... to path)
-        last = last.split('&')[0].split('?')[0]
         if last and re.match(r'^[0-9a-f]{16,}$', last, re.IGNORECASE):
             return last.lower()
     except Exception:

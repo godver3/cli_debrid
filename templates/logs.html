@@ -21,6 +21,12 @@
 
 {% block content %}
 <div class="log-container">
+    {% if climount_available %}
+    <div class="log-source-tabs">
+        <button type="button" class="log-source-tab active" data-source="clidebrid">cli_debrid</button>
+        <button type="button" class="log-source-tab" data-source="climount">cli_mount</button>
+    </div>
+    {% endif %}
     <div class="log-controls">
         <select id="log-level-filter">
             <option value="all">All Levels</option>
@@ -38,18 +44,45 @@
             <option value="5000">5000 lines</option>
         </select>
         <input type="text" id="log-search" placeholder="Filter logs...">
-        <button id="share-logs-btn" title="Share logs via transfer.sh">
-            Share Logs
-            <div class="share-progress" style="width: 0%"></div>
-        </button>
-        <a id="share-url" href="#" target="_blank" title="Click to open shared logs"></a>
-        <button id="copy-url-btn" title="Copy URL to clipboard">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-            </svg>
-        </button>
+        <div class="share-button-group">
+            <div class="share-item">
+                <button id="share-logs-btn" title="Share cli_debrid logs via paste.c-net.org">
+                    Share cli_debrid Logs
+                    <div class="share-progress" style="width: 0%"></div>
+                </button>
+                <a id="share-url" class="share-result-url" href="#" target="_blank" title="Click to open shared logs"></a>
+                <button id="copy-url-btn" class="copy-url-btn" title="Copy URL to clipboard" data-target="share-url">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                    </svg>
+                </button>
+            </div>
+            {% if climount_available %}
+            <div class="share-item">
+                <button id="share-climount-logs-btn" title="Share cli_mount logs via paste.c-net.org">
+                    Share cli_mount Logs
+                    <div class="share-progress" style="width: 0%"></div>
+                </button>
+                <a id="share-url-climount" class="share-result-url" href="#" target="_blank" title="Click to open shared cli_mount logs"></a>
+                <button id="copy-url-climount-btn" class="copy-url-btn" title="Copy URL to clipboard" data-target="share-url-climount">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                    </svg>
+                </button>
+            </div>
+            <div class="share-item">
+                <button id="share-both-logs-btn" title="Share both cli_debrid and cli_mount logs">
+                    Share Both
+                    <div class="share-progress" style="width: 0%"></div>
+                </button>
+            </div>
+            {% endif %}
+        </div>
         <button class="bottom-button" onclick="scrollToBottomAndResume()">⭳ Bottom</button>
         <div id="pause-indicator">Logging paused...</div>
+        {% if climount_available %}
+        <span id="climount-last-polled" style="display:none;"></span>
+        {% endif %}
     </div>
     <div id="log-filter-chips" class="log-filter-chips"></div>
     <div id="log-entries">
@@ -122,6 +155,19 @@ function extractFuncName(log) {
     return FILE_TO_GROUP[stem] || stem; // fall back to stem if unmapped
 }
 
+// Groups not in GROUP_COLORS (e.g. cli_mount's [component] tags) get a
+// color assigned round-robin from CHIP_COLORS, remembered for consistency.
+let nextChipColorIndex = 0;
+const assignedChipColors = new Map();
+function colorForGroup(name) {
+    if (GROUP_COLORS[name]) return GROUP_COLORS[name];
+    if (assignedChipColors.has(name)) return assignedChipColors.get(name);
+    const color = CHIP_COLORS[nextChipColorIndex % CHIP_COLORS.length];
+    nextChipColorIndex++;
+    assignedChipColors.set(name, color);
+    return color;
+}
+
 function registerFuncName(funcName) {
     if (!funcName) return;
     if (chipState.has(funcName)) {
@@ -129,7 +175,7 @@ function registerFuncName(funcName) {
     } else {
         chipState.set(funcName, {
             count: 1,
-            color: GROUP_COLORS[funcName] || '#aaa',
+            color: colorForGroup(funcName),
             enabled: true
         });
     }
@@ -506,12 +552,219 @@ function loadSavedLogLevel() {
 
 document.getElementById('log-level-filter').addEventListener('change', (event) => {
     localStorage.setItem('selectedLogLevel', event.target.value);
-    updateLogs(true);
+    if (currentSource === 'clidebrid') {
+        updateLogs(true);
+    } else {
+        fetchClimountLogs();
+    }
 });
 
 document.getElementById('log-lines-select').addEventListener('change', (event) => {
     localStorage.setItem('selectedLogLines', event.target.value);
-    updateLogs(true);
+    if (currentSource === 'clidebrid') {
+        updateLogs(true);
+    } else {
+        fetchClimountLogs();
+    }
+});
+
+// ── LOG SOURCE TABS (cli_debrid live stream vs cli_mount polled logs) ──────
+let currentSource = 'clidebrid';
+let climountPollTimer = null;
+
+const CLIMOUNT_LEVEL_CLASS = {
+    DEBUG: 'debug', INFO: 'info', WARN: 'warning',
+    ERROR: 'error', FATAL: 'critical', PANIC: 'critical'
+};
+
+// Format: "2026-08-22 18:48:32 | INFO  | [component] rest of message key=value ..."
+const CLIMOUNT_LINE_RE = /^(\S+\s+\S+)\s*\|\s*(DEBUG|INFO|WARN|ERROR|FATAL|PANIC)\s*\|\s*(?:\[([^\]]+)\]\s*)?(.*)$/i;
+
+function extractClimountComponent(line) {
+    const m = line.match(CLIMOUNT_LINE_RE);
+    return m ? m[3] || null : null;
+}
+
+function renderClimountLogLine(line) {
+    const div = document.createElement('div');
+    const match = line.match(CLIMOUNT_LINE_RE);
+
+    if (!match) {
+        div.className = 'log-entry info';
+        div.textContent = line;
+        return div;
+    }
+
+    const [, timestamp, levelWord, component, rest] = match;
+    const level = CLIMOUNT_LEVEL_CLASS[levelWord.toUpperCase()] || 'info';
+    div.className = `log-entry ${level}`;
+
+    const tsSpan = document.createElement('span');
+    tsSpan.className = 'log-component log-timestamp';
+    tsSpan.textContent = timestamp;
+    div.appendChild(tsSpan);
+
+    div.appendChild(document.createTextNode(' | '));
+
+    const levelSpan = document.createElement('span');
+    levelSpan.className = `log-component log-level ${level}`;
+    levelSpan.textContent = levelWord.toUpperCase();
+    div.appendChild(levelSpan);
+
+    div.appendChild(document.createTextNode(' | '));
+
+    if (component) {
+        registerFuncName(component);
+        div.dataset.func = component;
+
+        const compSpan = document.createElement('span');
+        compSpan.className = 'log-component';
+        compSpan.style.color = colorForGroup(component);
+        compSpan.style.fontWeight = 'bold';
+        compSpan.textContent = `[${component}]`;
+        div.appendChild(compSpan);
+        div.appendChild(document.createTextNode(' '));
+    }
+
+    // Highlight key=value tokens (e.g. hash=..., ids=1) within the message
+    const msgSpan = document.createElement('span');
+    msgSpan.className = `log-component log-message ${level}`;
+    const kvRegex = /(\S+)=(\S+)/g;
+    let lastIndex = 0;
+    let kvMatch;
+    while ((kvMatch = kvRegex.exec(rest)) !== null) {
+        msgSpan.appendChild(document.createTextNode(rest.slice(lastIndex, kvMatch.index)));
+        const kv = document.createElement('span');
+        kv.className = 'log-component log-duration';
+        kv.textContent = kvMatch[0];
+        msgSpan.appendChild(kv);
+        lastIndex = kvMatch.index + kvMatch[0].length;
+    }
+    msgSpan.appendChild(document.createTextNode(rest.slice(lastIndex)));
+    div.appendChild(msgSpan);
+
+    return div;
+}
+
+function renderClimountMessage(message, cssClass) {
+    const logEntries = document.getElementById('log-entries');
+    logEntries.innerHTML = '';
+    const div = document.createElement('div');
+    div.className = `log-entry ${cssClass}`;
+    div.textContent = message;
+    logEntries.appendChild(div);
+}
+
+function fetchClimountLogs() {
+    const levelFilter = document.getElementById('log-level-filter').value.toLowerCase();
+    const linesVal = parseInt(document.getElementById('log-lines-select').value, 10) || 1000;
+
+    fetch(`/logs/api/climount/logs?lines=${linesVal}&level=${encodeURIComponent(levelFilter)}&_=${Date.now()}`, { cache: 'no-store' })
+    .then(response => response.json())
+    .then(data => {
+        if (currentSource !== 'climount') return; // tab switched away while this was in flight
+
+        const lastPolled = document.getElementById('climount-last-polled');
+        if (lastPolled) {
+            lastPolled.textContent = `cli_mount polled ${new Date().toLocaleTimeString()}`;
+            lastPolled.style.display = 'inline';
+        }
+
+        if (data.error) {
+            renderClimountMessage(data.error, 'error');
+            chipState.clear();
+            renderChips();
+            return;
+        }
+        const logEntries = document.getElementById('log-entries');
+        const wasAtBottom = isScrolledToBottom;
+
+        // Rebuild chip counts from this snapshot, but keep the user's
+        // enabled/disabled toggles from before this poll.
+        const previouslyDisabled = new Set(
+            Array.from(chipState.entries()).filter(([, d]) => !d.enabled).map(([name]) => name)
+        );
+        chipState.clear();
+
+        const fragment = document.createDocumentFragment();
+        (data.lines || []).forEach(line => {
+            fragment.appendChild(renderClimountLogLine(line));
+        });
+
+        previouslyDisabled.forEach(name => {
+            if (chipState.has(name)) chipState.get(name).enabled = false;
+        });
+
+        logEntries.innerHTML = '';
+        if (fragment.childNodes.length === 0) {
+            renderClimountMessage('No cli_mount log lines found.', 'info');
+            renderChips();
+        } else {
+            logEntries.appendChild(fragment);
+            renderChips();
+            applyChipFilter();
+            if (wasAtBottom && !isPaused) {
+                requestAnimationFrame(() => scrollToBottom(logEntries));
+            }
+        }
+    })
+    .catch(error => {
+        if (currentSource !== 'climount') return;
+        console.error('Error fetching cli_mount logs:', error);
+        renderClimountMessage('Failed to reach cli_mount log endpoint.', 'error');
+    });
+}
+
+function startClimountPolling() {
+    stopClimountPolling();
+    fetchClimountLogs();
+    climountPollTimer = setInterval(fetchClimountLogs, 2000);
+}
+
+function stopClimountPolling() {
+    if (climountPollTimer) {
+        clearInterval(climountPollTimer);
+        climountPollTimer = null;
+    }
+}
+
+function stopClidebridStream() {
+    if (window.logStream) {
+        window.logStream.onmessage = null;
+        window.logStream.onerror = null;
+        window.logStream.onopen = null;
+        window.logStream.close();
+        window.logStream = null;
+    }
+}
+
+document.querySelectorAll('.log-source-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        const source = tab.dataset.source;
+        if (source === currentSource) return;
+        currentSource = source;
+
+        document.querySelectorAll('.log-source-tab').forEach(t => t.classList.toggle('active', t === tab));
+
+        const logEntries = document.getElementById('log-entries');
+        logEntries.innerHTML = '';
+        renderedLogIds.clear();
+        chipState.clear();
+        renderChips();
+        isPaused = false;
+        isScrolledToBottom = true;
+        document.getElementById('pause-indicator').style.display = 'none';
+
+        if (source === 'clidebrid') {
+            stopClimountPolling();
+            const lastPolled = document.getElementById('climount-last-polled');
+            if (lastPolled) lastPolled.style.display = 'none';
+            updateLogs(true);
+        } else {
+            stopClidebridStream();
+            startClimountPolling();
+        }
+    });
 });
 
 document.getElementById('log-entries').addEventListener('scroll', checkScrollPosition);
@@ -532,127 +785,206 @@ function initialLoad() {
 
 window.addEventListener('load', initialLoad);
 
-// Add share logs functionality
-document.getElementById('share-logs-btn').addEventListener('click', function() {
-    const button = this;
+// Generic share-logs flow. Kicks off a share task at `endpoint`, polls its
+// status, updates `button`/`urlLink`, and resolves with the resulting URL
+// (or rejects) so callers like "Share Both" can wait on multiple shares.
+function hideShareResult(urlLink) {
+    urlLink.style.display = 'none';
+    const copyBtn = document.querySelector(`.copy-url-btn[data-target="${urlLink.id}"]`);
+    if (copyBtn) copyBtn.style.display = 'none';
+}
+
+function shareLogs(endpoint, button, urlLink, defaultLabel) {
     const progressBar = button.querySelector('.share-progress');
-    const shareUrl = document.getElementById('share-url');
     button.disabled = true;
     button.textContent = 'Preparing...';
     progressBar.style.width = '0%';
-    shareUrl.style.display = 'none';
+    hideShareResult(urlLink);
 
-    // Function to format file size
-    function formatSize(bytes) {
-        if (bytes < 1024) return bytes + ' B';
-        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
-        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
-    }
-
-    fetch('/logs/api/logs/share', {
-        method: 'POST'
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success && data.task_id) {
-            // Start polling for updates
-            const statusCheckInterval = setInterval(() => {
-                checkUploadStatus(data.task_id, statusCheckInterval);
-            }, 1000);
-        } else {
-            throw new Error(data.error || 'Failed to start log sharing process');
-        }
-    })
-    .catch(error => {
-        console.error('Error initiating log sharing:', error);
-        shareUrl.style.display = 'none';
-        showPopup({
-            type: POPUP_TYPES.ERROR,
-            title: 'Error',
-            message: error.message || 'An error occurred while initiating log sharing',
-            autoClose: 5000
-        });
-        button.textContent = 'Share Logs';
-        button.disabled = false;
-        progressBar.style.width = '0%';
-    });
-
-    function checkUploadStatus(taskId, intervalId) {
-        fetch(`/logs/api/logs/share/status/${taskId}`)
+    return new Promise((resolve, reject) => {
+        fetch(endpoint, { method: 'POST' })
         .then(response => response.json())
-        .then(statusData => {
-            progressBar.style.width = statusData.progress + '%';
-            
-            // Update button text based on dynamic message from backend if available
-            if (statusData.message && statusData.status !== 'completed') { // Don't use backend message for button if completed
-                button.textContent = statusData.message.substring(0, 25); // Keep it short
-            } else if (statusData.status === 'collecting') {
-                button.textContent = 'Collecting...';
-            } else if (statusData.status === 'compressing') {
-                button.textContent = 'Compressing...';
-            } else if (statusData.status === 'uploading_to_pastebin') {
-                button.textContent = 'Uploading...';
-            } else if (statusData.status !== 'completed' && statusData.status !== 'failed') {
-                 button.textContent = 'Processing...'; // Generic fallback
-            }
-            
-            if (statusData.status === 'completed') {
-                clearInterval(intervalId);
-                
-                shareUrl.href = statusData.url; 
-                shareUrl.textContent = 'View Shared Log (paste.c-net.org)';
-                shareUrl.title = statusData.url; // Show full URL on hover
-                shareUrl.target = '_blank'; 
-                shareUrl.style.display = 'inline-block';
-
-                document.getElementById('copy-url-btn').style.display = 'inline-block';
-
-                showPopup({
-                    type: POPUP_TYPES.SUCCESS,
-                    title: 'Success!',
-                    message: `Logs uploaded successfully to paste.c-net.org! URL: ${statusData.url}`,
-                    autoClose: 10000 
-                });
-
-                button.textContent = 'Share Logs'; // Reset button text
-                button.disabled = false;
-
-            } else if (statusData.status === 'failed') {
-                clearInterval(intervalId);
-                shareUrl.style.display = 'none';
-                document.getElementById('copy-url-btn').style.display = 'none';
-                
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    title: 'Error Sharing Logs',
-                    message: statusData.error || 'An unknown error occurred during log sharing.',
-                    autoClose: 7000
-                });
-                button.textContent = 'Share Logs'; // Reset button text
-                button.disabled = false;
+        .then(data => {
+            if (data.success && data.task_id) {
+                const statusCheckInterval = setInterval(() => {
+                    checkUploadStatus(data.task_id, statusCheckInterval);
+                }, 1000);
+            } else {
+                throw new Error(data.error || 'Failed to start log sharing process');
             }
         })
         .catch(error => {
-            console.error('Error checking upload status:', error);
-            clearInterval(intervalId);
-            shareUrl.style.display = 'none';
-            document.getElementById('copy-url-btn').style.display = 'none';
+            console.error(`Error initiating log sharing (${endpoint}):`, error);
+            hideShareResult(urlLink);
+            button.textContent = defaultLabel;
+            button.disabled = false;
+            progressBar.style.width = '0%';
+            reject(error);
+        });
+
+        function checkUploadStatus(taskId, intervalId) {
+            fetch(`/logs/api/logs/share/status/${taskId}`)
+            .then(response => response.json())
+            .then(statusData => {
+                progressBar.style.width = statusData.progress + '%';
+
+                if (statusData.message && statusData.status !== 'completed') {
+                    button.textContent = statusData.message.substring(0, 25);
+                } else if (statusData.status === 'collecting') {
+                    button.textContent = 'Collecting...';
+                } else if (statusData.status === 'compressing') {
+                    button.textContent = 'Compressing...';
+                } else if (statusData.status === 'uploading_to_pastebin') {
+                    button.textContent = 'Uploading...';
+                } else if (statusData.status !== 'completed' && statusData.status !== 'failed') {
+                    button.textContent = 'Processing...';
+                }
+
+                if (statusData.status === 'completed') {
+                    clearInterval(intervalId);
+
+                    urlLink.href = statusData.url;
+                    urlLink.textContent = 'View Shared Log (paste.c-net.org)';
+                    urlLink.title = statusData.url;
+                    urlLink.target = '_blank';
+                    urlLink.style.display = 'inline-block';
+                    const copyBtn = document.querySelector(`.copy-url-btn[data-target="${urlLink.id}"]`);
+                    if (copyBtn) copyBtn.style.display = 'inline-block';
+
+                    button.textContent = defaultLabel;
+                    button.disabled = false;
+                    resolve(statusData.url);
+
+                } else if (statusData.status === 'failed') {
+                    clearInterval(intervalId);
+                    hideShareResult(urlLink);
+
+                    button.textContent = defaultLabel;
+                    button.disabled = false;
+                    reject(new Error(statusData.error || 'An unknown error occurred during log sharing.'));
+                }
+            })
+            .catch(error => {
+                console.error('Error checking upload status:', error);
+                clearInterval(intervalId);
+                hideShareResult(urlLink);
+                button.textContent = defaultLabel;
+                button.disabled = false;
+                reject(error);
+            });
+        }
+    });
+}
+
+document.getElementById('share-logs-btn').addEventListener('click', function() {
+    shareLogs('/logs/api/logs/share', this, document.getElementById('share-url'), 'Share cli_debrid Logs')
+        .then(url => {
+            showPopup({
+                type: POPUP_TYPES.SUCCESS,
+                title: 'Success!',
+                message: `cli_debrid logs uploaded successfully to paste.c-net.org! URL: ${url}`,
+                autoClose: 10000
+            });
+        })
+        .catch(error => {
             showPopup({
                 type: POPUP_TYPES.ERROR,
-                title: 'Connection Error',
-                message: 'Lost connection while checking share status.',
-                autoClose: 5000
+                title: 'Error Sharing Logs',
+                message: error.message,
+                autoClose: 7000
             });
-            button.textContent = 'Share Logs';
-            button.disabled = false;
         });
-    }
 });
 
-// Add copy button functionality (for paste.c-net.org URL)
-document.getElementById('copy-url-btn').addEventListener('click', function() {
-    const shareUrl = document.getElementById('share-url');
-    navigator.clipboard.writeText(shareUrl.href).then(() => {
+// cli_mount share buttons only exist in the DOM when cli_mount is
+// enabled/configured as the Usenet provider (see climount_available in the template).
+const shareClimountBtn = document.getElementById('share-climount-logs-btn');
+if (shareClimountBtn) {
+    shareClimountBtn.addEventListener('click', function() {
+        shareLogs('/logs/api/climount/logs/share', this, document.getElementById('share-url-climount'), 'Share cli_mount Logs')
+            .then(url => {
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success!',
+                    message: `cli_mount logs uploaded successfully to paste.c-net.org! URL: ${url}`,
+                    autoClose: 10000
+                });
+            })
+            .catch(error => {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error Sharing cli_mount Logs',
+                    message: error.message,
+                    autoClose: 7000
+                });
+            });
+    });
+}
+
+const shareBothBtn = document.getElementById('share-both-logs-btn');
+if (shareBothBtn) {
+    shareBothBtn.addEventListener('click', function() {
+        const bothButton = this;
+        bothButton.disabled = true;
+
+        const cliDebridShare = shareLogs('/logs/api/logs/share', document.getElementById('share-logs-btn'), document.getElementById('share-url'), 'Share cli_debrid Logs');
+        const climountShare = shareLogs('/logs/api/climount/logs/share', document.getElementById('share-climount-logs-btn'), document.getElementById('share-url-climount'), 'Share cli_mount Logs');
+
+        Promise.allSettled([cliDebridShare, climountShare]).then(([cliDebridResult, climountResult]) => {
+            bothButton.disabled = false;
+
+            const lines = [];
+            lines.push(cliDebridResult.status === 'fulfilled'
+                ? `cli_debrid: ${cliDebridResult.value}`
+                : `cli_debrid: FAILED (${cliDebridResult.reason.message})`);
+            lines.push(climountResult.status === 'fulfilled'
+                ? `cli_mount: ${climountResult.value}`
+                : `cli_mount: FAILED (${climountResult.reason.message})`);
+
+            const bothFailed = cliDebridResult.status === 'rejected' && climountResult.status === 'rejected';
+            showPopup({
+                type: bothFailed ? POPUP_TYPES.ERROR : POPUP_TYPES.SUCCESS,
+                title: bothFailed ? 'Error Sharing Logs' : 'Logs Shared',
+                message: lines.join('\n'),
+                autoClose: bothFailed ? 7000 : 12000
+            });
+        });
+    });
+}
+
+// Copy text to clipboard, falling back to a hidden-textarea + execCommand
+// when the async Clipboard API isn't available (e.g. plain HTTP over a LAN
+// IP, where navigator.clipboard is undefined outside secure contexts and
+// navigator.clipboard.writeText() would throw synchronously instead of
+// rejecting, silently skipping the .catch() handler).
+function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+    }
+    return new Promise((resolve, reject) => {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        try {
+            const success = document.execCommand('copy');
+            success ? resolve() : reject(new Error('execCommand copy failed'));
+        } catch (err) {
+            reject(err);
+        } finally {
+            document.body.removeChild(textarea);
+        }
+    });
+}
+
+// Add copy button functionality (for paste.c-net.org URL) — each copy
+// button carries data-target pointing at its own adjacent result link.
+document.querySelectorAll('.copy-url-btn').forEach(btn => btn.addEventListener('click', function() {
+    const urlLink = document.getElementById(this.dataset.target);
+    copyTextToClipboard(urlLink.href).then(() => {
         showPopup({
             type: POPUP_TYPES.SUCCESS,
             title: 'Success',
@@ -667,7 +999,7 @@ document.getElementById('copy-url-btn').addEventListener('click', function() {
             autoClose: 2000
         });
     });
-});
+}));
 
 // Add cleanup when leaving the page
 window.addEventListener('beforeunload', () => {

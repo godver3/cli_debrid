@@ -15,44 +15,6 @@
 {% if environment_mode == 'full' %}
 <div class="settings-section">
     <div class="settings-section-header">
-        <h4>Debrid Provider</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        {% for key, value in settings_schema['Debrid Provider'].items() %}
-            {% if key != 'tab' %}
-            <div class="settings-form-group">
-                <label for="debrid provider-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                {% if value.type == 'boolean' %}
-                    <input type="checkbox" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" 
-                           data-section="Debrid Provider" data-key="{{ key }}"
-                           {% if settings.get('Debrid Provider', {}).get(key) %}checked{% endif %}>
-                {% elif value.choices %}
-                    <select id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" class="settings-input"
-                            data-section="Debrid Provider" data-key="{{ key }}">
-                        {% for choice in value.choices %}
-                            <option value="{{ choice }}" {% if settings.get('Debrid Provider', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
-                        {% endfor %}
-                    </select>
-                {% else %}
-                    <input type="{% if value.sensitive %}password{% else %}{{ value.type }}{% endif %}" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" 
-                           value="{{ settings.get('Debrid Provider', {}).get(key, '') }}" class="settings-input"
-                           data-section="Debrid Provider" data-key="{{ key }}"
-                           {% if value.sensitive %}type="password"{% endif %}>
-                {% endif %}
-                {% if value.description %}
-                    <p class="settings-description">{{ value.description }}</p>
-                {% endif %}
-            </div>
-            {% endif %}
-        {% endfor %}
-    </div>
-</div>
-{% endif %}
-
-{% if environment_mode == 'full' %}
-<div class="settings-section">
-    <div class="settings-section-header">
         <h4>File Management</h4>
         <span class="settings-toggle-icon">+</span>
     </div>
@@ -266,6 +228,84 @@
     </div>
 </div>
 {% endif %}
+
+{% if environment_mode == 'full' %}
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Debrid Provider</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        {% for key, value in settings_schema['Debrid Provider'].items() %}
+            {% if key != 'tab' %}
+            <div class="settings-form-group">
+                <label for="debrid provider-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" 
+                           data-section="Debrid Provider" data-key="{{ key }}"
+                           {% if settings.get('Debrid Provider', {}).get(key) %}checked{% endif %}>
+                {% elif value.choices %}
+                    <select id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" class="settings-input"
+                            data-section="Debrid Provider" data-key="{{ key }}">
+                        {% for choice in value.choices %}
+                            <option value="{{ choice }}" {% if settings.get('Debrid Provider', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{% if value.sensitive %}password{% else %}{{ value.type }}{% endif %}" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" 
+                           value="{{ settings.get('Debrid Provider', {}).get(key, '') }}" class="settings-input"
+                           data-section="Debrid Provider" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    <p class="settings-description">{{ value.description }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Metadata Providers</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        {% for section in ['TMDB', 'TVDB'] %}
+            {% for key, value in settings_schema[section].items() %}
+                {% if key != 'tab' %}
+                <div class="settings-form-group">
+                    <label for="{{ section|lower }}-{{ key }}" class="settings-title">{{ section }} {{ key|replace('_', ' ')|title }}:</label>
+                    {% if value.type == 'boolean' %}
+                        <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}"
+                               data-section="{{ section }}" data-key="{{ key }}"
+                               {% if settings.get(section, {}).get(key) %}checked{% endif %}>
+                    {% elif value.choices %}
+                        <select id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" class="settings-input"
+                                data-section="{{ section }}" data-key="{{ key }}">
+                            {% for choice in value.choices %}
+                                <option value="{{ choice }}" {% if settings.get(section, {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                            {% endfor %}
+                        </select>
+                    {% else %}
+                        {# TMDB's api_key stays locked (visible, read-only) in restricted environment modes,
+                           matching the field's old behavior when it lived under Additional Settings. #}
+                        <input type="{% if value.sensitive or (section == 'TMDB' and key == 'api_key' and environment_mode != 'full') %}password{% else %}{{ value.type }}{% endif %}" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}"
+                               value="{{ settings.get(section, {}).get(key, '') }}" class="settings-input"
+                               data-section="{{ section }}" data-key="{{ key }}"
+                               {% if section == 'TMDB' and key == 'api_key' and environment_mode != 'full' %}readonly disabled{% endif %}>
+                    {% endif %}
+                    {% if value.description %}
+                        <p class="settings-description">{{ value.description|safe }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+        {% endfor %}
+    </div>
+</div>
 
 <script>
 // Global function for updating media server settings

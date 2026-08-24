@@ -9,17 +9,22 @@ _NULL_AIRDATE_RECHECK = timedelta(hours=24)
 _TMDB_MAPPING_THRESHOLD = timedelta(days=21)
 
 
-def is_stale(item_type: str, media_status: str | None, last_trakt_fetch: datetime | None) -> bool:
+def is_stale(item_type: str, media_status: str | None, last_trakt_fetch: datetime | None, force: bool = False) -> bool:
     """Determine whether an item's metadata should be re-fetched from Trakt.
 
     Args:
         item_type: 'show' or 'movie'.
         media_status: Denormalized status string (e.g. 'returning series', 'ended').
         last_trakt_fetch: When the item was last fetched from Trakt API.
+        force: Skip the age check entirely and report stale regardless of
+            last_trakt_fetch (used by manual "refresh now" actions).
 
     Returns:
         True if the item is stale and should be refreshed.
     """
+    if force:
+        return True
+
     if last_trakt_fetch is None:
         return True
 

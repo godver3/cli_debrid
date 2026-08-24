@@ -281,6 +281,12 @@
         scrollbar-color: #666 #333;
     }
 
+    #climount-last-polled {
+        font-size: 0.8em;
+        color: #888;
+        white-space: nowrap;
+    }
+
     #pause-indicator {
         position: absolute;
         top: 5px;
@@ -316,7 +322,46 @@
         font-size: 0.3em;
     }
 
-    #share-logs-btn {
+    .log-source-tabs {
+        display: flex;
+        gap: 4px;
+        padding: 8px 10px 0;
+    }
+
+    .log-source-tab {
+        padding: 6px 14px;
+        background-color: #2c3e50;
+        color: #bbb;
+        border: none;
+        border-radius: 4px 4px 0 0;
+        cursor: pointer;
+        font-size: 0.9em;
+        transition: background-color 0.2s, color 0.2s;
+    }
+
+    .log-source-tab:hover {
+        background-color: #34495e;
+        color: #fff;
+    }
+
+    .log-source-tab.active {
+        background-color: #3498db;
+        color: #fff;
+    }
+
+    .share-button-group {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .share-item {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+    }
+
+    #share-logs-btn, #share-climount-logs-btn, #share-both-logs-btn {
         padding: 5px 10px;
         background-color: #2ecc71;
         color: white;
@@ -328,11 +373,11 @@
         position: relative;
     }
 
-    #share-logs-btn:hover {
+    #share-logs-btn:hover, #share-climount-logs-btn:hover, #share-both-logs-btn:hover {
         background-color: #27ae60;
     }
 
-    #share-logs-btn:disabled {
+    #share-logs-btn:disabled, #share-climount-logs-btn:disabled, #share-both-logs-btn:disabled {
         background-color: #95a5a6;
         cursor: not-allowed;
     }
@@ -346,7 +391,7 @@
         transition: width 0.3s ease-in-out;
     }
 
-    #share-url {
+    .share-result-url {
         color: #3498db;
         text-decoration: none;
         font-family: monospace;
@@ -357,15 +402,15 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 300px;
+        max-width: 220px;
     }
 
-    #share-url:hover {
+    .share-result-url:hover {
         background-color: #34495e;
         text-decoration: underline;
     }
 
-    #copy-url-btn {
+    .copy-url-btn {
         background: none;
         border: none;
         color: #3498db;
@@ -375,11 +420,11 @@
         transition: color 0.2s;
     }
 
-    #copy-url-btn:hover {
+    .copy-url-btn:hover {
         color: #2980b9;
     }
 
-    #copy-url-btn svg {
+    .copy-url-btn svg {
         width: 16px;
         height: 16px;
         vertical-align: middle;

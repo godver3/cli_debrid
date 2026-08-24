@@ -9,6 +9,15 @@ from utilities.post_processing import handle_state_change
 from typing import List
 import sqlite3
 
+# original_collected_at records an item's first-ever collection time and must
+# never be reset without also resetting collected_at (and vice versa) — every
+# site that sends an item back to 'Wanted' for a genuine re-download needs
+# both cleared together, or the item permanently loses its "first collection"
+# notification (see queue_manager.move_to_collected and local_library_scan.py,
+# which both key off original_collected_at being unset). Interpolate this
+# into each reset UPDATE's SET clause instead of hand-typing the two columns.
+RESET_COLLECTION_STATE_SQL = "collected_at = NULL, original_collected_at = NULL"
+
 @retry_on_db_lock()
 def bulk_delete_by_id(id_value, id_type):
     conn = get_db_connection()
@@ -168,7 +177,7 @@ def update_release_date_and_state(
             conn.close()
     
 @retry_on_db_lock()
-def update_media_item_state(item_id, state, **kwargs):
+def update_media_item_state(item_id, state, skip_state_change_hook=False, **kwargs):
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
@@ -224,11 +233,17 @@ def update_media_item_state(item_id, state, **kwargs):
         if updated_item_row:
             item_dict = dict(updated_item_row)
 
-            # Handle post-processing based on state
-            if state == 'Collected':
-                handle_state_change(item_dict)
-            elif state == 'Upgrading':
-                handle_state_change(item_dict)
+            # Handle post-processing based on state. Callers that already ran
+            # handle_state_change() for this exact state transition themselves
+            # (e.g. checking_queue.py, after local_library_scan.py's explicit
+            # call) pass skip_state_change_hook=True to avoid double-running
+            # CineSync, the subtitle downloader, and any custom post-processing
+            # script for the same item in the same cycle.
+            if not skip_state_change_hook:
+                if state == 'Collected':
+                    handle_state_change(item_dict)
+                elif state == 'Upgrading':
+                    handle_state_change(item_dict)
 
         logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
 

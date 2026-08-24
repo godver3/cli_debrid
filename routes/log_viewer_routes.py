@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, jsonify, request, Response, stream_with_context
 from .models import admin_required, onboarding_required
+from .api_tracker import api
 from datetime import datetime
 import os
 from collections import deque
@@ -31,7 +32,8 @@ upload_tasks = {}
 @onboarding_required
 def logs():
     logs = get_recent_logs(1000, level='all')  # Reduced from 500 to 100
-    return render_template('logs.html', logs=logs)
+    climount_available = _get_active_climount_client() is not None
+    return render_template('logs.html', logs=logs, climount_available=climount_available)
 
 @logs_bp.route('/api/logs')
 @admin_required
@@ -58,6 +60,127 @@ def api_logs():
             return jsonify(logs)
     except Exception as e:
         return jsonify({'error': 'An error occurred while fetching logs'}), 500
+
+_climount_client_cache = {'client': None, 'expires': 0.0}
+_CLIMOUNT_CLIENT_CACHE_TTL = 10  # seconds; the cli_mount log tab polls every 2s
+
+
+def _get_active_climount_client():
+    """Return a connected CliMountClient if cli_mount is the enabled Usenet provider, else None.
+
+    Cached briefly since the cli_mount log tab polls this on a 2s interval and
+    each build previously did two full settings.json reads (one here, one in
+    CliMountClient.__init__) for values that don't change mid-session.
+    """
+    now = time.monotonic()
+    if now < _climount_client_cache['expires']:
+        return _climount_client_cache['client']
+    try:
+        from utilities.settings import get_setting
+        cfg = get_setting('Usenet Provider') or {}
+        if not cfg.get('enabled') or cfg.get('provider', 'climount') != 'climount':
+            client = None
+        else:
+            from usenet.climount_client import CliMountClient
+            candidate = CliMountClient()
+            client = candidate if candidate.is_enabled() else None
+    except Exception as e:
+        logging.error(f"Error building cli_mount client: {e}")
+        client = None
+    _climount_client_cache['client'] = client
+    _climount_client_cache['expires'] = now + _CLIMOUNT_CLIENT_CACHE_TTL
+    return client
+
+
+@logs_bp.route('/api/climount/logs')
+@admin_required
+def api_climount_logs():
+    client = _get_active_climount_client()
+    if not client:
+        return jsonify({'error': 'cli_mount is not enabled/configured as the Usenet provider'}), 400
+
+    lines = request.args.get('lines', default=1000, type=int)
+    level = request.args.get('level', default='all').lower()
+
+    params = {'lines': lines}
+    if level != 'all':
+        params['level'] = level
+
+    try:
+        r = api.get(f'{client.base_url}/api/logs', headers=client._headers(), params=params, timeout=15)
+        r.raise_for_status()
+        resp = jsonify(r.json())
+    except Exception as e:
+        logging.error(f"Error fetching cli_mount logs: {e}")
+        resp = jsonify({'error': f'Failed to fetch cli_mount logs: {e}'})
+        resp.status_code = 502
+
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
+@logs_bp.route('/api/climount/logs/share', methods=['POST'])
+@admin_required
+def share_climount_logs():
+    client = _get_active_climount_client()
+    if not client:
+        return jsonify({'error': 'cli_mount is not enabled/configured as the Usenet provider'}), 400
+
+    task_id = str(uuid.uuid4())
+    upload_tasks[task_id] = {
+        'status': 'collecting',
+        'progress': 10,
+        'url': None,
+        'error': None,
+        'message': 'Asking cli_mount to collect & upload its logs...',
+        'timestamp': time.time()
+    }
+
+    threading.Thread(
+        target=process_climount_log_upload,
+        args=(task_id, client),
+        daemon=True
+    ).start()
+
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'message': 'cli_mount log upload started in background'
+    })
+
+
+def process_climount_log_upload(task_id, client):
+    """Background task: ask cli_mount to collect+gzip+upload its own logs."""
+    try:
+        upload_tasks[task_id].update({'status': 'uploading_to_pastebin', 'progress': 50,
+                                       'message': 'Uploading cli_mount logs to paste.c-net.org...'})
+        r = api.post(f'{client.base_url}/api/logs/share', headers=client._headers(), timeout=310)
+        r.raise_for_status()
+        data = r.json()
+        url = data.get('url')
+        if not url:
+            raise Exception('cli_mount did not return a share URL')
+
+        logging.info(f"Task {task_id}: cli_mount logs uploaded: {url}")
+        upload_tasks[task_id].update({
+            'status': 'completed',
+            'progress': 100,
+            'url': url,
+            'message': f"cli_mount logs uploaded successfully: {url.split('/')[-1]}"
+        })
+    except Exception as e:
+        logging.error(f"Task {task_id}: Failed to share cli_mount logs: {e}")
+        upload_tasks[task_id].update({
+            'status': 'failed',
+            'error': f'cli_mount log upload failed: {e}',
+            'progress': upload_tasks[task_id].get('progress', 10),
+            'message': 'Failed: cli_mount upload error.'
+        })
+
+    upload_tasks[task_id]['timestamp'] = time.time()
+
 
 @logs_bp.route('/api/logs/share', methods=['POST'])
 @admin_required

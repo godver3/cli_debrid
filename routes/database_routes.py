@@ -21,7 +21,7 @@ from utilities.web_scraper import get_media_meta
 from queues.config_manager import get_content_source_display_names, load_config
 from database import update_media_item_state
 from utilities.local_library_scan import convert_item_to_symlink
-from database.database_writing import update_media_item
+from database.database_writing import update_media_item, RESET_COLLECTION_STATE_SQL
 from database.symlink_verification import add_symlinked_file_for_verification
 database_bp = Blueprint('database', __name__)
 
@@ -1291,7 +1291,7 @@ def bulk_queue_action():
                                    filled_by_title = NULL,
                                    filled_by_magnet = NULL,
                                    filled_by_torrent_id = NULL,
-                                   collected_at = NULL,
+                                   {RESET_COLLECTION_STATE_SQL},
                                    rescrape_original_torrent_title = {rescrape_title_case_final_sql},
                                    original_scraped_torrent_title = NULL,
                                    upgrading_from = NULL,
@@ -1635,7 +1635,7 @@ def rescrape_single_item(item_id):
                     logging.warning(f"Rescrape: cli_mount removal failed for item {item_id}: {cm_err}")
 
         cursor.execute(
-            """UPDATE media_items
+            f"""UPDATE media_items
                SET state = 'Wanted',
                    location_on_disk = NULL,
                    original_path_for_symlink = NULL,
@@ -1643,7 +1643,7 @@ def rescrape_single_item(item_id):
                    filled_by_title = NULL,
                    filled_by_magnet = NULL,
                    filled_by_torrent_id = NULL,
-                   collected_at = NULL,
+                   {RESET_COLLECTION_STATE_SQL},
                    rescrape_original_torrent_title = ?,
                    original_scraped_torrent_title = NULL,
                    upgrading_from = NULL,

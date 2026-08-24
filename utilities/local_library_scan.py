@@ -1724,10 +1724,17 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 current_time = datetime.now()
                 
                 # Prepare update values
+                # original_collected_at is meant to be the item's first-ever collection
+                # time (matches the COALESCE(original_collected_at, ...) pattern used in
+                # database/collected_items.py's Plex-mode collection path) — preserve it
+                # across repair-driven re-collections instead of overwriting it every
+                # time, otherwise a repair looks identical to a first-time collection to
+                # both the notification gate below and notifications.py's own dedup-by-
+                # original_collected_at logic.
                 update_values = {
                         'location_on_disk': dest_file,
                     'collected_at': current_time,
-                    'original_collected_at': current_time,
+                    'original_collected_at': item.get('original_collected_at') or current_time,
                     'original_path_for_symlink': source_file,
                     'state': new_state,
                     'filled_by_title': item.get('filled_by_title'),
@@ -1844,7 +1851,14 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 previous_state = item.get('state')
 
                 if not item.get('upgrading_from'): # This indicates a regular collection, where new_state is 'Collected'
-                    if previous_state != 'Collected':
+                    # previous_state alone doesn't catch a repair-driven re-collection: NZBRepair/
+                    # torrent-replace flows intentionally bounce the item out of 'Collected' (into
+                    # 'Adding'/'Upgrading') before resubmitting, so previous_state != 'Collected' is
+                    # true on every repair attempt too, not just the first-ever collection. Gate on
+                    # original_collected_at as well — it's preserved (not overwritten) once first set,
+                    # so its presence means this item has genuinely been collected before, regardless
+                    # of what state it was bounced through for the repair.
+                    if previous_state != 'Collected' and not item.get('original_collected_at'):
                         from database.database_writing import add_to_collected_notifications
                         notification_item = item.copy()
                         notification_item.update(update_values)
@@ -1853,7 +1867,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         add_to_collected_notifications(notification_item)
                         logging.info(f"Added collection notification for item: {item_identifier}")
                     else:
-                        logging.info(f"Item {item_identifier} was already 'Collected'. Skipping redundant collection notification.")
+                        logging.info(f"Item {item_identifier} was already collected previously (previous_state={previous_state!r}, original_collected_at={item.get('original_collected_at')!r}). Skipping redundant collection notification.")
                 # Add notification for upgrades
                 elif item.get('upgrading_from'): # This indicates an upgrade, notification_item['new_state'] will be 'Upgraded'
                     # An item is 'Upgraded' from a previous version. Its state before this specific upgrade
@@ -1987,33 +2001,36 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                     try:
                                         # First, check if there's an existing entry for this movie/episode that's blacklisted or ghostlisted
                                         # This prevents creating duplicate entries when a blacklisted version already exists
+                                        # (media_items has no plain 'blacklisted' boolean column — blacklisted-ness is
+                                        # represented by blacklisted_date being set, same convention used in
+                                        # queues/blacklisted_queue.py and routes/debug_routes.py)
                                         if item_type == 'episode':
                                             existing_movie_check = conn.execute('''
-                                                SELECT id, state, blacklisted, ghostlisted
+                                                SELECT id, state, blacklisted_date, ghostlisted
                                                 FROM media_items
                                                 WHERE imdb_id = ? AND type = ? AND version = ?
                                                 AND season_number = ? AND episode_number = ?
-                                                AND (blacklisted = 1 OR ghostlisted = 1)
+                                                AND (blacklisted_date IS NOT NULL OR ghostlisted = 1)
                                                 LIMIT 1
                                             ''', (item.get('imdb_id'), item_type, item.get('version'),
                                                   item.get('season_number'), item.get('episode_number'))).fetchone()
                                         else:  # movie
                                             existing_movie_check = conn.execute('''
-                                                SELECT id, state, blacklisted, ghostlisted
+                                                SELECT id, state, blacklisted_date, ghostlisted
                                                 FROM media_items
                                                 WHERE imdb_id = ? AND type = ? AND version = ?
-                                                AND (blacklisted = 1 OR ghostlisted = 1)
+                                                AND (blacklisted_date IS NOT NULL OR ghostlisted = 1)
                                                 LIMIT 1
                                             ''', (item.get('imdb_id'), item_type, item.get('version'))).fetchone()
 
                                         if existing_movie_check:
-                                            logging.info(f"[MultiFile] Skipping additional file {additional_filename} - found existing blacklisted/ghostlisted entry (ID: {existing_movie_check['id']}, blacklisted: {existing_movie_check['blacklisted']}, ghostlisted: {existing_movie_check['ghostlisted']})")
+                                            logging.info(f"[MultiFile] Skipping additional file {additional_filename} - found existing blacklisted/ghostlisted entry (ID: {existing_movie_check['id']}, blacklisted_date: {existing_movie_check['blacklisted_date']}, ghostlisted: {existing_movie_check['ghostlisted']})")
                                             conn.close()
                                             continue
 
                                         # Check if this specific file already exists in the database
                                         cursor = conn.execute(
-                                            'SELECT id, blacklisted, ghostlisted FROM media_items WHERE filled_by_file = ? AND type = ?',
+                                            'SELECT id, blacklisted_date, ghostlisted FROM media_items WHERE filled_by_file = ? AND type = ?',
                                             (additional_filename, item_type)
                                         )
                                         existing = cursor.fetchone()
@@ -2021,7 +2038,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
 
                                         if existing:
                                             # Check if the existing entry is blacklisted or ghostlisted
-                                            if existing['blacklisted'] == 1 or existing['ghostlisted'] == 1:
+                                            if existing['blacklisted_date'] is not None or existing['ghostlisted'] == 1:
                                                 logging.info(f"[MultiFile] Skipping update for {additional_filename} - existing entry (ID: {existing['id']}) is blacklisted/ghostlisted")
                                                 conn.close()
                                                 continue
