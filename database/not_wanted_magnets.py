@@ -120,21 +120,6 @@ def extract_nzb_guid(url_or_guid: str) -> str:
         last = re.sub(r'\.nzb$', '', last, flags=re.IGNORECASE)
         if last and re.match(r'^[0-9a-f]{16,}$', last, re.IGNORECASE):
             return last.lower()
-        # Fallback: some indexers omit the '?' separator entirely (e.g.
-        # ".../getnzb/<hash>.nzb&i=195615&r=..."), so the '&'-split above
-        # still leaves other query params glued on before the extension can
-        # be stripped in the right order. Pull a bare hex hash out of the
-        # *start* of the last path segment directly instead of relying on
-        # separator order. Anchored to the start (not searched anywhere in
-        # the segment) so this can only ever match the guid itself, never a
-        # same-length hex value glued on later — e.g. a per-user API key in
-        # "&r=<apikey>", which is identical across every URL from that
-        # indexer and would otherwise get blacklisted as if it were the
-        # broken NZB's own guid, silently filtering out all future results
-        # from that indexer.
-        hash_match = re.match(r'([0-9a-f]{32,40})', path.split('/')[-1], re.IGNORECASE)
-        if hash_match:
-            return hash_match.group(1).lower()
     except Exception:
         pass
     # If it looks like a plain guid already
