@@ -3312,6 +3312,8 @@ class ProgramRunner:
     _nzb_health_triggered: dict = {}     # entry_name → tick count since trigger (0 = not yet triggered)
     _NZB_HEALTH_MAX_POLL_TICKS = 6       # give up polling after ~60s (6 ticks × 10s)
     _nzb_confirmed_complete: dict = {}   # job_id → entry_name for jobs confirmed complete+folder found
+    _nzb_ghost_repeat_counts: dict = {}  # item_id → consecutive ghost-job cycles for this item
+    _NZB_GHOST_BLACKLIST_THRESHOLD = 3   # blacklist instead of retrying after this many ghost repeats
 
     def task_nzb_health_check(self):
         """Poll NZB items in Adding state, run health checks, move to Checking or back to Wanted.
@@ -3611,11 +3613,24 @@ class ProgramRunner:
                         logging.warning(f'[NZB] Ghost job {torrent_id}: found {len(_ghost_items)} item(s) to move to Wanted')
                         for _gi in _ghost_items:
                             try:
+                                _gi_id = _gi['id']
                                 _gi_url = _gi.get('filled_by_magnet', '')
                                 if _gi_url and _gi_url != item.get('filled_by_magnet', ''):
                                     _add_guid_g(_gi_url)
-                                self.queue_manager.move_to_wanted(_gi, 'Adding')
-                                logging.info(f'[NZB] Moved ghost job item {_gi["id"]} to Wanted')
+                                # Cap how many times the same item can be resurrected into a
+                                # ghost job before we stop retrying and blacklist instead -
+                                # without this, an item whose reused reference keeps ghosting
+                                # (e.g. a dead cli_mount job resurrected by a watchlist re-add)
+                                # loops Wanted->Scraping->Adding forever with no escalation.
+                                _ghost_count = self._nzb_ghost_repeat_counts.get(_gi_id, 0) + 1
+                                self._nzb_ghost_repeat_counts[_gi_id] = _ghost_count
+                                if _ghost_count >= self._NZB_GHOST_BLACKLIST_THRESHOLD:
+                                    logging.warning(f'[NZB] Item {_gi_id} ghosted {_ghost_count}x — blacklisting instead of retrying again')
+                                    self.queue_manager.move_to_blacklisted(_gi, 'Adding')
+                                    self._nzb_ghost_repeat_counts.pop(_gi_id, None)
+                                else:
+                                    self.queue_manager.move_to_wanted(_gi, 'Adding')
+                                    logging.info(f'[NZB] Moved ghost job item {_gi_id} to Wanted (ghost count {_ghost_count}/{self._NZB_GHOST_BLACKLIST_THRESHOLD})')
                             except Exception as _gi_err:
                                 logging.error(f'[NZB] Failed to move ghost item {_gi.get("id")} to Wanted: {_gi_err}')
                         continue
@@ -3723,15 +3738,36 @@ class ProgramRunner:
                             # Move back to Wanted for fresh re-scrape rather than blacklisting.
                             # NZB failures exhaust scrape_results quickly (not-wanted list filters them),
                             # but new results may be available on indexers — don't blacklist prematurely.
-                            logging.info(f'[NZB] {torrent_id} no remaining results — moving to Wanted for fresh scrape')
-                            try:
-                                from database.database_writing import update_media_item as _umi_nw
-                                _umi_nw(item_id, filled_by_torrent_id=None, filled_by_file=None,
-                                        filled_by_title=None, filled_by_magnet=None,
-                                        scrape_results=None, fall_back_to_single_scraper=False)
-                            except Exception:
-                                pass
-                            self.queue_manager.move_to_wanted(item, 'Adding')
+                            #
+                            # That assumption only holds if the fresh re-scrape actually reaches a
+                            # different NZB each time. If something keeps reusing the same dead
+                            # reference (the not-wanted guid it just added above doesn't stop a
+                            # title-match reuse elsewhere from grabbing it again), this becomes an
+                            # unbounded loop instead of the intended "try something new" retry - so
+                            # cap repeats of the identical outcome for this item before giving up.
+                            _fail_count = self._nzb_ghost_repeat_counts.get(item_id, 0) + 1
+                            self._nzb_ghost_repeat_counts[item_id] = _fail_count
+                            if _fail_count >= self._NZB_GHOST_BLACKLIST_THRESHOLD:
+                                logging.warning(f'[NZB] Item {item_id} failed-in-cli_mount {_fail_count}x with no new results each time — blacklisting instead of retrying again')
+                                self._nzb_ghost_repeat_counts.pop(item_id, None)
+                                try:
+                                    from database.database_writing import update_media_item as _umi_nw
+                                    _umi_nw(item_id, filled_by_torrent_id=None, filled_by_file=None,
+                                            filled_by_title=None, filled_by_magnet=None,
+                                            scrape_results=None, fall_back_to_single_scraper=False)
+                                except Exception:
+                                    pass
+                                self.queue_manager.move_to_blacklisted(item, 'Adding')
+                            else:
+                                logging.info(f'[NZB] {torrent_id} no remaining results — moving to Wanted for fresh scrape (failure count {_fail_count}/{self._NZB_GHOST_BLACKLIST_THRESHOLD})')
+                                try:
+                                    from database.database_writing import update_media_item as _umi_nw
+                                    _umi_nw(item_id, filled_by_torrent_id=None, filled_by_file=None,
+                                            filled_by_title=None, filled_by_magnet=None,
+                                            scrape_results=None, fall_back_to_single_scraper=False)
+                                except Exception:
+                                    pass
+                                self.queue_manager.move_to_wanted(item, 'Adding')
                         continue
                     elif progress < 100:
                         # Check if this job has been downloading too long without finishing.
@@ -4168,6 +4204,9 @@ class ProgramRunner:
                                 debrid_folder_name=_folder_name,
                                 original_scraped_torrent_title=nzb_original_title,
                             )
+                            # Item cleared Adding on a real, live job — any prior ghost-job
+                            # repeats for it are no longer relevant to a future streak.
+                            self._nzb_ghost_repeat_counts.pop(item_id, None)
                             # Move all coalesced siblings (same torrent_id, still in Adding,
                             # no filled_by_file yet) to Checking together with the initiator.
                             # _resolve_nzb_file_info will assign per-episode filenames to all
@@ -4190,6 +4229,7 @@ class ProgramRunner:
                                         original_scraped_torrent_title=nzb_original_title,
                                     )
                                     _moved_as_sibling.add(_sib['id'])
+                                    self._nzb_ghost_repeat_counts.pop(_sib['id'], None)
                                     logging.info(f'[NZB] Moved coalesced sibling {_sib["id"]} to Checking with initiator')
                                 except Exception as _se:
                                     logging.warning(f'[NZB] Could not move sibling {_sib.get("id")} to Checking: {_se}')
