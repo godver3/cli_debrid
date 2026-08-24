@@ -764,7 +764,11 @@ def check_scraper_connection(scraper_id, scraper_config):
             except Exception as e:
                 base_response['error'] = str(e)
 
-            base_response['details'].update({'url': url})
+            base_response['details'].update({
+                'url': url,
+                'subscription_expiry_date': scraper_config.get('subscription_expiry_date', ''),
+                'auto_renew': scraper_config.get('auto_renew', False)
+            })
 
         elif scraper_type == 'AIOStreams':
             # Test AIOStreams Stremio addon by checking manifest.json endpoint
@@ -1667,7 +1671,11 @@ def index():
             if scfg.get('enabled', False):
                 scraper_type = scfg.get('type', sid)
                 name = f"{scraper_type} ({sid})"
-                skeleton_scrapers.append({'name': name, 'connected': None, 'details': {}})
+                details = {}
+                if scraper_type == 'Newznab':
+                    details['subscription_expiry_date'] = scfg.get('subscription_expiry_date', '')
+                    details['auto_renew'] = scfg.get('auto_renew', False)
+                skeleton_scrapers.append({'name': name, 'connected': None, 'details': details})
         for sid, scfg in _cfg.get('Content Sources', {}).items():
             if scfg.get('enabled', False) and scfg.get('type') != 'Collected':
                 display_name = scfg.get('display_name')
