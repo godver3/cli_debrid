@@ -1143,6 +1143,33 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 
 <script>
+    // Persist just the Trakt client_id/client_secret fields before starting
+    // authorization. "Authorize Trakt" used to read whatever was last saved
+    // to disk, ignoring unsaved edits still sitting in these two inputs —
+    // clicking Authorize right after typing new credentials (without first
+    // clicking the page's separate "Save Settings" button) failed with
+    // "Trakt client ID or secret not set" even though the fields were filled in.
+    function saveTraktCredentials() {
+        const clientIdInput = document.getElementById('trakt-client_id');
+        const clientSecretInput = document.getElementById('trakt-client_secret');
+        const clientId = clientIdInput ? clientIdInput.value.trim() : '';
+        const clientSecret = clientSecretInput ? clientSecretInput.value.trim() : '';
+        if (!clientId || !clientSecret) {
+            return Promise.reject(new Error('Enter both a Trakt Client ID and Client Secret first.'));
+        }
+        return fetch('/settings/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ Trakt: { client_id: clientId, client_secret: clientSecret } })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status !== 'success') {
+                    throw new Error(data.message || 'Failed to save Trakt credentials');
+                }
+            });
+    }
+
     function initializeTraktAuthorization() {
     const traktAuthBtn = document.getElementById('trakt-auth-btn');
     const traktAuthStatus = document.getElementById('trakt-auth-status');
@@ -1153,10 +1180,14 @@ document.addEventListener('DOMContentLoaded', function() {
     if (traktAuthBtn) {
         traktAuthBtn.addEventListener('click', function() {
             traktAuthBtn.disabled = true;
-            traktAuthStatus.textContent = 'Initializing Trakt authorization...';
+            traktAuthStatus.textContent = 'Saving Trakt credentials...';
             traktAuthCode.style.display = 'none';
 
-            fetch('/trakt/trakt_auth', { method: 'POST' })
+            saveTraktCredentials()
+                .then(() => {
+                    traktAuthStatus.textContent = 'Initializing Trakt authorization...';
+                    return fetch('/trakt/trakt_auth', { method: 'POST' });
+                })
                 .then(response => response.json())
                 .then(data => {
                     console.log('Trakt auth response:', data);
@@ -1172,7 +1203,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 })
                 .catch(error => {
                     console.error('Trakt auth error:', error);
-                    traktAuthStatus.textContent = 'Error: Unable to start authorization process';
+                    traktAuthStatus.textContent = 'Error: ' + (error.message || 'Unable to start authorization process');
                 })
                 .finally(() => {
                     traktAuthBtn.disabled = false;
