@@ -712,14 +712,17 @@ class ScrapingQueue:
                                     len(_batch_candidates) >= _season_total
                                 )
 
-                                if _all_eps_requested and is_multi_pack:
+                                _disable_nzb_season_packs = get_setting('Usenet Provider', 'disable_nzb_season_packs', True)
+
+                                if _all_eps_requested and is_multi_pack and not _disable_nzb_season_packs:
                                     # Full season in batch and multi-pack mode — current item will
                                     # scrape as season pack; siblings will coalesce onto its job.
                                     # No special handling needed here; fall through to normal scrape.
                                     logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — season pack path handles this')
                                 else:
-                                    # Partial batch or individual mode — scrape each episode in the
-                                    # batch right now so they all move to Adding in one tick.
+                                    # Partial batch, individual mode, or full season with NZB season
+                                    # packs disabled — scrape each episode in the batch right now so
+                                    # they all move to Adding in one tick (as a virtual aggregate pack).
                                     # Each gets its own cli_mount job and independent health check.
                                     _batch_submitted = 0
                                     _batch_ids_to_remove = set()
