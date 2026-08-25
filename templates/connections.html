@@ -332,6 +332,18 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
                 <span class="conn-card-spinner"></span><span>Checking…</span>
             </div>
         </div>
+
+        <!-- Trakt (only shown when authorized) -->
+        <div class="connection-card" data-service="trakt" {% if not trakt_status %}style="display:none"{% endif %}>
+            <div class="connection-header">
+                <i class="fas fa-tv"></i>
+                <span class="connection-title">Trakt</span>
+                <div class="status-indicator {% if trakt_status %}{{ 'connected' if trakt_status.connected else 'disconnected' }}{% else %}checking{% endif %}"></div>
+            </div>
+            <div class="conn-card-footer" data-ts="">
+                <span class="conn-card-spinner"></span><span>Checking…</span>
+            </div>
+        </div>
     </div>
 
     <!-- Scraper Cards -->
@@ -565,6 +577,7 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
                 'tmdb_status': 'tmdb',
                 'climount_status': 'climount',
                 'scrob_status': 'scrob',
+                'trakt_status': 'trakt',
             };
             for (const [key, service] of Object.entries(map)) {
                 if (data[key]) {

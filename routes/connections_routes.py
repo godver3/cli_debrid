@@ -560,6 +560,20 @@ def check_tmdb_connection():
         return {'name': 'TMDB', 'connected': False, 'error': str(e), 'details': {}}
 
 
+def check_trakt_connection():
+    """Check Trakt auth status. Only shown when Trakt has been authorized."""
+    try:
+        from cli_battery.app.direct_api import DirectAPI
+        result = DirectAPI.check_trakt_auth()
+        status = result.get('status')
+        if status != 'authorized':
+            return None  # Not connected/authorized - don't show the card
+        return {'name': 'Trakt', 'connected': True, 'error': None, 'details': {}}
+    except Exception as e:
+        log.error(f"Trakt connection check failed: {e}", exc_info=True)
+        return None
+
+
 def check_scrob_connection():
     """Check Scrob connection if URL and API key are configured."""
     from content_checkers.scrob import get_scrob_config, _scrob_get
@@ -1437,6 +1451,7 @@ def api_check_system():
     tasks['tmdb_status'] = check_tmdb_connection
     tasks['climount_status'] = check_climount_connection
     tasks['scrob_status'] = check_scrob_connection
+    tasks['trakt_status'] = check_trakt_connection
     results = {}
     with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
         future_to_task = {executor.submit(func): name for name, func in tasks.items()}
@@ -1458,6 +1473,7 @@ def api_check_system():
     results.setdefault('tmdb_status', None)
     results.setdefault('climount_status', None)
     results.setdefault('scrob_status', None)
+    results.setdefault('trakt_status', None)
     return jsonify(results)
 
 
@@ -1596,6 +1612,7 @@ def _run_all_connection_checks():
         'jellyfin_status': None,
         'mounted_files_status': None,
         'phalanx_db_status': None,
+        'trakt_status': None,
         'scraper_statuses': [],
         'content_source_statuses': [],
     }
@@ -1607,6 +1624,7 @@ def _run_all_connection_checks():
         'cli_battery_status': check_cli_battery_connection,
         'mounted_files_status': check_mounted_files_connection,
         'phalanx_db_status': check_phalanx_db_connection,
+        'trakt_status': check_trakt_connection,
         'nyaa_scraper_statuses': check_nyaa_scrapers_only,
         'non_nyaa_scraper_statuses': check_non_nyaa_scrapers,
         'content_source_statuses': check_content_sources_connections,
@@ -1689,7 +1707,7 @@ def index():
         'jellyfin_status': None, 'mounted_files_status': None,
         'phalanx_db_status': None,
         'tvdb_status': None, 'tmdb_status': None, 'climount_status': None,
-        'scrob_status': None,
+        'scrob_status': None, 'trakt_status': None,
         'scraper_statuses': skeleton_scrapers,
         'content_source_statuses': skeleton_sources,
     }
@@ -1715,6 +1733,7 @@ def index():
                          tmdb_status=results['tmdb_status'],
                          climount_status=results['climount_status'],
                          scrob_status=results['scrob_status'],
+                         trakt_status=results['trakt_status'],
                          scraper_statuses=results['scraper_statuses'],
                          content_source_statuses=results['content_source_statuses'],
                          failing_connections=failing_connections,
