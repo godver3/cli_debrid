@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import logging
 import re
@@ -12,6 +13,7 @@ from routes.api_tracker import api
 from utilities.settings import get_setting
 from PTT import parse_title as ptt_parse
 from rapidfuzz import fuzz as _fuzz
+from scraper.request_dedup import SingleFlightGuard
 
 def _get_retention_days() -> int:
     """Get configured usenet retention days. 0 = disabled."""
@@ -48,6 +50,11 @@ _SANITIZE_RE = re.compile(r"[!?:&,;\"'()\[\]{}]")
 _NZB_CACHE: Dict[str, tuple] = {}   # key -> (timestamp, results)
 _NZB_CACHE_LOCK = threading.Lock()
 _NZB_CACHE_TTL = 600  # 10 minutes
+
+# Coalesces concurrent identical searches (e.g. the same ID-based query fired
+# by two title-variant threads within milliseconds of each other) so only one
+# of them actually hits the indexer — see scraper/request_dedup.py.
+_NZB_INFLIGHT = SingleFlightGuard()
 
 
 def _cache_key(endpoint: str, params: dict) -> str:
@@ -187,13 +194,29 @@ def scrape_newznab_instance(
                 _cache_set(ck, [])
             return []
 
+    # scrape_all() runs one _do_scrape per title variant (original, translated,
+    # anime aliases, ...) concurrently, and this ID-based query doesn't depend
+    # on title at all — so two variants can fire the identical request within
+    # milliseconds of each other, before either has cached a result. Route
+    # every call through the single-flight guard so only the first one
+    # actually hits the indexer; the rest reuse its result.
+    _wait_timeout = (timeout + 5) if timeout else 35
+
+    def _fetch_coalesced(params):
+        return _NZB_INFLIGHT.call(
+            _cache_key(endpoint, params),
+            lambda: _fetch(params),
+            wait_timeout=_wait_timeout,
+            copy_fn=copy.deepcopy,
+        )
+
     # Run both queries in parallel if there are 2, otherwise just run one
     all_results: List[Dict[str, Any]] = []
     if len(params_list) == 1:
-        all_results = _fetch(params_list[0])
+        all_results = _fetch_coalesced(params_list[0])
     else:
         with ThreadPoolExecutor(max_workers=2) as ex:
-            futures = [ex.submit(_fetch, p) for p in params_list]
+            futures = [ex.submit(_fetch_coalesced, p) for p in params_list]
             for f in as_completed(futures):
                 all_results.extend(f.result())
 
@@ -207,10 +230,10 @@ def scrape_newznab_instance(
         logging.info(f"Newznab '{instance}': 0 movie results — retrying with cross-category search (movie+TV)")
         retry_results: List[Dict[str, Any]] = []
         if len(tv_params_list) == 1:
-            retry_results = _fetch(tv_params_list[0])
+            retry_results = _fetch_coalesced(tv_params_list[0])
         else:
             with ThreadPoolExecutor(max_workers=2) as ex:
-                futures = [ex.submit(_fetch, p) for p in tv_params_list]
+                futures = [ex.submit(_fetch_coalesced, p) for p in tv_params_list]
                 for f in as_completed(futures):
                     retry_results.extend(f.result())
         if retry_results:

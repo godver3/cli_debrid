@@ -1,4 +1,5 @@
 from routes.api_tracker import api
+import copy
 import hashlib
 import logging
 import threading
@@ -10,11 +11,17 @@ from urllib.parse import urlencode, quote_plus
 import re
 import json
 from scraper.functions.common import trim_magnet
+from scraper.request_dedup import SingleFlightGuard
 
 # Query result cache — reduces API hits for duplicate NZB searches within TTL window
 _NZB_CACHE: Dict[str, tuple] = {}   # key -> (timestamp, results)
 _NZB_CACHE_LOCK = threading.Lock()
 _NZB_CACHE_TTL = 600  # 10 minutes
+
+# Coalesces concurrent identical searches (e.g. the same ID-based query fired
+# by two title-variant threads within milliseconds of each other) so only one
+# of them actually hits the indexer — see scraper/request_dedup.py.
+_NZB_INFLIGHT = SingleFlightGuard()
 
 
 def _cache_key(endpoint: str, params: dict) -> str:
@@ -161,13 +168,29 @@ def scrape_prowlarr_instance(
             logging.error(f"Prowlarr '{instance}' error: {e}", exc_info=True)
         return []
 
+    # scrape_all() runs one _do_scrape per title variant (original, translated,
+    # anime aliases, ...) concurrently, and the ID-based query above doesn't
+    # depend on title at all — so two variants can fire the identical request
+    # within milliseconds of each other, before either has cached a result.
+    # Route every call through the single-flight guard so only the first one
+    # actually hits Prowlarr; the rest reuse its result.
+    _wait_timeout = (timeout + 5) if timeout else 35
+
+    def _fetch_coalesced(query_params):
+        return _NZB_INFLIGHT.call(
+            _cache_key(search_endpoint, query_params),
+            lambda: _fetch(query_params),
+            wait_timeout=_wait_timeout,
+            copy_fn=copy.deepcopy,
+        )
+
     # Run all queries in parallel
     all_instance_results: List[Dict[str, Any]] = []
     if len(params_list) == 1:
-        all_instance_results = _fetch(params_list[0])
+        all_instance_results = _fetch_coalesced(params_list[0])
     else:
         with ThreadPoolExecutor(max_workers=2) as ex:
-            futures = [ex.submit(_fetch, p) for p in params_list]
+            futures = [ex.submit(_fetch_coalesced, p) for p in params_list]
             for f in as_completed(futures):
                 all_instance_results.extend(f.result())
 
