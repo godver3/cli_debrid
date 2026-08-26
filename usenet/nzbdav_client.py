@@ -611,6 +611,9 @@ class NzbdavClient:
                 logging.warning(f'[NzbDAV] No video files in folder {folder_name!r}')
                 return folder_name, None
 
+            from debrid.common import filter_unwanted_video_files
+            video_files = filter_unwanted_video_files(video_files)
+
             best_file = None
             if season is not None and episode is not None:
                 ep_pat = re.compile(
@@ -641,7 +644,9 @@ class NzbdavClient:
             folder_name = self._find_nzb_folder(job_norm, original_name=job_name)
             if not folder_name:
                 return None
-            video_files = sorted([name for name, _ in self._list_nzb_folder_files(folder_name)])
+            from debrid.common import filter_unwanted_video_files
+            filtered_files = filter_unwanted_video_files(self._list_nzb_folder_files(folder_name))
+            video_files = sorted([name for name, _ in filtered_files])
             logging.info(f'[NzbDAV] get_nzb_folder_all_files: folder={folder_name!r} files={video_files}')
             return folder_name, video_files
         except Exception as exc:

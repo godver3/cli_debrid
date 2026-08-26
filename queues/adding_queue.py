@@ -988,30 +988,26 @@ class AddingQueue:
                         logging.warning(f"Blacklisting old item {item_identifier} due to adding failure: {error}")
                         queue_manager.move_to_blacklisted(item, "Adding")
 
-                        # Blacklist related items (keep existing logic)
-                        if item_id and item.get('type') == 'episode':
-                            series_title = item.get('series_title', '') or item.get('title', '')
-                            season = item.get('season') or item.get('season_number')
-                            version = item.get('version')
-
-                            # Stream items from DB to avoid loading entire table into memory
+                        # Blacklist siblings that actually depended on the same dead
+                        # torrent/NZB job — not every episode in the season. A per-episode
+                        # failure (e.g. this episode's own candidates all failed their cache
+                        # check, or a rate-limit/legal block on this episode's specific
+                        # release) says nothing about episodes with independent releases.
+                        failed_torrent_id = item.get('torrent_id') or item.get('filled_by_torrent_id')
+                        if item_id and item.get('type') == 'episode' and failed_torrent_id:
                             from database import stream_all_media_items  # Local import
 
                             for candidate in stream_all_media_items(state=None, media_type='episode'):
                                 try:
                                     if candidate.get('id') == item_id:
                                         continue
-                                    if ((candidate.get('series_title', '') or candidate.get('title', '')) != series_title):
-                                        continue
-                                    if (candidate.get('season') or candidate.get('season_number')) != season:
-                                        continue
-                                    if candidate.get('version') != version:
+                                    if candidate.get('filled_by_torrent_id') != failed_torrent_id:
                                         continue
                                     if candidate.get('state') in ('Blacklisted', 'Collected'):
                                         continue
 
                                     related_item_state = candidate.get('state', 'Unknown')
-                                    logging.info(f"Blacklisting related episode ID: {candidate.get('id')} ({candidate.get('title')}) from state {related_item_state} due to primary item failure.")
+                                    logging.info(f"Blacklisting related episode ID: {candidate.get('id')} ({candidate.get('title')}) from state {related_item_state} — shared dead torrent/job {failed_torrent_id} with primary item failure.")
                                     queue_manager.move_to_blacklisted(candidate, related_item_state)
                                 except Exception as iter_err:
                                     logging.error(f"Error while streaming candidate items for blacklist related: {iter_err}")

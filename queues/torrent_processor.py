@@ -1110,6 +1110,19 @@ class TorrentProcessor:
                     _prefix = (bool(_job_prefix) and _title_prefix(_t_name) == _job_prefix)
                     if _exact or _prefix:
                         _existing_hash = _t.get('info_hash', '')
+                        # Verify the matched job is still actually alive on the provider
+                        # before reusing it - a title match against cli_mount's listing can
+                        # still be a stale/completed-and-cleaned-up entry, and reusing it
+                        # blindly ghosts every retry forever (same failure class the Aug 18
+                        # is_nzb_job_alive() fix closed for the sibling-pack reuse sites,
+                        # just not here).
+                        try:
+                            from usenet.climount_client import is_nzb_job_alive as _is_job_alive
+                            if not _is_job_alive(_existing_hash):
+                                logging.warning(f'[{item_identifier}] Matched job {_existing_hash} in cli_mount listing no longer alive on provider - not reusing')
+                                continue
+                        except Exception:
+                            pass  # unknown due to error - don't block a legitimate reuse
                         _match_type = 'exact' if _exact else 'prefix'
                         logging.info(f'[{item_identifier}] NZB already in cli_mount ({_match_type} match): {_t_name} (hash={_existing_hash}) — reusing job')
                         _found_dc = True

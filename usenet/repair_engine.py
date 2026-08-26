@@ -1539,6 +1539,37 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                             playback_target['file_name'],
                         )
                         continue
+                    # No repair still owns this old UUID (finished or never tracked) — the
+                    # provider will otherwise keep re-reporting this exact stale job as
+                    # broken on every future sweep forever, spamming 'not_found' for an
+                    # entry nothing can ever act on. Clear it the same way the orphan
+                    # branch below does — but first check no *other* live item still
+                    # references this exact old UUID (e.g. a sibling episode from the
+                    # same season-pack NZB that hasn't been repaired yet). Same guard
+                    # as the manual-retry provider delete above; unlike that path,
+                    # cli_mount's own health check already confirmed this UUID is dead.
+                    if info_hash:
+                        conn = get_db_connection()
+                        try:
+                            sibling_count = conn.execute(
+                                "SELECT COUNT(*) FROM media_items "
+                                "WHERE filled_by_torrent_id IN (?, ?) "
+                                "AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                                (info_hash, f'nzb:{info_hash}', playback_target['cli_debrid_id']),
+                            ).fetchone()[0]
+                        finally:
+                            conn.close()
+                        if sibling_count == 0:
+                            logger.info(
+                                f'[NZBPlayback] Stale broken entry for superseded item '
+                                f'{playback_target["cli_debrid_id"]} — deleting {info_hash!r} from provider'
+                            )
+                            _delete_from_provider(info_hash, entry_name)
+                        else:
+                            logger.info(
+                                f'[NZBPlayback] Skipping provider delete for {info_hash!r} — '
+                                f'{sibling_count} sibling(s) still rely on it'
+                            )
                 elif info_hash:
                     logger.warning(f'[NZBRepair] No repairable DB items for {entry_name!r} — orphan, deleting from provider')
                     _delete_from_provider(info_hash, entry_name)

@@ -1238,7 +1238,17 @@ SETTINGS_SCHEMA = {
                 "enabled": {"type": "boolean", "default": False},
                 "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},
                 "url": {"type": "string", "default": "", "validate": "url"},
-                "api_key": {"type": "string", "default": "", "sensitive": True}
+                "api_key": {"type": "string", "default": "", "sensitive": True},
+                "subscription_expiry_date": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional: date this Newznab subscription expires (YYYY-MM-DD format). Leave empty if not applicable."
+                },
+                "auto_renew": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Optional: whether this Newznab subscription auto-renews."
+                }
             }
         }
     },

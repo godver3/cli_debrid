@@ -365,6 +365,16 @@
             <label for="{{ scraper_id }}-api_key" class="settings-title">API Key:</label>
             <input type="password" id="{{ scraper_id }}-api_key" name="Scrapers.{{ scraper_id }}.api_key" value="{{ config.api_key | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.api_key" placeholder="Your Newznab API key">
         </div>
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-subscription_expiry_date" class="settings-title">Subscription Expiry Date:</label>
+            <input type="date" id="{{ scraper_id }}-subscription_expiry_date" name="Scrapers.{{ scraper_id }}.subscription_expiry_date" value="{{ config.subscription_expiry_date | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.subscription_expiry_date">
+            <small class="settings-description">Optional. Shown on the Connections page for this scraper.</small>
+        </div>
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-auto_renew" class="settings-title">Auto Renews:</label>
+            <input type="checkbox" id="{{ scraper_id }}-auto_renew" name="Scrapers.{{ scraper_id }}.auto_renew" {% if config.auto_renew %}checked{% endif %} data-section="Scrapers" data-key="{{ scraper_id }}.auto_renew">
+            <small class="settings-description">Optional. Whether this subscription renews automatically.</small>
+        </div>
         {% endif %}
         {% if config.type == 'AIOStreams' %}
         <!-- AIOStreams Setup Information -->

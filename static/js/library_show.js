@@ -1037,8 +1037,14 @@ function getQualityScore(episode) {
 }
 
 function getHighestQualityEpisode(episodes) {
-    // Return the episode with the highest quality score
-    return episodes.reduce((best, current) => {
+    // Return the episode with the highest quality score.
+    // Prefer entries that actually have a collected file - otherwise a
+    // Blacklisted/Wanted row for a higher-labeled version (e.g. a 2160p
+    // version that was never found and got blacklisted) outscores the
+    // real Collected file and its version badge gets shown instead.
+    const collectedEpisodes = episodes.filter(ep => ep.state === 'Collected' || ep.state === 'Upgrading');
+    const candidates = collectedEpisodes.length > 0 ? collectedEpisodes : episodes;
+    return candidates.reduce((best, current) => {
         const bestScore = getQualityScore(best);
         const currentScore = getQualityScore(current);
         return currentScore > bestScore ? current : best;
@@ -1317,9 +1323,18 @@ function createEpisodeRow(episodes, seasonNumber) {
                 const parts = ep.location_on_disk.split('/');
                 fileName = parts[parts.length - 1];
             }
+            // Rows with no file at all are Blacklisted/Wanted placeholders for a
+            // version that was never actually found/downloaded - label them as such
+            // instead of the misleading "Unknown file" (there's nothing unknown
+            // about it: no version matching those criteria was ever collected).
+            if (!fileName) {
+                fileName = (ep.state === 'Blacklisted')
+                    ? 'No file (blacklisted - version never found)'
+                    : 'No file collected yet';
+            }
             return {
                 id: ep.id,
-                file: fileName || 'Unknown file',
+                file: fileName,
                 version: ep.version || 'Unknown'
             };
         }));

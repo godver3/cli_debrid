@@ -58,7 +58,7 @@
     </div>
     <div class="settings-section-content">
         {# Advanced settings hidden: 'disable_initialization', 'auto_run_program' #}
-        {% for key in ['logging_level', 'timezone_override', 'enable_tracemalloc', 'tracemalloc_sample_rate', 'check_for_updates', 'use_symlinks_on_windows'] %}
+        {% for key in ['logging_level', 'timezone_override', 'enable_tracemalloc', 'tracemalloc_sample_rate', 'check_for_updates'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">
@@ -499,66 +499,6 @@
     </div>
     <div class="settings-section-content">
         {% for key in ['plex_watchlist_removal', 'plex_watchlist_keep_series', 'trakt_watchlist_removal', 'trakt_watchlist_keep_series'] %}
-            {% set value = settings_schema.Debug.get(key) %}
-            {% if value %}
-            <div class="settings-form-group">
-                <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                {% if value.type == 'boolean' %}
-                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}"
-                           data-section="Debug" data-key="{{ key }}"
-                           {% if settings.get('Debug', {}).get(key, value.default) == True %}checked{% endif %}>
-                {% elif value.type == 'string' and value.choices %}
-                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input"
-                            data-section="Debug" data-key="{{ key }}">
-                        {% for option in value.choices %}
-                            <option value="{{ option }}" {% if (settings.get('Debug', {}).get(key, value.default) | string) == (option | string) %}selected{% endif %}>{{ option }}</option>
-                        {% endfor %}
-                    </select>
-                {% else %}
-                    <input type="{{ value.type if value.type != 'string' else 'text' }}" id="debug-{{ key }}" name="Debug.{{ key }}"
-                           value="{% set val = settings.get('Debug', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
-                           data-section="Debug" data-key="{{ key }}"
-                           {% if value.sensitive %}type="password"{% endif %}
-                           {% if value.min is defined %}min="{{ value.min }}"{% endif %}
-                           {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
-                {% endif %}
-                {% if value.description %}
-                    {% if value.description is string %}
-                        <p class="settings-description">{{ value.description }}</p>
-                    {% else %}
-                        <div class="settings-description">
-                            {% for item in value.description %}
-                                {% if loop.first %}
-                                    <p>{{ item }}</p>
-                                    <ul>
-                                {% elif loop.last %}
-                                    <li>{{ item }}</li>
-                                    </ul>
-                                {% else %}
-                                    <li>{{ item }}</li>
-                                {% endif %}
-                            {% endfor %}
-                        </div>
-                    {% endif %}
-                {% endif %}
-            </div>
-            {% endif %}
-        {% endfor %}
-    </div>
-</div>
-
-<!-- Symlink & Naming Section -->
-<div class="settings-section settings-card">
-    <div class="settings-section-header">
-        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-        <div class="settings-header-left">
-            <h4>Symlink & Naming</h4>
-        </div>
-    </div>
-    <div class="settings-section-content">
-        {% for key in ['symlink_movie_template', 'symlink_episode_template', 'anime_renaming_using_anidb', 'enable_separate_anime_folders', 'enable_separate_documentary_folders', 'movies_folder_name', 'tv_shows_folder_name', 'anime_movies_folder_name', 'anime_tv_shows_folder_name', 'documentary_movies_folder_name', 'documentary_tv_shows_folder_name', 'apply_to_anime_tv_shows', 'apply_to_documentary_movies', 'apply_to_documentary_tv_shows', 'use_symlinks_on_windows'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">
