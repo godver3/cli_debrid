@@ -273,6 +273,9 @@ class CliMountClient:
                 logging.warning(f'[cli_mount] No video files in folder {folder_name!r}')
                 return folder_name, None
 
+            from debrid.common import filter_unwanted_video_files
+            video_files = filter_unwanted_video_files(video_files)
+
             # If season/episode provided, find the matching file
             best_file = None
             if season is not None and episode is not None:
@@ -310,7 +313,9 @@ class CliMountClient:
             folder_name = self._find_nzb_folder(job_norm, original_name=job_name)
             if not folder_name:
                 return None
-            video_files = sorted([name for name, _ in self._list_nzb_folder_files(folder_name)])
+            from debrid.common import filter_unwanted_video_files
+            filtered_files = filter_unwanted_video_files(self._list_nzb_folder_files(folder_name))
+            video_files = sorted([name for name, _ in filtered_files])
             logging.info(f'[cli_mount] get_nzb_folder_all_files: folder={folder_name!r} files={video_files}')
             return folder_name, video_files
         except Exception as exc:

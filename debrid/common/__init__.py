@@ -7,7 +7,8 @@ from .torrent import (
 from .utils import (
     extract_hash_from_magnet,
     is_video_file,
-    is_unwanted_file
+    is_unwanted_file,
+    filter_unwanted_video_files
 )
 from .cache import timed_lru_cache
 from .api import RateLimiter
@@ -21,5 +22,6 @@ __all__ = [
     'RateLimiter',
     'timed_lru_cache',
     'is_video_file',
-    'is_unwanted_file'
+    'is_unwanted_file',
+    'filter_unwanted_video_files'
 ]

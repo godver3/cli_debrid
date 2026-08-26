@@ -14,10 +14,34 @@ def is_video_file(filename: str) -> bool:
     return result
 
 def is_unwanted_file(filename: str) -> bool:
-    """Check if a file is unwanted (e.g., sample files)"""
-    result = 'sample' in filename.lower()
+    """Check if a file is unwanted (e.g., sample or trailer files)"""
+    name_lower = filename.lower()
+    result = 'sample' in name_lower or 'trailer' in name_lower
     #logging.info(f"is_unwanted_file check for {filename}: {result}")
     return result
+
+def filter_unwanted_video_files(video_files: List[Tuple[str, int]], size_threshold_ratio: float = 0.05) -> List[Tuple[str, int]]:
+    """
+    Filter a list of (filename, size) tuples to drop samples/trailers.
+
+    First drops files whose name matches is_unwanted_file (e.g. 'sample', 'trailer').
+    Then, if multiple files remain, drops any file smaller than size_threshold_ratio
+    of the largest remaining file - this catches unnamed extras/trailers without
+    affecting legitimate short episodes or bonus content.
+
+    Never returns an empty list if the input was non-empty (falls back to the
+    unfiltered input so a false-positive match can't hide every candidate).
+    """
+    filtered = [(name, size) for name, size in video_files if not is_unwanted_file(name)]
+    if not filtered:
+        filtered = list(video_files)
+
+    if len(filtered) > 1:
+        max_size = max(size for _, size in filtered)
+        if max_size > 0:
+            filtered = [(name, size) for name, size in filtered if size >= max_size * size_threshold_ratio]
+
+    return filtered
 
 def extract_hash_from_magnet(magnet_link: str) -> str:
     """Extract hash from magnet link or download and extract from HTTP link."""
