@@ -14,11 +14,41 @@ Files land on the rclone mount automatically after cli_mount downloads them.
 import logging
 import os
 import re
+import threading
 import time
 from typing import Optional, Dict, Any, Tuple
 
 from utilities.settings import get_setting
 from routes.api_tracker import api
+
+# Jobs we ourselves just told the provider to delete. is_nzb_job_alive() checks
+# this before trusting a fresh provider response, since a delete call returning
+# success doesn't guarantee every other provider endpoint (job-status, listing)
+# reflects that removal immediately - a re-check moments later can still report
+# the job "alive" against a provider still catching up to its own deletion.
+_recently_deleted_lock = threading.Lock()
+_recently_deleted_jobs: Dict[str, float] = {}
+_RECENTLY_DELETED_TTL_SECONDS = 30  # generous margin over the observed ~1-2s race
+
+
+def _mark_job_deleted(job_hash: str) -> None:
+    if not job_hash:
+        return
+    now = time.time()
+    with _recently_deleted_lock:
+        _recently_deleted_jobs[job_hash] = now
+        if len(_recently_deleted_jobs) > 256:
+            cutoff = now - _RECENTLY_DELETED_TTL_SECONDS
+            for h in [h for h, t in _recently_deleted_jobs.items() if t < cutoff]:
+                del _recently_deleted_jobs[h]
+
+
+def _was_recently_deleted_by_us(job_hash: str) -> bool:
+    if not job_hash:
+        return False
+    with _recently_deleted_lock:
+        deleted_at = _recently_deleted_jobs.get(job_hash)
+    return deleted_at is not None and (time.time() - deleted_at) < _RECENTLY_DELETED_TTL_SECONDS
 
 
 def _delete_status(url, **kwargs):
@@ -341,9 +371,11 @@ class CliMountClient:
             )
             if status in (200, 204):
                 logging.info(f'[cli_mount] Removed NZB entry {info_hash} from storage and mount')
+                _mark_job_deleted(info_hash)
                 return True
             if status == 404:
                 logging.info(f'[cli_mount] NZB entry {info_hash} already gone (404)')
+                _mark_job_deleted(info_hash)
                 return True
             if status is not None:
                 logging.debug(f'[cli_mount] remove_nzb browse endpoint returned {status}')
@@ -359,9 +391,11 @@ class CliMountClient:
             )
             if status in (200, 204):
                 logging.info(f'[cli_mount] Removed NZB job {info_hash} from queue')
+                _mark_job_deleted(info_hash)
                 return True
             if status == 404:
                 logging.info(f'[cli_mount] NZB job {info_hash} already gone (404)')
+                _mark_job_deleted(info_hash)
                 return True
             if status is None:
                 logging.debug(f'[cli_mount] remove_nzb queue delete error: {exc}')
@@ -384,6 +418,9 @@ class CliMountClient:
                             )
                             if status in (200, 204, 404):
                                 logging.info(f'[cli_mount] Removed NZB by name search: {entry_name!r}')
+                                _mark_job_deleted(h)
+                                if info_hash:
+                                    _mark_job_deleted(info_hash)
                                 return True
             except Exception as e:
                 logging.debug(f'[cli_mount] remove_nzb name-search error: {e}')
@@ -427,6 +464,7 @@ class CliMountClient:
             headers=self._headers(), timeout=15,
         )
         if status in (200, 204, 404):
+            _mark_job_deleted(info_hash)
             return True
         if status is not None:
             logging.warning('[cli_mount] Exact job delete %s returned HTTP %s', info_hash, status)
@@ -906,6 +944,33 @@ def get_climount_client():
     return _client_instance
 
 
+# Built lazily (module-level singleton, not per-call) on first use so the
+# `debrid` package's heavier imports stay lazy like the rest of this module,
+# while still giving the cache decorator a stable function object to attach
+# its cache dict to - a fresh function (and fresh empty cache) built on every
+# call, as this used to do, made the 20s cache never actually persist.
+_check_job_alive_on_provider = None
+
+
+def _get_check_job_alive_on_provider():
+    global _check_job_alive_on_provider
+    if _check_job_alive_on_provider is None:
+        from debrid.common.cache import timed_lru_cache
+
+        @timed_lru_cache(seconds=20)
+        def _check(job_hash: str) -> bool:
+            try:
+                status = get_climount_client().get_job_status(job_hash)
+                return bool(status and status.get('raw'))
+            except Exception as exc:
+                logging.debug(f'[cli_mount] is_nzb_job_alive check failed for {job_hash!r}: {exc}')
+                # Unknown due to a transient error - don't block a legitimate reuse over it.
+                return True
+
+        _check_job_alive_on_provider = _check
+    return _check_job_alive_on_provider
+
+
 def is_nzb_job_alive(job_hash: str) -> bool:
     """
     Check whether a shared season-pack job is still queryable on the usenet
@@ -915,20 +980,16 @@ def is_nzb_job_alive(job_hash: str) -> bool:
     another dead reference that will ghost every retry forever, since nothing
     else ever re-verifies it. Result is cached briefly so many sibling
     episodes checking the same job within one pass don't each re-query it.
+
+    Jobs we ourselves deleted moments ago are treated as dead unconditionally,
+    without a provider round-trip - the provider's delete endpoint returning
+    success doesn't guarantee its other read endpoints (job-status, listing)
+    reflect that removal immediately, and a fresh query in that gap can still
+    report the job "alive".
     """
-    from debrid.common.cache import timed_lru_cache
-
-    @timed_lru_cache(seconds=20)
-    def _check(_job_hash: str) -> bool:
-        try:
-            status = get_climount_client().get_job_status(_job_hash)
-            return bool(status and status.get('raw'))
-        except Exception as exc:
-            logging.debug(f'[cli_mount] is_nzb_job_alive check failed for {_job_hash!r}: {exc}')
-            # Unknown due to a transient error - don't block a legitimate reuse over it.
-            return True
-
-    return _check(job_hash)
+    if _was_recently_deleted_by_us(job_hash):
+        return False
+    return _get_check_job_alive_on_provider()(job_hash)
 
 
 def reset_climount_client() -> None:
