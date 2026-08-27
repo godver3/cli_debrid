@@ -726,17 +726,100 @@ class ScrapingQueue:
                                     # Each gets its own cli_mount job and independent health check.
                                     _batch_submitted = 0
                                     _batch_ids_to_remove = set()
-                                    # Process all siblings except current item (it falls through to normal scrape below)
-                                    _siblings_to_batch = [it for it in _batch if it.get('id') != item_to_process.get('id')]
-                                    for _bep in _siblings_to_batch:
+                                    # Process the whole batch together, in the same ascending S/E order
+                                    # it was sorted in above (current item included) — previously the
+                                    # current item (always the lowest-numbered episode still in Scraping,
+                                    # per the queue's own S/E sort) was excluded here and left to fall
+                                    # through to the normal scrape path below, which runs *after* this
+                                    # loop finishes submitting every other episode. That meant the
+                                    # lowest episode (typically E1) was always the last one actually
+                                    # submitted/added within a batch tick, even though it's first in
+                                    # queue order. Including it here keeps submission order matching
+                                    # queue order; it no longer gets the richer normal-path handling
+                                    # (not-wanted filtering, delayed-scrape-by-score) in this batched
+                                    # case, same as its siblings already didn't.
+                                    for _bep in _batch:
                                         try:
                                             _bep_id = f"{_bep.get('title')} S{_curr_season:02d}E{_bep.get('episode_number', 0):02d}"
                                             _bep_results, _ = self.scrape_with_fallback(
                                                 _bep, False, queue_manager,
                                                 check_pack_wantedness=False
                                             )
+                                            _bep_results = _bep_results if _bep_results is not None else []
+                                            if _bep_results and not _bep.get('disable_not_wanted_check'):
+                                                _bep_results = [
+                                                    r for r in _bep_results
+                                                    if not is_magnet_not_wanted(r.get('magnet') or r.get('nzb_url'))
+                                                    and not is_url_not_wanted(r.get('magnet') or r.get('nzb_url'))
+                                                    and not (r.get('nzb_url') and is_nzb_guid_not_wanted(r.get('parsed_info', {}).get('guid') or r.get('nzb_url')))
+                                                ]
                                             if _bep_results:
                                                 _bep_best = _bep_results[0]
+
+                                                # Duplicate-Collected check: if this episode is already
+                                                # Collected under the same NZB URL/magnet, this is a
+                                                # duplicate re-add — mark it Collected and skip submitting
+                                                # instead of grabbing the same file again. Mirrors the
+                                                # single-item path's check (line ~966 below).
+                                                _bep_nzb_url_check = _bep_best.get('nzb_url') or _bep_best.get('magnet') or ''
+                                                _bep_is_duplicate = False
+                                                if _bep_nzb_url_check:
+                                                    try:
+                                                        from database import get_db_connection as _gdb_bdup
+                                                        _conn_bdup = _gdb_bdup()
+                                                        try:
+                                                            _bdup = _conn_bdup.execute(
+                                                                "SELECT id FROM media_items "
+                                                                "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                                                                "AND type='episode' AND state='Collected' "
+                                                                "AND filled_by_magnet=?",
+                                                                (_bep.get('imdb_id'), _curr_season,
+                                                                 _bep.get('episode_number'), _bep_nzb_url_check)
+                                                            ).fetchone()
+                                                        finally:
+                                                            _conn_bdup.close()
+                                                        if _bdup:
+                                                            logging.info(f'[NZBBatch] {_bep_id} already Collected with same NZB URL — marking Collected, skipping resubmit')
+                                                            from database.database_writing import update_media_item_state as _bdup_update_state
+                                                            _bdup_update_state(_bep['id'], 'Collected')
+                                                            _batch_ids_to_remove.add(_bep['id'])
+                                                            _bep_is_duplicate = True
+                                                    except Exception as _bdup_err:
+                                                        logging.debug(f'[NZBBatch] Duplicate-Collected check error for {_bep_id}: {_bdup_err}')
+
+                                                if _bep_is_duplicate:
+                                                    continue
+
+                                                # In-flight dedup check: don't submit a second NZB for an
+                                                # episode/version already Adding or Checking under a
+                                                # different item. Mirrors the single-item path's check
+                                                # (line ~1004 below).
+                                                _bep_in_flight = None
+                                                try:
+                                                    _bep_ver = (_bep.get('version') or 'Default').rstrip('*')
+                                                    from database import get_db_connection as _gdb_binf
+                                                    _conn_binf = _gdb_binf()
+                                                    try:
+                                                        _bep_in_flight = _conn_binf.execute(
+                                                            "SELECT id FROM media_items "
+                                                            "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                                                            "AND type='episode' AND state IN ('Adding','Checking') "
+                                                            "AND REPLACE(version,'*','')=? AND id!=?",
+                                                            (_bep.get('imdb_id'), _curr_season,
+                                                             _bep.get('episode_number'), _bep_ver, _bep['id'])
+                                                        ).fetchone()
+                                                    finally:
+                                                        _conn_binf.close()
+                                                except Exception as _binf_err:
+                                                    logging.debug(f'[NZBBatch] In-flight check error for {_bep_id}: {_binf_err}')
+
+                                                if _bep_in_flight:
+                                                    logging.warning(f'[NZBBatch] {_bep_id} already in-flight as ID {_bep_in_flight[0]} '
+                                                                     f'(Adding/Checking, same imdb/season/episode/version) — sending back to Wanted to avoid duplicate NZB')
+                                                    queue_manager.move_to_wanted(_bep, "Scraping")
+                                                    _batch_ids_to_remove.add(_bep['id'])
+                                                    continue
+
                                                 queue_manager.move_to_adding(
                                                     _bep, 'Scraping',
                                                     _bep_best['title'],
@@ -747,14 +830,25 @@ class ScrapingQueue:
                                                 _batch_ids_to_remove.add(_bep['id'])
                                                 logging.info(f'[NZBBatch] Batched sibling {_bep_id} → Adding')
                                             else:
-                                                logging.info(f'[NZBBatch] No results for sibling {_bep_id} — will retry individually')
+                                                logging.info(f'[NZBBatch] No results for {_bep_id} — will retry individually')
                                         except Exception as _bep_err:
-                                            logging.warning(f'[NZBBatch] Error processing sibling {_bep.get("id")}: {_bep_err}')
+                                            logging.warning(f'[NZBBatch] Error processing {_bep.get("id")}: {_bep_err}')
                                     if _batch_ids_to_remove:
                                         self.items = [it for it in self.items if it.get('id') not in _batch_ids_to_remove]
                                         self._item_ids -= _batch_ids_to_remove
-                                        logging.info(f'[NZBBatch] Batched {_batch_submitted} siblings to Adding; current item continues normally')
-                                    _nzb_batch_handled = (_batch_submitted > 0)
+                                        logging.info(f'[NZBBatch] Batched {_batch_submitted} episodes to Adding')
+                                    # If the current item itself was submitted, marked Collected (dup),
+                                    # or sent back to Wanted (in-flight) above, it's already removed
+                                    # from self.items — must not also fall through to the normal scrape
+                                    # path below, which would re-process a stale/already-handled item.
+                                    # _batch_submitted alone isn't enough to detect this: the current
+                                    # item can be "handled" (added to _batch_ids_to_remove) via the
+                                    # duplicate-Collected or in-flight branches above without ever
+                                    # incrementing _batch_submitted.
+                                    _nzb_batch_handled = (
+                                        _batch_submitted > 0 or
+                                        item_to_process.get('id') in _batch_ids_to_remove
+                                    )
                         except Exception as _be:
                             logging.warning(f'[NZBBatch] Batch processing failed, falling back to individual scrape: {_be}', exc_info=True)
 

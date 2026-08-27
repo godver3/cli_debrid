@@ -408,10 +408,15 @@ def filter_results(
                     # Apply same acronym handling for aliases
                     if alias_sim < 0.8:
                         simple_alias = re.sub(r'[^a-z0-9]', '', alias)
-                        # Compare query vs alias for acronym handling, not result vs alias
-                        simple_sim_result = fuzz.ratio(simple_query, simple_alias) / 100.0
+                        # Compare the actual result/parsed title against the alias — comparing the
+                        # query against the alias instead (the previous bug here) meant any alias
+                        # textually identical to the query itself (e.g. many shows list the plain
+                        # English title again under several locale codes) always scored a
+                        # near-perfect match regardless of what the scraped result actually was,
+                        # letting unrelated releases pass the similarity gate via best_alias_sim.
+                        simple_sim_result = fuzz.ratio(simple_result, simple_alias) / 100.0
                         if simple_parsed:
-                            simple_sim_parsed = fuzz.ratio(simple_query, simple_alias) / 100.0
+                            simple_sim_parsed = fuzz.ratio(simple_parsed, simple_alias) / 100.0
                             simple_sim = max(simple_sim_result, simple_sim_parsed)
                         else:
                             simple_sim = simple_sim_result
@@ -604,10 +609,13 @@ def filter_results(
                     # Apply same acronym handling for API aliases
                     if final_alias_sim < 0.8:
                         simple_api_alias = re.sub(r'[^a-z0-9]', '', normalized_api_alias)
-                        # Compare query vs API alias for acronym handling, not result vs API alias
-                        simple_sim_result = fuzz.ratio(simple_query, simple_api_alias) / 100.0
+                        # Compare the actual result/parsed title against the API alias — see the
+                        # matching_aliases loop above for why comparing the query against the alias
+                        # itself is wrong (it lets any alias identical to the query pass regardless
+                        # of the scraped result's actual title).
+                        simple_sim_result = fuzz.ratio(simple_result, simple_api_alias) / 100.0
                         if simple_parsed:
-                            simple_sim_parsed = fuzz.ratio(simple_query, simple_api_alias) / 100.0
+                            simple_sim_parsed = fuzz.ratio(simple_parsed, simple_api_alias) / 100.0
                             simple_sim = max(simple_sim_result, simple_sim_parsed)
                         else:
                             simple_sim = simple_sim_result
