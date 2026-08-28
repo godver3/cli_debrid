@@ -576,14 +576,62 @@ def process_pending_playback_repairs():
             )
             item = _media_item(repair['cli_debrid_id'])
             if repair['status'] == 'awaiting_candidate':
+                if not item:
+                    _schedule(repair['id'], 'item_missing', 300)
+                    continue
+                # This row's own candidate lifecycle isn't the only writer of
+                # the item's filled_by_torrent_id — the main repair sweep
+                # (_run_repair_inner) can independently submit and accept a
+                # fresh candidate for the same broken entry on its own
+                # schedule, racing this row's rejection/retry cycle. If the
+                # item already sits on real (non-original, non-excluded)
+                # content by the time this row is claimed, something else
+                # already fixed it — searching for yet another candidate here
+                # would submit a redundant duplicate NZB for a file that's
+                # already collected. Finalize instead, same as the existing
+                # 'superseded externally' handling below for the
+                # awaiting_collection stage.
+                current_source = _source_uuid(item).lower()
+                already_fixed = (
+                    item.get('state') == 'Collected'
+                    and current_source
+                    and current_source != (repair['old_info_hash'] or '').lower()
+                )
+                if already_fixed:
+                    conn = get_db_connection()
+                    try:
+                        replacement_title = (
+                            item.get('filled_by_title') or item.get('debrid_folder_name') or
+                            item.get('filled_by_file') or current_source
+                        )
+                        if repair.get('activity_id'):
+                            conn.execute(
+                                """UPDATE nzb_repair_activity SET replacement_nzb_id=?,replacement_title=?,
+                                   outcome='replaced',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                                (current_source, replacement_title, repair['activity_id']),
+                            )
+                        conn.execute(
+                            """UPDATE nzb_playback_repairs SET status='complete',completed_at=CURRENT_TIMESTAMP,
+                               cleanup_status='pending',
+                               cleanup_first_pending_at=COALESCE(cleanup_first_pending_at,CURRENT_TIMESTAMP),
+                               next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
+                               last_error='superseded_externally',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                            (repair['id'],),
+                        )
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    log.warning(
+                        '[NZBPlayback] Item %s already Collected on %s by the time repair=%s was claimed for '
+                        'candidate search — finalizing as replaced instead of submitting a duplicate',
+                        repair['cli_debrid_id'], current_source, repair['id'],
+                    )
+                    continue
                 # The last accepted candidate was itself verified broken. Reuse
                 # the exact same scrape/submit/exclude pipeline that produced
                 # the first candidate to keep searching until a healthy
                 # replacement is found, instead of stalling here forever —
                 # nothing else in this module reads this status.
-                if not item:
-                    _schedule(repair['id'], 'item_missing', 300)
-                    continue
                 from usenet.repair_engine import find_and_submit_playback_candidate
                 outcome = find_and_submit_playback_candidate(repair, item)
                 log.info(
