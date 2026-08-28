@@ -93,10 +93,13 @@ class TestRemoveNzbExact(unittest.TestCase):
         self.assertEqual([url for url, _ in calls], [browse, queue])
 
     def test_200_is_success(self):
-        url = 'http://x:8383/api/browse/torrents/live-hash'
-        m, _ = _load(status_map={url: 200})
+        browse = 'http://x:8383/api/browse/torrents/live-hash'
+        queue = 'http://x:8383/api/torrents'
+        m, calls = _load(status_map={browse: 200})
         client = m.CliMountClient()
         self.assertTrue(client.remove_nzb_exact('live-hash'))
+        self.assertEqual([url for url, _ in calls], [browse, queue])
+        self.assertEqual(calls[1][1]['params'], {'hashes': 'live-hash'})
 
     def test_500_is_failure(self):
         url = 'http://x:8383/api/browse/torrents/broken-hash'
@@ -137,12 +140,14 @@ class TestRemoveNzb(unittest.TestCase):
         self.assertFalse(client.remove_nzb('stale-hash'))
         self.assertEqual([url for url, _ in calls], [browse, queue])
 
-    def test_primary_success_does_not_touch_queue_fallback(self):
+    def test_primary_success_also_deletes_queue(self):
         browse = 'http://x:8383/api/browse/torrents/live-hash'
+        queue = 'http://x:8383/api/torrents'
         m, calls = _load(status_map={browse: 204})
         client = m.CliMountClient()
         self.assertTrue(client.remove_nzb('live-hash'))
-        self.assertEqual([url for url, _ in calls], [browse])
+        self.assertEqual([url for url, _ in calls], [browse, queue])
+        self.assertEqual(calls[1][1]['params'], {'hashes': 'live-hash'})
 
     def test_primary_500_falls_back_to_queue_delete(self):
         primary = 'http://x:8383/api/browse/torrents/broken-hash'

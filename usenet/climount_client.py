@@ -72,6 +72,25 @@ def _delete_status(url, **kwargs):
 
 
 
+def _delete_queue_job(base_url: str, info_hash: str, headers: Dict[str, str]) -> bool:
+    """Best-effort queue.db cleanup for a job UUID."""
+    if not info_hash:
+        return False
+    status, exc = _delete_status(
+        f'{base_url}/api/torrents',
+        params={'hashes': info_hash},
+        headers=headers,
+        timeout=15,
+    )
+    if status in (200, 204, 404):
+        return True
+    if status is not None:
+        logging.debug(f'[cli_mount] queue delete for {info_hash} returned HTTP {status}')
+    else:
+        logging.debug(f'[cli_mount] queue delete for {info_hash} failed: {exc}')
+    return False
+
+
 class CliMountClient:
     """Submits NZB URLs to cli_mount and polls for completion."""
 
@@ -347,9 +366,11 @@ class CliMountClient:
 
     def remove_nzb(self, info_hash: str, entry_name: str = '') -> bool:
         """
-        Delete a completed NZB entry from cli_mount — removes from entries.db AND mount.
+        Delete a completed NZB entry from cli_mount — removes from entries.db, mount,
+        and queue.db.
         Uses DELETE /api/browse/torrents/{hash} which calls manager.DeleteEntry()
-        and removes the entry from storage and the filesystem mount.
+        and removes the entry from storage and the filesystem mount, then deletes
+        the matching queue row via /api/torrents?hashes=.
         Falls back to queue-only DELETE /api/torrents?hashes= if browse delete fails.
         Returns True if removed (or already gone), False on error.
         """
@@ -364,6 +385,7 @@ class CliMountClient:
             )
             if status in (200, 204):
                 logging.info(f'[cli_mount] Removed NZB entry {info_hash} from storage and mount')
+                _delete_queue_job(self.base_url, info_hash, self._headers())
                 _mark_job_deleted(info_hash)
                 return True
             if status == 404:
@@ -416,6 +438,7 @@ class CliMountClient:
                             )
                             if status in (200, 204, 404):
                                 logging.info(f'[cli_mount] Removed NZB by name search: {entry_name!r}')
+                                _delete_queue_job(self.base_url, h, self._headers())
                                 _mark_job_deleted(h)
                                 if info_hash:
                                     _mark_job_deleted(info_hash)
@@ -462,6 +485,7 @@ class CliMountClient:
             headers=self._headers(), timeout=15,
         )
         if status in (200, 204):
+            _delete_queue_job(self.base_url, info_hash, self._headers())
             _mark_job_deleted(info_hash)
             return True
         if status == 404:
