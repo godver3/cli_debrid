@@ -82,7 +82,11 @@ def _delete_queue_job(base_url: str, info_hash: str, headers: Dict[str, str]) ->
         headers=headers,
         timeout=15,
     )
-    if status in (200, 204, 404):
+    if status in (200, 204):
+        logging.info(f'[cli_mount] Removed queue job {info_hash} after mount/storage delete')
+        return True
+    if status == 404:
+        logging.debug(f'[cli_mount] Queue job {info_hash} already absent after mount delete')
         return True
     if status is not None:
         logging.debug(f'[cli_mount] queue delete for {info_hash} returned HTTP {status}')
