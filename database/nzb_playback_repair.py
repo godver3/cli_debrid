@@ -1080,3 +1080,122 @@ def retry_deferred_playback_cleanups():
             conn.commit()
         finally:
             conn.close()
+
+
+def _playback_stage_label(repair: dict) -> str:
+    """Human-readable stage for Debrid Manager in-flight repairs."""
+    status = repair.get('status') or ''
+    last_error = (repair.get('last_error') or '').lower()
+    if status == 'awaiting_candidate':
+        if repair.get('candidate_search_stuck_since'):
+            return 'Searching (slow backoff)'
+        attempts = repair.get('candidate_search_attempts') or 0
+        if attempts:
+            return f'Searching for replacement ({attempts} tries)'
+        return 'Searching for replacement'
+    if status == 'awaiting_collection':
+        if repair.get('candidate_info_hash'):
+            if any(token in last_error for token in (
+                'http', 'timeout', 'verification', '500', '409', 'repair_busy', 'read timed out',
+            )):
+                return 'Pending verification (retrying)'
+            return 'Verifying replacement'
+        return 'Waiting for download'
+    if status == 'awaiting_verification':
+        return 'Pending verification'
+    if status == 'verified':
+        return 'Verified — cleaning up old file'
+    if status == 'cleanup_complete':
+        return 'Finishing cleanup'
+    return status.replace('_', ' ').title()
+
+
+def list_active_playback_repairs() -> list:
+    """Return open playback-repair rows joined with item/activity context."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """SELECT r.*,
+                      m.filled_by_title AS item_title,
+                      m.season_number,
+                      m.episode_number,
+                      m.state AS item_state,
+                      m.filled_by_torrent_id,
+                      m.filled_by_title,
+                      a.outcome AS activity_outcome
+               FROM nzb_playback_repairs r
+               LEFT JOIN media_items m ON m.id = r.cli_debrid_id
+               LEFT JOIN nzb_repair_activity a ON a.id = r.activity_id
+               WHERE r.status != 'complete'
+               ORDER BY r.updated_at DESC"""
+        ).fetchall()
+        out = []
+        for raw in rows:
+            repair = dict(raw)
+            item = _media_item(repair['cli_debrid_id'])
+            if item:
+                repair['item_title'] = item.get('title') or repair.get('item_title') or item.get('filled_by_title')
+                repair.setdefault('season_number', item.get('season_number'))
+                repair.setdefault('episode_number', item.get('episode_number'))
+            repair['stage_label'] = _playback_stage_label(repair)
+            out.append(repair)
+        return out
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock(max_attempts=4, initial_wait=0.1, backoff_factor=2)
+def cancel_playback_repair(repair_id: int, *, move_to_wanted: bool = False) -> dict:
+    """Stop an in-flight playback repair immediately.
+
+    move_to_wanted=False keeps the item on whatever source it currently has.
+    move_to_wanted=True blacklists the broken/candidate sources and resets the
+    item to Wanted for a fresh scrape (same cleanup path as manual retry).
+    """
+    conn = get_db_connection()
+    repair = None
+    try:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute(
+            "SELECT * FROM nzb_playback_repairs WHERE id=? AND status!='complete'",
+            (int(repair_id),),
+        ).fetchone()
+        if not row:
+            conn.rollback()
+            return {'outcome': 'error', 'message': 'Repair not found or already complete'}
+        repair = dict(row)
+        cancel_reason = 'cancelled_to_wanted' if move_to_wanted else 'cancelled_by_user'
+        conn.execute(
+            """UPDATE nzb_playback_repairs
+               SET status='complete',completed_at=CURRENT_TIMESTAMP,
+                   next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
+                   last_error=?,updated_at=CURRENT_TIMESTAMP
+               WHERE id=?""",
+            (cancel_reason, repair['id']),
+        )
+        if repair.get('activity_id') and not move_to_wanted:
+            conn.execute(
+                """UPDATE nzb_repair_activity
+                   SET outcome='cancelled',updated_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (repair['activity_id'],),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        log.exception('[NZBPlayback] Failed to cancel repair %s', repair_id)
+        raise
+    finally:
+        conn.close()
+
+    log.info(
+        '[NZBPlayback] Cancelled repair=%s item=%s move_to_wanted=%s',
+        repair['id'], repair['cli_debrid_id'], move_to_wanted,
+    )
+
+    if move_to_wanted:
+        from usenet.repair_engine import reset_item_to_wanted_from_repair
+        return reset_item_to_wanted_from_repair(repair)
+
+    return {'outcome': 'ok', 'message': 'Repair cancelled'}
+

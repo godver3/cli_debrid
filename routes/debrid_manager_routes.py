@@ -5453,6 +5453,35 @@ def usenet_retry_exhausted():
         return jsonify(success=False, error=str(e))
 
 
+@debrid_manager_bp.route('/api/usenet/repair/in_flight')
+def usenet_repair_in_flight():
+    """Return active playback-repair rows (verification, candidate search, etc.)."""
+    try:
+        from database.nzb_playback_repair import list_active_playback_repairs
+        items = list_active_playback_repairs()
+        return jsonify(success=True, items=items, count=len(items))
+    except Exception as e:
+        logging.error(f'[UsenetRepair] in_flight error: {e}', exc_info=True)
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/usenet/repair/cancel', methods=['POST'])
+def usenet_repair_cancel():
+    """Cancel an in-flight playback repair. action=cancel|wanted."""
+    try:
+        body = request.get_json(silent=True) or {}
+        repair_id = body.get('repair_id')
+        action = (body.get('action') or 'cancel').strip().lower()
+        if not repair_id:
+            return jsonify(success=False, error='repair_id required'), 400
+        from database.nzb_playback_repair import cancel_playback_repair
+        result = cancel_playback_repair(int(repair_id), move_to_wanted=(action == 'wanted'))
+        return jsonify(success=result.get('outcome') == 'ok', result=result)
+    except Exception as e:
+        logging.error(f'[UsenetRepair] cancel error: {e}', exc_info=True)
+        return jsonify(success=False, error=str(e))
+
+
 @debrid_manager_bp.route('/api/usenet/repair/run', methods=['POST'])
 def usenet_run_repair():
     """Kick off a repair run in background. Accepts optional version_override in JSON body."""

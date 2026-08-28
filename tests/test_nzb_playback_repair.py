@@ -774,6 +774,19 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         targets = _json_module.loads(repair['cleanup_targets_json'])
         self.assertEqual(targets[0]['status'], 'complete')
 
+    def test_cancel_playback_repair_stops_worker(self):
+        playback.begin_playback_repair(self.item, self.target)
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        result = playback.cancel_playback_repair(repair['id'], move_to_wanted=False)
+        self.assertEqual(result['outcome'], 'ok')
+        with self.connect() as conn:
+            row = conn.execute('SELECT * FROM nzb_playback_repairs WHERE id=?', (repair['id'],)).fetchone()
+            activity = conn.execute('SELECT * FROM nzb_repair_activity WHERE id=?', (repair['activity_id'],)).fetchone()
+        self.assertEqual(row['status'], 'complete')
+        self.assertEqual(row['last_error'], 'cancelled_by_user')
+        self.assertEqual(activity['outcome'], 'cancelled')
+
 
 if __name__ == '__main__':
     unittest.main()
