@@ -89,7 +89,7 @@ def log_repair_activity(
 ) -> None:
     """outcome: 'replaced' | 'not_found' | 'no_replacement' | 'submission_failed' |
                 'plex_deleted' | 'error' | 'skipped_backoff' | 'skipped_max_attempts' |
-                'manual_retry'"""
+                'skipped_junk_source' | 'manual_retry'"""
     try:
         from datetime import datetime as _dt
         now = _dt.utcnow().strftime('%Y-%m-%d %H:%M:%S')
@@ -280,12 +280,14 @@ def get_repair_stats(days: int = 30, source: str = None) -> dict:
             'plex_deleted': stats.get('plex_deleted', 0),
             'skipped_backoff': stats.get('skipped_backoff', 0),
             'skipped_max_attempts': stats.get('skipped_max_attempts', 0),
+            'skipped_junk_source': stats.get('skipped_junk_source', 0),
             'error': stats.get('error', 0),
             'total': sum(stats.values()),
         }
     except Exception as e:
         logger.debug(f"[NZBRepair] get_repair_stats error: {e}")
         return {k: 0 for k in ('replaced', 'not_found', 'no_replacement', 'submission_failed',
-                                'plex_deleted', 'skipped_backoff', 'skipped_max_attempts', 'error', 'total')}
+                                'plex_deleted', 'skipped_backoff', 'skipped_max_attempts',
+                                'skipped_junk_source', 'error', 'total')}
     finally:
         conn.close()

@@ -846,6 +846,125 @@ def _bulk_delete_from_plex(items: list) -> dict:
 # Segment blacklisting
 # ---------------------------------------------------------------------------
 
+def _resolve_repair_mount_path(location_on_disk: str) -> str:
+    """Translate a DB location_on_disk path to the in-container mount path."""
+    if not location_on_disk:
+        return ''
+    if location_on_disk.startswith('/debrid/'):
+        mount = get_setting('Usenet Provider', 'mount_path', '/debrid').rstrip('/')
+        return mount + location_on_disk[len('/debrid'):]
+    return location_on_disk
+
+
+def _junk_nzb_source_reason(item: dict, location_on_disk: str) -> Optional[str]:
+    """Return a reason when the on-disk source looks like junk, not a segment repair case.
+
+    Junk must never enter the repair pipeline — no replacement scrape, no submit,
+    and no item state changes from repair (manual rescrape / junk cleanup handles those).
+    """
+    import os as _os_junk
+
+    file_path = _resolve_repair_mount_path(location_on_disk)
+    if not file_path or not _os_junk.path.isfile(file_path):
+        return None
+
+    basename = _os_junk.path.basename(file_path)
+    from debrid.common.utils import is_unwanted_file
+    if is_unwanted_file(basename):
+        return 'sample/trailer filename'
+
+    try:
+        actual_size = _os_junk.path.getsize(file_path)
+    except OSError:
+        return None
+
+    nzb_title = (
+        item.get('original_scraped_torrent_title')
+        or item.get('filled_by_title')
+        or item.get('filled_by_file')
+        or item.get('debrid_folder_name')
+        or ''
+    )
+    from usenet.nzb_size_validation import individual_nzb_size_mismatch
+    mismatch = individual_nzb_size_mismatch(item, nzb_title, actual_size)
+    if mismatch:
+        _actual, _expected, ratio = mismatch
+        return f'size mismatch ({ratio * 100:.1f}% of advertised)'
+
+    folder = _os_junk.path.dirname(file_path)
+    try:
+        from debrid.common.utils import is_video_file, filter_unwanted_video_files
+        video_files = []
+        for name in _os_junk.listdir(folder):
+            path = _os_junk.path.join(folder, name)
+            if _os_junk.path.isfile(path) and is_video_file(name):
+                try:
+                    video_files.append((name, _os_junk.path.getsize(path)))
+                except OSError:
+                    pass
+        if len(video_files) > 1:
+            filtered = filter_unwanted_video_files(video_files)
+            if filtered:
+                max_size = max(sz for _, sz in filtered)
+                if max_size > 0 and actual_size < max_size * 0.05 and actual_size < 500 * 1024 * 1024:
+                    return f'relative junk ({actual_size // (1024 ** 2)} MiB vs folder max {max_size // (1024 ** 3)} GiB)'
+    except OSError:
+        pass
+
+    return None
+
+
+def _is_junk_replacement_result(result: dict) -> bool:
+    """True when a scrape candidate must not be submitted as a repair replacement."""
+    from debrid.common.utils import is_unwanted_file
+    for key in ('title', 'original_title'):
+        if is_unwanted_file(result.get(key) or ''):
+            return True
+    return False
+
+
+def _skip_junk_in_repair(
+    db_items: list,
+    *,
+    info_hash: str,
+    nzb_url: str,
+    entry_name: str,
+    junk_reason: str,
+    triggered_by: str,
+    summary: dict,
+) -> None:
+    """Drop a junk source from the repair pipeline without touching item state."""
+    from database.not_wanted_magnets import add_to_not_wanted
+
+    _broken_segment_id = db_items[0].get('nzb_segment_id', '') if db_items else ''
+    _blacklist_broken_nzb(nzb_url, segment_id=_broken_segment_id)
+    if info_hash:
+        try:
+            add_to_not_wanted(info_hash)
+        except Exception:
+            pass
+
+    rep = db_items[0]
+    log_repair_activity(
+        item_id=rep.get('id'),
+        title=rep.get('title'),
+        media_type=rep.get('type'),
+        season_number=rep.get('season_number'),
+        episode_number=rep.get('episode_number'),
+        broken_nzb_id=info_hash or entry_name,
+        broken_nzb_title=entry_name,
+        replacement_title=junk_reason,
+        outcome='skipped_junk_source',
+        triggered_by=triggered_by,
+    )
+    summary.setdefault('skipped_junk_source', 0)
+    summary['skipped_junk_source'] += 1
+    logger.info(
+        f'[NZBRepair] {entry_name!r} — junk source ({junk_reason}); '
+        f'skipping repair ({len(db_items)} matched item(s), no state change)'
+    )
+
+
 def _blacklist_broken_nzb(nzb_url: str, segment_id: str = '') -> None:
     """Add broken NZB URL/guid and segment ID to not-wanted lists.
     segment_id should be passed from the DB item's nzb_segment_id column —
@@ -906,6 +1025,7 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
         )
 
         nzb_results = [r for r in (results or []) if r.get('protocol') == 'nzb']
+        nzb_results = [r for r in nzb_results if not _is_junk_replacement_result(r)]
 
         # Filter out not-wanted magnets/URLs/guids. Unlike scraping_queue.py's
         # normal scrape path, this repair-specific search never went through
@@ -1149,6 +1269,12 @@ def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
         return 'no_replacement'
 
     for candidate in unique_candidates:
+        if _is_junk_replacement_result(candidate):
+            logger.info(
+                '[NZBPlayback] Skipping junk replacement candidate %r',
+                candidate.get('title'),
+            )
+            continue
         job_id, submitted_title, disposition = _submit_and_confirm_replacement(
             candidate, item.get('title', ''), item=item)
         if disposition in ('failed', 'rejected'):
@@ -1435,6 +1561,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
         'submission_failed': 0,
         'skipped_backoff': 0,
         'skipped_max_attempts': 0,
+        'skipped_junk_source': 0,
         'not_found': 0,
         'errors': 0,
     }
@@ -1616,6 +1743,21 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
 
             summary['matched'] += len(db_items)
 
+            rep = db_items[0]
+            _loc = rep.get('location_on_disk', '') if db_items else ''
+            _junk_reason = _junk_nzb_source_reason(rep, _loc)
+            if _junk_reason:
+                _skip_junk_in_repair(
+                    db_items,
+                    info_hash=info_hash,
+                    nzb_url=nzb_url,
+                    entry_name=entry_name,
+                    junk_reason=_junk_reason,
+                    triggered_by=triggered_by,
+                    summary=summary,
+                )
+                continue
+
             # --- Step 1b: Verify file is actually unreadable before repairing ---
             # cli_mount's NNTP STAT check can produce false positives (server hiccups,
             # temporary routing issues). Read the first 1MB via subprocess with a hard
@@ -1626,7 +1768,6 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             # repair or upgrade (pointing to a different healthy version), the check
             # would incorrectly report the file as readable and skip a real repair.
             # Guard: verify the broken entry name is referenced in location_on_disk.
-            _loc = db_items[0].get('location_on_disk', '') if db_items else ''
             _failure_reason = entry.get('failure_reason', '')
             # Skip readability check when cli_mount explicitly reports usenet_segment_missing
             # — that is a definitive diagnosis, not a transient server hiccup.
@@ -1698,7 +1839,6 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             _blacklist_broken_nzb(nzb_url, segment_id=_broken_segment_id)
 
             # --- Step 4: Scrape for replacement ---
-            rep = db_items[0]
             broken_nzb_title = rep.get('debrid_folder_name') or rep.get('filled_by_file') or entry_name
             candidates = _scrape_for_replacement(rep, broken_nzb_title, version_override=version_override)
 
@@ -1760,6 +1900,14 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             named_title = ''
             candidates_to_try = candidates if playback_target else candidates[:1]
             for candidate in candidates_to_try:
+                if _is_junk_replacement_result(candidate):
+                    logger.info(
+                        '[NZBRepair] Skipping junk replacement candidate %r',
+                        candidate.get('title'),
+                    )
+                    if playback_target:
+                        record_failed_candidate(rep['id'], candidate, '')
+                    continue
                 job_id, submitted_title, candidate_disposition = _submit_and_confirm_replacement(
                     candidate, rep.get('title', ''), item=rep)
                 if playback_target and candidate_disposition in ('failed', 'rejected'):

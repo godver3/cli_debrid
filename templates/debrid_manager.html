@@ -785,6 +785,7 @@
                         <option value="replaced">Replaced</option>
                         <option value="not_found">Not Found</option>
                         <option value="plex_deleted">Plex Deleted</option>
+                        <option value="skipped_junk_source">Junk</option>
                         <option value="error">Error</option>
                     </select>
                     <button onclick="usenetLoadActivity(document.getElementById('usenet-filter-select').value||null)" class="un-btn"><i class="fa-solid fa-rotate" style="color:#e8601c"></i> Refresh</button>
@@ -898,6 +899,7 @@
                         <option value="reinserted">Re-inserted</option>
                         <option value="replaced">Replaced</option>
                         <option value="not_found">Not Found</option>
+                        <option value="skipped_junk_source">Junk</option>
                         <option value="error">Error</option>
                     </select>
                     <button onclick="debridLoadActivity(document.getElementById('dr-filter-select').value||null)" class="un-btn"><i class="fa-solid fa-rotate" style="color:#CE93D8"></i> Refresh</button>
@@ -4504,6 +4506,11 @@ function _buildOutcomeTooltip(r) {
         case 'reinserted':
             lines.push('cli_mount link resolver re-triggered for this entry.');
             break;
+        case 'skipped_junk_source':
+            lines.push('File is junk (trailer/sample/wrong size) — repair skipped intentionally.');
+            lines.push('No replacement scrape, no provider submit, and no item state change.');
+            if (r.replacement_title) lines.push('Reason: ' + r.replacement_title);
+            break;
         case 'skipped_max_attempts':
             if (r.current_replacement_title) {
                 lines.push('Maximum repair attempts were reached, but the item has since been resolved (retried or fixed another way).');
@@ -4559,17 +4566,25 @@ function _usenetRenderActivity(rows, container, pagination) {
     rows.forEach((r, idx) => {
         const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
         const resolvedElsewhere = (r.outcome === 'manual_retry' || r.outcome === 'skipped_max_attempts') && !!r.current_replacement_title;
-        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'replacement_pending' ? '#ffaa44' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : resolvedElsewhere ? '#00d4aa' : r.outcome === 'manual_retry' ? '#4488ff' : '#ff4444';
-        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : (resolvedElsewhere && r.outcome === 'manual_retry') ? 'Retry Succeeded' : (resolvedElsewhere && r.outcome === 'skipped_max_attempts') ? 'Resolved' : r.outcome === 'manual_retry' ? 'Retrying…' : r.outcome === 'skipped_max_attempts' ? 'Max Attempts' : (r.outcome || '—');
+        const isJunk = r.outcome === 'skipped_junk_source';
+        const outcomeColor = isJunk ? '#888'
+            : r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'replacement_pending' ? '#ffaa44' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : resolvedElsewhere ? '#00d4aa' : r.outcome === 'manual_retry' ? '#4488ff' : '#ff4444';
+        const outcomeLabel = isJunk ? 'Junk'
+            : r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : (resolvedElsewhere && r.outcome === 'manual_retry') ? 'Retry Succeeded' : (resolvedElsewhere && r.outcome === 'skipped_max_attempts') ? 'Resolved' : r.outcome === 'manual_retry' ? 'Retrying…' : r.outcome === 'skipped_max_attempts' ? 'Max Attempts' : (r.outcome || '—');
         const outcomeTooltip = _buildOutcomeTooltip(r);
         const epSub = r.season_number ? `<br><span style="font-size:11px;color:#888">S${String(r.season_number).padStart(2,'0')}E${String(r.episode_number||0).padStart(2,'0')}</span>` : '';
         const activityTime = r.updated_at || r.created_at;
         const ts = activityTime ? new Date(activityTime + (activityTime.endsWith('Z') ? '' : 'Z')).toLocaleString() : '—';
         const brokenTitle = r.broken_nzb_title || r.broken_nzb_id || '—';
-        const replTitle = resolvedElsewhere && r.current_replacement_title
+        const replTitle = isJunk
+            ? null
+            : (resolvedElsewhere && r.current_replacement_title
             ? r.current_replacement_title
-            : (r.replacement_title && r.replacement_title !== '—') ? r.replacement_title : null;
-        const candidateCell = _renderActivityCandidateCell(brokenTitle, replTitle, r.broken_nzb_id);
+            : (r.replacement_title && r.replacement_title !== '—') ? r.replacement_title : null);
+        const candidateCell = isJunk
+            ? `<div style="font-size:12px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(brokenTitle)}">${_esc(brokenTitle)} ${_renderActivityBadge(r.broken_nzb_id)}</div>`
+              + (r.replacement_title ? `<div style="font-size:11px;color:#666;margin-top:3px" title="${_esc(r.replacement_title)}">Junk: ${_esc(r.replacement_title)}</div>` : '')
+            : _renderActivityCandidateCell(brokenTitle, replTitle, r.broken_nzb_id);
         const retryBtn = (r.outcome === 'skipped_max_attempts' && !resolvedElsewhere)
             ? `<button class="dm-btn dm-btn-secondary dm-btn-xs" style="margin-left:8px"
                        data-item-id="${_esc(r.item_id)}" data-broken-id="${_esc(r.broken_nzb_id || '')}"
@@ -5256,11 +5271,14 @@ function _debridRenderActivity(rows, container, pagination) {
 
     rows.forEach((r, idx) => {
         const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
-        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa'
+        const isJunk = r.outcome === 'skipped_junk_source';
+        const outcomeColor = isJunk ? '#888'
+            : r.outcome === 'replaced' ? '#00d4aa'
             : r.outcome === 'reinserted' ? '#a78bfa'
             : r.outcome === 'not_found'  ? '#ffaa44'
             : '#ff4444';
-        const outcomeLabel = r.outcome === 'replaced'   ? 'Replaced'
+        const outcomeLabel = isJunk ? 'Junk'
+            : r.outcome === 'replaced'   ? 'Replaced'
             : r.outcome === 'reinserted' ? 'Re-inserted'
             : r.outcome === 'not_found'  ? 'Not Found'
             : (r.outcome || '—');
@@ -5272,8 +5290,11 @@ function _debridRenderActivity(rows, container, pagination) {
             ? new Date(r.created_at + (r.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString()
             : '—';
         const brokenTitle = r.broken_nzb_title || r.broken_nzb_id || '—';
-        const replTitle = (r.replacement_title && r.replacement_title !== '—') ? r.replacement_title : null;
-        const candidateCell = _renderActivityCandidateCell(brokenTitle, replTitle, r.broken_nzb_id);
+        const replTitle = isJunk ? null : ((r.replacement_title && r.replacement_title !== '—') ? r.replacement_title : null);
+        const candidateCell = isJunk
+            ? `<div style="font-size:12px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(brokenTitle)}">${_esc(brokenTitle)} ${_renderActivityBadge(r.broken_nzb_id)}</div>`
+              + (r.replacement_title ? `<div style="font-size:11px;color:#666;margin-top:3px" title="${_esc(r.replacement_title)}">Junk: ${_esc(r.replacement_title)}</div>` : '')
+            : _renderActivityCandidateCell(brokenTitle, replTitle, r.broken_nzb_id);
         html += `<tr style="border-bottom:1px solid var(--border-color,#2a2a2a);background:${bg};">
             <td style="padding:8px 12px;white-space:nowrap;font-family:monospace;font-size:11px;color:var(--text-secondary,#888)">${ts}</td>
             <td style="padding:8px 12px;font-weight:500;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(r.title || '—')}${epSub}</td>
