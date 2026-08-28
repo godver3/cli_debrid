@@ -41,6 +41,32 @@ class TestBlacklistAndCleanupNzbFailure(unittest.TestCase):
             )
             self.assertIsNone(item['filled_by_torrent_id'])
 
+    def test_preserves_existing_rescrape_original_torrent_title(self):
+        item = {
+            'id': 99,
+            'filled_by_torrent_id': 'nzb:fresh123',
+            'filled_by_magnet': 'https://indexer/getnzb/fresh.nzb',
+            'nzb_segment_id': 'seg@fresh',
+            'rescrape_original_torrent_title': 'Old.Pack.Title.S04.1080p-REMUX',
+            'original_scraped_torrent_title': 'Fresh.Episode.S04E02.1080p-WEB',
+            'filled_by_file': 'Fresh.Episode.S04E02.1080p-WEB.mkv',
+        }
+        with patch('database.not_wanted_magnets.add_to_not_wanted_nzb_guid'), \
+             patch('database.not_wanted_magnets.add_to_not_wanted_nzb_segment'), \
+             patch('database.not_wanted_magnets.add_to_not_wanted'), \
+             patch('queues.run_program.clear_nzb_job_health_cache'), \
+             patch('database.database_writing.update_media_item') as mock_update:
+            from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+            blacklist_and_cleanup_nzb_failure(item, 'ffprobe reject')
+
+            mock_update.assert_called_once()
+            update_kwargs = mock_update.call_args[1]
+            self.assertNotIn('rescrape_original_torrent_title', update_kwargs)
+            self.assertEqual(
+                item['rescrape_original_torrent_title'],
+                'Old.Pack.Title.S04.1080p-REMUX',
+            )
+
 
 if __name__ == '__main__':
     unittest.main()

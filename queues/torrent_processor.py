@@ -28,7 +28,7 @@ from debrid.common import (
 from debrid.status import TorrentStatus
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls, is_magnet_not_wanted
 from utilities.settings import get_setting
-from utilities.rescrape_helpers import rescrape_blocks_pack_reuse
+from utilities.rescrape_helpers import rescrape_blocks_any_pack_reuse, rescrape_blocks_pack_reuse
 
 class TorrentProcessingError(Exception):
     """Base exception for torrent processing errors"""
@@ -531,6 +531,8 @@ class TorrentProcessor:
         """
         if not item or item.get('type') != 'episode':
             return None
+        if rescrape_blocks_any_pack_reuse(item):
+            return None
         _imdb = item.get('imdb_id')
         _season = item.get('season_number')
         if not _imdb or _season is None:
@@ -830,7 +832,7 @@ class TorrentProcessor:
         # Equivalent of debrid's _all_torrent_ids check: if another episode of the same
         # show/season already has an NZB job (in any active or completed state), reuse it
         # instead of submitting a duplicate season pack NZB.
-        if item and item.get('type') == 'episode':
+        if item and item.get('type') == 'episode' and not rescrape_blocks_any_pack_reuse(item):
             _imdb = item.get('imdb_id')
             _season = item.get('season_number')
             _parsed = result.get('parsed_info', {}) or {}

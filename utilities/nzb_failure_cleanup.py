@@ -124,7 +124,7 @@ def blacklist_and_cleanup_nzb_failure(
         for key in update_kwargs:
             item[key] = None
 
-    if set_rescrape_title:
+    if set_rescrape_title and not item.get('rescrape_original_torrent_title'):
         bad_title = (
             item.get('original_scraped_torrent_title')
             or item.get('filled_by_title')
