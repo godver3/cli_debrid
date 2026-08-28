@@ -123,6 +123,42 @@ def queue_plex_removal_for_item(item_db_data, file_management, item_id):
             cache_plex_removal(item_db_data['title'], path_to_remove, item_db_data.get('episode_title'))
         logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Symlinked/Local mode with Plex URL). Path: {path_to_remove}")
 
+
+def sync_queues_after_rescrape(item_ids):
+    """Drop rescrapped items from in-memory queues immediately after the DB reset.
+
+    Bulk rescrape only updates SQLite; without this, Checking/Adding can keep
+    processing stale filled_by_* fields until task_update_queue_views runs (~30s),
+    and sibling pack reuse can re-bind the old torrent on the very next tick.
+    """
+    if not item_ids:
+        return
+    id_set = {int(i) for i in item_ids}
+    try:
+        from routes.program_operation_routes import get_program_runner
+        runner = get_program_runner()
+        if not runner or not getattr(runner, 'queue_manager', None):
+            return
+        qm = runner.queue_manager
+        for queue_name in ('Checking', 'Adding', 'Scraping'):
+            queue = qm.queues.get(queue_name)
+            if not queue or not hasattr(queue, 'items'):
+                continue
+            for mem_item in list(queue.items):
+                if mem_item.get('id') in id_set:
+                    if hasattr(queue, 'remove_item'):
+                        queue.remove_item(mem_item)
+                    else:
+                        queue.items = [i for i in queue.items if i.get('id') not in id_set]
+        adding_queue = qm.queues.get('Adding')
+        if adding_queue and hasattr(adding_queue, '_nzb_submitted_ids'):
+            adding_queue._nzb_submitted_ids -= id_set
+        if hasattr(runner, 'task_update_queue_views'):
+            runner.task_update_queue_views()
+        logging.info(f"Rescrape: Synced in-memory queues after reset for item IDs: {sorted(id_set)}")
+    except Exception as exc:
+        logging.warning(f"Rescrape: Post-rescrape queue sync failed: {exc}")
+
 def get_item_size_gb(location_on_disk, original_path_for_symlink):
     file_path_to_check = None
     if original_path_for_symlink:
@@ -1298,6 +1334,8 @@ def bulk_queue_action():
                                    debrid_folder_name = NULL,
                                    scrape_results = NULL,
                                    nzb_segment_id = NULL,
+                                   real_debrid_original_title = NULL,
+                                   location_basename = NULL,
                                    {RESET_COLLECTION_STATE_SQL},
                                    rescrape_original_torrent_title = {rescrape_title_case_final_sql},
                                    original_scraped_torrent_title = NULL,
@@ -1317,6 +1355,7 @@ def bulk_queue_action():
                             conn_rescape_batch.commit()
                             total_processed += rows_affected_by_update
                             logging.info(f"Rescrape: Successfully committed DB update for {rows_affected_by_update} items for batch {i//batch_size + 1}.")
+                            sync_queues_after_rescrape(item_ids_for_update_clause)
                         else:
                             conn_rescape_batch.rollback()
                             mismatch_error_msg = f"Rescrape DB Update: Expected to affect {len(item_ids_for_update_clause)} items, but DB reported {rows_affected_by_update}. Rolled back changes for this group of items in batch {i//batch_size + 1}."
@@ -1653,6 +1692,8 @@ def rescrape_single_item(item_id):
                    debrid_folder_name = NULL,
                    scrape_results = NULL,
                    nzb_segment_id = NULL,
+                   real_debrid_original_title = NULL,
+                   location_basename = NULL,
                    {RESET_COLLECTION_STATE_SQL},
                    rescrape_original_torrent_title = ?,
                    original_scraped_torrent_title = NULL,
@@ -1671,6 +1712,7 @@ def rescrape_single_item(item_id):
 
         conn.commit()
         logging.info(f"Rescrape: Successfully reset item {item_id} to Wanted.")
+        sync_queues_after_rescrape([item_id])
         return {'success': True}
 
     except sqlite3.OperationalError as e:

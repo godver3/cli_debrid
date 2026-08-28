@@ -4,6 +4,7 @@ and addition to debrid service accounts.
 """
 
 import logging
+import re
 import time
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
@@ -27,6 +28,7 @@ from debrid.common import (
 from debrid.status import TorrentStatus
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls, is_magnet_not_wanted
 from utilities.settings import get_setting
+from utilities.rescrape_helpers import rescrape_blocks_pack_reuse
 
 class TorrentProcessingError(Exception):
     """Base exception for torrent processing errors"""
@@ -549,6 +551,8 @@ class TorrentProcessor:
         def _try_reuse(torrent_id: str, check_title: str, magnet: Optional[str]) -> Optional[Tuple]:
             if not _is_pack_title(check_title):
                 return None
+            if rescrape_blocks_pack_reuse(item, check_title):
+                return None
             from utilities.session_bad_torrents import is_torrent_known_unplayable
             for provider in self._providers:
                 try:
@@ -858,6 +862,8 @@ class TorrentProcessor:
                         _mem_job = _mem_item.get('filled_by_torrent_id')
                         _mem_id = _mem_job[4:] if _mem_job and _mem_job.startswith('nzb:') else _mem_job
                         if _mem_is_pack:
+                            if rescrape_blocks_pack_reuse(item, _mem_check_title):
+                                continue
                             # Verify the shared pack job is still actually queryable on the
                             # provider before reusing it - a job that completed and was since
                             # cleaned up (or never existed) will ghost every retry forever if
@@ -921,18 +927,21 @@ class TorrentProcessor:
                         # in-memory check above. Defaulting True here risks the same wrong-job-reuse.
                         _sibling_is_pack = bool(_sibling_check_title) and not _re_dedup.search(r'[Ss]\d{2}[Ee]\d{2}', _sibling_check_title)
                         if _sibling_is_pack:
-                            # Verify the shared pack job is still actually queryable on the
-                            # provider before reusing it - a job that completed and was since
-                            # cleaned up (or never existed) will ghost every retry forever if
-                            # reused blindly, since nothing else ever re-checks it afterward.
-                            try:
-                                from usenet.climount_client import is_nzb_job_alive as _is_job_alive
-                                _sib_job_hash = _sibling[0][4:] if _sibling[0].startswith('nzb:') else _sibling[0]
-                                if not _is_job_alive(_sib_job_hash):
-                                    logging.warning(f'[{item_identifier}] Sibling job {_sibling[0]} no longer alive on provider - not reusing, submitting fresh')
-                                    _sibling_is_pack = False
-                            except Exception:
-                                pass  # unknown due to error - don't block a legitimate reuse
+                            if rescrape_blocks_pack_reuse(item, _sibling_check_title):
+                                _sibling_is_pack = False
+                            else:
+                                # Verify the shared pack job is still actually queryable on the
+                                # provider before reusing it - a job that completed and was since
+                                # cleaned up (or never existed) will ghost every retry forever if
+                                # reused blindly, since nothing else ever re-checks it afterward.
+                                try:
+                                    from usenet.climount_client import is_nzb_job_alive as _is_job_alive
+                                    _sib_job_hash = _sibling[0][4:] if _sibling[0].startswith('nzb:') else _sibling[0]
+                                    if not _is_job_alive(_sib_job_hash):
+                                        logging.warning(f'[{item_identifier}] Sibling job {_sibling[0]} no longer alive on provider - not reusing, submitting fresh')
+                                        _sibling_is_pack = False
+                                except Exception:
+                                    pass  # unknown due to error - don't block a legitimate reuse
                         if (_is_pack and _sibling_is_pack) or (not _is_pack and _sibling_is_pack):
                             _existing_job = _sibling[0]
                             # Job-level check, not per-file — see matching comment in the
