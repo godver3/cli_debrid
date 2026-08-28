@@ -280,12 +280,14 @@ class CliMountClient:
             logging.warning(f'[cli_mount] _list_nzb_folder_files error for {folder_name!r}: {exc}')
         return []
 
-    def get_nzb_file_info(self, job_name: str, season: int = None, episode: int = None, fast_check: bool = False) -> Optional[Tuple[str, str]]:
+    def get_nzb_file_info(self, job_name: str, season: int = None, episode: int = None,
+                          fast_check: bool = False, include_size: bool = False):
         """
         Find the downloaded folder and best-matching video file for a completed NZB job.
         If season/episode are provided, picks the file matching that episode.
         Otherwise picks the largest video file.
-        Returns (folder_name, video_filename) or None if not found.
+        Returns (folder_name, video_filename) or None if not found. When
+        include_size=True, returns (folder_name, video_filename, size_bytes).
         """
         def _norm(s):
             return re.sub(r'[^a-z0-9]', '', s.lower())
@@ -301,7 +303,7 @@ class CliMountClient:
             video_files = self._list_nzb_folder_files(folder_name)
             if not video_files:
                 logging.warning(f'[cli_mount] No video files in folder {folder_name!r}')
-                return folder_name, None
+                return (folder_name, None, None) if include_size else (folder_name, None)
 
             from debrid.common import filter_unwanted_video_files
             video_files = filter_unwanted_video_files(video_files)
@@ -313,17 +315,20 @@ class CliMountClient:
                     rf'[Ss]{season:02d}[Ee]{episode:02d}(?![0-9])',
                     re.IGNORECASE
                 )
-                for name, _ in video_files:
+                for name, size in video_files:
                     if ep_pat.search(name):
-                        best_file = name
+                        best_file = (name, size)
                         break
 
             # Fallback: largest file
             if not best_file:
-                best_file = max(video_files, key=lambda x: x[1])[0]
+                best_file = max(video_files, key=lambda x: x[1])
 
-            logging.info(f'[cli_mount] get_nzb_file_info: folder={folder_name!r} file={best_file!r}')
-            return folder_name, best_file
+            best_name, best_size = best_file
+            logging.info(f'[cli_mount] get_nzb_file_info: folder={folder_name!r} file={best_name!r}')
+            if include_size:
+                return folder_name, best_name, best_size
+            return folder_name, best_name
 
         except Exception as exc:
             logging.warning(f'[cli_mount] get_nzb_file_info error for {job_name!r}: {exc}')

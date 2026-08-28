@@ -3368,7 +3368,7 @@ class ProgramRunner:
                 try:
                     status = _nzb_client.get_job_status(job_id)
                     if not status:
-                        return job_id, None, None, None
+                        return job_id, None, None, None, None
                     raw = status.get('raw', {})
                     raw_progress = raw.get('progress', status.get('progress', 0))
                     progress = int(float(raw_progress) * 100)
@@ -3382,6 +3382,7 @@ class ProgramRunner:
                     elif status.get('state') == 'completed':
                         progress = 100
                     entry_name = None
+                    actual_file_size = None
                     if progress == 100:
                         # If raw is empty the job isn't in cli_mount's queue.
                         # Wait a few ticks before declaring ghost — a brand-new submission
@@ -3408,9 +3409,11 @@ class ProgramRunner:
                             nzb_title = items_for_job[0].get('filled_by_file', '') or items_for_job[0].get('original_scraped_torrent_title', '')
                             search_name = nzb_title or job_id
                             try:
-                                result = _nzb_client.get_nzb_file_info(search_name, fast_check=True)
+                                result = _nzb_client.get_nzb_file_info(
+                                    search_name, fast_check=True, include_size=True
+                                )
                                 if result:
-                                    entry_name, _ = result
+                                    entry_name, _, actual_file_size = result
                             except Exception:
                                 pass
                         if not entry_name and progress == 100:
@@ -3426,9 +3429,9 @@ class ProgramRunner:
                                 progress = 99
                         elif progress == 100:
                             _job_folder_wait_counts.pop(job_id, None)
-                    return job_id, progress, entry_name, None
+                    return job_id, progress, entry_name, actual_file_size, None
                 except Exception as exc:
-                    return job_id, None, None, exc
+                    return job_id, None, None, None, exc
 
             # Option 3: cap workers at 5, per-job timeout
             _job_results = {}
@@ -3437,8 +3440,8 @@ class ProgramRunner:
                 try:
                     for _fut in _ac(_futures, timeout=self._NZB_HEALTH_JOB_TIMEOUT * len(_unique_jobs)):
                         try:
-                            jid, prog, entry, err = _fut.result(timeout=self._NZB_HEALTH_JOB_TIMEOUT)
-                            _job_results[jid] = (prog, entry, err)
+                            jid, prog, entry, actual_size, err = _fut.result(timeout=self._NZB_HEALTH_JOB_TIMEOUT)
+                            _job_results[jid] = (prog, entry, actual_size, err)
                         except Exception:
                             pass
                 except Exception:
@@ -3446,8 +3449,8 @@ class ProgramRunner:
                     for _fut, jid in _futures.items():
                         if _fut.done():
                             try:
-                                _, prog, entry, err = _fut.result()
-                                _job_results[jid] = (prog, entry, err)
+                                _, prog, entry, actual_size, err = _fut.result()
+                                _job_results[jid] = (prog, entry, actual_size, err)
                             except Exception:
                                 pass
 
@@ -3456,14 +3459,14 @@ class ProgramRunner:
             # and blocks items from reaching Checking. Since the folder is confirmed
             # present (entry_name is set), proceed immediately without waiting.
             _health_results = {}
-            for jid, (prog, entry, err) in _job_results.items():
+            for jid, (prog, entry, actual_size, err) in _job_results.items():
                 if prog == 100 and entry:
                     _health_results[entry] = None  # None = inconclusive, proceed to Checking
                     self._nzb_confirmed_complete[jid] = entry  # remember this job was complete+folder found
                     adding_queue._nzb_downloading_job_ids.discard(jid)  # no longer downloading
 
             # Process results per item
-            _ghost_job_ids = [jid for jid, (prog, _, _) in _job_results.items() if prog == -2]
+            _ghost_job_ids = [jid for jid, (prog, _, _, _) in _job_results.items() if prog == -2]
             if _ghost_job_ids:
                 logging.warning(f'[NZB] Ghost job IDs detected in results: {_ghost_job_ids}')
             _moved_as_sibling = set()  # item IDs already batch-moved with their initiator
@@ -3570,7 +3573,7 @@ class ProgramRunner:
                             except Exception:
                                 pass
                         continue
-                    _prog, _entry, _err = _job_results[job_id]
+                    _prog, _entry, _actual_file_size, _err = _job_results[job_id]
                     if _err:
                         logging.debug(f'[NZB] Error polling progress for {torrent_id}: {_err}')
                         continue
@@ -4035,8 +4038,36 @@ class ProgramRunner:
                     else:
                         health = _health_results.get(entry_name)
 
+                    # A completed individual NZB whose selected video is only a
+                    # tiny fraction of the indexer's advertised release size is
+                    # almost certainly a trailer, sample, or incomplete payload.
+                    # Reuse the existing broken-job cleanup/blacklist/retry flow.
+                    if health != 'broken':
+                        try:
+                            from usenet.nzb_size_validation import individual_nzb_size_mismatch
+                            _size_mismatch = individual_nzb_size_mismatch(
+                                item, nzb_title, _actual_file_size
+                            )
+                            if _size_mismatch:
+                                _actual_b, _expected_b, _ratio = _size_mismatch
+                                logging.warning(
+                                    f'[NZB] {torrent_id} actual video is only {_ratio:.1%} of '
+                                    f'advertised size ({_actual_b / (1024 ** 2):.1f} MiB vs '
+                                    f'{_expected_b / (1024 ** 3):.2f} GiB) — treating as broken'
+                                )
+                                health = 'broken'
+                        except Exception as _size_err:
+                            logging.debug(f'[NZB] Could not validate completed file size: {_size_err}')
+
                     if health == 'broken':
                         logging.warning(f'[NZB] {torrent_id} entry {entry_name!r} is BROKEN — deleting and moving back to Wanted')
+                        # A rejected job may already be cached as complete from an earlier
+                        # poll in this or a prior tick. Drop that cache so we retry the
+                        # next scrape result in Adding instead of advancing to Checking.
+                        self._nzb_confirmed_complete.pop(job_id, None)
+                        if entry_name:
+                            _health_results.pop(entry_name, None)
+                        _job_folder_wait_counts.pop(job_id, None)
                         self._nzb_health_triggered.pop(entry_name, None)
                         # Add NZB guid to not-wanted so it's filtered at scrape time in future
                         try:
@@ -4154,6 +4185,11 @@ class ProgramRunner:
                                     logging.info(f'[NZB] Moved broken sibling {_sib["id"]} back to Wanted')
                                 except Exception as _sib_err:
                                     logging.warning(f'[NZB] Could not clean up sibling {_sib.get("id")}: {_sib_err}')
+                        item['filled_by_torrent_id'] = None
+                        item['filled_by_file'] = None
+                        item['filled_by_title'] = None
+                        item['debrid_folder_name'] = None
+                        continue
                     else:
                         if health == 'healthy':
                             logging.info(f'[NZB] {torrent_id} health check passed — moving to Checking')
