@@ -18,9 +18,9 @@ from scraper.request_dedup import SingleFlightGuard
 def _get_retention_days() -> int:
     """Get configured usenet retention days. 0 = disabled."""
     try:
-        return int(get_setting('Usenet Provider', 'retention_days', 1500))
+        return int(get_setting('Usenet Provider', 'retention_days', 5000))
     except (ValueError, TypeError):
-        return 1500
+        return 5000
 
 
 def _is_within_retention_days(pub_date_str: str, retention_days: int) -> bool:
