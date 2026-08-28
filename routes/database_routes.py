@@ -1285,6 +1285,10 @@ def bulk_queue_action():
                         # MOVED DEFINITIONS UP
                         final_db_update_query = f"""UPDATE media_items 
                                SET state = 'Wanted', 
+                                   blacklisted_date = NULL,
+                                   ghostlisted = 0,
+                                   sleep_cycles = 0,
+                                   wake_count = 0,
                                    location_on_disk = NULL, 
                                    original_path_for_symlink = NULL, 
                                    filled_by_file = NULL,
