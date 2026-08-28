@@ -51,6 +51,21 @@ def test_skips_unknown_or_invalid_sizes():
     assert individual_nzb_size_mismatch(_item(), "Show.S10E21.1080p-WDC", None) is None
 
 
+def test_falls_back_to_item_size_when_scrape_results_missing():
+    item = {
+        "type": "episode",
+        "size": 3.3,
+        "filled_by_magnet": "https://indexer.invalid/get/bad",
+        "scrape_results": None,
+    }
+    assert advertised_size_bytes(item, "Ted.Lasso.S03E09.1080p.BluRay.x264-BORDURE") == int(3.3 * GIB)
+    mismatch = individual_nzb_size_mismatch(
+        item, "Ted.Lasso.S03E09.1080p.BluRay.x264-BORDURE", 126 * 1024 ** 2
+    )
+    assert mismatch is not None
+    assert mismatch[2] < 0.10
+
+
 def test_checks_movies_without_episode_marker():
     mismatch = individual_nzb_size_mismatch(
         _item(media_type="movie", title="Movie.2026.1080p-WDC", size=4.0),

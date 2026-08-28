@@ -36,7 +36,17 @@ def advertised_size_bytes(item: Dict[str, Any], nzb_title: str) -> Optional[int]
             title_match = result
 
     if not title_match:
-        return None
+        # scrape_results is often cleared on rescrape/reuse; the item row still
+        # keeps the advertised GiB from the original scrape.
+        raw_size = item.get("size")
+        try:
+            size_gib = float(raw_size)
+        except (TypeError, ValueError):
+            return None
+        if size_gib <= 0:
+            return None
+        return int(size_gib * _BYTES_PER_GIB)
+
     raw_size = title_match.get("total_size_gb", title_match.get("size"))
     try:
         size_gib = float(raw_size)
