@@ -5336,12 +5336,16 @@ class ProgramRunner:
                             season = item['season_number']
                             episode = item['episode_number']
                             matched_file = None
-                            if season is not None and episode is not None:
-                                ep_pat = _re_sc.compile(rf'[Ss]{season:02d}[Ee]{episode:02d}(?![0-9])', _re_sc.IGNORECASE)
-                                for vf in video_files:
-                                    if ep_pat.search(vf):
-                                        matched_file = vf
-                                        break
+                            try:
+                                _file_result = _dc_sc.get_nzb_file_info(
+                                    folder_name, season=season, episode=episode,
+                                )
+                                if _file_result:
+                                    matched_file = _file_result[1]
+                            except Exception as _resolve_err:
+                                logging.debug(
+                                    f"[NZBCoalesce] get_nzb_file_info failed for {folder_name!r}: {_resolve_err}"
+                                )
 
                             if not matched_file:
                                 # Can't confirm this item's own file exists in the pack folder yet -
@@ -6274,6 +6278,20 @@ class ProgramRunner:
             item = dict(item_dict)
             torrent_id = str(item.get('filled_by_torrent_id') or '')
             is_nzb = torrent_id.startswith('nzb:')
+
+            if is_nzb:
+                import os as _os_size_gate
+                from utilities.local_library_scan import (
+                    _prefer_largest_nzb_source,
+                    _reject_if_nzb_size_too_small,
+                )
+                _source_folder = _os_size_gate.path.dirname(actual_file_path)
+                actual_file_path = _prefer_largest_nzb_source(item, _source_folder, actual_file_path)
+                if _reject_if_nzb_size_too_small(item, actual_file_path):
+                    if cache_key in self.plex_scan_tick_counts:
+                        del self.plex_scan_tick_counts[cache_key]
+                    return False
+
             probe_section = 'Usenet Provider' if is_nzb else 'Debrid Provider'
             probe_key = 'ffprobe_all_nzbs' if is_nzb else 'ffprobe_all_debrid_additions'
             if not get_setting(probe_section, probe_key, False):

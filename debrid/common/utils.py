@@ -1,6 +1,6 @@
 import re
 import logging
-from typing import List, Union, Dict, Tuple
+from typing import List, Optional, Union, Dict, Tuple
 
 # Common video file extensions
 VIDEO_EXTENSIONS = [
@@ -42,6 +42,31 @@ def filter_unwanted_video_files(video_files: List[Tuple[str, int]], size_thresho
             filtered = [(name, size) for name, size in filtered if size >= max_size * size_threshold_ratio]
 
     return filtered
+
+
+def pick_best_video_file(
+    video_files: List[Tuple[str, int]],
+    season: Optional[int] = None,
+    episode: Optional[int] = None,
+    size_threshold_ratio: float = 0.05,
+) -> Optional[Tuple[str, int]]:
+    """Return the largest suitable video after sample/trailer and relative-size filtering.
+
+    When season/episode are provided, only filenames matching that episode are
+    considered; otherwise the largest remaining file wins.
+    """
+    filtered = filter_unwanted_video_files(video_files, size_threshold_ratio=size_threshold_ratio)
+    if not filtered:
+        return None
+
+    if season is not None and episode is not None:
+        ep_pat = re.compile(rf'[Ss]{int(season):02d}[Ee]{int(episode):02d}(?![0-9])', re.IGNORECASE)
+        matches = [(name, size) for name, size in filtered if ep_pat.search(name)]
+        if matches:
+            return max(matches, key=lambda x: x[1])
+
+    return max(filtered, key=lambda x: x[1])
+
 
 def extract_hash_from_magnet(magnet_link: str) -> str:
     """Extract hash from magnet link or download and extract from HTTP link."""
