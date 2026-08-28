@@ -46,6 +46,47 @@ def torrent_has_other_active_owner(torrent_id: str, exclude_item_id) -> bool:
         return True
 
 
+def cancel_superseded_nzb_job(
+    previous_torrent_id: str,
+    new_checking_id: str,
+    item_id,
+    downloading_job_ids: Optional[set] = None,
+) -> None:
+    """Cancel a prior cli_mount NZB job when this item is about to bind a different one.
+
+    Prevents orphan jobs when the Adding queue cycles scrape results faster than the
+    NZB health-check task tracks a single filled_by_torrent_id.
+    """
+    prev = str(previous_torrent_id or '')
+    new_id = str(new_checking_id or '')
+    if not prev.startswith('nzb:') or not new_id.startswith('nzb:') or prev == new_id:
+        return
+    prev_job = prev[4:]
+    if not prev_job:
+        return
+    try:
+        from database.not_wanted_magnets import add_to_not_wanted
+        add_to_not_wanted(prev_job)
+        logging.info(f'[NZB] Blacklisted superseded job hash {prev_job!r} for item {item_id}')
+    except Exception as e:
+        logging.debug(f'[NZB] Could not blacklist superseded job {prev_job}: {e}')
+    if not torrent_has_other_active_owner(prev, item_id):
+        remove_unwanted_torrent(
+            prev,
+            is_nzb=True,
+            removal_reason=f'Superseded by new NZB submission ({new_id}) for item {item_id}',
+        )
+    else:
+        logging.info(f'[NZB] Keeping superseded job {prev_job} — other item(s) still reference it')
+    if downloading_job_ids is not None:
+        downloading_job_ids.discard(prev_job)
+    try:
+        from queues.run_program import clear_nzb_job_health_cache
+        clear_nzb_job_health_cache(prev_job)
+    except Exception as e:
+        logging.debug(f'[NZB] Could not clear health cache for superseded job {prev_job}: {e}')
+
+
 def remove_unwanted_torrent(torrent_id: str, is_nzb: bool = False, debrid_provider=None, removal_reason: str = "Removed due to unwanted media item"):
     """
     Remove an unwanted torrent from the debrid service and track the removal.
@@ -602,6 +643,13 @@ class AddingQueue:
                     nzb_original_title = torrent_info.get('original_title') or nzb_title
                     nzb_segment_id = torrent_info.get('_nzb_segment_id', '')
                     checking_id = f"nzb:{job_id}" if job_id and not str(job_id).startswith('nzb:') else str(job_id)
+
+                    cancel_superseded_nzb_job(
+                        item.get('filled_by_torrent_id'),
+                        checking_id,
+                        item['id'],
+                        downloading_job_ids=self._nzb_downloading_job_ids,
+                    )
 
                     # Store the checking_id on the item so we can poll it next tick
                     from database.database_writing import update_media_item

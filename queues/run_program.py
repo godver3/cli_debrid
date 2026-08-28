@@ -116,6 +116,16 @@ program_runner = None
 # Database migration check at startup
 migrate_plex_removal_database()
 
+
+def clear_nzb_job_health_cache(job_id: str) -> None:
+    """Drop cached NZB health-check state for a cancelled or superseded cli_mount job."""
+    bare = job_id[4:] if str(job_id).startswith('nzb:') else str(job_id or '')
+    if not bare:
+        return
+    ProgramRunner._nzb_confirmed_complete.pop(bare, None)
+    ProgramRunner._nzb_folder_wait_counts.pop(bare, None)
+
+
 class ProgramRunner:
     _instance = None
 
