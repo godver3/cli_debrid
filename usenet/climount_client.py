@@ -374,9 +374,14 @@ class CliMountClient:
                 _mark_job_deleted(info_hash)
                 return True
             if status == 404:
-                logging.info(f'[cli_mount] NZB entry {info_hash} already gone (404)')
-                _mark_job_deleted(info_hash)
-                return True
+                # A broken NZB can still exist in /api/torrents even when it
+                # never produced a browse/storage entry.  A 404 here only
+                # proves the mount entry is absent, so continue to the exact
+                # queue deletion below instead of leaving a reusable ghost.
+                logging.info(
+                    f'[cli_mount] NZB mount entry {info_hash} absent (404) — '
+                    'checking provider queue'
+                )
             if status is not None:
                 logging.debug(f'[cli_mount] remove_nzb browse endpoint returned {status}')
             else:
@@ -463,9 +468,33 @@ class CliMountClient:
             f'{self.base_url}/api/browse/torrents/{info_hash}',
             headers=self._headers(), timeout=15,
         )
-        if status in (200, 204, 404):
+        if status in (200, 204):
             _mark_job_deleted(info_hash)
             return True
+        if status == 404:
+            # Missing from browse/storage does not imply missing from the
+            # provider queue.  Delete that second record by exact UUID too;
+            # unlike remove_nzb(), this method deliberately has no name-based
+            # fallback.
+            queue_status, queue_exc = _delete_status(
+                f'{self.base_url}/api/torrents',
+                params={'hashes': info_hash},
+                headers=self._headers(), timeout=15,
+            )
+            if queue_status in (200, 204, 404):
+                _mark_job_deleted(info_hash)
+                return True
+            if queue_status is not None:
+                logging.warning(
+                    '[cli_mount] Exact queue delete %s returned HTTP %s',
+                    info_hash, queue_status,
+                )
+            else:
+                logging.warning(
+                    '[cli_mount] Exact queue delete %s failed: %s',
+                    info_hash, queue_exc,
+                )
+            return False
         if status is not None:
             logging.warning('[cli_mount] Exact job delete %s returned HTTP %s', info_hash, status)
         else:
