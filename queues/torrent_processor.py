@@ -1047,6 +1047,35 @@ class TorrentProcessor:
 
         _job_prefix = _title_prefix(job_title)
 
+        # Fetch NZB XML once for segment blacklist checks on reuse and submit paths.
+        _nzb_xml = None
+        try:
+            from routes.api_tracker import api as _nzb_api_early
+            _nr_early = _nzb_api_early.get(nzb_url, timeout=15, allow_redirects=True)
+            if _nr_early.status_code == 200 and '<nzb' in _nr_early.text.lower():
+                _nzb_xml = _nr_early.text
+                from database.not_wanted_magnets import is_nzb_segment_not_wanted
+                if is_nzb_segment_not_wanted(_nzb_xml):
+                    logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
+                    return None
+        except Exception as _nzb_early_err:
+            logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_early_err}')
+
+        def _blocked_nzb_job_reuse(existing_hash: str) -> bool:
+            """True when an existing cli_mount job must not be reused for this result."""
+            if is_magnet_not_wanted(existing_hash):
+                logging.warning(
+                    f'[{item_identifier}] Matched job {existing_hash} is in not-wanted list - not reusing'
+                )
+                return True
+            if has_any_known_unplayable_file(f'nzb:{existing_hash}'):
+                logging.info(
+                    f'[{item_identifier}] Matched job nzb:{existing_hash} has a file already '
+                    f'confirmed unplayable this session — not reusing'
+                )
+                return True
+            return False
+
         # DB-level dedup: check if same item already in Adding/Checking with nzb: torrent ID.
         # Works for both cli_mount and NzbDAV since it uses the DB, not provider API.
         # Version-scoped: different versions (e.g. 1080p vs 4k) of the same movie/episode
@@ -1078,8 +1107,8 @@ class TorrentProcessor:
                     _dd_row = _dbc.execute(_dd_q, _dd_p).fetchone()
                 if _dd_row:
                     _existing_nzb_id = _dd_row[0][4:]  # strip 'nzb:'
-                    if is_magnet_not_wanted(_existing_nzb_id):
-                        logging.warning(f'[{item_identifier}] DB-dedup match {_existing_nzb_id} is in not-wanted list - not reusing')
+                    if _blocked_nzb_job_reuse(_existing_nzb_id):
+                        pass  # fall through to fresh submission / title match
                     else:
                         logging.info(f'[{item_identifier}] NZB already in-flight (DB dedup): {_existing_nzb_id} — reusing job')
                         return {'id': _existing_nzb_id, 'filename': job_title, 'original_title': job_title,
@@ -1131,8 +1160,7 @@ class TorrentProcessor:
                         # only proves it still exists, not that it's healthy. Once a job's
                         # hash has been blacklisted, reusing it here just re-enters the same
                         # stuck job and defeats the health-check's not-wanted list entirely.
-                        if is_magnet_not_wanted(_existing_hash):
-                            logging.warning(f'[{item_identifier}] Matched job {_existing_hash} in cli_mount listing is in not-wanted list - not reusing')
+                        if _blocked_nzb_job_reuse(_existing_hash):
                             continue
                         _match_type = 'exact' if _exact else 'prefix'
                         logging.info(f'[{item_identifier}] NZB already in cli_mount ({_match_type} match): {_t_name} (hash={_existing_hash}) — reusing job')
@@ -1145,20 +1173,6 @@ class TorrentProcessor:
                 _page_dc += 1
         except Exception:
             pass
-
-        # Fetch NZB XML to check segment ID against not-wanted list
-        _nzb_xml = None
-        try:
-            from routes.api_tracker import api as _nzb_api2
-            _nr = _nzb_api2.get(nzb_url, timeout=15, allow_redirects=True)
-            if _nr.status_code == 200 and '<nzb' in _nr.text.lower():
-                _nzb_xml = _nr.text
-                from database.not_wanted_magnets import is_nzb_segment_not_wanted
-                if is_nzb_segment_not_wanted(_nzb_xml):
-                    logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
-                    return None
-        except Exception as _nzb_check_err:
-            logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_check_err}')
 
         _item = item or {}
         # Derive is_anime: prefer trigger_is_anime DB flag, fall back to genres

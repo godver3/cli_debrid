@@ -3612,12 +3612,13 @@ class ProgramRunner:
                         # because the dedup check would just re-assign the same dead hash.
                         logging.warning(f'[NZB] {torrent_id} is a ghost job — moving all items with this job to Wanted')
                         try:
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid_g, add_to_not_wanted as _add_hash_nw_g
-                            _nzb_url_g = item.get('filled_by_magnet', '')
-                            if _nzb_url_g:
-                                _add_guid_g(_nzb_url_g)
-                            if job_id:
-                                _add_hash_nw_g(job_id)
+                            from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+                            blacklist_and_cleanup_nzb_failure(
+                                item,
+                                'ghost job in cli_mount',
+                                clear_filled_by=False,
+                                set_rescrape_title=True,
+                            )
                         except Exception:
                             pass
                         # Move all items sharing this ghost torrent_id to Wanted
@@ -3629,9 +3630,17 @@ class ProgramRunner:
                         for _gi in _ghost_items:
                             try:
                                 _gi_id = _gi['id']
-                                _gi_url = _gi.get('filled_by_magnet', '')
-                                if _gi_url and _gi_url != item.get('filled_by_magnet', ''):
-                                    _add_guid_g(_gi_url)
+                                if _gi is not item:
+                                    try:
+                                        from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+                                        blacklist_and_cleanup_nzb_failure(
+                                            _gi,
+                                            'ghost job sibling cleanup',
+                                            clear_filled_by=False,
+                                            set_rescrape_title=True,
+                                        )
+                                    except Exception:
+                                        pass
                                 # Cap how many times the same item can be resurrected into a
                                 # ghost job before we stop retrying and blacklist instead -
                                 # without this, an item whose reused reference keeps ghosting
@@ -3665,24 +3674,15 @@ class ProgramRunner:
                             continue
                         logging.warning(f'[NZB] {torrent_id} failed in cli_mount — adding to not-wanted and moving back to Scraping')
                         try:
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid, add_to_not_wanted_nzb_segment as _add_seg, add_to_not_wanted as _add_hash_nw
-                            _nzb_url = item.get('filled_by_magnet', '')
-                            if _nzb_url:
-                                _add_guid(_nzb_url)
-                                logging.info(f'[NZB] Added {_nzb_url[:60]}... to not-wanted guids')
-                            # Also blacklist segment ID so same content from any indexer is filtered next scrape
-                            _seg_id = item.get('nzb_segment_id', '')
-                            if _seg_id:
-                                _add_seg(_seg_id)
-                                logging.debug(f'[NZB] Added segment {_seg_id!r} to not-wanted segments')
-                            # Blacklist the job hash itself so torrent_processor's title/DB-dedup
-                            # reuse (which matches by hash, not by guid or segment) can't hand
-                            # this same stuck job back out on the very next retry attempt.
-                            if job_id:
-                                _add_hash_nw(job_id)
-                                logging.debug(f'[NZB] Added job hash {job_id!r} to not-wanted')
+                            from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+                            blacklist_and_cleanup_nzb_failure(
+                                item,
+                                'failed in cli_mount',
+                                clear_filled_by=False,
+                                set_rescrape_title=True,
+                            )
                         except Exception as _nw_err:
-                            logging.debug(f'[NZB] Could not add to not-wanted: {_nw_err}')
+                            logging.debug(f'[NZB] Could not run failure cleanup: {_nw_err}')
                         # Clean up all siblings sharing this dead job — add their URLs to not-wanted
                         # and move them back to Wanted so they re-scrape fresh without the dead job
                         try:
@@ -3693,9 +3693,16 @@ class ProgramRunner:
                             for _ds in _dead_siblings:
                                 try:
                                     _ds_id = _ds['id']
-                                    _ds_url = _ds.get('filled_by_magnet', '')
-                                    if _ds_url:
-                                        _add_guid(_ds_url)
+                                    try:
+                                        from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+                                        blacklist_and_cleanup_nzb_failure(
+                                            _ds,
+                                            'failed-in-cli_mount sibling cleanup',
+                                            clear_filled_by=False,
+                                            set_rescrape_title=True,
+                                        )
+                                    except Exception:
+                                        pass
                                     # Cap repeats for coalesced siblings the same way the primary
                                     # item below is capped. Without this, a sibling sharing the
                                     # dead job reference (e.g. a coalesced season pack) keeps
@@ -4071,22 +4078,9 @@ class ProgramRunner:
 
                     if health == 'broken':
                         logging.warning(f'[NZB] {torrent_id} entry {entry_name!r} is BROKEN — deleting and moving back to Wanted')
-                        # A rejected job may already be cached as complete from an earlier
-                        # poll in this or a prior tick. Drop that cache so we retry the
-                        # next scrape result in Adding instead of advancing to Checking.
-                        self._nzb_confirmed_complete.pop(job_id, None)
                         if entry_name:
                             _health_results.pop(entry_name, None)
-                        _job_folder_wait_counts.pop(job_id, None)
                         self._nzb_health_triggered.pop(entry_name, None)
-                        # Add NZB guid to not-wanted so it's filtered at scrape time in future
-                        try:
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid
-                            _nzb_url_for_guid = item.get('filled_by_magnet', '')
-                            if _nzb_url_for_guid:
-                                _add_guid(_nzb_url_for_guid)
-                        except Exception as _ge:
-                            logging.debug(f'[NZB] Could not add guid to not-wanted: {_ge}')
                         try:
                             import requests as _req
                             _dcy_url = _gs('Usenet Provider', 'url', default='').rstrip('/')
@@ -4121,34 +4115,20 @@ class ProgramRunner:
                         except Exception as _de:
                             logging.warning(f'[NZB] Error deleting broken entry: {_de}')
                         try:
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_segment, extract_nzb_segment_id
-                            import json as _j
-                            _seg_id = ''
-                            _results_raw = item.get('scrape_results', [])
-                            if isinstance(_results_raw, str):
-                                _results_raw = _j.loads(_results_raw)
-                            for _r in (_results_raw or []):
-                                if _r.get('title', '') == nzb_title or _r.get('original_title', '') == nzb_title:
-                                    _nzb_fetch_url = _r.get('nzb_url', '') or _r.get('magnet', '')
-                                    if _nzb_fetch_url:
-                                        try:
-                                            from routes.api_tracker import api as _fapi
-                                            _fr = _fapi.get(_nzb_fetch_url, timeout=15, allow_redirects=True)
-                                            if _fr.status_code == 200 and '<nzb' in _fr.text.lower():
-                                                _seg_id = extract_nzb_segment_id(_fr.text)
-                                        except Exception:
-                                            pass
-                                    break
-                            if _seg_id:
-                                add_to_not_wanted_nzb_segment(_seg_id)
-                                logging.info(f'[NZB] Added broken NZB segment ID {_seg_id!r} to not-wanted')
+                            from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+                            blacklist_and_cleanup_nzb_failure(
+                                item,
+                                'health check broken',
+                                clear_filled_by=True,
+                                set_rescrape_title=True,
+                                nzb_title=nzb_title,
+                                fetch_segment_if_missing=True,
+                            )
                         except Exception as _nwe:
-                            logging.debug(f'[NZB] Could not add segment to not-wanted: {_nwe}')
-                        from database.database_writing import update_media_item as _umi
-                        _umi(item_id, filled_by_torrent_id=None, filled_by_file=None, filled_by_title=None,
-                             debrid_folder_name=None, fall_back_to_single_scraper=False)
+                            logging.debug(f'[NZB] Could not run broken-job cleanup: {_nwe}')
                         try:
                             import json as _json
+                            from database.database_writing import update_media_item as _umi
                             _results = item.get('scrape_results', [])
                             if isinstance(_results, str):
                                 _results = _json.loads(_results)
@@ -4175,15 +4155,19 @@ class ProgramRunner:
                         if _broken_siblings:
                             logging.warning(f'[NZB] Cleaning up {len(_broken_siblings)} coalesced siblings of broken job {torrent_id}')
                             from database.database_writing import update_media_item as _umi2
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid2
                             for _sib in _broken_siblings:
                                 try:
-                                    _sib_url = _sib.get('filled_by_magnet', '')
-                                    if _sib_url:
-                                        try:
-                                            _add_guid2(_sib_url)
-                                        except Exception:
-                                            pass
+                                    try:
+                                        from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+                                        blacklist_and_cleanup_nzb_failure(
+                                            _sib,
+                                            'health check broken sibling cleanup',
+                                            clear_filled_by=False,
+                                            set_rescrape_title=True,
+                                            nzb_title=nzb_title,
+                                        )
+                                    except Exception:
+                                        pass
                                     _umi2(_sib['id'],
                                           filled_by_torrent_id=None,
                                           filled_by_file=None,

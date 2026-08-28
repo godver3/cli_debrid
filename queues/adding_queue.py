@@ -47,9 +47,8 @@ def torrent_has_other_active_owner(torrent_id: str, exclude_item_id) -> bool:
 
 
 def cancel_superseded_nzb_job(
-    previous_torrent_id: str,
+    item: Dict[str, Any],
     new_checking_id: str,
-    item_id,
     downloading_job_ids: Optional[set] = None,
 ) -> None:
     """Cancel a prior cli_mount NZB job when this item is about to bind a different one.
@@ -57,19 +56,24 @@ def cancel_superseded_nzb_job(
     Prevents orphan jobs when the Adding queue cycles scrape results faster than the
     NZB health-check task tracks a single filled_by_torrent_id.
     """
-    prev = str(previous_torrent_id or '')
+    prev = str(item.get('filled_by_torrent_id') or '')
     new_id = str(new_checking_id or '')
+    item_id = item.get('id')
     if not prev.startswith('nzb:') or not new_id.startswith('nzb:') or prev == new_id:
         return
     prev_job = prev[4:]
     if not prev_job:
         return
     try:
-        from database.not_wanted_magnets import add_to_not_wanted
-        add_to_not_wanted(prev_job)
-        logging.info(f'[NZB] Blacklisted superseded job hash {prev_job!r} for item {item_id}')
+        from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+        blacklist_and_cleanup_nzb_failure(
+            item,
+            f'Superseded by new NZB submission ({new_id})',
+            clear_filled_by=False,
+            set_rescrape_title=True,
+        )
     except Exception as e:
-        logging.debug(f'[NZB] Could not blacklist superseded job {prev_job}: {e}')
+        logging.debug(f'[NZB] Could not blacklist superseded job for item {item_id}: {e}')
     if not torrent_has_other_active_owner(prev, item_id):
         remove_unwanted_torrent(
             prev,
@@ -80,11 +84,6 @@ def cancel_superseded_nzb_job(
         logging.info(f'[NZB] Keeping superseded job {prev_job} — other item(s) still reference it')
     if downloading_job_ids is not None:
         downloading_job_ids.discard(prev_job)
-    try:
-        from queues.run_program import clear_nzb_job_health_cache
-        clear_nzb_job_health_cache(prev_job)
-    except Exception as e:
-        logging.debug(f'[NZB] Could not clear health cache for superseded job {prev_job}: {e}')
 
 
 def remove_unwanted_torrent(torrent_id: str, is_nzb: bool = False, debrid_provider=None, removal_reason: str = "Removed due to unwanted media item"):
@@ -645,9 +644,8 @@ class AddingQueue:
                     checking_id = f"nzb:{job_id}" if job_id and not str(job_id).startswith('nzb:') else str(job_id)
 
                     cancel_superseded_nzb_job(
-                        item.get('filled_by_torrent_id'),
+                        item,
                         checking_id,
-                        item['id'],
                         downloading_job_ids=self._nzb_downloading_job_ids,
                     )
 

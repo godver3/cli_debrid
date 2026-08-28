@@ -1254,28 +1254,7 @@ def _reject_unplayable_source(item: Dict[str, Any], is_nzb: bool) -> None:
     to Wanted so it gets rescraped, mirroring the existing missing-segments/
     checking-timeout rejection pattern used elsewhere in the queue processing."""
     try:
-        if is_nzb:
-            from database.not_wanted_magnets import (
-                add_to_not_wanted,
-                add_to_not_wanted_nzb_guid,
-                add_to_not_wanted_nzb_segment,
-            )
-            nzb_url = item.get('filled_by_magnet', '')
-            if nzb_url:
-                add_to_not_wanted_nzb_guid(nzb_url)
-            _seg_id = item.get('nzb_segment_id') or item.get('_nzb_segment_id', '')
-            if _seg_id:
-                add_to_not_wanted_nzb_segment(_seg_id)
-            # Blacklist the cli_mount job hash so torrent_processor title/DB-dedup
-            # reuse cannot hand this job back on the next scrape (mirrors
-            # task_nzb_health_check terminal-failure handling in run_program.py).
-            _torrent_id = str(item.get('filled_by_torrent_id') or '')
-            if _torrent_id.startswith('nzb:'):
-                _job_hash = _torrent_id[4:]
-                if _job_hash:
-                    add_to_not_wanted(_job_hash)
-                    logging.info(f"[ffprobe] Added cli_mount job hash {_job_hash!r} to not-wanted")
-        else:
+        if not is_nzb:
             from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
             from debrid.common import extract_hash_from_magnet
             magnet = item.get('filled_by_magnet', '')
@@ -1329,6 +1308,18 @@ def _reject_unplayable_source(item: Dict[str, Any], is_nzb: bool) -> None:
                 logging.info(f"[ffprobe] Torrent {torrent_id} still needed by other episode(s) sharing this pack — not removing")
     except Exception as e:
         logging.warning(f"[ffprobe] Failed to remove unplayable torrent from debrid service: {e}")
+
+    if is_nzb:
+        try:
+            from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+            blacklist_and_cleanup_nzb_failure(
+                item,
+                'ffprobe playability check failed',
+                clear_filled_by=True,
+                set_rescrape_title=True,
+            )
+        except Exception as e:
+            logging.warning(f"[ffprobe] Failed NZB failure cleanup: {e}")
 
     # An episode stuck in forced multi-pack scraping (queues/scraping_queue.py,
     # any scrape >7 days old) that fails here via ffprobe - rather than the
