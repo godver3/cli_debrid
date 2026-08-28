@@ -4,7 +4,7 @@ Junk symlink audit — scan symlink library + mount for bad/split/NZB-mismatch f
 Used by Debug > Junk Files in debrid_manager and by scripts/junk_symlink_cleanup.py.
 
 Junk detection (any of):
-  - filename contains sample/trailer
+  - filename has sample/trailer as a release tag (not embedded in a title)
   - episode symlink target below min episode threshold (default 200 MiB)
   - movie symlink target below min movie threshold (default 300 MiB)
   - file is < 5% of the largest video in the same mount folder (split junk)
@@ -26,6 +26,8 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from debrid.common.utils import is_unwanted_file
+
 VIDEO_EXTENSIONS = {
     ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".webm", ".mpg", ".mpeg", ".m2ts"
 }
@@ -45,11 +47,6 @@ OLD_RELEASE_RE = re.compile(
 
 def is_video_file(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in VIDEO_EXTENSIONS
-
-
-def is_unwanted_name(name: str) -> bool:
-    n = name.lower()
-    return "sample" in n or "trailer" in n
 
 
 def resolve_symlink_target(link_path: str) -> str:
@@ -274,7 +271,7 @@ def classify_junk(
     min_movie_bytes: int,
 ) -> Optional[str]:
     name = os.path.basename(path)
-    if is_unwanted_name(name):
+    if is_unwanted_file(name):
         return "sample/trailer name"
     if media_type == "episode" and size < min_episode_bytes:
         return f"episode under {min_episode_bytes // (1024 * 1024)} MiB"
@@ -516,7 +513,7 @@ def build_junk_symlink_plan(
                 continue
             if fp in target_to_links:
                 continue
-            if is_unwanted_name(name):
+            if is_unwanted_file(name):
                 mount_files_to_delete[fp] = "sample/trailer name (orphan)"
                 continue
             if max_sz > 0 and sz < max_sz * RELATIVE_JUNK_RATIO and sz < 500 * 1024 * 1024:
