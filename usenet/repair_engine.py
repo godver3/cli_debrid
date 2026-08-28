@@ -33,6 +33,7 @@ Key differences from previous implementation:
 
 import json
 import logging
+import os
 import re
 import time
 from typing import Optional, Tuple
@@ -1303,6 +1304,117 @@ def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
     return 'submission_failed'
 
 
+def _collect_playback_repair_sources(repair: dict, item: dict) -> list[tuple[str, str]]:
+    """Deduped (info_hash, entry_name) pairs for an aborted playback repair."""
+    seen: set[str] = set()
+    sources: list[tuple[str, str]] = []
+
+    def _add(info_hash, entry_name) -> None:
+        h = (info_hash or '').strip()
+        name = (entry_name or h or '').strip()
+        if not h:
+            return
+        key = h.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        sources.append((h, name))
+
+    _add(repair.get('old_info_hash'), repair.get('old_entry_name'))
+    _add(repair.get('candidate_info_hash'), repair.get('candidate_title'))
+
+    torrent_id = item.get('filled_by_torrent_id') or ''
+    if torrent_id.startswith('nzb:'):
+        _add(torrent_id[4:], item.get('filled_by_title') or item.get('debrid_folder_name')
+              or item.get('filled_by_file'))
+    return sources
+
+
+def _find_paths_for_release(item: dict, entry_name: str) -> list[str]:
+    """Symlink/real paths on disk that belong to a specific release folder name."""
+    if not entry_name:
+        return []
+    paths: list[str] = []
+    loc = item.get('location_on_disk') or ''
+    if loc and entry_name in loc and os.path.lexists(loc):
+        paths.append(loc)
+
+    search_dirs: list[str] = []
+    if loc:
+        search_dirs.append(os.path.dirname(loc))
+    try:
+        from utilities.local_library_scan import get_symlink_path
+        probe = dict(item)
+        probe['filled_by_title'] = entry_name
+        probe['original_scraped_torrent_title'] = entry_name
+        probe['debrid_folder_name'] = entry_name
+        guessed = get_symlink_path(probe, f'{entry_name}.mkv', skip_jikan_lookup=True)
+        if guessed:
+            search_dirs.append(os.path.dirname(guessed))
+            if os.path.lexists(guessed):
+                paths.append(guessed)
+    except Exception as exc:
+        logger.debug('[NZBRepair] symlink path probe failed for %r: %s', entry_name, exc)
+
+    needle_paren = f'({entry_name})'
+    for directory in search_dirs:
+        if not directory or not os.path.isdir(directory):
+            continue
+        try:
+            for name in os.listdir(directory):
+                if entry_name not in name and needle_paren not in name:
+                    continue
+                full = os.path.join(directory, name)
+                if os.path.islink(full) or os.path.isfile(full):
+                    paths.append(full)
+        except OSError as exc:
+            logger.debug('[NZBRepair] could not scan %r: %s', directory, exc)
+    return list(dict.fromkeys(paths))
+
+
+def _remove_path_from_media_server(item: dict, path: str) -> None:
+    if not path:
+        return
+    try:
+        from utilities.plex_functions import remove_file_from_plex
+        ep_title = item.get('episode_title') if item.get('type') != 'movie' else None
+        remove_file_from_plex(item.get('title', ''), path, ep_title)
+    except Exception as exc:
+        logger.warning('[NZBRepair] media-server file removal failed for %r: %s', path, exc)
+
+
+def _unlink_if_present(path: str) -> None:
+    try:
+        if os.path.islink(path) or os.path.isfile(path):
+            os.unlink(path)
+            logger.info('[NZBRepair] Removed symlink/file %r', path)
+    except OSError as exc:
+        logger.warning('[NZBRepair] Could not remove %r: %s', path, exc)
+
+
+def _teardown_playback_repair_mounts(repair: dict, item: dict) -> None:
+    """Remove broken + partial-replacement mounts when aborting a playback repair."""
+    sources = _collect_playback_repair_sources(repair, item)
+    if not sources:
+        return
+    logger.info(
+        '[NZBRepair] Teardown playback repair=%s item=%s sources=%s',
+        repair.get('id'), item.get('id'), [s[0] for s in sources],
+    )
+    client = _client()
+    for info_hash, entry_name in sources:
+        try:
+            if hasattr(client, 'remove_nzb_exact'):
+                client.remove_nzb_exact(info_hash)
+            else:
+                _delete_from_provider(info_hash, entry_name)
+        except Exception as exc:
+            logger.warning('[NZBRepair] Provider teardown failed for %r: %s', info_hash, exc)
+        for path in _find_paths_for_release(item, entry_name):
+            _remove_path_from_media_server(item, path)
+            _unlink_if_present(path)
+
+
 def _move_to_wanted(item: dict) -> None:
     """Move item back to Wanted without touching Plex or provider."""
     try:
@@ -1398,6 +1510,10 @@ def _apply_manual_retry_reset(
 def reset_item_to_wanted_from_repair(repair: dict) -> dict:
     """Cancel an in-flight playback repair and reset the item to Wanted."""
     item_id = int(repair['cli_debrid_id'])
+    item = _find_db_item_by_id(item_id)
+    if not item:
+        return {'outcome': 'error', 'message': f'No DB item found for id {item_id}'}
+    _teardown_playback_repair_mounts(repair, item)
     broken_nzb_id = repair.get('old_info_hash') or repair.get('old_entry_name') or ''
     result = _apply_manual_retry_reset(
         item_id,

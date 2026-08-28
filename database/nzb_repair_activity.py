@@ -247,8 +247,14 @@ def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None, 
                     # count it as resolved if the current title actually
                     # differs from the one that was broken in this row.
                     broken_title = r.get('broken_nzb_title') or r.get('broken_nzb_id') or ''
-                    if state == 'Collected' and filled_by_title and filled_by_title != broken_title:
-                        r['current_replacement_title'] = filled_by_title
+                    if state == 'Collected' and filled_by_title:
+                        if filled_by_title != broken_title:
+                            r['current_replacement_title'] = filled_by_title
+                        elif r.get('outcome') == 'manual_retry':
+                            # Send to Wanted finished — even a same-title
+                            # re-collect means the retry landed.
+                            r['current_replacement_title'] = filled_by_title
+                            r['manual_retry_resolved'] = True
 
         return result, total
     except Exception as e:

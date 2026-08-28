@@ -787,6 +787,43 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         self.assertEqual(row['last_error'], 'cancelled_by_user')
         self.assertEqual(activity['outcome'], 'cancelled')
 
+    def test_cancel_to_wanted_teardowns_repair_sources(self):
+        """Send to Wanted must tear down broken + candidate mounts before re-scrape."""
+        self._prep_verifying_candidate()
+        with self.connect() as conn:
+            repair = dict(conn.execute('SELECT * FROM nzb_playback_repairs').fetchone())
+
+        teardown_calls = []
+
+        def _fake_reset(repair_row):
+            teardown_calls.append((
+                repair_row.get('old_info_hash'),
+                repair_row.get('candidate_info_hash'),
+                repair_row.get('cli_debrid_id'),
+            ))
+            return {'outcome': 'ok', 'message': 'ok'}
+
+        repair_spec = importlib.util.spec_from_file_location(
+            'usenet.repair_engine', os.path.join(ROOT, 'usenet', 'repair_engine.py'))
+        repair_engine = importlib.util.module_from_spec(repair_spec)
+        old_module = sys.modules.get('usenet.repair_engine')
+        sys.modules['usenet.repair_engine'] = repair_engine
+        repair_spec.loader.exec_module(repair_engine)
+        old_reset = repair_engine.reset_item_to_wanted_from_repair
+        repair_engine.reset_item_to_wanted_from_repair = _fake_reset
+        self.addCleanup(lambda: setattr(repair_engine, 'reset_item_to_wanted_from_repair', old_reset))
+        if old_module is not None:
+            self.addCleanup(lambda: sys.modules.__setitem__('usenet.repair_engine', old_module))
+        else:
+            self.addCleanup(lambda: sys.modules.pop('usenet.repair_engine', None))
+
+        result = playback.cancel_playback_repair(repair['id'], move_to_wanted=True)
+        self.assertEqual(result['outcome'], 'ok')
+        self.assertEqual(len(teardown_calls), 1)
+        self.assertEqual(teardown_calls[0][0], 'old-uuid')
+        self.assertEqual(teardown_calls[0][1], 'new-uuid')
+        self.assertEqual(teardown_calls[0][2], 7)
+
 
 if __name__ == '__main__':
     unittest.main()

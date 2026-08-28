@@ -4661,6 +4661,7 @@ function _usenetRenderActivity(rows, container, pagination) {
     rows.forEach((r, idx) => {
         const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
         const resolvedElsewhere = (r.outcome === 'manual_retry' || r.outcome === 'skipped_max_attempts') && !!r.current_replacement_title;
+        const manualRetryResolved = r.outcome === 'manual_retry' && !!r.manual_retry_resolved;
         const isJunk = r.outcome === 'skipped_junk_source';
         const isCancelled = r.outcome === 'cancelled';
         const outcomeColor = isJunk ? '#888'
@@ -4668,7 +4669,7 @@ function _usenetRenderActivity(rows, container, pagination) {
             : r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'replacement_pending' ? '#ffaa44' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : resolvedElsewhere ? '#00d4aa' : r.outcome === 'manual_retry' ? '#4488ff' : '#ff4444';
         const outcomeLabel = isJunk ? 'Junk'
             : isCancelled ? 'Cancelled'
-            : r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : (resolvedElsewhere && r.outcome === 'manual_retry') ? 'Retry Succeeded' : (resolvedElsewhere && r.outcome === 'skipped_max_attempts') ? 'Resolved' : r.outcome === 'manual_retry' ? 'Retrying…' : r.outcome === 'skipped_max_attempts' ? 'Max Attempts' : (r.outcome || '—');
+            : r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'replacement_pending' ? 'Pending verification' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : manualRetryResolved ? 'Re-collected' : (resolvedElsewhere && r.outcome === 'manual_retry') ? 'Retry Succeeded' : (resolvedElsewhere && r.outcome === 'skipped_max_attempts') ? 'Resolved' : r.outcome === 'manual_retry' ? 'Retrying…' : r.outcome === 'skipped_max_attempts' ? 'Max Attempts' : (r.outcome || '—');
         const outcomeTooltip = _buildOutcomeTooltip(r);
         const epSub = r.season_number ? `<br><span style="font-size:11px;color:#888">S${String(r.season_number).padStart(2,'0')}E${String(r.episode_number||0).padStart(2,'0')}</span>` : '';
         const activityTime = r.updated_at || r.created_at;
