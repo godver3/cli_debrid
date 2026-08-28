@@ -25,7 +25,7 @@ from debrid.common import (
     download_and_extract_hash
 )
 from debrid.status import TorrentStatus
-from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls, is_magnet_not_wanted
 from utilities.settings import get_setting
 
 class TorrentProcessingError(Exception):
@@ -1078,10 +1078,13 @@ class TorrentProcessor:
                     _dd_row = _dbc.execute(_dd_q, _dd_p).fetchone()
                 if _dd_row:
                     _existing_nzb_id = _dd_row[0][4:]  # strip 'nzb:'
-                    logging.info(f'[{item_identifier}] NZB already in-flight (DB dedup): {_existing_nzb_id} — reusing job')
-                    return {'id': _existing_nzb_id, 'filename': job_title, 'original_title': job_title,
-                            'status': 'downloading', 'files': [], 'progress': 0,
-                            '_provider': 'Usenet', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                    if is_magnet_not_wanted(_existing_nzb_id):
+                        logging.warning(f'[{item_identifier}] DB-dedup match {_existing_nzb_id} is in not-wanted list - not reusing')
+                    else:
+                        logging.info(f'[{item_identifier}] NZB already in-flight (DB dedup): {_existing_nzb_id} — reusing job')
+                        return {'id': _existing_nzb_id, 'filename': job_title, 'original_title': job_title,
+                                'status': 'downloading', 'files': [], 'progress': 0,
+                                '_provider': 'Usenet', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
         except Exception:
             pass
 
@@ -1123,6 +1126,14 @@ class TorrentProcessor:
                                 continue
                         except Exception:
                             pass  # unknown due to error - don't block a legitimate reuse
+                        # A job can be alive on the provider yet permanently stuck (e.g. the
+                        # "folder never appeared" health-check failure) - is_nzb_job_alive()
+                        # only proves it still exists, not that it's healthy. Once a job's
+                        # hash has been blacklisted, reusing it here just re-enters the same
+                        # stuck job and defeats the health-check's not-wanted list entirely.
+                        if is_magnet_not_wanted(_existing_hash):
+                            logging.warning(f'[{item_identifier}] Matched job {_existing_hash} in cli_mount listing is in not-wanted list - not reusing')
+                            continue
                         _match_type = 'exact' if _exact else 'prefix'
                         logging.info(f'[{item_identifier}] NZB already in cli_mount ({_match_type} match): {_t_name} (hash={_existing_hash}) — reusing job')
                         _found_dc = True

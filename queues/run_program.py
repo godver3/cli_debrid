@@ -3599,10 +3599,12 @@ class ProgramRunner:
                         # because the dedup check would just re-assign the same dead hash.
                         logging.warning(f'[NZB] {torrent_id} is a ghost job — moving all items with this job to Wanted')
                         try:
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid_g
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid_g, add_to_not_wanted as _add_hash_nw_g
                             _nzb_url_g = item.get('filled_by_magnet', '')
                             if _nzb_url_g:
                                 _add_guid_g(_nzb_url_g)
+                            if job_id:
+                                _add_hash_nw_g(job_id)
                         except Exception:
                             pass
                         # Move all items sharing this ghost torrent_id to Wanted
@@ -3650,7 +3652,7 @@ class ProgramRunner:
                             continue
                         logging.warning(f'[NZB] {torrent_id} failed in cli_mount — adding to not-wanted and moving back to Scraping')
                         try:
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid, add_to_not_wanted_nzb_segment as _add_seg
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid, add_to_not_wanted_nzb_segment as _add_seg, add_to_not_wanted as _add_hash_nw
                             _nzb_url = item.get('filled_by_magnet', '')
                             if _nzb_url:
                                 _add_guid(_nzb_url)
@@ -3660,6 +3662,12 @@ class ProgramRunner:
                             if _seg_id:
                                 _add_seg(_seg_id)
                                 logging.debug(f'[NZB] Added segment {_seg_id!r} to not-wanted segments')
+                            # Blacklist the job hash itself so torrent_processor's title/DB-dedup
+                            # reuse (which matches by hash, not by guid or segment) can't hand
+                            # this same stuck job back out on the very next retry attempt.
+                            if job_id:
+                                _add_hash_nw(job_id)
+                                logging.debug(f'[NZB] Added job hash {job_id!r} to not-wanted')
                         except Exception as _nw_err:
                             logging.debug(f'[NZB] Could not add to not-wanted: {_nw_err}')
                         # Clean up all siblings sharing this dead job — add their URLs to not-wanted
