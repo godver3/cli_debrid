@@ -1157,17 +1157,104 @@ def _apply_nzb_naming(source_file: str, item: Dict[str, Any]) -> str:
         return source_file
 
 
+def _prefer_largest_nzb_source(item: Dict[str, Any], source_folder: str, source_file: str) -> str:
+    """When a folder holds multiple video files, prefer the largest episode match."""
+    if not source_folder or not os.path.isdir(source_folder):
+        return source_file
+
+    from debrid.common.utils import is_video_file
+    video_files = []
+    for name in os.listdir(source_folder):
+        path = os.path.join(source_folder, name)
+        if os.path.isfile(path) and is_video_file(name):
+            try:
+                video_files.append((name, os.path.getsize(path)))
+            except OSError:
+                pass
+
+    if len(video_files) <= 1:
+        return source_file
+
+    season = episode = None
+    if item.get('type') == 'episode':
+        season = item.get('season_number')
+        episode = item.get('episode_number')
+
+    from debrid.common.utils import pick_best_video_file
+    best = pick_best_video_file(video_files, season=season, episode=episode)
+    if not best:
+        return source_file
+
+    best_name, best_size = best
+    best_path = os.path.join(source_folder, best_name)
+    if os.path.abspath(best_path) == os.path.abspath(source_file):
+        return source_file
+
+    try:
+        current_size = os.path.getsize(source_file)
+    except OSError:
+        current_size = 0
+
+    if best_size <= current_size:
+        return source_file
+
+    logging.info(
+        f"[Symlink] Using largest video candidate {best_name!r} "
+        f"({best_size / (1024 ** 2):.0f} MiB) instead of {os.path.basename(source_file)!r} "
+        f"({current_size / (1024 ** 2):.0f} MiB) for item {item.get('id')}"
+    )
+    item['filled_by_file'] = best_name
+    try:
+        from database.database_writing import update_media_item
+        update_media_item(item['id'], filled_by_file=best_name)
+    except Exception as exc:
+        logging.debug(f"[Symlink] Could not persist filled_by_file for item {item.get('id')}: {exc}")
+    return best_path
+
+
+def _reject_if_nzb_size_too_small(item: Dict[str, Any], source_path: str) -> bool:
+    """Return True when an NZB source is far below its advertised size and was rejected."""
+    torrent_id = str(item.get('filled_by_torrent_id') or '')
+    if not torrent_id.startswith('nzb:'):
+        return False
+
+    try:
+        actual_size = os.path.getsize(source_path)
+    except OSError:
+        return False
+
+    nzb_title = (
+        item.get('original_scraped_torrent_title')
+        or item.get('filled_by_title')
+        or item.get('filled_by_file')
+        or ''
+    )
+    from usenet.nzb_size_validation import individual_nzb_size_mismatch
+    mismatch = individual_nzb_size_mismatch(item, nzb_title, actual_size)
+    if not mismatch:
+        return False
+
+    actual, expected, ratio = mismatch
+    logging.warning(
+        f"[NZB] Source video is only {ratio * 100:.1f}% of advertised size "
+        f"({actual / (1024 ** 2):.1f} MiB vs {expected / (1024 ** 2):.1f} MiB) — "
+        f"rejecting symlink for item {item.get('id')}"
+    )
+    _reject_unplayable_source(item, is_nzb=True)
+    try:
+        from queues.queue_manager import QueueManager
+        QueueManager().move_to_wanted(item, 'Checking')
+    except Exception as exc:
+        logging.error(f"[NZB] Failed to move item {item.get('id')} back to Wanted after size rejection: {exc}")
+    return True
+
+
 def _reject_unplayable_source(item: Dict[str, Any], is_nzb: bool) -> None:
     """Mark a confirmed-unplayable file's source as not-wanted and revert the item
     to Wanted so it gets rescraped, mirroring the existing missing-segments/
     checking-timeout rejection pattern used elsewhere in the queue processing."""
     try:
-        if is_nzb:
-            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid
-            nzb_url = item.get('filled_by_magnet', '')
-            if nzb_url:
-                add_to_not_wanted_nzb_guid(nzb_url)
-        else:
+        if not is_nzb:
             from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
             from debrid.common import extract_hash_from_magnet
             magnet = item.get('filled_by_magnet', '')
@@ -1221,6 +1308,18 @@ def _reject_unplayable_source(item: Dict[str, Any], is_nzb: bool) -> None:
                 logging.info(f"[ffprobe] Torrent {torrent_id} still needed by other episode(s) sharing this pack — not removing")
     except Exception as e:
         logging.warning(f"[ffprobe] Failed to remove unplayable torrent from debrid service: {e}")
+
+    if is_nzb:
+        try:
+            from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+            blacklist_and_cleanup_nzb_failure(
+                item,
+                'ffprobe playability check failed',
+                clear_filled_by=True,
+                set_rescrape_title=True,
+            )
+        except Exception as e:
+            logging.warning(f"[ffprobe] Failed NZB failure cleanup: {e}")
 
     # An episode stuck in forced multi-pack scraping (queues/scraping_queue.py,
     # any scrape >7 days old) that fails here via ffprobe - rather than the
@@ -1507,6 +1606,11 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             
             # For NZB items in Plex mode with NZB naming enabled: move file to organised structure
             source_file = _apply_nzb_naming(source_file, item)
+
+            if source_folder:
+                source_file = _prefer_largest_nzb_source(item, source_folder, source_file)
+            if _reject_if_nzb_size_too_small(item, source_file):
+                return False
 
             # Optional playability verification, gated by protocol-specific toggles
             # (off by default). Only meaningful here in Symlinked/Local mode, which

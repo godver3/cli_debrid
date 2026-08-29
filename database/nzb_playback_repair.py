@@ -432,6 +432,68 @@ def _source_uuid(item):
     return value[4:] if value.startswith('nzb:') else value
 
 
+def _replacement_source_if_superseded(item, old_info_hash):
+    """Return the current nzb uuid when the item already sits on a non-original source."""
+    if not item:
+        return None
+    if item.get('state') not in ('Collected', 'Adding', 'Checking'):
+        return None
+    current = _source_uuid(item).lower()
+    old = (old_info_hash or '').lower()
+    if current and current != old:
+        return current
+    return None
+
+
+def playback_candidate_search_blocked(repair_id, item_id, old_info_hash):
+    """Return (blocked, reason) when another path already owns this repair's replacement."""
+    if _replacement_source_if_superseded(_media_item(item_id), old_info_hash):
+        return True, 'superseded_externally'
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT status, candidate_info_hash FROM nzb_playback_repairs WHERE id=?',
+            (repair_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row or row['status'] != 'awaiting_candidate':
+        return True, 'stage_advanced'
+    if row['candidate_info_hash']:
+        return True, 'candidate_in_flight'
+    if _replacement_source_if_superseded(_media_item(item_id), old_info_hash):
+        return True, 'superseded_externally'
+    return False, ''
+
+
+def _finalize_superseded_externally(repair, item, current_source, log_msg, *log_args):
+    conn = get_db_connection()
+    try:
+        replacement_title = (
+            item.get('filled_by_title') or item.get('debrid_folder_name') or
+            item.get('filled_by_file') or current_source
+        )
+        if repair.get('activity_id'):
+            conn.execute(
+                """UPDATE nzb_repair_activity SET replacement_nzb_id=?,replacement_title=?,
+                   outcome='replaced',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (current_source, replacement_title, repair['activity_id']),
+            )
+        conn.execute(
+            """UPDATE nzb_playback_repairs SET status='complete',completed_at=CURRENT_TIMESTAMP,
+               cleanup_status='pending',
+               cleanup_first_pending_at=COALESCE(cleanup_first_pending_at,CURRENT_TIMESTAMP),
+               next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
+               last_error='superseded_externally',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (repair['id'],),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    log.warning(log_msg, *log_args)
+    return True
+
+
 def _symlink_matches(item, entry_name, file_name):
     """Confirm location_on_disk actually points at the given replacement file.
 
@@ -576,14 +638,48 @@ def process_pending_playback_repairs():
             )
             item = _media_item(repair['cli_debrid_id'])
             if repair['status'] == 'awaiting_candidate':
+                if not item:
+                    _schedule(repair['id'], 'item_missing', 300)
+                    continue
+                # The main repair sweep (_run_repair_inner) can independently
+                # submit a replacement for the same broken entry while this
+                # row still sits in awaiting_candidate (empty candidate or
+                # mid-scrape). If the item is already on a non-original source
+                # — even still Adding/Checking — or the repair row was advanced
+                # by that other path, do not scrape/submit another NZB here.
+                current_source = _replacement_source_if_superseded(item, repair['old_info_hash'])
+                if current_source:
+                    _finalize_superseded_externally(
+                        repair, item, current_source,
+                        '[NZBPlayback] Item %s already on replacement %s (state=%s) when repair=%s was '
+                        'claimed for candidate search — finalizing instead of submitting a duplicate',
+                        repair['cli_debrid_id'], current_source, item.get('state'), repair['id'],
+                    )
+                    continue
+                blocked, block_reason = playback_candidate_search_blocked(
+                    repair['id'], repair['cli_debrid_id'], repair['old_info_hash'],
+                )
+                if blocked:
+                    if block_reason == 'superseded_externally':
+                        item = _media_item(repair['cli_debrid_id']) or item
+                        current_source = _replacement_source_if_superseded(item, repair['old_info_hash'])
+                        if current_source:
+                            _finalize_superseded_externally(
+                                repair, item, current_source,
+                                '[NZBPlayback] Item %s already on replacement %s (state=%s) when repair=%s was '
+                                'claimed for candidate search — finalizing instead of submitting a duplicate',
+                                repair['cli_debrid_id'], current_source, item.get('state'), repair['id'],
+                            )
+                        else:
+                            _schedule(repair['id'], block_reason, 15)
+                    else:
+                        _schedule(repair['id'], block_reason, 15)
+                    continue
                 # The last accepted candidate was itself verified broken. Reuse
                 # the exact same scrape/submit/exclude pipeline that produced
                 # the first candidate to keep searching until a healthy
                 # replacement is found, instead of stalling here forever —
                 # nothing else in this module reads this status.
-                if not item:
-                    _schedule(repair['id'], 'item_missing', 300)
-                    continue
                 from usenet.repair_engine import find_and_submit_playback_candidate
                 outcome = find_and_submit_playback_candidate(repair, item)
                 log.info(
@@ -1032,3 +1128,122 @@ def retry_deferred_playback_cleanups():
             conn.commit()
         finally:
             conn.close()
+
+
+def _playback_stage_label(repair: dict) -> str:
+    """Human-readable stage for Debrid Manager in-flight repairs."""
+    status = repair.get('status') or ''
+    last_error = (repair.get('last_error') or '').lower()
+    if status == 'awaiting_candidate':
+        if repair.get('candidate_search_stuck_since'):
+            return 'Searching (slow backoff)'
+        attempts = repair.get('candidate_search_attempts') or 0
+        if attempts:
+            return f'Searching for replacement ({attempts} tries)'
+        return 'Searching for replacement'
+    if status == 'awaiting_collection':
+        if repair.get('candidate_info_hash'):
+            if any(token in last_error for token in (
+                'http', 'timeout', 'verification', '500', '409', 'repair_busy', 'read timed out',
+            )):
+                return 'Pending verification (retrying)'
+            return 'Verifying replacement'
+        return 'Waiting for download'
+    if status == 'awaiting_verification':
+        return 'Pending verification'
+    if status == 'verified':
+        return 'Verified — cleaning up old file'
+    if status == 'cleanup_complete':
+        return 'Finishing cleanup'
+    return status.replace('_', ' ').title()
+
+
+def list_active_playback_repairs() -> list:
+    """Return open playback-repair rows joined with item/activity context."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """SELECT r.*,
+                      m.filled_by_title AS item_title,
+                      m.season_number,
+                      m.episode_number,
+                      m.state AS item_state,
+                      m.filled_by_torrent_id,
+                      m.filled_by_title,
+                      a.outcome AS activity_outcome
+               FROM nzb_playback_repairs r
+               LEFT JOIN media_items m ON m.id = r.cli_debrid_id
+               LEFT JOIN nzb_repair_activity a ON a.id = r.activity_id
+               WHERE r.status != 'complete'
+               ORDER BY r.updated_at DESC"""
+        ).fetchall()
+        out = []
+        for raw in rows:
+            repair = dict(raw)
+            item = _media_item(repair['cli_debrid_id'])
+            if item:
+                repair['item_title'] = item.get('title') or repair.get('item_title') or item.get('filled_by_title')
+                repair.setdefault('season_number', item.get('season_number'))
+                repair.setdefault('episode_number', item.get('episode_number'))
+            repair['stage_label'] = _playback_stage_label(repair)
+            out.append(repair)
+        return out
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock(max_attempts=4, initial_wait=0.1, backoff_factor=2)
+def cancel_playback_repair(repair_id: int, *, move_to_wanted: bool = False) -> dict:
+    """Stop an in-flight playback repair immediately.
+
+    move_to_wanted=False keeps the item on whatever source it currently has.
+    move_to_wanted=True blacklists the broken/candidate sources and resets the
+    item to Wanted for a fresh scrape (same cleanup path as manual retry).
+    """
+    conn = get_db_connection()
+    repair = None
+    try:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute(
+            "SELECT * FROM nzb_playback_repairs WHERE id=? AND status!='complete'",
+            (int(repair_id),),
+        ).fetchone()
+        if not row:
+            conn.rollback()
+            return {'outcome': 'error', 'message': 'Repair not found or already complete'}
+        repair = dict(row)
+        cancel_reason = 'cancelled_to_wanted' if move_to_wanted else 'cancelled_by_user'
+        conn.execute(
+            """UPDATE nzb_playback_repairs
+               SET status='complete',completed_at=CURRENT_TIMESTAMP,
+                   next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
+                   last_error=?,updated_at=CURRENT_TIMESTAMP
+               WHERE id=?""",
+            (cancel_reason, repair['id']),
+        )
+        if repair.get('activity_id') and not move_to_wanted:
+            conn.execute(
+                """UPDATE nzb_repair_activity
+                   SET outcome='cancelled',updated_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (repair['activity_id'],),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        log.exception('[NZBPlayback] Failed to cancel repair %s', repair_id)
+        raise
+    finally:
+        conn.close()
+
+    log.info(
+        '[NZBPlayback] Cancelled repair=%s item=%s move_to_wanted=%s',
+        repair['id'], repair['cli_debrid_id'], move_to_wanted,
+    )
+
+    if move_to_wanted:
+        from usenet.repair_engine import reset_item_to_wanted_from_repair
+        return reset_item_to_wanted_from_repair(repair)
+
+    return {'outcome': 'ok', 'message': 'Repair cancelled'}
+

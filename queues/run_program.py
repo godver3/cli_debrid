@@ -116,6 +116,16 @@ program_runner = None
 # Database migration check at startup
 migrate_plex_removal_database()
 
+
+def clear_nzb_job_health_cache(job_id: str) -> None:
+    """Drop cached NZB health-check state for a cancelled or superseded cli_mount job."""
+    bare = job_id[4:] if str(job_id).startswith('nzb:') else str(job_id or '')
+    if not bare:
+        return
+    ProgramRunner._nzb_confirmed_complete.pop(bare, None)
+    ProgramRunner._nzb_folder_wait_counts.pop(bare, None)
+
+
 class ProgramRunner:
     _instance = None
 
@@ -3368,7 +3378,7 @@ class ProgramRunner:
                 try:
                     status = _nzb_client.get_job_status(job_id)
                     if not status:
-                        return job_id, None, None, None
+                        return job_id, None, None, None, None
                     raw = status.get('raw', {})
                     raw_progress = raw.get('progress', status.get('progress', 0))
                     progress = int(float(raw_progress) * 100)
@@ -3382,6 +3392,7 @@ class ProgramRunner:
                     elif status.get('state') == 'completed':
                         progress = 100
                     entry_name = None
+                    actual_file_size = None
                     if progress == 100:
                         # If raw is empty the job isn't in cli_mount's queue.
                         # Wait a few ticks before declaring ghost — a brand-new submission
@@ -3408,9 +3419,11 @@ class ProgramRunner:
                             nzb_title = items_for_job[0].get('filled_by_file', '') or items_for_job[0].get('original_scraped_torrent_title', '')
                             search_name = nzb_title or job_id
                             try:
-                                result = _nzb_client.get_nzb_file_info(search_name, fast_check=True)
+                                result = _nzb_client.get_nzb_file_info(
+                                    search_name, fast_check=True, include_size=True
+                                )
                                 if result:
-                                    entry_name, _ = result
+                                    entry_name, _, actual_file_size = result
                             except Exception:
                                 pass
                         if not entry_name and progress == 100:
@@ -3426,9 +3439,9 @@ class ProgramRunner:
                                 progress = 99
                         elif progress == 100:
                             _job_folder_wait_counts.pop(job_id, None)
-                    return job_id, progress, entry_name, None
+                    return job_id, progress, entry_name, actual_file_size, None
                 except Exception as exc:
-                    return job_id, None, None, exc
+                    return job_id, None, None, None, exc
 
             # Option 3: cap workers at 5, per-job timeout
             _job_results = {}
@@ -3437,8 +3450,8 @@ class ProgramRunner:
                 try:
                     for _fut in _ac(_futures, timeout=self._NZB_HEALTH_JOB_TIMEOUT * len(_unique_jobs)):
                         try:
-                            jid, prog, entry, err = _fut.result(timeout=self._NZB_HEALTH_JOB_TIMEOUT)
-                            _job_results[jid] = (prog, entry, err)
+                            jid, prog, entry, actual_size, err = _fut.result(timeout=self._NZB_HEALTH_JOB_TIMEOUT)
+                            _job_results[jid] = (prog, entry, actual_size, err)
                         except Exception:
                             pass
                 except Exception:
@@ -3446,8 +3459,8 @@ class ProgramRunner:
                     for _fut, jid in _futures.items():
                         if _fut.done():
                             try:
-                                _, prog, entry, err = _fut.result()
-                                _job_results[jid] = (prog, entry, err)
+                                _, prog, entry, actual_size, err = _fut.result()
+                                _job_results[jid] = (prog, entry, actual_size, err)
                             except Exception:
                                 pass
 
@@ -3456,14 +3469,14 @@ class ProgramRunner:
             # and blocks items from reaching Checking. Since the folder is confirmed
             # present (entry_name is set), proceed immediately without waiting.
             _health_results = {}
-            for jid, (prog, entry, err) in _job_results.items():
+            for jid, (prog, entry, actual_size, err) in _job_results.items():
                 if prog == 100 and entry:
                     _health_results[entry] = None  # None = inconclusive, proceed to Checking
                     self._nzb_confirmed_complete[jid] = entry  # remember this job was complete+folder found
                     adding_queue._nzb_downloading_job_ids.discard(jid)  # no longer downloading
 
             # Process results per item
-            _ghost_job_ids = [jid for jid, (prog, _, _) in _job_results.items() if prog == -2]
+            _ghost_job_ids = [jid for jid, (prog, _, _, _) in _job_results.items() if prog == -2]
             if _ghost_job_ids:
                 logging.warning(f'[NZB] Ghost job IDs detected in results: {_ghost_job_ids}')
             _moved_as_sibling = set()  # item IDs already batch-moved with their initiator
@@ -3570,7 +3583,7 @@ class ProgramRunner:
                             except Exception:
                                 pass
                         continue
-                    _prog, _entry, _err = _job_results[job_id]
+                    _prog, _entry, _actual_file_size, _err = _job_results[job_id]
                     if _err:
                         logging.debug(f'[NZB] Error polling progress for {torrent_id}: {_err}')
                         continue
@@ -3599,10 +3612,13 @@ class ProgramRunner:
                         # because the dedup check would just re-assign the same dead hash.
                         logging.warning(f'[NZB] {torrent_id} is a ghost job — moving all items with this job to Wanted')
                         try:
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid_g
-                            _nzb_url_g = item.get('filled_by_magnet', '')
-                            if _nzb_url_g:
-                                _add_guid_g(_nzb_url_g)
+                            from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+                            blacklist_and_cleanup_nzb_failure(
+                                item,
+                                'ghost job in cli_mount',
+                                clear_filled_by=False,
+                                set_rescrape_title=True,
+                            )
                         except Exception:
                             pass
                         # Move all items sharing this ghost torrent_id to Wanted
@@ -3614,9 +3630,17 @@ class ProgramRunner:
                         for _gi in _ghost_items:
                             try:
                                 _gi_id = _gi['id']
-                                _gi_url = _gi.get('filled_by_magnet', '')
-                                if _gi_url and _gi_url != item.get('filled_by_magnet', ''):
-                                    _add_guid_g(_gi_url)
+                                if _gi is not item:
+                                    try:
+                                        from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+                                        blacklist_and_cleanup_nzb_failure(
+                                            _gi,
+                                            'ghost job sibling cleanup',
+                                            clear_filled_by=False,
+                                            set_rescrape_title=True,
+                                        )
+                                    except Exception:
+                                        pass
                                 # Cap how many times the same item can be resurrected into a
                                 # ghost job before we stop retrying and blacklist instead -
                                 # without this, an item whose reused reference keeps ghosting
@@ -3650,18 +3674,15 @@ class ProgramRunner:
                             continue
                         logging.warning(f'[NZB] {torrent_id} failed in cli_mount — adding to not-wanted and moving back to Scraping')
                         try:
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid, add_to_not_wanted_nzb_segment as _add_seg
-                            _nzb_url = item.get('filled_by_magnet', '')
-                            if _nzb_url:
-                                _add_guid(_nzb_url)
-                                logging.info(f'[NZB] Added {_nzb_url[:60]}... to not-wanted guids')
-                            # Also blacklist segment ID so same content from any indexer is filtered next scrape
-                            _seg_id = item.get('nzb_segment_id', '')
-                            if _seg_id:
-                                _add_seg(_seg_id)
-                                logging.debug(f'[NZB] Added segment {_seg_id!r} to not-wanted segments')
+                            from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+                            blacklist_and_cleanup_nzb_failure(
+                                item,
+                                'failed in cli_mount',
+                                clear_filled_by=False,
+                                set_rescrape_title=True,
+                            )
                         except Exception as _nw_err:
-                            logging.debug(f'[NZB] Could not add to not-wanted: {_nw_err}')
+                            logging.debug(f'[NZB] Could not run failure cleanup: {_nw_err}')
                         # Clean up all siblings sharing this dead job — add their URLs to not-wanted
                         # and move them back to Wanted so they re-scrape fresh without the dead job
                         try:
@@ -3672,9 +3693,16 @@ class ProgramRunner:
                             for _ds in _dead_siblings:
                                 try:
                                     _ds_id = _ds['id']
-                                    _ds_url = _ds.get('filled_by_magnet', '')
-                                    if _ds_url:
-                                        _add_guid(_ds_url)
+                                    try:
+                                        from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+                                        blacklist_and_cleanup_nzb_failure(
+                                            _ds,
+                                            'failed-in-cli_mount sibling cleanup',
+                                            clear_filled_by=False,
+                                            set_rescrape_title=True,
+                                        )
+                                    except Exception:
+                                        pass
                                     # Cap repeats for coalesced siblings the same way the primary
                                     # item below is capped. Without this, a sibling sharing the
                                     # dead job reference (e.g. a coalesced season pack) keeps
@@ -4027,17 +4055,32 @@ class ProgramRunner:
                     else:
                         health = _health_results.get(entry_name)
 
+                    # A completed individual NZB whose selected video is only a
+                    # tiny fraction of the indexer's advertised release size is
+                    # almost certainly a trailer, sample, or incomplete payload.
+                    # Reuse the existing broken-job cleanup/blacklist/retry flow.
+                    if health != 'broken':
+                        try:
+                            from usenet.nzb_size_validation import individual_nzb_size_mismatch
+                            _size_mismatch = individual_nzb_size_mismatch(
+                                item, nzb_title, _actual_file_size
+                            )
+                            if _size_mismatch:
+                                _actual_b, _expected_b, _ratio = _size_mismatch
+                                logging.warning(
+                                    f'[NZB] {torrent_id} actual video is only {_ratio:.1%} of '
+                                    f'advertised size ({_actual_b / (1024 ** 2):.1f} MiB vs '
+                                    f'{_expected_b / (1024 ** 3):.2f} GiB) — treating as broken'
+                                )
+                                health = 'broken'
+                        except Exception as _size_err:
+                            logging.debug(f'[NZB] Could not validate completed file size: {_size_err}')
+
                     if health == 'broken':
                         logging.warning(f'[NZB] {torrent_id} entry {entry_name!r} is BROKEN — deleting and moving back to Wanted')
+                        if entry_name:
+                            _health_results.pop(entry_name, None)
                         self._nzb_health_triggered.pop(entry_name, None)
-                        # Add NZB guid to not-wanted so it's filtered at scrape time in future
-                        try:
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid
-                            _nzb_url_for_guid = item.get('filled_by_magnet', '')
-                            if _nzb_url_for_guid:
-                                _add_guid(_nzb_url_for_guid)
-                        except Exception as _ge:
-                            logging.debug(f'[NZB] Could not add guid to not-wanted: {_ge}')
                         try:
                             import requests as _req
                             _dcy_url = _gs('Usenet Provider', 'url', default='').rstrip('/')
@@ -4072,34 +4115,20 @@ class ProgramRunner:
                         except Exception as _de:
                             logging.warning(f'[NZB] Error deleting broken entry: {_de}')
                         try:
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_segment, extract_nzb_segment_id
-                            import json as _j
-                            _seg_id = ''
-                            _results_raw = item.get('scrape_results', [])
-                            if isinstance(_results_raw, str):
-                                _results_raw = _j.loads(_results_raw)
-                            for _r in (_results_raw or []):
-                                if _r.get('title', '') == nzb_title or _r.get('original_title', '') == nzb_title:
-                                    _nzb_fetch_url = _r.get('nzb_url', '') or _r.get('magnet', '')
-                                    if _nzb_fetch_url:
-                                        try:
-                                            from routes.api_tracker import api as _fapi
-                                            _fr = _fapi.get(_nzb_fetch_url, timeout=15, allow_redirects=True)
-                                            if _fr.status_code == 200 and '<nzb' in _fr.text.lower():
-                                                _seg_id = extract_nzb_segment_id(_fr.text)
-                                        except Exception:
-                                            pass
-                                    break
-                            if _seg_id:
-                                add_to_not_wanted_nzb_segment(_seg_id)
-                                logging.info(f'[NZB] Added broken NZB segment ID {_seg_id!r} to not-wanted')
+                            from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+                            blacklist_and_cleanup_nzb_failure(
+                                item,
+                                'health check broken',
+                                clear_filled_by=True,
+                                set_rescrape_title=True,
+                                nzb_title=nzb_title,
+                                fetch_segment_if_missing=True,
+                            )
                         except Exception as _nwe:
-                            logging.debug(f'[NZB] Could not add segment to not-wanted: {_nwe}')
-                        from database.database_writing import update_media_item as _umi
-                        _umi(item_id, filled_by_torrent_id=None, filled_by_file=None, filled_by_title=None,
-                             debrid_folder_name=None, fall_back_to_single_scraper=False)
+                            logging.debug(f'[NZB] Could not run broken-job cleanup: {_nwe}')
                         try:
                             import json as _json
+                            from database.database_writing import update_media_item as _umi
                             _results = item.get('scrape_results', [])
                             if isinstance(_results, str):
                                 _results = _json.loads(_results)
@@ -4126,15 +4155,19 @@ class ProgramRunner:
                         if _broken_siblings:
                             logging.warning(f'[NZB] Cleaning up {len(_broken_siblings)} coalesced siblings of broken job {torrent_id}')
                             from database.database_writing import update_media_item as _umi2
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid2
                             for _sib in _broken_siblings:
                                 try:
-                                    _sib_url = _sib.get('filled_by_magnet', '')
-                                    if _sib_url:
-                                        try:
-                                            _add_guid2(_sib_url)
-                                        except Exception:
-                                            pass
+                                    try:
+                                        from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+                                        blacklist_and_cleanup_nzb_failure(
+                                            _sib,
+                                            'health check broken sibling cleanup',
+                                            clear_filled_by=False,
+                                            set_rescrape_title=True,
+                                            nzb_title=nzb_title,
+                                        )
+                                    except Exception:
+                                        pass
                                     _umi2(_sib['id'],
                                           filled_by_torrent_id=None,
                                           filled_by_file=None,
@@ -4146,6 +4179,11 @@ class ProgramRunner:
                                     logging.info(f'[NZB] Moved broken sibling {_sib["id"]} back to Wanted')
                                 except Exception as _sib_err:
                                     logging.warning(f'[NZB] Could not clean up sibling {_sib.get("id")}: {_sib_err}')
+                        item['filled_by_torrent_id'] = None
+                        item['filled_by_file'] = None
+                        item['filled_by_title'] = None
+                        item['debrid_folder_name'] = None
+                        continue
                     else:
                         if health == 'healthy':
                             logging.info(f'[NZB] {torrent_id} health check passed — moving to Checking')
@@ -5292,12 +5330,16 @@ class ProgramRunner:
                             season = item['season_number']
                             episode = item['episode_number']
                             matched_file = None
-                            if season is not None and episode is not None:
-                                ep_pat = _re_sc.compile(rf'[Ss]{season:02d}[Ee]{episode:02d}(?![0-9])', _re_sc.IGNORECASE)
-                                for vf in video_files:
-                                    if ep_pat.search(vf):
-                                        matched_file = vf
-                                        break
+                            try:
+                                _file_result = _dc_sc.get_nzb_file_info(
+                                    folder_name, season=season, episode=episode,
+                                )
+                                if _file_result:
+                                    matched_file = _file_result[1]
+                            except Exception as _resolve_err:
+                                logging.debug(
+                                    f"[NZBCoalesce] get_nzb_file_info failed for {folder_name!r}: {_resolve_err}"
+                                )
 
                             if not matched_file:
                                 # Can't confirm this item's own file exists in the pack folder yet -
@@ -6230,6 +6272,20 @@ class ProgramRunner:
             item = dict(item_dict)
             torrent_id = str(item.get('filled_by_torrent_id') or '')
             is_nzb = torrent_id.startswith('nzb:')
+
+            if is_nzb:
+                import os as _os_size_gate
+                from utilities.local_library_scan import (
+                    _prefer_largest_nzb_source,
+                    _reject_if_nzb_size_too_small,
+                )
+                _source_folder = _os_size_gate.path.dirname(actual_file_path)
+                actual_file_path = _prefer_largest_nzb_source(item, _source_folder, actual_file_path)
+                if _reject_if_nzb_size_too_small(item, actual_file_path):
+                    if cache_key in self.plex_scan_tick_counts:
+                        del self.plex_scan_tick_counts[cache_key]
+                    return False
+
             probe_section = 'Usenet Provider' if is_nzb else 'Debrid Provider'
             probe_key = 'ffprobe_all_nzbs' if is_nzb else 'ffprobe_all_debrid_additions'
             if not get_setting(probe_section, probe_key, False):

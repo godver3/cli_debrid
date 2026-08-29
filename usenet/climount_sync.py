@@ -337,6 +337,7 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                     files = entry.get('files') or []
                     size_to_file: dict = {f['size']: f['name'] for f in files if f.get('size') and f.get('name')}
                     single_file = files[0]['name'] if len(files) == 1 else None
+                    file_tuples = [(f['name'], f['size']) for f in files if f.get('name') and f.get('size')]
 
                     # Handle bad flag — trigger immediate re-insertion if cli_mount marked entry bad
                     if entry.get('bad'):
@@ -356,12 +357,21 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                     # DB field updates — unchanged from original, runs per item_id
                     for item_id in item_ids:
                         file_name = single_file
-                        if file_name is None and size_to_file:
-                            row_size = conn.execute(
-                                'SELECT size FROM media_items WHERE id = ?', (item_id,)
+                        if file_name is None and file_tuples:
+                            from debrid.common.utils import pick_best_video_file
+                            row_meta = conn.execute(
+                                'SELECT type, season_number, episode_number, size FROM media_items WHERE id = ?',
+                                (item_id,),
                             ).fetchone()
-                            if row_size and row_size[0]:
-                                size_bytes = int(float(row_size[0]) * 1024 * 1024 * 1024)
+                            season = episode = None
+                            if row_meta and row_meta[0] == 'episode':
+                                season = row_meta[1]
+                                episode = row_meta[2]
+                            best = pick_best_video_file(file_tuples, season=season, episode=episode)
+                            if best:
+                                file_name = best[0]
+                            elif row_meta and row_meta[3]:
+                                size_bytes = int(float(row_meta[3]) * 1024 * 1024 * 1024)
                                 file_name = size_to_file.get(size_bytes)
                                 if not file_name:
                                     for sz, fn in size_to_file.items():

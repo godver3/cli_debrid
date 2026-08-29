@@ -423,18 +423,14 @@ class CheckingQueue:
                     ep = item.get('episode_number')
                     season = item.get('season_number')
                     orig_scraped = item.get('original_scraped_torrent_title') or job_name
-                    # Find file matching this episode number
                     matched_file = None
-                    if ep is not None and season is not None:
-                        ep_pat = _re_ep.compile(
-                            rf'[Ss]{season:02d}[Ee]{ep:02d}(?![0-9])',
-                            _re_ep.IGNORECASE
-                        )
-                        for vf in video_files:
-                            if ep_pat.search(vf):
-                                matched_file = vf
-                                break
-                    # Fallback to largest file if no episode match
+                    file_result = client.get_nzb_file_info(
+                        job_name, season=season, episode=ep,
+                    )
+                    if file_result:
+                        resolved_folder, matched_file = file_result[0], file_result[1]
+                        if resolved_folder:
+                            folder_name = resolved_folder
                     if not matched_file and video_files:
                         matched_file = video_files[0]
                     if not matched_file:

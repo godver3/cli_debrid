@@ -89,7 +89,7 @@ def log_repair_activity(
 ) -> None:
     """outcome: 'replaced' | 'not_found' | 'no_replacement' | 'submission_failed' |
                 'plex_deleted' | 'error' | 'skipped_backoff' | 'skipped_max_attempts' |
-                'manual_retry'"""
+                'skipped_junk_source' | 'cancelled' | 'manual_retry'"""
     try:
         from datetime import datetime as _dt
         now = _dt.utcnow().strftime('%Y-%m-%d %H:%M:%S')
@@ -247,8 +247,14 @@ def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None, 
                     # count it as resolved if the current title actually
                     # differs from the one that was broken in this row.
                     broken_title = r.get('broken_nzb_title') or r.get('broken_nzb_id') or ''
-                    if state == 'Collected' and filled_by_title and filled_by_title != broken_title:
-                        r['current_replacement_title'] = filled_by_title
+                    if state == 'Collected' and filled_by_title:
+                        if filled_by_title != broken_title:
+                            r['current_replacement_title'] = filled_by_title
+                        elif r.get('outcome') == 'manual_retry':
+                            # Send to Wanted finished — even a same-title
+                            # re-collect means the retry landed.
+                            r['current_replacement_title'] = filled_by_title
+                            r['manual_retry_resolved'] = True
 
         return result, total
     except Exception as e:
@@ -280,12 +286,14 @@ def get_repair_stats(days: int = 30, source: str = None) -> dict:
             'plex_deleted': stats.get('plex_deleted', 0),
             'skipped_backoff': stats.get('skipped_backoff', 0),
             'skipped_max_attempts': stats.get('skipped_max_attempts', 0),
+            'skipped_junk_source': stats.get('skipped_junk_source', 0),
             'error': stats.get('error', 0),
             'total': sum(stats.values()),
         }
     except Exception as e:
         logger.debug(f"[NZBRepair] get_repair_stats error: {e}")
         return {k: 0 for k in ('replaced', 'not_found', 'no_replacement', 'submission_failed',
-                                'plex_deleted', 'skipped_backoff', 'skipped_max_attempts', 'error', 'total')}
+                                'plex_deleted', 'skipped_backoff', 'skipped_max_attempts',
+                                'skipped_junk_source', 'error', 'total')}
     finally:
         conn.close()

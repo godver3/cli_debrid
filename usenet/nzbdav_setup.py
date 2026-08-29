@@ -217,7 +217,7 @@ def do_generate(a, interactive=False):
             "api_token": a.apikey or "<nzbdav api.key>",
             "download_folder": "__unplayable__",
             "mounted_file_location": a.container_mount_path,
-            "retention_days": 1500,
+            "retention_days": 5000,
             "enable_nzb_naming": False,
         }
     }

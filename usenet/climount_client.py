@@ -72,6 +72,29 @@ def _delete_status(url, **kwargs):
 
 
 
+def _delete_queue_job(base_url: str, info_hash: str, headers: Dict[str, str]) -> bool:
+    """Best-effort queue.db cleanup for a job UUID."""
+    if not info_hash:
+        return False
+    status, exc = _delete_status(
+        f'{base_url}/api/torrents',
+        params={'hashes': info_hash},
+        headers=headers,
+        timeout=15,
+    )
+    if status in (200, 204):
+        logging.info(f'[cli_mount] Removed queue job {info_hash} after mount/storage delete')
+        return True
+    if status == 404:
+        logging.debug(f'[cli_mount] Queue job {info_hash} already absent after mount delete')
+        return True
+    if status is not None:
+        logging.debug(f'[cli_mount] queue delete for {info_hash} returned HTTP {status}')
+    else:
+        logging.debug(f'[cli_mount] queue delete for {info_hash} failed: {exc}')
+    return False
+
+
 class CliMountClient:
     """Submits NZB URLs to cli_mount and polls for completion."""
 
@@ -280,12 +303,14 @@ class CliMountClient:
             logging.warning(f'[cli_mount] _list_nzb_folder_files error for {folder_name!r}: {exc}')
         return []
 
-    def get_nzb_file_info(self, job_name: str, season: int = None, episode: int = None, fast_check: bool = False) -> Optional[Tuple[str, str]]:
+    def get_nzb_file_info(self, job_name: str, season: int = None, episode: int = None,
+                          fast_check: bool = False, include_size: bool = False):
         """
         Find the downloaded folder and best-matching video file for a completed NZB job.
         If season/episode are provided, picks the file matching that episode.
         Otherwise picks the largest video file.
-        Returns (folder_name, video_filename) or None if not found.
+        Returns (folder_name, video_filename) or None if not found. When
+        include_size=True, returns (folder_name, video_filename, size_bytes).
         """
         def _norm(s):
             return re.sub(r'[^a-z0-9]', '', s.lower())
@@ -301,29 +326,20 @@ class CliMountClient:
             video_files = self._list_nzb_folder_files(folder_name)
             if not video_files:
                 logging.warning(f'[cli_mount] No video files in folder {folder_name!r}')
-                return folder_name, None
+                return (folder_name, None, None) if include_size else (folder_name, None)
 
-            from debrid.common import filter_unwanted_video_files
+            from debrid.common import filter_unwanted_video_files, pick_best_video_file
             video_files = filter_unwanted_video_files(video_files)
 
-            # If season/episode provided, find the matching file
-            best_file = None
-            if season is not None and episode is not None:
-                ep_pat = re.compile(
-                    rf'[Ss]{season:02d}[Ee]{episode:02d}(?![0-9])',
-                    re.IGNORECASE
-                )
-                for name, _ in video_files:
-                    if ep_pat.search(name):
-                        best_file = name
-                        break
-
-            # Fallback: largest file
+            best_file = pick_best_video_file(video_files, season=season, episode=episode)
             if not best_file:
-                best_file = max(video_files, key=lambda x: x[1])[0]
+                best_file = max(video_files, key=lambda x: x[1])
 
-            logging.info(f'[cli_mount] get_nzb_file_info: folder={folder_name!r} file={best_file!r}')
-            return folder_name, best_file
+            best_name, best_size = best_file
+            logging.info(f'[cli_mount] get_nzb_file_info: folder={folder_name!r} file={best_name!r}')
+            if include_size:
+                return folder_name, best_name, best_size
+            return folder_name, best_name
 
         except Exception as exc:
             logging.warning(f'[cli_mount] get_nzb_file_info error for {job_name!r}: {exc}')
@@ -354,9 +370,11 @@ class CliMountClient:
 
     def remove_nzb(self, info_hash: str, entry_name: str = '') -> bool:
         """
-        Delete a completed NZB entry from cli_mount — removes from entries.db AND mount.
+        Delete a completed NZB entry from cli_mount — removes from entries.db, mount,
+        and queue.db.
         Uses DELETE /api/browse/torrents/{hash} which calls manager.DeleteEntry()
-        and removes the entry from storage and the filesystem mount.
+        and removes the entry from storage and the filesystem mount, then deletes
+        the matching queue row via /api/torrents?hashes=.
         Falls back to queue-only DELETE /api/torrents?hashes= if browse delete fails.
         Returns True if removed (or already gone), False on error.
         """
@@ -371,12 +389,18 @@ class CliMountClient:
             )
             if status in (200, 204):
                 logging.info(f'[cli_mount] Removed NZB entry {info_hash} from storage and mount')
+                _delete_queue_job(self.base_url, info_hash, self._headers())
                 _mark_job_deleted(info_hash)
                 return True
             if status == 404:
-                logging.info(f'[cli_mount] NZB entry {info_hash} already gone (404)')
-                _mark_job_deleted(info_hash)
-                return True
+                # A broken NZB can still exist in /api/torrents even when it
+                # never produced a browse/storage entry.  A 404 here only
+                # proves the mount entry is absent, so continue to the exact
+                # queue deletion below instead of leaving a reusable ghost.
+                logging.info(
+                    f'[cli_mount] NZB mount entry {info_hash} absent (404) — '
+                    'checking provider queue'
+                )
             if status is not None:
                 logging.debug(f'[cli_mount] remove_nzb browse endpoint returned {status}')
             else:
@@ -418,6 +442,7 @@ class CliMountClient:
                             )
                             if status in (200, 204, 404):
                                 logging.info(f'[cli_mount] Removed NZB by name search: {entry_name!r}')
+                                _delete_queue_job(self.base_url, h, self._headers())
                                 _mark_job_deleted(h)
                                 if info_hash:
                                     _mark_job_deleted(info_hash)
@@ -463,9 +488,34 @@ class CliMountClient:
             f'{self.base_url}/api/browse/torrents/{info_hash}',
             headers=self._headers(), timeout=15,
         )
-        if status in (200, 204, 404):
+        if status in (200, 204):
+            _delete_queue_job(self.base_url, info_hash, self._headers())
             _mark_job_deleted(info_hash)
             return True
+        if status == 404:
+            # Missing from browse/storage does not imply missing from the
+            # provider queue.  Delete that second record by exact UUID too;
+            # unlike remove_nzb(), this method deliberately has no name-based
+            # fallback.
+            queue_status, queue_exc = _delete_status(
+                f'{self.base_url}/api/torrents',
+                params={'hashes': info_hash},
+                headers=self._headers(), timeout=15,
+            )
+            if queue_status in (200, 204, 404):
+                _mark_job_deleted(info_hash)
+                return True
+            if queue_status is not None:
+                logging.warning(
+                    '[cli_mount] Exact queue delete %s returned HTTP %s',
+                    info_hash, queue_status,
+                )
+            else:
+                logging.warning(
+                    '[cli_mount] Exact queue delete %s failed: %s',
+                    info_hash, queue_exc,
+                )
+            return False
         if status is not None:
             logging.warning('[cli_mount] Exact job delete %s returned HTTP %s', info_hash, status)
         else:

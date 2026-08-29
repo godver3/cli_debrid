@@ -33,6 +33,7 @@ Key differences from previous implementation:
 
 import json
 import logging
+import os
 import re
 import time
 from typing import Optional, Tuple
@@ -62,6 +63,7 @@ from database.nzb_playback_repair import (
     candidate_is_excluded,
     candidate_keys,
     has_active_exact_repair,
+    playback_candidate_search_blocked,
     record_failed_candidate,
     set_playback_candidate,
 )
@@ -846,6 +848,125 @@ def _bulk_delete_from_plex(items: list) -> dict:
 # Segment blacklisting
 # ---------------------------------------------------------------------------
 
+def _resolve_repair_mount_path(location_on_disk: str) -> str:
+    """Translate a DB location_on_disk path to the in-container mount path."""
+    if not location_on_disk:
+        return ''
+    if location_on_disk.startswith('/debrid/'):
+        mount = get_setting('Usenet Provider', 'mount_path', '/debrid').rstrip('/')
+        return mount + location_on_disk[len('/debrid'):]
+    return location_on_disk
+
+
+def _junk_nzb_source_reason(item: dict, location_on_disk: str) -> Optional[str]:
+    """Return a reason when the on-disk source looks like junk, not a segment repair case.
+
+    Junk must never enter the repair pipeline — no replacement scrape, no submit,
+    and no item state changes from repair (manual rescrape / junk cleanup handles those).
+    """
+    import os as _os_junk
+
+    file_path = _resolve_repair_mount_path(location_on_disk)
+    if not file_path or not _os_junk.path.isfile(file_path):
+        return None
+
+    basename = _os_junk.path.basename(file_path)
+    from debrid.common.utils import is_unwanted_file
+    if is_unwanted_file(basename):
+        return 'sample/trailer filename'
+
+    try:
+        actual_size = _os_junk.path.getsize(file_path)
+    except OSError:
+        return None
+
+    nzb_title = (
+        item.get('original_scraped_torrent_title')
+        or item.get('filled_by_title')
+        or item.get('filled_by_file')
+        or item.get('debrid_folder_name')
+        or ''
+    )
+    from usenet.nzb_size_validation import individual_nzb_size_mismatch
+    mismatch = individual_nzb_size_mismatch(item, nzb_title, actual_size)
+    if mismatch:
+        _actual, _expected, ratio = mismatch
+        return f'size mismatch ({ratio * 100:.1f}% of advertised)'
+
+    folder = _os_junk.path.dirname(file_path)
+    try:
+        from debrid.common.utils import is_video_file, filter_unwanted_video_files
+        video_files = []
+        for name in _os_junk.listdir(folder):
+            path = _os_junk.path.join(folder, name)
+            if _os_junk.path.isfile(path) and is_video_file(name):
+                try:
+                    video_files.append((name, _os_junk.path.getsize(path)))
+                except OSError:
+                    pass
+        if len(video_files) > 1:
+            filtered = filter_unwanted_video_files(video_files)
+            if filtered:
+                max_size = max(sz for _, sz in filtered)
+                if max_size > 0 and actual_size < max_size * 0.05 and actual_size < 500 * 1024 * 1024:
+                    return f'relative junk ({actual_size // (1024 ** 2)} MiB vs folder max {max_size // (1024 ** 3)} GiB)'
+    except OSError:
+        pass
+
+    return None
+
+
+def _is_junk_replacement_result(result: dict) -> bool:
+    """True when a scrape candidate must not be submitted as a repair replacement."""
+    from debrid.common.utils import is_unwanted_file
+    for key in ('title', 'original_title'):
+        if is_unwanted_file(result.get(key) or ''):
+            return True
+    return False
+
+
+def _skip_junk_in_repair(
+    db_items: list,
+    *,
+    info_hash: str,
+    nzb_url: str,
+    entry_name: str,
+    junk_reason: str,
+    triggered_by: str,
+    summary: dict,
+) -> None:
+    """Drop a junk source from the repair pipeline without touching item state."""
+    from database.not_wanted_magnets import add_to_not_wanted
+
+    _broken_segment_id = db_items[0].get('nzb_segment_id', '') if db_items else ''
+    _blacklist_broken_nzb(nzb_url, segment_id=_broken_segment_id)
+    if info_hash:
+        try:
+            add_to_not_wanted(info_hash)
+        except Exception:
+            pass
+
+    rep = db_items[0]
+    log_repair_activity(
+        item_id=rep.get('id'),
+        title=rep.get('title'),
+        media_type=rep.get('type'),
+        season_number=rep.get('season_number'),
+        episode_number=rep.get('episode_number'),
+        broken_nzb_id=info_hash or entry_name,
+        broken_nzb_title=entry_name,
+        replacement_title=junk_reason,
+        outcome='skipped_junk_source',
+        triggered_by=triggered_by,
+    )
+    summary.setdefault('skipped_junk_source', 0)
+    summary['skipped_junk_source'] += 1
+    logger.info(
+        f'[NZBRepair] {entry_name!r} — junk source ({junk_reason}); '
+        f'skipping repair ({len(db_items)} matched item(s), no state change)'
+    )
+
+
 def _blacklist_broken_nzb(nzb_url: str, segment_id: str = '') -> None:
     """Add broken NZB URL/guid and segment ID to not-wanted lists.
     segment_id should be passed from the DB item's nzb_segment_id column —
@@ -906,6 +1027,7 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
         )
 
         nzb_results = [r for r in (results or []) if r.get('protocol') == 'nzb']
+        nzb_results = [r for r in nzb_results if not _is_junk_replacement_result(r)]
 
         # Filter out not-wanted magnets/URLs/guids. Unlike scraping_queue.py's
         # normal scrape path, this repair-specific search never went through
@@ -1132,6 +1254,15 @@ def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
     scheduling/logging by the completion worker — never raises.
     """
     item_id = item['id']
+    repair_id = repair_row.get('id')
+    old_info_hash = repair_row.get('old_info_hash')
+    blocked, block_reason = playback_candidate_search_blocked(repair_id, item_id, old_info_hash)
+    if blocked:
+        logger.info(
+            '[NZBPlayback] Skipping candidate search for item %s repair=%s: %s',
+            item_id, repair_id, block_reason,
+        )
+        return block_reason
     broken_nzb_title = (item.get('debrid_folder_name') or item.get('filled_by_file')
                          or repair_row.get('old_entry_name') or item.get('title') or '')
     candidates = _scrape_for_replacement(item, broken_nzb_title)
@@ -1149,6 +1280,19 @@ def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
         return 'no_replacement'
 
     for candidate in unique_candidates:
+        blocked, block_reason = playback_candidate_search_blocked(repair_id, item_id, old_info_hash)
+        if blocked:
+            logger.info(
+                '[NZBPlayback] Aborting candidate search mid-pipeline for item %s repair=%s: %s',
+                item_id, repair_id, block_reason,
+            )
+            return block_reason
+        if _is_junk_replacement_result(candidate):
+            logger.info(
+                '[NZBPlayback] Skipping junk replacement candidate %r',
+                candidate.get('title'),
+            )
+            continue
         job_id, submitted_title, disposition = _submit_and_confirm_replacement(
             candidate, item.get('title', ''), item=item)
         if disposition in ('failed', 'rejected'):
@@ -1175,6 +1319,117 @@ def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
         )
         return 'submitted'
     return 'submission_failed'
+
+
+def _collect_playback_repair_sources(repair: dict, item: dict) -> list[tuple[str, str]]:
+    """Deduped (info_hash, entry_name) pairs for an aborted playback repair."""
+    seen: set[str] = set()
+    sources: list[tuple[str, str]] = []
+
+    def _add(info_hash, entry_name) -> None:
+        h = (info_hash or '').strip()
+        name = (entry_name or h or '').strip()
+        if not h:
+            return
+        key = h.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        sources.append((h, name))
+
+    _add(repair.get('old_info_hash'), repair.get('old_entry_name'))
+    _add(repair.get('candidate_info_hash'), repair.get('candidate_title'))
+
+    torrent_id = item.get('filled_by_torrent_id') or ''
+    if torrent_id.startswith('nzb:'):
+        _add(torrent_id[4:], item.get('filled_by_title') or item.get('debrid_folder_name')
+              or item.get('filled_by_file'))
+    return sources
+
+
+def _find_paths_for_release(item: dict, entry_name: str) -> list[str]:
+    """Symlink/real paths on disk that belong to a specific release folder name."""
+    if not entry_name:
+        return []
+    paths: list[str] = []
+    loc = item.get('location_on_disk') or ''
+    if loc and entry_name in loc and os.path.lexists(loc):
+        paths.append(loc)
+
+    search_dirs: list[str] = []
+    if loc:
+        search_dirs.append(os.path.dirname(loc))
+    try:
+        from utilities.local_library_scan import get_symlink_path
+        probe = dict(item)
+        probe['filled_by_title'] = entry_name
+        probe['original_scraped_torrent_title'] = entry_name
+        probe['debrid_folder_name'] = entry_name
+        guessed = get_symlink_path(probe, f'{entry_name}.mkv', skip_jikan_lookup=True)
+        if guessed:
+            search_dirs.append(os.path.dirname(guessed))
+            if os.path.lexists(guessed):
+                paths.append(guessed)
+    except Exception as exc:
+        logger.debug('[NZBRepair] symlink path probe failed for %r: %s', entry_name, exc)
+
+    needle_paren = f'({entry_name})'
+    for directory in search_dirs:
+        if not directory or not os.path.isdir(directory):
+            continue
+        try:
+            for name in os.listdir(directory):
+                if entry_name not in name and needle_paren not in name:
+                    continue
+                full = os.path.join(directory, name)
+                if os.path.islink(full) or os.path.isfile(full):
+                    paths.append(full)
+        except OSError as exc:
+            logger.debug('[NZBRepair] could not scan %r: %s', directory, exc)
+    return list(dict.fromkeys(paths))
+
+
+def _remove_path_from_media_server(item: dict, path: str) -> None:
+    if not path:
+        return
+    try:
+        from utilities.plex_functions import remove_file_from_plex
+        ep_title = item.get('episode_title') if item.get('type') != 'movie' else None
+        remove_file_from_plex(item.get('title', ''), path, ep_title)
+    except Exception as exc:
+        logger.warning('[NZBRepair] media-server file removal failed for %r: %s', path, exc)
+
+
+def _unlink_if_present(path: str) -> None:
+    try:
+        if os.path.islink(path) or os.path.isfile(path):
+            os.unlink(path)
+            logger.info('[NZBRepair] Removed symlink/file %r', path)
+    except OSError as exc:
+        logger.warning('[NZBRepair] Could not remove %r: %s', path, exc)
+
+
+def _teardown_playback_repair_mounts(repair: dict, item: dict) -> None:
+    """Remove broken + partial-replacement mounts when aborting a playback repair."""
+    sources = _collect_playback_repair_sources(repair, item)
+    if not sources:
+        return
+    logger.info(
+        '[NZBRepair] Teardown playback repair=%s item=%s sources=%s',
+        repair.get('id'), item.get('id'), [s[0] for s in sources],
+    )
+    client = _client()
+    for info_hash, entry_name in sources:
+        try:
+            if hasattr(client, 'remove_nzb_exact'):
+                client.remove_nzb_exact(info_hash)
+            else:
+                _delete_from_provider(info_hash, entry_name)
+        except Exception as exc:
+            logger.warning('[NZBRepair] Provider teardown failed for %r: %s', info_hash, exc)
+        for path in _find_paths_for_release(item, entry_name):
+            _remove_path_from_media_server(item, path)
+            _unlink_if_present(path)
 
 
 def _move_to_wanted(item: dict) -> None:
@@ -1205,16 +1460,13 @@ _manual_retry_pending: set = set()
 _manual_retry_pending_lock = _threading.Lock()
 
 
-def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
-    """Manually retry an item stuck at 'skipped_max_attempts' (give_up).
-
-    The give_up gate short-circuits before Plex/provider deletion ever runs,
-    so the dead entry is likely still sitting there — clean it up here,
-    blacklist it so re-scrape can't just pick the same dead release again,
-    then move the item back to Wanted. Also logs a fresh activity row with
-    repair_attempts=0 so a later get_repair_state() lookup for this
-    broken_nzb_id derives give_up=False again, in case it resurfaces.
-    """
+def _apply_manual_retry_reset(
+    item_id: int,
+    broken_nzb_id: str = '',
+    *,
+    extra_hashes: Optional[list] = None,
+) -> dict:
+    """Shared cleanup for manual retry and cancelled playback repairs."""
     item = _find_db_item_by_id(item_id)
     if not item:
         return {'outcome': 'error', 'message': f'No DB item found for id {item_id}'}
@@ -1223,40 +1475,19 @@ def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
     if nzb_url:
         _blacklist_broken_nzb(nzb_url, item.get('nzb_segment_id', '') or '')
 
-    # Symlinked/Local mode: deliberately NOT calling _delete_from_plex(item).
-    # get_symlink_path is deterministic (based on title/season/episode/version,
-    # not the specific release), so a replacement always lands at the exact
-    # same path as before — a normal rescan updates the existing Plex item in
-    # place (keeping addedAt/watch history) once the new symlink exists.
-    # Deleting first just orphans that match, so the replacement shows up
-    # as a fresh "recently added" item instead. ffprobe's rejection path
-    # (_reject_unplayable_source) never touches Plex for the same reason.
-    #
-    # Plex mode is different: per _symlink_matches (database/
-    # nzb_playback_repair.py), location_on_disk there is the real mounted
-    # file path as Plex's own API reports it — no cli_debrid-owned symlink
-    # or deterministic path to key off, so a different replacement release
-    # genuinely is a different path from Plex's perspective. Skipping the
-    # delete there risks leaving the dead entry orphaned alongside the new
-    # one, so Plex mode keeps the original delete-then-recreate behavior.
+    if extra_hashes:
+        from database.not_wanted_magnets import add_to_not_wanted
+        for info_hash in extra_hashes:
+            if not info_hash:
+                continue
+            try:
+                add_to_not_wanted(info_hash)
+            except Exception:
+                pass
+
     if get_setting('File Management', 'file_collection_management') != 'Symlinked/Local':
         _delete_from_plex(item)
 
-    # broken_nzb_id (from the activity row logged back when this item first
-    # failed) is often just the release title, not a real provider job ID —
-    # deleting by it silently no-ops. The item's own filled_by_torrent_id
-    # ("nzb:<uuid>") is the CURRENT, authoritative job ID for whatever's
-    # still sitting on the mount right now, so prefer that.
-    #
-    # But that torrent_id may be a season pack shared with sibling episodes
-    # (coalescing assigns the same job to every episode in the pack) — unlike
-    # the automated NZBRepair path, which only ever deletes an entry that
-    # cli_mount's own health check already independently confirmed dead,
-    # nothing here has verified this job is actually broken beyond "the one
-    # episode the user retried looked stuck." Deleting it unconditionally
-    # would take the whole pack down for every sibling still relying on it.
-    # Match the same sibling check the manual "Delete item" UI route uses
-    # before it removes anything from cli_mount.
     torrent_id = item.get('filled_by_torrent_id') or ''
     provider_job_id = torrent_id[4:] if torrent_id.startswith('nzb:') else (torrent_id or broken_nzb_id)
     if provider_job_id and torrent_id:
@@ -1284,20 +1515,77 @@ def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
     with _manual_retry_pending_lock:
         _manual_retry_pending.add(item_id)
 
-    # _move_to_wanted resets identity fields but leaves collected_at from the
-    # OLD (broken) collection in place. The Adding queue's season-pack dedup
-    # check (run_program.py's "self_collected" shortcut) sees that stale
-    # timestamp, assumes this item already has a file in place from earlier
-    # in the same cycle, and marks it Collected without ever running the
-    # Checking queue's symlink creation — leaving it 'Collected' in the DB
-    # with location_on_disk still None and nothing actually playable. Only
-    # clearing it here (not in _move_to_wanted itself, which the automated
-    # repair loop also calls) keeps this scoped to manual retries.
     try:
         from database.database_writing import update_media_item
         update_media_item(item_id, collected_at=None)
     except Exception as e:
         logger.warning(f'[NZBRepair] Could not clear stale collected_at for item {item_id}: {e}')
+
+    return {'outcome': 'ok', 'item': item}
+
+
+def reset_item_to_wanted_from_repair(repair: dict) -> dict:
+    """Cancel an in-flight playback repair and reset the item to Wanted."""
+    item_id = int(repair['cli_debrid_id'])
+    item = _find_db_item_by_id(item_id)
+    if not item:
+        return {'outcome': 'error', 'message': f'No DB item found for id {item_id}'}
+    _teardown_playback_repair_mounts(repair, item)
+    broken_nzb_id = repair.get('old_info_hash') or repair.get('old_entry_name') or ''
+    result = _apply_manual_retry_reset(
+        item_id,
+        broken_nzb_id,
+        extra_hashes=[repair.get('old_info_hash'), repair.get('candidate_info_hash')],
+    )
+    if result.get('outcome') != 'ok':
+        return result
+
+    item = result['item']
+    conn = get_db_connection()
+    try:
+        if repair.get('activity_id'):
+            conn.execute(
+                """UPDATE nzb_repair_activity
+                   SET outcome='manual_retry', triggered_by='manual', repair_attempts=0,
+                       updated_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (repair['activity_id'],),
+            )
+        else:
+            log_repair_activity(
+                item_id=item_id,
+                title=item.get('title'),
+                media_type=item.get('type'),
+                season_number=item.get('season_number'),
+                episode_number=item.get('episode_number'),
+                broken_nzb_id=broken_nzb_id,
+                broken_nzb_title=repair.get('old_entry_name') or item.get('filled_by_file', ''),
+                outcome='manual_retry',
+                triggered_by='manual',
+                repair_attempts=0,
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    logger.info('[NZBRepair] Cancelled playback repair %s; item %s reset to Wanted', repair.get('id'), item_id)
+    return {'outcome': 'ok', 'message': 'Repair cancelled; item reset to Wanted for re-scrape'}
+
+
+def retry_exhausted_item(item_id: int, broken_nzb_id: str = '') -> dict:
+    """Manually retry an item stuck at 'skipped_max_attempts' (give_up).
+
+    The give_up gate short-circuits before Plex/provider deletion ever runs,
+    so the dead entry is likely still sitting there — clean it up here,
+    blacklist it so re-scrape can't just pick the same dead release again,
+    then move the item back to Wanted. Also logs a fresh activity row with
+    repair_attempts=0 so a later get_repair_state() lookup for this
+    broken_nzb_id derives give_up=False again, in case it resurfaces.
+    """
+    result = _apply_manual_retry_reset(item_id, broken_nzb_id)
+    if result.get('outcome') != 'ok':
+        return result
+    item = result['item']
 
     log_repair_activity(
         item_id=item_id,
@@ -1435,6 +1723,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
         'submission_failed': 0,
         'skipped_backoff': 0,
         'skipped_max_attempts': 0,
+        'skipped_junk_source': 0,
         'not_found': 0,
         'errors': 0,
     }
@@ -1616,6 +1905,21 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
 
             summary['matched'] += len(db_items)
 
+            rep = db_items[0]
+            _loc = rep.get('location_on_disk', '') if db_items else ''
+            _junk_reason = _junk_nzb_source_reason(rep, _loc)
+            if _junk_reason:
+                _skip_junk_in_repair(
+                    db_items,
+                    info_hash=info_hash,
+                    nzb_url=nzb_url,
+                    entry_name=entry_name,
+                    junk_reason=_junk_reason,
+                    triggered_by=triggered_by,
+                    summary=summary,
+                )
+                continue
+
             # --- Step 1b: Verify file is actually unreadable before repairing ---
             # cli_mount's NNTP STAT check can produce false positives (server hiccups,
             # temporary routing issues). Read the first 1MB via subprocess with a hard
@@ -1626,7 +1930,6 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             # repair or upgrade (pointing to a different healthy version), the check
             # would incorrectly report the file as readable and skip a real repair.
             # Guard: verify the broken entry name is referenced in location_on_disk.
-            _loc = db_items[0].get('location_on_disk', '') if db_items else ''
             _failure_reason = entry.get('failure_reason', '')
             # Skip readability check when cli_mount explicitly reports usenet_segment_missing
             # — that is a definitive diagnosis, not a transient server hiccup.
@@ -1698,7 +2001,6 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             _blacklist_broken_nzb(nzb_url, segment_id=_broken_segment_id)
 
             # --- Step 4: Scrape for replacement ---
-            rep = db_items[0]
             broken_nzb_title = rep.get('debrid_folder_name') or rep.get('filled_by_file') or entry_name
             candidates = _scrape_for_replacement(rep, broken_nzb_title, version_override=version_override)
 
@@ -1760,6 +2062,14 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             named_title = ''
             candidates_to_try = candidates if playback_target else candidates[:1]
             for candidate in candidates_to_try:
+                if _is_junk_replacement_result(candidate):
+                    logger.info(
+                        '[NZBRepair] Skipping junk replacement candidate %r',
+                        candidate.get('title'),
+                    )
+                    if playback_target:
+                        record_failed_candidate(rep['id'], candidate, '')
+                    continue
                 job_id, submitted_title, candidate_disposition = _submit_and_confirm_replacement(
                     candidate, rep.get('title', ''), item=rep)
                 if playback_target and candidate_disposition in ('failed', 'rejected'):

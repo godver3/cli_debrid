@@ -3662,6 +3662,238 @@ def api_symlink_audit_delete():
 
 
 # ---------------------------------------------------------------------------
+# Junk Symlink Audit (bad/split/NZB-mismatch files in symlink mode)
+# ---------------------------------------------------------------------------
+
+_JUNK_AUDIT_STALE_AFTER = 24 * 3600
+_JUNK_AUDIT_CACHE_FILE = os.path.join(
+    os.environ.get('USER_DB_CONTENT', '/user/db_content'),
+    'junk_symlink_audit_cache.json',
+)
+
+_junk_symlink_audit_state = {
+    'status': 'idle',
+    'data': None,
+    'error': None,
+    'ts': 0,
+    'lock': threading.Lock(),
+}
+
+
+def _junk_audit_db_path():
+    from database.core import get_db_connection
+    conn = get_db_connection()
+    try:
+        return conn.execute('PRAGMA database_list').fetchone()[2]
+    finally:
+        conn.close()
+
+
+def _junk_audit_paths():
+    from utilities.settings import get_setting
+    file_mgmt = get_setting('File Management', 'file_collection_management', 'Plex')
+    if file_mgmt != 'Symlinked/Local':
+        return None, None, None
+    mount = get_setting('File Management', 'original_files_path', '')
+    symlinks = get_setting('File Management', 'symlinked_files_path', '')
+    db_path = _junk_audit_db_path()
+    return db_path, symlinks, mount
+
+
+def _junk_audit_load_cache():
+    try:
+        if os.path.exists(_JUNK_AUDIT_CACHE_FILE):
+            with open(_JUNK_AUDIT_CACHE_FILE, 'r') as f:
+                saved = json.load(f)
+            data, ts = saved.get('data'), saved.get('ts', 0)
+            if data and ts:
+                with _junk_symlink_audit_state['lock']:
+                    _junk_symlink_audit_state['status'] = 'done'
+                    _junk_symlink_audit_state['data'] = data
+                    _junk_symlink_audit_state['ts'] = ts
+                logging.info(f"[JunkAudit] Loaded cached results (age: {(time.time()-ts)/3600:.1f}h)")
+    except Exception as exc:
+        logging.warning(f"[JunkAudit] Could not load cache: {exc}")
+
+
+def _junk_audit_save_cache(data, ts):
+    try:
+        with open(_JUNK_AUDIT_CACHE_FILE, 'w') as f:
+            json.dump({'data': data, 'ts': ts}, f)
+    except Exception as exc:
+        logging.warning(f"[JunkAudit] Could not save cache: {exc}")
+
+
+_junk_audit_load_cache()
+
+
+def _run_junk_symlink_audit_bg(db_path, symlink_dir, mount_dir):
+    from utilities.junk_symlink_audit import build_junk_symlink_plan
+    try:
+        plan = build_junk_symlink_plan(
+            db_path=db_path,
+            symlink_root=symlink_dir,
+            mount_path=mount_dir,
+        )
+        ts_now = time.time()
+        plan['scanned_at'] = ts_now
+        with _junk_symlink_audit_state['lock']:
+            _junk_symlink_audit_state['status'] = 'done'
+            _junk_symlink_audit_state['data'] = plan
+            _junk_symlink_audit_state['error'] = None
+            _junk_symlink_audit_state['ts'] = ts_now
+        _junk_audit_save_cache(plan, ts_now)
+        logging.info(
+            "[JunkAudit] Scan done: likely=%s review=%s mount=%s db_resets=%s dup_del=%s",
+            plan['stats']['bad_symlinks'], plan['stats']['review_symlinks'],
+            plan['stats']['mount_files'], plan['stats']['db_resets'],
+            plan['stats']['db_duplicate_deletes'],
+        )
+    except Exception as exc:
+        logging.error(f"[JunkAudit] Scan failed: {exc}", exc_info=True)
+        with _junk_symlink_audit_state['lock']:
+            _junk_symlink_audit_state['status'] = 'error'
+            _junk_symlink_audit_state['error'] = str(exc)
+
+
+@debrid_manager_bp.route('/api/junk_symlink_audit')
+@admin_required
+def api_junk_symlink_audit():
+    db_path, symlink_dir, mount_dir = _junk_audit_paths()
+    if not symlink_dir:
+        return jsonify({'success': False, 'error': 'Not in symlink mode'}), 400
+
+    with _junk_symlink_audit_state['lock']:
+        status = _junk_symlink_audit_state['status']
+        data = _junk_symlink_audit_state['data']
+        ts = _junk_symlink_audit_state['ts']
+        err = _junk_symlink_audit_state['error']
+
+    stale = bool(ts and (time.time() - ts) > _JUNK_AUDIT_STALE_AFTER)
+    if status == 'idle' and not data and os.path.isdir(symlink_dir):
+        with _junk_symlink_audit_state['lock']:
+            if _junk_symlink_audit_state['status'] == 'idle':
+                _junk_symlink_audit_state['status'] = 'scanning'
+        threading.Thread(
+            target=_run_junk_symlink_audit_bg,
+            args=(db_path, symlink_dir, mount_dir),
+            daemon=True,
+        ).start()
+        status = 'scanning'
+
+    return jsonify({
+        'success': True,
+        'status': status,
+        'data': data,
+        'ts': ts,
+        'stale': stale,
+        'error': err,
+        'paths': {'symlinks': symlink_dir, 'mount': mount_dir},
+    })
+
+
+@debrid_manager_bp.route('/api/junk_symlink_audit/scan', methods=['POST'])
+@admin_required
+def api_junk_symlink_audit_scan():
+    db_path, symlink_dir, mount_dir = _junk_audit_paths()
+    if not symlink_dir:
+        return jsonify({'success': False, 'error': 'Not in symlink mode'}), 400
+    if not os.path.isdir(symlink_dir):
+        return jsonify({'success': False, 'error': f'Symlink directory not found: {symlink_dir}'}), 400
+    if mount_dir and not os.path.isdir(mount_dir):
+        return jsonify({'success': False, 'error': f'Mount directory not found: {mount_dir}'}), 400
+
+    with _junk_symlink_audit_state['lock']:
+        if _junk_symlink_audit_state['status'] == 'scanning':
+            return jsonify({'success': True, 'status': 'scanning'})
+        _junk_symlink_audit_state['status'] = 'scanning'
+        _junk_symlink_audit_state['error'] = None
+
+    threading.Thread(
+        target=_run_junk_symlink_audit_bg,
+        args=(db_path, symlink_dir, mount_dir),
+        daemon=True,
+    ).start()
+    return jsonify({'success': True, 'status': 'scanning'})
+
+
+@debrid_manager_bp.route('/api/junk_symlink_audit/apply', methods=['POST'])
+@admin_required
+def api_junk_symlink_audit_apply():
+    """Apply junk audit fixes: symlinks, mount orphans, DB rescrape/delete."""
+    from utilities.junk_symlink_audit import apply_junk_symlink_plan
+
+    db_path, symlink_dir, mount_dir = _junk_audit_paths()
+    if not symlink_dir:
+        return jsonify({'success': False, 'error': 'Not in symlink mode'}), 400
+
+    with _junk_symlink_audit_state['lock']:
+        plan = _junk_symlink_audit_state.get('data')
+    if not plan:
+        return jsonify({'success': False, 'error': 'No audit results — run scan first'}), 400
+
+    req = request.get_json(silent=True) or {}
+    apply_all = req.get('apply_all', True)
+    item_ids = req.get('item_ids')
+    symlink_paths = req.get('symlink_paths')
+    mount_paths = req.get('mount_paths')
+    include_mount = req.get('include_mount', True)
+    apply_db = req.get('apply_db', apply_all or bool(item_ids))
+    # Default bulk fix to high-confidence junk only; pass 'review' or 'all' explicitly.
+    confidence_tier = req.get('confidence_tier')
+    if apply_all and confidence_tier is None:
+        confidence_tier = 'high'
+    elif confidence_tier == 'all':
+        confidence_tier = None
+
+    symlink_set = None if apply_all and not symlink_paths else (
+        set(symlink_paths) if symlink_paths else (set() if not apply_all else None)
+    )
+    if item_ids and not symlink_paths:
+        id_set = {int(i) for i in item_ids}
+        symlink_set = {
+            e['symlink'] for e in plan.get('bad_symlinks', []) + plan.get('review_symlinks', [])
+            if e.get('item_id') in id_set
+        }
+    mount_set = None if not include_mount else (
+        None if apply_all and not mount_paths else (
+            set(mount_paths) if mount_paths else (set() if not apply_all else None)
+        )
+    )
+    reset_ids = None
+    delete_ids = None
+    if not apply_db:
+        reset_ids = set()
+        delete_ids = set()
+    elif item_ids:
+        reset_ids = {int(i) for i in item_ids}
+        delete_ids = {int(i) for i in item_ids}
+
+    result = apply_junk_symlink_plan(
+        plan,
+        db_path=db_path,
+        symlink_paths=symlink_set,
+        mount_paths=mount_set,
+        reset_item_ids=reset_ids,
+        delete_item_ids=delete_ids,
+        use_rescrape=True,
+        confidence_tier=confidence_tier,
+    )
+
+    with _junk_symlink_audit_state['lock']:
+        _junk_symlink_audit_state['status'] = 'idle'
+        _junk_symlink_audit_state['data'] = None
+        _junk_symlink_audit_state['ts'] = 0
+    try:
+        if os.path.exists(_JUNK_AUDIT_CACHE_FILE):
+            os.remove(_JUNK_AUDIT_CACHE_FILE)
+    except Exception:
+        pass
+
+    return jsonify({'success': True, **result})
+
+
+# ---------------------------------------------------------------------------
 # Battery Audit
 # ---------------------------------------------------------------------------
 
@@ -5450,6 +5682,35 @@ def usenet_retry_exhausted():
         return jsonify(success=result.get('outcome') == 'ok', result=result)
     except Exception as e:
         logging.error(f'[UsenetRepair] retry_exhausted error: {e}', exc_info=True)
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/usenet/repair/in_flight')
+def usenet_repair_in_flight():
+    """Return active playback-repair rows (verification, candidate search, etc.)."""
+    try:
+        from database.nzb_playback_repair import list_active_playback_repairs
+        items = list_active_playback_repairs()
+        return jsonify(success=True, items=items, count=len(items))
+    except Exception as e:
+        logging.error(f'[UsenetRepair] in_flight error: {e}', exc_info=True)
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/usenet/repair/cancel', methods=['POST'])
+def usenet_repair_cancel():
+    """Cancel an in-flight playback repair. action=cancel|wanted."""
+    try:
+        body = request.get_json(silent=True) or {}
+        repair_id = body.get('repair_id')
+        action = (body.get('action') or 'cancel').strip().lower()
+        if not repair_id:
+            return jsonify(success=False, error='repair_id required'), 400
+        from database.nzb_playback_repair import cancel_playback_repair
+        result = cancel_playback_repair(int(repair_id), move_to_wanted=(action == 'wanted'))
+        return jsonify(success=result.get('outcome') == 'ok', result=result)
+    except Exception as e:
+        logging.error(f'[UsenetRepair] cancel error: {e}', exc_info=True)
         return jsonify(success=False, error=str(e))
 
 

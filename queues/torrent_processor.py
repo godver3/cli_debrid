@@ -4,6 +4,7 @@ and addition to debrid service accounts.
 """
 
 import logging
+import re
 import time
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
@@ -25,8 +26,9 @@ from debrid.common import (
     download_and_extract_hash
 )
 from debrid.status import TorrentStatus
-from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls, is_magnet_not_wanted
 from utilities.settings import get_setting
+from utilities.rescrape_helpers import rescrape_blocks_any_pack_reuse, rescrape_blocks_pack_reuse
 
 class TorrentProcessingError(Exception):
     """Base exception for torrent processing errors"""
@@ -529,6 +531,8 @@ class TorrentProcessor:
         """
         if not item or item.get('type') != 'episode':
             return None
+        if rescrape_blocks_any_pack_reuse(item):
+            return None
         _imdb = item.get('imdb_id')
         _season = item.get('season_number')
         if not _imdb or _season is None:
@@ -548,6 +552,8 @@ class TorrentProcessor:
 
         def _try_reuse(torrent_id: str, check_title: str, magnet: Optional[str]) -> Optional[Tuple]:
             if not _is_pack_title(check_title):
+                return None
+            if rescrape_blocks_pack_reuse(item, check_title):
                 return None
             from utilities.session_bad_torrents import is_torrent_known_unplayable
             for provider in self._providers:
@@ -826,7 +832,7 @@ class TorrentProcessor:
         # Equivalent of debrid's _all_torrent_ids check: if another episode of the same
         # show/season already has an NZB job (in any active or completed state), reuse it
         # instead of submitting a duplicate season pack NZB.
-        if item and item.get('type') == 'episode':
+        if item and item.get('type') == 'episode' and not rescrape_blocks_any_pack_reuse(item):
             _imdb = item.get('imdb_id')
             _season = item.get('season_number')
             _parsed = result.get('parsed_info', {}) or {}
@@ -858,6 +864,8 @@ class TorrentProcessor:
                         _mem_job = _mem_item.get('filled_by_torrent_id')
                         _mem_id = _mem_job[4:] if _mem_job and _mem_job.startswith('nzb:') else _mem_job
                         if _mem_is_pack:
+                            if rescrape_blocks_pack_reuse(item, _mem_check_title):
+                                continue
                             # Verify the shared pack job is still actually queryable on the
                             # provider before reusing it - a job that completed and was since
                             # cleaned up (or never existed) will ghost every retry forever if
@@ -921,18 +929,21 @@ class TorrentProcessor:
                         # in-memory check above. Defaulting True here risks the same wrong-job-reuse.
                         _sibling_is_pack = bool(_sibling_check_title) and not _re_dedup.search(r'[Ss]\d{2}[Ee]\d{2}', _sibling_check_title)
                         if _sibling_is_pack:
-                            # Verify the shared pack job is still actually queryable on the
-                            # provider before reusing it - a job that completed and was since
-                            # cleaned up (or never existed) will ghost every retry forever if
-                            # reused blindly, since nothing else ever re-checks it afterward.
-                            try:
-                                from usenet.climount_client import is_nzb_job_alive as _is_job_alive
-                                _sib_job_hash = _sibling[0][4:] if _sibling[0].startswith('nzb:') else _sibling[0]
-                                if not _is_job_alive(_sib_job_hash):
-                                    logging.warning(f'[{item_identifier}] Sibling job {_sibling[0]} no longer alive on provider - not reusing, submitting fresh')
-                                    _sibling_is_pack = False
-                            except Exception:
-                                pass  # unknown due to error - don't block a legitimate reuse
+                            if rescrape_blocks_pack_reuse(item, _sibling_check_title):
+                                _sibling_is_pack = False
+                            else:
+                                # Verify the shared pack job is still actually queryable on the
+                                # provider before reusing it - a job that completed and was since
+                                # cleaned up (or never existed) will ghost every retry forever if
+                                # reused blindly, since nothing else ever re-checks it afterward.
+                                try:
+                                    from usenet.climount_client import is_nzb_job_alive as _is_job_alive
+                                    _sib_job_hash = _sibling[0][4:] if _sibling[0].startswith('nzb:') else _sibling[0]
+                                    if not _is_job_alive(_sib_job_hash):
+                                        logging.warning(f'[{item_identifier}] Sibling job {_sibling[0]} no longer alive on provider - not reusing, submitting fresh')
+                                        _sibling_is_pack = False
+                                except Exception:
+                                    pass  # unknown due to error - don't block a legitimate reuse
                         if (_is_pack and _sibling_is_pack) or (not _is_pack and _sibling_is_pack):
                             _existing_job = _sibling[0]
                             # Job-level check, not per-file — see matching comment in the
@@ -1047,6 +1058,35 @@ class TorrentProcessor:
 
         _job_prefix = _title_prefix(job_title)
 
+        # Fetch NZB XML once for segment blacklist checks on reuse and submit paths.
+        _nzb_xml = None
+        try:
+            from routes.api_tracker import api as _nzb_api_early
+            _nr_early = _nzb_api_early.get(nzb_url, timeout=15, allow_redirects=True)
+            if _nr_early.status_code == 200 and '<nzb' in _nr_early.text.lower():
+                _nzb_xml = _nr_early.text
+                from database.not_wanted_magnets import is_nzb_segment_not_wanted
+                if is_nzb_segment_not_wanted(_nzb_xml):
+                    logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
+                    return None
+        except Exception as _nzb_early_err:
+            logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_early_err}')
+
+        def _blocked_nzb_job_reuse(existing_hash: str) -> bool:
+            """True when an existing cli_mount job must not be reused for this result."""
+            if is_magnet_not_wanted(existing_hash):
+                logging.warning(
+                    f'[{item_identifier}] Matched job {existing_hash} is in not-wanted list - not reusing'
+                )
+                return True
+            if has_any_known_unplayable_file(f'nzb:{existing_hash}'):
+                logging.info(
+                    f'[{item_identifier}] Matched job nzb:{existing_hash} has a file already '
+                    f'confirmed unplayable this session — not reusing'
+                )
+                return True
+            return False
+
         # DB-level dedup: check if same item already in Adding/Checking with nzb: torrent ID.
         # Works for both cli_mount and NzbDAV since it uses the DB, not provider API.
         # Version-scoped: different versions (e.g. 1080p vs 4k) of the same movie/episode
@@ -1078,10 +1118,13 @@ class TorrentProcessor:
                     _dd_row = _dbc.execute(_dd_q, _dd_p).fetchone()
                 if _dd_row:
                     _existing_nzb_id = _dd_row[0][4:]  # strip 'nzb:'
-                    logging.info(f'[{item_identifier}] NZB already in-flight (DB dedup): {_existing_nzb_id} — reusing job')
-                    return {'id': _existing_nzb_id, 'filename': job_title, 'original_title': job_title,
-                            'status': 'downloading', 'files': [], 'progress': 0,
-                            '_provider': 'Usenet', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                    if _blocked_nzb_job_reuse(_existing_nzb_id):
+                        pass  # fall through to fresh submission / title match
+                    else:
+                        logging.info(f'[{item_identifier}] NZB already in-flight (DB dedup): {_existing_nzb_id} — reusing job')
+                        return {'id': _existing_nzb_id, 'filename': job_title, 'original_title': job_title,
+                                'status': 'downloading', 'files': [], 'progress': 0,
+                                '_provider': 'Usenet', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
         except Exception:
             pass
 
@@ -1123,6 +1166,13 @@ class TorrentProcessor:
                                 continue
                         except Exception:
                             pass  # unknown due to error - don't block a legitimate reuse
+                        # A job can be alive on the provider yet permanently stuck (e.g. the
+                        # "folder never appeared" health-check failure) - is_nzb_job_alive()
+                        # only proves it still exists, not that it's healthy. Once a job's
+                        # hash has been blacklisted, reusing it here just re-enters the same
+                        # stuck job and defeats the health-check's not-wanted list entirely.
+                        if _blocked_nzb_job_reuse(_existing_hash):
+                            continue
                         _match_type = 'exact' if _exact else 'prefix'
                         logging.info(f'[{item_identifier}] NZB already in cli_mount ({_match_type} match): {_t_name} (hash={_existing_hash}) — reusing job')
                         _found_dc = True
@@ -1134,20 +1184,6 @@ class TorrentProcessor:
                 _page_dc += 1
         except Exception:
             pass
-
-        # Fetch NZB XML to check segment ID against not-wanted list
-        _nzb_xml = None
-        try:
-            from routes.api_tracker import api as _nzb_api2
-            _nr = _nzb_api2.get(nzb_url, timeout=15, allow_redirects=True)
-            if _nr.status_code == 200 and '<nzb' in _nr.text.lower():
-                _nzb_xml = _nr.text
-                from database.not_wanted_magnets import is_nzb_segment_not_wanted
-                if is_nzb_segment_not_wanted(_nzb_xml):
-                    logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
-                    return None
-        except Exception as _nzb_check_err:
-            logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_check_err}')
 
         _item = item or {}
         # Derive is_anime: prefer trigger_is_anime DB flag, fall back to genres

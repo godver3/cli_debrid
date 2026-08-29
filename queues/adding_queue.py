@@ -46,6 +46,46 @@ def torrent_has_other_active_owner(torrent_id: str, exclude_item_id) -> bool:
         return True
 
 
+def cancel_superseded_nzb_job(
+    item: Dict[str, Any],
+    new_checking_id: str,
+    downloading_job_ids: Optional[set] = None,
+) -> None:
+    """Cancel a prior cli_mount NZB job when this item is about to bind a different one.
+
+    Prevents orphan jobs when the Adding queue cycles scrape results faster than the
+    NZB health-check task tracks a single filled_by_torrent_id.
+    """
+    prev = str(item.get('filled_by_torrent_id') or '')
+    new_id = str(new_checking_id or '')
+    item_id = item.get('id')
+    if not prev.startswith('nzb:') or not new_id.startswith('nzb:') or prev == new_id:
+        return
+    prev_job = prev[4:]
+    if not prev_job:
+        return
+    try:
+        from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+        blacklist_and_cleanup_nzb_failure(
+            item,
+            f'Superseded by new NZB submission ({new_id})',
+            clear_filled_by=False,
+            set_rescrape_title=True,
+        )
+    except Exception as e:
+        logging.debug(f'[NZB] Could not blacklist superseded job for item {item_id}: {e}')
+    if not torrent_has_other_active_owner(prev, item_id):
+        remove_unwanted_torrent(
+            prev,
+            is_nzb=True,
+            removal_reason=f'Superseded by new NZB submission ({new_id}) for item {item_id}',
+        )
+    else:
+        logging.info(f'[NZB] Keeping superseded job {prev_job} — other item(s) still reference it')
+    if downloading_job_ids is not None:
+        downloading_job_ids.discard(prev_job)
+
+
 def remove_unwanted_torrent(torrent_id: str, is_nzb: bool = False, debrid_provider=None, removal_reason: str = "Removed due to unwanted media item"):
     """
     Remove an unwanted torrent from the debrid service and track the removal.
@@ -602,6 +642,12 @@ class AddingQueue:
                     nzb_original_title = torrent_info.get('original_title') or nzb_title
                     nzb_segment_id = torrent_info.get('_nzb_segment_id', '')
                     checking_id = f"nzb:{job_id}" if job_id and not str(job_id).startswith('nzb:') else str(job_id)
+
+                    cancel_superseded_nzb_job(
+                        item,
+                        checking_id,
+                        downloading_job_ids=self._nzb_downloading_job_ids,
+                    )
 
                     # Store the checking_id on the item so we can poll it next tick
                     from database.database_writing import update_media_item

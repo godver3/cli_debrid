@@ -5,8 +5,9 @@ Unit tests for CliMountClient.remove_nzb_exact / remove_nzb 404 handling.
 routes.api_tracker.api.delete() calls response.raise_for_status(), so an
 error response (4xx/5xx) surfaces as a raised exception carrying a
 `.response` with the real status code, not a returned Response object.
-These tests simulate that exactly and confirm a 404 ("already gone") is
-treated as success rather than falling through to the generic-failure path.
+These tests simulate that exactly.  In particular, a browse-entry 404 must
+still trigger an exact queue deletion because failed NZBs may never have
+created a mount entry while remaining present in /api/torrents.
 """
 
 import importlib.util
@@ -46,7 +47,7 @@ def _load(status_map, connection_error_urls=frozenset()):
     calls = []
 
     def fake_delete(url, **kwargs):
-        calls.append(url)
+        calls.append((url, kwargs))
         if url in connection_error_urls:
             raise ConnectionError('connection refused')
         status = status_map.get(url, 200)
@@ -66,18 +67,39 @@ def _load(status_map, connection_error_urls=frozenset()):
 
 
 class TestRemoveNzbExact(unittest.TestCase):
-    def test_404_is_treated_as_already_removed(self):
-        url = 'http://x:8383/api/browse/torrents/stale-hash'
-        m, calls = _load(status_map={url: 404})
+    def test_browse_404_deletes_exact_queue_job(self):
+        browse = 'http://x:8383/api/browse/torrents/stale-hash'
+        queue = 'http://x:8383/api/torrents'
+        m, calls = _load(status_map={browse: 404, queue: 204})
         client = m.CliMountClient()
         self.assertTrue(client.remove_nzb_exact('stale-hash'))
-        self.assertEqual(calls, [url])
+        self.assertEqual([url for url, _ in calls], [browse, queue])
+        self.assertEqual(calls[1][1]['params'], {'hashes': 'stale-hash'})
+
+    def test_browse_and_queue_404_are_already_removed(self):
+        browse = 'http://x:8383/api/browse/torrents/stale-hash'
+        queue = 'http://x:8383/api/torrents'
+        m, calls = _load(status_map={browse: 404, queue: 404})
+        client = m.CliMountClient()
+        self.assertTrue(client.remove_nzb_exact('stale-hash'))
+        self.assertEqual([url for url, _ in calls], [browse, queue])
+
+    def test_browse_404_queue_error_is_failure(self):
+        browse = 'http://x:8383/api/browse/torrents/stale-hash'
+        queue = 'http://x:8383/api/torrents'
+        m, calls = _load(status_map={browse: 404, queue: 500})
+        client = m.CliMountClient()
+        self.assertFalse(client.remove_nzb_exact('stale-hash'))
+        self.assertEqual([url for url, _ in calls], [browse, queue])
 
     def test_200_is_success(self):
-        url = 'http://x:8383/api/browse/torrents/live-hash'
-        m, _ = _load(status_map={url: 200})
+        browse = 'http://x:8383/api/browse/torrents/live-hash'
+        queue = 'http://x:8383/api/torrents'
+        m, calls = _load(status_map={browse: 200})
         client = m.CliMountClient()
         self.assertTrue(client.remove_nzb_exact('live-hash'))
+        self.assertEqual([url for url, _ in calls], [browse, queue])
+        self.assertEqual(calls[1][1]['params'], {'hashes': 'live-hash'})
 
     def test_500_is_failure(self):
         url = 'http://x:8383/api/browse/torrents/broken-hash'
@@ -93,13 +115,39 @@ class TestRemoveNzbExact(unittest.TestCase):
 
 
 class TestRemoveNzb(unittest.TestCase):
-    def test_primary_404_is_treated_as_already_gone(self):
-        url = 'http://x:8383/api/browse/torrents/stale-hash'
-        m, calls = _load(status_map={url: 404})
+    def test_primary_404_falls_through_to_exact_queue_delete(self):
+        browse = 'http://x:8383/api/browse/torrents/stale-hash'
+        queue = 'http://x:8383/api/torrents'
+        m, calls = _load(status_map={browse: 404, queue: 200})
         client = m.CliMountClient()
         self.assertTrue(client.remove_nzb('stale-hash'))
-        # Only the primary browse-delete should fire — no fallback needed.
-        self.assertEqual(calls, [url])
+        self.assertEqual([url for url, _ in calls], [browse, queue])
+        self.assertEqual(calls[1][1]['params'], {'hashes': 'stale-hash'})
+
+    def test_primary_and_queue_404_are_already_gone(self):
+        browse = 'http://x:8383/api/browse/torrents/stale-hash'
+        queue = 'http://x:8383/api/torrents'
+        m, calls = _load(status_map={browse: 404, queue: 404})
+        client = m.CliMountClient()
+        self.assertTrue(client.remove_nzb('stale-hash'))
+        self.assertEqual([url for url, _ in calls], [browse, queue])
+
+    def test_primary_404_queue_error_is_failure_without_name_fallback(self):
+        browse = 'http://x:8383/api/browse/torrents/stale-hash'
+        queue = 'http://x:8383/api/torrents'
+        m, calls = _load(status_map={browse: 404, queue: 500})
+        client = m.CliMountClient()
+        self.assertFalse(client.remove_nzb('stale-hash'))
+        self.assertEqual([url for url, _ in calls], [browse, queue])
+
+    def test_primary_success_also_deletes_queue(self):
+        browse = 'http://x:8383/api/browse/torrents/live-hash'
+        queue = 'http://x:8383/api/torrents'
+        m, calls = _load(status_map={browse: 204})
+        client = m.CliMountClient()
+        self.assertTrue(client.remove_nzb('live-hash'))
+        self.assertEqual([url for url, _ in calls], [browse, queue])
+        self.assertEqual(calls[1][1]['params'], {'hashes': 'live-hash'})
 
     def test_primary_500_falls_back_to_queue_delete(self):
         primary = 'http://x:8383/api/browse/torrents/broken-hash'
@@ -107,7 +155,7 @@ class TestRemoveNzb(unittest.TestCase):
         m, calls = _load(status_map={primary: 500, fallback: 200})
         client = m.CliMountClient()
         self.assertTrue(client.remove_nzb('broken-hash'))
-        self.assertEqual(calls, [primary, fallback])
+        self.assertEqual([url for url, _ in calls], [primary, fallback])
 
 
 if __name__ == '__main__':

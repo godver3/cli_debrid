@@ -356,7 +356,7 @@ SETTINGS_SCHEMA = {
         "retention_days": {
             "type": "integer",
             "description": "Maximum age of NZB results in days. Results older than this are filtered out before submission. Set to 0 to disable. Applies everywhere NZB indexers are searched.",
-            "default": 1500
+            "default": 5000
         },
         "disable_nzb_season_packs": {
             "type": "boolean",

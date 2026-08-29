@@ -222,6 +222,65 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         self.assertEqual(updated['last_error'], 'no_replacement')
         self.assertIsNotNone(updated['next_attempt_at'])
 
+    def test_awaiting_candidate_finalizes_when_general_repair_already_submitted(self):
+        """If _run_repair_inner already moved the item to Adding on a new hash
+        while this row still sits in awaiting_candidate, the completion worker
+        must not scrape/submit a second NZB."""
+        playback.begin_playback_repair(self.item, self.target)
+        with self.connect() as conn:
+            conn.execute(
+                """UPDATE media_items SET state='Adding', filled_by_torrent_id='nzb:external-uuid',
+                   filled_by_title='External.Release', debrid_folder_name='External.Release'"""
+            )
+            conn.commit()
+
+        self._install_fake_repair_engine(
+            lambda *args: self.fail('find_and_submit_playback_candidate must not run'),
+        )
+        old_item = playback._media_item
+        playback._media_item = lambda _id: dict(
+            self.connect().execute('SELECT * FROM media_items WHERE id=7').fetchone(),
+        )
+        self.addCleanup(lambda: setattr(playback, '_media_item', old_item))
+
+        playback.process_pending_playback_repairs()
+
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+            activity = conn.execute(
+                'SELECT * FROM nzb_repair_activity WHERE id=?', (repair['activity_id'],),
+            ).fetchone()
+        self.assertEqual(repair['status'], 'complete')
+        self.assertEqual(repair['last_error'], 'superseded_externally')
+        self.assertEqual(activity['replacement_nzb_id'], 'external-uuid')
+        self.assertEqual(activity['outcome'], 'replaced')
+
+    def test_awaiting_candidate_reschedules_when_repair_row_already_has_candidate(self):
+        """If set_playback_candidate advanced the row while this pass was queued,
+        defer instead of launching a parallel scrape."""
+        playback.begin_playback_repair(self.item, self.target)
+        with self.connect() as conn:
+            conn.execute(
+                """UPDATE nzb_playback_repairs SET candidate_info_hash='in-flight-uuid',
+                   candidate_title='In.Flight', status='awaiting_candidate'"""
+            )
+            conn.commit()
+
+        self._install_fake_repair_engine(
+            lambda *args: self.fail('find_and_submit_playback_candidate must not run'),
+        )
+        old_item = playback._media_item
+        playback._media_item = lambda _id: dict(self.item)
+        self.addCleanup(lambda: setattr(playback, '_media_item', old_item))
+
+        playback.process_pending_playback_repairs()
+
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        self.assertEqual(repair['status'], 'awaiting_candidate')
+        self.assertEqual(repair['last_error'], 'candidate_in_flight')
+        self.assertIsNotNone(repair['next_attempt_at'])
+
     def test_healthy_candidate_cleans_exact_target_then_finalizes_activity(self):
         playback.begin_playback_repair(self.item, self.target)
         with self.connect() as conn:
@@ -773,6 +832,56 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         self.assertEqual(repair['cleanup_status'], 'complete')
         targets = _json_module.loads(repair['cleanup_targets_json'])
         self.assertEqual(targets[0]['status'], 'complete')
+
+    def test_cancel_playback_repair_stops_worker(self):
+        playback.begin_playback_repair(self.item, self.target)
+        with self.connect() as conn:
+            repair = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+        result = playback.cancel_playback_repair(repair['id'], move_to_wanted=False)
+        self.assertEqual(result['outcome'], 'ok')
+        with self.connect() as conn:
+            row = conn.execute('SELECT * FROM nzb_playback_repairs WHERE id=?', (repair['id'],)).fetchone()
+            activity = conn.execute('SELECT * FROM nzb_repair_activity WHERE id=?', (repair['activity_id'],)).fetchone()
+        self.assertEqual(row['status'], 'complete')
+        self.assertEqual(row['last_error'], 'cancelled_by_user')
+        self.assertEqual(activity['outcome'], 'cancelled')
+
+    def test_cancel_to_wanted_teardowns_repair_sources(self):
+        """Send to Wanted must tear down broken + candidate mounts before re-scrape."""
+        self._prep_verifying_candidate()
+        with self.connect() as conn:
+            repair = dict(conn.execute('SELECT * FROM nzb_playback_repairs').fetchone())
+
+        teardown_calls = []
+
+        def _fake_reset(repair_row):
+            teardown_calls.append((
+                repair_row.get('old_info_hash'),
+                repair_row.get('candidate_info_hash'),
+                repair_row.get('cli_debrid_id'),
+            ))
+            return {'outcome': 'ok', 'message': 'ok'}
+
+        repair_spec = importlib.util.spec_from_file_location(
+            'usenet.repair_engine', os.path.join(ROOT, 'usenet', 'repair_engine.py'))
+        repair_engine = importlib.util.module_from_spec(repair_spec)
+        old_module = sys.modules.get('usenet.repair_engine')
+        sys.modules['usenet.repair_engine'] = repair_engine
+        repair_spec.loader.exec_module(repair_engine)
+        old_reset = repair_engine.reset_item_to_wanted_from_repair
+        repair_engine.reset_item_to_wanted_from_repair = _fake_reset
+        self.addCleanup(lambda: setattr(repair_engine, 'reset_item_to_wanted_from_repair', old_reset))
+        if old_module is not None:
+            self.addCleanup(lambda: sys.modules.__setitem__('usenet.repair_engine', old_module))
+        else:
+            self.addCleanup(lambda: sys.modules.pop('usenet.repair_engine', None))
+
+        result = playback.cancel_playback_repair(repair['id'], move_to_wanted=True)
+        self.assertEqual(result['outcome'], 'ok')
+        self.assertEqual(len(teardown_calls), 1)
+        self.assertEqual(teardown_calls[0][0], 'old-uuid')
+        self.assertEqual(teardown_calls[0][1], 'new-uuid')
+        self.assertEqual(teardown_calls[0][2], 7)
 
 
 if __name__ == '__main__':

@@ -8,7 +8,8 @@ from .utils import (
     extract_hash_from_magnet,
     is_video_file,
     is_unwanted_file,
-    filter_unwanted_video_files
+    filter_unwanted_video_files,
+    pick_best_video_file,
 )
 from .cache import timed_lru_cache
 from .api import RateLimiter
@@ -23,5 +24,6 @@ __all__ = [
     'timed_lru_cache',
     'is_video_file',
     'is_unwanted_file',
-    'filter_unwanted_video_files'
+    'filter_unwanted_video_files',
+    'pick_best_video_file',
 ]

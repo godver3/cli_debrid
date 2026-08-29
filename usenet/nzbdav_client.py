@@ -591,7 +591,8 @@ class NzbdavClient:
             logging.warning(f'[NzbDAV] _list_nzb_folder_files error for {folder_name!r}: {exc}')
         return []
 
-    def get_nzb_file_info(self, job_name: str, season: int = None, episode: int = None) -> Optional[Tuple[str, str]]:
+    def get_nzb_file_info(self, job_name: str, season: int = None, episode: int = None,
+                          fast_check: bool = False, include_size: bool = False):
         """Find folder + best-matching video for a completed job.
 
         Identical signature & return contract to CliMountClient.
@@ -609,27 +610,20 @@ class NzbdavClient:
             video_files = self._list_nzb_folder_files(folder_name)
             if not video_files:
                 logging.warning(f'[NzbDAV] No video files in folder {folder_name!r}')
-                return folder_name, None
+                return (folder_name, None, None) if include_size else (folder_name, None)
 
-            from debrid.common import filter_unwanted_video_files
+            from debrid.common import filter_unwanted_video_files, pick_best_video_file
             video_files = filter_unwanted_video_files(video_files)
 
-            best_file = None
-            if season is not None and episode is not None:
-                ep_pat = re.compile(
-                    rf'[Ss]{season:02d}[Ee]{episode:02d}(?![0-9])',
-                    re.IGNORECASE,
-                )
-                for name, _ in video_files:
-                    if ep_pat.search(name):
-                        best_file = name
-                        break
-
+            best_file = pick_best_video_file(video_files, season=season, episode=episode)
             if not best_file:
-                best_file = max(video_files, key=lambda x: x[1])[0]
+                best_file = max(video_files, key=lambda x: x[1])
 
-            logging.info(f'[NzbDAV] get_nzb_file_info: folder={folder_name!r} file={best_file!r}')
-            return folder_name, best_file
+            best_name, best_size = best_file
+            logging.info(f'[NzbDAV] get_nzb_file_info: folder={folder_name!r} file={best_name!r}')
+            if include_size:
+                return folder_name, best_name, best_size
+            return folder_name, best_name
         except Exception as exc:
             logging.warning(f'[NzbDAV] get_nzb_file_info error for {job_name!r}: {exc}')
             return None

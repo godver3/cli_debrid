@@ -522,9 +522,9 @@
         <div class="settings-form-group">
             <label for="usenet_provider-retention_days" class="settings-title">Usenet Retention Days:</label>
             <input type="number" id="usenet_provider-retention_days" name="Usenet Provider.retention_days"
-                   value="{{ settings.get('Usenet Provider', {}).get('retention_days', 1500) }}"
+                   value="{{ settings.get('Usenet Provider', {}).get('retention_days', 5000) }}"
                    class="settings-input" data-section="Usenet Provider" data-key="retention_days"
-                   min="0" placeholder="1500">
+                   min="0" placeholder="5000">
             <p class="settings-description">Maximum age of NZB results in days. Results older than this are filtered out at search time and never submitted to the Usenet provider. Set to 0 to disable. Applies everywhere NZB indexers are searched (queue, scraper results, upgrade hub, repair).</p>
         </div>
         <div class="settings-form-group">

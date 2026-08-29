@@ -789,6 +789,27 @@ def replace_entry(entry_name: str, info_hash: str, version_override: str = None)
         db_item = db_items[0]
         item_id = db_item.get('id')
 
+        from usenet.repair_engine import _junk_nzb_source_reason
+        _junk_reason = _junk_nzb_source_reason(db_item, db_item.get('location_on_disk', '') or '')
+        if _junk_reason:
+            logger.info(
+                f'[DebridRepair] replace_entry {entry_name!r}: junk source ({_junk_reason}); '
+                f'skipping repair for item {item_id} (no state change)'
+            )
+            log_repair_activity(
+                item_id=item_id,
+                title=db_item.get('title'),
+                media_type=db_item.get('type'),
+                season_number=db_item.get('season_number'),
+                episode_number=db_item.get('episode_number'),
+                broken_nzb_id=f'debrid:{info_hash}',
+                broken_nzb_title=entry_name,
+                replacement_title=_junk_reason,
+                outcome='skipped_junk_source',
+                triggered_by='debrid_repair',
+            )
+            return {'outcome': 'skipped_junk_source', 'message': _junk_reason}
+
         # Orphan check — DB item already collected via a different provider
         if _is_orphan_entry(db_item, info_hash):
             _delete_from_climount(info_hash, entry_name)
@@ -865,6 +886,7 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
             'reinserted': 0,
             'replaced': 0,
             'not_found': 0,
+            'skipped_junk_source': 0,
             'errors': 0,
         }
 
@@ -900,6 +922,8 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
                     outcome = result.get('outcome', 'error')
                     if outcome == 'replaced':
                         summary['replaced'] += 1
+                    elif outcome == 'skipped_junk_source':
+                        summary['skipped_junk_source'] += 1
                     elif outcome == 'not_found':
                         summary['not_found'] += 1
                     else:
@@ -1019,13 +1043,14 @@ def get_repair_stats(days: int = 30) -> dict:
                 'not_found': stats.get('not_found', 0),
                 'no_replacement': stats.get('no_replacement', 0),
                 'error': stats.get('error', 0),
+                'skipped_junk_source': stats.get('skipped_junk_source', 0),
                 'total': sum(stats.values()),
             }
         except Exception as e:
             logger.debug(f'[DebridRepair] get_repair_stats error: {e}')
-            return {k: 0 for k in ('replaced', 'reinserted', 'not_found', 'no_replacement', 'error', 'total')}
+            return {k: 0 for k in ('replaced', 'reinserted', 'not_found', 'no_replacement', 'error', 'skipped_junk_source', 'total')}
         finally:
             conn.close()
     except Exception as e:
         logger.debug(f'[DebridRepair] get_repair_stats DB connection error: {e}')
-        return {k: 0 for k in ('replaced', 'reinserted', 'not_found', 'no_replacement', 'error', 'total')}
+        return {k: 0 for k in ('replaced', 'reinserted', 'not_found', 'no_replacement', 'error', 'skipped_junk_source', 'total')}
