@@ -432,6 +432,68 @@ def _source_uuid(item):
     return value[4:] if value.startswith('nzb:') else value
 
 
+def _replacement_source_if_superseded(item, old_info_hash):
+    """Return the current nzb uuid when the item already sits on a non-original source."""
+    if not item:
+        return None
+    if item.get('state') not in ('Collected', 'Adding', 'Checking'):
+        return None
+    current = _source_uuid(item).lower()
+    old = (old_info_hash or '').lower()
+    if current and current != old:
+        return current
+    return None
+
+
+def playback_candidate_search_blocked(repair_id, item_id, old_info_hash):
+    """Return (blocked, reason) when another path already owns this repair's replacement."""
+    if _replacement_source_if_superseded(_media_item(item_id), old_info_hash):
+        return True, 'superseded_externally'
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT status, candidate_info_hash FROM nzb_playback_repairs WHERE id=?',
+            (repair_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row or row['status'] != 'awaiting_candidate':
+        return True, 'stage_advanced'
+    if row['candidate_info_hash']:
+        return True, 'candidate_in_flight'
+    if _replacement_source_if_superseded(_media_item(item_id), old_info_hash):
+        return True, 'superseded_externally'
+    return False, ''
+
+
+def _finalize_superseded_externally(repair, item, current_source, log_msg, *log_args):
+    conn = get_db_connection()
+    try:
+        replacement_title = (
+            item.get('filled_by_title') or item.get('debrid_folder_name') or
+            item.get('filled_by_file') or current_source
+        )
+        if repair.get('activity_id'):
+            conn.execute(
+                """UPDATE nzb_repair_activity SET replacement_nzb_id=?,replacement_title=?,
+                   outcome='replaced',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (current_source, replacement_title, repair['activity_id']),
+            )
+        conn.execute(
+            """UPDATE nzb_playback_repairs SET status='complete',completed_at=CURRENT_TIMESTAMP,
+               cleanup_status='pending',
+               cleanup_first_pending_at=COALESCE(cleanup_first_pending_at,CURRENT_TIMESTAMP),
+               next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
+               last_error='superseded_externally',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (repair['id'],),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    log.warning(log_msg, *log_args)
+    return True
+
+
 def _symlink_matches(item, entry_name, file_name):
     """Confirm location_on_disk actually points at the given replacement file.
 
@@ -579,53 +641,39 @@ def process_pending_playback_repairs():
                 if not item:
                     _schedule(repair['id'], 'item_missing', 300)
                     continue
-                # This row's own candidate lifecycle isn't the only writer of
-                # the item's filled_by_torrent_id — the main repair sweep
-                # (_run_repair_inner) can independently submit and accept a
-                # fresh candidate for the same broken entry on its own
-                # schedule, racing this row's rejection/retry cycle. If the
-                # item already sits on real (non-original, non-excluded)
-                # content by the time this row is claimed, something else
-                # already fixed it — searching for yet another candidate here
-                # would submit a redundant duplicate NZB for a file that's
-                # already collected. Finalize instead, same as the existing
-                # 'superseded externally' handling below for the
-                # awaiting_collection stage.
-                current_source = _source_uuid(item).lower()
-                already_fixed = (
-                    item.get('state') == 'Collected'
-                    and current_source
-                    and current_source != (repair['old_info_hash'] or '').lower()
-                )
-                if already_fixed:
-                    conn = get_db_connection()
-                    try:
-                        replacement_title = (
-                            item.get('filled_by_title') or item.get('debrid_folder_name') or
-                            item.get('filled_by_file') or current_source
-                        )
-                        if repair.get('activity_id'):
-                            conn.execute(
-                                """UPDATE nzb_repair_activity SET replacement_nzb_id=?,replacement_title=?,
-                                   outcome='replaced',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-                                (current_source, replacement_title, repair['activity_id']),
-                            )
-                        conn.execute(
-                            """UPDATE nzb_playback_repairs SET status='complete',completed_at=CURRENT_TIMESTAMP,
-                               cleanup_status='pending',
-                               cleanup_first_pending_at=COALESCE(cleanup_first_pending_at,CURRENT_TIMESTAMP),
-                               next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
-                               last_error='superseded_externally',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-                            (repair['id'],),
-                        )
-                        conn.commit()
-                    finally:
-                        conn.close()
-                    log.warning(
-                        '[NZBPlayback] Item %s already Collected on %s by the time repair=%s was claimed for '
-                        'candidate search — finalizing as replaced instead of submitting a duplicate',
-                        repair['cli_debrid_id'], current_source, repair['id'],
+                # The main repair sweep (_run_repair_inner) can independently
+                # submit a replacement for the same broken entry while this
+                # row still sits in awaiting_candidate (empty candidate or
+                # mid-scrape). If the item is already on a non-original source
+                # — even still Adding/Checking — or the repair row was advanced
+                # by that other path, do not scrape/submit another NZB here.
+                current_source = _replacement_source_if_superseded(item, repair['old_info_hash'])
+                if current_source:
+                    _finalize_superseded_externally(
+                        repair, item, current_source,
+                        '[NZBPlayback] Item %s already on replacement %s (state=%s) when repair=%s was '
+                        'claimed for candidate search — finalizing instead of submitting a duplicate',
+                        repair['cli_debrid_id'], current_source, item.get('state'), repair['id'],
                     )
+                    continue
+                blocked, block_reason = playback_candidate_search_blocked(
+                    repair['id'], repair['cli_debrid_id'], repair['old_info_hash'],
+                )
+                if blocked:
+                    if block_reason == 'superseded_externally':
+                        item = _media_item(repair['cli_debrid_id']) or item
+                        current_source = _replacement_source_if_superseded(item, repair['old_info_hash'])
+                        if current_source:
+                            _finalize_superseded_externally(
+                                repair, item, current_source,
+                                '[NZBPlayback] Item %s already on replacement %s (state=%s) when repair=%s was '
+                                'claimed for candidate search — finalizing instead of submitting a duplicate',
+                                repair['cli_debrid_id'], current_source, item.get('state'), repair['id'],
+                            )
+                        else:
+                            _schedule(repair['id'], block_reason, 15)
+                    else:
+                        _schedule(repair['id'], block_reason, 15)
                     continue
                 # The last accepted candidate was itself verified broken. Reuse
                 # the exact same scrape/submit/exclude pipeline that produced

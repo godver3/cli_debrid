@@ -63,6 +63,7 @@ from database.nzb_playback_repair import (
     candidate_is_excluded,
     candidate_keys,
     has_active_exact_repair,
+    playback_candidate_search_blocked,
     record_failed_candidate,
     set_playback_candidate,
 )
@@ -1253,6 +1254,15 @@ def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
     scheduling/logging by the completion worker — never raises.
     """
     item_id = item['id']
+    repair_id = repair_row.get('id')
+    old_info_hash = repair_row.get('old_info_hash')
+    blocked, block_reason = playback_candidate_search_blocked(repair_id, item_id, old_info_hash)
+    if blocked:
+        logger.info(
+            '[NZBPlayback] Skipping candidate search for item %s repair=%s: %s',
+            item_id, repair_id, block_reason,
+        )
+        return block_reason
     broken_nzb_title = (item.get('debrid_folder_name') or item.get('filled_by_file')
                          or repair_row.get('old_entry_name') or item.get('title') or '')
     candidates = _scrape_for_replacement(item, broken_nzb_title)
@@ -1270,6 +1280,13 @@ def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
         return 'no_replacement'
 
     for candidate in unique_candidates:
+        blocked, block_reason = playback_candidate_search_blocked(repair_id, item_id, old_info_hash)
+        if blocked:
+            logger.info(
+                '[NZBPlayback] Aborting candidate search mid-pipeline for item %s repair=%s: %s',
+                item_id, repair_id, block_reason,
+            )
+            return block_reason
         if _is_junk_replacement_result(candidate):
             logger.info(
                 '[NZBPlayback] Skipping junk replacement candidate %r',
