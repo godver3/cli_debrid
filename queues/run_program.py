@@ -74,7 +74,8 @@ import json
 from utilities.post_processing import handle_state_change
 from content_checkers.content_cache_management import (
     load_source_cache, save_source_cache, 
-    should_process_item, update_cache_for_item
+    should_process_item, update_cache_for_item,
+    load_live_content_source_config, normalize_enabled_versions
 )
 from collections import deque # Import deque for efficient queue operations
 from database.symlink_verification import (
@@ -1930,6 +1931,18 @@ class ProgramRunner:
     def process_content_source(self, source, data):
         from datetime import datetime, timedelta # Add this import
         source_type = source.split('_')[0]
+
+        # Scheduled and manual APScheduler jobs retain the arguments they were
+        # created with. Reload the source here so version changes made in the UI
+        # are honored even when a job was registered before the settings save.
+        live_source_data = load_live_content_source_config(source)
+        if live_source_data is None:
+            logging.warning(f"Content source {source} no longer exists in current settings. Skipping stale scheduled task.")
+            return
+        if live_source_data != data:
+            logging.debug(f"Reloaded current configuration for content source {source} before processing.")
+        data = live_source_data
+
         versions_from_config = data.get('versions', []) # Default to empty list if missing
         source_media_type = data.get('media_type', 'All')
         raw_cutoff_date = data.get('cutoff_date', '')
@@ -1960,14 +1973,16 @@ class ProgramRunner:
         cutoff_date = parsed_cutoff_date # Use the parsed_cutoff_date
 
         # Convert versions_from_config to the expected dictionary format
-        if isinstance(versions_from_config, list):
-            versions_dict = {version_name: True for version_name in versions_from_config}
-            logging.debug(f"Converted versions list for {source} to dict: {versions_dict}")
-        elif isinstance(versions_from_config, dict):
-            versions_dict = versions_from_config # Use as is if already a dict
-        else:
+        versions_dict = normalize_enabled_versions(versions_from_config)
+        if not isinstance(versions_from_config, (list, tuple, set, dict)):
             logging.warning(f"Unexpected format for versions in source {source} (type: {type(versions_from_config)}). Defaulting to empty versions.")
-            versions_dict = {} # Default to empty dict for safety
+
+        if not versions_dict:
+            logging.error(
+                f"Content source {source} has no enabled versions in current settings. "
+                "Skipping this run before metadata processing; select and save at least one version."
+            )
+            return
 
         logging.debug(f"Processing content source: {source} (type: {source_type}, media_type: {source_media_type}, versions (as dict): {versions_dict})")
 

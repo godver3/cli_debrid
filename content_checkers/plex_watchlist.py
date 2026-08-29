@@ -230,7 +230,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
         total_items_from_async = len(fetched_data_list)
         skipped_count = 0
         removed_count = 0
-        collected_skipped = 0
+        retained_series_count = 0
         
         processing_loop_start_time = time.time()
         for item_details in fetched_data_list:
@@ -274,30 +274,33 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             logging.debug(f"Item '{title}' (IMDB: {imdb_id}) - Presence: {item_state}")
 
             if item_state in ("Collected", "Partial") and should_remove:
+                should_remove_item = False
                 if media_type == 'tv':
                     if keep_series:
-                        logging.debug(f"Keeping collected TV series: '{title}' (IMDB: {imdb_id}) - keep_series is enabled.")
-                        collected_skipped += 1
-                        continue
+                        logging.debug(f"Retaining and processing collected TV series: '{title}' (IMDB: {imdb_id}) - keep_series is enabled.")
+                        retained_series_count += 1
                     else:
                         show_status = get_show_status(imdb_id)
                         if show_status != 'ended':
-                            logging.debug(f"Keeping collected ongoing TV series: '{title}' (IMDB: {imdb_id}) - status: {show_status}.")
-                            collected_skipped += 1
-                            continue
-                        logging.debug(f"Identified collected and ended TV series for removal: '{title}' (IMDB: {imdb_id}) - status: {show_status}.")
+                            logging.debug(f"Retaining and processing collected ongoing/non-ended TV series: '{title}' (IMDB: {imdb_id}) - status: {show_status or 'unknown'}.")
+                            retained_series_count += 1
+                        else:
+                            logging.debug(f"Identified collected and ended TV series for removal: '{title}' (IMDB: {imdb_id}) - status: {show_status}.")
+                            should_remove_item = True
                 else: # movie
                     logging.debug(f"Identified collected movie for removal: '{title}' (IMDB: {imdb_id}).")
-                
-                try:
-                    remove_item_start_time = time.time()
-                    account.removeFromWatchlist([original_plex_item]) # Use the original PlexAPI object
-                    removed_count += 1
-                    logging.info(f"Successfully removed '{title}' (IMDB: {imdb_id}) from watchlist. Took {time.time() - remove_item_start_time:.4f}s.")
-                    continue
-                except Exception as e_remove:
-                    logging.error(f"Failed to remove '{title}' (IMDB: {imdb_id}) from watchlist: {e_remove}")
-                    # Continue processing other items even if removal fails
+                    should_remove_item = True
+
+                if should_remove_item:
+                    try:
+                        remove_item_start_time = time.time()
+                        account.removeFromWatchlist([original_plex_item]) # Use the original PlexAPI object
+                        removed_count += 1
+                        logging.info(f"Successfully removed '{title}' (IMDB: {imdb_id}) from watchlist. Took {time.time() - remove_item_start_time:.4f}s.")
+                        continue
+                    except Exception as e_remove:
+                        logging.error(f"Failed to remove '{title}' (IMDB: {imdb_id}) from watchlist: {e_remove}")
+                        # Process the item when removal fails so it is not silently lost.
             
             processed_items_for_current_run.append({
                 'imdb_id': imdb_id,
@@ -312,10 +315,10 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
         logging.info(f"Plex.tv cloud watchlist processing complete:")
         logging.info(f"Total items in initial watchlist: {len(initial_watchlist)}")
         logging.info(f"Items prepared for async fetch: {len(items_to_process_async)}")
-        logging.info(f"Items successfully processed from async results: {len(fetched_data_list) - skipped_count - collected_skipped - removed_count}")
+        logging.info(f"Items successfully processed from async results: {len(processed_items_for_current_run)}")
         logging.info(f"Items skipped (no IMDB ID or fetch error): {skipped_count}")
         logging.info(f"Items removed from watchlist: {removed_count}")
-        logging.info(f"Items skipped (already collected and kept): {collected_skipped}")
+        logging.info(f"Retained TV series processed: {retained_series_count}")
         logging.info(f"New items added to wanted list: {len(processed_items_for_current_run)}")
         
         all_wanted_items.append((processed_items_for_current_run, versions))

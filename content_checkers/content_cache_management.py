@@ -9,6 +9,33 @@ import random
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 CACHE_EXPIRY_HOURS = 6
 
+
+def normalize_enabled_versions(versions: Any) -> Dict[str, bool]:
+    """Return a canonical map containing only enabled content-source versions."""
+    if isinstance(versions, (list, tuple, set)):
+        return {str(version): True for version in versions if str(version).strip()}
+
+    if isinstance(versions, dict):
+        enabled_versions = {}
+        for version, enabled in versions.items():
+            if isinstance(enabled, str):
+                enabled = enabled.strip().lower() == 'true'
+            if enabled and str(version).strip():
+                enabled_versions[str(version)] = True
+        return enabled_versions
+
+    return {}
+
+
+def load_live_content_source_config(source_id: str) -> Optional[Dict[str, Any]]:
+    """Load a content source directly from current settings for each task run."""
+    from utilities.settings import get_all_settings
+
+    settings = get_all_settings()
+    content_sources = settings.get('Content Sources', {}) if isinstance(settings, dict) else {}
+    source_config = content_sources.get(source_id) if isinstance(content_sources, dict) else None
+    return source_config.copy() if isinstance(source_config, dict) else None
+
 def get_cache_file_path(source_id: str) -> str:
     """Get the cache file path for a specific content source."""
     safe_source_id = source_id.replace('/', '_').replace('\\', '_')
@@ -152,4 +179,4 @@ def update_cache_for_item(item: Dict[str, Any], source_id: str, cache: Dict[str,
         'expiry_duration_hours': expiry_duration_hours, # Store the calculated duration
         'data': item.copy()  # Store a copy of the full item data
     }
-    logging.debug(f"Updated cache for {cache_key}") 
+    logging.debug(f"Updated cache for {cache_key}")
