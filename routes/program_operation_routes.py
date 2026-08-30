@@ -1229,9 +1229,6 @@ def disable_task():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-_task_toggles_write_lock = threading.Lock()
-
-
 def _persist_task_toggles_from_runner(runner):
     """Write ProgramRunner's live enabled_tasks state to task_toggles.json.
 
@@ -1242,13 +1239,6 @@ def _persist_task_toggles_from_runner(runner):
     save (which restarts ProgramRunner) then rebuilt enabled_tasks from the
     stale on-disk file, silently re-enabling a source the user had "disabled"
     minutes earlier. Persisting on every toggle closes that gap.
-
-    Now called on every individual toggle rather than only on an explicit
-    Save click, so concurrent requests (e.g. a user rapidly flipping several
-    switches) are much more likely to race here than before. Serialized with
-    a lock and written via temp-file + os.replace so two overlapping calls
-    can't interleave partial writes into the same file descriptor and
-    corrupt the JSON -- each write is now atomic from any reader's view.
 
     Returns (success: bool, error: str | None).
     """
@@ -1277,38 +1267,32 @@ def _persist_task_toggles_from_runner(runner):
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
     toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
 
-    with _task_toggles_write_lock:
-        migration_version = None
+    migration_version = None
 
-        # Read existing file to preserve metadata (like _migration_version)
-        if os.path.exists(toggles_file_path):
-            try:
-                with open(toggles_file_path, 'r') as f:
-                    current_data_from_file = json.load(f)
-                    if isinstance(current_data_from_file, dict) and MIGRATION_VERSION_KEY in current_data_from_file:
-                        migration_version = current_data_from_file[MIGRATION_VERSION_KEY]
-            except (json.JSONDecodeError, OSError) as e:
-                logging.warning(f"Could not read existing task toggles file to preserve metadata: {e}")
-
-        # Preserve the migration version marker
-        if migration_version is not None:
-            data_to_save[MIGRATION_VERSION_KEY] = migration_version
-
-        # Save the combined data to JSON file, atomically: write to a temp
-        # file in the same directory then rename over the target, so a
-        # concurrent reader (or a crash mid-write) never sees a truncated
-        # or half-written file.
+    # Read existing file to preserve metadata (like _migration_version)
+    if os.path.exists(toggles_file_path):
         try:
-            os.makedirs(os.path.dirname(toggles_file_path), exist_ok=True)
-            temp_path = toggles_file_path + '.tmp'
-            with open(temp_path, 'w') as f:
-                json.dump(data_to_save, f, indent=4)
-            os.replace(temp_path, toggles_file_path)
-            logging.info(f"Live task toggle states saved to {toggles_file_path}")
-            return True, None
-        except OSError as e:
-            logging.error(f"Error writing task toggles file: {str(e)}")
-            return False, f"Failed to write file: {str(e)}"
+            with open(toggles_file_path, 'r') as f:
+                current_data_from_file = json.load(f)
+                if isinstance(current_data_from_file, dict) and MIGRATION_VERSION_KEY in current_data_from_file:
+                    migration_version = current_data_from_file[MIGRATION_VERSION_KEY]
+        except (json.JSONDecodeError, OSError) as e:
+            logging.warning(f"Could not read existing task toggles file to preserve metadata: {e}")
+
+    # Preserve the migration version marker
+    if migration_version is not None:
+        data_to_save[MIGRATION_VERSION_KEY] = migration_version
+
+    # Save the combined data to JSON file
+    try:
+        os.makedirs(os.path.dirname(toggles_file_path), exist_ok=True)
+        with open(toggles_file_path, 'w') as f:
+            json.dump(data_to_save, f, indent=4)
+        logging.info(f"Live task toggle states saved to {toggles_file_path}")
+        return True, None
+    except OSError as e:
+        logging.error(f"Error writing task toggles file: {str(e)}")
+        return False, f"Failed to write file: {str(e)}"
 
 
 @program_operation_bp.route('/save_task_toggles', methods=['POST'])
