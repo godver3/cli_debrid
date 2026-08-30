@@ -396,6 +396,7 @@ def remap_plex_paths_to_mount(items: List[Dict[str, Any]], mount_path: str) -> L
 
 def _clean_separators_in_string(s: str) -> str:
     """Clean up orphaned separators after removing template components."""
+    original = s
     s = re.sub(r'\s*-\s*\(\s*\)', '', s)
     s = re.sub(r'\(\s*\)', '', s)
     s = re.sub(r'\s*-\s*\[\s*\]', '', s)
@@ -404,7 +405,14 @@ def _clean_separators_in_string(s: str) -> str:
     s = re.sub(r'^\s*-\s*', '', s)
     s = re.sub(r'\s*-\s*$', '', s)
     s = re.sub(r'\s{2,}', ' ', s)
-    return s.strip()
+    s = s.strip()
+    # A bare "- {value}" placeholder (not wrapped in parens/brackets) that was empty
+    # gets silently dropped by the trailing-dash cleanup above, unlike the optional
+    # "(...)"/"[...]" wrapped components. Log it so a missing template value is
+    # visible instead of just producing an unexpectedly short filename.
+    if s != original and not re.search(r'[()\[\]]', original):
+        logging.warning(f"[SymlinkPath] Dropped an empty template component while cleaning: {original!r} -> {s!r}")
+    return s
 
 
 def truncate_path_components(
@@ -809,13 +817,30 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                 f"items released in {item.get('year', '')!r}"
             )
 
+        # filled_by_file is normally the discovered source filename, but can be empty for
+        # some items (e.g. certain debrid discovery paths never set it). Fall back through
+        # the other filename-ish fields we track rather than leaving original_filename
+        # blank, which _clean_separators_in_string silently swallows from templates that
+        # reference it outside of optional "(...)"/"[...]" wrapping.
+        original_filename_source = (
+            item.get('filled_by_file')
+            or item.get('original_filename')
+            or item.get('original_scraped_torrent_title')
+            or ''
+        )
+        if not original_filename_source:
+            logging.warning(
+                f"[SymlinkPath] No filename source found for item {item.get('id', '?')} "
+                f"({item.get('title', 'Unknown')!r}) — original_filename template variable will be empty."
+            )
+
         template_vars = {
             'title': effective_title,
             'year': item.get('year', ''),
             'imdb_id': imdb_id,
             'tmdb_id': item.get('tmdb_id', ''),
             'version': item.get('version', '').strip('*'),  # Remove all asterisks for template placeholder use
-            'original_filename': os.path.splitext(item.get('filled_by_file', ''))[0],
+            'original_filename': os.path.splitext(original_filename_source)[0],
             'content_source': item.get('content_source', ''),
             'resolution': item.get('resolution', '')
         }
