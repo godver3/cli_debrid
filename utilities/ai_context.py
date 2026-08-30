@@ -45,26 +45,23 @@ WRITABLE_SECTIONS = {
     'UI Settings', 'Notifications', 'Debug', 'Discover Settings',
 }
 
-# Key name substrings that indicate a sensitive value — redacted to '***'
-# Use specific enough strings to avoid false positives (e.g. 'url' alone would
-# catch 'plex_url' which we actually want to show as configured/not configured)
-_SENSITIVE_FRAGMENTS = {
-    'token', 'secret', 'password', 'api_key', 'client_secret',
-    'webhook', 'bearer', 'credential', 'private_key',
-}
-
-# Exact key names that are sensitive regardless of context
-_SENSITIVE_EXACT = {
-    'key', 'auth', 'access', 'client_id', 'username', 'email',
-    'user',
-}
+# Extra exact key names sensitive for THIS module's purpose (redacting
+# config before it reaches the AI provider / a log-share upload) that
+# aren't credentials on their own, so utilities/log_redaction.py -- whose
+# job is scrubbing live log lines for the same reason -- doesn't need them.
+# The credential list itself lives in one place (log_redaction) so a
+# fragment/key added there (e.g. 'passkey', 'authorization', 'access_token')
+# automatically protects this module's output too, instead of two
+# independently-maintained lists silently drifting apart.
+_EXTRA_SENSITIVE_EXACT = {'access', 'client_id', 'email', 'user'}
 
 
 def _is_sensitive(key_name: str) -> bool:
+    from utilities.log_redaction import _is_sensitive_key
     kl = key_name.lower()
-    if kl in _SENSITIVE_EXACT:
+    if kl in _EXTRA_SENSITIVE_EXACT:
         return True
-    return any(s in kl for s in _SENSITIVE_FRAGMENTS)
+    return _is_sensitive_key(kl)
 
 
 def _redact_value(key_name: str, value):

@@ -65,6 +65,23 @@ class TestPatternBasedRedaction(unittest.TestCase):
         self.assertEqual(scrub(''), '')
         self.assertIsNone(scrub(None))
 
+    def test_exact_sensitive_key_covered_when_value_not_yet_in_config(self):
+        # _SENSITIVE_EXACT entries ('username', 'pass', 'auth', etc.) used to
+        # only be checked by the value-based pass (which requires the value
+        # to already be sitting in config.json). A not-yet-saved value --
+        # e.g. an in-flight connection-test payload -- was invisible to
+        # both passes, since _KEY_RE/_MARKER_RE were built only from
+        # _SENSITIVE_FRAGMENTS. Fixed by folding _SENSITIVE_EXACT into both.
+        line = "Debug payload: {'username': 'newuser123', 'pass': 'hunter12345'}"
+        result = scrub(line)
+        self.assertNotIn('newuser123', result)
+        self.assertNotIn('hunter12345', result)
+
+    def test_bare_exact_key_kv_covered(self):
+        line = 'auth=supersecretvalue123'
+        result = scrub(line)
+        self.assertNotIn('supersecretvalue123', result)
+
 
 class TestValueBasedRedactionFromConfig(unittest.TestCase):
     """The reliable half: real secret values pulled from config.json, matched

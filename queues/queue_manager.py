@@ -1301,7 +1301,7 @@ class QueueManager:
                         AND type = ?
                         AND season_number = ?
                         AND episode_number = ?
-                        AND (ghostlisted = 1 OR (state = 'Blacklisted' AND REPLACE(COALESCE(version, ''), '*', '') = ?))
+                        AND (ghostlisted = 1 OR (state = 'Blacklisted' AND RTRIM(COALESCE(version, ''), '*') = ?))
                         LIMIT 1
                     """
                     result_check = conn_check.execute(query_check, (imdb_id, tmdb_id, media_type, season, episode, target_version)).fetchone()
@@ -1311,7 +1311,7 @@ class QueueManager:
                         SELECT id FROM media_items
                         WHERE (imdb_id = ? OR tmdb_id = ?)
                         AND type = ?
-                        AND (ghostlisted = 1 OR (state = 'Blacklisted' AND REPLACE(COALESCE(version, ''), '*', '') = ?))
+                        AND (ghostlisted = 1 OR (state = 'Blacklisted' AND RTRIM(COALESCE(version, ''), '*') = ?))
                         LIMIT 1
                     """
                     result_check = conn_check.execute(query_check, (imdb_id, tmdb_id, media_type, target_version)).fetchone()

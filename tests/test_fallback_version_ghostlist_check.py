@@ -32,7 +32,7 @@ EPISODE_QUERY = """
     AND type = ?
     AND season_number = ?
     AND episode_number = ?
-    AND (ghostlisted = 1 OR (state = 'Blacklisted' AND REPLACE(COALESCE(version, ''), '*', '') = ?))
+    AND (ghostlisted = 1 OR (state = 'Blacklisted' AND RTRIM(COALESCE(version, ''), '*') = ?))
     LIMIT 1
 """
 
@@ -103,13 +103,27 @@ class TestFallbackVersionCreationIsNotSelfBlocked(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(row)
 
+    def test_internal_asterisk_in_a_custom_version_name_is_preserved(self):
+        # A user-named version like '4K*HDR' has its '*' in the middle, not
+        # as a trailing pending-upgrade marker. REPLACE(...,'*','') would
+        # have stripped it too (yielding '4KHDR'), diverging from Python's
+        # target_version = (...).rstrip('*') (only strips trailing '*',
+        # leaving '4K*HDR' as-is) -- silently reintroducing the self-block
+        # bug for any version name containing an internal '*'. RTRIM only
+        # strips from the right end, matching rstrip('*') exactly.
+        _insert(self.conn, state='Blacklisted', version='4K*HDR')
+        row = self.conn.execute(
+            EPISODE_QUERY, ('tt0124932', 'tt0124932', 'episode', 49, 27, '4K*HDR')
+        ).fetchone()
+        self.assertIsNotNone(row)
+
 
 class TestProductionCodeMatchesFixedQuery(unittest.TestCase):
     def test_queue_manager_uses_version_scoped_blacklist_check(self):
         with open(os.path.join(PROJECT_ROOT, "queues", "queue_manager.py"), encoding="utf-8") as f:
             source = f.read()
         self.assertIn(
-            "AND (ghostlisted = 1 OR (state = 'Blacklisted' AND REPLACE(COALESCE(version, ''), '*', '') = ?))",
+            "AND (ghostlisted = 1 OR (state = 'Blacklisted' AND RTRIM(COALESCE(version, ''), '*') = ?))",
             source,
         )
         self.assertIn(

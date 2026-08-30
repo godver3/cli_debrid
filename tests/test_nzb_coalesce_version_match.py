@@ -24,7 +24,7 @@ SIBLING_QUERY = (
     "FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' "
     "AND state IN ('Adding','Checking','Collected','Upgrading') "
     "AND filled_by_torrent_id LIKE 'nzb:%' "
-    "AND REPLACE(COALESCE(version, ''), '*', '') = ? LIMIT 1"
+    "AND RTRIM(COALESCE(version, ''), '*') = ? LIMIT 1"
 )
 
 
@@ -93,6 +93,18 @@ class TestSiblingLookupIsVersionAware(unittest.TestCase):
         row = self.conn.execute(SIBLING_QUERY, requested).fetchone()
         self.assertIsNotNone(row)
 
+    def test_internal_asterisk_in_a_custom_version_name_is_preserved(self):
+        # A user-named version like '4K*HDR' has its '*' in the middle, not
+        # as a trailing pending-upgrade marker. REPLACE(...,'*','') would
+        # have stripped it too (yielding '4KHDR'), diverging from Python's
+        # target_version = (...).rstrip('*') (which only strips trailing
+        # '*' and leaves '4K*HDR' as-is) -- silently breaking the match for
+        # any version name containing an internal '*'. RTRIM only strips
+        # from the right end, matching rstrip('*') exactly.
+        _insert_sibling(self.conn, episode_number=1, version='4K*HDR')
+        row = self.conn.execute(SIBLING_QUERY, ('tt1234567', 1, '4K*HDR')).fetchone()
+        self.assertIsNotNone(row)
+
 
 class TestProductionQueryMatchesFixedSql(unittest.TestCase):
     """Guards against the fix regressing back to a version-blind query in scraping_queue.py."""
@@ -103,7 +115,7 @@ class TestProductionQueryMatchesFixedSql(unittest.TestCase):
         marker = "FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode'"
         idx = source.index(marker)
         snippet = source[idx:idx + 400]
-        self.assertIn("REPLACE(COALESCE(version, ''), '*', '') = ?", snippet)
+        self.assertIn("RTRIM(COALESCE(version, ''), '*') = ?", snippet)
         self.assertIn("_coalesce_version = (item_to_process.get('version') or '').rstrip('*')", source)
 
 

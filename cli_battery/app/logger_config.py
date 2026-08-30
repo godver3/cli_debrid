@@ -34,7 +34,17 @@ def setup_logger():
     console_handler = colorlog.StreamHandler()
     console_handler.setLevel(logging.INFO)  # Keep INFO for console
     
-    formatter = colorlog.ColoredFormatter(
+    class RedactingColoredFormatter(colorlog.ColoredFormatter):
+        """ColoredFormatter that also scrubs credentials, matching the file handler below.
+
+        Without this, secrets reaching cli_battery's console output stayed in
+        cleartext even after the file handler was redacted -- and console
+        output is commonly captured by docker logs/systemd journal.
+        """
+        def format(self, record):
+            return scrub(super().format(record))
+
+    formatter = RedactingColoredFormatter(
         '%(log_color)s%(asctime)s - %(filename)s:%(funcName)s - %(levelname)s - %(message)s',
         log_colors={
             'DEBUG': 'cyan',

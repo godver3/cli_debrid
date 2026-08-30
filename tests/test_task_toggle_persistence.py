@@ -68,5 +68,40 @@ class TestToggleEndpointsPersistImmediately(unittest.TestCase):
         self.assertIn("_persist_task_toggles_from_runner(runner)", body)
 
 
+class TestPersistIsSerializedAndAtomic(unittest.TestCase):
+    """Persisting on every toggle (rather than only an explicit Save click)
+    makes concurrent calls -- e.g. a user rapidly flipping several switches
+    -- much more likely. Two overlapping unlocked, non-atomic
+    open(path, 'w')/json.dump() calls to the same file can interleave and
+    corrupt task_toggles.json. Fixed with a lock plus a temp-file +
+    os.replace write.
+    """
+
+    def setUp(self):
+        self.source = _read("routes/program_operation_routes.py")
+
+    def test_module_level_lock_exists(self):
+        self.assertIn("_task_toggles_write_lock = threading.Lock()", self.source)
+
+    def _persist_function_body(self):
+        start = self.source.index("def _persist_task_toggles_from_runner(runner):")
+        end = self.source.index("\n@program_operation_bp.route('/save_task_toggles'", start)
+        return self.source[start:end]
+
+    def test_write_is_serialized_under_the_lock(self):
+        body = self._persist_function_body()
+        self.assertIn("with _task_toggles_write_lock:", body)
+        lock_idx = body.index("with _task_toggles_write_lock:")
+        write_idx = body.index("json.dump(data_to_save, f, indent=4)")
+        self.assertLess(lock_idx, write_idx)
+
+    def test_write_is_atomic_via_temp_file_and_replace(self):
+        body = self._persist_function_body()
+        self.assertIn("temp_path = toggles_file_path + '.tmp'", body)
+        self.assertIn("os.replace(temp_path, toggles_file_path)", body)
+        # Never write json.dump directly to the real path -- only the temp one.
+        self.assertNotIn("open(toggles_file_path, 'w')", body)
+
+
 if __name__ == "__main__":
     unittest.main()

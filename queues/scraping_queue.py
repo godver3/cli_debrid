@@ -313,7 +313,7 @@ class ScrapingQueue:
                                 "FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' "
                                 "AND state IN ('Adding','Checking','Collected','Upgrading') "
                                 "AND filled_by_torrent_id LIKE 'nzb:%' "
-                                "AND REPLACE(COALESCE(version, ''), '*', '') = ? LIMIT 1",
+                                "AND RTRIM(COALESCE(version, ''), '*') = ? LIMIT 1",
                                 (_coalesce_imdb, _coalesce_season, _coalesce_version)
                             ).fetchone()
                         finally:

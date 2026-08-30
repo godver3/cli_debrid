@@ -169,7 +169,21 @@ def refresh_secrets() -> None:
 
 # --- Strategy 2: replace values whose key looks sensitive -------------------
 
-_KEY_RE = r'[A-Za-z0-9_\-]*(?:' + '|'.join(_SENSITIVE_FRAGMENTS) + r')[A-Za-z0-9_\-]*'
+# _SENSITIVE_EXACT entries (e.g. 'username', 'pass') are exact-match-only in
+# _is_sensitive_key() precisely because they're too generic to treat as
+# substrings ('key' alone would catch 'keyboard', 'monkey' as identifiers).
+# But that same exactness means the fragment-only pattern below used to
+# never match them at all: a not-yet-saved '{"username": "..."}' dict repr,
+# never seen by the value-based pass either, went completely unredacted.
+# Included here as whole-alternative matches (not folded into the
+# open-ended [A-Za-z0-9_\-]* padding fragments get), so 'username'/'pass'/
+# 'auth' match as themselves without also matching every identifier that
+# merely contains them.
+_EXACT_KEY_ALTERNATION = '|'.join(re.escape(k) for k in sorted(_SENSITIVE_EXACT, key=len, reverse=True))
+_KEY_RE = (
+    r'(?:[A-Za-z0-9_\-]*(?:' + '|'.join(_SENSITIVE_FRAGMENTS) + r')[A-Za-z0-9_\-]*'
+    r'|' + _EXACT_KEY_ALTERNATION + r')'
+)
 
 # 'api_key': 'value'  /  "token": "value"  -- dict reprs and JSON
 _QUOTED_KV_RE = re.compile(
@@ -190,8 +204,15 @@ _BEARER_RE = re.compile(r'(?P<prefix>\bBearer\s+)(?P<val>[A-Za-z0-9._\-]{' + str
                         re.IGNORECASE)
 
 # Cheap gate: only run the three substitutions above when the text contains
-# something that could plausibly match. Most log lines do not.
-_MARKER_RE = re.compile('|'.join(_SENSITIVE_FRAGMENTS) + r'|\bkey\b|\bauth\b', re.IGNORECASE)
+# something that could plausibly match. Most log lines do not. Generalized
+# over the full _SENSITIVE_EXACT set (word-boundary matches, since these are
+# exact-match keys) rather than hardcoding just 'key'/'auth' -- otherwise a
+# line containing only 'username' or 'pass' would skip the gate and never
+# reach _QUOTED_KV_RE/_BARE_KV_RE at all despite _KEY_RE now covering them.
+_MARKER_RE = re.compile(
+    '|'.join(_SENSITIVE_FRAGMENTS) + r'|' + r'|'.join(r'\b' + re.escape(k) + r'\b' for k in _SENSITIVE_EXACT),
+    re.IGNORECASE,
+)
 
 
 def _replace_kv(match) -> str:
