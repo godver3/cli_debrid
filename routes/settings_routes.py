@@ -2659,8 +2659,9 @@ def scraping_content():
     migrate_clean_version_filter_keys()
     migrate_clean_stale_scraper_keys_from_versions()
     config = load_config() # Initial load
-    # Add logging to see the config state within the route
-    logging.debug(f"[scraping_content] Loaded config: {config}")
+    # Log the shape of the config, never its contents — this dumped every
+    # API key and token into debug.log on each page load.
+    logging.debug(f"[scraping_content] Loaded config sections: {sorted(config.keys())}")
     schema = SETTINGS_SCHEMA
     # Explicitly reload config right before accessing versions
     config = load_config()

@@ -254,6 +254,13 @@ def save_config(config):
                 with open(config_file_path, 'w') as config_file:
                     json.dump(config, config_file, indent=2)
                 logging.debug(f"save_config: Successfully saved config to {config_file_path}")
+                # A key entered just now must be redacted from the very next
+                # log line, not once the cache TTL happens to lapse.
+                try:
+                    from utilities.log_redaction import refresh_secrets
+                    refresh_secrets()
+                except Exception:
+                    pass
             except Exception as e_save:
                 logging.error(f"Failed to save config to {config_file_path}: {str(e_save)}")
                 # If save failed and we have a backup, try to restore it

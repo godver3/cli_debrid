@@ -2,6 +2,7 @@ import logging
 import colorlog
 from logging.handlers import RotatingFileHandler
 import os
+from utilities.log_redaction import RedactingFormatter
 
 class ImmediateRotatingFileHandler(RotatingFileHandler):
     """A RotatingFileHandler that flushes immediately after each write"""
@@ -72,7 +73,7 @@ def setup_logger():
     file_handler.addFilter(ExcludeFilter())
     
     # Use a simpler formatter for file logs to reduce overhead
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    file_handler.setFormatter(RedactingFormatter('%(asctime)s - %(levelname)s - %(message)s'))
     
     logger.addHandler(file_handler)
 

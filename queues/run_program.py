@@ -8,6 +8,7 @@ import uuid
 import ctypes
 import platform
 import gc
+from utilities.log_redaction import RedactingFormatter
 # *** START EDIT: Import tracemalloc ***
 try:
     import tracemalloc
@@ -4977,7 +4978,7 @@ class ProgramRunner:
             os.makedirs(log_dir, exist_ok=True)
             log_file = os.path.join(log_dir, 'reconciliations.log')
             handler = logging.FileHandler(log_file)
-            handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+            handler.setFormatter(RedactingFormatter('%(asctime)s - %(message)s'))
             reconciliation_logger.addHandler(handler)
             reconciliation_logger.setLevel(logging.INFO)
 

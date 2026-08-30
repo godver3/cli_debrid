@@ -9,6 +9,7 @@ from flask import current_app, g
 from requests.exceptions import RequestException
 import os
 from utilities.version import get_app_version
+from utilities.log_redaction import RedactingFormatter
 
 def setup_api_logging():
     print("Setting up API logging")
@@ -31,7 +32,7 @@ def setup_api_logging():
     )
     
     # Use a more compact log format
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', 
+    formatter = RedactingFormatter('%(asctime)s - %(levelname)s - %(message)s', 
                                 datefmt='%Y-%m-%d %H:%M:%S')
     handler.setFormatter(formatter)
     
