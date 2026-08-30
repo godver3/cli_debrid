@@ -219,11 +219,17 @@ def scan_mount_for_external_adds() -> Dict:
         )
         return summary
 
+    # Only write the state file when something actually changed. The steady
+    # state is a large mount where every entry is already known, and rewriting
+    # a file with one key per mount folder on every run buys nothing.
+    dirty = False
+
     # Drop state for folders that have gone from the mount, so the file
     # doesn't grow without bound.
     present = set(entries)
     for name in [n for n in state if n not in present]:
         del state[name]
+        dirty = True
 
     candidates = []
     for name in entries:
@@ -233,7 +239,8 @@ def scan_mount_for_external_adds() -> Dict:
         candidates.append(name)
 
     if not candidates:
-        _save_state(state)
+        if dirty:
+            _save_state(state)
         return summary
 
     known_titles, known_components = _build_known_sets()
@@ -244,12 +251,14 @@ def scan_mount_for_external_adds() -> Dict:
             # Tracked by cli_debrid already - record it so we don't re-check
             # it against the DB on every run.
             state[name] = {'imported': True, 'tracked_existing': True, 'first_seen': now}
+            dirty = True
             continue
         new_folders.append(name)
 
     summary['new_candidates'] = len(new_folders)
     if not new_folders:
-        _save_state(state)
+        if dirty:
+            _save_state(state)
         return summary
 
     logging.info(f"[ExternalScan] {len(new_folders)} mount entries with no database record; "
