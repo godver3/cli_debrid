@@ -967,7 +967,7 @@ class ProgramRunner:
         # --- END EDIT ---
 
     # *** START EDIT: New method to get task target ***
-    def _get_task_target(self, task_name: str):
+    def _get_task_target(self, task_name: str, manual: bool = False):
         """Resolves the target function and arguments for a given task name."""
         target_func = None
         args = []
@@ -995,6 +995,11 @@ class ProgramRunner:
             if source_data:
                 target_func = self.process_content_source
                 args = [source_id, source_data]
+                if manual:
+                    # Explicit manual/debug-triggered runs bypass the source cache so a
+                    # user flipping unblacklist_on_source_run and re-running immediately
+                    # actually reaches add_wanted_items instead of being cache-skipped.
+                    kwargs = {'bypass_cache': True}
             else:
                 logging.warning(f"Content source data not found for source ID '{source_id}' derived from task '{task_name}'. This task will be skipped.")
 
@@ -1928,7 +1933,7 @@ class ProgramRunner:
         self.task_reconcile_queues()
     # --- END EDIT ---
     
-    def process_content_source(self, source, data):
+    def process_content_source(self, source, data, bypass_cache=False):
         from datetime import datetime, timedelta # Add this import
         source_type = source.split('_')[0]
 
@@ -1953,6 +1958,11 @@ class ProgramRunner:
             logging.warning(f"Invalid list_length_limit value for source {source}: {data.get('list_length_limit')}. Using default value 0.")
             list_length_limit = 0
         unblacklist_on_source_run = bool(data.get('unblacklist_on_source_run', False))
+        granular_versions = get_setting('Debug', 'enable_granular_version_additions', False)
+        logging.info(
+            f"Starting content source run: source={source}, unblacklist={unblacklist_on_source_run}, "
+            f"granular={granular_versions}, bypass_cache={bypass_cache}"
+        )
         parsed_cutoff_date = None
 
         if raw_cutoff_date:
@@ -2124,8 +2134,8 @@ class ProgramRunner:
                         
                         # Then filter items based on cache
                         items_to_process_raw = [
-                            item for item in items 
-                            if should_process_item(item, source, source_cache)
+                            item for item in items
+                            if bypass_cache or should_process_item(item, source, source_cache)
                         ]
                         items_skipped = len(items) - len(items_to_process_raw)
                         cache_skipped += items_skipped
@@ -2240,8 +2250,8 @@ class ProgramRunner:
                     
                     # Then filter items based on cache
                     items_to_process_raw = [
-                        item for item in wanted_content 
-                        if should_process_item(item, source, source_cache)
+                        item for item in wanted_content
+                        if bypass_cache or should_process_item(item, source, source_cache)
                     ]
                     items_skipped = len(wanted_content) - len(items_to_process_raw)
                     cache_skipped += items_skipped
@@ -7576,7 +7586,7 @@ class ProgramRunner:
 
         logging.info(f"Attempting to manually trigger task: {job_id_base} by adding it to APScheduler queue.")
 
-        target_func, args, kwargs = self._get_task_target(job_id_base)
+        target_func, args, kwargs = self._get_task_target(job_id_base, manual=True)
 
         if target_func:
             try:

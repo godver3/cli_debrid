@@ -60,7 +60,7 @@ class TestContentSourceExecutionUsesLiveVersions(unittest.TestCase):
         with open(os.path.join(project_root, "queues", "run_program.py"), encoding="utf-8") as source_file:
             source = source_file.read()
 
-        method_start = source.index("    def process_content_source(self, source, data):")
+        method_start = source.index("    def process_content_source(self, source, data, bypass_cache=False):")
         method_end = source.index("\n    def task_purge_not_wanted_magnets_file", method_start)
         method = source[method_start:method_end]
 
