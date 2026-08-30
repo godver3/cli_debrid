@@ -1006,6 +1006,7 @@ def get_task_timings():
         'task_sync_cli_mount_changes',
         'task_repair_broken_nzbs',
         'task_repair_broken_debrids',
+        'task_scan_mount_for_external_adds',
     }
     _METADATA_TASKS = {
         'task_refresh_release_dates',

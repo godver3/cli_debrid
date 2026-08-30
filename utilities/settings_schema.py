@@ -256,6 +256,11 @@ SETTINGS_SCHEMA = {
             "description": "Process files in rclone webhook even if they don't match any items in the checking state",
             "default": False
         },
+        "scan_mount_for_external_adds": {
+            "type": "boolean",
+            "description": "Periodically scan the original files path for content added outside cli_debrid (e.g. via DMM or the debrid provider's own UI) and import it - symlink it and trigger a media server scan. Use this when your mount provider has no library-update webhook (Decypharr, plain rclone); zurg users already get this via its on_library_update hook. The first run records existing mount content as a baseline without importing it.",
+            "default": False
+        },
         "plex_url_for_symlink": {
             "type": "string",
             "description": "Plex server URL for symlink updates (optional)",

@@ -498,6 +498,8 @@ function createTaskTile(taskName, taskData) {
             displayName = 'Check Local Files for Plex Update';
         } else if (taskName === 'task_refresh_library_size_cache') {
             displayName = 'Refresh Debrid Library Size';
+        } else if (taskName === 'task_scan_mount_for_external_adds') {
+            displayName = 'Scan Mount for External Adds';
         } else if (taskName === 'final_check_queue' || taskName === 'Final_check_queue') {
             displayName = 'Final Scrape';
         } else {
@@ -1240,6 +1242,7 @@ function tngDisplayName(taskName, info) {
     if (n === 'task_repair_broken_nzbs')         return 'Repair Broken NZBs';
     if (n === 'task_repair_broken_debrids')      return 'Repair Broken Debrids';
     if (n === 'task_backfill_nzb_torrent_ids')   return 'Backfill NZB Torrent IDs';
+    if (n === 'task_scan_mount_for_external_adds') return 'Scan Mount for External Adds';
     if (n === 'final_check_queue' || n === 'Final_check_queue') return 'Final Scrape';
     if (n.endsWith('_wanted')) n = n.replace('task_', '').replace('_wanted', '');
     else                       n = n.replace('task_', '');
