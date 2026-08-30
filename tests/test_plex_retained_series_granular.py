@@ -204,7 +204,7 @@ class RetainedSeriesGranularTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def run_add(self, items):
+    def run_add(self, items, unblacklist=False):
         notification_response = MagicMock()
         notification_response.json = {'success': False}
         metadata = types.ModuleType('metadata.metadata')
@@ -248,6 +248,7 @@ class RetainedSeriesGranularTests(unittest.TestCase):
             wanted_items.add_wanted_items(
                 items,
                 {'1080p': True, '2160p': True},
+                unblacklist=unblacklist,
             )
 
     def test_retained_monitor_skips_new_version_for_existing_episode(self):
@@ -267,6 +268,21 @@ class RetainedSeriesGranularTests(unittest.TestCase):
 
         self.assertEqual(
             [('1080p', 'Collected'), ('2160p', 'Wanted')],
+            [(row['version'], row['state']) for row in self.rows_for_episode(1)],
+        )
+
+    def test_retained_monitor_can_unblacklist_with_global_granular_enabled(self):
+        conn = self.connect()
+        conn.execute(
+            "UPDATE media_items SET state = 'Blacklisted' WHERE episode_number = 1"
+        )
+        conn.commit()
+        conn.close()
+
+        self.run_add([self.episode(1)], unblacklist=True)
+
+        self.assertEqual(
+            [('1080p', 'Wanted')],
             [(row['version'], row['state']) for row in self.rows_for_episode(1)],
         )
 

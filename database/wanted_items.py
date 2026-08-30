@@ -352,6 +352,9 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
             imdb_id = item.get('imdb_id')
             tmdb_id = item.get('tmdb_id')
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
+            item_enable_granular_versions = enable_granular_versions and not (
+                item_type == 'episode' and item.get('monitor_missing_episodes_only', False)
+            )
             normalized_title = normalize_string(str(item.get('title', 'Unknown')))
 
             if do_not_add_watched and watch_history_conn:
@@ -437,7 +440,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         break
 
             if is_blacklisted_in_db:
-                if not enable_granular_versions:
+                if not item_enable_granular_versions:
                     # If unblacklist is enabled and item is only blacklisted (not ghostlisted), reset it
                     if unblacklist and not is_ghostlisted_in_db:
                         db_item_id = _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item)
@@ -501,7 +504,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
             is_user_initiated_add = item.get('content_source') in ('content_requester', 'Magnet_Assigner')
 
             if is_collected_or_upgrading_in_db and not is_user_initiated_add:
-                if not enable_granular_versions:
+                if not item_enable_granular_versions:
                     if _plex_labels_active:
                         new_source = item.get('content_source')
                         new_detail = item.get('content_source_detail')
@@ -554,7 +557,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                     for version_vs, state_vs, _ in existing_movies[tmdb_id]:
                         existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
 
-                if not (enable_granular_versions or is_user_initiated_add):
+                if not (item_enable_granular_versions or is_user_initiated_add):
                     if existing_versions_set_vs:
                         skip = True
                         if imdb_id and imdb_id in existing_movies: skip_stats['existing_movie_imdb'] += 1
@@ -599,18 +602,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         for version_vs, state_vs, _, _ in existing_episodes[tmdb_key_vs]:
                             existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
 
-                # A retained Plex series is a missing-episode monitor, not a
-                # background quality upgrade. Any existing row for this episode
-                # satisfies the monitoring pass, even when another configured
-                # granular version is absent.
-                monitor_missing_episodes_only = bool(item.get('monitor_missing_episodes_only', False))
-                if monitor_missing_episodes_only and existing_versions_set_vs:
-                    skip = True
-                    if imdb_key_vs and imdb_key_vs in existing_episodes: skip_stats['existing_episode_imdb'] += 1
-                    if tmdb_key_vs and tmdb_key_vs in existing_episodes and (not imdb_key_vs or imdb_key_vs != tmdb_key_vs): skip_stats['existing_episode_tmdb'] += 1
-                    if episode_key_vs not in version_summary['episodes']:
-                        version_summary['episodes'][episode_key_vs] = {'existing': existing_versions_set_vs, 'added': set(), 'title': normalized_title, 'states': existing_states_set_vs}
-                elif not (enable_granular_versions or is_user_initiated_add):
+                if not (item_enable_granular_versions or is_user_initiated_add):
                     if existing_versions_set_vs:
                         skip = True
                         if imdb_key_vs and imdb_key_vs in existing_episodes: skip_stats['existing_episode_imdb'] += 1
