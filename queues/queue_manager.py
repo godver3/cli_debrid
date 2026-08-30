@@ -1279,6 +1279,14 @@ class QueueManager:
         media_type = new_item_data_for_db.get('type')
         season = new_item_data_for_db.get('season_number')
         episode = new_item_data_for_db.get('episode_number')
+        # This is called right after blacklisted_queue.py sets the ORIGINAL item
+        # (same imdb/season/episode, different version) to state='Blacklisted' as
+        # part of creating a fallback-version replacement. Matching on state alone
+        # (without version) always found that just-blacklisted original row and
+        # silently killed every fallback-version creation. Only a genuine
+        # permanent ghostlist (any version) or a prior blacklist of this exact
+        # target version should block re-creation.
+        target_version = (new_item_data_for_db.get('version') or '').rstrip('*')
 
         if imdb_id or tmdb_id:
             conn_check = None
@@ -1293,23 +1301,23 @@ class QueueManager:
                         AND type = ?
                         AND season_number = ?
                         AND episode_number = ?
-                        AND (ghostlisted = 1 OR state = 'Blacklisted')
+                        AND (ghostlisted = 1 OR (state = 'Blacklisted' AND REPLACE(COALESCE(version, ''), '*', '') = ?))
                         LIMIT 1
                     """
-                    result_check = conn_check.execute(query_check, (imdb_id, tmdb_id, media_type, season, episode)).fetchone()
+                    result_check = conn_check.execute(query_check, (imdb_id, tmdb_id, media_type, season, episode, target_version)).fetchone()
                 else:
                     # For movies/shows, check by IMDB/TMDB
                     query_check = """
                         SELECT id FROM media_items
                         WHERE (imdb_id = ? OR tmdb_id = ?)
                         AND type = ?
-                        AND (ghostlisted = 1 OR state = 'Blacklisted')
+                        AND (ghostlisted = 1 OR (state = 'Blacklisted' AND REPLACE(COALESCE(version, ''), '*', '') = ?))
                         LIMIT 1
                     """
-                    result_check = conn_check.execute(query_check, (imdb_id, tmdb_id, media_type)).fetchone()
+                    result_check = conn_check.execute(query_check, (imdb_id, tmdb_id, media_type, target_version)).fetchone()
 
                 if result_check:
-                    logging.info(f"⛔ Skipping {item_identifier_for_log} - user has ghostlisted/blacklisted this item (ID: {result_check[0]})")
+                    logging.info(f"⛔ Skipping {item_identifier_for_log} - user has ghostlisted this item, or version '{target_version}' is already blacklisted (ID: {result_check[0]})")
                     return False
             except Exception as e_check:
                 logging.error(f"Error checking ghostlisted status for {item_identifier_for_log}: {e_check}")
