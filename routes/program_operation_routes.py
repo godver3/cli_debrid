@@ -1202,6 +1202,9 @@ def enable_task():
             return jsonify({'success': False, 'error': 'Program is not running'})
         
         program_runner.enable_task(task_name)
+        _persisted, _persist_err = _persist_task_toggles_from_runner(program_runner)
+        if not _persisted:
+            logging.warning(f"Enabled task '{task_name}' live, but failed to persist toggle state: {_persist_err}")
         return jsonify({'success': True, 'message': f'Successfully enabled task: {task_name}'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -1219,72 +1222,96 @@ def disable_task():
             return jsonify({'success': False, 'error': 'Program is not running'})
         
         program_runner.disable_task(task_name)
+        _persisted, _persist_err = _persist_task_toggles_from_runner(program_runner)
+        if not _persisted:
+            logging.warning(f"Disabled task '{task_name}' live, but failed to persist toggle state: {_persist_err}")
         return jsonify({'success': True, 'message': f'Successfully disabled task: {task_name}'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+def _persist_task_toggles_from_runner(runner):
+    """Write ProgramRunner's live enabled_tasks state to task_toggles.json.
+
+    Shared by the explicit 'Save' button on the Task Manager page and by the
+    individual enable_task/disable_task toggle endpoints. Flipping a single
+    switch used to only pause/resume the in-memory scheduler job -- nothing
+    wrote it to disk until a separate Save click. Any subsequent settings
+    save (which restarts ProgramRunner) then rebuilt enabled_tasks from the
+    stale on-disk file, silently re-enabling a source the user had "disabled"
+    minutes earlier. Persisting on every toggle closes that gap.
+
+    Returns (success: bool, error: str | None).
+    """
+    MIGRATION_VERSION_KEY = "_migration_version"
+
+    if not (hasattr(runner, 'task_intervals') and hasattr(runner, 'enabled_tasks')):
+        return False, 'ProgramRunner instance is missing necessary attributes (task_intervals or enabled_tasks).'
+
+    # Construct live_task_states from ProgramRunner
+    live_task_states = {}
+    for task_name in runner.task_intervals.keys():
+        # Ensure we use the same normalized name that would be stored/checked
+        normalized_name = runner._normalize_task_name(task_name)
+        live_task_states[normalized_name] = normalized_name in runner.enabled_tasks
+
+    # Save the full live state for all known tasks.
+    # Diff-based saving caused a bug: after one correct restart with a disabled task,
+    # the snapshot no longer contained that task (since it was already excluded by the
+    # toggle-aware init logic), so subsequent saves dropped the 'false' entry, causing
+    # the task to re-enable on the next restart.
+    # Saving the full state is safe: stale tasks are excluded because we only iterate
+    # runner.task_intervals.keys() above, and the file format is unchanged.
+    data_to_save = live_task_states.copy()
+
+    # Get the file path
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
+
+    migration_version = None
+
+    # Read existing file to preserve metadata (like _migration_version)
+    if os.path.exists(toggles_file_path):
+        try:
+            with open(toggles_file_path, 'r') as f:
+                current_data_from_file = json.load(f)
+                if isinstance(current_data_from_file, dict) and MIGRATION_VERSION_KEY in current_data_from_file:
+                    migration_version = current_data_from_file[MIGRATION_VERSION_KEY]
+        except (json.JSONDecodeError, OSError) as e:
+            logging.warning(f"Could not read existing task toggles file to preserve metadata: {e}")
+
+    # Preserve the migration version marker
+    if migration_version is not None:
+        data_to_save[MIGRATION_VERSION_KEY] = migration_version
+
+    # Save the combined data to JSON file
+    try:
+        os.makedirs(os.path.dirname(toggles_file_path), exist_ok=True)
+        with open(toggles_file_path, 'w') as f:
+            json.dump(data_to_save, f, indent=4)
+        logging.info(f"Live task toggle states saved to {toggles_file_path}")
+        return True, None
+    except OSError as e:
+        logging.error(f"Error writing task toggles file: {str(e)}")
+        return False, f"Failed to write file: {str(e)}"
+
 
 @program_operation_bp.route('/save_task_toggles', methods=['POST'])
 @admin_required
 def save_task_toggles():
     """Save the current state of task toggles to a JSON file, based on ProgramRunner's live state."""
-    MIGRATION_VERSION_KEY = "_migration_version"
     runner = get_program_runner()
 
     if not runner:
         return jsonify({'success': False, 'error': 'ProgramRunner not available. Cannot determine live task states.'}), 500
 
+    if not (hasattr(runner, 'task_intervals') and hasattr(runner, 'enabled_tasks')):
+        return jsonify({'success': False, 'error': 'ProgramRunner instance is missing necessary attributes (task_intervals or enabled_tasks).'}), 500
+
     try:
-        # Construct live_task_states from ProgramRunner
-        live_task_states = {}
-        if hasattr(runner, 'task_intervals') and hasattr(runner, 'enabled_tasks'):
-            all_defined_tasks = runner.task_intervals.keys()
-            for task_name in all_defined_tasks:
-                # Ensure we use the same normalized name that would be stored/checked
-                normalized_name = runner._normalize_task_name(task_name) 
-                live_task_states[normalized_name] = normalized_name in runner.enabled_tasks
-        else:
-            return jsonify({'success': False, 'error': 'ProgramRunner instance is missing necessary attributes (task_intervals or enabled_tasks).'}), 500
-
-        # Save the full live state for all known tasks.
-        # Diff-based saving caused a bug: after one correct restart with a disabled task,
-        # the snapshot no longer contained that task (since it was already excluded by the
-        # toggle-aware init logic), so subsequent saves dropped the 'false' entry, causing
-        # the task to re-enable on the next restart.
-        # Saving the full state is safe: stale tasks are excluded because we only iterate
-        # runner.task_intervals.keys() above, and the file format is unchanged.
-        data_to_save = live_task_states.copy()
-
-        # Get the file path
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
-
-        migration_version = None
-
-        # Read existing file to preserve metadata (like _migration_version)
-        if os.path.exists(toggles_file_path):
-            try:
-                with open(toggles_file_path, 'r') as f:
-                    current_data_from_file = json.load(f)
-                    if isinstance(current_data_from_file, dict) and MIGRATION_VERSION_KEY in current_data_from_file:
-                        migration_version = current_data_from_file[MIGRATION_VERSION_KEY]
-            except (json.JSONDecodeError, OSError) as e:
-                logging.warning(f"Could not read existing task toggles file to preserve metadata: {e}")
-
-        # Preserve the migration version marker
-        if migration_version is not None:
-            data_to_save[MIGRATION_VERSION_KEY] = migration_version
-
-        # Save the combined data to JSON file
-        try:
-            os.makedirs(os.path.dirname(toggles_file_path), exist_ok=True)
-            with open(toggles_file_path, 'w') as f:
-                json.dump(data_to_save, f, indent=4)
-            logging.info(f"Live task toggle states saved to {toggles_file_path}")
+        success, error = _persist_task_toggles_from_runner(runner)
+        if success:
             return jsonify({'success': True, 'message': 'Task toggle states saved successfully based on live program state.'})
-        except OSError as e:
-             logging.error(f"Error writing task toggles file: {str(e)}")
-             return jsonify({'success': False, 'error': f"Failed to write file: {str(e)}"})
-
+        return jsonify({'success': False, 'error': error})
     except Exception as e:
         logging.error(f"Error saving task toggles: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)})
