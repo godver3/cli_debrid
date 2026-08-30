@@ -86,6 +86,7 @@ function togglePlexSection() {
     // Toggle path input fields and Plex symlink settings
     const originalFilesPath = document.getElementById('file management-original_files_path');
     const symlinkedFilesPath = document.getElementById('file management-symlinked_files_path');
+    const externalAddScan = document.getElementById('file management-scan_mount_for_external_adds');
     const plexSymlinkSettings = document.querySelectorAll('.symlink-plex-setting');
 
     if (fileManagementSelect) {
@@ -94,7 +95,9 @@ function togglePlexSection() {
         // Handle path fields
         const pathElements = [
             originalFilesPath?.closest('.settings-form-group'),
-            symlinkedFilesPath?.closest('.settings-form-group')
+            symlinkedFilesPath?.closest('.settings-form-group'),
+            // Symlink-mode only: the scan imports mount content by symlinking it
+            externalAddScan?.closest('.settings-form-group')
         ].filter(Boolean);
 
         pathElements.forEach(element => {

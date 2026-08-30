@@ -337,6 +337,7 @@ class ProgramRunner:
             'task_repair_broken_debrids': 6 * 60 * 60, # Run every 6 hours
             'task_sync_cli_mount_changes': 5 * 60, # Run every 5 minutes
             'task_push_pending_climount_tags': 5 * 60, # Run every 5 minutes — catches tags changed on cli_debrid side only
+            'task_scan_mount_for_external_adds': 15 * 60, # Run every 15 minutes (disabled by default)
             'task_nzb_health_check': 10,             # Run every 10 seconds — polls NZB items in Adding
             'task_nzb_playback_repair_completion': 15, # Confirm only already-started playback repairs
             'task_nzb_playback_cleanup_retry': 20 * 60, # Background retry for old-file cleanup deferred after finalization
@@ -499,6 +500,7 @@ class ProgramRunner:
             'task_refresh_library_size_cache',
             # --- END EDIT ---
             'task_process_standalone_plex_removals', # Add to dynamic intervals as well
+            'task_scan_mount_for_external_adds',
             # --- START EDIT: Add media analysis task to dynamic intervals ---
             'task_analyze_media_files',
             # --- END EDIT ---
@@ -697,6 +699,22 @@ class ProgramRunner:
                  if 'task_verify_symlinked_files' in self.enabled_tasks and not is_symlink_toggled_on:
                      self.enabled_tasks.remove('task_verify_symlinked_files')
                      logging.info("Disabled symlink verification task as no media server settings are configured.")
+
+        # Enable the external-add mount scan only in symlink mode and only when opted in.
+        # Picks up content added straight to the debrid account (DMM, provider UI) on
+        # setups whose mount provider has no library-update webhook.
+        _ext_scan_task = 'task_scan_mount_for_external_adds'
+        if (file_management_mode == 'Symlinked/Local'
+                and get_setting('File Management', 'scan_mount_for_external_adds', False)):
+            _is_ext_toggled_off = saved_states.get(self._normalize_task_name(_ext_scan_task), True) is False
+            if not _is_ext_toggled_off and _ext_scan_task not in self.enabled_tasks:
+                self.enabled_tasks.add(_ext_scan_task)
+                logging.info(f"Enabled '{_ext_scan_task}' based on File Management setting.")
+        else:
+            _is_ext_toggled_on = saved_states.get(self._normalize_task_name(_ext_scan_task), False) is True
+            if _ext_scan_task in self.enabled_tasks and not _is_ext_toggled_on:
+                self.enabled_tasks.remove(_ext_scan_task)
+                logging.info(f"Disabled '{_ext_scan_task}' as the setting is off or mode is not Symlinked/Local.")
 
 
         if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):
@@ -4915,6 +4933,28 @@ class ProgramRunner:
                                    'service_name': None, 'status_code': None, 'retry_count': 0}
                 self.resume_queue()
                 logging.info('[CMSync] Initial full sync complete — queue resumed')
+
+    def task_scan_mount_for_external_adds(self):
+        """Import content that appeared in the debrid mount without cli_debrid putting it there.
+
+        Covers mount providers with no library-update webhook (Decypharr, plain
+        rclone). Zurg calls /webhook/rclone via on_library_update instead, which
+        runs the same import pipeline.
+        """
+        from utilities.external_mount_scan import scan_mount_for_external_adds
+        try:
+            summary = scan_mount_for_external_adds()
+            if summary.get('skipped_reason'):
+                logging.debug(f"[ExternalScan] Skipped: {summary['skipped_reason']}")
+            elif summary.get('baselined'):
+                logging.info(f"[ExternalScan] Baselined {summary['baselined']} existing mount entries.")
+            elif summary.get('imported') or summary.get('failed'):
+                logging.info(
+                    f"[ExternalScan] Scanned {summary.get('entries_seen', 0)} entries — "
+                    f"imported {summary.get('imported', 0)}, failed {summary.get('failed', 0)}."
+                )
+        except Exception as e:
+            logging.error(f"[ExternalScan] Task error: {e}", exc_info=True)
 
     def task_push_pending_climount_tags(self):
         """Push tags for media_items rows whose tags changed on the cli_debrid
