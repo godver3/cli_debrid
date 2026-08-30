@@ -167,6 +167,7 @@ class PlexWatchlistRetentionTests(unittest.TestCase):
             with self.subTest(state=state):
                 returned, removed, logs = self.run_fetcher(state, 'tv', True)
                 self.assertEqual(len(returned), 1)
+                self.assertTrue(returned[0]['monitor_missing_episodes_only'])
                 self.assertEqual(removed, [])
                 self.assertIn('Retained TV series processed: 1', logs)
                 self.assertNotIn('already collected and kept', logs)
@@ -177,6 +178,7 @@ class PlexWatchlistRetentionTests(unittest.TestCase):
                 returned, removed, _ = self.run_fetcher(
                     state, 'tv', False, show_status='returning series')
                 self.assertEqual(len(returned), 1)
+                self.assertTrue(returned[0]['monitor_missing_episodes_only'])
                 self.assertEqual(removed, [])
 
     def test_ended_series_and_collected_movie_are_removed(self):
@@ -194,6 +196,7 @@ class PlexWatchlistRetentionTests(unittest.TestCase):
                 returned, removed, _ = self.run_fetcher(
                     state, 'movie', False, removal=False)
                 self.assertEqual(len(returned), 1)
+                self.assertFalse(returned[0]['monitor_missing_episodes_only'])
                 self.assertEqual(removed, [])
 
     def test_removal_failure_keeps_item_in_processing_batch(self):
@@ -238,6 +241,7 @@ class PlexRssRetentionTests(unittest.TestCase):
             with self.subTest(state=state):
                 returned, logs = self.run_fetcher(state, 'tv', True)
                 self.assertEqual(len(returned), 1)
+                self.assertTrue(returned[0]['monitor_missing_episodes_only'])
                 self.assertIn('Retained TV series processed: 1', logs)
                 self.assertNotIn('collected but kept', logs)
 
@@ -247,11 +251,13 @@ class PlexRssRetentionTests(unittest.TestCase):
                 returned, _ = self.run_fetcher(
                     state, 'tv', False, show_status='returning series')
                 self.assertEqual(len(returned), 1)
+                self.assertTrue(returned[0]['monitor_missing_episodes_only'])
 
     def test_unknown_status_is_conservatively_processed(self):
         returned, _ = self.run_fetcher(
             'Collected', 'tv', False, show_status='')
         self.assertEqual(len(returned), 1)
+        self.assertTrue(returned[0]['monitor_missing_episodes_only'])
 
     def test_ended_series_and_collected_movie_are_suppressed(self):
         ended, _ = self.run_fetcher(
@@ -266,6 +272,7 @@ class PlexRssRetentionTests(unittest.TestCase):
                 returned, _ = self.run_fetcher(
                     state, 'movie', False, removal=False)
                 self.assertEqual(len(returned), 1)
+                self.assertFalse(returned[0]['monitor_missing_episodes_only'])
 
 
 if __name__ == '__main__':

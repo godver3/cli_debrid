@@ -211,7 +211,10 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
             'country': (metadata.get('country') or '').lower(),  # Add country code, handling None
             # Preserve content source information if available
             'content_source': original_item.get('content_source') if original_item else None,
-            'content_source_detail': original_item.get('content_source_detail') if original_item else None
+            'content_source_detail': original_item.get('content_source_detail') if original_item else None,
+            'monitor_missing_episodes_only': bool(
+                original_item.get('monitor_missing_episodes_only', False)
+            ) if original_item else False,
         }
         logging.debug(f"Created processed_metadata with content_source_detail={processed_metadata.get('content_source_detail')}")
 
@@ -367,7 +370,8 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
         'airtime': airtime, # Calculated local time
         'country': show_item.get('country', '').lower(),  # Add country code from show metadata
         'content_source': show_item.get('content_source'),  # Preserve content source
-        'content_source_detail': show_item.get('content_source_detail')  # Preserve content source detail
+        'content_source_detail': show_item.get('content_source_detail'),  # Preserve content source detail
+        'monitor_missing_episodes_only': bool(show_item.get('monitor_missing_episodes_only', False)),
     }
     
     # logging.debug(f"Created episode item with content_source_detail={episode_item.get('content_source_detail')}")
@@ -794,6 +798,9 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             try:
                 current_item_metadata['content_source'] = item_from_input_list.get('content_source')
                 current_item_metadata['content_source_detail'] = item_from_input_list.get('content_source_detail')
+                current_item_metadata['monitor_missing_episodes_only'] = bool(
+                    item_from_input_list.get('monitor_missing_episodes_only', False)
+                )
                 current_item_metadata['imdb_id'] = imdb_id
                 current_item_metadata['tmdb_id'] = item_from_input_list.get('tmdb_id') or current_item_metadata.get('ids', {}).get('tmdb') or metadata.get('tmdb_id')
                 

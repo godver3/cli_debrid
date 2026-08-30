@@ -599,7 +599,18 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         for version_vs, state_vs, _, _ in existing_episodes[tmdb_key_vs]:
                             existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
 
-                if not (enable_granular_versions or is_user_initiated_add):
+                # A retained Plex series is a missing-episode monitor, not a
+                # background quality upgrade. Any existing row for this episode
+                # satisfies the monitoring pass, even when another configured
+                # granular version is absent.
+                monitor_missing_episodes_only = bool(item.get('monitor_missing_episodes_only', False))
+                if monitor_missing_episodes_only and existing_versions_set_vs:
+                    skip = True
+                    if imdb_key_vs and imdb_key_vs in existing_episodes: skip_stats['existing_episode_imdb'] += 1
+                    if tmdb_key_vs and tmdb_key_vs in existing_episodes and (not imdb_key_vs or imdb_key_vs != tmdb_key_vs): skip_stats['existing_episode_tmdb'] += 1
+                    if episode_key_vs not in version_summary['episodes']:
+                        version_summary['episodes'][episode_key_vs] = {'existing': existing_versions_set_vs, 'added': set(), 'title': normalized_title, 'states': existing_states_set_vs}
+                elif not (enable_granular_versions or is_user_initiated_add):
                     if existing_versions_set_vs:
                         skip = True
                         if imdb_key_vs and imdb_key_vs in existing_episodes: skip_stats['existing_episode_imdb'] += 1

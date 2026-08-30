@@ -145,17 +145,20 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
 
                 # Check if the item is already collected
                 item_state = get_media_item_presence_overall(imdb_id=imdb_id)
+                monitor_missing_episodes_only = False
                 if item_state in ("Collected", "Partial") and should_remove:
                     should_suppress_item = False
                     if media_type == 'tv':
                         if keep_series:
                             logging.debug(f"Retaining and processing collected TV series from RSS: {imdb_id} ('{entry_title}') - keep_series is enabled")
                             retained_series_count += 1
+                            monitor_missing_episodes_only = True
                         else:
                             show_status = get_show_status(imdb_id)
                             if show_status != 'ended':
                                 logging.debug(f"Retaining and processing ongoing/non-ended TV series from RSS: {imdb_id} ('{entry_title}') - status: {show_status or 'unknown'}")
                                 retained_series_count += 1
+                                monitor_missing_episodes_only = True
                             else:
                                 logging.debug(f"Skipping (simulating removal) collected and ended/canceled TV series from RSS: {imdb_id} ('{entry_title}') - status: {show_status}")
                                 should_suppress_item = True
@@ -197,7 +200,8 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
                     'title': entry.title,
                     'imdb_id': imdb_id,
                     'media_type': media_type,
-                    'source': 'plex_rss'
+                    'source': 'plex_rss',
+                    'monitor_missing_episodes_only': monitor_missing_episodes_only,
                 }
 
                 processed_items.append(item)

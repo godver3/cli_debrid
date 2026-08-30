@@ -272,6 +272,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             
             item_state = get_media_item_presence_overall(imdb_id=imdb_id)
             logging.debug(f"Item '{title}' (IMDB: {imdb_id}) - Presence: {item_state}")
+            monitor_missing_episodes_only = False
 
             if item_state in ("Collected", "Partial") and should_remove:
                 should_remove_item = False
@@ -279,11 +280,13 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
                     if keep_series:
                         logging.debug(f"Retaining and processing collected TV series: '{title}' (IMDB: {imdb_id}) - keep_series is enabled.")
                         retained_series_count += 1
+                        monitor_missing_episodes_only = True
                     else:
                         show_status = get_show_status(imdb_id)
                         if show_status != 'ended':
                             logging.debug(f"Retaining and processing collected ongoing/non-ended TV series: '{title}' (IMDB: {imdb_id}) - status: {show_status or 'unknown'}.")
                             retained_series_count += 1
+                            monitor_missing_episodes_only = True
                         else:
                             logging.debug(f"Identified collected and ended TV series for removal: '{title}' (IMDB: {imdb_id}) - status: {show_status}.")
                             should_remove_item = True
@@ -305,7 +308,8 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             processed_items_for_current_run.append({
                 'imdb_id': imdb_id,
                 'media_type': media_type,
-                'content_source_detail': account.username
+                'content_source_detail': account.username,
+                'monitor_missing_episodes_only': monitor_missing_episodes_only,
             })
             logging.debug(f"Added '{title}' (IMDB: {imdb_id}, Type: {media_type}) to processed items from source: {account.username}")
 
