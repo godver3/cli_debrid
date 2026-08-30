@@ -43,8 +43,14 @@ _SENSITIVE_FRAGMENTS = (
     'passkey', 'webhook',
 )
 
-# Exact key names that are sensitive on their own.
-_SENSITIVE_EXACT = frozenset({'key', 'auth', 'pass', 'apikey', 'api_key'})
+# Exact key names that are sensitive on their own. 'username' is here even
+# though it isn't a credential by itself: content sources like "Other Plex
+# Watchlist" store a friend's real Plex username, and log lines routinely
+# narrate it in plain prose (e.g. "Starting watchlist retrieval for other
+# Plex user: <username>") rather than as a key/value pair the pattern-based
+# pass would catch -- only the value-based pass, seeded from this key, finds
+# and replaces that literal string wherever it appears.
+_SENSITIVE_EXACT = frozenset({'key', 'auth', 'pass', 'apikey', 'api_key', 'username'})
 
 # Values shorter than this are too likely to be ordinary words to blanket
 # replace across every log line.

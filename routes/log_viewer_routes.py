@@ -273,7 +273,20 @@ def process_log_upload(task_id):
             "=== End settings snapshot ===\n\n"
             + '\n'.join(logs)
         )
-        
+
+        # Belt-and-suspenders: RedactingFormatter scrubs new log lines as
+        # they're written, but rotated files predating that change (or a
+        # build without it yet) still have secrets in cleartext on disk.
+        # Running the same value-based/pattern-based scrub over the fully
+        # assembled upload (raw log lines + our own settings snapshot) here
+        # catches those, using a second, independently-derived detection of
+        # what counts as sensitive.
+        try:
+            from utilities.log_redaction import scrub
+            log_content = scrub(log_content)
+        except Exception as e:
+            logging.warning(f"Task {task_id}: Log redaction scrub unavailable, uploading unscrubbed: {e}")
+
         upload_tasks[task_id].update({'status': 'compressing', 'progress': 30, 'message': 'Compressing logs...'})
         compressed_buffer = io.BytesIO()
         with gzip.GzipFile(fileobj=compressed_buffer, mode='wb', compresslevel=9) as gz:
