@@ -259,8 +259,20 @@ def process_log_upload(task_id):
         
         upload_tasks[task_id].update({'progress': 20, 'message': 'Preparing for compression...'})
         logging.info(f"Task {task_id}: Collected {len(logs)} log entries for upload.")
-        
-        log_content = '\n'.join(logs)
+
+        try:
+            from utilities.ai_context import get_diagnostic_settings_snapshot
+            settings_snapshot = get_diagnostic_settings_snapshot()
+        except Exception as e:
+            logging.warning(f"Task {task_id}: Failed to build settings snapshot for log upload: {e}")
+            settings_snapshot = '(settings snapshot unavailable)'
+
+        log_content = (
+            "=== Diagnostic settings snapshot (sensitive values redacted) ===\n"
+            f"{settings_snapshot}\n"
+            "=== End settings snapshot ===\n\n"
+            + '\n'.join(logs)
+        )
         
         upload_tasks[task_id].update({'status': 'compressing', 'progress': 30, 'message': 'Compressing logs...'})
         compressed_buffer = io.BytesIO()

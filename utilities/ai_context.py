@@ -271,6 +271,28 @@ def _get_settings_summary():
         return '  (unavailable)'
 
 
+def get_diagnostic_settings_snapshot():
+    """
+    Plain-text snapshot of app version + current settings state (sensitive values
+    redacted via the same rules used for the AI Butler's config context), meant to
+    be prepended to shared/uploaded log bundles.
+
+    Debugging a user's report almost always needs to know things like which
+    versions/granular-versions/unblacklist-on-source-run toggles are actually set
+    -- previously that required a separate round of screenshots and questions on
+    top of the logs themselves.
+    """
+    from utilities.version import get_app_version
+
+    lines = [f"App version: {get_app_version()}", ""]
+    lines.append("--- Settings summary (non-sensitive) ---")
+    lines.append(_get_settings_summary())
+    lines.append("")
+    lines.append("--- Full configuration (sensitive values redacted) ---")
+    lines.append(_get_full_config())
+    return '\n'.join(lines)
+
+
 def _get_writable_schema_summary():
     """Return a concise summary of settings the AI is allowed to suggest changes for."""
     try:
