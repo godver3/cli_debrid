@@ -7,6 +7,9 @@ configured. get_diagnostic_settings_snapshot() bundles app version + redacted
 settings into the log share so that information travels with the logs.
 """
 
+import json
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -75,6 +78,56 @@ class TestDiagnosticSettingsSnapshot(unittest.TestCase):
     def test_debug_advanced_settings_included_in_flat_summary(self, mock_config):
         snapshot = get_diagnostic_settings_snapshot()
         self.assertIn('Debug.enable_granular_version_additions', snapshot)
+
+
+class TestLegacyTraktAuthSummary(unittest.TestCase):
+    """A user can clear config.json's Trakt fields and still have a live
+    OAuth token cached in the separate .pytrakt.json file (the underlying
+    `trakt` library's own store) -- the snapshot must surface that presence
+    without ever exposing the token value itself.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self._env_patch = patch.dict(os.environ, {'USER_CONFIG': self.tmpdir.name})
+        self._env_patch.start()
+
+    def tearDown(self):
+        self._env_patch.stop()
+        self.tmpdir.cleanup()
+
+    def _write_legacy_file(self, data):
+        path = os.path.join(self.tmpdir.name, '.pytrakt.json')
+        with open(path, 'w') as f:
+            json.dump(data, f)
+        return path
+
+    @patch('utilities.settings.load_config', return_value={})
+    def test_reports_no_file_when_absent(self, mock_config):
+        snapshot = get_diagnostic_settings_snapshot()
+        self.assertIn('no legacy .pytrakt.json file', snapshot)
+
+    @patch('utilities.settings.load_config', return_value={})
+    def test_reports_set_without_exposing_stale_token_value(self, mock_config):
+        self._write_legacy_file({
+            'CLIENT_ID': '',
+            'CLIENT_SECRET': '',
+            'OAUTH_TOKEN': 'leftover-real-oauth-token-value',
+            'OAUTH_REFRESH': 'leftover-refresh-value',
+        })
+        snapshot = get_diagnostic_settings_snapshot()
+        self.assertIn('OAUTH_TOKEN = *** (set)', snapshot)
+        self.assertIn('CLIENT_ID = (not set)', snapshot)
+        self.assertNotIn('leftover-real-oauth-token-value', snapshot)
+        self.assertNotIn('leftover-refresh-value', snapshot)
+
+    @patch('utilities.settings.load_config', return_value={})
+    def test_survives_malformed_legacy_file(self, mock_config):
+        path = os.path.join(self.tmpdir.name, '.pytrakt.json')
+        with open(path, 'w') as f:
+            f.write('not valid json{{{')
+        snapshot = get_diagnostic_settings_snapshot()
+        self.assertIn('could not read legacy .pytrakt.json', snapshot)
 
 
 if __name__ == "__main__":

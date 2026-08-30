@@ -271,6 +271,45 @@ def _get_settings_summary():
         return '  (unavailable)'
 
 
+def _get_legacy_trakt_auth_summary():
+    """Redacted presence-check of the legacy .pytrakt.json OAuth cache.
+
+    Trakt auth is split across two stores: config.json's 'Trakt' section
+    (client_id/client_secret/access_token/etc, already covered by
+    _get_full_config()) and this separate file -- the underlying `trakt`
+    Python library's own token cache (see utilities/trakt_auth_cleanup.py).
+    A user can clear config.json's Trakt fields entirely and still have a
+    live, working token cached here, keeping Trakt silently authenticated.
+    Surfacing this (presence only, never the value) is what actually
+    answers "why is Trakt still authorized after I cleared it".
+    """
+    try:
+        import json
+        import os
+        from utilities.trakt_auth_cleanup import _legacy_config_path, _LEGACY_AUTH_KEYS, _has_value
+
+        legacy_path = _legacy_config_path()
+        if not os.path.exists(legacy_path):
+            return f'  (no legacy .pytrakt.json file at {legacy_path})'
+
+        with open(legacy_path, 'r') as f:
+            legacy_config = json.load(f)
+
+        if not isinstance(legacy_config, dict):
+            return '  (legacy .pytrakt.json is malformed -- not a JSON object)'
+
+        lines = [f"  File: {legacy_path}"]
+        for key in _LEGACY_AUTH_KEYS:
+            present = _has_value(legacy_config.get(key))
+            lines.append(f"  {key} = {'*** (set)' if present else '(not set)'}")
+        return '\n'.join(lines)
+    except (json.JSONDecodeError, OSError) as e:
+        return f'  (could not read legacy .pytrakt.json: {e})'
+    except Exception as e:
+        logger.debug(f"AI context: legacy trakt auth summary unavailable: {e}")
+        return '  (unavailable)'
+
+
 def _get_content_sources_summary():
     """One line per configured content source: id, type, enabled, and the
     per-source toggles that debugging sessions actually need (versions,
@@ -320,6 +359,9 @@ def get_diagnostic_settings_snapshot():
     lines = [f"App version: {get_app_version()}", ""]
     lines.append("--- Content Sources ---")
     lines.append(_get_content_sources_summary())
+    lines.append("")
+    lines.append("--- Legacy Trakt OAuth cache (.pytrakt.json) ---")
+    lines.append(_get_legacy_trakt_auth_summary())
     lines.append("")
     lines.append("--- Settings summary (non-sensitive) ---")
     lines.append(_get_settings_summary())
