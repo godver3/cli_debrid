@@ -243,7 +243,7 @@ def _get_settings_summary():
 
         SUMMARY_SECTIONS = {
             'File Management', 'Plex', 'Debrid Provider', 'Scraping',
-            'Trakt', 'UI Settings', 'Notifications',
+            'Trakt', 'UI Settings', 'Notifications', 'Debug',
         }
 
         lines = []
@@ -271,6 +271,39 @@ def _get_settings_summary():
         return '  (unavailable)'
 
 
+def _get_content_sources_summary():
+    """One line per configured content source: id, type, enabled, and the
+    per-source toggles that debugging sessions actually need (versions,
+    unblacklist_on_source_run) -- these live in a user-populated dict keyed
+    by source id, not a fixed schema, so the flat _get_settings_summary()
+    above skips them entirely. Buried 900+ lines into the full JSON dump is
+    not the same as visible.
+    """
+    try:
+        from utilities.settings import get_all_settings
+
+        sources = get_all_settings().get('Content Sources', {})
+        if not isinstance(sources, dict) or not sources:
+            return '  (none configured)'
+
+        lines = []
+        for source_id, data in sorted(sources.items()):
+            if not isinstance(data, dict):
+                continue
+            enabled = data.get('enabled', False)
+            source_type = data.get('type', source_id.rsplit('_', 1)[0])
+            versions = data.get('versions', [])
+            unblacklist = data.get('unblacklist_on_source_run', False)
+            lines.append(
+                f"  {source_id} (type={source_type}, enabled={enabled}, "
+                f"versions={versions}, unblacklist_on_source_run={unblacklist})"
+            )
+        return '\n'.join(lines) if lines else '  (none configured)'
+    except Exception as e:
+        logger.debug(f"AI context: content sources summary unavailable: {e}")
+        return '  (unavailable)'
+
+
 def get_diagnostic_settings_snapshot():
     """
     Plain-text snapshot of app version + current settings state (sensitive values
@@ -285,6 +318,9 @@ def get_diagnostic_settings_snapshot():
     from utilities.version import get_app_version
 
     lines = [f"App version: {get_app_version()}", ""]
+    lines.append("--- Content Sources ---")
+    lines.append(_get_content_sources_summary())
+    lines.append("")
     lines.append("--- Settings summary (non-sensitive) ---")
     lines.append(_get_settings_summary())
     lines.append("")

@@ -61,6 +61,21 @@ class TestDiagnosticSettingsSnapshot(unittest.TestCase):
         snapshot = get_diagnostic_settings_snapshot()
         self.assertIsInstance(snapshot, str)
 
+    @patch('utilities.settings.load_config', return_value=FAKE_CONFIG)
+    def test_lists_content_sources_with_enabled_state(self, mock_config):
+        snapshot = get_diagnostic_settings_snapshot()
+        self.assertIn('--- Content Sources ---', snapshot)
+        self.assertIn(
+            "Other Plex Watchlist_1 (type=Other Plex Watchlist, enabled=True, "
+            "versions=['1080p'], unblacklist_on_source_run=True)",
+            snapshot,
+        )
+
+    @patch('utilities.settings.load_config', return_value=FAKE_CONFIG)
+    def test_debug_advanced_settings_included_in_flat_summary(self, mock_config):
+        snapshot = get_diagnostic_settings_snapshot()
+        self.assertIn('Debug.enable_granular_version_additions', snapshot)
+
 
 if __name__ == "__main__":
     unittest.main()
