@@ -267,25 +267,31 @@ def process_log_upload(task_id):
             logging.warning(f"Task {task_id}: Failed to build settings snapshot for log upload: {e}")
             settings_snapshot = '(settings snapshot unavailable)'
 
+        # Belt-and-suspenders: RedactingFormatter scrubs new log lines as
+        # they're written, but rotated files predating that change (or a
+        # build without it yet) still have secrets in cleartext on disk.
+        # scrub() is built to run per formatted line (that's its normal call
+        # site, once per record); applying it to a single ~hundreds-of-MB
+        # string assembled from up to 1.5M lines instead means every one of
+        # its regex passes has to scan that entire blob, which can take long
+        # enough to hold up the whole app (this task runs on a background
+        # thread, but CPython regex matching doesn't release the GIL).
+        # Scrubbing each line individually keeps every regex call bounded to
+        # a single line's length, same as the live logging path already does
+        # continuously with no perf issue.
+        try:
+            from utilities.log_redaction import scrub
+            logs = [scrub(line) for line in logs]
+            settings_snapshot = scrub(settings_snapshot)
+        except Exception as e:
+            logging.warning(f"Task {task_id}: Log redaction scrub unavailable, uploading unscrubbed: {e}")
+
         log_content = (
             "=== Diagnostic settings snapshot (sensitive values redacted) ===\n"
             f"{settings_snapshot}\n"
             "=== End settings snapshot ===\n\n"
             + '\n'.join(logs)
         )
-
-        # Belt-and-suspenders: RedactingFormatter scrubs new log lines as
-        # they're written, but rotated files predating that change (or a
-        # build without it yet) still have secrets in cleartext on disk.
-        # Running the same value-based/pattern-based scrub over the fully
-        # assembled upload (raw log lines + our own settings snapshot) here
-        # catches those, using a second, independently-derived detection of
-        # what counts as sensitive.
-        try:
-            from utilities.log_redaction import scrub
-            log_content = scrub(log_content)
-        except Exception as e:
-            logging.warning(f"Task {task_id}: Log redaction scrub unavailable, uploading unscrubbed: {e}")
 
         upload_tasks[task_id].update({'status': 'compressing', 'progress': 30, 'message': 'Compressing logs...'})
         compressed_buffer = io.BytesIO()
