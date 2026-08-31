@@ -788,7 +788,7 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
 
     try:
         # Fetch details (overview, genres, ratings, backdrop)
-        details_response = api.get(details_url)
+        details_response = api.get(details_url, timeout=15)
         details_response.raise_for_status()
         details_data = details_response.json()
 
@@ -798,7 +798,7 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         # no English results exist (e.g. non-English original content with no EN poster).
         poster_url = None
         try:
-            images_response = api.get(images_url)
+            images_response = api.get(images_url, timeout=15)
             images_response.raise_for_status()
             all_posters = images_response.json().get('posters', [])
             # Prefer English posters; fall back to all results only if none found

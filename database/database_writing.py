@@ -804,16 +804,24 @@ def add_media_item(item: dict, user_initiated: bool = False) -> int:
             apply_movie_release_override_to_item(item, conn=conn)
 
         # GHOSTLIST/BLACKLIST CHECK
+        # Scoped to the same normalized version being inserted for the 'Blacklisted'
+        # half: create_and_add_item_to_wanted_queue() blacklists the original item
+        # (e.g. '1080p') immediately before calling add_media_item() to insert the
+        # fallback item (e.g. '720 and below'), so an unscoped match here always found
+        # that just-blacklisted original row and silently killed every fallback
+        # insertion, mirroring the bug already fixed in queue_manager.py's own
+        # duplicate check. A genuine permanent ghostlist still blocks at any version.
+        target_version = (version or '').rstrip('*')
         if imdb_id or tmdb_id:
             # Build query to check for ghostlisted/blacklisted entries
             ghostlist_check_query = '''
                 SELECT id, version FROM media_items
                 WHERE (imdb_id = ? OR tmdb_id = ?)
                 AND type = ?
-                AND (ghostlisted = 1 OR state = 'Blacklisted')
+                AND (ghostlisted = 1 OR (state = 'Blacklisted' AND RTRIM(COALESCE(version, ''), '*') = ?))
                 LIMIT 1
             '''
-            ghostlist_check_params = [imdb_id, tmdb_id, item_type]
+            ghostlist_check_params = [imdb_id, tmdb_id, item_type, target_version]
 
             # For episodes, also check season/episode number
             if item_type == 'episode' and 'season_number' in item and 'episode_number' in item:
@@ -823,10 +831,10 @@ def add_media_item(item: dict, user_initiated: bool = False) -> int:
                     AND type = ?
                     AND season_number = ?
                     AND episode_number = ?
-                    AND (ghostlisted = 1 OR state = 'Blacklisted')
+                    AND (ghostlisted = 1 OR (state = 'Blacklisted' AND RTRIM(COALESCE(version, ''), '*') = ?))
                     LIMIT 1
                 '''
-                ghostlist_check_params = [imdb_id, tmdb_id, item_type, item['season_number'], item['episode_number']]
+                ghostlist_check_params = [imdb_id, tmdb_id, item_type, item['season_number'], item['episode_number'], target_version]
 
             ghostlist_result = conn.execute(ghostlist_check_query, ghostlist_check_params).fetchone()
 

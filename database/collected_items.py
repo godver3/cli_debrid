@@ -958,7 +958,7 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                         tmdb_id = COALESCE(NULLIF(tmdb_id, ''), ?),
                                         collected_at = COALESCE(collected_at, ?),
                                         last_updated = ?,
-                                        ms_item_id = COALESCE(ms_item_id, ?)
+                                        ms_item_id = COALESCE(NULLIF(ms_item_id, ''), ?)
                                     WHERE id = ?
                                 ''', (effective_location, new_resolution, new_size, imdb_id, tmdb_id, collected_at, datetime.now(), plex_ms_item_id, db_item_id))
 
