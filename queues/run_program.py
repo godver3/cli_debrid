@@ -8,6 +8,7 @@ import uuid
 import ctypes
 import platform
 import gc
+from utilities.log_redaction import RedactingFormatter
 # *** START EDIT: Import tracemalloc ***
 try:
     import tracemalloc
@@ -74,7 +75,8 @@ import json
 from utilities.post_processing import handle_state_change
 from content_checkers.content_cache_management import (
     load_source_cache, save_source_cache, 
-    should_process_item, update_cache_for_item
+    should_process_item, update_cache_for_item,
+    load_live_content_source_config, normalize_enabled_versions
 )
 from collections import deque # Import deque for efficient queue operations
 from database.symlink_verification import (
@@ -335,6 +337,7 @@ class ProgramRunner:
             'task_repair_broken_debrids': 6 * 60 * 60, # Run every 6 hours
             'task_sync_cli_mount_changes': 5 * 60, # Run every 5 minutes
             'task_push_pending_climount_tags': 5 * 60, # Run every 5 minutes — catches tags changed on cli_debrid side only
+            'task_scan_mount_for_external_adds': 15 * 60, # Run every 15 minutes (disabled by default)
             'task_nzb_health_check': 10,             # Run every 10 seconds — polls NZB items in Adding
             'task_nzb_playback_repair_completion': 15, # Confirm only already-started playback repairs
             'task_nzb_playback_cleanup_retry': 20 * 60, # Background retry for old-file cleanup deferred after finalization
@@ -497,6 +500,7 @@ class ProgramRunner:
             'task_refresh_library_size_cache',
             # --- END EDIT ---
             'task_process_standalone_plex_removals', # Add to dynamic intervals as well
+            'task_scan_mount_for_external_adds',
             # --- START EDIT: Add media analysis task to dynamic intervals ---
             'task_analyze_media_files',
             # --- END EDIT ---
@@ -695,6 +699,22 @@ class ProgramRunner:
                  if 'task_verify_symlinked_files' in self.enabled_tasks and not is_symlink_toggled_on:
                      self.enabled_tasks.remove('task_verify_symlinked_files')
                      logging.info("Disabled symlink verification task as no media server settings are configured.")
+
+        # Enable the external-add mount scan only in symlink mode and only when opted in.
+        # Picks up content added straight to the debrid account (DMM, provider UI) on
+        # setups whose mount provider has no library-update webhook.
+        _ext_scan_task = 'task_scan_mount_for_external_adds'
+        if (file_management_mode == 'Symlinked/Local'
+                and get_setting('File Management', 'scan_mount_for_external_adds', False)):
+            _is_ext_toggled_off = saved_states.get(self._normalize_task_name(_ext_scan_task), True) is False
+            if not _is_ext_toggled_off and _ext_scan_task not in self.enabled_tasks:
+                self.enabled_tasks.add(_ext_scan_task)
+                logging.info(f"Enabled '{_ext_scan_task}' based on File Management setting.")
+        else:
+            _is_ext_toggled_on = saved_states.get(self._normalize_task_name(_ext_scan_task), False) is True
+            if _ext_scan_task in self.enabled_tasks and not _is_ext_toggled_on:
+                self.enabled_tasks.remove(_ext_scan_task)
+                logging.info(f"Disabled '{_ext_scan_task}' as the setting is off or mode is not Symlinked/Local.")
 
 
         if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):
@@ -966,7 +986,7 @@ class ProgramRunner:
         # --- END EDIT ---
 
     # *** START EDIT: New method to get task target ***
-    def _get_task_target(self, task_name: str):
+    def _get_task_target(self, task_name: str, manual: bool = False):
         """Resolves the target function and arguments for a given task name."""
         target_func = None
         args = []
@@ -994,6 +1014,11 @@ class ProgramRunner:
             if source_data:
                 target_func = self.process_content_source
                 args = [source_id, source_data]
+                if manual:
+                    # Explicit manual/debug-triggered runs bypass the source cache so a
+                    # user flipping unblacklist_on_source_run and re-running immediately
+                    # actually reaches add_wanted_items instead of being cache-skipped.
+                    kwargs = {'bypass_cache': True}
             else:
                 logging.warning(f"Content source data not found for source ID '{source_id}' derived from task '{task_name}'. This task will be skipped.")
 
@@ -1927,9 +1952,21 @@ class ProgramRunner:
         self.task_reconcile_queues()
     # --- END EDIT ---
     
-    def process_content_source(self, source, data):
+    def process_content_source(self, source, data, bypass_cache=False):
         from datetime import datetime, timedelta # Add this import
         source_type = source.split('_')[0]
+
+        # Scheduled and manual APScheduler jobs retain the arguments they were
+        # created with. Reload the source here so version changes made in the UI
+        # are honored even when a job was registered before the settings save.
+        live_source_data = load_live_content_source_config(source)
+        if live_source_data is None:
+            logging.warning(f"Content source {source} no longer exists in current settings. Skipping stale scheduled task.")
+            return
+        if live_source_data != data:
+            logging.debug(f"Reloaded current configuration for content source {source} before processing.")
+        data = live_source_data
+
         versions_from_config = data.get('versions', []) # Default to empty list if missing
         source_media_type = data.get('media_type', 'All')
         raw_cutoff_date = data.get('cutoff_date', '')
@@ -1940,6 +1977,11 @@ class ProgramRunner:
             logging.warning(f"Invalid list_length_limit value for source {source}: {data.get('list_length_limit')}. Using default value 0.")
             list_length_limit = 0
         unblacklist_on_source_run = bool(data.get('unblacklist_on_source_run', False))
+        granular_versions = get_setting('Debug', 'enable_granular_version_additions', False)
+        logging.info(
+            f"Starting content source run: source={source}, unblacklist={unblacklist_on_source_run}, "
+            f"granular={granular_versions}, bypass_cache={bypass_cache}"
+        )
         parsed_cutoff_date = None
 
         if raw_cutoff_date:
@@ -1960,14 +2002,16 @@ class ProgramRunner:
         cutoff_date = parsed_cutoff_date # Use the parsed_cutoff_date
 
         # Convert versions_from_config to the expected dictionary format
-        if isinstance(versions_from_config, list):
-            versions_dict = {version_name: True for version_name in versions_from_config}
-            logging.debug(f"Converted versions list for {source} to dict: {versions_dict}")
-        elif isinstance(versions_from_config, dict):
-            versions_dict = versions_from_config # Use as is if already a dict
-        else:
+        versions_dict = normalize_enabled_versions(versions_from_config)
+        if not isinstance(versions_from_config, (list, tuple, set, dict)):
             logging.warning(f"Unexpected format for versions in source {source} (type: {type(versions_from_config)}). Defaulting to empty versions.")
-            versions_dict = {} # Default to empty dict for safety
+
+        if not versions_dict:
+            logging.error(
+                f"Content source {source} has no enabled versions in current settings. "
+                "Skipping this run before metadata processing; select and save at least one version."
+            )
+            return
 
         logging.debug(f"Processing content source: {source} (type: {source_type}, media_type: {source_media_type}, versions (as dict): {versions_dict})")
 
@@ -2109,8 +2153,8 @@ class ProgramRunner:
                         
                         # Then filter items based on cache
                         items_to_process_raw = [
-                            item for item in items 
-                            if should_process_item(item, source, source_cache)
+                            item for item in items
+                            if bypass_cache or should_process_item(item, source, source_cache)
                         ]
                         items_skipped = len(items) - len(items_to_process_raw)
                         cache_skipped += items_skipped
@@ -2225,8 +2269,8 @@ class ProgramRunner:
                     
                     # Then filter items based on cache
                     items_to_process_raw = [
-                        item for item in wanted_content 
-                        if should_process_item(item, source, source_cache)
+                        item for item in wanted_content
+                        if bypass_cache or should_process_item(item, source, source_cache)
                     ]
                     items_skipped = len(wanted_content) - len(items_to_process_raw)
                     cache_skipped += items_skipped
@@ -4890,6 +4934,28 @@ class ProgramRunner:
                 self.resume_queue()
                 logging.info('[CMSync] Initial full sync complete — queue resumed')
 
+    def task_scan_mount_for_external_adds(self):
+        """Import content that appeared in the debrid mount without cli_debrid putting it there.
+
+        Covers mount providers with no library-update webhook (Decypharr, plain
+        rclone). Zurg calls /webhook/rclone via on_library_update instead, which
+        runs the same import pipeline.
+        """
+        from utilities.external_mount_scan import scan_mount_for_external_adds
+        try:
+            summary = scan_mount_for_external_adds()
+            if summary.get('skipped_reason'):
+                logging.debug(f"[ExternalScan] Skipped: {summary['skipped_reason']}")
+            elif summary.get('baselined'):
+                logging.info(f"[ExternalScan] Baselined {summary['baselined']} existing mount entries.")
+            elif summary.get('imported') or summary.get('failed'):
+                logging.info(
+                    f"[ExternalScan] Scanned {summary.get('entries_seen', 0)} entries — "
+                    f"imported {summary.get('imported', 0)}, failed {summary.get('failed', 0)}."
+                )
+        except Exception as e:
+            logging.error(f"[ExternalScan] Task error: {e}", exc_info=True)
+
     def task_push_pending_climount_tags(self):
         """Push tags for media_items rows whose tags changed on the cli_debrid
         side only — sync_changes_from_climount can't detect these since it only
@@ -4952,7 +5018,7 @@ class ProgramRunner:
             os.makedirs(log_dir, exist_ok=True)
             log_file = os.path.join(log_dir, 'reconciliations.log')
             handler = logging.FileHandler(log_file)
-            handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+            handler.setFormatter(RedactingFormatter('%(asctime)s - %(message)s'))
             reconciliation_logger.addHandler(handler)
             reconciliation_logger.setLevel(logging.INFO)
 
@@ -7561,7 +7627,7 @@ class ProgramRunner:
 
         logging.info(f"Attempting to manually trigger task: {job_id_base} by adding it to APScheduler queue.")
 
-        target_func, args, kwargs = self._get_task_target(job_id_base)
+        target_func, args, kwargs = self._get_task_target(job_id_base, manual=True)
 
         if target_func:
             try:

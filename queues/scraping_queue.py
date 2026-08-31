@@ -303,6 +303,7 @@ class ScrapingQueue:
                 _coalesce_season = item_to_process.get('season_number')
                 if _coalesce_imdb and _coalesce_season is not None:
                     try:
+                        _coalesce_version = (item_to_process.get('version') or '').rstrip('*')
                         from database import get_db_connection as _gdb
                         _cconn = _gdb()
                         try:
@@ -311,8 +312,9 @@ class ScrapingQueue:
                                 "filled_by_title, original_scraped_torrent_title, nzb_segment_id "
                                 "FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' "
                                 "AND state IN ('Adding','Checking','Collected','Upgrading') "
-                                "AND filled_by_torrent_id LIKE 'nzb:%' LIMIT 1",
-                                (_coalesce_imdb, _coalesce_season)
+                                "AND filled_by_torrent_id LIKE 'nzb:%' "
+                                "AND RTRIM(COALESCE(version, ''), '*') = ? LIMIT 1",
+                                (_coalesce_imdb, _coalesce_season, _coalesce_version)
                             ).fetchone()
                         finally:
                             _cconn.close()

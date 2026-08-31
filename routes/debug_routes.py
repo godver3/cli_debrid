@@ -41,8 +41,8 @@ import queue
 import asyncio
 from utilities.plex_functions import get_collected_from_plex, plex_update_item
 from content_checkers.content_cache_management import (
-    load_source_cache, save_source_cache, 
-    should_process_item, update_cache_for_item
+    load_source_cache, save_source_cache,
+    update_cache_for_item
 )
 import traceback
 from database.symlink_verification import get_unverified_files, get_verification_stats
@@ -975,6 +975,12 @@ def get_and_add_wanted_content(source_id):
     except (ValueError, TypeError):
         logging.warning(f"Invalid list_length_limit value for source {source_id}: {source_data.get('list_length_limit')}. Using default value 0.")
         list_length_limit = 0
+    unblacklist_on_source_run = bool(source_data.get('unblacklist_on_source_run', False))
+    granular_versions = get_setting('Debug', 'enable_granular_version_additions', False)
+    logging.info(
+        f"Starting content source run: source={source_id}, unblacklist={unblacklist_on_source_run}, "
+        f"granular={granular_versions}, bypass_cache=True"
+    )
     parsed_cutoff_date = None
 
     if raw_cutoff_date:
@@ -1034,29 +1040,29 @@ def get_and_add_wanted_content(source_id):
             wanted_content = get_wanted_from_mdblist_source(source_data, versions_from_config)
         elif source_type == 'Special Trakt Lists':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_special_trakt_lists(source_data, versions_from_config)
+            wanted_content = get_wanted_from_special_trakt_lists(source_data, versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Trakt Watchlist':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_trakt_watchlist(versions_from_config)
+            wanted_content = get_wanted_from_trakt_watchlist(versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Trakt Lists':
             update_trakt_settings(content_sources)
             trakt_lists = source_data.get('trakt_lists', '').split(',')
             for trakt_list in trakt_lists:
                 trakt_list = trakt_list.strip()
                 if trakt_list: # Check if list name is not empty
-                    wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions_from_config))
+                    wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions_from_config, unblacklist=unblacklist_on_source_run))
         elif source_type == 'Friends Trakt Watchlist':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_friend_trakt_watchlist(source_data, versions_from_config)
+            wanted_content = get_wanted_from_friend_trakt_watchlist(source_data, versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Trakt Collection':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_trakt_collection(versions_from_config)
+            wanted_content = get_wanted_from_trakt_collection(versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Scrob Lists':
-            wanted_content = get_wanted_from_scrob_lists(source_data.get('scrob_list_ids', ''), versions_from_config)
+            wanted_content = get_wanted_from_scrob_lists(source_data.get('scrob_list_ids', ''), versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Scrob Collection':
-            wanted_content = get_wanted_from_scrob_collection(versions_from_config)
+            wanted_content = get_wanted_from_scrob_collection(versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Special Scrob Lists':
-            wanted_content = get_wanted_from_scrob_special(source_data, versions_from_config)
+            wanted_content = get_wanted_from_scrob_special(source_data, versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Collected':
             wanted_content = get_wanted_from_collected()
         elif source_type == 'Adaptive List':
@@ -1117,12 +1123,8 @@ def get_and_add_wanted_content(source_id):
                         # Note: Media type and genre filtering moved to after metadata processing
 
                         # Filter by cache
-                        items_to_process_raw = [
-                            item for item in items
-                            if should_process_item(item, source_id, source_cache)
-                        ]
-                        batch_cache_skipped += len(items) - len(items_to_process_raw)
-                        logging.debug(f"Batch {source_id}: Cache filtering results: {batch_cache_skipped} skipped, {len(items_to_process_raw)} to process")
+                        items_to_process_raw = list(items)
+                        logging.debug(f"Batch {source_id}: Cache bypassed for manual run, {len(items_to_process_raw)} to process")
 
                         if items_to_process_raw:
                             batch_items_processed += len(items_to_process_raw)
@@ -1224,7 +1226,7 @@ def get_and_add_wanted_content(source_id):
                                 
                                 if final_items_for_db_batch:
                                     from database import add_wanted_items
-                                    added_count = add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_from_config)
+                                    added_count = add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_from_config, unblacklist=unblacklist_on_source_run)
                                     batch_total_items_added += added_count or 0
                                     
                                     # Update cache for all items that were processed (regardless of whether they made it through filtering)
@@ -1248,13 +1250,8 @@ def get_and_add_wanted_content(source_id):
                 original_count = len(wanted_content)
                 # Note: Media type and genre filtering moved to after metadata processing
 
-                # Filter by cache
-                items_to_process_raw = [
-                    item for item in wanted_content
-                    if should_process_item(item, source_id, source_cache)
-                ]
-                cache_skipped += len(wanted_content) - len(items_to_process_raw)
-                logging.debug(f"{source_id}: Cache filtering results: {cache_skipped} skipped, {len(items_to_process_raw)} to process")
+                items_to_process_raw = list(wanted_content)
+                logging.debug(f"{source_id}: Cache bypassed for manual run, {len(items_to_process_raw)} to process")
 
                 if items_to_process_raw:
                     items_processed += len(items_to_process_raw)
@@ -1350,7 +1347,7 @@ def get_and_add_wanted_content(source_id):
                         # Add only the date-filtered items to the database
                         if final_items_for_db_non_batch:
                             from database import add_wanted_items # Already imported at your line 1077
-                            added_count = add_wanted_items(final_items_for_db_non_batch, versions_from_config) 
+                            added_count = add_wanted_items(final_items_for_db_non_batch, versions_from_config, unblacklist=unblacklist_on_source_run)
                             total_items_added += added_count or 0
                             
                             # Update cache for all items that were processed (regardless of whether they made it through filtering)

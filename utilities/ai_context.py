@@ -243,7 +243,7 @@ def _get_settings_summary():
 
         SUMMARY_SECTIONS = {
             'File Management', 'Plex', 'Debrid Provider', 'Scraping',
-            'Trakt', 'UI Settings', 'Notifications',
+            'Trakt', 'UI Settings', 'Notifications', 'Debug',
         }
 
         lines = []
@@ -269,6 +269,106 @@ def _get_settings_summary():
     except Exception as e:
         logger.debug(f"AI context: settings summary unavailable: {e}")
         return '  (unavailable)'
+
+
+def _get_legacy_trakt_auth_summary():
+    """Redacted presence-check of the legacy .pytrakt.json OAuth cache.
+
+    Trakt auth is split across two stores: config.json's 'Trakt' section
+    (client_id/client_secret/access_token/etc, already covered by
+    _get_full_config()) and this separate file -- the underlying `trakt`
+    Python library's own token cache (see utilities/trakt_auth_cleanup.py).
+    A user can clear config.json's Trakt fields entirely and still have a
+    live, working token cached here, keeping Trakt silently authenticated.
+    Surfacing this (presence only, never the value) is what actually
+    answers "why is Trakt still authorized after I cleared it".
+    """
+    try:
+        import json
+        import os
+        from utilities.trakt_auth_cleanup import _legacy_config_path, _LEGACY_AUTH_KEYS, _has_value
+
+        legacy_path = _legacy_config_path()
+        if not os.path.exists(legacy_path):
+            return f'  (no legacy .pytrakt.json file at {legacy_path})'
+
+        with open(legacy_path, 'r') as f:
+            legacy_config = json.load(f)
+
+        if not isinstance(legacy_config, dict):
+            return '  (legacy .pytrakt.json is malformed -- not a JSON object)'
+
+        lines = [f"  File: {legacy_path}"]
+        for key in _LEGACY_AUTH_KEYS:
+            present = _has_value(legacy_config.get(key))
+            lines.append(f"  {key} = {'*** (set)' if present else '(not set)'}")
+        return '\n'.join(lines)
+    except (json.JSONDecodeError, OSError) as e:
+        return f'  (could not read legacy .pytrakt.json: {e})'
+    except Exception as e:
+        logger.debug(f"AI context: legacy trakt auth summary unavailable: {e}")
+        return '  (unavailable)'
+
+
+def _get_content_sources_summary():
+    """One line per configured content source: id, type, enabled, and the
+    per-source toggles that debugging sessions actually need (versions,
+    unblacklist_on_source_run) -- these live in a user-populated dict keyed
+    by source id, not a fixed schema, so the flat _get_settings_summary()
+    above skips them entirely. Buried 900+ lines into the full JSON dump is
+    not the same as visible.
+    """
+    try:
+        from utilities.settings import get_all_settings
+
+        sources = get_all_settings().get('Content Sources', {})
+        if not isinstance(sources, dict) or not sources:
+            return '  (none configured)'
+
+        lines = []
+        for source_id, data in sorted(sources.items()):
+            if not isinstance(data, dict):
+                continue
+            enabled = data.get('enabled', False)
+            source_type = data.get('type', source_id.rsplit('_', 1)[0])
+            versions = data.get('versions', [])
+            unblacklist = data.get('unblacklist_on_source_run', False)
+            lines.append(
+                f"  {source_id} (type={source_type}, enabled={enabled}, "
+                f"versions={versions}, unblacklist_on_source_run={unblacklist})"
+            )
+        return '\n'.join(lines) if lines else '  (none configured)'
+    except Exception as e:
+        logger.debug(f"AI context: content sources summary unavailable: {e}")
+        return '  (unavailable)'
+
+
+def get_diagnostic_settings_snapshot():
+    """
+    Plain-text snapshot of app version + current settings state (sensitive values
+    redacted via the same rules used for the AI Butler's config context), meant to
+    be prepended to shared/uploaded log bundles.
+
+    Debugging a user's report almost always needs to know things like which
+    versions/granular-versions/unblacklist-on-source-run toggles are actually set
+    -- previously that required a separate round of screenshots and questions on
+    top of the logs themselves.
+    """
+    from utilities.version import get_app_version
+
+    lines = [f"App version: {get_app_version()}", ""]
+    lines.append("--- Content Sources ---")
+    lines.append(_get_content_sources_summary())
+    lines.append("")
+    lines.append("--- Legacy Trakt OAuth cache (.pytrakt.json) ---")
+    lines.append(_get_legacy_trakt_auth_summary())
+    lines.append("")
+    lines.append("--- Settings summary (non-sensitive) ---")
+    lines.append(_get_settings_summary())
+    lines.append("")
+    lines.append("--- Full configuration (sensitive values redacted) ---")
+    lines.append(_get_full_config())
+    return '\n'.join(lines)
 
 
 def _get_writable_schema_summary():

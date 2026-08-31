@@ -110,7 +110,7 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
         skipped_count = 0
         cache_skipped = 0
         removed_count = 0
-        collected_skipped_count = 0 # For items that are collected but kept
+        retained_series_count = 0
 
         # Get removal settings
         should_remove = get_setting('Debug', 'plex_watchlist_removal', False)
@@ -145,24 +145,30 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
 
                 # Check if the item is already collected
                 item_state = get_media_item_presence_overall(imdb_id=imdb_id)
+                monitor_missing_episodes_only = False
                 if item_state in ("Collected", "Partial") and should_remove:
+                    should_suppress_item = False
                     if media_type == 'tv':
                         if keep_series:
-                            logging.debug(f"Keeping collected TV series from RSS: {imdb_id} ('{entry_title}') - keep_series is enabled")
-                            collected_skipped_count +=1
-                            continue
+                            logging.debug(f"Retaining and processing collected TV series from RSS: {imdb_id} ('{entry_title}') - keep_series is enabled")
+                            retained_series_count += 1
+                            monitor_missing_episodes_only = True
                         else:
                             show_status = get_show_status(imdb_id)
-                            if show_status != 'ended': # This includes 'canceled' due to get_show_status logic
-                                logging.debug(f"Keeping ongoing/non-ended TV series from RSS: {imdb_id} ('{entry_title}') - status: {show_status}")
-                                collected_skipped_count +=1
-                                continue
-                            logging.debug(f"Skipping (simulating removal) collected and ended/canceled TV series from RSS: {imdb_id} ('{entry_title}') - status: {show_status}")
+                            if show_status != 'ended':
+                                logging.debug(f"Retaining and processing ongoing/non-ended TV series from RSS: {imdb_id} ('{entry_title}') - status: {show_status or 'unknown'}")
+                                retained_series_count += 1
+                                monitor_missing_episodes_only = True
+                            else:
+                                logging.debug(f"Skipping (simulating removal) collected and ended/canceled TV series from RSS: {imdb_id} ('{entry_title}') - status: {show_status}")
+                                should_suppress_item = True
                     else: # Movie
                         logging.debug(f"Skipping (simulating removal) collected movie from RSS: {imdb_id} ('{entry_title}')")
-                    
-                    removed_count += 1
-                    continue # Skip adding to processed_items
+                        should_suppress_item = True
+
+                    if should_suppress_item:
+                        removed_count += 1
+                        continue # Simulate removal by suppressing the RSS item from ingestion.
 
                 # Check cache
                 if not disable_caching:
@@ -194,7 +200,8 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
                     'title': entry.title,
                     'imdb_id': imdb_id,
                     'media_type': media_type,
-                    'source': 'plex_rss'
+                    'source': 'plex_rss',
+                    'monitor_missing_episodes_only': monitor_missing_episodes_only,
                 }
 
                 processed_items.append(item)
@@ -219,7 +226,7 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
         logging.info(f"- Skipped (no IMDB ID): {skipped_count}")
         if should_remove:
             logging.info(f"- Items 'removed' (collected and not kept): {removed_count}")
-            logging.info(f"- Items skipped (collected but kept): {collected_skipped_count}")
+            logging.info(f"- Retained TV series processed: {retained_series_count}")
         if not disable_caching:
             logging.info(f"- Items skipped (cached): {cache_skipped}")
         logging.info(f"- Items added to wanted: {sum(len(items) for items, _ in all_wanted_items)}")
