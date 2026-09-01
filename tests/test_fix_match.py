@@ -893,5 +893,45 @@ class TestForceMatchSignature(unittest.TestCase):
         self.assertIn('if not ignore_previous_attempts and _has_been_attempted', source)
 
 
+class TestModalOverlayContract(unittest.TestCase):
+    """
+    Source-level guards for the two things that made the modal unusable.
+
+    The markup is included from the page's content block, which renders inside
+    <main> -- and base.css gives main `position: relative; z-index: 1`, a
+    stacking context. Anything the modal sets for z-index is scoped inside it,
+    so it cannot rise above the nav, toasts or the full-viewport #loading
+    overlay, all of which sit at 9999 in the root stacking context.
+    """
+
+    @staticmethod
+    def _read(*parts):
+        with open(os.path.join(PROJECT_ROOT, *parts), encoding='utf-8') as handle:
+            return handle.read()
+
+    def test_main_is_still_a_stacking_context(self):
+        """If this ever stops being true the reparenting comment is stale."""
+        base_css = self._read('static', 'css', 'base.css')
+        main_rule = base_css.split('\nmain {', 1)[1].split('}', 1)[0]
+        self.assertIn('position: relative', main_rule)
+        self.assertIn('z-index: 1', main_rule)
+
+    def test_modal_is_reparented_to_the_body(self):
+        js = self._read('static', 'js', 'fix_match_modal.js')
+        self.assertIn('document.body.appendChild(modal)', js)
+
+    def test_focus_never_scrolls_the_page(self):
+        """A focus() that scrolls jumps the reader away from a locked page."""
+        js = self._read('static', 'js', 'fix_match_modal.js')
+        self.assertIn('preventScroll: true', js)
+        self.assertNotIn('searchInput.focus();', js)
+
+    def test_scroll_lock_is_conditional_on_the_overlay_rendering(self):
+        """Locking scroll with no visible overlay strands the reader."""
+        js = self._read('static', 'js', 'fix_match_modal.js')
+        lock = js.split("document.body.style.overflow = 'hidden'", 1)[0]
+        self.assertIn("getComputedStyle(modal).position === 'fixed'", lock)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

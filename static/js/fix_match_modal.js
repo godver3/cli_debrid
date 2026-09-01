@@ -31,6 +31,16 @@
             return false;
         }
 
+        // The markup ships inside the page's content block, which renders in
+        // <main> — and main is `position: relative; z-index: 1`, a stacking
+        // context. Our z-index is scoped inside it, so the modal cannot rise
+        // above the nav, toasts or the full-viewport #loading overlay, all of
+        // which sit at 9999 in the root context. Every other modal here is a
+        // direct child of <body>; move ours there so it behaves the same.
+        if (modal.parentElement !== document.body) {
+            document.body.appendChild(modal);
+        }
+
         overlay = modal.querySelector('.fix-match-modal-overlay');
         closeBtn = modal.querySelector('.fix-match-modal-close');
         cancelBtn = modal.querySelector('.fix-match-btn-cancel');
@@ -161,8 +171,20 @@
         clearCandidate();
 
         modal.style.display = 'flex';
-        document.body.style.overflow = 'hidden';
-        searchInput.focus();
+
+        // Only lock the page once the overlay is genuinely covering the
+        // viewport. If the stylesheet is missing the modal lays out inline
+        // instead, and locking the scroll then strands the reader on a page
+        // they can neither see the modal on nor scroll.
+        if (window.getComputedStyle(modal).position === 'fixed') {
+            document.body.style.overflow = 'hidden';
+        } else {
+            console.error('[Fix Match] fix_match_modal.css is not loaded — ' +
+                'leaving the page scrollable');
+        }
+
+        // preventScroll: focusing the field must never move the page.
+        searchInput.focus({ preventScroll: true });
         searchInput.select();
     };
 
