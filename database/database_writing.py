@@ -875,6 +875,38 @@ def add_media_item(item: dict, user_initiated: bool = False) -> int:
                         update_fields.append('torrent_name = ?')
                         update_values.append(item['torrent_name'])
 
+                    # An adopted row takes on the incoming item's file identity.
+                    # Without this the caller's file pointers are silently dropped
+                    # and the row keeps pointing at whatever it referenced before
+                    # being ghostlisted — so an add that supplies a file (an
+                    # external mount import, a manual magnet file assignment) ends
+                    # up with the wrong file, or a Checking item hunting for one
+                    # that is no longer there. Only fields the caller actually
+                    # supplied are written, so this is a no-op for callers adding
+                    # a queue-destined item that has no file yet.
+                    #
+                    # 'version' is deliberately absent: this branch only runs when
+                    # the existing and incoming versions already match.
+                    for _identity_field in (
+                        'filled_by_file', 'filled_by_title', 'filled_by_magnet',
+                        'filled_by_torrent_id', 'location_on_disk',
+                        'original_path_for_symlink', 'collected_at',
+                        'content_source',
+                    ):
+                        if _identity_field in item:
+                            update_fields.append(f'{_identity_field} = ?')
+                            update_values.append(item[_identity_field])
+
+                    # original_collected_at records when the item was FIRST
+                    # collected, so it is filled in but never overwritten —
+                    # matching the COALESCE pattern used in collected_items.py.
+                    # Overwriting it would make a long-held item that was
+                    # re-acquired look newly added and could re-open upgrade
+                    # windows that had already closed.
+                    if 'original_collected_at' in item:
+                        update_fields.append('original_collected_at = COALESCE(original_collected_at, ?)')
+                        update_values.append(item['original_collected_at'])
+
                     # Always update last_updated
                     update_fields.append('last_updated = ?')
                     update_values.append(datetime.now())
