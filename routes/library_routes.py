@@ -1450,7 +1450,11 @@ def show_detail_data(media_id):
             season_1 = next((s for s in seasons_list if s['season_number'] == 1), None)
             if season_1 and season_1['episodes']:
                 # Sort episodes by episode_number and get the first one with collected_at
-                sorted_episodes = sorted(season_1['episodes'], key=lambda ep: ep.get('episode_number', 999))
+                # episode_number can be NULL in the DB, so treat None as last instead of comparing it
+                sorted_episodes = sorted(
+                    season_1['episodes'],
+                    key=lambda ep: ep['episode_number'] if ep.get('episode_number') is not None else 999
+                )
                 first_ep_with_date = next((ep for ep in sorted_episodes if ep.get('collected_at')), None)
                 if first_ep_with_date:
                     added_date = first_ep_with_date['collected_at']
