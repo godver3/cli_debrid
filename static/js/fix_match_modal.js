@@ -16,7 +16,7 @@
     let searchInput, searchYearInput, searchBtn, resultsEl, searchStatusEl;
     let manualInput, manualBtn;
     let previewEl, previewTitleEl, previewImdbEl, previewTmdbEl, previewTvdbEl;
-    let impactEl, rematchCheckbox, errorEl;
+    let impactEl, rematchCheckbox, queueMissingCheckbox, errorEl;
     let currentTitleEl, currentImdbEl, currentTmdbEl, currentTvdbEl;
 
     // The entry being fixed, as handed over by the page.
@@ -62,6 +62,7 @@
         previewTvdbEl = document.getElementById('fixMatchPreviewTvdb');
         impactEl = document.getElementById('fixMatchImpact');
         rematchCheckbox = document.getElementById('fixMatchRematchServer');
+        queueMissingCheckbox = document.getElementById('fixMatchQueueMissing');
         errorEl = document.getElementById('fixMatchError');
 
         currentTitleEl = document.getElementById('fixMatchCurrentTitle');
@@ -212,6 +213,9 @@
         resultsEl.innerHTML = '';
         resultsEl.style.display = 'none';
         rematchCheckbox.checked = true;
+        // Off by default: correcting a match should not imply "and go download
+        // everything missing under the new ID".
+        queueMissingCheckbox.checked = false;
         applyBtn.textContent = 'Apply Fix';
         setStatus('');
         setError('');
@@ -417,6 +421,7 @@
                     current_imdb_id: context.imdbId || null,
                     current_tmdb_id: context.tmdbId || null,
                     rematch_media_server: rematchCheckbox.checked,
+                    queue_missing: queueMissingCheckbox.checked,
                 }),
             });
             const data = await response.json();
@@ -475,6 +480,9 @@
                 'try the Refresh Metadata button.');
         }
 
+        if (data.override_recorded) {
+            extras.push('Files for this title imported later will use the corrected match.');
+        }
         if (data.rematch_note) extras.push(data.rematch_note + '.');
         return [summary].concat(extras).join(' ');
     }

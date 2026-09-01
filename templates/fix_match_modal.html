@@ -431,9 +431,14 @@
                     <input type="checkbox" id="fixMatchRematchServer" class="fix-match-checkbox" checked>
                     Also re-match this entry in Plex
                 </label>
+                <label class="fix-match-checkbox-label">
+                    <input type="checkbox" id="fixMatchQueueMissing" class="fix-match-checkbox">
+                    Also queue any episodes missing under the new match
+                </label>
                 <p class="fix-match-hint">
-                    Episode titles, air dates, genres and artwork are re-pulled automatically
-                    once the IDs are corrected.
+                    Episode titles, air dates, genres and artwork are re-pulled automatically.
+                    The correction is remembered, so files for this title imported later are
+                    matched to it instead of being looked up again.
                 </p>
             </div>
 

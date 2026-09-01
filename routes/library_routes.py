@@ -1687,9 +1687,13 @@ def move_missing_to_wanted():
             'error': str(e)
         }), 500
 
+class _SkipQueueMissing(Exception):
+    """Internal: bail out of the queue-missing-episodes step without failing."""
+
+
 @library_bp.route('/refresh_metadata/show/<media_id>', methods=['POST'])
 @user_required
-def refresh_show_metadata(media_id):
+def refresh_show_metadata(media_id, queue_missing=True):
     """
     Refresh show metadata from TMDB/Trakt and update episode titles in database
     """
@@ -1900,6 +1904,8 @@ def refresh_show_metadata(media_id):
         # show was first requested (e.g. "3 of 8 episodes" becoming "8 of 8").
         new_episodes_added = 0
         try:
+            if not queue_missing:
+                raise _SkipQueueMissing()
             from metadata.metadata import process_metadata
             from database.wanted_items import add_wanted_items
 
@@ -1939,6 +1945,8 @@ def refresh_show_metadata(media_id):
                     new_episodes_added = added or 0
                     if new_episodes_added:
                         logging.info(f"Metadata refresh for {title}: added {new_episodes_added} previously-missing episode(s) to the queue.")
+        except _SkipQueueMissing:
+            logging.info(f"Metadata refresh for {imdb_id}: not queueing missing episodes (caller opted out)")
         except Exception as e_add:
             logging.warning(f"Could not add missing episodes during metadata refresh for {imdb_id}: {e_add}")
 
@@ -5343,7 +5351,7 @@ def fix_match_preview():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-def _fix_match_refresh_entry_metadata(media_type, imdb_id):
+def _fix_match_refresh_entry_metadata(media_type, imdb_id, queue_missing=False):
     """
     Re-pull the per-item metadata for a just-corrected entry.
 
@@ -5357,9 +5365,13 @@ def _fix_match_refresh_entry_metadata(media_type, imdb_id):
     failed refresh must not turn a successful fix into an error - it is
     reported alongside the result instead.
     """
-    view = refresh_show_metadata if media_type == 'show' else refresh_movie_metadata
     try:
-        response = view(imdb_id)
+        if media_type == 'show':
+            # Correcting a match must not, on its own, start downloading two
+            # more seasons; queueing what is missing is opt-in.
+            response = refresh_show_metadata(imdb_id, queue_missing=queue_missing)
+        else:
+            response = refresh_movie_metadata(imdb_id)
         # A view returns a Response, a bare dict (Flask jsonifies those itself),
         # or either of those paired with a status code on the failure paths.
         if isinstance(response, tuple):
@@ -5428,6 +5440,7 @@ def fix_match_apply():
     old_imdb_id = (data.get('current_imdb_id') or '').strip() or None
     old_tmdb_id = str(data.get('current_tmdb_id') or '').strip() or None
     rematch_media_server = bool(data.get('rematch_media_server', True))
+    queue_missing = bool(data.get('queue_missing', False))
 
     if not media_type:
         return jsonify({'success': False, 'error': "media_type must be 'show' or 'movie'"}), 400
@@ -5532,7 +5545,18 @@ def fix_match_apply():
         # -- 5. Re-pull everything that hangs off the corrected IDs --
         # Runs before the rematch is dispatched so the battery (and its Plex
         # GUIDs) are already fresh when force_match_with_tmdb looks them up.
-        metadata_refresh = _fix_match_refresh_entry_metadata(media_type, new_imdb_id)
+        metadata_refresh = _fix_match_refresh_entry_metadata(
+            media_type, new_imdb_id, queue_missing=queue_missing)
+
+        # -- 5b. Make the correction stick --
+        # Imports of files cli_debrid did not place re-derive the match from the
+        # release name every time, so without this the same fuzzy search that
+        # mis-resolved this title would undo the fix on the next new file.
+        override_recorded = False
+        if new_title:
+            from database.match_overrides import set_match_override
+            override_recorded = set_match_override(
+                new_title, new_year, media_type, new_imdb_id)
 
         # -- 6. Hand the media server the corrected match --
         rematch_started = False
@@ -5573,6 +5597,7 @@ def fix_match_apply():
             'previous': {'imdb_id': old_imdb_id, 'tmdb_id': old_tmdb_id},
             'rows_updated': rows_updated,
             'battery_item_deleted': battery_item_deleted,
+            'override_recorded': override_recorded,
             'metadata_refresh': {
                 'success': bool(metadata_refresh.get('success')),
                 'updated_episodes': metadata_refresh.get('updated_episodes'),
