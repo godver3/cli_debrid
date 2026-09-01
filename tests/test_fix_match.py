@@ -14,6 +14,7 @@ against the real function bodies, so an edit to them shows up here.
 
 import ast
 import os
+import sys
 import sqlite3
 import threading
 import types
@@ -295,14 +296,35 @@ class FixMatchTestBase(unittest.TestCase):
                                'new_episodes_added': 3}
 
         def make_refresh(kind):
-            def refresh(media_id):
-                self.refresh_calls.append((kind, media_id, self.fetch_rows()))
+            def refresh(media_id, **kwargs):
+                self.refresh_calls.append((kind, media_id, self.fetch_rows(), kwargs))
                 result = self.refresh_result
                 return result() if callable(result) else result
             return refresh
 
         fix_match.refresh_show_metadata = make_refresh('show')
         fix_match.refresh_movie_metadata = make_refresh('movie')
+
+        # fix_match_apply imports the override store at call time; the real one
+        # opens the live media_items.db, so stand in for it.
+        self.overrides = []
+        overrides_module = types.ModuleType('database.match_overrides')
+
+        def set_match_override(title, year, media_type, imdb_id):
+            self.overrides.append((title, year, media_type, imdb_id))
+            return True
+
+        overrides_module.set_match_override = set_match_override
+        saved_overrides = sys.modules.get('database.match_overrides')
+        sys.modules['database.match_overrides'] = overrides_module
+
+        def restore_overrides():
+            if saved_overrides is None:
+                sys.modules.pop('database.match_overrides', None)
+            else:
+                sys.modules['database.match_overrides'] = saved_overrides
+
+        self.addCleanup(restore_overrides)
 
         self.settings_values = {
             ('File Management', 'file_collection_management'): 'Plex',
@@ -681,7 +703,7 @@ class TestFixMatchApply(FixMatchTestBase):
         payload, _ = self.apply()
 
         self.assertEqual(len(self.refresh_calls), 1)
-        kind, media_id, _rows = self.refresh_calls[0]
+        kind, media_id, _rows, _kwargs = self.refresh_calls[0]
         self.assertEqual((kind, media_id), ('show', 'tt13375737'))
         self.assertTrue(payload['metadata_refresh']['success'])
 
@@ -702,7 +724,7 @@ class TestFixMatchApply(FixMatchTestBase):
 
         self.apply()
 
-        _kind, _media_id, rows_seen = self.refresh_calls[0]
+        _kind, _media_id, rows_seen, _kwargs = self.refresh_calls[0]
         self.assertEqual([r['imdb_id'] for r in rows_seen[:2]],
                          ['tt13375737', 'tt13375737'])
 
@@ -720,7 +742,7 @@ class TestFixMatchApply(FixMatchTestBase):
 
     def test_a_failing_refresh_does_not_undo_the_id_fix(self):
         """IDs are already committed when the refresh runs; report, do not fail."""
-        def boom(media_id):
+        def boom(media_id, **kwargs):
             raise RuntimeError('trakt unreachable')
 
         fix_match.refresh_show_metadata = boom
@@ -747,6 +769,68 @@ class TestFixMatchApply(FixMatchTestBase):
         self.assertTrue(payload['success'])
         self.assertFalse(payload['metadata_refresh']['success'])
         self.assertEqual(payload['metadata_refresh']['error'], 'Show not found')
+
+    # -- durable correction --
+
+    def test_records_an_override_so_later_imports_use_the_fix(self):
+        """
+        Imports of files cli_debrid did not place re-derive the match from the
+        release name every time. Without a recorded override the same fuzzy
+        search that mis-resolved this title undoes the fix on the next file.
+        """
+        self.use_battery(self.battery, metadata=SHOW_METADATA)
+
+        payload, _ = self.apply()
+
+        self.assertTrue(payload['override_recorded'])
+        self.assertEqual(self.overrides, [('Foundation', 2021, 'show', 'tt13375737')])
+
+    def test_the_override_keys_on_the_corrected_title_not_the_wrong_one(self):
+        """
+        Release names carry the real show's name, which is the corrected title.
+        Keying on the wrong show's title would both miss and hijack.
+        """
+        self.use_battery(self.battery, metadata=SHOW_METADATA)
+        self.apply()
+        recorded_title = self.overrides[0][0]
+        self.assertEqual(recorded_title, 'Foundation')
+        self.assertNotEqual(recorded_title, 'Wrong Show')
+
+    def test_no_override_when_the_provider_gave_no_title(self):
+        self.use_battery(self.battery, metadata={'ids': {'imdb': 'tt13375737', 'tmdb': 93740}})
+        payload, _ = self.apply()
+        self.assertFalse(payload['override_recorded'])
+        self.assertEqual(self.overrides, [])
+
+    # -- queueing missing episodes --
+
+    def test_missing_episodes_are_not_queued_by_default(self):
+        """Correcting a match must not imply "and download the rest of the show"."""
+        self.use_battery(self.battery, metadata=SHOW_METADATA)
+
+        self.apply()
+
+        self.assertEqual(self.refresh_calls[0][3], {'queue_missing': False})
+
+    def test_missing_episodes_are_queued_when_asked_for(self):
+        self.use_battery(self.battery, metadata=SHOW_METADATA)
+
+        self.apply(queue_missing=True)
+
+        self.assertEqual(self.refresh_calls[0][3], {'queue_missing': True})
+
+    def test_the_movie_refresh_takes_no_queue_flag(self):
+        """Only the show refresh queues episodes; passing it to the movie one errors."""
+        conn = self.connect()
+        conn.execute("UPDATE media_items SET type = 'movie'")
+        conn.commit()
+        conn.close()
+        self.use_battery(self.battery, metadata=dict(SHOW_METADATA, type='movie'))
+
+        self.apply(media_type='movie', queue_missing=True)
+
+        self.assertEqual(self.refresh_calls[0][0], 'movie')
+        self.assertEqual(self.refresh_calls[0][3], {})
 
     # -- media server rematch --
 
