@@ -3906,15 +3906,30 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                     title_for_best_match_selection = parsed_title # Raw PTT output as last resort
                     logging.debug(f"[RcloneScan {task_id}] No suitable cleaned filename or folder title, falling back to raw parsed_title for best_match selection: '{title_for_best_match_selection}'")
                 
+                # A Fix Match correction for this title wins outright. The fuzzy
+                # search below is stateless, so whatever it mis-resolved once it
+                # mis-resolves again for every new release of the same show --
+                # undoing the correction each time a file lands.
+                from database.match_overrides import find_match_override
+                override_imdb_id = find_match_override(
+                    [cleaned_folder_title, cleaned_filename_title, parsed_title],
+                    parsed_year,
+                    'show' if current_parsed_type == 'episode' else 'movie',
+                )
+
                 best_match_from_search = None
-                if final_search_results:
+                if final_search_results and not override_imdb_id:
                     best_match_from_search = DirectAPI.find_best_match_from_results(
                         original_query_title=title_for_best_match_selection, 
                         query_year=parsed_year,
                         search_results=final_search_results
                     )
-                
-                if best_match_from_search:
+
+                if override_imdb_id:
+                    logging.info(f"[RcloneScan {task_id}] Using Fix Match override for "
+                                 f"'{title_for_best_match_selection}' ({parsed_year}): {override_imdb_id}")
+                    item_id_to_use = override_imdb_id
+                elif best_match_from_search:
                     logging.info(f"[RcloneScan {task_id}] Best match selected by find_best_match_from_results: {best_match_from_search.get('title')} ({best_match_from_search.get('year')}) using matching title '{title_for_best_match_selection}' (search performed with '{title_that_yielded_search_results}')")
                     item_id_to_use = best_match_from_search.get('imdb_id') or best_match_from_search.get('tmdb_id')
                 elif final_search_results: 

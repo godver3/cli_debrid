@@ -36,6 +36,9 @@ def migrate_schema():
 
         from .movie_release_overrides import ensure_movie_release_override_table
         ensure_movie_release_override_table(conn)
+
+        from .match_overrides import ensure_match_override_table
+        ensure_match_override_table(conn)
         
         # Check if statistics_summary table exists and has id column
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
@@ -1005,6 +1008,9 @@ def create_tables():
 
         from .movie_release_overrides import ensure_movie_release_override_table
         ensure_movie_release_override_table(conn)
+
+        from .match_overrides import ensure_match_override_table
+        ensure_match_override_table(conn)
 
         # Add new table for tracking requested seasons
         cursor.execute('''
