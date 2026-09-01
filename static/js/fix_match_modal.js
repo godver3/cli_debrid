@@ -127,11 +127,59 @@
     }
 
     /**
+     * Title for display, without doubling a year the provider already put in it
+     * (Trakt disambiguates some entries as e.g. "Sugar (2024)").
+     */
+    function titleWithYear(title, year) {
+        const name = title || 'Unknown';
+        if (!year) return name;
+        return name.indexOf('(' + year + ')') !== -1 ? name : name + ' (' + year + ')';
+    }
+
+    /**
+     * Where to send someone to check an ID is the entry they mean.
+     */
+    function providerUrl(provider, id, mediaType) {
+        if (!id) return null;
+        const encoded = encodeURIComponent(id);
+        if (provider === 'imdb') {
+            return 'https://www.imdb.com/title/' + encoded + '/';
+        }
+        if (provider === 'tmdb') {
+            return 'https://www.themoviedb.org/' +
+                (mediaType === 'show' ? 'tv' : 'movie') + '/' + encoded;
+        }
+        if (provider === 'tvdb') {
+            // Only the numeric ID is known here, and thetvdb.com/series/<n>
+            // expects a slug and 404s on a number. dereferrer resolves it.
+            return 'https://thetvdb.com/dereferrer/' +
+                (mediaType === 'show' ? 'series' : 'movie') + '/' + encoded;
+        }
+        return null;
+    }
+
+    /**
+     * Render an ID as a link out to its provider, or plain text when absent.
+     */
+    function renderIdLink(el, provider, id) {
+        if (!el) return;
+        el.textContent = displayId(id);
+        const url = providerUrl(provider, id, context && context.mediaType);
+        if (url) {
+            el.href = url;
+            el.title = 'Open on ' + provider.toUpperCase();
+        } else {
+            el.removeAttribute('href');
+            el.removeAttribute('title');
+        }
+    }
+
+    /**
      * Show a resolved ID, highlighted when it differs from what the entry has now.
      */
-    function renderResolvedId(el, newValue, currentValue) {
+    function renderResolvedId(el, provider, newValue, currentValue) {
         if (!el) return;
-        el.textContent = displayId(newValue);
+        renderIdLink(el, provider, newValue);
         const changed = String(newValue || '') !== String(currentValue || '');
         el.classList.toggle('fix-match-id-changed', changed && Boolean(newValue));
     }
@@ -153,11 +201,10 @@
 
         context = Object.assign({ mediaType: 'movie' }, entry || {});
 
-        const yearSuffix = context.year ? ' (' + context.year + ')' : '';
-        currentTitleEl.textContent = (context.title || 'Unknown') + yearSuffix;
-        currentImdbEl.textContent = displayId(context.imdbId);
-        currentTmdbEl.textContent = displayId(context.tmdbId);
-        currentTvdbEl.textContent = displayId(context.tvdbId);
+        currentTitleEl.textContent = titleWithYear(context.title, context.year);
+        renderIdLink(currentImdbEl, 'imdb', context.imdbId);
+        renderIdLink(currentTmdbEl, 'tmdb', context.tmdbId);
+        renderIdLink(currentTvdbEl, 'tvdb', context.tvdbId);
 
         searchInput.value = context.title || '';
         searchYearInput.value = context.year || '';
@@ -248,8 +295,7 @@
             button.className = 'fix-match-result';
 
             const label = document.createElement('span');
-            label.textContent = (result.title || 'Unknown') +
-                (result.year ? ' (' + result.year + ')' : '') +
+            label.textContent = titleWithYear(result.title, result.year) +
                 (result.type ? ' · ' + result.type : '');
 
             const ids = document.createElement('span');
@@ -323,11 +369,10 @@
             }
 
             candidate = data;
-            previewTitleEl.textContent = (data.title || 'Unknown') +
-                (data.year ? ' (' + data.year + ')' : '');
-            renderResolvedId(previewImdbEl, data.imdb_id, context.imdbId);
-            renderResolvedId(previewTmdbEl, data.tmdb_id, context.tmdbId);
-            renderResolvedId(previewTvdbEl, data.tvdb_id, context.tvdbId);
+            previewTitleEl.textContent = titleWithYear(data.title, data.year);
+            renderResolvedId(previewImdbEl, 'imdb', data.imdb_id, context.imdbId);
+            renderResolvedId(previewTmdbEl, 'tmdb', data.tmdb_id, context.tmdbId);
+            renderResolvedId(previewTvdbEl, 'tvdb', data.tvdb_id, context.tvdbId);
             impactEl.textContent = buildImpactText(data);
 
             previewEl.style.display = 'block';
@@ -349,7 +394,7 @@
 
         const parts = ['Will rewrite ' + rows + ' database row' + (rows === 1 ? '' : 's')];
         const titles = (data.affected_titles || [])
-            .map(function (t) { return t.title + (t.year ? ' (' + t.year + ')' : ''); });
+            .map(function (t) { return titleWithYear(t.title, t.year); });
         if (titles.length) parts.push('currently titled ' + titles.join(', '));
         return parts.join(', ') + '.';
     }
@@ -403,7 +448,7 @@
 
     function buildResultMessage(data) {
         const summary = [
-            'Matched to ' + data.title + (data.year ? ' (' + data.year + ')' : ''),
+            'Matched to ' + titleWithYear(data.title, data.year),
             'IMDb ' + displayId(data.imdb_id),
             'TMDB ' + displayId(data.tmdb_id),
             'TVDB ' + displayId(data.tvdb_id),

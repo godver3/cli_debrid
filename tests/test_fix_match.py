@@ -950,5 +950,50 @@ class TestModalOverlayContract(unittest.TestCase):
         self.assertIn("getComputedStyle(modal).position === 'fixed'", lock)
 
 
+class TestProviderLinks(unittest.TestCase):
+    """
+    The IDs in the modal link out so the match can be eyeballed before Apply
+    rewrites every row of the entry.
+    """
+
+    @staticmethod
+    def _js():
+        with open(os.path.join(PROJECT_ROOT, 'static', 'js', 'fix_match_modal.js'),
+                  encoding='utf-8') as handle:
+            return handle.read()
+
+    def test_links_out_to_all_three_providers(self):
+        js = self._js()
+        self.assertIn('https://www.imdb.com/title/', js)
+        self.assertIn('https://www.themoviedb.org/', js)
+        self.assertIn('https://thetvdb.com/', js)
+
+    def test_tvdb_uses_the_dereferrer_for_a_numeric_id(self):
+        """
+        Only the numeric TVDB ID is known here, and thetvdb.com/series/<n>
+        expects a slug -- it 404s on a number. Elsewhere in this codebase that
+        mistake is already made; do not repeat it.
+        """
+        js = self._js()
+        self.assertIn('https://thetvdb.com/dereferrer/', js)
+        self.assertNotIn("'https://thetvdb.com/series/", js)
+
+    def test_the_ids_are_anchors_in_both_rows(self):
+        with open(os.path.join(PROJECT_ROOT, 'templates', 'fix_match_modal.html'),
+                  encoding='utf-8') as handle:
+            partial = handle.read()
+        for prefix in ('Current', 'Preview'):
+            for key in ('Imdb', 'Tmdb', 'Tvdb'):
+                self.assertIn(f'<a id="fixMatch{prefix}{key}"', partial)
+
+    def test_a_year_already_in_the_title_is_not_repeated(self):
+        """Trakt disambiguates some entries as e.g. "Sugar (2024)"."""
+        js = self._js()
+        self.assertIn('function titleWithYear', js)
+        # Nothing may hand-roll the suffix any more.
+        self.assertNotIn("+ ' (' + data.year + ')'", js)
+        self.assertNotIn("+ ' (' + result.year + ')'", js)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

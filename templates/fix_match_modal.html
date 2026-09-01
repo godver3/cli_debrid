@@ -147,6 +147,22 @@
     margin-right: 2px;
 }
 
+/* An ID with no href (provider has none) stays plain text. */
+.fix-match-id-value {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px dotted transparent;
+}
+
+.fix-match-id-value[href] {
+    cursor: pointer;
+    border-bottom-color: currentColor;
+}
+
+.fix-match-id-value[href]:hover {
+    color: var(--primary-color, #4a9eff);
+}
+
 .fix-match-id-changed {
     color: #4ecdc4;
     font-weight: 600;
@@ -370,9 +386,9 @@
                 <div class="fix-match-current">
                     <div class="fix-match-current-title" id="fixMatchCurrentTitle">-</div>
                     <div class="fix-match-id-row">
-                        <span class="fix-match-id"><span class="fix-match-id-key">IMDb</span> <span id="fixMatchCurrentImdb">-</span></span>
-                        <span class="fix-match-id"><span class="fix-match-id-key">TMDB</span> <span id="fixMatchCurrentTmdb">-</span></span>
-                        <span class="fix-match-id"><span class="fix-match-id-key">TVDB</span> <span id="fixMatchCurrentTvdb">-</span></span>
+                        <span class="fix-match-id"><span class="fix-match-id-key">IMDb</span> <a id="fixMatchCurrentImdb" class="fix-match-id-value" target="_blank" rel="noopener noreferrer">-</a></span>
+                        <span class="fix-match-id"><span class="fix-match-id-key">TMDB</span> <a id="fixMatchCurrentTmdb" class="fix-match-id-value" target="_blank" rel="noopener noreferrer">-</a></span>
+                        <span class="fix-match-id"><span class="fix-match-id-key">TVDB</span> <a id="fixMatchCurrentTvdb" class="fix-match-id-value" target="_blank" rel="noopener noreferrer">-</a></span>
                     </div>
                 </div>
             </div>
@@ -406,9 +422,9 @@
                 <label class="fix-match-label">New match</label>
                 <div class="fix-match-preview-title" id="fixMatchPreviewTitle">-</div>
                 <div class="fix-match-id-row">
-                    <span class="fix-match-id"><span class="fix-match-id-key">IMDb</span> <span id="fixMatchPreviewImdb">-</span></span>
-                    <span class="fix-match-id"><span class="fix-match-id-key">TMDB</span> <span id="fixMatchPreviewTmdb">-</span></span>
-                    <span class="fix-match-id"><span class="fix-match-id-key">TVDB</span> <span id="fixMatchPreviewTvdb">-</span></span>
+                    <span class="fix-match-id"><span class="fix-match-id-key">IMDb</span> <a id="fixMatchPreviewImdb" class="fix-match-id-value" target="_blank" rel="noopener noreferrer">-</a></span>
+                    <span class="fix-match-id"><span class="fix-match-id-key">TMDB</span> <a id="fixMatchPreviewTmdb" class="fix-match-id-value" target="_blank" rel="noopener noreferrer">-</a></span>
+                    <span class="fix-match-id"><span class="fix-match-id-key">TVDB</span> <a id="fixMatchPreviewTvdb" class="fix-match-id-value" target="_blank" rel="noopener noreferrer">-</a></span>
                 </div>
                 <p class="fix-match-impact" id="fixMatchImpact"></p>
                 <label class="fix-match-checkbox-label">
