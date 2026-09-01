@@ -173,14 +173,14 @@
         modal.style.display = 'flex';
 
         // Only lock the page once the overlay is genuinely covering the
-        // viewport. If the stylesheet is missing the modal lays out inline
+        // viewport. Without its styles the modal lays out in the page flow
         // instead, and locking the scroll then strands the reader on a page
         // they can neither see the modal on nor scroll.
         if (window.getComputedStyle(modal).position === 'fixed') {
             document.body.style.overflow = 'hidden';
         } else {
-            console.error('[Fix Match] fix_match_modal.css is not loaded — ' +
-                'leaving the page scrollable');
+            console.error('[Fix Match] modal styles missing (the <style> block ' +
+                'in fix_match_modal.html) — leaving the page scrollable');
         }
 
         // preventScroll: focusing the field must never move the page.

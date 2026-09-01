@@ -916,6 +916,23 @@ class TestModalOverlayContract(unittest.TestCase):
         self.assertIn('position: relative', main_rule)
         self.assertIn('z-index: 1', main_rule)
 
+    def test_the_partial_carries_its_own_styles(self):
+        """
+        Without its styles the modal lays out in the page flow instead of
+        overlaying, which is indistinguishable from the button doing nothing.
+        Keeping them in the partial removes the separate stylesheet as a
+        thing that can fail to reach the browser.
+        """
+        partial = self._read('templates', 'fix_match_modal.html')
+        self.assertIn('<style>', partial)
+        self.assertIn('.fix-match-modal {', partial)
+        self.assertIn('position: fixed', partial)
+
+        for page in ('library_show.html', 'library_movie.html'):
+            markup = self._read('templates', page)
+            self.assertIn("{% include 'fix_match_modal.html' %}", markup)
+            self.assertNotIn('fix_match_modal.css', markup)
+
     def test_modal_is_reparented_to_the_body(self):
         js = self._read('static', 'js', 'fix_match_modal.js')
         self.assertIn('document.body.appendChild(modal)', js)
