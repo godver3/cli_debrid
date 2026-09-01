@@ -5,6 +5,7 @@
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/library_show.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/trailer_modal.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/fix_match_modal.css') }}">
 <script>
     // Dynamically load theme-specific CSS
     (function() {
@@ -223,6 +224,16 @@
                                         </svg>
                                     </button>
                                     {% if has_admin_permissions %}
+                                    <button id="btn-fix-match" class="action-btn ghost-btn" title="Fix Match - correct the IMDb, TMDB and TVDB IDs" aria-label="Fix match">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M3 7V5a2 2 0 0 1 2-2h2"></path>
+                                            <path d="M17 3h2a2 2 0 0 1 2 2v2"></path>
+                                            <path d="M21 17v2a2 2 0 0 1-2 2h-2"></path>
+                                            <path d="M7 21H5a2 2 0 0 1-2-2v-2"></path>
+                                            <circle cx="12" cy="12" r="3"></circle>
+                                            <path d="m16 16-1.9-1.9"></path>
+                                        </svg>
+                                    </button>
                                     <button id="btn-settings" class="action-btn ghost-btn" title="Settings" aria-label="Show settings">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                             <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path>
@@ -401,6 +412,7 @@
         </div>
     </div>
 </div>
+{% include 'fix_match_modal.html' %}
 {% endblock %}
 
 {% block scripts %}
@@ -411,4 +423,5 @@
 <script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
 <script src="{{ url_for('static', filename='js/library_show.js') }}?v={{ range(10000, 99999) | random }}"></script>
 <script src="{{ url_for('static', filename='js/trailer_modal.js') }}"></script>
+<script src="{{ url_for('static', filename='js/fix_match_modal.js') }}?v={{ range(10000, 99999) | random }}"></script>
 {% endblock %}

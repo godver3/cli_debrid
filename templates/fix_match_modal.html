@@ -1,0 +1,78 @@
+<!--
+  Fix Match modal — corrects a library entry's IMDb, TMDB and TVDB IDs together.
+  Included by library_show.html and library_movie.html; driven by fix_match_modal.js.
+-->
+<div id="fixMatchModal" class="fix-match-modal" style="display: none;">
+    <div class="fix-match-modal-overlay"></div>
+    <div class="fix-match-modal-content">
+        <div class="fix-match-modal-header">
+            <h2>Fix Match</h2>
+            <button class="fix-match-modal-close" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="fix-match-modal-body">
+            <div class="fix-match-section">
+                <label class="fix-match-label">Currently matched to</label>
+                <div class="fix-match-current">
+                    <div class="fix-match-current-title" id="fixMatchCurrentTitle">-</div>
+                    <div class="fix-match-id-row">
+                        <span class="fix-match-id"><span class="fix-match-id-key">IMDb</span> <span id="fixMatchCurrentImdb">-</span></span>
+                        <span class="fix-match-id"><span class="fix-match-id-key">TMDB</span> <span id="fixMatchCurrentTmdb">-</span></span>
+                        <span class="fix-match-id"><span class="fix-match-id-key">TVDB</span> <span id="fixMatchCurrentTvdb">-</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="fix-match-section">
+                <label class="fix-match-label" for="fixMatchSearchInput">Search for the correct title</label>
+                <div class="fix-match-search-row">
+                    <input type="text" id="fixMatchSearchInput" class="fix-match-input"
+                           placeholder="Title" autocomplete="off">
+                    <input type="number" id="fixMatchSearchYear" class="fix-match-input fix-match-input-year"
+                           placeholder="Year" min="1870" max="2200">
+                    <button type="button" id="fixMatchSearchBtn" class="fix-match-btn-secondary">Search</button>
+                </div>
+                <div id="fixMatchResults" class="fix-match-results" style="display: none;"></div>
+                <p id="fixMatchSearchStatus" class="fix-match-status" style="display: none;"></p>
+            </div>
+
+            <div class="fix-match-section">
+                <label class="fix-match-label" for="fixMatchManualId">…or enter the ID directly</label>
+                <div class="fix-match-search-row">
+                    <input type="text" id="fixMatchManualId" class="fix-match-input"
+                           placeholder="tt1234567 or a TMDB ID" autocomplete="off">
+                    <button type="button" id="fixMatchManualBtn" class="fix-match-btn-secondary">Look up</button>
+                </div>
+                <p class="fix-match-hint">
+                    Only the IMDb ID is needed — the TMDB and TVDB IDs are resolved from it.
+                </p>
+            </div>
+
+            <div id="fixMatchPreview" class="fix-match-preview" style="display: none;">
+                <label class="fix-match-label">New match</label>
+                <div class="fix-match-preview-title" id="fixMatchPreviewTitle">-</div>
+                <div class="fix-match-id-row">
+                    <span class="fix-match-id"><span class="fix-match-id-key">IMDb</span> <span id="fixMatchPreviewImdb">-</span></span>
+                    <span class="fix-match-id"><span class="fix-match-id-key">TMDB</span> <span id="fixMatchPreviewTmdb">-</span></span>
+                    <span class="fix-match-id"><span class="fix-match-id-key">TVDB</span> <span id="fixMatchPreviewTvdb">-</span></span>
+                </div>
+                <p class="fix-match-impact" id="fixMatchImpact"></p>
+                <label class="fix-match-checkbox-label">
+                    <input type="checkbox" id="fixMatchRematchServer" class="fix-match-checkbox" checked>
+                    Also re-match this entry in Plex
+                </label>
+                <p class="fix-match-hint">
+                    Episode titles, air dates, genres and artwork are re-pulled automatically
+                    once the IDs are corrected.
+                </p>
+            </div>
+
+            <p id="fixMatchError" class="fix-match-error" style="display: none;"></p>
+        </div>
+
+        <div class="fix-match-modal-footer">
+            <button type="button" class="fix-match-btn-cancel">Cancel</button>
+            <button type="button" class="fix-match-btn-apply" disabled>Apply Fix</button>
+        </div>
+    </div>
+</div>
