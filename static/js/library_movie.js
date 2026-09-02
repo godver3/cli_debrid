@@ -87,6 +87,7 @@ function attachEventListeners() {
     const btnSettings = document.getElementById('btn-settings');
     const btnSearchMovie = document.getElementById('btn-search-movie');
     const btnRequestMovie = document.getElementById('btn-request-movie');
+    const btnFixMatch = document.getElementById('btn-fix-match');
     const editReleaseDateBtn = document.getElementById('edit-release-date-btn');
     const refreshReleaseDateBtn = document.getElementById('refresh-release-date-btn');
 
@@ -112,6 +113,10 @@ function attachEventListeners() {
 
     if (btnRequestMovie) {
         btnRequestMovie.addEventListener('click', handleRequestMovie);
+    }
+
+    if (btnFixMatch) {
+        btnFixMatch.addEventListener('click', handleFixMatch);
     }
 
     if (editReleaseDateBtn) {
@@ -1141,6 +1146,23 @@ async function handleRefreshReleaseDate() {
             btn.innerHTML = originalHTML;
         }
     }
+}
+
+function handleFixMatch() {
+    if (!movieData) return;
+
+    // The URL carries whichever ID the page was opened with, and that ID is
+    // about to change - reload onto the corrected one rather than a dead URL.
+    window.openFixMatchModal({
+        mediaType: 'movie',
+        title: movieData.title,
+        year: movieData.year,
+        imdbId: movieData.imdb_id,
+        tmdbId: movieData.tmdb_id,
+        onApplied: function(result) {
+            window.location.href = '/library/movie/' + (result.imdb_id || result.tmdb_id);
+        }
+    });
 }
 
 function handleRefreshTMDB() {

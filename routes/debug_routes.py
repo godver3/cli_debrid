@@ -3563,8 +3563,73 @@ def delete_battery_db_files():
 
 # --- Rclone Mount to Symlinks Logic ---
 
-def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id, trigger_plex_update_on_success: bool = False, assumed_item_title_from_path: str = None): # Add new parameter
-    """Background task to scan Rclone mount, fetch metadata, and create DB entries/symlinks."""
+def _describe_add_media_item_failure(item: dict) -> str:
+    """Explain why add_media_item returned None.
+
+    It swallows several distinct failures into a bare None — a ghostlist or
+    blacklist block, and any sqlite3.Error (IntegrityError included) — so the
+    caller cannot tell them apart. 'add_media_item no ID returned' on its own
+    sends you digging through add_media_item to guess which one happened.
+    Runs only on the failure path, so the extra query costs nothing normally.
+    """
+    try:
+        from database.core import get_db_connection
+        imdb_id = item.get('imdb_id')
+        tmdb_id = item.get('tmdb_id')
+        item_type = item.get('type')
+        if not (imdb_id or tmdb_id):
+            return ("add_media_item returned None and the item has neither an IMDb "
+                    "nor a TMDB ID — check the metadata stage")
+
+        # Must mirror add_media_item's guard exactly, including the
+        # version-scoping of the 'Blacklisted' half — an unscoped query here
+        # would blame the ghostlist for a failure it did not cause.
+        target_version = (item.get('version') or '').rstrip('*')
+        guard = ("(ghostlisted = 1 OR (state = 'Blacklisted' "
+                 "AND RTRIM(COALESCE(version, ''), '*') = ?))")
+
+        conn = get_db_connection()
+        try:
+            if item_type == 'episode' and item.get('season_number') is not None \
+                    and item.get('episode_number') is not None:
+                query = ('SELECT id, state, ghostlisted, version FROM media_items '
+                         'WHERE (imdb_id = ? OR tmdb_id = ?) AND type = ? '
+                         'AND season_number = ? AND episode_number = ? '
+                         f'AND {guard} LIMIT 1')
+                params = [imdb_id, tmdb_id, item_type, item.get('season_number'),
+                          item.get('episode_number'), target_version]
+            else:
+                query = ('SELECT id, state, ghostlisted, version FROM media_items '
+                         'WHERE (imdb_id = ? OR tmdb_id = ?) AND type = ? '
+                         f'AND {guard} LIMIT 1')
+                params = [imdb_id, tmdb_id, item_type, target_version]
+            row = conn.execute(query, params).fetchone()
+        finally:
+            conn.close()
+
+        if row:
+            reason = 'ghostlisted' if row['ghostlisted'] else f"state={row['state']}"
+            return (f"blocked by add_media_item: existing item id={row['id']} is {reason} "
+                    f"(version={row['version']}). An external add should pass "
+                    f"user_initiated=True to unghost and update it in place.")
+        return ("add_media_item returned None but no ghostlisted/blacklisted row "
+                "matches — check the preceding 'SQLite error' or 'Unexpected error' "
+                "log line from add_media_item for the real cause")
+    except Exception as e:
+        return f"add_media_item returned None; could not determine why ({e})"
+
+
+def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id, trigger_plex_update_on_success: bool = False, assumed_item_title_from_path: str = None, user_initiated: bool = False): # Add new parameter
+    """Background task to scan Rclone mount, fetch metadata, and create DB entries/symlinks.
+
+    user_initiated is passed straight to add_media_item, where it bypasses the
+    ghostlist/blacklist guard. Only set it for an import a person actually asked
+    for -- the rclone webhook, which fires because someone put content in the
+    debrid account by hand. It must stay False for anything running on a timer:
+    the mount also fills up with cli_debrid's own leftovers (cache-check probes,
+    torrents orphaned when a grab failed), and bypassing the guard for those
+    re-imports the exact releases the queues just blacklisted.
+    """
     global rclone_scan_progress
 
     # --- Progress File Setup ---
@@ -3850,15 +3915,30 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                     title_for_best_match_selection = parsed_title # Raw PTT output as last resort
                     logging.debug(f"[RcloneScan {task_id}] No suitable cleaned filename or folder title, falling back to raw parsed_title for best_match selection: '{title_for_best_match_selection}'")
                 
+                # A Fix Match correction for this title wins outright. The fuzzy
+                # search below is stateless, so whatever it mis-resolved once it
+                # mis-resolves again for every new release of the same show --
+                # undoing the correction each time a file lands.
+                from database.match_overrides import find_match_override
+                override_imdb_id = find_match_override(
+                    [cleaned_folder_title, cleaned_filename_title, parsed_title],
+                    parsed_year,
+                    'show' if current_parsed_type == 'episode' else 'movie',
+                )
+
                 best_match_from_search = None
-                if final_search_results:
+                if final_search_results and not override_imdb_id:
                     best_match_from_search = DirectAPI.find_best_match_from_results(
                         original_query_title=title_for_best_match_selection, 
                         query_year=parsed_year,
                         search_results=final_search_results
                     )
-                
-                if best_match_from_search:
+
+                if override_imdb_id:
+                    logging.info(f"[RcloneScan {task_id}] Using Fix Match override for "
+                                 f"'{title_for_best_match_selection}' ({parsed_year}): {override_imdb_id}")
+                    item_id_to_use = override_imdb_id
+                elif best_match_from_search:
                     logging.info(f"[RcloneScan {task_id}] Best match selected by find_best_match_from_results: {best_match_from_search.get('title')} ({best_match_from_search.get('year')}) using matching title '{title_for_best_match_selection}' (search performed with '{title_that_yielded_search_results}')")
                     item_id_to_use = best_match_from_search.get('imdb_id') or best_match_from_search.get('tmdb_id')
                 elif final_search_results: 
@@ -4108,12 +4188,34 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
             else:
                 item_id_from_db = None
                 try:
-                    # add_media_item is called with item_for_db_filtered_for_db, 
+                    # add_media_item is called with item_for_db_filtered_for_db,
                     # which has 'genres' as a JSON string
-                    item_id_from_db = add_media_item(item_for_db_filtered_for_db)
-                    if not item_id_from_db: raise Exception("add_media_item no ID returned")
+                    #
+                    # user_initiated bypasses add_media_item's ghostlist/blacklist
+                    # guard, so an existing entry of the same version is unghosted
+                    # and updated in place instead of blocked. Only the rclone
+                    # webhook sets it: content that reached the mount because a
+                    # person put it there is disproportionately likely to be
+                    # ghostlisted already, since that is usually why they went and
+                    # got it elsewhere. It is a decision for the caller to make --
+                    # it was briefly derived from trigger_plex_update_on_success,
+                    # which silently handed the bypass to the periodic mount scan
+                    # and let it re-import releases the queues had just blacklisted.
+                    item_id_from_db = add_media_item(
+                        item_for_db_filtered_for_db,
+                        user_initiated=user_initiated
+                    )
+                    if not item_id_from_db:
+                        raise Exception(_describe_add_media_item_failure(item_for_db_filtered_for_db))
                     items_added_to_db += 1; update_progress(items_added_to_db=items_added_to_db)
                 except sqlite3.IntegrityError:
+                    # NOTE: unreachable. add_media_item catches sqlite3.Error —
+                    # IntegrityError is a subclass — and returns None instead of
+                    # propagating, so a duplicate surfaces through the None branch
+                    # above, not here. media_items also declares no UNIQUE/NOT NULL
+                    # constraints, so nothing raises IntegrityError in the first
+                    # place. Kept only so behaviour does not change if either of
+                    # those two facts is ever revisited.
                     logging.warning(f"[RcloneScan {task_id}] DB IntegrityError for {item_path.name}, V:{current_parsed_version}. Likely duplicate.")
                     skipped_duplicates += 1; update_progress(skipped_duplicates=skipped_duplicates)
                     # If it's a duplicate, we should still mark original_file_path_str as processed if we intend to skip it next time
@@ -4143,6 +4245,29 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                         )
                         if not symlink_success: raise Exception("create_symlink returned False")
                         symlinks_created += 1; update_progress(symlinks_created=symlinks_created)
+
+                        # Sync the file pointers onto the row. Required for the
+                        # adopt path: when add_media_item unghosts an existing
+                        # entry of the same version it returns that entry's id
+                        # after updating only ghostlisted/state/magnet/torrent
+                        # fields, so location_on_disk and friends would still
+                        # reference the file this import just replaced. A no-op
+                        # for a fresh insert, which already has these values.
+                        try:
+                            from database.database_writing import update_media_item as _update_media_item
+                            _location_fields = {
+                                k: item_for_db_filtered_for_db.get(k)
+                                for k in ('location_on_disk', 'original_path_for_symlink',
+                                          'filled_by_file', 'filled_by_title', 'state',
+                                          'collected_at', 'version')
+                                if item_for_db_filtered_for_db.get(k) is not None
+                            }
+                            if _location_fields:
+                                _update_media_item(item_id_from_db, **_location_fields)
+                        except Exception as _loc_err:
+                            logging.error(
+                                f"[RcloneScan {task_id}] Symlink created but failed to sync file "
+                                f"pointers on item {item_id_from_db}: {_loc_err}", exc_info=True)
                         
                         # Successfully processed, add to persistent progress and save
                         processed_original_files.add(original_file_path_str)
@@ -4273,7 +4398,9 @@ def rclone_to_symlinks_route():
     # Start the background task
     thread = threading.Thread(
         target=_run_rclone_to_symlink_task,
-        args=(rclone_mount_path, symlink_base_path, dry_run, task_id, False, assumed_item_title_from_path_manual) # Pass False for trigger_plex_update and None for assumed_item_title
+        # False, then False: no Plex trigger, and not user_initiated -- the bulk scan
+        # sweeps the whole mount, so it must not unghost everything still sitting there.
+        args=(rclone_mount_path, symlink_base_path, dry_run, task_id, False, assumed_item_title_from_path_manual, False)
     )
     thread.daemon = True
     thread.start()

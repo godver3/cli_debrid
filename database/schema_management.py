@@ -36,6 +36,9 @@ def migrate_schema():
 
         from .movie_release_overrides import ensure_movie_release_override_table
         ensure_movie_release_override_table(conn)
+
+        from .match_overrides import ensure_match_override_table
+        ensure_match_override_table(conn)
         
         # Check if statistics_summary table exists and has id column
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
@@ -390,6 +393,13 @@ def migrate_schema():
         if 'original_filename' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN original_filename TEXT')
             logging.info("Added original_filename column to media_items table.")
+        if 'debrid_provider' not in columns:
+            # Which provider in the fallback chain actually holds filled_by_torrent_id.
+            # Without it the Checking queue polls the primary provider for every
+            # torrent, so a torrent added to a fallback 404s on the first poll and
+            # gets treated as missing — see _provider_for_torrent in checking_queue.
+            conn.execute('ALTER TABLE media_items ADD COLUMN debrid_provider TEXT')
+            logging.info("Added debrid_provider column to media_items table.")
 
         # Migrate data from legacy plex_* columns to ms_* columns (one-time migration)
         # Only runs when plex_rating_key data exists AND ms_item_id is completely unpopulated
@@ -999,12 +1009,16 @@ def create_tables():
                 verification_failure_reason TEXT,
                 plex_labels_last_synced TIMESTAMP,
                 debrid_folder_name TEXT,
-                source_position INTEGER
+                source_position INTEGER,
+                debrid_provider TEXT
             )
         ''')
 
         from .movie_release_overrides import ensure_movie_release_override_table
         ensure_movie_release_override_table(conn)
+
+        from .match_overrides import ensure_match_override_table
+        ensure_match_override_table(conn)
 
         # Add new table for tracking requested seasons
         cursor.execute('''

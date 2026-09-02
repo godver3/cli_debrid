@@ -799,6 +799,7 @@ class AddingQueue:
                     filled_by_file=matched_file_basename,
                     torrent_id=torrent_info.get('id'),
                     debrid_folder_name=debrid_folder_name,
+                    debrid_provider=torrent_info.get('_provider'),
                 )
                 processed_this_item = True # Mark primary item as processed for delay logic
 
@@ -845,6 +846,10 @@ class AddingQueue:
                                 filled_by_file=related_file_basename, # Pass the basename
                                 torrent_id=torrent_info.get('id'),
                                 debrid_folder_name=debrid_folder_name,
+                                # Same torrent as the primary item, so the same provider
+                                # holds it -- a related episode left unstamped would fall
+                                # back to polling the primary and 404 on its own.
+                                debrid_provider=torrent_info.get('_provider'),
                             )
                             # move_to_checking handles removal from original queue (Scraping/Wanted)
 

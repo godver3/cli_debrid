@@ -46,6 +46,7 @@ function attachEventListeners() {
     const btnRefreshTMDB = document.getElementById('btn-refresh-tmdb');
     const btnSettings = document.getElementById('btn-settings');
     const btnDownsubShow = document.getElementById('btn-downsub-show');
+    const btnFixMatch = document.getElementById('btn-fix-match');
 
     if (btnGetMissing) {
         btnGetMissing.addEventListener('click', handleGetMissing);
@@ -65,6 +66,10 @@ function attachEventListeners() {
 
     if (btnDownsubShow) {
         btnDownsubShow.addEventListener('click', handleDownsubShow);
+    }
+
+    if (btnFixMatch) {
+        btnFixMatch.addEventListener('click', handleFixMatch);
     }
 
     // Close overlay when pressing Escape key
@@ -1935,6 +1940,24 @@ function handleRefreshTMDB() {
         });
         btn.disabled = false;
         btn.innerHTML = originalHTML;
+    });
+}
+
+function handleFixMatch() {
+    if (!showData) return;
+
+    // The URL carries whichever ID the page was opened with, and that ID is
+    // about to change — reload onto the corrected one rather than a dead URL.
+    window.openFixMatchModal({
+        mediaType: 'show',
+        title: showData.title,
+        year: showData.year,
+        imdbId: showData.imdb_id,
+        tmdbId: showData.tmdb_id,
+        tvdbId: showData.tvdb_id,
+        onApplied: function(result) {
+            window.location.href = '/library/show/' + (result.imdb_id || result.tmdb_id);
+        }
     });
 }
 
