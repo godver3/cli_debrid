@@ -105,6 +105,32 @@ def get_debrid_providers() -> List[DebridProvider]:
     return _provider_list
 
 
+def get_provider_by_name(provider_name: Optional[str]) -> Optional[DebridProvider]:
+    """Return the already-instantiated provider from the chain whose
+    PROVIDER_NAME matches, or None.
+
+    Resolves against get_debrid_providers() rather than building a fresh
+    instance so the fallback's configured api_key comes along with it -- a
+    bare _instantiate_provider(name) would come back holding the primary's
+    key (or none at all) and 401 on every call.
+    """
+    if not provider_name:
+        return None
+    wanted = provider_name.strip().lower()
+    if not wanted:
+        return None
+    for p in get_debrid_providers():
+        if p.PROVIDER_NAME.strip().lower() == wanted:
+            return p
+    # Also accept the raw settings spelling ('realdebrid' -> 'Real-Debrid')
+    mapped = _NAME_MAP.get(wanted)
+    if mapped:
+        for p in get_debrid_providers():
+            if p.PROVIDER_NAME.strip().lower() == mapped.strip().lower():
+                return p
+    return None
+
+
 def reset_provider() -> None:
     """Reset all provider instances, forcing reinitialization on next use."""
     global _provider_instance, _provider_list
@@ -123,6 +149,7 @@ def get_provider_display_name() -> str:
 __all__ = [
     'get_debrid_provider',
     'get_debrid_providers',
+    'get_provider_by_name',
     'get_provider_display_name',
     'reset_provider',
     'DebridProvider',

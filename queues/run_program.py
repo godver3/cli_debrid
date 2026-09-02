@@ -4948,10 +4948,11 @@ class ProgramRunner:
                 logging.debug(f"[ExternalScan] Skipped: {summary['skipped_reason']}")
             elif summary.get('baselined'):
                 logging.info(f"[ExternalScan] Baselined {summary['baselined']} existing mount entries.")
-            elif summary.get('imported') or summary.get('failed'):
+            elif summary.get('imported') or summary.get('failed') or summary.get('rejected'):
                 logging.info(
                     f"[ExternalScan] Scanned {summary.get('entries_seen', 0)} entries — "
-                    f"imported {summary.get('imported', 0)}, failed {summary.get('failed', 0)}."
+                    f"imported {summary.get('imported', 0)}, failed {summary.get('failed', 0)}, "
+                    f"skipped {summary.get('rejected', 0)} as previously rejected."
                 )
         except Exception as e:
             logging.error(f"[ExternalScan] Task error: {e}", exc_info=True)

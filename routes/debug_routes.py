@@ -3619,8 +3619,17 @@ def _describe_add_media_item_failure(item: dict) -> str:
         return f"add_media_item returned None; could not determine why ({e})"
 
 
-def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id, trigger_plex_update_on_success: bool = False, assumed_item_title_from_path: str = None): # Add new parameter
-    """Background task to scan Rclone mount, fetch metadata, and create DB entries/symlinks."""
+def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id, trigger_plex_update_on_success: bool = False, assumed_item_title_from_path: str = None, user_initiated: bool = False): # Add new parameter
+    """Background task to scan Rclone mount, fetch metadata, and create DB entries/symlinks.
+
+    user_initiated is passed straight to add_media_item, where it bypasses the
+    ghostlist/blacklist guard. Only set it for an import a person actually asked
+    for -- the rclone webhook, which fires because someone put content in the
+    debrid account by hand. It must stay False for anything running on a timer:
+    the mount also fills up with cli_debrid's own leftovers (cache-check probes,
+    torrents orphaned when a grab failed), and bypassing the guard for those
+    re-imports the exact releases the queues just blacklisted.
+    """
     global rclone_scan_progress
 
     # --- Progress File Setup ---
@@ -4182,22 +4191,19 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                     # add_media_item is called with item_for_db_filtered_for_db,
                     # which has 'genres' as a JSON string
                     #
-                    # An external add is an implicit user action: the content only
-                    # appeared in the mount because someone deliberately put it in
-                    # the debrid account. Without user_initiated, add_media_item
-                    # refuses anything ghostlisted or blacklisted and returns None
-                    # — and ghostlisted/blacklisted is exactly what a user tends to
-                    # fetch externally, because cli_debrid had given up on it.
-                    # With it, an existing entry of the same version is unghosted
-                    # and updated in place instead of being blocked or duplicated.
-                    # Scoped to the external-add path only: the manual bulk-scan
-                    # tool must not unghost everything still present in the mount.
-                    # trigger_plex_update_on_success already marks this path — it
-                    # is what sets content_source to 'external_webhook' above.
-                    is_external_add = trigger_plex_update_on_success
+                    # user_initiated bypasses add_media_item's ghostlist/blacklist
+                    # guard, so an existing entry of the same version is unghosted
+                    # and updated in place instead of blocked. Only the rclone
+                    # webhook sets it: content that reached the mount because a
+                    # person put it there is disproportionately likely to be
+                    # ghostlisted already, since that is usually why they went and
+                    # got it elsewhere. It is a decision for the caller to make --
+                    # it was briefly derived from trigger_plex_update_on_success,
+                    # which silently handed the bypass to the periodic mount scan
+                    # and let it re-import releases the queues had just blacklisted.
                     item_id_from_db = add_media_item(
                         item_for_db_filtered_for_db,
-                        user_initiated=is_external_add
+                        user_initiated=user_initiated
                     )
                     if not item_id_from_db:
                         raise Exception(_describe_add_media_item_failure(item_for_db_filtered_for_db))
@@ -4392,7 +4398,9 @@ def rclone_to_symlinks_route():
     # Start the background task
     thread = threading.Thread(
         target=_run_rclone_to_symlink_task,
-        args=(rclone_mount_path, symlink_base_path, dry_run, task_id, False, assumed_item_title_from_path_manual) # Pass False for trigger_plex_update and None for assumed_item_title
+        # False, then False: no Plex trigger, and not user_initiated -- the bulk scan
+        # sweeps the whole mount, so it must not unghost everything still sitting there.
+        args=(rclone_mount_path, symlink_base_path, dry_run, task_id, False, assumed_item_title_from_path_manual, False)
     )
     thread.daemon = True
     thread.start()

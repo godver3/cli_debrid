@@ -78,6 +78,8 @@ class CheckingQueue:
             cls._instance.debrid_provider = get_debrid_provider()  # May be None for usenet-only setups
             cls._instance.uncached_torrents = {}  # Dict of {torrent_hash: {last_check_time, item_ids[]}}
             cls._instance.unknown_strikes = {} # Tracks consecutive unknown states for torrents
+            cls._instance._torrent_providers = {}  # torrent_id -> provider name that holds it
+            cls._instance._rediscovery_exhausted = set()  # probed the whole chain, nobody had it
         return cls._instance
 
     def __init__(self):
@@ -89,6 +91,12 @@ class CheckingQueue:
         self.last_report_time = datetime.now()
         self._nzb_missing_counts = {}  # tracks consecutive not-found polls per torrent_id
         self._nzb_plex_scan_triggered = set()  # torrent_ids that have already had Plex scan fired
+        # Survives item removal: handle_missing_torrent and handle_stalled_torrent both
+        # drop items from self.items before they are done talking to the provider.
+        if not hasattr(self, '_torrent_providers'):
+            self._torrent_providers = {}
+        if not hasattr(self, '_rediscovery_exhausted'):
+            self._rediscovery_exhausted = set()
 
     def update(self):
         from database import get_all_media_items
@@ -123,6 +131,11 @@ class CheckingQueue:
             if item['id'] not in self.checking_queue_times:
                 self.checking_queue_times[item['id']] = time.time()
                 logging.debug(f"Initialized checking time for item {item['id']} with torrent ID {item.get('filled_by_torrent_id')}")
+            self._remember_provider(item)
+
+        for _tid in removed_torrents:
+            self._torrent_providers.pop(_tid, None)
+            self._rediscovery_exhausted.discard(_tid)
 
     def get_contents(self, raw=False):
         # raw=True: skip live API calls, return items as-is (for page render, not SSE stream)
@@ -564,6 +577,146 @@ class CheckingQueue:
             logging.error(f"[NZB] Error polling cli_mount for job {job_id}: {e}")
             return None
 
+    def _remember_provider(self, item: Dict[str, Any]) -> None:
+        """Record which provider holds this item's torrent, if the item says."""
+        torrent_id = item.get('filled_by_torrent_id')
+        name = item.get('debrid_provider')
+        if torrent_id and name:
+            self._torrent_providers[torrent_id] = name
+
+    def _recorded_provider_name(self, torrent_id: str) -> Optional[str]:
+        """The provider name recorded for this torrent, or None if unknown.
+
+        Reads the memo first, then the item rows, promoting whatever it finds
+        into the memo. Separate from _provider_for_torrent so a caller can tell
+        'we know this is on AllDebrid' from 'we are guessing at the primary' --
+        the rediscovery probe must only run for the latter.
+        """
+        if not torrent_id:
+            return None
+        name = self._torrent_providers.get(torrent_id)
+        if name:
+            return name
+        for item in self.items:
+            if item.get('filled_by_torrent_id') == torrent_id:
+                name = item.get('debrid_provider')
+                if name:
+                    self._torrent_providers[torrent_id] = name
+                return name
+        return None
+
+    def _provider_for_torrent(self, torrent_id: str):
+        """Return the debrid provider that actually holds this torrent.
+
+        With a fallback provider chain configured, a torrent can be added to any
+        provider in the chain, but its id is only meaningful to that one. Polling
+        the primary for a torrent AllDebrid holds returns 404, which
+        get_torrent_progress reports as PROGRESS_RESULT_MISSING and
+        handle_missing_torrent then treats as a dead torrent: it blacklists the
+        magnet and sends the item back to Wanted, which regrabs the next release
+        and repeats -- one release burned per cycle.
+
+        Falls back to the primary provider when the item predates the
+        debrid_provider column or names a provider no longer in the chain, which
+        is the old behaviour and no worse than it was.
+        """
+        default = self.debrid_provider
+        name = self._recorded_provider_name(torrent_id)
+        if not name:
+            return default
+
+        from debrid import get_provider_by_name
+        provider = get_provider_by_name(name)
+        if provider is None:
+            logging.warning(
+                f"Torrent {torrent_id} was added to '{name}', which is no longer in the "
+                f"provider chain. Falling back to the primary provider; if this torrent "
+                f"reports missing, that is why."
+            )
+            return default
+        return provider
+
+    @staticmethod
+    def _looks_like_not_found(status_result) -> bool:
+        """True when the provider is telling us the torrent does not exist.
+
+        Covers both the clean NOT_FOUND status and the 404 that some providers
+        bury in the message of a generic error status.
+        """
+        if status_result is None:
+            return False
+        if status_result.status == TorrentFetchStatus.NOT_FOUND:
+            return True
+        return bool(
+            status_result.message and "404" in status_result.message
+            and status_result.status in (
+                TorrentFetchStatus.CLIENT_ERROR,
+                TorrentFetchStatus.SERVER_ERROR,
+                TorrentFetchStatus.PROVIDER_HANDLED_ERROR,
+                TorrentFetchStatus.UNKNOWN_ERROR,
+                TorrentFetchStatus.REQUEST_ERROR,
+            )
+        )
+
+    def _rediscover_provider(self, torrent_id: str):
+        """Find which provider in the chain actually knows this torrent.
+
+        Only for torrents with no recorded provider: rows written before the
+        debrid_provider column existed, so a 404 from the primary is genuinely
+        ambiguous -- the torrent may be dead, or it may be sitting on a fallback
+        under an id the primary has never heard of. Probing the rest of the chain
+        tells the two apart instead of assuming the worst and regrabbing.
+
+        A positive answer is memoised and persisted. A negative one goes in a
+        separate set rather than into the routing map -- writing the primary's
+        name in there would turn 'we asked everyone once and nobody had it' into
+        'this torrent lives on the primary', which is a routing claim this
+        function has no grounds to make and which would survive a later, correct
+        stamp.
+        """
+        from debrid import get_debrid_providers
+
+        if torrent_id in self._rediscovery_exhausted:
+            return None
+
+        providers = get_debrid_providers()
+        if len(providers) < 2:
+            return None
+
+        for provider in providers:
+            if provider is self.debrid_provider:
+                continue  # already asked, that is why we are here
+            try:
+                result = provider.get_torrent_info_with_status(torrent_id)
+            except Exception as e:
+                logging.debug(f"[{provider.PROVIDER_NAME}] rediscovery probe failed for {torrent_id}: {e}")
+                continue
+            if result.status == TorrentFetchStatus.OK:
+                logging.info(
+                    f"Torrent {torrent_id} was not found on {self.debrid_provider.PROVIDER_NAME} but "
+                    f"is live on {provider.PROVIDER_NAME}. Recording that and polling it from now on."
+                )
+                self._torrent_providers[torrent_id] = provider.PROVIDER_NAME
+                self._persist_provider(torrent_id, provider.PROVIDER_NAME)
+                return result
+
+        # Nobody has it. Remember only that, so the whole chain is not re-probed
+        # on every pass of the queue.
+        self._rediscovery_exhausted.add(torrent_id)
+        return None
+
+    def _persist_provider(self, torrent_id: str, provider_name: str) -> None:
+        """Write a rediscovered provider back onto every item on that torrent, so
+        the answer survives a restart."""
+        try:
+            from database.database_writing import update_media_item
+            for item in self.items:
+                if item.get('filled_by_torrent_id') == torrent_id:
+                    item['debrid_provider'] = provider_name
+                    update_media_item(item['id'], debrid_provider=provider_name)
+        except Exception as e:
+            logging.warning(f"Could not persist debrid_provider for torrent {torrent_id}: {e}")
+
     def get_torrent_progress(self, torrent_id: str) -> Union[int, str, None]:
         """
         Get the current progress percentage for a torrent or a status string.
@@ -578,7 +731,16 @@ class CheckingQueue:
             return self._get_nzb_progress(torrent_id)
 
         try:
-            status_result = self.debrid_provider.get_torrent_info_with_status(torrent_id)
+            known_provider = self._recorded_provider_name(torrent_id) is not None
+            status_result = self._provider_for_torrent(torrent_id).get_torrent_info_with_status(torrent_id)
+
+            # A 404 from a provider we only guessed at is ambiguous. Ask the rest of
+            # the chain before declaring the torrent missing -- handle_missing_torrent
+            # blacklists the magnet and regrabs, so a wrong answer here costs a release.
+            if not known_provider and self._looks_like_not_found(status_result):
+                rediscovered = self._rediscover_provider(torrent_id)
+                if rediscovered is not None:
+                    status_result = rediscovered
 
             if status_result.status == TorrentFetchStatus.OK:
                 if isinstance(status_result.data, dict):
@@ -1421,7 +1583,7 @@ class CheckingQueue:
                         else:
                             logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)")
                             try:
-                                self.debrid_provider.remove_torrent(
+                                self._provider_for_torrent(torrent_id).remove_torrent(
                                     torrent_id,
                                     removal_reason=f"Content not found in checking queue after {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)"
                                 )
@@ -1443,7 +1605,7 @@ class CheckingQueue:
                             logging.info(f"NZB {torrent_id} stalled — skipping debrid removal")
                         else:
                             try:
-                                self.debrid_provider.remove_torrent(
+                                self._provider_for_torrent(torrent_id).remove_torrent(
                                     torrent_id,
                                     removal_reason=f"No download progress after 5 minutes (stalled at {current_progress}%)"
                                 )
@@ -1701,7 +1863,7 @@ class CheckingQueue:
         # Attempt to remove torrent from debrid provider
         try:
             logging.info(f"Attempting to remove torrent {torrent_id} from debrid service due to: {reason}")
-            self.debrid_provider.remove_torrent(torrent_id, removal_reason=f"Stalled/Failed: {reason}")
+            self._provider_for_torrent(torrent_id).remove_torrent(torrent_id, removal_reason=f"Stalled/Failed: {reason}")
             logging.info(f"Successfully removed torrent {torrent_id} from debrid service.")
         except requests.exceptions.HTTPError as e:
             if hasattr(e, 'response') and e.response is not None:

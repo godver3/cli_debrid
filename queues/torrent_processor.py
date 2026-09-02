@@ -1305,6 +1305,17 @@ class TorrentProcessor:
             results, accept_uncached=accept_uncached, item=item, adding_queue_items=adding_queue_items,
         )
         if torrent_info:
+            # Stamp which provider actually holds this torrent. add_to_account tags
+            # its own successes, but the cached-hit, existing-torrent-reuse and
+            # sibling-pack paths return info straight from whichever provider
+            # answered without tagging it -- self.debrid_provider is the one thing
+            # every path updates, so it is the reliable fallback. The Adding queue
+            # persists this onto the item and the Checking queue polls that provider
+            # instead of the primary: polling the primary for a torrent a fallback
+            # holds 404s on the very first check and is misread as a missing torrent,
+            # which sends the item back to Wanted and regrabs the next release.
+            if not torrent_info.get('_provider') and self.debrid_provider is not None:
+                torrent_info['_provider'] = self.debrid_provider.PROVIDER_NAME
             try:
                 self._consolidate_covered_siblings(item, torrent_info)
             except Exception as e:

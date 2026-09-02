@@ -201,6 +201,7 @@ def update_media_item_state(item_id, state, skip_state_change_hook=False, **kwar
             'upgrading_from',
             'debrid_folder_name',
             'original_filename',
+            'debrid_provider',
         ]
         for field in optional_fields:
             if field in kwargs:
