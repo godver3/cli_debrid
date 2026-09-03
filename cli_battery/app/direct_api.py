@@ -68,16 +68,33 @@ def _ensure_worker():
         logger.warning(f"Could not start refresh worker: {e}")
 
 
-def _get_metadata_client():
-    """Return tvdb_client if TVDB API key is set, else trakt_client."""
+def _tmdb_only_available() -> bool:
+    """True when there is no TVDB key but TMDB is configured.
+
+    tvdb_client serves shows entirely from TMDB in that case, which keeps TV
+    working on setups that have neither a TVDB key nor a Trakt account.
+    """
     if tvdb_client.is_available():
+        return False
+    try:
+        from utilities.settings import get_setting
+        return bool((get_setting('TMDB', 'api_key', default='') or '').strip())
+    except Exception:
+        return False
+
+
+def _get_metadata_client():
+    """Return tvdb_client if TVDB or TMDB is configured, else trakt_client."""
+    if tvdb_client.is_available() or _tmdb_only_available():
         return tvdb_client
     return trakt_client
 
 
 def _get_metadata_source_name() -> str:
-    """Return 'tvdb' or 'trakt' depending on which client is active."""
-    return 'tvdb' if tvdb_client.is_available() else 'trakt'
+    """Return 'tvdb', 'tmdb' or 'trakt' depending on which source is active."""
+    if tvdb_client.is_available():
+        return 'tvdb'
+    return 'tmdb' if _tmdb_only_available() else 'trakt'
 
 
 def _get_local_tz():

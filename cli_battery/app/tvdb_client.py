@@ -604,6 +604,16 @@ def _get_trakt_status(imdb_id: str) -> Optional[str]:
 
 def get_show_data(imdb_id: str) -> Optional[dict]:
     """Get full show metadata + aliases + seasons/episodes."""
+    # No usable TVDB key: serve the whole show from TMDB rather than resolving a
+    # TVDB id we cannot then fetch with. Resolving one via TMDB and continuing
+    # would send us into the TVDB request below, whose failure path falls back to
+    # Trakt - useless on a setup that has neither.
+    if not is_available():
+        tmdb_api_key = _get_tmdb_api_key()
+        if tmdb_api_key:
+            return _fetch_tmdb_show_data(imdb_id, tmdb_api_key)
+        return None
+
     tvdb_id = _resolve_tvdb_id(imdb_id, media_type='show')
     if not tvdb_id:
         # TVDB hasn't linked this IMDb ID yet — try resolving via TMDB ID
@@ -991,6 +1001,28 @@ def _extract_seasons_from_extended(raw: dict) -> Optional[dict]:
 
 def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) -> Tuple[Optional[dict], Optional[str]]:
     """Fetch seasons and episodes for a show."""
+    # No usable TVDB key: build seasons from TMDB. See get_show_data above.
+    if not is_available():
+        tmdb_api_key = _get_tmdb_api_key()
+        if not tmdb_api_key:
+            return None, None
+        show = _fetch_tmdb_show_data(imdb_id, tmdb_api_key)
+        if not show:
+            return None, None
+        seasons = {}
+        for sn_str, sdata in (show.get('seasons') or {}).items():
+            try:
+                sn = int(sn_str)
+            except (TypeError, ValueError):
+                continue
+            seasons[sn] = {
+                'episode_count': sdata.get('episode_count', 0),
+                'episodes': sdata.get('episodes', {}),
+            }
+        if seasons and not include_specials:
+            seasons.pop(0, None)
+        return (seasons, 'tmdb') if seasons else (None, None)
+
     tvdb_id = _resolve_tvdb_id(imdb_id, media_type='show')
     if not tvdb_id:
         logger.warning(f"TVDB: could not resolve IMDb {imdb_id} to TVDB ID for episodes, trying Trakt fallback")
@@ -1531,6 +1563,59 @@ def _fetch_tmdb_movie_data(imdb_id: str, api_key: str) -> Optional[dict]:
         return None
 
 
+def _fetch_tmdb_episodes(tmdb_id: int, api_key: str,
+                         season_numbers: List[Optional[int]]) -> Optional[dict]:
+    """Fetch episodes per season from TMDB, shaped like _fetch_episodes_paginated.
+
+    Returns {season_number: {episode_number: {title, overview, runtime,
+    first_aired, imdb_id, absolute}}}.
+
+    TMDB gives air_date as a plain YYYY-MM-DD with no air time or network
+    timezone, so first_aired is formatted date-only. Downstream treats a
+    date-only value the same way it does for TVDB shows lacking airsTime.
+    """
+    if not tmdb_id:
+        return None
+
+    by_season: dict = {}
+    for sn in season_numbers:
+        if sn is None:
+            continue
+        try:
+            resp = requests.get(
+                f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{sn}",
+                params={'api_key': api_key},
+                timeout=REQUEST_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                logger.debug(f"TMDB season {sn} fetch failed for tmdb_id={tmdb_id}: {resp.status_code}")
+                continue
+
+            ep_dict: dict = {}
+            for ep in (resp.json().get('episodes') or []):
+                ep_num = ep.get('episode_number')
+                if ep_num is None:
+                    continue
+                ep_dict[ep_num] = {
+                    'title': ep.get('name', '') or '',
+                    'overview': ep.get('overview', '') or '',
+                    'runtime': ep.get('runtime') or 0,
+                    'first_aired': _format_air_date(ep.get('air_date')),
+                    'imdb_id': None,
+                    'absolute': None,
+                }
+            if ep_dict:
+                by_season[sn] = ep_dict
+        except Exception as e:
+            logger.debug(f"TMDB season {sn} error for tmdb_id={tmdb_id}: {e}")
+
+    if by_season:
+        total = sum(len(v) for v in by_season.values())
+        logger.info(f"TMDB: fetched {total} episode(s) across {len(by_season)} season(s) "
+                    f"for tmdb_id={tmdb_id}")
+    return by_season or None
+
+
 def _fetch_tmdb_show_data(imdb_id: str, api_key: str) -> Optional[dict]:
     """Fetch show metadata from TMDB as fallback when TVDB cannot resolve the ID."""
     tmdb_id = _resolve_tmdb_id_from_imdb(imdb_id, api_key, media_type='show')
@@ -1570,15 +1655,23 @@ def _fetch_tmdb_show_data(imdb_id: str, api_key: str) -> Optional[dict]:
 
         genres = [g.get('name', '') for g in (raw.get('genres') or []) if isinstance(g, dict)]
 
-        # Build seasons dict
+        # Build seasons dict, populating episodes from TMDB. Without episodes
+        # the show cannot expand into wanted items, so a show-level-only result
+        # is no more useful than none at all.
+        episodes_by_season = _fetch_tmdb_episodes(
+            tmdb_id, api_key,
+            [s.get('season_number') for s in (raw.get('seasons') or [])],
+        ) or {}
+
         seasons = {}
         for s in (raw.get('seasons') or []):
             sn = s.get('season_number')
             if sn is not None:
+                fetched = episodes_by_season.get(sn) or {}
                 seasons[str(sn)] = {
                     'number': sn,
-                    'episode_count': s.get('episode_count', 0),
-                    'episodes': {},
+                    'episode_count': len(fetched) or s.get('episode_count', 0),
+                    'episodes': fetched,
                 }
 
         data = {
