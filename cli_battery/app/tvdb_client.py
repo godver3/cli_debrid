@@ -118,6 +118,32 @@ def is_available() -> bool:
         return False
 
 
+def _trakt_configured() -> bool:
+    """True when Trakt has stored tokens.
+
+    Deliberately does not call trakt_auth.is_authenticated(), which can fire a
+    network token refresh - this runs on every metadata client selection.
+    """
+    try:
+        from utilities.settings import get_setting
+        return bool((get_setting('Trakt', 'access_token', default='') or '').strip()
+                    or (get_setting('Trakt', 'refresh_token', default='') or '').strip())
+    except Exception:
+        return False
+
+
+def tmdb_only_mode() -> bool:
+    """True when shows can only be served from TMDB.
+
+    Requires a TMDB key and the absence of both richer sources. Trakt is
+    preferred over TMDB when configured: TMDB gives no per-episode IMDb ids, no
+    absolute numbering, and date-only air times.
+    """
+    if is_available() or _trakt_configured():
+        return False
+    return bool(_get_tmdb_api_key())
+
+
 def _ensure_token() -> bool:
     """Authenticate with TVDB and cache the bearer token. Returns True on success."""
     global _token
@@ -604,14 +630,15 @@ def _get_trakt_status(imdb_id: str) -> Optional[str]:
 
 def get_show_data(imdb_id: str) -> Optional[dict]:
     """Get full show metadata + aliases + seasons/episodes."""
-    # No usable TVDB key: serve the whole show from TMDB rather than resolving a
-    # TVDB id we cannot then fetch with. Resolving one via TMDB and continuing
-    # would send us into the TVDB request below, whose failure path falls back to
-    # Trakt - useless on a setup that has neither.
+    # No usable TVDB key: don't resolve a TVDB id we cannot then fetch with.
+    # Resolving one via TMDB and continuing would send us into the TVDB request
+    # below, which needs the key we don't have.
     if not is_available():
-        tmdb_api_key = _get_tmdb_api_key()
-        if tmdb_api_key:
-            return _fetch_tmdb_show_data(imdb_id, tmdb_api_key)
+        if tmdb_only_mode():
+            return _fetch_tmdb_show_data(imdb_id, _get_tmdb_api_key())
+        if _trakt_configured():
+            from . import trakt_client
+            return trakt_client.get_show_data(imdb_id)
         return None
 
     tvdb_id = _resolve_tvdb_id(imdb_id, media_type='show')
@@ -1001,12 +1028,16 @@ def _extract_seasons_from_extended(raw: dict) -> Optional[dict]:
 
 def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) -> Tuple[Optional[dict], Optional[str]]:
     """Fetch seasons and episodes for a show."""
-    # No usable TVDB key: build seasons from TMDB. See get_show_data above.
+    # No usable TVDB key: prefer Trakt, else build seasons from TMDB.
+    # See get_show_data above.
     if not is_available():
-        tmdb_api_key = _get_tmdb_api_key()
-        if not tmdb_api_key:
+        if not tmdb_only_mode():
+            if _trakt_configured():
+                from . import trakt_client
+                return trakt_client.get_show_seasons_and_episodes(
+                    imdb_id, include_specials=include_specials)
             return None, None
-        show = _fetch_tmdb_show_data(imdb_id, tmdb_api_key)
+        show = _fetch_tmdb_show_data(imdb_id, _get_tmdb_api_key())
         if not show:
             return None, None
         seasons = {}

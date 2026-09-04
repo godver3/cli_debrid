@@ -69,18 +69,14 @@ def _ensure_worker():
 
 
 def _tmdb_only_available() -> bool:
-    """True when there is no TVDB key but TMDB is configured.
+    """True when shows must come from TMDB: no TVDB key, no Trakt tokens.
 
     tvdb_client serves shows entirely from TMDB in that case, which keeps TV
-    working on setups that have neither a TVDB key nor a Trakt account.
+    working on setups that have neither a TVDB key nor a Trakt account. Trakt
+    wins when configured - TMDB has no per-episode IMDb ids, no absolute
+    numbering, and date-only air times.
     """
-    if tvdb_client.is_available():
-        return False
-    try:
-        from utilities.settings import get_setting
-        return bool((get_setting('TMDB', 'api_key', default='') or '').strip())
-    except Exception:
-        return False
+    return tvdb_client.tmdb_only_mode()
 
 
 def _get_metadata_client():
