@@ -68,16 +68,29 @@ def _ensure_worker():
         logger.warning(f"Could not start refresh worker: {e}")
 
 
+def _tmdb_only_available() -> bool:
+    """True when shows must come from TMDB: no TVDB key, no Trakt tokens.
+
+    tvdb_client serves shows entirely from TMDB in that case, which keeps TV
+    working on setups that have neither a TVDB key nor a Trakt account. Trakt
+    wins when configured - TMDB has no per-episode IMDb ids, no absolute
+    numbering, and date-only air times.
+    """
+    return tvdb_client.tmdb_only_mode()
+
+
 def _get_metadata_client():
-    """Return tvdb_client if TVDB API key is set, else trakt_client."""
-    if tvdb_client.is_available():
+    """Return tvdb_client if TVDB or TMDB is configured, else trakt_client."""
+    if tvdb_client.is_available() or _tmdb_only_available():
         return tvdb_client
     return trakt_client
 
 
 def _get_metadata_source_name() -> str:
-    """Return 'tvdb' or 'trakt' depending on which client is active."""
-    return 'tvdb' if tvdb_client.is_available() else 'trakt'
+    """Return 'tvdb', 'tmdb' or 'trakt' depending on which source is active."""
+    if tvdb_client.is_available():
+        return 'tvdb'
+    return 'tmdb' if _tmdb_only_available() else 'trakt'
 
 
 def _get_local_tz():
