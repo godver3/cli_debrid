@@ -218,7 +218,8 @@ class TestProviderResolutionSemantics(unittest.TestCase):
             for item in items:
                 if item.get('filled_by_torrent_id') == torrent_id:
                     name = item.get('debrid_provider')
-                    break
+                    if name:
+                        break
         if not name:
             return default
         return self._by_name(name) or default
@@ -248,6 +249,17 @@ class TestProviderResolutionSemantics(unittest.TestCase):
     def test_rd_torrent_still_goes_to_rd(self):
         items = [{'id': 2, 'filled_by_torrent_id': 'XYZ', 'debrid_provider': 'Real-Debrid'}]
         self.assertIs(self._resolve('XYZ', {}, items, self.rd), self.rd)
+
+    def test_sibling_item_with_the_stamp_is_found_past_an_unstamped_one(self):
+        """A season-pack torrent creates several Checking items sharing one
+        torrent_id. An unstamped sibling sitting first in the list (e.g. added
+        through a queue that doesn't stamp debrid_provider) must not stop the
+        lookup before it reaches a sibling that does carry the name."""
+        items = [
+            {'id': 1, 'filled_by_torrent_id': 'PACK', 'debrid_provider': None},
+            {'id': 2, 'filled_by_torrent_id': 'PACK', 'debrid_provider': 'AllDebrid'},
+        ]
+        self.assertIs(self._resolve('PACK', {}, items, self.rd), self.ad)
 
 
 class TestRediscoveryDoesNotCorruptRouting(unittest.TestCase):

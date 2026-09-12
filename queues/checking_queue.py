@@ -597,12 +597,16 @@ class CheckingQueue:
         name = self._torrent_providers.get(torrent_id)
         if name:
             return name
+        # A season-pack torrent creates several Checking-queue items sharing one
+        # torrent_id. Keep checking siblings instead of stopping at the first
+        # match — an item added before this column existed (or through a queue
+        # that doesn't stamp it) sits alongside one that does carry the name.
         for item in self.items:
             if item.get('filled_by_torrent_id') == torrent_id:
                 name = item.get('debrid_provider')
                 if name:
                     self._torrent_providers[torrent_id] = name
-                return name
+                    return name
         return None
 
     def _provider_for_torrent(self, torrent_id: str):
