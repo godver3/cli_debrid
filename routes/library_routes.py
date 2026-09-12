@@ -5517,10 +5517,14 @@ def fix_match_apply():
 
             # Same predicate rather than an id list of the rows just selected:
             # no placeholder-count ceiling on a long-running show.
-            set_parts = ['imdb_id = ?', 'tmdb_id = ?']
-            set_params = [new_imdb_id, new_tmdb_id]
-            # Only overwrite title/year when the provider actually gave us one,
-            # so a sparse metadata record cannot blank them out.
+            set_parts = ['imdb_id = ?']
+            set_params = [new_imdb_id]
+            # Only overwrite tmdb_id/title/year when the provider actually gave us
+            # one, so a sparse metadata record (no TMDB match for this IMDb ID)
+            # cannot blank out a previously-working value on every matched row.
+            if new_tmdb_id:
+                set_parts.append('tmdb_id = ?')
+                set_params.append(new_tmdb_id)
             if new_title:
                 set_parts.append('title = ?')
                 set_params.append(new_title)

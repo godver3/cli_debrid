@@ -621,6 +621,32 @@ class TestFixMatchApply(FixMatchTestBase):
             ],
         )
 
+    def test_preserves_existing_tmdb_id_when_new_metadata_has_none(self):
+        # A metadata record with no 'tmdb' key must not blank out a row's
+        # previously-working tmdb_id -- same "only overwrite if truthy" guard
+        # title/year already get.
+        sparse_metadata = {
+            'title': 'Foundation', 'year': 2021, 'type': 'show',
+            'ids': {'imdb': 'tt13375737', 'slug': 'foundation-2021'},
+        }
+        self.use_battery(self.battery, metadata=sparse_metadata)
+
+        payload, status = self.apply()
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload['success'], payload)
+        self.assertIsNone(payload['tmdb_id'])
+
+        rows = self.fetch_rows()
+        self.assertEqual(
+            [(r['imdb_id'], r['tmdb_id']) for r in rows],
+            [
+                ('tt13375737', '111'),  # tmdb_id preserved, not wiped to NULL
+                ('tt13375737', '111'),
+                ('tt999', '222'),  # a different entry, left alone
+            ],
+        )
+
     def test_repoints_the_battery_item_and_both_mapping_caches(self):
         self.use_battery(self.battery, metadata=SHOW_METADATA)
 
