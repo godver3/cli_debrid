@@ -118,11 +118,33 @@ def _sync_library_keys_for_new_items(plex_url: str, plex_token: str) -> Dict[str
             try:
                 # Single Plex API call — build in-memory lookup dicts
                 plex_items = client.get_all_items_with_guids(plex_type=plex_type)
+                # A page fetch failing partway through leaves `plex_items` a PARTIAL
+                # inventory with no other signal of that — see get_all_items_with_guids.
+                # Blank-key assignment (Pass 1) can only ever fill an empty value, so
+                # it's safe to run on a partial inventory (worst case: some rows just
+                # don't resolve this pass). Existing-key invalidation (Pass 2,
+                # split-apart detection) is NOT safe on partial data: a legitimate
+                # item dropped from this fetch could make an unrelated row's file
+                # path look like it moved. Require a complete inventory for that pass.
+                inventory_complete = not getattr(client, 'last_fetch_incomplete', False)
 
                 file_map:  dict = {}   # location_on_disk → ratingKey
                 imdb_map:  dict = {}   # imdb_id          → ratingKey
                 tmdb_map:  dict = {}   # tmdb_id (str)    → ratingKey
                 title_map: dict = {}   # (title_lower, year_str) → ratingKey
+                # Keys seen under more than one distinct ratingKey this fetch — e.g.
+                # two Plex items sharing an IMDb ID (a real split-apart in progress).
+                # Last-write-wins previously resolved these to whichever ratingKey the
+                # API happened to return last; excluded here instead so an ambiguous
+                # key can never silently steer a row onto the wrong item.
+                ambiguous: dict = {'file': set(), 'imdb': set(), 'tmdb': set(), 'title': set()}
+
+                def _set_unique(bucket: dict, key, rk: str, ambiguous_key: str) -> None:
+                    existing = bucket.get(key)
+                    if existing is not None and existing != rk:
+                        ambiguous[ambiguous_key].add(key)
+                        return
+                    bucket[key] = rk
 
                 for pi in plex_items:
                     rk = pi.get('ratingKey')
@@ -130,18 +152,35 @@ def _sync_library_keys_for_new_items(plex_url: str, plex_token: str) -> Dict[str
                         continue
                     for fp in (pi.get('file_paths') or []):
                         if fp:
-                            file_map[fp] = rk
+                            _set_unique(file_map, fp, rk, 'file')
                     if pi.get('imdb_id'):
-                        imdb_map[pi['imdb_id']] = rk
+                        _set_unique(imdb_map, pi['imdb_id'], rk, 'imdb')
                     if pi.get('tmdb_id'):
-                        tmdb_map[str(pi['tmdb_id'])] = rk
+                        _set_unique(tmdb_map, str(pi['tmdb_id']), rk, 'tmdb')
                     if pi.get('title') and pi.get('year'):
-                        title_map[(pi['title'].lower(), str(pi['year']))] = rk
+                        _set_unique(title_map, (pi['title'].lower(), str(pi['year'])), rk, 'title')
+
+                for key in ambiguous['file']:
+                    file_map.pop(key, None)
+                for key in ambiguous['imdb']:
+                    imdb_map.pop(key, None)
+                for key in ambiguous['tmdb']:
+                    tmdb_map.pop(key, None)
+                for key in ambiguous['title']:
+                    title_map.pop(key, None)
+                if any(ambiguous.values()):
+                    logger.warning(
+                        f"ms-key sync ({db_type}): {sum(len(v) for v in ambiguous.values())} "
+                        f"ambiguous identity key(s) (matched more than one Plex item) excluded "
+                        f"from this pass rather than guessed"
+                    )
 
                 # resolved: list of (db_id, new_rk, old_rk)
                 resolved = []
 
-                # Pass 1: rows missing ms_item_id entirely
+                # Pass 1: rows missing ms_item_id entirely — a blank-key assignment
+                # can only add an association, never invalidate an existing one, so
+                # this is safe to run even against a partial inventory.
                 for row in rows_missing:
                     db_id   = row['id']
                     old_rk  = ''
@@ -161,17 +200,28 @@ def _sync_library_keys_for_new_items(plex_url: str, plex_token: str) -> Dict[str
                         resolved.append((db_id, new_rk, old_rk))
 
                 # Pass 2: rows that have ms_item_id but Plex file-path now maps
-                # to a different ratingKey — these are split-apart items.
-                # Only file-path matching is reliable here; imdb_id would resolve
-                # to whichever split item Plex returns first.
-                for row in rows_split:
-                    db_id   = row['id']
-                    old_rk  = row['ms_item_id']
-                    loc     = row['location_on_disk']
+                # to a different ratingKey — these are split-apart items. Only
+                # file-path matching is reliable here; imdb_id would resolve to
+                # whichever split item Plex returns first. Requires a complete,
+                # non-ambiguous inventory: this pass REPLACES an existing
+                # association, so acting on partial or duplicate-matched data
+                # risks invalidating a correct key instead of only fixing a
+                # genuinely stale one.
+                if not inventory_complete:
+                    logger.warning(
+                        f"ms-key sync ({db_type}): Plex inventory fetch was incomplete — "
+                        f"skipping split-apart detection this run ({len(rows_split)} "
+                        f"candidate(s) deferred); blank-key assignment still applied"
+                    )
+                else:
+                    for row in rows_split:
+                        db_id   = row['id']
+                        old_rk  = row['ms_item_id']
+                        loc     = row['location_on_disk']
 
-                    new_rk = file_map.get(loc)
-                    if new_rk and new_rk != old_rk:
-                        resolved.append((db_id, new_rk, old_rk))
+                        new_rk = file_map.get(loc)
+                        if new_rk and new_rk != old_rk:
+                            resolved.append((db_id, new_rk, old_rk))
 
                 if not resolved:
                     continue
@@ -183,9 +233,20 @@ def _sync_library_keys_for_new_items(plex_url: str, plex_token: str) -> Dict[str
                     changed_item_ids = []
 
                     for db_id, new_rk, old_rk in resolved:
-                        cursor.execute(
-                            'UPDATE media_items SET ms_item_id = ? WHERE id = ?',
-                            (new_rk, db_id))
+                        # Predicate pins the write to the ms_item_id value this row had
+                        # when it was read above — if something else changed it
+                        # concurrently (another sync pass, a manual fix), this update
+                        # is a no-op (rowcount 0) instead of blindly clobbering that
+                        # newer value with data read before it happened.
+                        if old_rk:
+                            cursor.execute(
+                                'UPDATE media_items SET ms_item_id = ? WHERE id = ? AND ms_item_id = ?',
+                                (new_rk, db_id, old_rk))
+                        else:
+                            cursor.execute(
+                                "UPDATE media_items SET ms_item_id = ? WHERE id = ? "
+                                "AND (ms_item_id IS NULL OR ms_item_id = '')",
+                                (new_rk, db_id))
                         if cursor.rowcount:
                             counts[count_key] += 1
                             if old_rk and old_rk != new_rk:

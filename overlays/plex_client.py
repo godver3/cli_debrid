@@ -44,6 +44,8 @@ class PlexClient:
         self.logger = logging.getLogger(__name__)
         self.session = requests.Session()
         self.session.headers.update({'Accept': 'application/json'})
+        # Set by get_all_items_with_guids on a partial fetch — see there.
+        self.last_fetch_incomplete = False
 
     def _make_request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """
@@ -696,6 +698,13 @@ class PlexClient:
         sections = self.get_all_sections()
         results = []
         seen_keys = set()
+        # Set by the exception branch below when a page fetch fails partway through
+        # a section — this call's `results` is then a PARTIAL inventory, not proof
+        # any given item is actually missing from Plex. Callers that use this data
+        # to invalidate/rewrite an *existing* association (not just fill a blank
+        # one) must check this and skip that pass rather than act on a partial
+        # picture — see _sync_library_keys_for_new_items.
+        self.last_fetch_incomplete = False
 
         for section in sections:
             # movies belong in movie sections (type='movie'), shows in show sections
@@ -767,6 +776,7 @@ class PlexClient:
                 except Exception as e:
                     self.logger.error(
                         f"Failed to fetch section {section['title']} type={plex_type} offset={container_start}: {e}")
+                    self.last_fetch_incomplete = True
                     break
 
         self.logger.info(
