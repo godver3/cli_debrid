@@ -18,7 +18,6 @@ from cli_battery.app.direct_api import DirectAPI
 from cli_battery.app import trakt_client
 from cli_battery.app.database import DatabaseManager
 from database.database_reading import get_media_item_presence, get_all_media_items, get_show_episode_identifiers_from_db, get_media_item_ids
-from utilities.title_country import prefer_source_title_on_country_conflict
 
 # Initialize DirectAPI at module level
 direct_api = DirectAPI()
@@ -201,27 +200,15 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
             logging.error(f"Unexpected metadata format for IMDb ID: {imdb_id}. Expected dict, got {type(metadata)}")
             return {}
 
-        battery_title = metadata.get('title', 'Unknown Title')
-        source_title = original_item.get('title') if original_item else None
-        country_code = (metadata.get('country') or '').lower()
-        resolved_title = prefer_source_title_on_country_conflict(
-            source_title, battery_title, metadata_country=country_code
-        ) or battery_title
-        if source_title and resolved_title != battery_title:
-            logging.info(
-                f"Preserving source title '{source_title}' over battery title "
-                f"'{battery_title}' for {imdb_id} (country-region conflict)"
-            )
-
         processed_metadata = {
             'imdb_id': imdb_id,  # Default to the input imdb_id
             'tmdb_id': tmdb_id,  # Default to the input tmdb_id
-            'title': resolved_title,
+            'title': metadata.get('title', 'Unknown Title'),
             'year': None,
             'genres': [],
             'runtime': None,
             'airs': metadata.get('airs', {}),
-            'country': country_code,  # Add country code, handling None
+            'country': (metadata.get('country') or '').lower(),  # Add country code, handling None
             # Preserve content source information if available
             'content_source': original_item.get('content_source') if original_item else None,
             'content_source_detail': original_item.get('content_source_detail') if original_item else None,
@@ -809,23 +796,6 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             processed_count += 1
             
             try:
-                # Bulk battery metadata can carry a wrong regional franchise title
-                # (e.g. "The Floor (PT)" for US IMDb). Prefer the content-source
-                # title when its country marker disagrees.
-                battery_title = current_item_metadata.get('title')
-                source_title = item_from_input_list.get('title')
-                resolved_title = prefer_source_title_on_country_conflict(
-                    source_title,
-                    battery_title,
-                    metadata_country=current_item_metadata.get('country'),
-                )
-                if source_title and resolved_title and resolved_title != battery_title:
-                    logging.info(
-                        f"Preserving source title '{source_title}' over battery title "
-                        f"'{battery_title}' for {imdb_id} (country-region conflict)"
-                    )
-                    current_item_metadata['title'] = resolved_title
-
                 current_item_metadata['content_source'] = item_from_input_list.get('content_source')
                 current_item_metadata['content_source_detail'] = item_from_input_list.get('content_source_detail')
                 current_item_metadata['monitor_missing_episodes_only'] = bool(
