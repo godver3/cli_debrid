@@ -10,45 +10,20 @@ from scraper.functions.other_functions import smart_search
 from scraper.functions.adult_terms import adult_terms
 from scraper.functions.common import *
 from datetime import datetime, timezone
+from utilities.title_country import (
+    extract_title_country_codes,
+)
 # --- Import DirectAPI if type hinting is desired, ensure it's available in the execution path ---
 # from cli_battery.app.direct_api import DirectAPI # Or adjust path as needed
 
 def detect_language_codes(text: str) -> List[str]:
     """
-    Fallback function to detect language/country codes in a title or alias.
-    This is used as a fallback when PTT parsing fails.
-    Returns a list of detected codes (e.g., ['UK', 'US', 'AU']).
+    Detect language/country codes in a title or alias.
+
+    Prefer parenthetical markers like "(US)" / "(PT)" and standalone tokens
+    like "AU" in release names. Used when PTT does not populate `country`.
     """
-    if not text:
-        return []
-    
-    # Common language/country codes that appear in titles
-    language_codes = {
-        'UK', 'US', 'AU', 'CA', 'NZ', 'DE', 'FR', 'ES', 'IT', 'NL', 'SE', 'NO', 'DK', 'FI',
-        'PL', 'CZ', 'HU', 'RO', 'BG', 'HR', 'RS', 'SI', 'SK', 'EE', 'LV', 'LT', 'PT', 'GR',
-        'JP', 'KR', 'CN', 'IN', 'BR', 'MX', 'AR', 'CL', 'PE', 'CO', 'VE', 'EC', 'BO', 'PY',
-        'UY', 'GY', 'SR', 'GF', 'FK', 'GS', 'IO', 'PN', 'TC', 'VG', 'AI', 'BM', 'KY', 'MS',
-        'KN', 'LC', 'VC', 'AG', 'DM', 'GD', 'TT', 'BB', 'JM', 'HT', 'DO', 'PR', 'CU', 'JM',
-        'BS', 'TC', 'AW', 'CW', 'SX', 'BQ', 'BL', 'MF', 'GP', 'MQ', 'RE', 'YT', 'NC', 'PF',
-        'WF', 'TF', 'PM', 'ST', 'CV', 'GM', 'GN', 'GW', 'SL', 'LR', 'CI', 'BF', 'ML', 'NE',
-        'TD', 'SD', 'ER', 'DJ', 'SO', 'KE', 'TZ', 'UG', 'RW', 'BI', 'CD', 'CG', 'GA', 'GQ',
-        'ST', 'AO', 'ZM', 'ZW', 'BW', 'NA', 'SZ', 'LS', 'MG', 'MU', 'SC', 'KM', 'YT', 'RE',
-        'MZ', 'MW', 'ZW', 'ZM', 'TZ', 'KE', 'UG', 'RW', 'BI', 'CD', 'CG', 'GA', 'GQ', 'ST',
-        'AO', 'ZM', 'ZW', 'BW', 'NA', 'SZ', 'LS', 'MG', 'MU', 'SC', 'KM', 'YT', 'RE', 'MZ',
-        'MW', 'ZW', 'ZM', 'TZ', 'KE', 'UG', 'RW', 'BI', 'CD', 'CG', 'GA', 'GQ', 'ST', 'AO'
-    }
-    
-    # Split text into words and check for language codes
-    words = text.upper().split()
-    detected_codes = []
-    
-    for word in words:
-        # Remove common punctuation that might be attached to codes
-        clean_word = re.sub(r'[^\w]', '', word)
-        if clean_word in language_codes:
-            detected_codes.append(clean_word)
-    
-    return detected_codes
+    return extract_title_country_codes(text)
 
 def extract_year_from_title(title: str) -> Optional[int]:
     """
@@ -553,18 +528,23 @@ def filter_results(
             
             detected_codes_in_original = []
             for check_title in all_titles_to_check:
-                # Use PTT parser to detect country codes in titles/aliases
+                # Use PTT parser to detect country codes in titles/aliases, then
+                # always merge custom detection so parenthetical codes like
+                # "(PT)" / "(US)" still enable hard filtering when PTT omits them.
                 try:
                     from scraper.functions.ptt_parser import parse_with_ptt
                     parsed_alias = parse_with_ptt(check_title)
                     if parsed_alias.get('country'):
                         country_code_mapping = {'gb': 'UK', 'us': 'US', 'au': 'AU', 'ca': 'CA', 'nz': 'NZ'}
-                        detected_code = country_code_mapping.get(parsed_alias['country'].lower(), parsed_alias['country'].upper())
+                        detected_code = country_code_mapping.get(
+                            parsed_alias['country'].lower(),
+                            parsed_alias['country'].upper(),
+                        )
                         detected_codes_in_original.append(detected_code)
-                except Exception as e:
-                    # Fallback to our custom detection if PTT parsing fails
-                    codes = detect_language_codes(check_title)
-                    detected_codes_in_original.extend(codes)
+                except Exception:
+                    pass
+
+                detected_codes_in_original.extend(detect_language_codes(check_title))
             
             # Remove duplicates while preserving order
             detected_codes_in_original = list(dict.fromkeys(detected_codes_in_original))
@@ -849,6 +829,11 @@ def filter_results(
                 result_language_code = None
                 if result_country:
                     result_language_code = country_code_mapping.get(result_country.lower(), result_country.upper())
+                if not result_language_code:
+                    # PTT often misses parenthetical / standalone region tokens
+                    fallback_codes = detect_language_codes(original_title)
+                    if fallback_codes:
+                        result_language_code = fallback_codes[0]
                 
                 if result_language_code:
                     # Result has language codes - check if they match expected
@@ -871,6 +856,10 @@ def filter_results(
                 result_language_code = None
                 if result_country:
                     result_language_code = country_code_mapping.get(result_country.lower(), result_country.upper())
+                if not result_language_code:
+                    fallback_codes = detect_language_codes(original_title)
+                    if fallback_codes:
+                        result_language_code = fallback_codes[0]
                 
                 if result_language_code:
                     # Result has language codes but original doesn't - apply small ranking penalty
