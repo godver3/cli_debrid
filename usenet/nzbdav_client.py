@@ -30,6 +30,7 @@ LIMITATIONS vs climount:
     config 'mounted_file_location' minus '/__all__').
 """
 
+import hashlib
 import logging
 import os
 import re
@@ -270,6 +271,11 @@ class NzbdavClient:
         # Flag set by add_nzb_content when nzbdav reports ARTICLE_NOT_FOUND-style
         # errors (matches CliMountClient.last_missing_segments contract).
         self.last_missing_segments = False
+        # Zurg (and other generic SAB-emulating mounts) store content flat as
+        # <mount_path>/<job_name>/ instead of NzbDAV's <mount_path>/<cat>/<job_name>/.
+        # The 'provider' key still selects this class (same submit/poll/health-check
+        # logic applies); this flag only changes how the WebDAV mount is browsed.
+        self.flat_layout = (cfg.get('provider') or '').strip().lower() == 'zurg'
 
     # -- internal helpers ---------------------------------------------------
 
@@ -364,13 +370,26 @@ class NzbdavClient:
                                                tags=tags, tags_exclusive=tags_exclusive) or self.default_category
         # nzbdav uses `nzbname` for the resulting folder name; default to title
         nzbname = title or 'download'
-        filename = f'{nzbname}.nzb'
+        content_bytes = nzb_content.encode('utf-8')
+        # Zurg (unlike real nzbdav) derives release identity from the uploaded .nzb
+        # FILENAME, not from `nzbname`/the resulting folder — it explicitly does not
+        # detect in-place content swaps under the same filename. Two different
+        # candidate releases can legitimately share an nzbname (e.g. a season pack
+        # retried after a rejection), so on Zurg a content-hash suffix keeps every
+        # distinct payload's filename unique and prevents a retry from being served
+        # out of the previous attempt's cached/rejected state. `nzbname` (the folder
+        # name) is left untouched so existing folder-lookup/dedup logic is unaffected.
+        if self.flat_layout:
+            content_hash = hashlib.sha1(content_bytes).hexdigest()[:8]
+            filename = f'{nzbname}-{content_hash}.nzb'
+        else:
+            filename = f'{nzbname}.nzb'
 
         try:
             r = api.post(
                 self._sab_url(),
                 params=self._sab_params(mode='addfile', cat=cat, nzbname=nzbname),
-                files={'name': (filename, nzb_content.encode('utf-8'), 'application/x-nzb')},
+                files={'name': (filename, content_bytes, 'application/x-nzb')},
                 timeout=30,
             )
             if r.status_code == 200:
@@ -451,12 +470,31 @@ class NzbdavClient:
         """
         return self.mount_path
 
-    def _find_nzb_folder(self, job_norm: str, original_name: str = '') -> Optional[str]:
-        """Find an nzbdav content folder matching the job-name.
+    def _entry_parent_dirs(self, content_root: str) -> list:
+        """Directories whose immediate children are job/release folders.
 
-        nzbdav has no `/api/browse/nzbs/<name>` endpoint, so we list the host
-        mount filesystem under <content_root>/<cat>/. We try `original_name`
-        as a fast direct stat first, then fall through to a normalised scan.
+        NzbDAV nests job folders under a category dir (<content_root>/<cat>/<job>/),
+        so the parents to scan are each category subdir. Zurg and other flat-layout
+        SAB-emulation mounts put job folders directly under content_root, so the
+        only parent to scan is content_root itself — no category level exists.
+        """
+        if self.flat_layout:
+            return [content_root]
+        try:
+            return [os.path.join(content_root, d) for d in os.listdir(content_root)
+                    if os.path.isdir(os.path.join(content_root, d))]
+        except Exception as exc:
+            logging.warning(f'[NzbDAV] _entry_parent_dirs scan error: {exc}')
+            return []
+
+    def _find_nzb_folder(self, job_norm: str, original_name: str = '') -> Optional[str]:
+        """Find an nzbdav/zurg content folder matching the job-name.
+
+        Neither backend exposes a `/api/browse/nzbs/<name>` endpoint, so we list
+        the host mount filesystem instead (under <content_root>/<cat>/ for nzbdav,
+        directly under <content_root>/ for flat-layout mounts like Zurg). We try
+        `original_name` as a fast direct stat first, then fall through to a
+        normalised scan.
         """
         def _norm(s):
             return re.sub(r'[^a-z0-9]', '', s.lower())
@@ -466,8 +504,15 @@ class NzbdavClient:
             logging.debug(f'[NzbDAV] content root not found: {content_root}')
             return None
 
-        # Exact + nzbdav dedup-suffix matches ("Name", "Name (2)", "Name (3)").
-        # nzbdav appends " (N)" when a folder of that name already exists, so on a
+        # Flat layout: the job folder name IS the release name, so a direct stat
+        # resolves it without any scan at all.
+        if self.flat_layout and original_name:
+            direct_path = os.path.join(content_root, original_name)
+            if os.path.isdir(direct_path):
+                return original_name
+
+        # Exact + dedup-suffix matches ("Name", "Name (2)", "Name (3)").
+        # nzbdav/zurg append " (N)" when a folder of that name already exists, so on a
         # re-grab/upgrade the freshly-downloaded copy carries the newest mtime.
         # Picking the newest avoids resolving to a stale older copy (which the old
         # fast-path did by returning the bare exact name). The match is precise —
@@ -476,10 +521,7 @@ class NzbdavClient:
         dedup_re = re.compile(r'^' + re.escape(original_name) + r' \(\d+\)$') if original_name else None
         dedup_matches = []  # (entry, mtime)
         try:
-            for cat_dir in os.listdir(content_root):
-                cat_path = os.path.join(content_root, cat_dir)
-                if not os.path.isdir(cat_path):
-                    continue
+            for cat_path in self._entry_parent_dirs(content_root):
                 for entry in os.listdir(cat_path):
                     if original_name and (entry == original_name or (dedup_re and dedup_re.match(entry))):
                         try:
@@ -499,10 +541,7 @@ class NzbdavClient:
 
         # Fuzzy fallback: normalised match (unchanged behaviour).
         try:
-            for cat_dir in os.listdir(content_root):
-                cat_path = os.path.join(content_root, cat_dir)
-                if not os.path.isdir(cat_path):
-                    continue
+            for cat_path in self._entry_parent_dirs(content_root):
                 for entry in os.listdir(cat_path):
                     name_norm = _norm(entry)
                     if name_norm == job_norm or job_norm in name_norm or name_norm in job_norm:
@@ -548,9 +587,17 @@ class NzbdavClient:
         content_root = self._content_root()
         if not os.path.isdir(content_root):
             return []
+        if self.flat_layout:
+            folder_paths = [os.path.join(content_root, folder_name)]
+        else:
+            try:
+                folder_paths = [os.path.join(content_root, cat_dir, folder_name)
+                                 for cat_dir in os.listdir(content_root)]
+            except Exception as exc:
+                logging.warning(f'[NzbDAV] _list_nzb_folder_files scan error for {folder_name!r}: {exc}')
+                folder_paths = []
         try:
-            for cat_dir in os.listdir(content_root):
-                folder_path = os.path.join(content_root, cat_dir, folder_name)
+            for folder_path in folder_paths:
                 if not os.path.isdir(folder_path):
                     continue
                 results = []
