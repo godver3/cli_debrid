@@ -3296,8 +3296,12 @@ def perform_recovery():
 
                 # Call add_media_item and handle potential IntegrityError
                 try:
-                    # Pass the explicitly constructed and filtered dictionary
-                    item_id = add_media_item(db_item_filtered)
+                    # Pass the explicitly constructed and filtered dictionary.
+                    # user_initiated=True: an admin explicitly triggered this
+                    # recovery, so a ghostlisted/blacklisted row should be
+                    # adopted (and unghosted) rather than silently refused --
+                    # the same reasoning as the external-add import path.
+                    item_id = add_media_item(db_item_filtered, user_initiated=True)
                     if item_id:
                         successful_recoveries += 1
                     else:
@@ -3590,8 +3594,11 @@ def _describe_add_media_item_failure(item: dict) -> str:
 
         conn = get_db_connection()
         try:
-            if item_type == 'episode' and item.get('season_number') is not None \
-                    and item.get('episode_number') is not None:
+            # Key presence, not value truthiness -- must match add_media_item's
+            # own guard exactly ('season_number' in item and 'episode_number' in
+            # item), or this can silently take the unscoped branch/match the
+            # wrong row and misreport why an add failed.
+            if item_type == 'episode' and 'season_number' in item and 'episode_number' in item:
                 query = ('SELECT id, state, ghostlisted, version FROM media_items '
                          'WHERE (imdb_id = ? OR tmdb_id = ?) AND type = ? '
                          'AND season_number = ? AND episode_number = ? '
@@ -5002,7 +5009,10 @@ def perform_riven_recovery(): # New function
                     raise ValueError(f"Missing essential data (imdb_id or type) after filtering")
 
                 try:
-                    item_id = add_media_item(db_item_filtered)
+                    # user_initiated=True: an admin explicitly triggered this
+                    # recovery, so a ghostlisted/blacklisted row should be
+                    # adopted (and unghosted) rather than silently refused.
+                    item_id = add_media_item(db_item_filtered, user_initiated=True)
                     if item_id:
                         # --- Create the new symlink ---
                         try:
