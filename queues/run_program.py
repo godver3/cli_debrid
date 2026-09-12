@@ -3539,8 +3539,11 @@ class ProgramRunner:
                         try:
                             import re as _re_stale
                             from database.core import get_db_connection as _get_dbc_stale
+                            from debrid.common import is_likely_season_pack as _is_pack_stale
                             _item_file = item.get('filled_by_file') or item.get('original_scraped_torrent_title') or ''
-                            _is_individual = bool(_re_stale.search(r'[Ss]\d{2}[Ee]\d{2}', _item_file))
+                            # Also checks filled_by_title - a provider can obfuscate the
+                            # filename while the episode marker survives only there.
+                            _is_individual = not _is_pack_stale(_item_file, item.get('filled_by_title') or '')
                             with _get_dbc_stale() as _sc:
                                 if _is_individual:
                                     # Individual episode — match on same file under different entry
@@ -3591,8 +3594,9 @@ class ProgramRunner:
                             try:
                                 import re as _re_stale2
                                 from database.core import get_db_connection as _get_dbc_stale2
+                                from debrid.common import is_likely_season_pack as _is_pack_stale2
                                 _item_file2 = item.get('filled_by_file') or item.get('original_scraped_torrent_title') or ''
-                                _is_individual2 = bool(_re_stale2.search(r'[Ss]\d{2}[Ee]\d{2}', _item_file2))
+                                _is_individual2 = not _is_pack_stale2(_item_file2, item.get('filled_by_title') or '')
                                 with _get_dbc_stale2() as _sc2:
                                     if _is_individual2:
                                         _stale2 = _sc2.execute(
@@ -4026,7 +4030,8 @@ class ProgramRunner:
                     # Individual episode NZBs (title contains SxxExx) are self-contained —
                     # their sibling episodes each have their own job and don't need to
                     # coalesce before _resolve_nzb_file_info runs.
-                    _is_individual_ep = bool(__import__('re').search(r'[Ss]\d{2}[Ee]\d{2}', nzb_title or ''))
+                    from debrid.common import is_likely_season_pack as _is_pack_ep
+                    _is_individual_ep = not _is_pack_ep(nzb_title, item.get('filled_by_title') or '')
                     if _imdb_wait and _season_wait is not None and not _is_individual_ep:
                         try:
                             from database.core import get_db_connection as _get_dbc
@@ -4048,7 +4053,8 @@ class ProgramRunner:
                                 )
                                 # While waiting for Scraping siblings, pull any Wanted/Sleeping
                                 # siblings into Adding now so they don't wait behind the throttle.
-                                _is_pack_early = not __import__('re').search(r'[Ss]\d{2}[Ee]\d{2}', nzb_title or '')
+                                from debrid.common import is_likely_season_pack as _is_pack_early_fn
+                                _is_pack_early = _is_pack_early_fn(nzb_title, item.get('filled_by_title') or '')
                                 if _is_pack_early:
                                     try:
                                         from database.core import get_db_connection as _get_dbc_e
@@ -4243,7 +4249,8 @@ class ProgramRunner:
                         # working so there's no need to scrape them individually.
                         _imdb_pull = item.get('imdb_id')
                         _season_pull = item.get('season_number')
-                        _is_pack = not __import__('re').search(r'[Ss]\d{2}[Ee]\d{2}', nzb_title or '')
+                        from debrid.common import is_likely_season_pack as _is_pack_fn
+                        _is_pack = _is_pack_fn(nzb_title, item.get('filled_by_title') or '')
                         if _imdb_pull and _season_pull is not None and _is_pack:
                             try:
                                 from database.core import get_db_connection as _get_dbc2

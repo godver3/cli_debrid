@@ -16,6 +16,45 @@ def is_video_file(filename: str) -> bool:
 
 _JUNK_WORDS = frozenset({"sample", "trailer"})
 _EPISODE_RE = re.compile(r"[Ss]\d{1,2}[Ee]\d{1,2}(?![0-9])")
+
+# Season-pack vs. single-episode identity check (godver3/cli_debrid#496 item 2).
+# 1-2 digit season, 1-3 digit episode: a 2-digit-only pattern misses S1E1-style
+# releases and 3-digit episode numbers (common in long-running anime, e.g.
+# S01E101). Used across sibling-reuse/coalescing checks that must tell a real
+# season pack apart from a single episode release before reusing an in-flight
+# job for a different episode.
+_SEASON_PACK_EPISODE_RE = re.compile(r"[Ss]\d{1,2}[Ee]\d{1,3}")
+
+
+def release_identity_has_episode_marker(*identity_fields: Optional[str]) -> bool:
+    """True if any given release-identity string carries an episode coordinate.
+
+    Callers should pass every identity field they have (scraped release title,
+    resolved/downloaded filename, cli_debrid's own job title) rather than
+    picking one: a provider can serve an obfuscated filename while the
+    episode marker survives only in the scraped title, or vice versa, and
+    checking a single field misses that.
+    """
+    for field in identity_fields:
+        if field and _SEASON_PACK_EPISODE_RE.search(field):
+            return True
+    return False
+
+
+def is_likely_season_pack(*identity_fields: Optional[str]) -> bool:
+    """True only if at least one identity field is non-empty and none of them
+    show a specific episode coordinate.
+
+    An entirely empty identity (every field blank) is deliberately never
+    treated as a pack — that usually means a sibling's own submission hasn't
+    been written back into the caller's data yet, not proof it covers a whole
+    season. Defaulting empty-to-pack in that case caused an unrelated
+    individual episode's job to be reused here.
+    """
+    non_empty = [f for f in identity_fields if f]
+    if not non_empty:
+        return False
+    return not release_identity_has_episode_marker(*non_empty)
 _BRACKET_JUNK_RE = re.compile(r"[\[\(]\s*(?:sample|trailer)\s*[\]\)]", re.I)
 _QUALITY_SEGMENTS = frozenset({
     "1080p", "720p", "576p", "480p", "360p", "2160p", "4k", "8k",

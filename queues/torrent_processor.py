@@ -539,10 +539,8 @@ class TorrentProcessor:
             return None
 
         import re as _re_sib
+        from debrid.common import is_likely_season_pack
         _item_version = (item.get('version') or '').rstrip('*')
-
-        def _is_pack_title(title: str) -> bool:
-            return bool(title) and not _re_sib.search(r'[Ss]\d{2}[Ee]\d{2}', title)
 
         _episode = item.get('episode_number')
         _ep_pattern = (
@@ -550,8 +548,12 @@ class TorrentProcessor:
             if _episode is not None else None
         )
 
-        def _try_reuse(torrent_id: str, check_title: str, magnet: Optional[str]) -> Optional[Tuple]:
-            if not _is_pack_title(check_title):
+        def _try_reuse(torrent_id: str, check_title: str, magnet: Optional[str],
+                       filled_by_title: str = '') -> Optional[Tuple]:
+            # Check every available identity field (display title, filled_by_title),
+            # not just check_title alone - a provider can serve an obfuscated
+            # filename while the episode marker survives only in filled_by_title.
+            if not is_likely_season_pack(check_title, filled_by_title):
                 return None
             if rescrape_blocks_pack_reuse(item, check_title):
                 return None
@@ -634,7 +636,8 @@ class TorrentProcessor:
                 if not _mem_torrent_id or str(_mem_torrent_id).startswith('nzb:'):
                     continue
                 _mem_check_title = _mem_item.get('original_scraped_torrent_title') or _mem_item.get('filled_by_file') or ''
-                reused = _try_reuse(_mem_torrent_id, _mem_check_title, _mem_item.get('filled_by_magnet'))
+                reused = _try_reuse(_mem_torrent_id, _mem_check_title, _mem_item.get('filled_by_magnet'),
+                                    filled_by_title=_mem_item.get('filled_by_title') or '')
                 if reused:
                     return reused
 
@@ -653,7 +656,8 @@ class TorrentProcessor:
                 # downstream folder-name guess in check_local_file_for_item for every episode
                 # that inherited the wrong title.
                 _siblings = _conn.execute(
-                    "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title, filled_by_magnet "
+                    "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title, filled_by_magnet, "
+                    "filled_by_title "
                     "FROM media_items "
                     "WHERE id IN ("
                     "  SELECT MIN(id) FROM media_items "
@@ -678,7 +682,7 @@ class TorrentProcessor:
         best, best_file_count = None, -1
         for _sib in _siblings:
             _sib_check_title = _sib[2] or _sib[1] or ''
-            reused = _try_reuse(_sib[0], _sib_check_title, _sib[3])
+            reused = _try_reuse(_sib[0], _sib_check_title, _sib[3], filled_by_title=_sib[4] or '')
             if reused:
                 file_count = len(reused[0].get('files', []))
                 if file_count > best_file_count:
@@ -857,7 +861,7 @@ class TorrentProcessor:
             if _imdb and _season is not None:
                 # In-memory check: scan Adding queue items for same imdb+season with nzb: job.
                 # This catches jobs submitted this tick before they're written to DB.
-                import re as _re_mem
+                from debrid.common import is_likely_season_pack as _is_likely_season_pack_mem
                 if adding_queue_items:
                     _item_version = (item or {}).get('version', 'Default')
                     for _mem_item in adding_queue_items:
@@ -872,12 +876,15 @@ class TorrentProcessor:
                         # releases and was wrongly read as "not a normal episode filename,
                         # must be an unresolved pack".
                         _mem_check_title = _mem_item.get('original_scraped_torrent_title') or _mem_item.get('filled_by_file') or ''
-                        # An empty title here usually means this sibling's own submission
+                        # An empty identity here usually means this sibling's own submission
                         # (earlier this same tick) hasn't been reflected back into this
                         # in-memory snapshot yet - not evidence it's a pack. Defaulting to
                         # "is a pack" in that case caused a different episode's individual
                         # NZB job to be reused here, symlinking the wrong file to this item.
-                        _mem_is_pack = bool(_mem_check_title) and not _re_mem.search(r'[Ss]\d{2}[Ee]\d{2}', _mem_check_title)
+                        # Checks filled_by_title too, not just the title/filename precedence
+                        # above - a provider can obfuscate the filename while the episode
+                        # marker survives only in filled_by_title.
+                        _mem_is_pack = _is_likely_season_pack_mem(_mem_check_title, _mem_item.get('filled_by_title') or '')
                         _mem_job = _mem_item.get('filled_by_torrent_id')
                         _mem_id = _mem_job[4:] if _mem_job and _mem_job.startswith('nzb:') else _mem_job
                         if _mem_is_pack:
@@ -920,14 +927,15 @@ class TorrentProcessor:
 
                 try:
                     from database import get_db_connection as _gdb
+                    from debrid.common import is_likely_season_pack as _is_likely_season_pack_db
                     _conn = _gdb()
-                    import re as _re_dedup
                     # Matches SQL's REPLACE(COALESCE(version,''),'*','') exactly — fall back
                     # to '' (not a literal like 'Default') so NULL/empty version rows still compare equal.
                     _sibling_ver = (item.get('version') or '').rstrip('*')
                     try:
                         _sibling = _conn.execute(
-                            "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title FROM media_items "
+                            "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title, filled_by_title "
+                            "FROM media_items "
                             "WHERE imdb_id=? AND season_number=? AND type='episode' "
                             "AND id!=? AND filled_by_torrent_id LIKE 'nzb:%' "
                             "AND REPLACE(COALESCE(version,''),'*','')=? "
@@ -942,9 +950,11 @@ class TorrentProcessor:
                         # single-episode usenet releases and was wrongly read as "not a normal
                         # episode filename, must be an unresolved pack".
                         _sibling_check_title = _sibling[2] or _sibling[1] or ''
-                        # Empty title is not evidence of a pack - see matching comment in the
+                        # Empty identity is not evidence of a pack - see matching comment in the
                         # in-memory check above. Defaulting True here risks the same wrong-job-reuse.
-                        _sibling_is_pack = bool(_sibling_check_title) and not _re_dedup.search(r'[Ss]\d{2}[Ee]\d{2}', _sibling_check_title)
+                        # Also checks filled_by_title, which can carry the episode marker even
+                        # when the title/filename precedence above doesn't.
+                        _sibling_is_pack = _is_likely_season_pack_db(_sibling_check_title, _sibling[3] or '')
                         if _sibling_is_pack:
                             if rescrape_blocks_pack_reuse(item, _sibling_check_title):
                                 _sibling_is_pack = False

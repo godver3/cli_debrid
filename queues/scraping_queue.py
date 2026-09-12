@@ -318,29 +318,23 @@ class ScrapingQueue:
                             ).fetchone()
                         finally:
                             _cconn.close()
-                        import re as _re_coal
-                        # A sibling job is only safe to reuse as a "season pack" if NEITHER the
-                        # scraped release title NOR the actual downloaded filename reveal a
-                        # specific episode marker anywhere. Checking the title alone is not
-                        # enough: some indexers (e.g. DrunkenSlug REPACK releases) publish a
-                        # genuinely single-episode NZB under a season-level release name like
-                        # "Show.S03.REPACK.WEB-DL...", with the real episode number appearing
-                        # only in the inner filename once downloaded. Trusting a title-less match
-                        # by itself caused every other episode of that season to silently reuse
-                        # that one episode's file. Checking the filename too catches this case:
-                        # once the sibling has actually downloaded, its filled_by_file (e.g.
-                        # "Show.S03E01....mkv") carries the real episode marker even when the
-                        # scraped title never did.
+                        # A sibling job is only safe to reuse as a "season pack" if NONE of its
+                        # available release-identity fields reveal a specific episode marker.
+                        # Checking the scraped title alone is not enough: some indexers (e.g.
+                        # DrunkenSlug REPACK releases) publish a genuinely single-episode NZB
+                        # under a season-level release name like "Show.S03.REPACK.WEB-DL...",
+                        # with the real episode number appearing only in the inner filename once
+                        # downloaded, or only in filled_by_title if the filename is obfuscated.
+                        # Trusting one field by itself caused every other episode of that season
+                        # to silently reuse that one episode's file. is_likely_season_pack checks
+                        # every field (title, filename, job title) and requires at least one to
+                        # be non-empty, so an unresolved sibling's still-blank fields are never
+                        # mistaken for pack evidence.
+                        from debrid.common import is_likely_season_pack
                         _coal_title = (_sibling_nzb[4] or '') if _sibling_nzb else ''  # original_scraped_torrent_title
                         _coal_file = (_sibling_nzb[1] or '') if _sibling_nzb else ''  # filled_by_file
-                        _coal_title_has_ep = bool(_re_coal.search(r'[Ss]\d{2}[Ee]\d{2}', _coal_title))
-                        _coal_file_has_ep = bool(_re_coal.search(r'[Ss]\d{2}[Ee]\d{2}', _coal_file))
-                        # An entirely empty title/filename is not evidence of a pack either - it
-                        # usually just means the sibling's own submission hasn't finished writing
-                        # back yet. Requiring at least one real (non-empty) field, with neither
-                        # field showing a specific episode, avoids wrongly coalescing this item
-                        # into an unrelated individual episode's job.
-                        if _sibling_nzb and (_coal_title or _coal_file) and not _coal_title_has_ep and not _coal_file_has_ep:
+                        _coal_job_title = (_sibling_nzb[3] or '') if _sibling_nzb else ''  # filled_by_title
+                        if _sibling_nzb and is_likely_season_pack(_coal_title, _coal_file, _coal_job_title):
                             _job_id = _sibling_nzb[0]
                             # Verify the shared job is still actually queryable on the provider
                             # before reusing it - a job that completed and was since cleaned up
