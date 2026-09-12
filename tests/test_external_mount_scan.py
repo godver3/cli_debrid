@@ -65,15 +65,27 @@ class ExternalMountScanTestBase(unittest.TestCase):
         self._already_tracked_patch = patch.object(ems, '_already_tracked', return_value=False)
         self._already_tracked_patch.start()
 
+        # Nothing previously rejected, by default. _build_rejected_sets/_is_rejected
+        # lazily import database.* for the same reason _already_tracked does, so
+        # they are patched here too; TestRejectedContentIsSkipped drives the real
+        # filter by overriding these.
+        self._rejected_sets_patch = patch.object(ems, '_build_rejected_sets', return_value=set())
+        self._rejected_sets_patch.start()
+        self._is_rejected_patch = patch.object(ems, '_is_rejected', return_value=False)
+        self._is_rejected_patch.start()
+
         # Stub out routes.debug_routes so the lazy import inside
         # scan_mount_for_external_adds() never touches the real (flask-
         # dependent) module. import_result records every call for assertions.
         self.import_calls = []
+        self.import_user_initiated = []
         self.import_result = {'items_added_to_db': 0, 'symlinks_created': 0}
         self._install_debug_routes_stub()
 
     def tearDown(self):
         self._restore_debug_routes_stub()
+        self._is_rejected_patch.stop()
+        self._rejected_sets_patch.stop()
         self._already_tracked_patch.stop()
         self._known_sets_patch.stop()
         self._env_patch.stop()
@@ -89,8 +101,9 @@ class ExternalMountScanTestBase(unittest.TestCase):
         fake_debug_routes = types.ModuleType('routes.debug_routes')
         fake_debug_routes.rclone_scan_progress = {}
 
-        def fake_run_task(scan_path, symlink_base_path, dry_run, task_id, trigger_plex_update_on_success=False, assumed_item_title_from_path=None):
+        def fake_run_task(scan_path, symlink_base_path, dry_run, task_id, trigger_plex_update_on_success=False, assumed_item_title_from_path=None, user_initiated=False):
             self.import_calls.append(scan_path)
+            self.import_user_initiated.append(user_initiated)
             fake_debug_routes.rclone_scan_progress[task_id] = dict(self.import_result)
 
         fake_debug_routes._run_rclone_to_symlink_task = fake_run_task
@@ -256,6 +269,201 @@ class TestModeAndPathGuards(ExternalMountScanTestBase):
         ):
             summary = ems.scan_mount_for_external_adds()
         self.assertIsNotNone(summary['skipped_reason'])
+
+
+class TestRejectedContentIsSkipped(ExternalMountScanTestBase):
+    """The mount is not only external content.
+
+    cli_debrid's own cache-check probes and failed grabs leave folders behind
+    that the DB no longer points at, so they look exactly like an external add.
+    Importing them reinstates the releases the queues just blacklisted -- live,
+    this produced 10 library rows for one episode and 11 for one season, each
+    with its own symlink and Plex scan.
+    """
+
+    JUNK = 'Ted Lasso S04E05 Riches of Embarrassment 1080p ATVP WEB-DL DDP5 1 Atmos H 264-FLUX'
+    GENUINE = 'Some.Show.S01E01.1080p.WEB-DL'
+
+    def _baseline(self):
+        """First run always baselines, so anything under test has to appear after
+        one. Uses a throwaway folder to get that out of the way."""
+        self._mkfolder('Pre.Existing.Show.S01')
+        self._run_scan()
+
+    def _reject(self, *names):
+        """Drive the real filter with a known rejected set."""
+        normalized = {n.lower() for n in names}
+        self._is_rejected_patch.stop()
+        self._rejected_sets_patch.stop()
+        self._rejected_sets_patch = patch.object(
+            ems, '_build_rejected_sets', return_value=normalized)
+        self._rejected_sets_patch.start()
+        self._is_rejected_patch = patch.object(
+            ems, '_is_rejected',
+            side_effect=lambda name, rejected: name.lower() in rejected)
+        self._is_rejected_patch.start()
+
+    def test_blacklisted_release_is_not_imported(self):
+        self._baseline()
+        self._mkfolder(self.JUNK)
+        self._reject(self.JUNK)
+        summary = self._run_scan()
+        self.assertEqual(self.import_calls, [],
+                         'a release the queues rejected must not come back as an external add')
+        self.assertEqual(summary['imported'], 0)
+        self.assertEqual(summary['rejected'], 1)
+
+    def test_genuine_external_add_still_imports_alongside_junk(self):
+        self._baseline()
+        self._mkfolder(self.JUNK)
+        self._mkfolder(self.GENUINE)
+        self._reject(self.JUNK)
+        self.import_result = {'items_added_to_db': 1, 'symlinks_created': 1}
+        summary = self._run_scan()
+        self.assertEqual(len(self.import_calls), 1)
+        self.assertTrue(self.import_calls[0].endswith(self.GENUINE))
+        self.assertEqual(summary['imported'], 1)
+        self.assertEqual(summary['rejected'], 1)
+
+    def test_rejection_is_recorded_without_consuming_an_attempt(self):
+        """No import was tried, so the 3-attempt budget must be untouched --
+        otherwise a folder that is later un-blacklisted could never be picked up."""
+        self._baseline()
+        self._mkfolder(self.JUNK)
+        self._reject(self.JUNK)
+        self._run_scan()
+        entry = self._state()[self.JUNK]
+        self.assertTrue(entry['rejected'])
+        self.assertNotIn('attempts', entry)
+        self.assertFalse(entry.get('imported'))
+
+    def test_rejected_folder_is_not_rechecked_on_the_next_run(self):
+        self._baseline()
+        self._mkfolder(self.JUNK)
+        self._reject(self.JUNK)
+        self._run_scan()
+        summary = self._run_scan()
+        self.assertEqual(self.import_calls, [])
+        self.assertEqual(summary['rejected'], 0, 'should not be re-evaluated within the window')
+
+    def test_rejected_folder_is_reconsidered_after_the_retry_window(self):
+        """The user may since have un-blacklisted it and fetched it by hand --
+        precisely the case this task exists to catch."""
+        self._baseline()
+        self._mkfolder(self.JUNK)
+        self._reject(self.JUNK)
+        self._run_scan()
+
+        state = self._state()
+        state[self.JUNK]['last_attempt'] = time.time() - (ems.RETRY_AFTER_SECONDS + 60)
+        with open(os.path.join(self.db_content_dir.name, ems.STATE_FILENAME), 'w') as f:
+            json.dump(state, f)
+
+        # No longer rejected, and now genuinely present.
+        self._reject()
+        self.import_result = {'items_added_to_db': 1, 'symlinks_created': 1}
+        summary = self._run_scan()
+        self.assertEqual(len(self.import_calls), 1)
+        self.assertEqual(summary['imported'], 1)
+
+    def test_baseline_content_is_still_never_imported(self):
+        """The rejected path must not disturb the baseline guarantee: content
+        already in the mount when the feature was switched on stays untouched
+        whether or not it is rejected."""
+        self._mkfolder(self.GENUINE)
+        self._mkfolder(self.JUNK)
+        self._run_scan()  # first run baselines both
+        self._reject(self.JUNK)
+        summary = self._run_scan()
+        self.assertEqual(self.import_calls, [])
+        self.assertEqual(summary['imported'], 0)
+        self.assertEqual(summary['rejected'], 0, 'baseline is checked before rejection')
+
+
+class TestRejectedSetConstruction(unittest.TestCase):
+    """_build_rejected_sets joins the hash-keyed not-wanted list to mount folder
+    names through torrent_additions.item_data, which carries debrid_folder_name.
+    Neither database.* module is importable here (see module docstring), so the
+    join is exercised as a simulation against a real in-memory schema."""
+
+    def setUp(self):
+        import sqlite3
+        self.conn = sqlite3.connect(':memory:')
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute(
+            'CREATE TABLE torrent_additions (torrent_hash TEXT, item_data TEXT)')
+        self.conn.execute(
+            'CREATE TABLE media_items (filled_by_title TEXT, real_debrid_original_title TEXT,'
+            ' original_scraped_torrent_title TEXT, state TEXT, ghostlisted INTEGER DEFAULT 0)')
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _add_torrent(self, torrent_hash, folder_name):
+        self.conn.execute(
+            'INSERT INTO torrent_additions (torrent_hash, item_data) VALUES (?,?)',
+            (torrent_hash, json.dumps({'debrid_folder_name': folder_name,
+                                       'filled_by_title': folder_name})))
+        self.conn.commit()
+
+    def _build(self, not_wanted):
+        """Mirrors _build_rejected_sets, minus the lazy imports."""
+        rejected = set()
+        not_wanted = {h.lower() for h in not_wanted}
+        for row in self.conn.execute('SELECT torrent_hash, item_data FROM torrent_additions'):
+            if (row['torrent_hash'] or '').lower() not in not_wanted:
+                continue
+            data = json.loads(row['item_data'])
+            for key in ('debrid_folder_name', 'filled_by_title'):
+                if data.get(key):
+                    rejected.add(data[key].lower())
+        for row in self.conn.execute(
+                "SELECT filled_by_title, real_debrid_original_title,"
+                " original_scraped_torrent_title FROM media_items"
+                " WHERE state = 'Blacklisted' OR ghostlisted = 1"):
+            for value in tuple(row):
+                if value:
+                    rejected.add(value.lower())
+        rejected.discard('')
+        return rejected
+
+    def test_not_wanted_hash_resolves_to_its_mount_folder_name(self):
+        self._add_torrent('9AB6157B5B68300855478884E53EA41D3612DD51', 'Ted.Lasso.S04E05-FLUX')
+        self.assertIn('ted.lasso.s04e05-flux',
+                      self._build({'9ab6157b5b68300855478884e53ea41d3612dd51'}))
+
+    def test_hash_comparison_is_case_insensitive(self):
+        """Providers report hashes in either case; the not-wanted file stores
+        whatever it was given."""
+        self._add_torrent('abcdef0123456789abcdef0123456789abcdef01', 'Lowercase.Release')
+        self.assertIn('lowercase.release',
+                      self._build({'ABCDEF0123456789ABCDEF0123456789ABCDEF01'}))
+
+    def test_a_torrent_still_wanted_is_not_rejected(self):
+        self._add_torrent('1111111111111111111111111111111111111111', 'Still.Wanted.Release')
+        self.assertEqual(self._build({'2222222222222222222222222222222222222222'}), set())
+
+    def test_blacklisted_media_item_titles_are_included(self):
+        self.conn.execute(
+            'INSERT INTO media_items (filled_by_title, state) VALUES (?,?)',
+            ('Blacklisted.Release.1080p', 'Blacklisted'))
+        self.conn.commit()
+        self.assertIn('blacklisted.release.1080p', self._build(set()))
+
+    def test_ghostlisted_media_item_titles_are_included(self):
+        self.conn.execute(
+            'INSERT INTO media_items (real_debrid_original_title, state, ghostlisted)'
+            ' VALUES (?,?,?)', ('Ghosted.Release.2160p', 'Collected', 1))
+        self.conn.commit()
+        self.assertIn('ghosted.release.2160p', self._build(set()))
+
+    def test_collected_titles_are_not_rejected(self):
+        """Only rejected content -- a Collected row is handled by _already_tracked."""
+        self.conn.execute(
+            'INSERT INTO media_items (filled_by_title, state) VALUES (?,?)',
+            ('Perfectly.Fine.Release', 'Collected'))
+        self.conn.commit()
+        self.assertEqual(self._build(set()), set())
 
 
 if __name__ == "__main__":

@@ -65,7 +65,8 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str,
                           media_type: Optional[str] = None,
                           season: Optional[int] = None,
                           episode: Optional[int] = None,
-                          max_attempts: int = 5) -> bool:
+                          max_attempts: int = 5,
+                          ignore_previous_attempts: bool = False) -> bool:
     """
     Force matches a Plex item with a specific TMDB ID.
 
@@ -80,6 +81,9 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str,
         plex_rating_key (Optional[str]): The Plex rating key of the item to fix.
         imdb_id (Optional[str]): IMDb ID used to look up Plex GUID from battery.
         media_type (Optional[str]): 'movie' or 'show' — used for GUID lookup.
+        ignore_previous_attempts (bool): Skip the once-per-rating-key guard.  Set
+            by user-initiated fixes (e.g. the library Fix Match button), where a
+            repeat attempt is exactly what was asked for.
 
     Returns:
         bool: True if successful, False otherwise
@@ -89,7 +93,7 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str,
         return False
 
     rematch_log = _load_rematch_log()
-    if _has_been_attempted(plex_rating_key, rematch_log):
+    if not ignore_previous_attempts and _has_been_attempted(plex_rating_key, rematch_log):
         logging.info(f"Rematch for item with rating key {plex_rating_key} has been attempted before. Skipping. Last attempt: {rematch_log.get(str(plex_rating_key))}")
         return False # Indicate skipped due to previous attempt
 

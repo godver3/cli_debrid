@@ -16,6 +16,15 @@ First run records everything already in the mount as a baseline without
 importing it -- otherwise enabling this on an established library would mass
 import years of untracked content in one go. Delete the state file to
 re-baseline.
+
+"Nothing in the database points at it" is necessary but not sufficient evidence
+that a folder came from outside. cli_debrid leaves its own untracked folders in
+the mount too: cache-check probes add candidate magnets to the account, and a
+grab that later fails has its item sent back to Wanted, which stops the DB
+pointing at the torrent while the folder stays. Those are junk, not external
+adds, and importing them reinstates releases the queues deliberately rejected --
+so candidates are also checked against the not-wanted and blacklist sets
+(_build_rejected_sets) before being imported.
 """
 
 import json
@@ -134,6 +143,93 @@ def _build_known_sets() -> tuple:
     return known_titles, known_components
 
 
+def _build_rejected_sets() -> Set[str]:
+    """Normalized mount-folder names cli_debrid added itself and then rejected.
+
+    The premise of this whole task is that an untracked mount folder came from
+    outside cli_debrid. That is not true of its own debris: every cache-check
+    probe and every grab that later failed leaves a folder behind, and the DB
+    stops pointing at it the moment the item is sent back to Wanted. Those
+    folders then look exactly like an external add and get imported as Collected
+    -- including the releases the queues had just blacklisted, which is how one
+    episode ends up in the library a dozen times over.
+
+    Two sources, both cheap:
+      * torrent_additions rows whose hash is in the not-wanted set. item_data
+        carries debrid_folder_name/filled_by_title, which is the mount folder
+        name, so the hash-keyed not-wanted list can be matched against folders.
+      * titles on media_items rows that are Blacklisted or ghostlisted.
+    """
+    from database.database_reading import normalize_string_for_comparison
+
+    rejected: Set[str] = set()
+
+    try:
+        from database.not_wanted_magnets import get_not_wanted_magnets
+        from database.not_wanted_magnets import get_base_filename
+        # Entries are stored as bare hashes but magnets appear too; get_base_filename
+        # normalizes both. Lowercased to match the hash column comparison below.
+        not_wanted = set()
+        for nw in (get_not_wanted_magnets() or []):
+            if not nw:
+                continue
+            base = get_base_filename(nw)
+            if base:
+                not_wanted.add(base.lower())
+    except Exception as e:
+        logging.warning(f"[ExternalScan] Could not load not-wanted magnets: {e}")
+        not_wanted = set()
+
+    conn = None
+    try:
+        from database.core import get_db_connection
+        conn = get_db_connection()
+
+        if not_wanted:
+            # Filtered in Python rather than a huge IN (...) -- the not-wanted set
+            # runs to thousands of hashes and would blow SQLite's parameter limit.
+            try:
+                rows = conn.execute(
+                    'SELECT torrent_hash, item_data FROM torrent_additions'
+                ).fetchall()
+            except Exception:
+                rows = []  # table absent on a fresh install
+            for row in rows:
+                torrent_hash = (row['torrent_hash'] or '').lower()
+                if torrent_hash not in not_wanted:
+                    continue
+                try:
+                    data = json.loads(row['item_data']) if row['item_data'] else {}
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                for key in ('debrid_folder_name', 'filled_by_title'):
+                    value = data.get(key)
+                    if value:
+                        rejected.add(normalize_string_for_comparison(value))
+
+        rows = conn.execute(
+            "SELECT filled_by_title, real_debrid_original_title, "
+            "original_scraped_torrent_title FROM media_items "
+            "WHERE state = 'Blacklisted' OR ghostlisted = 1"
+        ).fetchall()
+        for row in rows:
+            for value in (row['filled_by_title'], row['real_debrid_original_title'],
+                          row['original_scraped_torrent_title']):
+                if value:
+                    rejected.add(normalize_string_for_comparison(value))
+    except Exception as e:
+        logging.error(f"[ExternalScan] Could not build rejected-content lookups: {e}", exc_info=True)
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    rejected.discard('')
+    return rejected
+
+
 def _already_tracked(folder_name: str, known_titles: Set[str], known_components: Set[str]) -> bool:
     """Fast pre-filter, then the same checks the rclone webhook makes."""
     from database.database_reading import (
@@ -155,6 +251,18 @@ def _already_tracked(folder_name: str, known_titles: Set[str], known_components:
     return False
 
 
+def _is_rejected(folder_name: str, rejected_names: Set[str]) -> bool:
+    """True when this mount folder is a release cli_debrid itself rejected.
+
+    Kept beside _already_tracked, and lazily importing the same normalizer, so
+    both membership tests treat folder names identically.
+    """
+    if not rejected_names:
+        return False
+    from database.database_reading import normalize_string_for_comparison
+    return normalize_string_for_comparison(folder_name) in rejected_names
+
+
 def _should_retry(entry: Dict, now: float) -> bool:
     # Present in the mount before the feature was turned on. Never auto-import
     # these -- the whole point of the baseline is that enabling the task does
@@ -163,6 +271,12 @@ def _should_retry(entry: Dict, now: float) -> bool:
         return False
     if entry.get('imported'):
         return False
+    if entry.get('rejected'):
+        # Known junk, but re-check on the normal window rather than permanently:
+        # the user may since have un-blacklisted it and gone and fetched it by
+        # hand, which is precisely the case this task exists to catch. Does not
+        # consume an 'attempts' slot -- no import was tried.
+        return (now - entry.get('last_attempt', 0)) >= RETRY_AFTER_SECONDS
     if entry.get('attempts', 0) >= MAX_ATTEMPTS:
         return False
     last = entry.get('last_attempt', 0)
@@ -181,6 +295,7 @@ def scan_mount_for_external_adds() -> Dict:
         'imported': 0,
         'failed': 0,
         'baselined': 0,
+        'rejected': 0,
     }
 
     if get_setting('File Management', 'file_collection_management', 'Symlinked/Local') != 'Symlinked/Local':
@@ -244,6 +359,7 @@ def scan_mount_for_external_adds() -> Dict:
         return summary
 
     known_titles, known_components = _build_known_sets()
+    rejected_names = _build_rejected_sets()
 
     new_folders = []
     for name in candidates:
@@ -252,6 +368,19 @@ def scan_mount_for_external_adds() -> Dict:
             # it against the DB on every run.
             state[name] = {'imported': True, 'tracked_existing': True, 'first_seen': now}
             dirty = True
+            continue
+        if _is_rejected(name, rejected_names):
+            # cli_debrid's own leftover, not an external add: this release was
+            # blacklisted or ghostlisted, so importing it would reinstate exactly
+            # what the queues rejected.
+            entry = state.get(name) or {'first_seen': now}
+            entry['rejected'] = True
+            entry['last_attempt'] = now
+            state[name] = entry
+            summary['rejected'] += 1
+            dirty = True
+            logging.info(f"[ExternalScan] Skipping '{name}' - blacklisted/not-wanted content "
+                         f"cli_debrid rejected itself, not an external add.")
             continue
         new_folders.append(name)
 
@@ -281,6 +410,13 @@ def scan_mount_for_external_adds() -> Dict:
             # Same call the rclone webhook makes - metadata lookup, DB insert
             # as Collected, symlink creation, media server scan and the
             # 'collected' notification all happen inside.
+            #
+            # user_initiated stays False. The webhook passes True because a person
+            # deliberately put that content in the debrid account, which justifies
+            # unghosting an existing entry. This task runs on a timer over whatever
+            # happens to be in the mount, including cli_debrid's own leftovers, so
+            # the ghostlist/blacklist guard is the only thing stopping it importing
+            # releases the queues just rejected.
             _run_rclone_to_symlink_task(
                 scan_path,
                 symlink_base_path,
@@ -288,6 +424,7 @@ def scan_mount_for_external_adds() -> Dict:
                 task_id,
                 True,                # trigger_plex_update_on_success
                 name,                # assumed_item_title_from_path
+                False,               # user_initiated - see below
             )
             progress = rclone_scan_progress.get(task_id) or {}
             added = progress.get('items_added_to_db', 0)

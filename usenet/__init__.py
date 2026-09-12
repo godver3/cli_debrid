@@ -8,6 +8,10 @@ to be slotted in without changing any call sites.
 Currently supported:
   - climount  (default; the original implementation)
   - nzbdav     (alternative; see nzbdav_client.py)
+  - zurg       (Zurg 2.0 / other flat-layout SAB-emulation mounts; reuses
+                nzbdav_client.py's submit/poll/health-check logic unchanged,
+                only the WebDAV browse helpers resolve folders differently —
+                see NzbdavClient.flat_layout)
 
 Selection is controlled by the `Usenet Provider.provider` config key. If unset,
 the factory defaults to `climount` to preserve existing behaviour for users
@@ -58,7 +62,7 @@ def _get_provider_key() -> str:
 def get_usenet_client():
     """Return the singleton client for whichever provider is configured."""
     provider = _get_provider_key()
-    if provider == 'nzbdav':
+    if provider in ('nzbdav', 'zurg'):
         from .nzbdav_client import get_nzbdav_client
         return get_nzbdav_client()
     # default + 'climount'
@@ -77,13 +81,14 @@ def get_usenet_provider_display_name() -> str:
     return {
         'climount': 'cli_mount',
         'nzbdav': 'NzbDAV',
+        'zurg': 'Zurg',
     }.get(provider, 'Usenet provider')
 
 
 def reset_usenet_client() -> None:
     """Reset the active provider's singleton (call after settings change)."""
     provider = _get_provider_key()
-    if provider == 'nzbdav':
+    if provider in ('nzbdav', 'zurg'):
         from .nzbdav_client import reset_nzbdav_client
         reset_nzbdav_client()
     else:

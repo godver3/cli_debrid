@@ -375,23 +375,23 @@ SETTINGS_SCHEMA = {
         },
         "provider": {
             "type": "string",
-            "description": "Which usenet backend to use: cli_mount or NzbDAV.",
+            "description": "Which usenet backend to use: cli_mount, NzbDAV, or Zurg (Zurg 2.0's SABnzbd-compatible endpoint, or any other flat-layout SAB-emulation mount). Zurg reuses the NzbDAV submit/poll/health-check logic unchanged, but resolves the job folder directly under the mount root instead of walking a <category>/<job> subfolder layout — required because Zurg's mount stores content flat and has no per-category subdirectories.",
             "default": "climount",
-            "choices": ["climount", "nzbdav"]
+            "choices": ["climount", "nzbdav", "zurg"]
         },
         "owned_categories": {
             "type": "string",
-            "description": "NzbDAV only. Comma-separated list of nzbdav categories the repair/health tool may act on. nzbdav history is shared with other SAB clients (e.g. Lidarr music), and repair can only re-acquire content cli-debrid manages — so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (movies, shows, movies_1080p_264, shows_1080p_264, plus the download-folder fallback). Set this only if your category names differ.",
+            "description": "NzbDAV/Zurg only. Comma-separated list of nzbdav categories the repair/health tool may act on. nzbdav history is shared with other SAB clients (e.g. Lidarr music), and repair can only re-acquire content cli-debrid manages — so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (movies, shows, movies_1080p_264, shows_1080p_264, plus the download-folder fallback). Set this only if your category names differ.",
             "default": ""
         },
         "exclude_categories": {
             "type": "string",
-            "description": "NzbDAV only. Comma-separated nzbdav categories the repair/health tool must ignore, subtracted from the included set. Use this if you point Radarr/Sonarr at the same nzbdav and don't want cli-debrid touching their categories.",
+            "description": "NzbDAV/Zurg only. Comma-separated nzbdav categories the repair/health tool must ignore, subtracted from the included set. Use this if you point Radarr/Sonarr at the same nzbdav and don't want cli-debrid touching their categories.",
             "default": ""
         },
         "nzbdav_category_map": {
             "type": "string",
-            "description": "NzbDAV only. Optional. Choose which categories you want and what they're named on your instance, as comma-separated bucket=name pairs, e.g. `movies=movies, shows=shows, movies_1080p=movies_1080p, shows_1080p=shows_1080p, fallback=__unplayable__`. Detected buckets you omit fall back to their parent (movies_2160p_remux → movies_2160p → movies), so items never land in a category that doesn't exist on your instance. Recognised buckets: movies, shows, movies_1080p, shows_1080p, movies_2160p, shows_2160p, movies_1080p_remux, movies_2160p_remux, anime_movies, anime_shows, music, and 'fallback'. Leave empty to use the full default taxonomy. The setup helper's required-category list and the repair scope follow this map automatically.",
+            "description": "NzbDAV/Zurg only. Optional. Choose which categories you want and what they're named on your instance, as comma-separated bucket=name pairs, e.g. `movies=movies, shows=shows, movies_1080p=movies_1080p, shows_1080p=shows_1080p, fallback=__unplayable__`. Detected buckets you omit fall back to their parent (movies_2160p_remux → movies_2160p → movies), so items never land in a category that doesn't exist on your instance. Recognised buckets: movies, shows, movies_1080p, shows_1080p, movies_2160p, shows_2160p, movies_1080p_remux, movies_2160p_remux, anime_movies, anime_shows, music, and 'fallback'. Leave empty to use the full default taxonomy. The setup helper's required-category list and the repair scope follow this map automatically.",
             "default": ""
         },
     },

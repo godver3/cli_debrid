@@ -685,6 +685,7 @@ class QueueManager:
         torrent_id: str = None,
         debrid_folder_name: str = None,
         original_scraped_torrent_title: str = None,
+        debrid_provider: str = None,
     ):
         item_identifier = self.generate_identifier(item)
 
@@ -743,6 +744,12 @@ class QueueManager:
         extra = {}
         if original_scraped_torrent_title:
             extra['original_scraped_torrent_title'] = original_scraped_torrent_title
+
+        # Only pass it when we actually know it: update_media_item_state writes any
+        # field present in kwargs, so passing None on a path that did not resolve a
+        # provider would wipe the value a previous Adding pass already recorded.
+        if debrid_provider:
+            extra['debrid_provider'] = debrid_provider
 
         updated_item = self._move_item_to_queue(
             item,

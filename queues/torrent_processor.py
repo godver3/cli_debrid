@@ -539,10 +539,8 @@ class TorrentProcessor:
             return None
 
         import re as _re_sib
+        from debrid.common import is_likely_season_pack
         _item_version = (item.get('version') or '').rstrip('*')
-
-        def _is_pack_title(title: str) -> bool:
-            return bool(title) and not _re_sib.search(r'[Ss]\d{2}[Ee]\d{2}', title)
 
         _episode = item.get('episode_number')
         _ep_pattern = (
@@ -550,8 +548,12 @@ class TorrentProcessor:
             if _episode is not None else None
         )
 
-        def _try_reuse(torrent_id: str, check_title: str, magnet: Optional[str]) -> Optional[Tuple]:
-            if not _is_pack_title(check_title):
+        def _try_reuse(torrent_id: str, check_title: str, magnet: Optional[str],
+                       filled_by_title: str = '') -> Optional[Tuple]:
+            # Check every available identity field (display title, filled_by_title),
+            # not just check_title alone - a provider can serve an obfuscated
+            # filename while the episode marker survives only in filled_by_title.
+            if not is_likely_season_pack(check_title, filled_by_title):
                 return None
             if rescrape_blocks_pack_reuse(item, check_title):
                 return None
@@ -595,6 +597,9 @@ class TorrentProcessor:
                 self.debrid_provider = provider
                 info = dict(info)
                 info['original_scraped_torrent_title'] = check_title
+                # Stamp explicitly with the provider this sibling pack was actually found on,
+                # same reasoning as _process_results_inner's cache-hit/existing-reuse paths.
+                info['_provider'] = provider.PROVIDER_NAME
                 # debrid_folder_name must reflect the provider's OWN real mount folder name
                 # (info['filename']/'original_filename'), not the indexer's cosmetic display
                 # title (check_title) - those two frequently differ (e.g. a release named
@@ -634,7 +639,8 @@ class TorrentProcessor:
                 if not _mem_torrent_id or str(_mem_torrent_id).startswith('nzb:'):
                     continue
                 _mem_check_title = _mem_item.get('original_scraped_torrent_title') or _mem_item.get('filled_by_file') or ''
-                reused = _try_reuse(_mem_torrent_id, _mem_check_title, _mem_item.get('filled_by_magnet'))
+                reused = _try_reuse(_mem_torrent_id, _mem_check_title, _mem_item.get('filled_by_magnet'),
+                                    filled_by_title=_mem_item.get('filled_by_title') or '')
                 if reused:
                     return reused
 
@@ -653,7 +659,8 @@ class TorrentProcessor:
                 # downstream folder-name guess in check_local_file_for_item for every episode
                 # that inherited the wrong title.
                 _siblings = _conn.execute(
-                    "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title, filled_by_magnet "
+                    "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title, filled_by_magnet, "
+                    "filled_by_title "
                     "FROM media_items "
                     "WHERE id IN ("
                     "  SELECT MIN(id) FROM media_items "
@@ -678,7 +685,7 @@ class TorrentProcessor:
         best, best_file_count = None, -1
         for _sib in _siblings:
             _sib_check_title = _sib[2] or _sib[1] or ''
-            reused = _try_reuse(_sib[0], _sib_check_title, _sib[3])
+            reused = _try_reuse(_sib[0], _sib_check_title, _sib[3], filled_by_title=_sib[4] or '')
             if reused:
                 file_count = len(reused[0].get('files', []))
                 if file_count > best_file_count:
@@ -829,6 +836,23 @@ class TorrentProcessor:
             logging.warning(f'[{item_identifier}] NZB result has no URL, skipping')
             return None
 
+        # Indexers can list the exact same underlying release under a different
+        # GUID (re-indexed upload, duplicate indexer feed) — the not-wanted store
+        # is per-GUID, so a fresh GUID for a release already confirmed dead this
+        # session would otherwise repeat the same expensive cli_mount submission.
+        from usenet.nzb_dead_release_cache import is_release_known_dead
+        if is_release_known_dead(title):
+            logging.info(f'[{item_identifier}] Skipping {title!r} — already confirmed missing segments '
+                         f'this session under a different GUID')
+            try:
+                from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nw_dup
+                _add_nw_dup(nzb_url)
+            except Exception:
+                pass
+            if item:
+                item['_nzb_all_missing_segments'] = True
+            return None
+
         # Equivalent of debrid's _all_torrent_ids check: if another episode of the same
         # show/season already has an NZB job (in any active or completed state), reuse it
         # instead of submitting a duplicate season pack NZB.
@@ -840,7 +864,7 @@ class TorrentProcessor:
             if _imdb and _season is not None:
                 # In-memory check: scan Adding queue items for same imdb+season with nzb: job.
                 # This catches jobs submitted this tick before they're written to DB.
-                import re as _re_mem
+                from debrid.common import is_likely_season_pack as _is_likely_season_pack_mem
                 if adding_queue_items:
                     _item_version = (item or {}).get('version', 'Default')
                     for _mem_item in adding_queue_items:
@@ -855,12 +879,15 @@ class TorrentProcessor:
                         # releases and was wrongly read as "not a normal episode filename,
                         # must be an unresolved pack".
                         _mem_check_title = _mem_item.get('original_scraped_torrent_title') or _mem_item.get('filled_by_file') or ''
-                        # An empty title here usually means this sibling's own submission
+                        # An empty identity here usually means this sibling's own submission
                         # (earlier this same tick) hasn't been reflected back into this
                         # in-memory snapshot yet - not evidence it's a pack. Defaulting to
                         # "is a pack" in that case caused a different episode's individual
                         # NZB job to be reused here, symlinking the wrong file to this item.
-                        _mem_is_pack = bool(_mem_check_title) and not _re_mem.search(r'[Ss]\d{2}[Ee]\d{2}', _mem_check_title)
+                        # Checks filled_by_title too, not just the title/filename precedence
+                        # above - a provider can obfuscate the filename while the episode
+                        # marker survives only in filled_by_title.
+                        _mem_is_pack = _is_likely_season_pack_mem(_mem_check_title, _mem_item.get('filled_by_title') or '')
                         _mem_job = _mem_item.get('filled_by_torrent_id')
                         _mem_id = _mem_job[4:] if _mem_job and _mem_job.startswith('nzb:') else _mem_job
                         if _mem_is_pack:
@@ -903,14 +930,15 @@ class TorrentProcessor:
 
                 try:
                     from database import get_db_connection as _gdb
+                    from debrid.common import is_likely_season_pack as _is_likely_season_pack_db
                     _conn = _gdb()
-                    import re as _re_dedup
                     # Matches SQL's REPLACE(COALESCE(version,''),'*','') exactly — fall back
                     # to '' (not a literal like 'Default') so NULL/empty version rows still compare equal.
                     _sibling_ver = (item.get('version') or '').rstrip('*')
                     try:
                         _sibling = _conn.execute(
-                            "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title FROM media_items "
+                            "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title, filled_by_title "
+                            "FROM media_items "
                             "WHERE imdb_id=? AND season_number=? AND type='episode' "
                             "AND id!=? AND filled_by_torrent_id LIKE 'nzb:%' "
                             "AND REPLACE(COALESCE(version,''),'*','')=? "
@@ -925,9 +953,11 @@ class TorrentProcessor:
                         # single-episode usenet releases and was wrongly read as "not a normal
                         # episode filename, must be an unresolved pack".
                         _sibling_check_title = _sibling[2] or _sibling[1] or ''
-                        # Empty title is not evidence of a pack - see matching comment in the
+                        # Empty identity is not evidence of a pack - see matching comment in the
                         # in-memory check above. Defaulting True here risks the same wrong-job-reuse.
-                        _sibling_is_pack = bool(_sibling_check_title) and not _re_dedup.search(r'[Ss]\d{2}[Ee]\d{2}', _sibling_check_title)
+                        # Also checks filled_by_title, which can carry the episode marker even
+                        # when the title/filename precedence above doesn't.
+                        _sibling_is_pack = _is_likely_season_pack_db(_sibling_check_title, _sibling[3] or '')
                         if _sibling_is_pack:
                             if rescrape_blocks_pack_reuse(item, _sibling_check_title):
                                 _sibling_is_pack = False
@@ -1225,6 +1255,8 @@ class TorrentProcessor:
                         logging.info(f'[{item_identifier}] Added missing-segments NZB URL to not-wanted')
                 except Exception:
                     pass
+                from usenet.nzb_dead_release_cache import mark_release_dead
+                mark_release_dead(title)
                 # Flag on item so adding_queue knows this was a missing-segments failure
                 if item:
                     item['_nzb_all_missing_segments'] = True
@@ -1246,6 +1278,8 @@ class TorrentProcessor:
                                                     tags=_tags, tags_exclusive=_tags_exclusive)
                     if not job_id and client.last_missing_segments:
                         logging.warning(f'[{item_identifier}] cli_mount server missing segments on fallback for {job_title!r}')
+                        from usenet.nzb_dead_release_cache import mark_release_dead
+                        mark_release_dead(title)
                         if item:
                             item['_nzb_all_missing_segments'] = True
                         return None
@@ -1305,6 +1339,17 @@ class TorrentProcessor:
             results, accept_uncached=accept_uncached, item=item, adding_queue_items=adding_queue_items,
         )
         if torrent_info:
+            # Stamp which provider actually holds this torrent. add_to_account tags
+            # its own successes, but the cached-hit, existing-torrent-reuse and
+            # sibling-pack paths return info straight from whichever provider
+            # answered without tagging it -- self.debrid_provider is the one thing
+            # every path updates, so it is the reliable fallback. The Adding queue
+            # persists this onto the item and the Checking queue polls that provider
+            # instead of the primary: polling the primary for a torrent a fallback
+            # holds 404s on the very first check and is misread as a missing torrent,
+            # which sends the item back to Wanted and regrabs the next release.
+            if not torrent_info.get('_provider') and self.debrid_provider is not None:
+                torrent_info['_provider'] = self.debrid_provider.PROVIDER_NAME
             try:
                 self._consolidate_covered_siblings(item, torrent_info)
             except Exception as e:
@@ -1480,6 +1525,14 @@ class TorrentProcessor:
                             logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Info Fetch - Getting info for cached torrent")
                             info = self.debrid_provider.get_torrent_info(torrent_id)
                             torrent_title = self.debrid_provider.get_cached_torrent_title(hash_value)
+                            # Stamp explicitly with winning_provider (this result's own cache-check
+                            # outcome) rather than relying on self.debrid_provider still matching it
+                            # by the time process_results' fallback stamp runs — self.debrid_provider
+                            # is shared, mutable state across every item this long-lived
+                            # TorrentProcessor processes, so a future edit between here and that
+                            # fallback could otherwise silently mis-stamp a different item.
+                            if info is not None:
+                                info['_provider'] = winning_provider.PROVIDER_NAME
                 
                 if not info:
                     try:
@@ -1510,6 +1563,10 @@ class TorrentProcessor:
                             else:
                                 logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Reusing existing torrent ID: {existing_torrent_id}")
                                 info = existing_info
+                                # Stamp explicitly with the provider this lookup was actually
+                                # performed against, same reasoning as the cache-hit path above.
+                                if info is not None:
+                                    info['_provider'] = self.debrid_provider.PROVIDER_NAME
                         else:
                             logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service")
                             info = self.add_to_account(original_link)

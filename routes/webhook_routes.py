@@ -200,7 +200,10 @@ def rclone_webhook():
 
         thread = threading.Thread(
             target=_run_rclone_to_symlink_task,
-            args=(scan_path, symlink_base_path_str, dry_run, task_id, True, final_dir_component)
+            # Trailing True is user_initiated: this content is in the mount because
+            # a person put it there, so it may unghost an existing entry. The periodic
+            # mount scan deliberately does not pass it.
+            args=(scan_path, symlink_base_path_str, dry_run, task_id, True, final_dir_component, True)
         )
         thread.daemon = True
         thread.start()

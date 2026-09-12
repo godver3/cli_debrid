@@ -419,7 +419,7 @@
             <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
-            <div class="info-banner-content">Connect a usenet backend — <strong>cli_mount</strong> (custom API, default port 8888) or <strong>NzbDAV</strong> (SAB-compatible API, default port 3000). Both handle NNTP and serve files via the rclone mount.</div>
+            <div class="info-banner-content">Connect a usenet backend — <strong>cli_mount</strong> (custom API, default port 8888), <strong>NzbDAV</strong> (SAB-compatible API, default port 3000), or <strong>Zurg</strong> (SABnzbd-emulation endpoint, e.g. Zurg 2.0). All handle NNTP and serve files via an rclone mount.</div>
         </div>
         <div class="settings-form-group">
             <label for="usenet_provider-enabled" class="settings-title">Enable Usenet:</label>
@@ -435,8 +435,9 @@
                     class="settings-input">
                 <option value="climount" {% if _provider == 'climount' %}selected{% endif %}>cli_mount</option>
                 <option value="nzbdav"    {% if _provider == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
+                <option value="zurg"      {% if _provider == 'zurg' %}selected{% endif %}>Zurg (generic SAB mount)</option>
             </select>
-            <p class="settings-description">Backend type. cli_mount uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Both expose the same client interface internally.</p>
+            <p class="settings-description">Backend type. cli_mount uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Zurg selects the same SAB-compatible logic as NzbDAV but resolves job folders directly under the mount root instead of a <code>&lt;category&gt;/&lt;job&gt;</code> layout — use it for Zurg 2.0's usenet SAB emulation, or any other flat-layout SAB-compatible mount. All three expose the same client interface internally.</p>
         </div>
         <details data-provider-only="nzbdav" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
             <summary style="cursor:pointer;font-weight:600;">How to set up NzbDAV (click to expand)</summary>
@@ -453,6 +454,17 @@
             <p class="settings-description" style="margin-top:4px;"><strong>Switching from cli_mount?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing cli_mount files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). To move existing downloads across, use <strong>Debug → Library → "Migrate between usenet providers"</strong> (in-app, both directions). For the cli_mount→NzbDAV direction it reads cli_mount's stored <code>.nzb</code> files, so bind cli_mount's appdata into cli-debrid (set <em>cli_mount Data Path</em> below) and the tool reads them from <code>&lt;data_path&gt;/usenet/nzbs</code>. (The host CLI <code>nzbdav_setup.py migrate-files</code> does the same from the shell.)</p>
         </details>
         {% include '_nzbdav_setup_helper.html' %}
+        <details data-provider-only="zurg" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
+            <summary style="cursor:pointer;font-weight:600;">How to set up Zurg (click to expand)</summary>
+            <p class="settings-description" style="margin-top:8px;">Zurg 2.0's SABnzbd-compatible endpoint speaks the same SAB query-string API as NzbDAV, so submission, polling and health checks work unchanged — the only difference is that Zurg's mount stores content <strong>flat</strong> (<code>&lt;mount&gt;/&lt;job name&gt;/</code>), with no per-category subfolder, so choosing Zurg here (instead of NzbDAV) is what makes folder lookups resolve correctly.</p>
+            <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
+                <li><strong>Point Zurg at your usenet provider</strong> (NNTP) and indexers, and confirm its SABnzbd-emulation endpoint is enabled (check Zurg's config/docs for the SAB API port, e.g. 9999).</li>
+                <li><strong>Fill the fields below:</strong> Provider URL (Zurg's SAB endpoint, e.g. <code>http://host:9999</code>), API Token (if Zurg requires one), Fallback Category (rarely needed — leave at <code>__unplayable__</code>), Zurg Mount Path (where Zurg's rclone mount appears in this container, e.g. <code>/mnt/zurg</code>).</li>
+                <li><strong>Bind the mount + Plex:</strong> bind Zurg's rclone mount into this container at that path, and point your Plex library at it (or a merged mount — see <em>Debrid Mount Path</em> above).</li>
+                <li><strong>Toggle</strong> <em>Enable Usenet</em> above and grab something to confirm the folder resolves and no duplicate re-grabs occur.</li>
+            </ol>
+            <p class="settings-description" style="margin-top:4px;">If you were previously using the NzbDAV option against a Zurg mount, switch Provider to Zurg here — the URL/Token/Mount Path values carry over unchanged, only the folder-resolution logic changes.</p>
+        </details>
         <details data-provider-only="climount" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
             <summary style="cursor:pointer;font-weight:600;">How to set up cli_mount (click to expand)</summary>
             <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
@@ -470,6 +482,7 @@
                    placeholder="e.g. http://192.168.1.x:8888 (cli_mount) or http://192.168.1.x:3000 (nzbdav)">
             <p class="settings-description" data-provider-only="climount">Do not use localhost:8888 — that conflicts with Phalanx DB. Use the cli_mount host IP or container name.</p>
             <p class="settings-description" data-provider-only="nzbdav">Use the NzbDAV host IP or container name with its port (default 3000), e.g. <code>http://192.168.1.x:3000</code>. Do not append <code>/sabnzbd</code> — NzbDAV serves its SAB-compatible API at the root <code>/api</code>.</p>
+            <p class="settings-description" data-provider-only="zurg">Use Zurg's SABnzbd-emulation host/port, e.g. <code>http://192.168.1.x:9999</code>.</p>
         </div>
         <div class="settings-form-group">
             <label for="usenet_provider-api_token" class="settings-title">API Token:</label>
@@ -479,13 +492,13 @@
                    placeholder="Leave empty if auth is disabled">
         </div>
         <div class="settings-form-group">
-            <label for="usenet_provider-download_folder" class="settings-title"><span data-provider-only="nzbdav">Fallback Category <span style="color:#888;font-size:0.85em;">(rarely used)</span></span><span data-provider-only="climount">Download Folder / Category</span>:</label>
+            <label for="usenet_provider-download_folder" class="settings-title"><span data-provider-only="nzbdav,zurg">Fallback Category <span style="color:#888;font-size:0.85em;">(rarely used)</span></span><span data-provider-only="climount">Download Folder / Category</span>:</label>
             <input type="text" id="usenet_provider-download_folder" name="Usenet Provider.download_folder"
                    value="{{ settings.get('Usenet Provider', {}).get('download_folder', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="download_folder"
-                   placeholder="cli_mount: blank for default · nzbdav: __unplayable__">
+                   placeholder="cli_mount: blank for default · nzbdav/zurg: __unplayable__">
             <p class="settings-description" data-provider-only="climount">Category/folder in cli_mount for downloads. Leave empty to use cli_mount's default download folder.</p>
-            <p class="settings-description" data-provider-only="nzbdav">This is <strong>not</strong> a download destination — it's the <strong>fallback category</strong> used only if the per-release title heuristic can't classify a grab. In practice the heuristic classifies everything (it auto-routes to <code>movies</code> / <code>shows</code> / <code>music</code> and the <code>*_1080p_264</code> variants), so this almost never fires. Recommended value: <code>__unplayable__</code> — a category Plex doesn't scan, so any unclassifiable grab parks there harmlessly instead of polluting a library. This name (and every category the heuristic emits) must exist in NzbDAV's <code>api.categories</code> — use the setup helper's "ensure categories" button above, or add them in NzbDAV → Settings → Categories.</p>
+            <p class="settings-description" data-provider-only="nzbdav,zurg">This is <strong>not</strong> a download destination — it's the <strong>fallback category</strong> used only if the per-release title heuristic can't classify a grab. In practice the heuristic classifies everything (it auto-routes to <code>movies</code> / <code>shows</code> / <code>music</code> and the <code>*_1080p_264</code> variants), so this almost never fires. Recommended value: <code>__unplayable__</code> — a category Plex doesn't scan, so any unclassifiable grab parks there harmlessly instead of polluting a library. This category name (and every category the heuristic emits) must exist on your instance — for NzbDAV, use the setup helper's "ensure categories" button above, or add them in NzbDAV → Settings → Categories; for Zurg, check its SAB-emulation category config.</p>
         </div>
         <div class="settings-form-group" data-provider-only="climount">
             <label for="usenet_provider-data_path" class="settings-title">cli_mount Data Path:</label>
@@ -495,29 +508,30 @@
                    placeholder="/cli_mount_data">
             <p class="settings-description">Path to cli_mount's data directory inside the container. Add <code>- /path/to/cli_mount/appdata:/cli_mount_data</code> to your docker-compose volumes, then set this to <code>/cli_mount_data</code>. Required for cli_mount DB backup, restore, and cleanup tools — and lets the in-app provider migration (<strong>Debug → Library</strong>) read cli_mount's stored <code>.nzb</code> files from <code>&lt;data_path&gt;/usenet/nzbs</code>.</p>
         </div>
-        <div class="settings-form-group" data-provider-only="nzbdav">
-            <label for="usenet_provider-mounted_file_location" class="settings-title">NzbDAV Mount Path:</label>
+        <div class="settings-form-group" data-provider-only="nzbdav,zurg">
+            <label for="usenet_provider-mounted_file_location" class="settings-title"><span data-provider-only="nzbdav">NzbDAV Mount Path</span><span data-provider-only="zurg">Zurg Mount Path</span>:</label>
             <input type="text" id="usenet_provider-mounted_file_location" name="Usenet Provider.mounted_file_location"
                    value="{{ settings.get('Usenet Provider', {}).get('mounted_file_location', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="mounted_file_location"
-                   placeholder="/mnt/nzbdav">
-            <p class="settings-description">Path inside <em>this</em> container where the NzbDAV rclone-mount appears. NzbDAV has no <code>/browse</code> API, so folder lookups walk the filesystem under <code>&lt;this path&gt;/content/&lt;category&gt;/</code>. Bind-mount the nzbdav-rclone mount into the cli-debrid container at this same path. A trailing <code>/__all__</code> is stripped automatically (zurg-path compatibility). Effectively required when provider is NzbDAV.</p>
+                   placeholder="/mnt/nzbdav or /mnt/zurg">
+            <p class="settings-description" data-provider-only="nzbdav">Path inside <em>this</em> container where the NzbDAV rclone-mount appears. NzbDAV has no <code>/browse</code> API, so folder lookups walk the filesystem under <code>&lt;this path&gt;/content/&lt;category&gt;/</code>. Bind-mount the nzbdav-rclone mount into the cli-debrid container at this same path. A trailing <code>/__all__</code> is stripped automatically. Effectively required when provider is NzbDAV.</p>
+            <p class="settings-description" data-provider-only="zurg">Path inside <em>this</em> container where the Zurg rclone-mount appears. Zurg's mount is flat — content lives directly at <code>&lt;this path&gt;/&lt;job name&gt;/</code>, with no per-category subfolder — so folder lookups resolve the job name directly under this path instead of walking a category layout. Bind-mount Zurg's rclone mount into the cli-debrid container at this same path. A trailing <code>/__all__</code> is stripped automatically. Effectively required when provider is Zurg.</p>
         </div>
-        <div class="settings-form-group" data-provider-only="nzbdav">
+        <div class="settings-form-group" data-provider-only="nzbdav,zurg">
             <label for="usenet_provider-owned_categories" class="settings-title">Repair: Owned Categories <span style="color: #888; font-size: 0.85em;">(advanced)</span>:</label>
             <input type="text" id="usenet_provider-owned_categories" name="Usenet Provider.owned_categories"
                    value="{{ settings.get('Usenet Provider', {}).get('owned_categories', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="owned_categories"
                    placeholder="auto: movies,shows,movies_1080p_264,shows_1080p_264,__unplayable__">
-            <p class="settings-description">Comma-separated NzbDAV categories the broken-NZB repair tool may act on. NzbDAV history is shared with other SAB clients (e.g. Lidarr music) — repair only re-acquires content cli-debrid manages, so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (plus the Download Folder fallback). Set only if your category names differ.</p>
+            <p class="settings-description">Comma-separated categories the broken-NZB repair tool may act on. History on a shared instance can include other SAB clients (e.g. Lidarr music) — repair only re-acquires content cli-debrid manages, so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (plus the Download Folder fallback). Set only if your category names differ.</p>
         </div>
-        <div class="settings-form-group" data-provider-only="nzbdav">
+        <div class="settings-form-group" data-provider-only="nzbdav,zurg">
             <label for="usenet_provider-exclude_categories" class="settings-title">Repair: Exclude Categories <span style="color: #888; font-size: 0.85em;">(advanced)</span>:</label>
             <input type="text" id="usenet_provider-exclude_categories" name="Usenet Provider.exclude_categories"
                    value="{{ settings.get('Usenet Provider', {}).get('exclude_categories', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="exclude_categories"
                    placeholder="e.g. music,lidarr (optional)">
-            <p class="settings-description">Comma-separated NzbDAV categories the repair tool must ignore (subtracted from the owned set). Use this if you point Radarr/Sonarr at the same NzbDAV and don't want cli-debrid touching their categories.</p>
+            <p class="settings-description">Comma-separated categories the repair tool must ignore (subtracted from the owned set). Use this if you point Radarr/Sonarr at the same backend and don't want cli-debrid touching their categories.</p>
         </div>
         <div class="settings-form-group">
             <label for="usenet_provider-retention_days" class="settings-title">Usenet Retention Days:</label>
@@ -578,7 +592,8 @@
             if (!sel) return;
             const apply = () => {
                 document.querySelectorAll('[data-provider-only]').forEach(el => {
-                    el.style.display = (el.dataset.providerOnly === sel.value) ? '' : 'none';
+                    const only = el.dataset.providerOnly.split(',').map(s => s.trim());
+                    el.style.display = only.includes(sel.value) ? '' : 'none';
                 });
             };
             sel.addEventListener('change', apply);

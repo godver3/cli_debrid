@@ -2,7 +2,7 @@ import logging
 import colorlog
 from logging.handlers import RotatingFileHandler
 import os
-from utilities.log_redaction import RedactingFormatter
+from utilities.log_redaction import RedactingFormatter, scrub
 
 class ImmediateRotatingFileHandler(RotatingFileHandler):
     """A RotatingFileHandler that flushes immediately after each write"""
