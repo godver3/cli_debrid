@@ -141,5 +141,70 @@ class TestFilenameHashSuffix(unittest.TestCase):
         self.assertEqual(fname, 'Same.Release.Title.nzb')
 
 
+def _load_mount_layout():
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'usenet', 'mount_layout.py')
+    spec = importlib.util.spec_from_file_location('mount_layout_zurg_test', path)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+ml = _load_mount_layout()
+
+
+class TestResolveNzbJobDirForPlexScan(unittest.TestCase):
+    """CheckingQueue's targeted Plex scan must find flat Zurg job dirs as well
+    as nested NzbDAV ones. The pre-fix walk only checked <mount>/<cat>/<job>,
+    which never matches on a flat mount (and can mistake sibling jobs for cats).
+    """
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+
+    def test_flat_zurg_layout_resolves_direct_child(self):
+        job = 'Movie.Title.2024.1080p-GRP'
+        os.makedirs(os.path.join(self.root, job))
+        self.assertEqual(
+            ml.resolve_nzb_job_dir(self.root, job),
+            os.path.join(self.root, job),
+        )
+
+    def test_flat_layout_with_sibling_jobs_still_hits_exact_folder(self):
+        target = 'Show.S01E01.1080p-GRP'
+        sibling = 'Show.S01E02.1080p-GRP'
+        os.makedirs(os.path.join(self.root, target))
+        os.makedirs(os.path.join(self.root, sibling))
+        self.assertEqual(
+            ml.resolve_nzb_job_dir(self.root, target),
+            os.path.join(self.root, target),
+        )
+
+    def test_nested_nzbdav_layout_still_resolves(self):
+        job = 'Movie.Title.2024.1080p-GRP'
+        nested = os.path.join(self.root, 'movies', job)
+        os.makedirs(nested)
+        self.assertEqual(ml.resolve_nzb_job_dir(self.root, job), nested)
+
+    def test_missing_folder_returns_none(self):
+        os.makedirs(os.path.join(self.root, 'movies', 'Other.Job'))
+        self.assertIsNone(ml.resolve_nzb_job_dir(self.root, 'Missing.Job'))
+
+    def test_checking_queue_wires_resolve_helper(self):
+        # queues/checking_queue.py can't be imported here (heavy deps), so
+        # assert the Plex-scan path calls the shared helper rather than the
+        # old nested-only listdir walk.
+        source = open(
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         'queues', 'checking_queue.py'),
+            encoding='utf-8',
+        ).read()
+        self.assertIn('from usenet.mount_layout import resolve_nzb_job_dir', source)
+        self.assertIn('resolve_nzb_job_dir(_mount, _folder)', source)
+        self.assertNotIn('_os.path.join(_mount, _cat, _folder)', source)
+
+
 if __name__ == '__main__':
     unittest.main()

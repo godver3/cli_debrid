@@ -176,3 +176,105 @@ def test_run_program_wires_independent_idle_watch_and_fail_closed_gate():
     assert "verdict = classify_new_nzb(actual_file_path)" in source
     assert "if verdict == UNKNOWN:" in source
     assert "from usenet.repair_engine import _verify_file_readable" in source
+
+
+def test_checking_queue_wires_nzb_period_backstop():
+    # CheckingQueue can't be imported here (heavy deps); pin the #499 backstop
+    # call site so a refactor can't silently drop GUID blacklisting on timeout.
+    source = (Path(__file__).parents[1] / "queues" / "checking_queue.py").read_text()
+    assert "from utilities.nzb_checking_backstop import apply_nzb_checking_timeout" in source
+    assert "apply_nzb_checking_timeout(" in source
+    assert 'content not found within {checking_queue_limit}s — adding to not-wanted' in source
+
+
+def test_inconclusive_probe_stays_in_checking_until_period_timeout_blacklists_guid():
+    """Composition: #499 fail-closed defer + Checking period backstop.
+
+    An inconclusive probe must not admit the item (gate contract: only True
+    proceeds). Once time_in_queue exceeds checking_queue_period, the NZB GUID
+    is blacklisted and the item returns to Wanted — the path that replaced the
+    old tick-based force-collect.
+    """
+    from utilities.nzb_checking_backstop import (
+        apply_nzb_checking_timeout,
+        checking_period_exceeded,
+    )
+
+    # 1) Inconclusive probe → UNKNOWN → callers treat as "not True" and defer.
+    assert _classify([False, None, False]) == UNKNOWN
+    gate_result = None  # run_program maps UNKNOWN → None
+    assert gate_result is not True
+
+    item = {"id": 42, "filled_by_magnet": "https://indexer.example/guid-xyz"}
+    not_wanted = []
+    moved = []
+
+    # 2) Still under the period limit — backstop must not fire yet.
+    assert checking_period_exceeded(30.0, 120.0) is False
+    assert (
+        apply_nzb_checking_timeout(
+            torrent_id="nzb:deadbeef",
+            items=[item],
+            time_in_queue=30.0,
+            limit=120.0,
+            add_to_not_wanted_nzb_guid=not_wanted.append,
+            move_to_wanted=lambda it, state: moved.append((it["id"], state)),
+            contains_item_id=lambda _id: True,
+        )
+        is False
+    )
+    assert not_wanted == []
+    assert moved == []
+
+    # 3) Time advances past the limit — GUID blacklisted, item → Wanted.
+    assert checking_period_exceeded(130.0, 120.0) is True
+    assert (
+        apply_nzb_checking_timeout(
+            torrent_id="nzb:deadbeef",
+            items=[item],
+            time_in_queue=130.0,
+            limit=120.0,
+            add_to_not_wanted_nzb_guid=not_wanted.append,
+            move_to_wanted=lambda it, state: moved.append((it["id"], state)),
+            contains_item_id=lambda _id: True,
+        )
+        is True
+    )
+    assert not_wanted == ["https://indexer.example/guid-xyz"]
+    assert moved == [(42, "Checking")]
+
+
+def test_checking_timeout_ignores_non_nzb_and_already_removed_items():
+    from utilities.nzb_checking_backstop import apply_nzb_checking_timeout
+
+    not_wanted = []
+    moved = []
+    assert (
+        apply_nzb_checking_timeout(
+            torrent_id="rd:abc123",
+            items=[{"id": 1, "filled_by_magnet": "magnet:?xt=urn:btih:abc"}],
+            time_in_queue=999.0,
+            limit=120.0,
+            add_to_not_wanted_nzb_guid=not_wanted.append,
+            move_to_wanted=lambda it, state: moved.append(it["id"]),
+            contains_item_id=lambda _id: True,
+        )
+        is False
+    )
+    assert not_wanted == []
+    assert moved == []
+
+    assert (
+        apply_nzb_checking_timeout(
+            torrent_id="nzb:abc",
+            items=[{"id": 7, "filled_by_magnet": "https://indexer.example/guid-7"}],
+            time_in_queue=999.0,
+            limit=120.0,
+            add_to_not_wanted_nzb_guid=not_wanted.append,
+            move_to_wanted=lambda it, state: moved.append(it["id"]),
+            contains_item_id=lambda _id: False,  # already removed from Checking
+        )
+        is True
+    )
+    assert not_wanted == ["https://indexer.example/guid-7"]
+    assert moved == []
