@@ -829,6 +829,23 @@ class TorrentProcessor:
             logging.warning(f'[{item_identifier}] NZB result has no URL, skipping')
             return None
 
+        # Indexers can list the exact same underlying release under a different
+        # GUID (re-indexed upload, duplicate indexer feed) — the not-wanted store
+        # is per-GUID, so a fresh GUID for a release already confirmed dead this
+        # session would otherwise repeat the same expensive cli_mount submission.
+        from usenet.nzb_dead_release_cache import is_release_known_dead
+        if is_release_known_dead(title):
+            logging.info(f'[{item_identifier}] Skipping {title!r} — already confirmed missing segments '
+                         f'this session under a different GUID')
+            try:
+                from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nw_dup
+                _add_nw_dup(nzb_url)
+            except Exception:
+                pass
+            if item:
+                item['_nzb_all_missing_segments'] = True
+            return None
+
         # Equivalent of debrid's _all_torrent_ids check: if another episode of the same
         # show/season already has an NZB job (in any active or completed state), reuse it
         # instead of submitting a duplicate season pack NZB.
@@ -1225,6 +1242,8 @@ class TorrentProcessor:
                         logging.info(f'[{item_identifier}] Added missing-segments NZB URL to not-wanted')
                 except Exception:
                     pass
+                from usenet.nzb_dead_release_cache import mark_release_dead
+                mark_release_dead(title)
                 # Flag on item so adding_queue knows this was a missing-segments failure
                 if item:
                     item['_nzb_all_missing_segments'] = True
@@ -1246,6 +1265,8 @@ class TorrentProcessor:
                                                     tags=_tags, tags_exclusive=_tags_exclusive)
                     if not job_id and client.last_missing_segments:
                         logging.warning(f'[{item_identifier}] cli_mount server missing segments on fallback for {job_title!r}')
+                        from usenet.nzb_dead_release_cache import mark_release_dead
+                        mark_release_dead(title)
                         if item:
                             item['_nzb_all_missing_segments'] = True
                         return None
