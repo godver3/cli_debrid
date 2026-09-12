@@ -40,6 +40,10 @@ def _load_match_overrides():
 
     core = types.ModuleType(pkg_name + '.core')
     core.get_db_connection = None  # patched per test
+    # Real retry_on_db_lock retries on 'database is locked' OperationalErrors;
+    # a plain pass-through is enough here since the fake connection never
+    # raises one -- the retry behaviour itself isn't what these tests cover.
+    core.retry_on_db_lock = lambda *a, **k: (lambda func: func)
     sys.modules[pkg_name + '.core'] = core
 
     reading = types.ModuleType(pkg_name + '.database_reading')

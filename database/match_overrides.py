@@ -18,10 +18,11 @@ called.
 """
 
 import logging
+import sqlite3
 from datetime import datetime
 from typing import Optional
 
-from .core import get_db_connection
+from .core import get_db_connection, retry_on_db_lock
 from .database_reading import normalize_string_for_comparison
 
 
@@ -56,6 +57,7 @@ def _coerce_year(year) -> Optional[int]:
         return None
 
 
+@retry_on_db_lock()
 def set_match_override(title: str, year, media_type: str, imdb_id: str) -> bool:
     """Record (or replace) the correction for one title/year/type."""
     norm_title = _normalize(title)
@@ -64,16 +66,33 @@ def set_match_override(title: str, year, media_type: str, imdb_id: str) -> bool:
 
     conn = get_db_connection()
     try:
-        ensure_match_override_table(conn)
-        conn.execute(
-            "INSERT OR REPLACE INTO match_overrides "
-            "(norm_title, year, media_type, imdb_id, title, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (norm_title, _coerce_year(year), media_type, imdb_id, title, datetime.now()),
-        )
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO match_overrides "
+                "(norm_title, year, media_type, imdb_id, title, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (norm_title, _coerce_year(year), media_type, imdb_id, title, datetime.now()),
+            )
+        except sqlite3.OperationalError as exc:
+            # "database is locked" must propagate to @retry_on_db_lock, which
+            # retries the whole call -- so only "no such table" (e.g. a
+            # schema-management migration ordering gap) is handled here,
+            # matching movie_release_overrides.py's pattern. Anything else
+            # re-raises past this function to the decorator/outer except.
+            if 'no such table' not in str(exc).lower():
+                raise
+            ensure_match_override_table(conn)
+            conn.execute(
+                "INSERT OR REPLACE INTO match_overrides "
+                "(norm_title, year, media_type, imdb_id, title, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (norm_title, _coerce_year(year), media_type, imdb_id, title, datetime.now()),
+            )
         conn.commit()
         logging.info(f"[MatchOverride] '{title}' ({year}) [{media_type}] -> {imdb_id}")
         return True
+    except sqlite3.OperationalError:
+        raise
     except Exception as e:
         logging.error(f"[MatchOverride] Could not record override for '{title}': {e}",
                       exc_info=True)
@@ -82,6 +101,7 @@ def set_match_override(title: str, year, media_type: str, imdb_id: str) -> bool:
         conn.close()
 
 
+@retry_on_db_lock()
 def get_match_override(title: str, year, media_type: str) -> Optional[str]:
     """
     The IMDb ID recorded for this title/year/type, or None.
@@ -95,20 +115,29 @@ def get_match_override(title: str, year, media_type: str) -> Optional[str]:
 
     conn = get_db_connection()
     try:
-        ensure_match_override_table(conn)
-        # Exact year first, then the year-less wildcard.
-        row = conn.execute(
-            "SELECT imdb_id FROM match_overrides "
-            "WHERE norm_title = ? AND media_type = ? AND year IS ? ",
-            (norm_title, media_type, _coerce_year(year)),
-        ).fetchone()
-        if not row:
+        try:
+            # Exact year first, then the year-less wildcard.
             row = conn.execute(
                 "SELECT imdb_id FROM match_overrides "
-                "WHERE norm_title = ? AND media_type = ? AND year IS NULL",
-                (norm_title, media_type),
+                "WHERE norm_title = ? AND media_type = ? AND year IS ? ",
+                (norm_title, media_type, _coerce_year(year)),
             ).fetchone()
+            if not row:
+                row = conn.execute(
+                    "SELECT imdb_id FROM match_overrides "
+                    "WHERE norm_title = ? AND media_type = ? AND year IS NULL",
+                    (norm_title, media_type),
+                ).fetchone()
+        except sqlite3.OperationalError as exc:
+            # See set_match_override: only "no such table" is handled here, a
+            # lock error re-raises past this function to @retry_on_db_lock.
+            if 'no such table' not in str(exc).lower():
+                raise
+            ensure_match_override_table(conn)
+            row = None
         return row['imdb_id'] if row else None
+    except sqlite3.OperationalError:
+        raise
     except Exception as e:
         logging.error(f"[MatchOverride] Lookup failed for '{title}': {e}", exc_info=True)
         return None
