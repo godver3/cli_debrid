@@ -339,7 +339,6 @@ class ProgramRunner:
             'task_push_pending_climount_tags': 5 * 60, # Run every 5 minutes — catches tags changed on cli_debrid side only
             'task_scan_mount_for_external_adds': 15 * 60, # Run every 15 minutes (disabled by default)
             'task_nzb_health_check': 10,             # Run every 10 seconds — polls NZB items in Adding
-            'task_nzb_idle_repair_watch': 60,        # Passive broken-state poll, independent of Adding
             'task_nzb_playback_repair_completion': 15, # Confirm only already-started playback repairs
             'task_nzb_playback_cleanup_retry': 20 * 60, # Background retry for old-file cleanup deferred after finalization
             'task_backfill_plex_guids': 24 * 60 * 60,    # Run once (disabled by default)
@@ -543,7 +542,6 @@ class ProgramRunner:
             'task_update_queue_views',
             'task_send_notifications',
             'task_nzb_health_check',
-            'task_nzb_idle_repair_watch',
             'task_nzb_playback_repair_completion',
             'task_nzb_playback_cleanup_retry',
             # Essential Periodic Tasks
@@ -4853,14 +4851,6 @@ class ProgramRunner:
         except Exception as exc:
             logging.error('[NZBPlayback] Completion task failed: %s', exc, exc_info=True)
 
-    def task_nzb_idle_repair_watch(self):
-        """Poll cli_mount's passive broken list even when no NZB is being added."""
-        try:
-            from utilities.nzb_idle_repair_watch import run_idle_repair_watch
-            run_idle_repair_watch()
-        except Exception as exc:
-            logging.error('[NZBIdleRepair] Watch task failed: %s', exc, exc_info=True)
-
     def task_nzb_playback_cleanup_retry(self):
         """Slow-cadence background retry for old-file cleanup deferred by the
         fast completion worker — repairs already finalized as replaced."""
@@ -6338,8 +6328,7 @@ class ProgramRunner:
             file is rejected and re-scraped before Plex has any chance to add
             it, avoiding a "recently added" flicker.
             Returns True if the item should proceed, False if it was rejected
-            (already reverted to Wanted), or None when verification must retry
-            later while the item remains in Checking.
+            (already reverted to Wanted; caller should skip further processing).
             """
             # In Symlinked/Local mode, check_local_file_for_item is already the
             # authoritative ffprobe gate for this item - it runs synchronously
@@ -6401,43 +6390,18 @@ class ProgramRunner:
                 try:
                     job_hash = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
                     from usenet.climount_client import get_climount_client
-                    from utilities.nzb_playability_guard import nzb_job_ready
                     job_status = get_climount_client().get_job_status(job_hash)
-                    if not nzb_job_ready(job_status):
-                        progress = job_status.get('progress', 0) if job_status else 'unknown'
-                        state = job_status.get('state', 'unknown') if job_status else 'unavailable'
-                        logging.info(
-                            f"[ffprobe] Deferring {probe_key} for item {item.get('id')} — "
-                            f"job {job_hash} is not conclusively complete "
-                            f"(state={state}, progress={progress}%)"
-                        )
-                        return None
+                    if job_status and job_status.get('state') != 'completed' and job_status.get('progress', 100) < 95:
+                        logging.info(f"[ffprobe] Deferring {probe_key} for item {item.get('id')} — job {job_hash} still downloading ({job_status.get('progress', 0)}%)")
+                        return True
                 except Exception as e:
-                    logging.warning(
-                        f"[ffprobe] Could not establish cli_mount completion for item "
-                        f"{item.get('id')} — keeping it in Checking: {e}"
-                    )
-                    return None
+                    logging.debug(f"[ffprobe] Could not check job download progress for {torrent_id}: {e}")
 
-            if is_nzb:
-                logging.info(f"[ffprobe] Running conclusive playability check ({probe_key}) on '{actual_file_path}'")
-                from utilities.nzb_playability_guard import HEALTHY, UNKNOWN, classify_new_nzb
-                verdict = classify_new_nzb(actual_file_path)
-                if verdict == HEALTHY:
-                    logging.info(f"[ffprobe] Playability check passed for '{actual_file_path}'")
-                    return True
-                if verdict == UNKNOWN:
-                    logging.warning(
-                        f"[ffprobe] Playability check inconclusive for item {item.get('id')} — "
-                        "keeping it in Checking and retrying later"
-                    )
-                    return None
-            else:
-                logging.info(f"[ffprobe] Running playability check ({probe_key}) on '{actual_file_path}'")
-                from usenet.repair_engine import _verify_file_readable
-                if _verify_file_readable(actual_file_path):
-                    logging.info(f"[ffprobe] Playability check passed for '{actual_file_path}'")
-                    return True
+            logging.info(f"[ffprobe] Running playability check ({probe_key}) on '{actual_file_path}'")
+            from usenet.repair_engine import _verify_file_readable
+            if _verify_file_readable(actual_file_path):
+                logging.info(f"[ffprobe] Playability check passed for '{actual_file_path}'")
+                return True
 
             logging.warning(f"[ffprobe] Playability check FAILED for '{actual_file_path}' — rejecting and reverting item {item.get('id')} to Wanted")
             from utilities.local_library_scan import _reject_unplayable_source
@@ -6596,7 +6560,7 @@ class ProgramRunner:
                     logging.info(f"Confirmed file exists on disk: {actual_file_path} for item {item_id}") # Log actual path found
                     self.file_location_cache[cache_key] = 'exists'
 
-                    if _ffprobe_gate_or_reject(item_dict, actual_file_path, cache_key) is not True:
+                    if not _ffprobe_gate_or_reject(item_dict, actual_file_path, cache_key):
                         continue
 
                     # --- START EDIT: Add Tick Check and Scan Path Gathering ---
@@ -6865,7 +6829,7 @@ class ProgramRunner:
                     current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
                     self.plex_scan_tick_counts[cache_key] = current_tick
 
-                    if _ffprobe_gate_or_reject(item_dict, actual_file_path, cache_key) is not True:
+                    if not _ffprobe_gate_or_reject(item_dict, actual_file_path, cache_key):
                         continue
 
                     # Option C: Direct Plex library lookup.

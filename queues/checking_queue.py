@@ -1578,22 +1578,15 @@ class CheckingQueue:
                     
                     if time_in_queue > checking_queue_limit:
                         if str(torrent_id).startswith('nzb:'):
-                            # Fail-closed playability (#499) can leave NZBs in
-                            # Checking while probes are inconclusive; this is the
-                            # period backstop that blacklists the GUID and returns
-                            # the group to Wanted instead of force-collecting.
                             logging.info(f"NZB {torrent_id} content not found within {checking_queue_limit}s — adding to not-wanted and moving back to Wanted")
                             from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nzb_guid_t
-                            from utilities.nzb_checking_backstop import apply_nzb_checking_timeout
-                            apply_nzb_checking_timeout(
-                                torrent_id=torrent_id,
-                                items=current_items_for_torrent,
-                                time_in_queue=time_in_queue,
-                                limit=checking_queue_limit,
-                                add_to_not_wanted_nzb_guid=_add_nzb_guid_t,
-                                move_to_wanted=queue_manager.move_to_wanted,
-                                contains_item_id=self.contains_item_id,
-                            )
+                            for _item_nw in current_items_for_torrent:
+                                try:
+                                    _nzb_url = _item_nw.get('filled_by_magnet', '')
+                                    if _nzb_url:
+                                        _add_nzb_guid_t(_nzb_url)
+                                except Exception:
+                                    pass
                         else:
                             logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)")
                             try:
@@ -1603,9 +1596,9 @@ class CheckingQueue:
                                 )
                             except Exception as e:
                                 logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
-                            for item_to_move in list(current_items_for_torrent):
-                                if self.contains_item_id(item_to_move['id']):
-                                    queue_manager.move_to_wanted(item_to_move, "Checking")
+                        for item_to_move in list(current_items_for_torrent):
+                            if self.contains_item_id(item_to_move['id']):
+                                queue_manager.move_to_wanted(item_to_move, "Checking")
                         continue
 
                 # Skip remaining checks if the torrent is completed
