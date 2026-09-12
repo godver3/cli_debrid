@@ -128,6 +128,17 @@ def get_match_override(title: str, year, media_type: str) -> Optional[str]:
                     "WHERE norm_title = ? AND media_type = ? AND year IS NULL",
                     (norm_title, media_type),
                 ).fetchone()
+                # A wildcard override applying to a query that DOES carry a year is
+                # the exact scenario that can hijack an unrelated, differently-year
+                # show sharing this normalized title -- intentional per the design
+                # (a year-less correction is meant to keep applying to releases that
+                # carry one), but worth a visible trail when it happens so a
+                # surprising import can be traced back to which override caused it.
+                if row and year not in (None, ''):
+                    logging.info(
+                        f"[MatchOverride] Year-less override for '{norm_title}' "
+                        f"[{media_type}] applied to a query with year={year!r} -> {row['imdb_id']}"
+                    )
         except sqlite3.OperationalError as exc:
             # See set_match_override: only "no such table" is handled here, a
             # lock error re-raises past this function to @retry_on_db_lock.
