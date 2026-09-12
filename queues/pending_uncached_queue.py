@@ -165,7 +165,8 @@ class PendingUncachedQueue:
             title=item.get('title', ''),
             link=item.get('filled_by_magnet', ''),
             filled_by_file=filename,
-            torrent_id=torrent_id
+            torrent_id=torrent_id,
+            debrid_provider=self.debrid_provider.PROVIDER_NAME
         )
         self.remove_item(item)
 
@@ -272,7 +273,8 @@ class PendingUncachedQueue:
                     title=related_item_dict.get('title', ''),
                     link=main_item_magnet_link, # Use the main item's magnet link
                     filled_by_file=related_filename_basename,
-                    torrent_id=torrent_id
+                    torrent_id=torrent_id,
+                    debrid_provider=self.debrid_provider.PROVIDER_NAME
                 )
                 # These items are from 'Scraping' or 'Wanted' queues, not self.items.
                 # Their state transition is handled by move_to_checking.
