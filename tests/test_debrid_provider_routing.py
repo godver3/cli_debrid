@@ -29,6 +29,7 @@ source with ast, and the routing decision itself is exercised as a simulation.
 import ast
 import os
 import unittest
+from pathlib import Path
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -401,6 +402,41 @@ class TestRediscoverySemantics(unittest.TestCase):
         rd = self.FakeProvider('Real-Debrid', [])
         self.assertIsNone(self._rediscover('ANY', [rd], rd))
         self.assertEqual(self.exhausted, set(), 'nothing was swept, so nothing to remember')
+
+
+class TestReturnPathsSelfStampProvider(unittest.TestCase):
+    """TorrentProcessor._process_results_inner's non-add_to_account return paths
+
+    (cache-hit reuse, existing-torrent-id reuse, sibling-pack reuse) used to rely
+    on self.debrid_provider still matching the current item by the time
+    process_results' fallback stamp ran afterward. self.debrid_provider is shared,
+    mutable state across every item a long-lived TorrentProcessor processes, so
+    that synchronization -- while correct today, traced call by call -- was
+    implicit and fragile to a future edit. Each path now stamps info['_provider']
+    itself at the point where the correct provider is unambiguously known,
+    removing the need to rely on that fallback at all for these three sites.
+    """
+    def _source(self):
+        path = Path(__file__).parents[1] / 'queues' / 'torrent_processor.py'
+        return path.read_text()
+
+    def test_cache_hit_reuse_self_stamps(self):
+        src = self._source()
+        self.assertIn("info = self.debrid_provider.get_torrent_info(torrent_id)", src)
+        self.assertIn("info['_provider'] = winning_provider.PROVIDER_NAME", src)
+
+    def test_existing_torrent_id_reuse_self_stamps(self):
+        src = self._source()
+        self.assertIn("info = existing_info", src)
+        self.assertIn("info['_provider'] = self.debrid_provider.PROVIDER_NAME", src)
+
+    def test_sibling_pack_reuse_self_stamps(self):
+        src = self._source()
+        # Inside _try_reuse: self.debrid_provider = provider; ... info['_provider'] = provider.PROVIDER_NAME
+        idx = src.index("self.debrid_provider = provider\n                info = dict(info)")
+        self.assertGreater(idx, -1)
+        snippet = src[idx:idx + 400]
+        self.assertIn("info['_provider'] = provider.PROVIDER_NAME", snippet)
 
 
 if __name__ == '__main__':

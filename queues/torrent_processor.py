@@ -597,6 +597,9 @@ class TorrentProcessor:
                 self.debrid_provider = provider
                 info = dict(info)
                 info['original_scraped_torrent_title'] = check_title
+                # Stamp explicitly with the provider this sibling pack was actually found on,
+                # same reasoning as _process_results_inner's cache-hit/existing-reuse paths.
+                info['_provider'] = provider.PROVIDER_NAME
                 # debrid_folder_name must reflect the provider's OWN real mount folder name
                 # (info['filename']/'original_filename'), not the indexer's cosmetic display
                 # title (check_title) - those two frequently differ (e.g. a release named
@@ -1522,6 +1525,14 @@ class TorrentProcessor:
                             logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Info Fetch - Getting info for cached torrent")
                             info = self.debrid_provider.get_torrent_info(torrent_id)
                             torrent_title = self.debrid_provider.get_cached_torrent_title(hash_value)
+                            # Stamp explicitly with winning_provider (this result's own cache-check
+                            # outcome) rather than relying on self.debrid_provider still matching it
+                            # by the time process_results' fallback stamp runs — self.debrid_provider
+                            # is shared, mutable state across every item this long-lived
+                            # TorrentProcessor processes, so a future edit between here and that
+                            # fallback could otherwise silently mis-stamp a different item.
+                            if info is not None:
+                                info['_provider'] = winning_provider.PROVIDER_NAME
                 
                 if not info:
                     try:
@@ -1552,6 +1563,10 @@ class TorrentProcessor:
                             else:
                                 logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Reusing existing torrent ID: {existing_torrent_id}")
                                 info = existing_info
+                                # Stamp explicitly with the provider this lookup was actually
+                                # performed against, same reasoning as the cache-hit path above.
+                                if info is not None:
+                                    info['_provider'] = self.debrid_provider.PROVIDER_NAME
                         else:
                             logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service")
                             info = self.add_to_account(original_link)
