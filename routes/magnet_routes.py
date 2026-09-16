@@ -913,20 +913,40 @@ def prepare_manual_assignment():
 
         # --- Phase 1: S/E Matching and Movie Matching ---
         logging.info("Phase 1: Attempting S/E and Movie matching...")
+        _media_matcher = MediaMatcher()
         for item in target_items:
             if item['assigned']: # Skip if already assigned (e.g., by movie logic below?)
                 continue
 
             item_type = item.get('type')
 
-            # --- Movie Logic: Assign largest file ---
+            # --- Movie Logic: Assign title-matched (else largest) file ---
             if item_type == 'movie':
                 if video_files: # Ensure there are video files to check
                     # Find the largest *unused* video file
                     unused_parsed_files = [f for f in parsed_video_files if not f['used']]
                     if unused_parsed_files:
-                        # Find original file dict corresponding to largest unused parsed file
-                        largest_parsed_file_info = max(unused_parsed_files, key=lambda f: f['original'].get('bytes', 0))
+                        # A multi-movie pack (e.g. a franchise box-set with several
+                        # films as separate files) bundles unrelated movies together -
+                        # picking the largest unused file unconditionally assigns
+                        # whichever film happens to be biggest to every movie item,
+                        # regardless of which one was actually requested. Prefer
+                        # files whose parsed title+year match this item; only fall
+                        # back to plain largest-file-wins when nothing matches (e.g.
+                        # a single-file torrent whose release name doesn't
+                        # fuzzy-match cleanly), preserving prior behavior there.
+                        title_matched_files = [
+                            f for f in unused_parsed_files
+                            if _media_matcher.match_movie(f['parsed'], item, f['original'].get('filename', ''))
+                        ]
+                        match_candidates = title_matched_files or unused_parsed_files
+                        if not title_matched_files:
+                            logging.warning(
+                                f"[Phase 1] No file title-matched movie '{item.get('title')}' ({item.get('year')}) "
+                                f"among {len(unused_parsed_files)} unused file(s) - falling back to largest unused file"
+                            )
+                        # Find original file dict corresponding to largest matching (or unused) parsed file
+                        largest_parsed_file_info = max(match_candidates, key=lambda f: f['original'].get('bytes', 0))
                         largest_filename = largest_parsed_file_info['original'].get('filename')
                         if largest_filename:
                              item['suggested_file_path'] = largest_filename
