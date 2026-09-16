@@ -742,7 +742,7 @@ class MediaMatcher:
         """
         item_type = item.get('type')
 
-        # --- Movie Logic (Find largest video file) ---
+        # --- Movie Logic (title+year match, largest file among matches) ---
         if item_type == 'movie':
             video_files = []
             for parsed_file in parsed_files:
@@ -752,8 +752,26 @@ class MediaMatcher:
             if not video_files:
                 return None
 
+            # A multi-movie "Collection" torrent bundles several unrelated films as
+            # separate files - picking the largest file unconditionally silently
+            # assigns whichever film happens to be biggest, regardless of what was
+            # requested. Prefer files whose parsed title+year actually match the
+            # item; only fall back to plain largest-file-wins when nothing matches
+            # (e.g. a single-file torrent whose release title doesn't fuzzy-match
+            # cleanly), which preserves the previous behavior for that case.
+            title_matched_files = [
+                f for f in video_files
+                if self.match_movie(f.get('parsed_info', {}), item, os.path.basename(f['path']))
+            ]
+            candidates = title_matched_files or video_files
+            if not title_matched_files:
+                logging.warning(
+                    f"No file in torrent title-matched item '{item.get('title')}' ({item.get('year')}) "
+                    f"among {len(video_files)} video file(s) - falling back to largest file"
+                )
+
             # Sort by size descending and take the largest
-            largest_file_info = max(video_files, key=lambda x: x.get('bytes', 0))
+            largest_file_info = max(candidates, key=lambda x: x.get('bytes', 0))
             return (os.path.basename(largest_file_info['path']), item) # Return basename path and item
 
         # --- TV Episode Logic ---
@@ -960,7 +978,8 @@ class MediaMatcher:
         Check if a movie file matches a movie item.
         Matches based on the queue item title and year.
         NOTE: This uses PTT parsed info, assumes 'parsed' is the result of PTT.
-              It's likely NOT used directly by AddingQueue flow anymore.
+              Used by find_best_match_from_parsed() to filter candidate files in
+              multi-movie collection torrents before falling back to largest-file.
         """
         # Get the parsed title from the file
         parsed_title = self._normalize_title(parsed.get('title', ''))
