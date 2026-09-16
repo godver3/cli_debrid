@@ -5383,7 +5383,7 @@ class ProgramRunner:
 
                     if stranded_matches:
                         import re as _re_sc
-                        from usenet.climount_client import get_climount_client as _get_dc_sc
+                        from usenet import get_usenet_client as _get_dc_sc
                         _dc_sc = _get_dc_sc()
                         _folder_files_cache = {}  # folder_name -> video_files list, avoid repeat lookups
 
@@ -6389,8 +6389,8 @@ class ProgramRunner:
                 # judging a file that isn't fully there yet.
                 try:
                     job_hash = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
-                    from usenet.climount_client import get_climount_client
-                    job_status = get_climount_client().get_job_status(job_hash)
+                    from usenet import get_usenet_client
+                    job_status = get_usenet_client().get_job_status(job_hash)
                     if job_status and job_status.get('state') != 'completed' and job_status.get('progress', 100) < 95:
                         logging.info(f"[ffprobe] Deferring {probe_key} for item {item.get('id')} — job {job_hash} still downloading ({job_status.get('progress', 0)}%)")
                         return True
@@ -7059,8 +7059,8 @@ class ProgramRunner:
                                                     def _do_chk_rename(h, name, ident, iid):
                                                         import time as _t
                                                         try:
-                                                            from usenet.climount_client import get_climount_client
-                                                            _dc = get_climount_client()
+                                                            from usenet import get_usenet_client
+                                                            _dc = get_usenet_client()
                                                             if not hasattr(_dc, 'rename_nzb'):
                                                                 return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                                             for _a in range(5):

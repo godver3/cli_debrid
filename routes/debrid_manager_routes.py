@@ -1456,9 +1456,9 @@ def api_nzb_reinsert():
             row
         ))
 
-        from usenet.climount_client import get_climount_client, reset_climount_client
-        reset_climount_client()
-        client = get_climount_client()
+        from usenet import get_usenet_client, reset_usenet_client
+        reset_usenet_client()
+        client = get_usenet_client()
 
         new_job_id = None
         used_url = None
