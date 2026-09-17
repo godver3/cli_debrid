@@ -384,6 +384,55 @@ async def _fetch_media_meta_async(session: aiohttp.ClientSession, tmdb_id: str, 
     return (poster_url_val, overview, genres, vote_average, backdrop_path_val)
 
 
+def _search_tmdb_only(search_term: str, tmdb_api_key: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Title search against TMDB directly (movies + TV), no Trakt involved.
+
+    Used as a fallback when Trakt isn't configured. Returns results in the
+    same shape search_trakt() produces (media_type/id/title/year/posterPath/
+    backdropPath), so callers don't need to know which backend answered.
+    TMDB has no combined movie+show search endpoint, so this queries both.
+    """
+    results: List[Dict[str, Any]] = []
+    for media_type, endpoint in (('movie', 'movie'), ('show', 'tv')):
+        try:
+            url = f"https://api.themoviedb.org/3/search/{endpoint}?api_key={tmdb_api_key}&query={api.utils.quote(search_term)}&page=1&language=en-US"
+            if year:
+                url += f"&year={year}" if media_type == 'movie' else f"&first_air_date_year={year}"
+            response = api.get(url, timeout=15)
+            response.raise_for_status()
+            for item in response.json().get('results', []):
+                title = item.get('title') if media_type == 'movie' else item.get('name')
+                date_str = item.get('release_date') if media_type == 'movie' else item.get('first_air_date')
+                if not title or not date_str:
+                    continue
+                try:
+                    item_year = int(date_str[:4])
+                except (ValueError, TypeError):
+                    continue
+                results.append({
+                    'media_type': media_type,
+                    'id': str(item.get('id')),
+                    'title': title,
+                    'year': item_year,
+                    'posterPath': item.get('poster_path'),
+                    'backdropPath': item.get('backdrop_path'),
+                    'votes': item.get('vote_count', 0),
+                })
+        except Exception as exc:
+            logging.warning(f"TMDB-only search failed for media_type={media_type}: {exc}")
+
+    results.sort(
+        key=lambda r: (
+            r['title'].lower() == search_term.lower(),
+            (r['year'] == year) if year else False,
+            fuzz.ratio(search_term.lower(), r['title'].lower()),
+            r.get('votes', 0),
+        ),
+        reverse=True,
+    )
+    return results[:100]
+
+
 def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     # PHASE 1: Check cache first
     cached_results = _search_cache.get(search_term, year)
@@ -395,7 +444,17 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
     has_tmdb = bool(tmdb_api_key)
 
     if not trakt_client_id:
-        logging.error("Trakt Client ID not set. Please configure in settings.")
+        if has_tmdb:
+            # Trakt is optional (only needed for watchlist-type content sources) but
+            # this search path hard-depended on it with no fallback, so title search
+            # (e.g. the manual magnet-assign screen) silently returned nothing for
+            # anyone who only configured TMDB - a very common setup. TMDB alone can
+            # answer a title search directly.
+            logging.info("Trakt Client ID not set - falling back to TMDB-only search.")
+            results = _search_tmdb_only(search_term, tmdb_api_key, year)
+            _search_cache.set(search_term, results, year)
+            return results
+        logging.error("Trakt Client ID not set and no TMDB API key configured either - cannot search.")
         return []
 
     headers = {
@@ -913,6 +972,60 @@ async def fetch_poster_url(tmdb_id, media_type):
     async with aiohttp.ClientSession() as session:
         return await get_poster_url(session, tmdb_id, media_type)
 
+
+def _search_tmdb_only_fast(search_term: str, tmdb_api_key: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Title search against TMDB directly, matching search_trakt_fast()'s output
+    shape. Used as a fallback when Trakt isn't configured.
+
+    TMDB's search response already includes poster/backdrop/overview/vote_average/
+    genre_ids directly, so unlike search_trakt_fast() this needs no per-item
+    details lookup at all.
+    """
+    results: List[Dict[str, Any]] = []
+    for media_type, endpoint in (('movie', 'movie'), ('show', 'tv')):
+        try:
+            url = f"https://api.themoviedb.org/3/search/{endpoint}?api_key={tmdb_api_key}&query={api.utils.quote(search_term)}&page=1&language=en-US"
+            if year:
+                url += f"&year={year}" if media_type == 'movie' else f"&first_air_date_year={year}"
+            response = api.get(url, timeout=10)
+            response.raise_for_status()
+            for item in response.json().get('results', []):
+                title = item.get('title') if media_type == 'movie' else item.get('name')
+                date_str = item.get('release_date') if media_type == 'movie' else item.get('first_air_date')
+                poster_path = item.get('poster_path')
+                if not title or not date_str or not poster_path:
+                    continue
+                try:
+                    item_year = int(date_str[:4])
+                except (ValueError, TypeError):
+                    continue
+                overview = item.get('overview', '')
+                results.append({
+                    'id': str(item.get('id')),
+                    'title': title,
+                    'year': item_year,
+                    'media_type': media_type,
+                    'poster_path': poster_path,
+                    'overview': overview,
+                    'show_overview': overview,
+                    # TMDB's search endpoint returns numeric genre_ids, not names, and
+                    # search_trakt_fast()'s consumers expect names here (it resolves
+                    # them via a per-item TMDB details call this fallback intentionally
+                    # skips for speed) - leave empty rather than showing raw numbers.
+                    'genre_ids': [],
+                    'rating': item.get('vote_average', 0),
+                    'vote_average': item.get('vote_average', 0),
+                    'backdrop_path': item.get('backdrop_path') or '',
+                    'votes': item.get('vote_count', 0),
+                    'imdb_id': '',
+                })
+        except Exception as exc:
+            logging.warning(f"TMDB-only fast search failed for media_type={media_type}: {exc}")
+
+    results.sort(key=lambda r: r.get('vote_average', 0) or 0, reverse=True)
+    return results[:100]
+
+
 def search_trakt_fast(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     """
     PHASE 2.2: Fast Trakt search with lightweight TMDB poster fetching.
@@ -928,7 +1041,12 @@ def search_trakt_fast(search_term: str, year: Optional[int] = None) -> List[Dict
     trakt_client_id = get_setting('Trakt', 'client_id')
     tmdb_api_key = get_setting('TMDB', 'api_key')
     if not trakt_client_id:
-        logging.error("Trakt Client ID not set.")
+        if tmdb_api_key:
+            logging.info("Trakt Client ID not set - falling back to TMDB-only fast search.")
+            results = _search_tmdb_only_fast(search_term, tmdb_api_key, year)
+            _search_cache.set(fast_search_term, results, year)
+            return results
+        logging.error("Trakt Client ID not set and no TMDB API key configured either - cannot search.")
         return []
 
     headers = {
