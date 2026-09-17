@@ -1362,7 +1362,7 @@ def refresh_usage():
 @statistics_bp.route('/move_to_wanted', methods=['POST'])
 @user_required
 def move_to_wanted():
-    """Move an item back to Wanted state and disable not wanted checks"""
+    """Move an item back to Wanted state, excluding its current release from the next scrape"""
     try:
         data = request.json
         imdb_id = data.get('imdb_id')
@@ -1378,7 +1378,12 @@ def move_to_wanted():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Build query based on item type
+        # Build query based on item type. excluded_release_id captures the release
+        # (magnet/nzb URL) that's currently filling the row *before* filled_by_magnet
+        # is wiped, so the next scrape can skip it for this item only — without
+        # touching the global not-wanted lists — instead of just re-picking the
+        # same top-scored result again. It's a one-shot flag: the scraper clears
+        # it after the item's next scrape completes (see reset_not_wanted_check).
         if season_number is not None and episode_number is not None:
             # Episode — no item_id scoping here since episode rows group all versions together
             query = f"""
@@ -1390,7 +1395,8 @@ def move_to_wanted():
                     filled_by_torrent_id = NULL,
                     {RESET_COLLECTION_STATE_SQL},
                     last_updated = ?,
-                    disable_not_wanted_check = TRUE,
+                    disable_not_wanted_check = FALSE,
+                    excluded_release_id = filled_by_magnet,
                     location_on_disk = NULL,
                     original_path_for_symlink = NULL,
                     original_scraped_torrent_title = NULL,
@@ -1414,7 +1420,8 @@ def move_to_wanted():
                     filled_by_torrent_id = NULL,
                     {RESET_COLLECTION_STATE_SQL},
                     last_updated = ?,
-                    disable_not_wanted_check = TRUE,
+                    disable_not_wanted_check = FALSE,
+                    excluded_release_id = filled_by_magnet,
                     location_on_disk = NULL,
                     original_path_for_symlink = NULL,
                     original_scraped_torrent_title = NULL,
@@ -1437,7 +1444,8 @@ def move_to_wanted():
                     filled_by_torrent_id = NULL,
                     {RESET_COLLECTION_STATE_SQL},
                     last_updated = ?,
-                    disable_not_wanted_check = TRUE,
+                    disable_not_wanted_check = FALSE,
+                    excluded_release_id = filled_by_magnet,
                     location_on_disk = NULL,
                     original_path_for_symlink = NULL,
                     original_scraped_torrent_title = NULL,
@@ -1449,7 +1457,7 @@ def move_to_wanted():
                 AND state NOT IN ('Wanted', 'Scraping', 'Adding')
             """
             params = (datetime.now(), imdb_id, tmdb_id)
-            
+
         cursor.execute(query, params)
         conn.commit()
         

@@ -9,9 +9,25 @@ import re
 from utilities.settings import get_setting
 from scraper.scraper import scrape
 from database.core import retry_on_db_lock
-from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted, is_nzb_guid_not_wanted
+from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted, is_nzb_guid_not_wanted, get_base_filename
 from cli_battery.app.direct_api import DirectAPI
 from routes.notifications import send_upgrade_failed_notification
+
+
+def _is_excluded_release(item: Dict[str, Any], result: Dict[str, Any]) -> bool:
+    """True if `result` is the release the item was just moved away from via the
+    library "Move to Wanted" button (item['excluded_release_id']). One-shot,
+    per-item exclusion — unrelated to the global not-wanted lists."""
+    excluded = item.get('excluded_release_id')
+    if not excluded:
+        return False
+    candidate = result.get('magnet') or result.get('nzb_url')
+    if not candidate:
+        return False
+    try:
+        return get_base_filename(excluded) == get_base_filename(candidate)
+    except Exception:
+        return excluded == candidate
 
 
 class ScrapingQueue:
@@ -194,7 +210,8 @@ class ScrapingQueue:
 
     @retry_on_db_lock()
     def reset_not_wanted_check(self, item_id):
-        """Reset the disable_not_wanted_check flag after scraping is complete"""
+        """Reset the disable_not_wanted_check flag and any one-shot excluded_release_id
+        (set by the library "Move to Wanted" button) after scraping is complete."""
         from database import get_db_connection
         import sqlite3
         conn = get_db_connection()
@@ -202,14 +219,15 @@ class ScrapingQueue:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE media_items
-                SET disable_not_wanted_check = FALSE
+                SET disable_not_wanted_check = FALSE,
+                    excluded_release_id = NULL
                 WHERE id = ?
             """, (item_id,))
             conn.commit()
         except sqlite3.OperationalError:
             raise
         except Exception as e:
-            logging.error(f"Error resetting disable_not_wanted_check flag: {str(e)}")
+            logging.error(f"Error resetting disable_not_wanted_check/excluded_release_id: {str(e)}")
         finally:
             conn.close()
 
@@ -742,6 +760,8 @@ class ScrapingQueue:
                                                 check_pack_wantedness=False
                                             )
                                             _bep_results = _bep_results if _bep_results is not None else []
+                                            if _bep_results:
+                                                _bep_results = [r for r in _bep_results if not _is_excluded_release(_bep, r)]
                                             if _bep_results and not _bep.get('disable_not_wanted_check'):
                                                 _bep_results = [
                                                     r for r in _bep_results
@@ -867,6 +887,8 @@ class ScrapingQueue:
                     filtered_results = []
                     if results: # Only filter if there are raw results
                         for result in results:
+                            if _is_excluded_release(item_to_process, result):
+                                continue
                             if not item_to_process.get('disable_not_wanted_check'):
                                 if is_magnet_not_wanted(result.get('magnet') or result.get('nzb_url')):
                                     continue
@@ -979,6 +1001,8 @@ class ScrapingQueue:
                         if fallback_results: # Only filter if there are raw results from fallback
                             current_filtered_fallback_results = []
                             for result in fallback_results:
+                                if _is_excluded_release(item_to_process, result):
+                                    continue
                                 if not item_to_process.get('disable_not_wanted_check'):
                                     if is_magnet_not_wanted(result.get('magnet') or result.get('nzb_url')):
                                         continue
@@ -1196,7 +1220,8 @@ class ScrapingQueue:
             # Filter out unwanted magnets, URLs and NZB guids
             results = [
                 r for r in results
-                if not (
+                if not _is_excluded_release(item, r)
+                and not (
                     not item.get('disable_not_wanted_check') and (
                         is_magnet_not_wanted(r.get('magnet') or r.get('nzb_url')) or
                         is_url_not_wanted(r.get('magnet') or r.get('nzb_url')) or
@@ -1441,6 +1466,9 @@ class ScrapingQueue:
             temp_individual_results = []
             for r_idx, r_val in enumerate(individual_results):
                 logging.debug(f"  Checking individual result #{r_idx + 1} ('{r_val.get('original_title', 'N/A')}') for not_wanted/rescrape filters.")
+                if _is_excluded_release(item, r_val):
+                    logging.info(f"    Filtered out '{r_val.get('original_title')}' — excluded release from a recent Move to Wanted.")
+                    continue
                 if not item.get('disable_not_wanted_check'):
                     if is_magnet_not_wanted(r_val.get('magnet') or r_val.get('nzb_url')):
                         logging.info(f"    Filtered out '{r_val.get('original_title')}' due to is_magnet_not_wanted.")

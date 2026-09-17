@@ -1171,14 +1171,24 @@ def confirm_manual_assignment():
             logging.info(f"Using torrent ID {initial_torrent_id} as hash for torrent file tracking")
             torrent_hash = f"torrent_file_{initial_torrent_id}"
 
-        # De-dupe: if this exact submission (same hash) was already confirmed moments
-        # ago, don't re-add the magnet or recreate items again — a retried/duplicate
-        # POST (double-click, page retry after the earlier missing-torrent bug, etc.)
-        # would otherwise add another permanent torrent and duplicate DB rows every
-        # time. Only guards against near-immediate re-submission; a legitimate
-        # re-assignment of the same hash later on (e.g. after deletion) is unaffected.
+        # De-dupe: if this exact submission (same hash, same target item(s)) was
+        # already confirmed moments ago, don't re-add the magnet or recreate items
+        # again — a retried/duplicate POST (double-click, page retry after the
+        # earlier missing-torrent bug, etc.) would otherwise add another permanent
+        # torrent and duplicate DB rows every time. Scoped to the same tmdb_id, not
+        # just the same hash: a multi-movie collection magnet (e.g. a franchise
+        # box-set) is legitimately re-assigned multiple times for different target
+        # movies in quick succession, each a separate Assign flow sharing one
+        # magnet — that must not trip this guard. Only guards against near-immediate
+        # re-submission of the exact same item; a legitimate re-assignment of the
+        # same hash+item later on (e.g. after deletion) is unaffected.
         if torrent_hash and not is_torrent_file:
             from database.torrent_tracking import get_torrent_history
+            current_tmdb_ids = set()
+            for item_key in assignments.keys():
+                parts = item_key.split('_')
+                if len(parts) >= 2:
+                    current_tmdb_ids.add(parts[1])
             try:
                 history = get_torrent_history(torrent_hash)
             except Exception:
@@ -1187,9 +1197,42 @@ def confirm_manual_assignment():
                 if record['trigger_source'] != 'manual_assign_confirm':
                     continue
                 try:
+                    prior_item_data = json.loads(record['item_data']) if record['item_data'] else {}
+                except (ValueError, TypeError):
+                    prior_item_data = {}
+                prior_tmdb_id = str(prior_item_data.get('tmdb_id') or '')
+                if prior_tmdb_id and current_tmdb_ids and prior_tmdb_id not in current_tmdb_ids:
+                    # Same magnet, different target item (e.g. a different movie from
+                    # the same collection pack) - not a duplicate submission.
+                    continue
+                try:
                     record_time = datetime.fromisoformat(str(record['timestamp']))
                     if (datetime.now() - record_time).total_seconds() < 120:
-                        logging.warning(f"Duplicate manual assignment submission detected for hash {torrent_hash} ({(datetime.now() - record_time).total_seconds():.0f}s after prior confirm); ignoring re-submission.")
+                        # Only block if that prior assignment's items are still actually
+                        # present - if the user deleted them (e.g. to redo a bad
+                        # assignment) there's nothing left to duplicate, so a fresh
+                        # confirm within the window must be allowed to go through
+                        # regardless of how recently the deleted attempt was.
+                        prior_torrent_id = prior_item_data.get('torrent_id')
+                        still_present = True
+                        if prior_torrent_id and prior_tmdb_id:
+                            try:
+                                from database import get_db_connection as _gdb_dedupe
+                                _conn_dedupe = _gdb_dedupe()
+                                try:
+                                    still_present = bool(_conn_dedupe.execute(
+                                        "SELECT 1 FROM media_items WHERE filled_by_torrent_id = ? AND tmdb_id = ? LIMIT 1",
+                                        (prior_torrent_id, prior_tmdb_id)
+                                    ).fetchone())
+                                finally:
+                                    _conn_dedupe.close()
+                            except Exception as _presence_err:
+                                logging.warning(f"Dedup presence check failed for torrent_id={prior_torrent_id!r}, assuming still present: {_presence_err}")
+                                still_present = True
+                        if not still_present:
+                            logging.info(f"Prior manual assignment for hash {torrent_hash} tmdb_id={prior_tmdb_id!r} was deleted - allowing re-assignment despite recent timestamp.")
+                            continue
+                        logging.warning(f"Duplicate manual assignment submission detected for hash {torrent_hash} tmdb_id={prior_tmdb_id!r} ({(datetime.now() - record_time).total_seconds():.0f}s after prior confirm); ignoring re-submission.")
                         return jsonify({'success': False, 'error': 'This torrent was already assigned moments ago. Refresh the page before assigning again.'}), 409
                 except (ValueError, TypeError):
                     continue

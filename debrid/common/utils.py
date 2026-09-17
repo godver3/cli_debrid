@@ -177,6 +177,15 @@ def pick_best_video_file(
     if season is not None and episode is not None:
         ep_pat = re.compile(rf'[Ss]{int(season):02d}[Ee]{int(episode):02d}(?![0-9])', re.IGNORECASE)
         matches = [(name, size) for name, size in filtered if ep_pat.search(name)]
+        if not matches:
+            # Fansub/anime releases commonly have no SxxExx marker at all - just a
+            # bare, delimiter-bounded episode number (e.g. "Title - 14 [tag].mkv").
+            # Without this fallback, every episode in such a pack resolves to
+            # whichever single file in the folder is largest, since no filename
+            # ever matches the strict pattern above and every request falls
+            # through to the same "largest overall" return below.
+            bare_pat = re.compile(rf'(?:^|[\s_.\-\[(])0*{int(episode)}(?:[\s_.\-\])]|$)')
+            matches = [(name, size) for name, size in filtered if bare_pat.search(name)]
         if matches:
             return max(matches, key=lambda x: x[1])
 

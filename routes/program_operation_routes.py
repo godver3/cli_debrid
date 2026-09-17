@@ -682,8 +682,19 @@ def _execute_start_program(skip_connectivity_check: bool = False, is_restart: bo
             elif not hasattr(runner_instance, 'scheduler') or runner_instance.scheduler is None: # Explicitly set to None by stop_program
                 needs_listener_setup = True
                 logging.info(f"[_execute_start_program] Reason for listener setup: runner.scheduler is missing or None for runner (ID: {id(runner_instance)}).")
-            # If scheduler exists but isn't running (shouldn't happen if set to None on stop, but good check)
-            elif hasattr(runner_instance, 'scheduler') and runner_instance.scheduler is not None and not runner_instance.scheduler.running:
+            # If scheduler exists, was previously started, but isn't running now, treat
+            # it as a zombie (shouldn't happen if set to None on stop, but good check).
+            # Gated on _scheduler_started_once: scheduler.running is False both before
+            # the very first start AND after a real crash - without that gate, the
+            # freshly __init__-created scheduler on every process boot (which hasn't
+            # been started yet at this point - that happens later, in
+            # ProgramRunner.start()) looked identical to a zombie and got discarded and
+            # rebuilt from scratch (with the wrong timezone, since the rebuild path
+            # here reads a different setting than __init__ does) before it ever got to
+            # run once. See godver3/cli_debrid startup-performance investigation.
+            elif (hasattr(runner_instance, 'scheduler') and runner_instance.scheduler is not None
+                  and not runner_instance.scheduler.running
+                  and getattr(runner_instance, '_scheduler_started_once', False)):
                  needs_listener_setup = True
                  logging.info(f"[_execute_start_program] Reason for listener setup: runner.scheduler exists but is not running for runner (ID: {id(runner_instance)}). Attempting to clear it.")
                  # Attempt to shut down and nullify this zombie scheduler

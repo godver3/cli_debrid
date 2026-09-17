@@ -487,12 +487,31 @@ def _get_local_timezone():
     logging.warning("All timezone detection methods failed, falling back to UTC")
     return timezone.utc
 
-def get_physical_release_date(imdb_id: Optional[str] = None) -> Optional[str]:
+def fetch_movie_release_dates_bundle(
+    imdb_id: Optional[str],
+    max_cache_age: Optional[timedelta] = None,
+) -> Optional[dict]:
+    """Fetch DirectAPI.get_movie_release_dates() exactly once so callers that need
+    the physical/theatrical/general release date for the same imdb_id can share
+    the result instead of each issuing their own redundant network call."""
+    if not imdb_id:
+        return None
+    if max_cache_age is None:
+        release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id)
+    else:
+        release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id, max_cache_age=max_cache_age)
+    return release_dates
+
+def get_physical_release_date(
+    imdb_id: Optional[str] = None,
+    release_dates: Optional[dict] = None,
+) -> Optional[str]:
     """Get the earliest physical release date for a movie."""
     if not imdb_id:
         return None
 
-    release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id)
+    if release_dates is None:
+        release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id)
     if not release_dates:
         return None
 
@@ -508,12 +527,16 @@ def get_physical_release_date(imdb_id: Optional[str] = None) -> Optional[str]:
 
     return min(physical_releases).strftime("%Y-%m-%d") if physical_releases else None
 
-def get_theatrical_release_date(imdb_id: Optional[str] = None) -> Optional[str]:
+def get_theatrical_release_date(
+    imdb_id: Optional[str] = None,
+    release_dates: Optional[dict] = None,
+) -> Optional[str]:
     """Get the oldest theatrical release date for a movie."""
     if not imdb_id:
         return None
 
-    release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id)
+    if release_dates is None:
+        release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id)
     if not release_dates:
         return None
 
@@ -672,6 +695,13 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
              missing_show_imdb_ids = show_imdb_ids_to_fetch
 
     # --- Step 2.5: Individual Fetch for Missing Items ---
+    # Each fetch is an independent network round-trip (battery/Trakt/TMDB) keyed
+    # only by imdb_id_val, and every worker only reads its own representative_item_val
+    # and returns a (imdb_id_val, media_type_val, fetched_metadata) tuple - the
+    # bulk_movie_metadata/bulk_show_metadata dicts are only written back on the main
+    # thread once every future has finished, so this is safe to run concurrently:
+    # a startup with hundreds of wanted items previously fetched these one at a
+    # time and dominated init time (see startup-performance investigation).
     if missing_movie_imdb_ids or missing_show_imdb_ids:
         logging.debug(f"Attempting individual metadata fetch for {len(missing_movie_imdb_ids)} movies and {len(missing_show_imdb_ids)} shows missing from battery.")
         ids_to_fetch_individually = {}
@@ -680,12 +710,10 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
         for id_ in missing_show_imdb_ids:
              if id_ in items_by_imdb_id: ids_to_fetch_individually[id_] = items_by_imdb_id[id_][0]
 
-        fetched_individually_count = 0
-        for imdb_id_val, representative_item_val in ids_to_fetch_individually.items():
+        def _fetch_one_missing(imdb_id_val, representative_item_val):
             try:
                 if not trakt_client._check_rate_limit():
                     logging.warning("Trakt rate limit reached during individual fetches. Waiting (handled by TraktMetadata).")
-                
                 logging.debug(f"Fetching individual metadata for missing IMDb: {imdb_id_val}")
                 fetched_metadata = get_metadata(
                     imdb_id=imdb_id_val,
@@ -693,324 +721,423 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                     item_media_type=representative_item_val.get('media_type'),
                     original_item=representative_item_val
                 )
+                return imdb_id_val, representative_item_val.get('media_type', '').lower(), fetched_metadata, None
+            except Exception as e:
+                return imdb_id_val, None, None, e
+
+        fetched_individually_count = 0
+        from concurrent.futures import ThreadPoolExecutor as _TPE_missing
+        _missing_workers = min(8, max(1, len(ids_to_fetch_individually)))
+        with _TPE_missing(max_workers=_missing_workers) as _missing_pool:
+            _missing_futures = [
+                _missing_pool.submit(_fetch_one_missing, imdb_id_val, representative_item_val)
+                for imdb_id_val, representative_item_val in ids_to_fetch_individually.items()
+            ]
+            for _fut in _missing_futures:
+                imdb_id_val, media_type_val, fetched_metadata, err = _fut.result()
+                if err is not None:
+                    logging.error(f"Error during individual metadata fetch for {imdb_id_val}: {err}", exc_info=True)
+                    continue
                 if fetched_metadata:
                     fetched_individually_count += 1
-                    media_type_val = representative_item_val.get('media_type', '').lower()
                     if media_type_val == 'movie':
                         bulk_movie_metadata[imdb_id_val] = fetched_metadata
                     elif media_type_val in ['tv', 'show', 'episode']:
-                         bulk_show_metadata[imdb_id_val] = fetched_metadata
+                        bulk_show_metadata[imdb_id_val] = fetched_metadata
                     logging.debug(f"Successfully fetched and added metadata for missing IMDb: {imdb_id_val}")
                 else:
-                     logging.warning(f"Individual fetch failed for missing IMDb: {imdb_id_val}")
-            except Exception as e:
-                logging.error(f"Error during individual metadata fetch for {imdb_id_val}: {e}", exc_info=True)
+                    logging.warning(f"Individual fetch failed for missing IMDb: {imdb_id_val}")
         logging.debug(f"Finished individual fetch process. Successfully fetched metadata for {fetched_individually_count} items.")
 
     # --- Step 3: Removed Pre-fetch DB presence/state info in bulk ---
     # db_item_states = {} # Removed
 
-    # --- Step 4: Process Items Using Fetched Data ---
-    logging.debug("Processing items using fetched metadata...")
-    processed_count = 0
-    processed_imdb_ids = set()
+    # --- Step 3.5: Pre-fetch stale show metadata concurrently ---
+    # Step 4 below force-refreshes any show whose bulk-fetched metadata is stale,
+    # one at a time, inline in its main per-item loop - previously the dominant
+    # cost of a startup with many wanted shows (see startup-performance
+    # investigation). Doing that same check here first, before Step 4 runs, and
+    # fetching every stale show concurrently, means Step 4's own staleness check
+    # finds already-fresh data and its inline refresh becomes a no-op - Step 4
+    # itself is untouched.
+    try:
+        from cli_battery.app.staleness import is_stale as _is_battery_stale_prefetch
+        _stale_show_imdb_ids = [
+            imdb_id_ for imdb_id_, meta_ in bulk_show_metadata.items()
+            if meta_ and 'last_trakt_fetch' in meta_
+            and _is_battery_stale_prefetch('show', meta_.get('media_status'), meta_['last_trakt_fetch'])
+        ]
+        if _stale_show_imdb_ids:
+            logging.info(f"Pre-fetching {len(_stale_show_imdb_ids)} stale show(s) concurrently before per-item processing.")
+            from concurrent.futures import ThreadPoolExecutor as _TPE_stale
 
-    for imdb_id, original_items_list in items_by_imdb_id.items():
-        if imdb_id in processed_imdb_ids: continue
-        processed_imdb_ids.add(imdb_id)
-
-        representative_item = original_items_list[0]
-        effective_metadata_fetch_type = representative_item.get('media_type', '').lower()
-        if effective_metadata_fetch_type == 'episode':
-            effective_metadata_fetch_type = 'show'
-
-        metadata = None
-        if effective_metadata_fetch_type == 'movie' and imdb_id in bulk_movie_metadata:
-            metadata = bulk_movie_metadata[imdb_id]
-        elif effective_metadata_fetch_type in ['tv', 'show'] and imdb_id in bulk_show_metadata:
-            metadata = bulk_show_metadata[imdb_id]
-
-            # --- Check for staleness from bulk data ---
-            if metadata and 'last_trakt_fetch' in metadata:
-                from cli_battery.app.staleness import is_stale as _is_battery_stale
-                if _is_battery_stale('show', metadata.get('media_status'), metadata['last_trakt_fetch']):
-                    logging.info(f"Bulk metadata for {imdb_id} is stale (last_trakt_fetch: {metadata['last_trakt_fetch']}). Forcing a refresh.")
-                    try:
-                        refreshed_metadata, _ = direct_api.force_refresh_metadata(imdb_id)
-                        if refreshed_metadata:
-                            logging.info(f"Successfully force-refreshed metadata for {imdb_id}.")
-                            metadata = refreshed_metadata
-                            bulk_show_metadata[imdb_id] = refreshed_metadata # Update cache
-                        else:
-                            logging.error(f"Force-refresh failed for stale item {imdb_id}. Proceeding with stale data.")
-                    except Exception as e_refresh:
-                        logging.error(f"Exception during force-refresh for stale item {imdb_id}: {e_refresh}", exc_info=True)
-            # --- End staleness check ---
-
-            if metadata and not isinstance(metadata.get('seasons'), dict):
-                logging.warning(f"Bulk metadata for show {imdb_id} lacks structured seasons. Attempting re-fetch for structure...")
+            def _refresh_one_stale(imdb_id_):
                 try:
-                    individual_metadata = get_metadata(
-                        imdb_id=imdb_id,
-                        tmdb_id=metadata.get('tmdb_id') or representative_item.get('tmdb_id'),
-                        item_media_type='show',
-                        original_item=representative_item
-                    )
-                    if individual_metadata and isinstance(individual_metadata.get('seasons'), dict):
-                        logging.info(f"Successfully re-fetched structured metadata for {imdb_id} including seasons.")
-                        metadata = individual_metadata
-                        bulk_show_metadata[imdb_id] = metadata
-                    else:
-                        logging.error(f"Individual metadata re-fetch for {imdb_id} failed to provide structured seasons.")
-                except Exception as e_ind:
-                    logging.error(f"Error during individual metadata re-fetch for {imdb_id}: {e_ind}", exc_info=True)
+                    refreshed, _src = direct_api.force_refresh_metadata(imdb_id_)
+                    return imdb_id_, refreshed, None
+                except Exception as e:
+                    return imdb_id_, None, e
 
-        if not metadata:
-            # Check if this might be a TMDB ID mistakenly used as IMDb ID
-            is_likely_tmdb_id = imdb_id and not str(imdb_id).startswith('tt') and str(imdb_id).isdigit()
-            id_type_display = "TMDB ID (incorrectly stored as IMDb ID)" if is_likely_tmdb_id else "IMDb ID"
-            
-            # Log detailed information about what we tried
-            logging.warning(f"Could not retrieve metadata for {id_type_display}: {imdb_id} (effective type: {effective_metadata_fetch_type}). Skipping {len(original_items_list)} related item(s).")
-            
-            # If it looks like a TMDB ID, try one more time with TMDB-only approach
-            if is_likely_tmdb_id:
-                tmdb_id_attempt = representative_item.get('tmdb_id') or imdb_id
-                logging.info(f"Attempting TMDB-only metadata fetch for TMDB ID {tmdb_id_attempt}...")
-                tmdb_only_metadata = get_tmdb_metadata(str(tmdb_id_attempt), effective_metadata_fetch_type)
-                
-                if tmdb_only_metadata:
-                    logging.info(f"Successfully fetched TMDB-only metadata for {tmdb_id_attempt}")
-                    # Add this to TMDB-only items for processing
-                    for item_orig in original_items_list:
-                        items_by_tmdb_id_only[tmdb_id_attempt].append(item_orig)
-                else:
-                    logging.error(f"TMDB-only fetch also failed for ID {tmdb_id_attempt}")
-            
-            continue
-        
-        for item_from_input_list in original_items_list:
-            current_item_metadata = metadata.copy()
-            item_media_type_lower = item_from_input_list.get('media_type', '').lower()
-
-            processed_count += 1
-            
-            try:
-                current_item_metadata['content_source'] = item_from_input_list.get('content_source')
-                current_item_metadata['content_source_detail'] = item_from_input_list.get('content_source_detail')
-                current_item_metadata['monitor_missing_episodes_only'] = bool(
-                    item_from_input_list.get('monitor_missing_episodes_only', False)
-                )
-                current_item_metadata['imdb_id'] = imdb_id
-                current_item_metadata['tmdb_id'] = item_from_input_list.get('tmdb_id') or current_item_metadata.get('ids', {}).get('tmdb') or metadata.get('tmdb_id')
-                
-                current_item_metadata['versions'] = item_from_input_list.get('versions', {})
-
-                if item_media_type_lower == 'movie':
-                    physical_release_date = get_physical_release_date(imdb_id)
-                    if physical_release_date: current_item_metadata['physical_release_date'] = physical_release_date
-                    
-                    theatrical_release_date = get_theatrical_release_date(imdb_id)
-                    if theatrical_release_date: current_item_metadata['theatrical_release_date'] = theatrical_release_date
-                    
-                    current_item_genres = current_item_metadata.get('genres', [])
-                    is_anime_movie = 'anime' in [str(g).lower() for g in current_item_genres]
-                    if is_anime_movie and 'anime' not in current_item_genres :
-                        current_item_metadata['genres'] = ['anime'] + [g for g in current_item_genres if str(g).lower() != 'anime']
-                    elif is_anime_movie :
-                        current_item_metadata['genres'] = ['anime'] + [g for g in current_item_genres if str(g).lower() != 'anime']
-
-                    current_item_metadata['is_anime'] = is_anime_movie
-                    current_item_metadata['release_date'] = get_release_date(current_item_metadata, imdb_id)
-                    current_item_metadata['media_type'] = 'movie'
-
-                    processed_items['movies'].append(current_item_metadata)
-                    logging.debug(f"Prepared movie {current_item_metadata.get('title')} for processing with versions: {current_item_metadata.get('versions')}.")
-
-                elif item_media_type_lower in ['tv', 'show', 'episode']:
-                    current_item_show_genres = current_item_metadata.get('genres', [])
-                    is_anime_show = 'anime' in [str(g).lower() for g in current_item_show_genres]
-                    if is_anime_show and 'anime' not in current_item_show_genres:
-                        current_item_metadata['genres'] = ['anime'] + [g for g in current_item_show_genres if str(g).lower() != 'anime']
-                    elif is_anime_show:
-                        current_item_metadata['genres'] = ['anime'] + [g for g in current_item_show_genres if str(g).lower() != 'anime']
-                    seasons_data_from_metadata = current_item_metadata.get('seasons')
-                    if seasons_data_from_metadata == 'None' or not isinstance(seasons_data_from_metadata, dict):
-                        logging.error(f"Invalid or missing seasons data in metadata for show {imdb_id}. Skipping episode generation for this item.")
+            _stale_workers = min(8, max(1, len(_stale_show_imdb_ids)))
+            with _TPE_stale(max_workers=_stale_workers) as _stale_pool:
+                _stale_futures = [_stale_pool.submit(_refresh_one_stale, iid) for iid in _stale_show_imdb_ids]
+                for _fut in _stale_futures:
+                    imdb_id_, refreshed, err = _fut.result()
+                    if err is not None:
+                        logging.error(f"Exception during pre-fetch refresh for stale item {imdb_id_}: {err}", exc_info=True)
                         continue
-
-                    requested_specific_seasons = item_from_input_list.get('requested_seasons', [])
-                    
-                    all_season_numbers_in_metadata = set()
-                    for s_key in seasons_data_from_metadata.keys():
-                        try: all_season_numbers_in_metadata.add(int(s_key))
-                        except ValueError: 
-                            if str(s_key) == "0": all_season_numbers_in_metadata.add(0)
-                            else: logging.warning(f"Non-integer season key '{s_key}' in metadata for {imdb_id}")
-                    
-                    seasons_to_process_for_this_item_instance = set()
-
-                    if requested_specific_seasons:
-                        valid_requested = {s_num for s_num in requested_specific_seasons if s_num in all_season_numbers_in_metadata}
-                        if len(valid_requested) != len(requested_specific_seasons):
-                            missing_seasons = set(requested_specific_seasons) - all_season_numbers_in_metadata
-                            logging.warning(f"Item for {imdb_id} requested seasons {requested_specific_seasons}, but metadata only contains {all_season_numbers_in_metadata}. Missing: {missing_seasons}. Forcing battery refresh to pick up new seasons.")
-                            try:
-                                refreshed_metadata, _ = direct_api.force_refresh_metadata(imdb_id)
-                                if refreshed_metadata and isinstance(refreshed_metadata.get('seasons'), dict):
-                                    seasons_data_from_metadata = refreshed_metadata['seasons']
-                                    all_season_numbers_in_metadata = set()
-                                    for s_key in seasons_data_from_metadata.keys():
-                                        try: all_season_numbers_in_metadata.add(int(s_key))
-                                        except ValueError: pass
-                                    valid_requested = {s_num for s_num in requested_specific_seasons if s_num in all_season_numbers_in_metadata}
-                                    logging.info(f"After refresh, metadata seasons for {imdb_id}: {all_season_numbers_in_metadata}. Valid requested: {valid_requested}")
-                                    # Update the bulk cache for this show
-                                    bulk_show_metadata[imdb_id] = refreshed_metadata
-                            except Exception as e_refresh:
-                                logging.warning(f"Force-refresh failed for {imdb_id} during season validation: {e_refresh}")
-                        seasons_to_process_for_this_item_instance = valid_requested
+                    if refreshed:
+                        bulk_show_metadata[imdb_id_] = refreshed
+                        logging.debug(f"Pre-fetched refreshed metadata for stale item {imdb_id_}.")
                     else:
-                        content_source_id = item_from_input_list.get('content_source')
-                        allow_specials_setting_for_source = False
-                        seasons_per_show = 0
-                        season_grab_order = 'first'
-                        if content_source_id:
-                            from queues.config_manager import load_config
-                            config = load_config()
-                            cs_config = config.get('Content Sources', {}).get(content_source_id, {})
-                            if isinstance(cs_config, dict):
-                                allow_specials_setting_for_source = cs_config.get('allow_specials', False)
-                                seasons_per_show = int(cs_config.get('seasons_per_show', 0) or 0)
-                                season_grab_order = cs_config.get('season_grab_order', 'first') or 'first'
+                        logging.warning(f"Pre-fetch refresh failed for stale item {imdb_id_}; Step 4 will retry inline.")
+    except Exception as e_prefetch:
+        logging.warning(f"Stale-show pre-fetch step failed, falling back to Step 4's inline per-item refresh: {e_prefetch}")
 
-                        seasons_to_process_for_this_item_instance = {
-                            s_num for s_num in all_season_numbers_in_metadata if allow_specials_setting_for_source or s_num != 0
-                        }
+    # --- Step 4: Process Items Using Fetched Data ---
+    # One worker per (imdb_id, original_items_list) group - the loop's natural
+    # unit, and the same bounded-pool / submit-all / collect-in-order / merge-on-
+    # main-thread pattern already used above for Step 2.5/3.5. Each worker only
+    # ever writes to its own imdb_id's slot in bulk_show_metadata (never another
+    # group's), so returning those writes for the main thread to merge after
+    # every future completes - rather than mutating the shared dicts from
+    # worker threads - keeps this race-free without needing a lock.
+    logging.debug("Processing items using fetched metadata...")
 
-                        if seasons_per_show > 0 and len(seasons_to_process_for_this_item_instance) > seasons_per_show:
-                            if season_grab_order == 'latest':
-                                sorted_seasons = sorted(seasons_to_process_for_this_item_instance, reverse=True)
-                            elif season_grab_order == 'recent':
-                                # Sort by most recently aired: use premiere date from metadata if available, fall back to season number descending
-                                def _season_air_key(s):
-                                    s_detail = seasons_data_from_metadata.get(str(s)) or {}
-                                    return s_detail.get('air_date') or s_detail.get('premiere_date') or f'{s:04d}'
-                                sorted_seasons = sorted(seasons_to_process_for_this_item_instance, key=_season_air_key, reverse=True)
+    def _process_one_imdb_group(imdb_id, original_items_list, bulk_movie_metadata, bulk_show_metadata):
+        movies_out = []
+        episodes_out = []
+        bulk_show_metadata_updates = {}
+        tmdb_only_appends = []
+
+        try:
+            representative_item = original_items_list[0]
+            effective_metadata_fetch_type = representative_item.get('media_type', '').lower()
+            if effective_metadata_fetch_type == 'episode':
+                effective_metadata_fetch_type = 'show'
+
+            metadata = None
+            if effective_metadata_fetch_type == 'movie' and imdb_id in bulk_movie_metadata:
+                metadata = bulk_movie_metadata[imdb_id]
+            elif effective_metadata_fetch_type in ['tv', 'show'] and imdb_id in bulk_show_metadata:
+                metadata = bulk_show_metadata[imdb_id]
+
+                # --- Check for staleness from bulk data ---
+                if metadata and 'last_trakt_fetch' in metadata:
+                    from cli_battery.app.staleness import is_stale as _is_battery_stale
+                    if _is_battery_stale('show', metadata.get('media_status'), metadata['last_trakt_fetch']):
+                        logging.info(f"Bulk metadata for {imdb_id} is stale (last_trakt_fetch: {metadata['last_trakt_fetch']}). Forcing a refresh.")
+                        try:
+                            refreshed_metadata, _ = direct_api.force_refresh_metadata(imdb_id)
+                            if refreshed_metadata:
+                                logging.info(f"Successfully force-refreshed metadata for {imdb_id}.")
+                                metadata = refreshed_metadata
+                                bulk_show_metadata_updates[imdb_id] = refreshed_metadata # Update cache
                             else:
-                                sorted_seasons = sorted(seasons_to_process_for_this_item_instance)
-                            seasons_to_process_for_this_item_instance = set(sorted_seasons[:seasons_per_show])
-                            logging.debug(f"Season limit applied for {imdb_id}: {seasons_per_show} seasons ({season_grab_order}), selected: {seasons_to_process_for_this_item_instance}")
-                   
-                    if not seasons_to_process_for_this_item_instance:
-                        logging.info(f"No seasons determined for active processing for show {current_item_metadata.get('title')} (IMDb {imdb_id}) from item {item_from_input_list.get('content_source_detail', '')}. Specific requested: {requested_specific_seasons}, Metadata seasons: {all_season_numbers_in_metadata}.")
-                        
-                        # Try to manually fetch seasons data as a fallback
-                        if not all_season_numbers_in_metadata:
-                            logging.info(f"Attempting manual seasons fetch for {imdb_id} as fallback...")
-                            try:
-                                # Try to force refresh the metadata to get seasons data
-                                from cli_battery.app.direct_api import DirectAPI
-                                refreshed_metadata, _ = DirectAPI.force_refresh_metadata(imdb_id)
-                                if refreshed_metadata and 'seasons' in refreshed_metadata:
-                                    refreshed_seasons = refreshed_metadata['seasons']
-                                    if isinstance(refreshed_seasons, dict) and refreshed_seasons:
-                                        # Extract season numbers from the refreshed data
-                                        refreshed_season_numbers = [int(season_num) for season_num in refreshed_seasons.keys() if str(season_num).isdigit() and int(season_num) > 0]
-                                        if refreshed_season_numbers:
-                                            logging.info(f"Successfully fetched {len(refreshed_season_numbers)} seasons via fallback for {imdb_id}: {refreshed_season_numbers}")
-                                            # Update the seasons data and retry processing
-                                            seasons_data_from_metadata = refreshed_seasons
-                                            all_season_numbers_in_metadata = set(refreshed_season_numbers)
-                                            
-                                            # Recalculate seasons to process
-                                            if requested_specific_seasons:
-                                                valid_requested = {s_num for s_num in requested_specific_seasons if s_num in all_season_numbers_in_metadata}
-                                                if len(valid_requested) != len(requested_specific_seasons):
-                                                    logging.warning(f"Item for {imdb_id} requested seasons {requested_specific_seasons}, but refreshed metadata only contains {all_season_numbers_in_metadata}. Processing valid: {valid_requested}")
-                                                seasons_to_process_for_this_item_instance = valid_requested
+                                logging.error(f"Force-refresh failed for stale item {imdb_id}. Proceeding with stale data.")
+                        except Exception as e_refresh:
+                            logging.error(f"Exception during force-refresh for stale item {imdb_id}: {e_refresh}", exc_info=True)
+                # --- End staleness check ---
+
+                if metadata and not isinstance(metadata.get('seasons'), dict):
+                    logging.warning(f"Bulk metadata for show {imdb_id} lacks structured seasons. Attempting re-fetch for structure...")
+                    try:
+                        individual_metadata = get_metadata(
+                            imdb_id=imdb_id,
+                            tmdb_id=metadata.get('tmdb_id') or representative_item.get('tmdb_id'),
+                            item_media_type='show',
+                            original_item=representative_item
+                        )
+                        if individual_metadata and isinstance(individual_metadata.get('seasons'), dict):
+                            logging.info(f"Successfully re-fetched structured metadata for {imdb_id} including seasons.")
+                            metadata = individual_metadata
+                            bulk_show_metadata_updates[imdb_id] = metadata
+                        else:
+                            logging.error(f"Individual metadata re-fetch for {imdb_id} failed to provide structured seasons.")
+                    except Exception as e_ind:
+                        logging.error(f"Error during individual metadata re-fetch for {imdb_id}: {e_ind}", exc_info=True)
+
+            if not metadata:
+                # Check if this might be a TMDB ID mistakenly used as IMDb ID
+                is_likely_tmdb_id = imdb_id and not str(imdb_id).startswith('tt') and str(imdb_id).isdigit()
+                id_type_display = "TMDB ID (incorrectly stored as IMDb ID)" if is_likely_tmdb_id else "IMDb ID"
+
+                # Log detailed information about what we tried
+                logging.warning(f"Could not retrieve metadata for {id_type_display}: {imdb_id} (effective type: {effective_metadata_fetch_type}). Skipping {len(original_items_list)} related item(s).")
+
+                # If it looks like a TMDB ID, try one more time with TMDB-only approach
+                if is_likely_tmdb_id:
+                    tmdb_id_attempt = representative_item.get('tmdb_id') or imdb_id
+                    logging.info(f"Attempting TMDB-only metadata fetch for TMDB ID {tmdb_id_attempt}...")
+                    tmdb_only_metadata = get_tmdb_metadata(str(tmdb_id_attempt), effective_metadata_fetch_type)
+
+                    if tmdb_only_metadata:
+                        logging.info(f"Successfully fetched TMDB-only metadata for {tmdb_id_attempt}")
+                        # Add this to TMDB-only items for processing
+                        for item_orig in original_items_list:
+                            tmdb_only_appends.append((tmdb_id_attempt, item_orig))
+                    else:
+                        logging.error(f"TMDB-only fetch also failed for ID {tmdb_id_attempt}")
+
+                return {
+                    'movies': movies_out,
+                    'episodes': episodes_out,
+                    'bulk_show_metadata_updates': bulk_show_metadata_updates,
+                    'tmdb_only_appends': tmdb_only_appends,
+                }
+
+            for item_from_input_list in original_items_list:
+                current_item_metadata = metadata.copy()
+                item_media_type_lower = item_from_input_list.get('media_type', '').lower()
+
+                try:
+                    current_item_metadata['content_source'] = item_from_input_list.get('content_source')
+                    current_item_metadata['content_source_detail'] = item_from_input_list.get('content_source_detail')
+                    current_item_metadata['monitor_missing_episodes_only'] = bool(
+                        item_from_input_list.get('monitor_missing_episodes_only', False)
+                    )
+                    current_item_metadata['imdb_id'] = imdb_id
+                    current_item_metadata['tmdb_id'] = item_from_input_list.get('tmdb_id') or current_item_metadata.get('ids', {}).get('tmdb') or metadata.get('tmdb_id')
+
+                    current_item_metadata['versions'] = item_from_input_list.get('versions', {})
+
+                    if item_media_type_lower == 'movie':
+                        shared_release_dates = fetch_movie_release_dates_bundle(imdb_id)
+
+                        physical_release_date = get_physical_release_date(imdb_id, release_dates=shared_release_dates)
+                        if physical_release_date: current_item_metadata['physical_release_date'] = physical_release_date
+
+                        theatrical_release_date = get_theatrical_release_date(imdb_id, release_dates=shared_release_dates)
+                        if theatrical_release_date: current_item_metadata['theatrical_release_date'] = theatrical_release_date
+
+                        current_item_genres = current_item_metadata.get('genres', [])
+                        is_anime_movie = 'anime' in [str(g).lower() for g in current_item_genres]
+                        if is_anime_movie and 'anime' not in current_item_genres :
+                            current_item_metadata['genres'] = ['anime'] + [g for g in current_item_genres if str(g).lower() != 'anime']
+                        elif is_anime_movie :
+                            current_item_metadata['genres'] = ['anime'] + [g for g in current_item_genres if str(g).lower() != 'anime']
+
+                        current_item_metadata['is_anime'] = is_anime_movie
+                        current_item_metadata['release_date'] = get_release_date(current_item_metadata, imdb_id, release_dates=shared_release_dates)
+                        current_item_metadata['media_type'] = 'movie'
+
+                        movies_out.append(current_item_metadata)
+                        logging.debug(f"Prepared movie {current_item_metadata.get('title')} for processing with versions: {current_item_metadata.get('versions')}.")
+
+                    elif item_media_type_lower in ['tv', 'show', 'episode']:
+                        current_item_show_genres = current_item_metadata.get('genres', [])
+                        is_anime_show = 'anime' in [str(g).lower() for g in current_item_show_genres]
+                        if is_anime_show and 'anime' not in current_item_show_genres:
+                            current_item_metadata['genres'] = ['anime'] + [g for g in current_item_show_genres if str(g).lower() != 'anime']
+                        elif is_anime_show:
+                            current_item_metadata['genres'] = ['anime'] + [g for g in current_item_show_genres if str(g).lower() != 'anime']
+                        seasons_data_from_metadata = current_item_metadata.get('seasons')
+                        if seasons_data_from_metadata == 'None' or not isinstance(seasons_data_from_metadata, dict):
+                            logging.error(f"Invalid or missing seasons data in metadata for show {imdb_id}. Skipping episode generation for this item.")
+                            continue
+
+                        requested_specific_seasons = item_from_input_list.get('requested_seasons', [])
+
+                        all_season_numbers_in_metadata = set()
+                        for s_key in seasons_data_from_metadata.keys():
+                            try: all_season_numbers_in_metadata.add(int(s_key))
+                            except ValueError:
+                                if str(s_key) == "0": all_season_numbers_in_metadata.add(0)
+                                else: logging.warning(f"Non-integer season key '{s_key}' in metadata for {imdb_id}")
+
+                        seasons_to_process_for_this_item_instance = set()
+
+                        if requested_specific_seasons:
+                            valid_requested = {s_num for s_num in requested_specific_seasons if s_num in all_season_numbers_in_metadata}
+                            if len(valid_requested) != len(requested_specific_seasons):
+                                missing_seasons = set(requested_specific_seasons) - all_season_numbers_in_metadata
+                                logging.warning(f"Item for {imdb_id} requested seasons {requested_specific_seasons}, but metadata only contains {all_season_numbers_in_metadata}. Missing: {missing_seasons}. Forcing battery refresh to pick up new seasons.")
+                                try:
+                                    refreshed_metadata, _ = direct_api.force_refresh_metadata(imdb_id)
+                                    if refreshed_metadata and isinstance(refreshed_metadata.get('seasons'), dict):
+                                        seasons_data_from_metadata = refreshed_metadata['seasons']
+                                        all_season_numbers_in_metadata = set()
+                                        for s_key in seasons_data_from_metadata.keys():
+                                            try: all_season_numbers_in_metadata.add(int(s_key))
+                                            except ValueError: pass
+                                        valid_requested = {s_num for s_num in requested_specific_seasons if s_num in all_season_numbers_in_metadata}
+                                        logging.info(f"After refresh, metadata seasons for {imdb_id}: {all_season_numbers_in_metadata}. Valid requested: {valid_requested}")
+                                        # Update the bulk cache for this show
+                                        bulk_show_metadata_updates[imdb_id] = refreshed_metadata
+                                except Exception as e_refresh:
+                                    logging.warning(f"Force-refresh failed for {imdb_id} during season validation: {e_refresh}")
+                            seasons_to_process_for_this_item_instance = valid_requested
+                        else:
+                            content_source_id = item_from_input_list.get('content_source')
+                            allow_specials_setting_for_source = False
+                            seasons_per_show = 0
+                            season_grab_order = 'first'
+                            if content_source_id:
+                                from queues.config_manager import load_config
+                                config = load_config()
+                                cs_config = config.get('Content Sources', {}).get(content_source_id, {})
+                                if isinstance(cs_config, dict):
+                                    allow_specials_setting_for_source = cs_config.get('allow_specials', False)
+                                    seasons_per_show = int(cs_config.get('seasons_per_show', 0) or 0)
+                                    season_grab_order = cs_config.get('season_grab_order', 'first') or 'first'
+
+                            seasons_to_process_for_this_item_instance = {
+                                s_num for s_num in all_season_numbers_in_metadata if allow_specials_setting_for_source or s_num != 0
+                            }
+
+                            if seasons_per_show > 0 and len(seasons_to_process_for_this_item_instance) > seasons_per_show:
+                                if season_grab_order == 'latest':
+                                    sorted_seasons = sorted(seasons_to_process_for_this_item_instance, reverse=True)
+                                elif season_grab_order == 'recent':
+                                    # Sort by most recently aired: use premiere date from metadata if available, fall back to season number descending
+                                    def _season_air_key(s):
+                                        s_detail = seasons_data_from_metadata.get(str(s)) or {}
+                                        return s_detail.get('air_date') or s_detail.get('premiere_date') or f'{s:04d}'
+                                    sorted_seasons = sorted(seasons_to_process_for_this_item_instance, key=_season_air_key, reverse=True)
+                                else:
+                                    sorted_seasons = sorted(seasons_to_process_for_this_item_instance)
+                                seasons_to_process_for_this_item_instance = set(sorted_seasons[:seasons_per_show])
+                                logging.debug(f"Season limit applied for {imdb_id}: {seasons_per_show} seasons ({season_grab_order}), selected: {seasons_to_process_for_this_item_instance}")
+
+                        if not seasons_to_process_for_this_item_instance:
+                            logging.info(f"No seasons determined for active processing for show {current_item_metadata.get('title')} (IMDb {imdb_id}) from item {item_from_input_list.get('content_source_detail', '')}. Specific requested: {requested_specific_seasons}, Metadata seasons: {all_season_numbers_in_metadata}.")
+
+                            # Try to manually fetch seasons data as a fallback
+                            if not all_season_numbers_in_metadata:
+                                logging.info(f"Attempting manual seasons fetch for {imdb_id} as fallback...")
+                                try:
+                                    # Try to force refresh the metadata to get seasons data
+                                    from cli_battery.app.direct_api import DirectAPI
+                                    refreshed_metadata, _ = DirectAPI.force_refresh_metadata(imdb_id)
+                                    if refreshed_metadata and 'seasons' in refreshed_metadata:
+                                        refreshed_seasons = refreshed_metadata['seasons']
+                                        if isinstance(refreshed_seasons, dict) and refreshed_seasons:
+                                            # Extract season numbers from the refreshed data
+                                            refreshed_season_numbers = [int(season_num) for season_num in refreshed_seasons.keys() if str(season_num).isdigit() and int(season_num) > 0]
+                                            if refreshed_season_numbers:
+                                                logging.info(f"Successfully fetched {len(refreshed_season_numbers)} seasons via fallback for {imdb_id}: {refreshed_season_numbers}")
+                                                # Update the seasons data and retry processing
+                                                seasons_data_from_metadata = refreshed_seasons
+                                                all_season_numbers_in_metadata = set(refreshed_season_numbers)
+
+                                                # Recalculate seasons to process
+                                                if requested_specific_seasons:
+                                                    valid_requested = {s_num for s_num in requested_specific_seasons if s_num in all_season_numbers_in_metadata}
+                                                    if len(valid_requested) != len(requested_specific_seasons):
+                                                        logging.warning(f"Item for {imdb_id} requested seasons {requested_specific_seasons}, but refreshed metadata only contains {all_season_numbers_in_metadata}. Processing valid: {valid_requested}")
+                                                    seasons_to_process_for_this_item_instance = valid_requested
+                                                else:
+                                                    content_source_id = item_from_input_list.get('content_source')
+                                                    allow_specials_setting_for_source = False
+                                                    seasons_per_show = 0
+                                                    season_grab_order = 'first'
+                                                    if content_source_id:
+                                                        from queues.config_manager import load_config
+                                                        config = load_config()
+                                                        cs_config = config.get('Content Sources', {}).get(content_source_id, {})
+                                                        if isinstance(cs_config, dict):
+                                                            allow_specials_setting_for_source = cs_config.get('allow_specials', False)
+                                                            seasons_per_show = int(cs_config.get('seasons_per_show', 0) or 0)
+                                                            season_grab_order = cs_config.get('season_grab_order', 'first') or 'first'
+
+                                                    seasons_to_process_for_this_item_instance = {
+                                                        s_num for s_num in all_season_numbers_in_metadata if allow_specials_setting_for_source or s_num != 0
+                                                    }
+
+                                                    if seasons_per_show > 0 and len(seasons_to_process_for_this_item_instance) > seasons_per_show:
+                                                        if season_grab_order == 'latest':
+                                                            sorted_seasons = sorted(seasons_to_process_for_this_item_instance, reverse=True)
+                                                        elif season_grab_order == 'recent':
+                                                            def _season_air_key_fb(s):
+                                                                s_detail = seasons_data_from_metadata.get(str(s)) or {}
+                                                                return s_detail.get('air_date') or s_detail.get('premiere_date') or f'{s:04d}'
+                                                            sorted_seasons = sorted(seasons_to_process_for_this_item_instance, key=_season_air_key_fb, reverse=True)
+                                                        else:
+                                                            sorted_seasons = sorted(seasons_to_process_for_this_item_instance)
+                                                        seasons_to_process_for_this_item_instance = set(sorted_seasons[:seasons_per_show])
+
+                                                # If we now have seasons to process, continue with the processing
+                                                if seasons_to_process_for_this_item_instance:
+                                                    logging.info(f"Retrying processing with {len(seasons_to_process_for_this_item_instance)} seasons for {imdb_id}")
+                                                else:
+                                                    logging.warning(f"Fallback seasons fetch succeeded but no valid seasons to process for {imdb_id}")
+                                                    continue
                                             else:
-                                                content_source_id = item_from_input_list.get('content_source')
-                                                allow_specials_setting_for_source = False
-                                                seasons_per_show = 0
-                                                season_grab_order = 'first'
-                                                if content_source_id:
-                                                    from queues.config_manager import load_config
-                                                    config = load_config()
-                                                    cs_config = config.get('Content Sources', {}).get(content_source_id, {})
-                                                    if isinstance(cs_config, dict):
-                                                        allow_specials_setting_for_source = cs_config.get('allow_specials', False)
-                                                        seasons_per_show = int(cs_config.get('seasons_per_show', 0) or 0)
-                                                        season_grab_order = cs_config.get('season_grab_order', 'first') or 'first'
-
-                                                seasons_to_process_for_this_item_instance = {
-                                                    s_num for s_num in all_season_numbers_in_metadata if allow_specials_setting_for_source or s_num != 0
-                                                }
-
-                                                if seasons_per_show > 0 and len(seasons_to_process_for_this_item_instance) > seasons_per_show:
-                                                    if season_grab_order == 'latest':
-                                                        sorted_seasons = sorted(seasons_to_process_for_this_item_instance, reverse=True)
-                                                    elif season_grab_order == 'recent':
-                                                        def _season_air_key_fb(s):
-                                                            s_detail = seasons_data_from_metadata.get(str(s)) or {}
-                                                            return s_detail.get('air_date') or s_detail.get('premiere_date') or f'{s:04d}'
-                                                        sorted_seasons = sorted(seasons_to_process_for_this_item_instance, key=_season_air_key_fb, reverse=True)
-                                                    else:
-                                                        sorted_seasons = sorted(seasons_to_process_for_this_item_instance)
-                                                    seasons_to_process_for_this_item_instance = set(sorted_seasons[:seasons_per_show])
-
-                                            # If we now have seasons to process, continue with the processing
-                                            if seasons_to_process_for_this_item_instance:
-                                                logging.info(f"Retrying processing with {len(seasons_to_process_for_this_item_instance)} seasons for {imdb_id}")
-                                            else:
-                                                logging.warning(f"Fallback seasons fetch succeeded but no valid seasons to process for {imdb_id}")
+                                                logging.warning(f"Fallback seasons fetch returned no valid season numbers for {imdb_id}")
                                                 continue
                                         else:
-                                            logging.warning(f"Fallback seasons fetch returned no valid season numbers for {imdb_id}")
+                                            logging.warning(f"Fallback seasons fetch returned invalid seasons data for {imdb_id}")
                                             continue
                                     else:
-                                        logging.warning(f"Fallback seasons fetch returned invalid seasons data for {imdb_id}")
+                                        logging.warning(f"Fallback metadata refresh failed or returned no seasons data for {imdb_id}")
                                         continue
-                                else:
-                                    logging.warning(f"Fallback metadata refresh failed or returned no seasons data for {imdb_id}")
+                                except Exception as fallback_error:
+                                    logging.error(f"Error during fallback seasons fetch for {imdb_id}: {fallback_error}")
                                     continue
-                            except Exception as fallback_error:
-                                logging.error(f"Error during fallback seasons fetch for {imdb_id}: {fallback_error}")
+                            else:
+                                # We have season numbers but none are valid for processing
                                 continue
-                        else:
-                            # We have season numbers but none are valid for processing
-                            continue
 
-                    current_item_episodes = []
-                    for season_num_to_process in seasons_to_process_for_this_item_instance:
-                        season_detail = seasons_data_from_metadata.get(str(season_num_to_process)) or seasons_data_from_metadata.get(season_num_to_process)
-                        if not season_detail or not isinstance(season_detail.get('episodes'), dict):
-                            logging.warning(f"Season {season_num_to_process} details or its episodes not found/invalid in metadata for {imdb_id}.")
-                            continue
-                        
-                        for ep_num_str, ep_data in season_detail['episodes'].items():
-                            try:
-                                ep_num_int = int(ep_num_str)
-                                episode_item_obj = create_episode_item(
-                                    current_item_metadata,
-                                    season_num_to_process,
-                                    ep_num_int,
-                                    ep_data,
-                                    is_anime_show
-                                )
-                                episode_item_obj['media_type'] = 'episode'
-                                episode_item_obj['versions'] = item_from_input_list.get('versions', {})
-                                current_item_episodes.append(episode_item_obj)
-                            except ValueError:
-                                logging.warning(f"Invalid episode number format '{ep_num_str}' for S{season_num_to_process}, IMDb {imdb_id}.")
-                            except Exception as e_create_ep:
-                                logging.error(f"Error creating episode S{season_num_to_process}E{ep_num_str} for {imdb_id}: {e_create_ep}", exc_info=True)
-                    
-                    processed_items['episodes'].extend(current_item_episodes)
-                    if current_item_episodes:
-                        logging.debug(f"Prepared {len(current_item_episodes)} episodes for show {current_item_metadata.get('title')} (IMDb {imdb_id}) from item {item_from_input_list.get('content_source_detail','')} based on seasons: {seasons_to_process_for_this_item_instance} with versions: {item_from_input_list.get('versions', {})}.")
-            except Exception as e:
-                logging.error(f"Error during main processing loop for item (IMDb {imdb_id}, Title {item_from_input_list.get('title', 'N/A')}, Detail {item_from_input_list.get('content_source_detail', 'N/A')}): {str(e)}", exc_info=True)
+                        current_item_episodes = []
+                        for season_num_to_process in seasons_to_process_for_this_item_instance:
+                            season_detail = seasons_data_from_metadata.get(str(season_num_to_process)) or seasons_data_from_metadata.get(season_num_to_process)
+                            if not season_detail or not isinstance(season_detail.get('episodes'), dict):
+                                logging.warning(f"Season {season_num_to_process} details or its episodes not found/invalid in metadata for {imdb_id}.")
+                                continue
+
+                            for ep_num_str, ep_data in season_detail['episodes'].items():
+                                try:
+                                    ep_num_int = int(ep_num_str)
+                                    episode_item_obj = create_episode_item(
+                                        current_item_metadata,
+                                        season_num_to_process,
+                                        ep_num_int,
+                                        ep_data,
+                                        is_anime_show
+                                    )
+                                    episode_item_obj['media_type'] = 'episode'
+                                    episode_item_obj['versions'] = item_from_input_list.get('versions', {})
+                                    current_item_episodes.append(episode_item_obj)
+                                except ValueError:
+                                    logging.warning(f"Invalid episode number format '{ep_num_str}' for S{season_num_to_process}, IMDb {imdb_id}.")
+                                except Exception as e_create_ep:
+                                    logging.error(f"Error creating episode S{season_num_to_process}E{ep_num_str} for {imdb_id}: {e_create_ep}", exc_info=True)
+
+                        episodes_out.extend(current_item_episodes)
+                        if current_item_episodes:
+                            logging.debug(f"Prepared {len(current_item_episodes)} episodes for show {current_item_metadata.get('title')} (IMDb {imdb_id}) from item {item_from_input_list.get('content_source_detail','')} based on seasons: {seasons_to_process_for_this_item_instance} with versions: {item_from_input_list.get('versions', {})}.")
+                except Exception as e:
+                    logging.error(f"Error during main processing loop for item (IMDb {imdb_id}, Title {item_from_input_list.get('title', 'N/A')}, Detail {item_from_input_list.get('content_source_detail', 'N/A')}): {str(e)}", exc_info=True)
+
+            return {
+                'movies': movies_out,
+                'episodes': episodes_out,
+                'bulk_show_metadata_updates': bulk_show_metadata_updates,
+                'tmdb_only_appends': tmdb_only_appends,
+            }
+        except Exception as e_group:
+            logging.error(f"Unexpected error processing metadata group for IMDb {imdb_id}: {e_group}", exc_info=True)
+            return {
+                'movies': movies_out,
+                'episodes': episodes_out,
+                'bulk_show_metadata_updates': bulk_show_metadata_updates,
+                'tmdb_only_appends': tmdb_only_appends,
+            }
+
+    from concurrent.futures import ThreadPoolExecutor as _TPE_groups
+    _group_workers = min(8, max(1, len(items_by_imdb_id)))
+    with _TPE_groups(max_workers=_group_workers) as _group_pool:
+        _group_futures = [
+            _group_pool.submit(_process_one_imdb_group, imdb_id, original_items_list, bulk_movie_metadata, bulk_show_metadata)
+            for imdb_id, original_items_list in items_by_imdb_id.items()
+        ]
+        for _fut in _group_futures:
+            _result = _fut.result()
+            processed_items['movies'].extend(_result['movies'])
+            processed_items['episodes'].extend(_result['episodes'])
+            bulk_show_metadata.update(_result['bulk_show_metadata_updates'])
+            for tmdb_id_key, item_orig in _result['tmdb_only_appends']:
+                items_by_tmdb_id_only[tmdb_id_key].append(item_orig)
 
     if items_by_tmdb_id_only:
          logging.warning(f"{len(items_by_tmdb_id_only)} items had only TMDB ID after conversion attempt. These items will be processed by add_wanted_items if they contain sufficient TMDB-only metadata (e.g., for UFC/Jackett). process_metadata primarily enriches with IMDb based info.")
@@ -1047,22 +1174,24 @@ def get_release_date(
     media_details: Dict[str, Any],
     imdb_id: Optional[str] = None,
     release_date_cache_max_age: Optional[timedelta] = None,
+    release_dates: Optional[dict] = None,
 ) -> str:
     if not media_details:
         logging.warning("No media details provided for release date")
         return 'Unknown'
-        
+
     if not imdb_id:
         logging.warning("Attempted to get release date with None IMDB ID")
         return media_details.get('released', 'Unknown')
 
-    if release_date_cache_max_age is None:
-        release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id)
-    else:
-        release_dates, _ = DirectAPI.get_movie_release_dates(
-            imdb_id,
-            max_cache_age=release_date_cache_max_age,
-        )
+    if release_dates is None:
+        if release_date_cache_max_age is None:
+            release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id)
+        else:
+            release_dates, _ = DirectAPI.get_movie_release_dates(
+                imdb_id,
+                max_cache_age=release_date_cache_max_age,
+            )
     logging.debug(f"Processing release dates for IMDb ID: {imdb_id}")
 
     if not release_dates:
@@ -1197,7 +1326,24 @@ def refresh_release_dates(force_bypass_cache: bool = False):
                      + list(get_all_media_items(state="Scraping"))
     logging.info(f"Found {len(items_to_refresh)} items to refresh")
 
-    for index, item in enumerate(items_to_refresh, 1):
+    # One worker per item - items_to_refresh is already a flat, read-only list.
+    # DB writes (update_release_date_and_state) happen directly from worker
+    # threads, unchanged in content: each write is self-contained (no item
+    # depends on another's write) and this reuses the same WAL + 30s-busy-timeout
+    # connection pattern already trusted elsewhere in this codebase for
+    # concurrent DB access. imdb_trakt_cache and the hit/miss counters are
+    # shared across workers (only touched in the movie early-release branch,
+    # gated behind the trakt_early_releases setting) and are protected by
+    # cache_lock. The periodic Trakt-cache checkpoint save is likewise
+    # protected by progress_lock and now fires based on completion count
+    # rather than original list position, since workers finish out of order.
+    import threading
+    cache_lock = threading.Lock()
+    progress_lock = threading.Lock()
+    completed_count = 0
+
+    def _process_one_refresh_item(index, item):
+        nonlocal cache_hits, cache_misses, completed_count
         try:
             item_dict = dict(item)
             title = item_dict.get('title', 'Unknown Title')
@@ -1217,11 +1363,11 @@ def refresh_release_dates(force_bypass_cache: bool = False):
 
             if not imdb_id:
                 logging.warning(f"Skipping item {index} (DB ID: {db_item_id}) due to missing imdb_id")
-                continue
+                return
 
             if not media_type or media_type == 'unknown type':
                 logging.warning(f"Skipping item {index} (DB ID: {db_item_id}) due to missing or invalid type")
-                continue
+                return
 
             new_release_date = None
             new_physical_release_date = None
@@ -1260,13 +1406,23 @@ def refresh_release_dates(force_bypass_cache: bool = False):
                                 title,
                                 imdb_id,
                             )
+                    # Shared single fetch for all three release-date lookups below. Note this
+                    # is a deliberate tightening vs. the old behavior: physical/theatrical
+                    # dates previously fetched with no cache-age override, but now share the
+                    # same release_date_cache_max_age (the daily-recheck floor for Unreleased
+                    # items) as the general release date.
+                    shared_release_dates = fetch_movie_release_dates_bundle(
+                        imdb_id,
+                        max_cache_age=release_date_cache_max_age,
+                    )
                     fetched_release_date = get_release_date(
                         metadata,
                         imdb_id,
                         release_date_cache_max_age=release_date_cache_max_age,
+                        release_dates=shared_release_dates,
                     )
-                    new_physical_release_date = get_physical_release_date(imdb_id)
-                    new_theatrical_release_date = get_theatrical_release_date(imdb_id)
+                    new_physical_release_date = get_physical_release_date(imdb_id, release_dates=shared_release_dates)
+                    new_theatrical_release_date = get_theatrical_release_date(imdb_id, release_dates=shared_release_dates)
                     logging.info(f"Physical release date: {new_physical_release_date}")
                     logging.info(f"Theatrical release date: {new_theatrical_release_date}")
 
@@ -1317,19 +1473,32 @@ def refresh_release_dates(force_bypass_cache: bool = False):
                         pass  # If we can't parse year, proceed with check
 
                 if trakt_early_releases and not skip_early_release_check and not is_old_movie:
-                    # Check cache first
-                    cached_entry = imdb_trakt_cache.get(imdb_id)
+                    # Check cache first. Held only across the local dict read/write
+                    # and the hit/miss counter increment - never across the
+                    # trakt.fetch_items_from_trakt() network calls below, since
+                    # holding a lock across a network call would serialize exactly
+                    # what parallelizing this loop is meant to avoid. This leaves a
+                    # benign TOCTOU gap where two threads can both miss on the same
+                    # rare shared imdb_id and both redundantly fetch - acceptable
+                    # since the cache entry written is idempotent (same imdb_id
+                    # always resolves to the same Trakt ID).
                     trakt_id_num = None
                     current_state = item_dict.get('state', 'Unknown')
 
-                    if cached_entry and trakt.is_cache_entry_valid(cached_entry, imdb_id, current_state):
+                    with cache_lock:
+                        cached_entry = imdb_trakt_cache.get(imdb_id)
+                        cache_was_hit = bool(cached_entry and trakt.is_cache_entry_valid(cached_entry, imdb_id, current_state))
+                        if cache_was_hit:
+                            trakt_id_num = cached_entry.get('trakt_id')
+                            cache_hits += 1
+                        else:
+                            cache_misses += 1
+
+                    if cache_was_hit:
                         # Cache hit
-                        trakt_id_num = cached_entry.get('trakt_id')
-                        cache_hits += 1
                         logging.debug(f"Cache hit for {imdb_id}: Trakt ID {trakt_id_num}")
                     else:
                         # Cache miss - make API call
-                        cache_misses += 1
                         logging.info(f"Checking Trakt for early releases for {title} ({imdb_id})")
                         trakt_id = trakt.fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
                         if trakt_id and isinstance(trakt_id, list) and len(trakt_id) > 0:
@@ -1341,12 +1510,13 @@ def refresh_release_dates(force_bypass_cache: bool = False):
                                         logging.debug(f"Found Trakt movie ID {trakt_id_num} for {imdb_id}")
 
                                         # Update cache
-                                        imdb_trakt_cache[imdb_id] = {
-                                            'trakt_id': trakt_id_num,
-                                            'cached_at': datetime.now().isoformat(),
-                                            'release_date': check_date if check_date != 'Unknown' else None,
-                                            'state': current_state
-                                        }
+                                        with cache_lock:
+                                            imdb_trakt_cache[imdb_id] = {
+                                                'trakt_id': trakt_id_num,
+                                                'cached_at': datetime.now().isoformat(),
+                                                'release_date': check_date if check_date != 'Unknown' else None,
+                                                'state': current_state
+                                            }
                                         break
 
                     # If we have a Trakt ID (from cache or API), check early release lists
@@ -1514,21 +1684,37 @@ def refresh_release_dates(force_bypass_cache: bool = False):
             else:
                 logging.info(f"No changes needed for {title} (DB ID: {db_item_id})")
 
-            # Periodic cache save every 100 items
-            # Rate limiting is now handled per-request in trakt.py (0.2s delay between requests)
+            # Periodic cache save every 100 completed items. Completion-order
+            # based (not the original list index, since workers finish out of
+            # order) - the Trakt rate limiter is the correct pacing mechanism
+            # under concurrency, so the old time.sleep(2) tied to this batch is
+            # dropped; it only blocked one worker for no benefit.
             batch_size = 100
-            batch_delay = 2  # Short pause for cache I/O
+            do_save = False
+            with progress_lock:
+                completed_count += 1
+                if completed_count % batch_size == 0:
+                    do_save = True
+                    progress_at_save = completed_count
 
-            if index % batch_size == 0:
-                logging.info(f"Progress: {index}/{len(items_to_refresh)} - Saving cache")
-                # Save cache periodically
-                trakt.save_imdb_trakt_cache(imdb_trakt_cache)
-                logging.debug(f"Cache saved at index {index} (Hits: {cache_hits}, Misses: {cache_misses})")
-                time.sleep(batch_delay)
+            if do_save:
+                logging.info(f"Progress: {progress_at_save}/{len(items_to_refresh)} - Saving cache")
+                with cache_lock:
+                    trakt.save_imdb_trakt_cache(imdb_trakt_cache)
+                logging.debug(f"Cache saved at {progress_at_save} completed items (Hits: {cache_hits}, Misses: {cache_misses})")
 
         except Exception as e:
             logging.error(f"Error processing item {index} (DB ID: {item_dict.get('id', 'N/A')}): {str(e)}", exc_info=True)
-            continue
+
+    from concurrent.futures import ThreadPoolExecutor as _TPE_refresh
+    _refresh_workers = min(8, max(1, len(items_to_refresh)))
+    with _TPE_refresh(max_workers=_refresh_workers) as _refresh_pool:
+        _refresh_futures = [
+            _refresh_pool.submit(_process_one_refresh_item, index, item)
+            for index, item in enumerate(items_to_refresh, 1)
+        ]
+        for _fut in _refresh_futures:
+            _fut.result()
 
     # Save final cache state
     trakt.save_imdb_trakt_cache(imdb_trakt_cache)
