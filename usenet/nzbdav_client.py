@@ -467,10 +467,34 @@ class NzbdavClient:
     def _content_root(self) -> str:
         """Return the root path that contains category subdirectories.
 
-        The mount_path setting points to where category folders live directly
-        (e.g. /debrid/content/ which contains movies/, shows/, etc.).
+        The mount_path setting is meant to point directly at the folder that
+        contains category subdirectories (e.g. /debrid/content/ which contains
+        movies/, shows/, etc.). NzbDAV's own rclone-mount root looks similar
+        one level up though, and it's an easy config mistake (godver3/cli_debrid#504)
+        to point mounted_file_location at that root instead of its `content`
+        child - the settings help text used to suggest exactly that. Detect
+        that specific case via NzbDAV's own known root-level siblings (`content`
+        + `completed-symlinks`, per this module's docstring) rather than
+        category folders, and transparently resolve into `content` instead of
+        silently failing every folder lookup.
         """
-        return self.mount_path
+        root = self.mount_path
+        if not self.flat_layout and os.path.isdir(root):
+            try:
+                entries = set(os.listdir(root))
+            except Exception:
+                entries = set()
+            if 'content' in entries and 'completed-symlinks' in entries:
+                corrected = os.path.join(root, 'content')
+                if os.path.isdir(corrected):
+                    logging.warning(
+                        f"[NzbDAV] mounted_file_location={root!r} looks like the raw NzbDAV "
+                        f"rclone-mount root (contains 'content' and 'completed-symlinks'), not "
+                        f"the category directory itself - using {corrected!r} instead. Update "
+                        f"the Usenet Provider Mount Path setting to {corrected!r} to silence this."
+                    )
+                    return corrected
+        return root
 
     def _entry_parent_dirs(self, content_root: str) -> list:
         """Directories whose immediate children are job/release folders.
