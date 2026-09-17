@@ -342,7 +342,7 @@ class ScrapingQueue:
                             # since nothing else ever re-checks it once it's written to this item.
                             _job_hash_for_check = _job_id[4:] if str(_job_id).startswith('nzb:') else _job_id
                             try:
-                                from usenet.climount_client import is_nzb_job_alive as _is_job_alive
+                                from usenet import is_nzb_job_alive as _is_job_alive
                                 _coalesce_job_alive = _is_job_alive(_job_hash_for_check)
                             except Exception:
                                 _coalesce_job_alive = True  # unknown due to error - don't block a legitimate reuse

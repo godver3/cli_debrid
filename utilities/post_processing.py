@@ -9,14 +9,28 @@ from utilities.settings import get_setting
 def replace_cleanup_after_collect(item_dict):
     """
     Called after a new item is promoted to Collected state.
-    Cleans up old entries with manual_replace=1 for the same media,
-    removes their debrid torrents and Plex entries. No-op when no
-    manual_replace items exist for the same imdb_id.
+    Cleans up old entries with manual_replace=1 for the same media -
+    removes their debrid/usenet torrent, their symlink and the original
+    mount-side file, and their media server entry - via DeletionManager,
+    the same fully-audited deletion path the library page's own Delete
+    button uses. No-op when no manual_replace items exist for the same
+    imdb_id.
+
+    Previously this reimplemented file/torrent removal by hand: it only
+    ever called the debrid provider's remove_torrent() (a no-op 404 for
+    an NZB job id, since that has to go through the usenet provider
+    instead) and asked Plex to remove the entry, with no direct
+    filesystem unlink at all - so in Symlinked/Local mode the stale
+    symlink (and the real file behind it on the mount) were left behind
+    whenever Plex removal didn't apply or silently failed. Delegating to
+    DeletionManager.delete_single_item() fixes both: it already handles
+    NZB-vs-debrid removal via the usenet/debrid provider factories and
+    directly unlinks the symlink and original file in symlink mode
+    instead of relying solely on the media server to do it.
     """
     imdb_id = item_dict.get('imdb_id')
     item_type = item_dict.get('type')
     item_id = item_dict.get('id')
-    new_torrent_id = item_dict.get('filled_by_torrent_id')
     # Matches SQL's REPLACE(COALESCE(version,''),'*','') exactly.
     item_version = (item_dict.get('version') or '').rstrip('*')
 
@@ -26,18 +40,9 @@ def replace_cleanup_after_collect(item_dict):
     conn = None
     try:
         from database import get_db_connection
-        from debrid import get_debrid_provider as _get_debrid_prov
-        from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
-        import os as _os
 
-        try:
-            _debrid_prov = _get_debrid_prov()
-        except Exception:
-            _debrid_prov = None
         conn = get_db_connection()
         cur = conn.cursor()
-
-        _fields = 'id, filled_by_torrent_id, filled_by_file, location_on_disk, title, episode_title'
 
         if item_type == 'episode':
             season_number = item_dict.get('season_number')
@@ -45,14 +50,14 @@ def replace_cleanup_after_collect(item_dict):
             if season_number is None or episode_number is None:
                 return
             old_rows = cur.execute(
-                f'''SELECT {_fields} FROM media_items
+                '''SELECT id FROM media_items
                    WHERE imdb_id = ? AND season_number = ? AND episode_number = ?
                    AND type = 'episode' AND manual_replace = 1 AND id != ?
                    AND REPLACE(COALESCE(version,''),'*','') = ?''',
                 (imdb_id, season_number, episode_number, item_id, item_version)
             ).fetchall()
             stale_rows = cur.execute(
-                f'''SELECT {_fields} FROM media_items m
+                '''SELECT id FROM media_items m
                    WHERE m.imdb_id = ? AND m.season_number = ? AND m.type = 'episode'
                    AND m.manual_replace = 1 AND m.id != ?
                    AND REPLACE(COALESCE(m.version,''),'*','') = ?
@@ -66,17 +71,16 @@ def replace_cleanup_after_collect(item_dict):
                 (imdb_id, season_number, item_id, item_version)
             ).fetchall()
             log_tag = 'REPLACE_SEASON'
-            removal_reason = 'Replaced by new season pack'
             entry_label = 'episode'
         else:  # movie
             old_rows = cur.execute(
-                f'''SELECT {_fields} FROM media_items
+                '''SELECT id FROM media_items
                    WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?
                    AND REPLACE(COALESCE(version,''),'*','') = ?''',
                 (imdb_id, item_id, item_version)
             ).fetchall()
             stale_rows = cur.execute(
-                f'''SELECT {_fields} FROM media_items m
+                '''SELECT id FROM media_items m
                    WHERE m.imdb_id = ? AND m.type = 'movie'
                    AND m.manual_replace = 1 AND m.id != ?
                    AND REPLACE(COALESCE(m.version,''),'*','') = ?
@@ -89,75 +93,42 @@ def replace_cleanup_after_collect(item_dict):
                 (imdb_id, item_id, item_version)
             ).fetchall()
             log_tag = 'REPLACE_MOVIE'
-            removal_reason = 'Replaced by new movie torrent'
             entry_label = 'movie'
 
         # Merge, deduplicating by id
-        all_rows = {row['id']: row for row in list(old_rows) + list(stale_rows)}
-        if not all_rows:
+        ids_to_delete = {row['id'] for row in list(old_rows) + list(stale_rows)}
+        conn.close()
+        conn = None
+        if not ids_to_delete:
             return  # Nothing to clean up
 
-        ids_to_delete = set()
-        plex_scan_paths = set()
+        from debrid import get_debrid_provider
+        from utilities.deletion_manager import DeletionManager
 
-        for old_row in all_rows.values():
-            old_id = old_row['id']
-            old_torrent_id = old_row['filled_by_torrent_id']
-            if old_torrent_id and old_torrent_id != new_torrent_id and _debrid_prov:
-                # Sibling guard: never remove a torrent still referenced by another
-                # live media_items row (e.g. a different version sharing this job id
-                # due to a since-fixed dedup bug) — that would delete the file out
-                # from under the surviving row, leaving it with a broken symlink.
-                try:
-                    _sib_count = cur.execute(
-                        "SELECT COUNT(*) FROM media_items "
-                        "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
-                        (old_torrent_id, old_id)
-                    ).fetchone()[0]
-                except Exception as sib_err:
-                    logging.warning(f"[{log_tag}] Sibling check failed for {old_torrent_id}, skipping removal to be safe: {sib_err}")
-                    _sib_count = 1
-                if _sib_count > 0:
-                    logging.info(f"[{log_tag}] Skipping debrid removal for {old_torrent_id} — still referenced by {_sib_count} other item(s)")
-                else:
-                    try:
-                        _debrid_prov.remove_torrent(old_torrent_id, removal_reason=removal_reason)
-                        logging.info(f"[{log_tag}] Removed debrid torrent {old_torrent_id} for old entry {old_id}")
-                    except Exception as debrid_err:
-                        if '404' in str(debrid_err):
-                            logging.debug(f"[{log_tag}] Old torrent {old_torrent_id} already removed (404)")
-                        else:
-                            logging.error(f"[{log_tag}] Failed to remove torrent {old_torrent_id}: {debrid_err}")
-            item_path = old_row['location_on_disk'] or old_row['filled_by_file']
-            if item_path:
-                ep_title = old_row['episode_title'] if item_type == 'episode' else None
-                title = old_row['title'] or ''
-                try:
-                    if not remove_file_from_plex(title, item_path, ep_title):
-                        logging.warning(f"[{log_tag}] Direct Plex removal failed for '{title}' ({item_path}), will fallback to scan+empty trash")
-                    else:
-                        logging.info(f"[{log_tag}] Removed '{title}' from Plex")
-                except Exception as plex_err:
-                    logging.warning(f"[{log_tag}] Plex removal error for '{title}': {plex_err}")
-                plex_scan_paths.add(_os.path.dirname(item_path))
-            ids_to_delete.add(old_id)
+        try:
+            debrid_provider = get_debrid_provider()
+        except Exception:
+            debrid_provider = None
+        deletion_manager = DeletionManager(debrid_provider=debrid_provider)
 
-        if ids_to_delete:
-            ids_list = list(ids_to_delete)
-            cur.execute(
-                f"DELETE FROM media_items WHERE id IN ({','.join(['?']*len(ids_list))})",
-                ids_list
-            )
-            conn.commit()
-            logging.info(f"[{log_tag}] Deleted {cur.rowcount} replaced {entry_label} entries. IDs: {ids_list}")
-
-        if plex_scan_paths:
+        for old_id in ids_to_delete:
             try:
-                section_type = 'show' if item_type == 'episode' else 'movie'
-                scan_and_empty_plex_trash(paths=list(plex_scan_paths), section_type=section_type)
-                logging.info(f"[{log_tag}] Triggered Plex scan+empty trash for paths: {list(plex_scan_paths)}")
-            except Exception as scan_err:
-                logging.warning(f"[{log_tag}] Plex scan+empty trash failed: {scan_err}")
+                result = deletion_manager.delete_single_item(
+                    old_id,
+                    delete_from_debrid=True,
+                    delete_from_media_server=True,
+                    delete_files=True,
+                    delete_symlinks=True,
+                    clear_cache=False,
+                    remove_from_content_source=False,
+                    skip_database=False,
+                )
+                if result.get('success'):
+                    logging.info(f"[{log_tag}] Cleaned up replaced {entry_label} entry {old_id}: {result}")
+                else:
+                    logging.warning(f"[{log_tag}] Cleanup for replaced {entry_label} entry {old_id} reported errors: {result.get('errors')}")
+            except Exception as del_err:
+                logging.error(f"[{log_tag}] Failed to clean up replaced {entry_label} entry {old_id}: {del_err}", exc_info=True)
 
     except Exception as err:
         logging.error(f"[REPLACE] Error in replace cleanup after collect: {err}", exc_info=True)

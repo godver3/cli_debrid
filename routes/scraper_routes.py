@@ -807,8 +807,10 @@ def add_torrent_to_debrid():
                                     def _do_rename_sp(h, name, provider_id=None):
                                         import time as _t
                                         try:
-                                            from usenet.climount_client import get_climount_client
-                                            _dc_sp = get_climount_client()
+                                            from usenet import get_usenet_client
+                                            _dc_sp = get_usenet_client()
+                                            if not hasattr(_dc_sp, 'rename_nzb_with_status'):
+                                                return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                             # cli_mount only registers an entry as queryable-by-hash after its
                                             # own periodic sync (default ~10 min) — a 404 in the first several
                                             # attempts is expected, not proof the entry is gone. Only treat 404
@@ -965,8 +967,10 @@ def add_torrent_to_debrid():
                                     def _do_rename2(h, name, item_id):
                                         import time as _t
                                         try:
-                                            from usenet.climount_client import get_climount_client
-                                            _dc2 = get_climount_client()
+                                            from usenet import get_usenet_client
+                                            _dc2 = get_usenet_client()
+                                            if not hasattr(_dc2, 'rename_nzb_with_status'):
+                                                return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                             # cli_mount only registers an entry as queryable-by-hash after its
                                             # own periodic sync (default ~10 min) — a 404 in the first several
                                             # attempts is expected, not proof the entry is gone. Only treat 404
@@ -2214,15 +2218,15 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
                     expired episode's retention issue applies to the rest of the pack — None
                     (unknown) is treated the same as level 1 for safety.
     """
-    from usenet.climount_client import get_climount_client, reset_climount_client
+    from usenet import get_usenet_client, reset_usenet_client
     from database.not_wanted_magnets import add_to_not_wanted_nzb_segment, extract_nzb_segment_id
     from metadata.metadata import get_metadata, get_release_date
     from database.database_writing import add_media_item, update_media_item_state, update_media_item
 
-    reset_climount_client()
-    client = get_climount_client()
+    reset_usenet_client()
+    client = get_usenet_client()
     if not client.is_enabled():
-        return jsonify({'error': 'Usenet provider (cli_mount) is not enabled.'}), 503
+        return jsonify({'error': f'Usenet provider ({_usenet_pname()}) is not enabled.'}), 503
 
     # Resolve metadata once
     imdb_id = None
@@ -2486,14 +2490,14 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
 def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, version, tmdb_id,
                        original_scraped_torrent_title=None, genres=None, current_score=0.0,
                        selected_folder=None, selected_folder_is_custom=False, selected_tags=None):
-    """Submit an NZB URL to cli_mount and track it through the queue like a debrid add."""
-    from usenet.climount_client import get_climount_client, reset_climount_client
+    """Submit an NZB URL to the configured Usenet provider and track it through the queue like a debrid add."""
+    from usenet import get_usenet_client, reset_usenet_client
     from metadata.metadata import get_metadata, get_release_date
-    reset_climount_client()
-    client = get_climount_client()
+    reset_usenet_client()
+    client = get_usenet_client()
 
     if not client.is_enabled():
-        return jsonify({'error': 'Usenet provider (cli_mount) is not enabled. Configure it in Required Settings.'}), 503
+        return jsonify({'error': f'Usenet provider ({_usenet_pname()}) is not enabled. Configure it in Required Settings.'}), 503
 
     if not nzb_url:
         return jsonify({'error': 'No NZB URL provided'}), 400
@@ -2553,7 +2557,7 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
                                 tags=selected_tags, tags_exclusive=False)
 
     if not job_id:
-        return jsonify({'error': 'Failed to submit NZB to cli_mount'}), 500
+        return jsonify({'error': f'Failed to submit NZB to {_usenet_pname()}'}), 500
 
     logging.info(f'[NZB] Submitted successfully, job_id={job_id}')
 

@@ -106,12 +106,12 @@ def remove_unwanted_torrent(torrent_id: str, is_nzb: bool = False, debrid_provid
 
     # NZB job IDs are never valid debrid torrent IDs — calling
     # get_torrent_info/remove_torrent on one 404s against the debrid provider.
-    # Cancel the cli_mount job instead.
+    # Cancel the Usenet provider job instead.
     if is_nzb or str(torrent_id).startswith('nzb:'):
         job_hash = torrent_id[4:] if str(torrent_id).startswith('nzb:') else torrent_id
         try:
-            from usenet.climount_client import get_climount_client
-            get_climount_client().remove_nzb(job_hash)
+            from usenet import get_usenet_client
+            get_usenet_client().remove_nzb(job_hash)
             logging.info(f"Cancelled unwanted NZB job {job_hash}")
         except Exception as e:
             logging.warning(f"Could not cancel NZB job {job_hash}: {e}")
@@ -588,8 +588,8 @@ class AddingQueue:
                         _job_id = torrent_info.get('id', '')
                         if _job_id:
                             try:
-                                from usenet.climount_client import get_climount_client
-                                get_climount_client().remove_nzb(_job_id)
+                                from usenet import get_usenet_client
+                                get_usenet_client().remove_nzb(_job_id)
                                 logging.info(f"Cancelled rejected NZB job {_job_id} ({reason})")
                             except Exception as _e:
                                 logging.warning(f"Could not cancel rejected NZB job {_job_id}: {_e}")

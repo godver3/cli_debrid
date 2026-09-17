@@ -538,7 +538,7 @@ def prepare_manual_assignment():
 
     if is_nzb_url or is_nzb_file:
         from routes.scraper_routes import _add_nzb_to_usenet
-        from usenet.climount_client import get_climount_client, reset_climount_client
+        from usenet import get_usenet_client, reset_usenet_client, get_usenet_provider_display_name
         try:
             season_num = int(season) if season and season.lower() != 'null' else None
         except (ValueError, TypeError):
@@ -550,15 +550,15 @@ def prepare_manual_assignment():
 
         try:
             if is_nzb_file:
-                # Upload .nzb file content directly to cli_mount, then track in queue
-                reset_climount_client()
-                client = get_climount_client()
+                # Upload .nzb file content directly to the configured Usenet provider, then track in queue
+                reset_usenet_client()
+                client = get_usenet_client()
                 if not client.is_enabled():
-                    return jsonify({'success': False, 'error': 'Usenet provider (cli_mount) is not enabled'}), 503
+                    return jsonify({'success': False, 'error': f'Usenet provider ({get_usenet_provider_display_name()}) is not enabled'}), 503
                 nzb_content = torrent_file.read().decode('utf-8', errors='replace')
                 job_id = client.add_nzb_content(nzb_content=nzb_content, title=torrent_file.filename)
                 if not job_id:
-                    return jsonify({'success': False, 'error': 'Failed to submit NZB to cli_mount'}), 500
+                    return jsonify({'success': False, 'error': f'Failed to submit NZB to {get_usenet_provider_display_name()}'}), 500
                 # Track in queue directly — NZB already submitted, skip re-submission
                 from database.database_writing import add_media_item
                 from database.database_reading import get_media_item_by_id
@@ -913,20 +913,40 @@ def prepare_manual_assignment():
 
         # --- Phase 1: S/E Matching and Movie Matching ---
         logging.info("Phase 1: Attempting S/E and Movie matching...")
+        _media_matcher = MediaMatcher()
         for item in target_items:
             if item['assigned']: # Skip if already assigned (e.g., by movie logic below?)
                 continue
 
             item_type = item.get('type')
 
-            # --- Movie Logic: Assign largest file ---
+            # --- Movie Logic: Assign title-matched (else largest) file ---
             if item_type == 'movie':
                 if video_files: # Ensure there are video files to check
                     # Find the largest *unused* video file
                     unused_parsed_files = [f for f in parsed_video_files if not f['used']]
                     if unused_parsed_files:
-                        # Find original file dict corresponding to largest unused parsed file
-                        largest_parsed_file_info = max(unused_parsed_files, key=lambda f: f['original'].get('bytes', 0))
+                        # A multi-movie pack (e.g. a franchise box-set with several
+                        # films as separate files) bundles unrelated movies together -
+                        # picking the largest unused file unconditionally assigns
+                        # whichever film happens to be biggest to every movie item,
+                        # regardless of which one was actually requested. Prefer
+                        # files whose parsed title+year match this item; only fall
+                        # back to plain largest-file-wins when nothing matches (e.g.
+                        # a single-file torrent whose release name doesn't
+                        # fuzzy-match cleanly), preserving prior behavior there.
+                        title_matched_files = [
+                            f for f in unused_parsed_files
+                            if _media_matcher.match_movie(f['parsed'], item, f['original'].get('filename', ''))
+                        ]
+                        match_candidates = title_matched_files or unused_parsed_files
+                        if not title_matched_files:
+                            logging.warning(
+                                f"[Phase 1] No file title-matched movie '{item.get('title')}' ({item.get('year')}) "
+                                f"among {len(unused_parsed_files)} unused file(s) - falling back to largest unused file"
+                            )
+                        # Find original file dict corresponding to largest matching (or unused) parsed file
+                        largest_parsed_file_info = max(match_candidates, key=lambda f: f['original'].get('bytes', 0))
                         largest_filename = largest_parsed_file_info['original'].get('filename')
                         if largest_filename:
                              item['suggested_file_path'] = largest_filename

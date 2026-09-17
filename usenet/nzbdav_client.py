@@ -263,8 +263,10 @@ class NzbdavClient:
         # Host-side filesystem path to where the nzbdav WebDAV mount appears
         # (used for browse helpers since nzbdav has no /browse API). Default to
         # the standard rclone-sidecar mount point shipped with nzbdav docs.
-        self.mount_path = cfg.get('mounted_file_location', '').rstrip('/')
-        if self.mount_path.endswith('/__all__'):
+        # rstrip/endswith both slash flavors - Windows configs store
+        # mounted_file_location with backslashes (e.g. "Z:\__all__").
+        self.mount_path = cfg.get('mounted_file_location', '').rstrip('/\\')
+        if self.mount_path.endswith(('/__all__', '\\__all__')):
             self.mount_path = self.mount_path[: -len('/__all__')]
         if not self.mount_path:
             self.mount_path = '/mnt/remote/nzbdav'
@@ -953,8 +955,12 @@ class NzbdavClient:
             counts[key] = counts.get(key, 0) + 1
         return counts
 
-    def trigger_health_scan(self) -> bool:
-        """No-op: nzbdav runs health checks internally; failures already live in history."""
+    def trigger_health_scan(self, full: bool = False, wait: bool = False, timeout: int = 300) -> bool:
+        """No-op: nzbdav runs health checks internally; failures already live in history.
+
+        Signature matches CliMountClient.trigger_health_scan so callers going
+        through the provider-agnostic factory don't need to special-case it.
+        """
         logging.debug('[NzbDAV] trigger_health_scan no-op (history is the live failure source)')
         return True
 

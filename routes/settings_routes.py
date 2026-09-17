@@ -2018,9 +2018,9 @@ def update_settings():
                     reset_provider()
                     logging.info("Debrid provider reset complete")
 
-                    from usenet.climount_client import reset_climount_client
-                    reset_climount_client()
-                    logging.info("cli_mount client reset complete")
+                    from usenet import reset_usenet_client
+                    reset_usenet_client()
+                    logging.info("Usenet provider client reset complete")
 
                     from queues.queue_manager import QueueManager
                     QueueManager().reinitialize()

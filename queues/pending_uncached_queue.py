@@ -198,8 +198,8 @@ class PendingUncachedQueue:
                         def _do_rename3(h, name, item_id):
                             import time as _t
                             try:
-                                from usenet.climount_client import get_climount_client
-                                _dc3 = get_climount_client()
+                                from usenet import get_usenet_client
+                                _dc3 = get_usenet_client()
                                 if not hasattr(_dc3, 'rename_nzb'):
                                     return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                 # cli_mount only registers an entry as queryable-by-hash after its

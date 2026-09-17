@@ -1262,7 +1262,7 @@ def bulk_queue_action():
 
                 if torrent_ids_to_check:
                     try:
-                        from usenet.climount_client import get_climount_client as _get_dc
+                        from usenet import get_usenet_client as _get_dc
                         _dc = _get_dc()
                         if _dc and _dc.is_enabled():
                             tid_placeholders = ','.join('?' * len(torrent_ids_to_check))
@@ -1651,7 +1651,7 @@ def rescrape_single_item(item_id):
             tid = item_db_data.get('filled_by_torrent_id') or ''
             if tid:
                 try:
-                    from usenet.climount_client import get_climount_client as _get_dc
+                    from usenet import get_usenet_client as _get_dc
                     _dc = _get_dc()
                     if _dc and _dc.is_enabled():
                         still_used = cursor.execute(
@@ -2007,7 +2007,7 @@ def delete_item():
                 finally:
                     _conn_del.close()
                 if _sibs == 0:
-                    from usenet.climount_client import get_climount_client as _get_dc_del
+                    from usenet import get_usenet_client as _get_dc_del
                     _dc_del = _get_dc_del()
                     if _dc_del and _dc_del.is_enabled():
                         if _torrent_id.startswith('nzb:'):

@@ -94,3 +94,29 @@ def reset_usenet_client() -> None:
     else:
         from .climount_client import reset_climount_client
         reset_climount_client()
+
+
+def is_nzb_job_alive(job_hash: str) -> bool:
+    """Check whether a shared season-pack job is still queryable on the active
+    provider before reusing its reference for a different episode, via
+    whichever provider is actually configured.
+
+    climount keeps its own short-lived "recently deleted by us" cache so a
+    provider round-trip isn't needed right after we delete a job ourselves;
+    that logic lives in climount_client.is_nzb_job_alive and is reused as-is.
+    nzbdav/zurg have no equivalent cache yet, so this falls back to a plain
+    get_job_status() round-trip for them.
+    """
+    provider = _get_provider_key()
+    if provider in ('nzbdav', 'zurg'):
+        import logging
+        from .nzbdav_client import get_nzbdav_client
+        try:
+            status = get_nzbdav_client().get_job_status(job_hash)
+            return bool(status and status.get('raw'))
+        except Exception as exc:
+            logging.debug(f'[{provider}] is_nzb_job_alive check failed for {job_hash!r}: {exc}')
+            # Unknown due to a transient error - don't block a legitimate reuse over it.
+            return True
+    from .climount_client import is_nzb_job_alive as _climount_is_nzb_job_alive
+    return _climount_is_nzb_job_alive(job_hash)

@@ -818,14 +818,14 @@ class TorrentProcessor:
                 logging.warning(f"Error removing consolidated-away torrent {old_torrent_id}: {e}")
 
     def _process_nzb_result(self, result: Dict, item: Optional[Dict] = None, adding_queue_items: Optional[list] = None) -> Optional[Tuple]:
-        """Submit an NZB result to cli_mount and return a synthetic torrent_info tuple."""
-        from usenet.climount_client import get_climount_client, reset_climount_client
+        """Submit an NZB result to the configured Usenet provider and return a synthetic torrent_info tuple."""
+        from usenet import get_usenet_client, reset_usenet_client
         from utilities.session_bad_torrents import has_any_known_unplayable_file
-        reset_climount_client()
-        client = get_climount_client()
+        reset_usenet_client()
+        client = get_usenet_client()
 
         if not client.is_enabled():
-            logging.debug('[NZB] cli_mount not enabled, skipping NZB result')
+            logging.debug('[NZB] Usenet provider not enabled, skipping NZB result')
             return None
 
         nzb_url = result.get('nzb_url') or result.get('magnet') or ''
@@ -898,7 +898,7 @@ class TorrentProcessor:
                             # cleaned up (or never existed) will ghost every retry forever if
                             # reused blindly, since nothing else ever re-checks it afterward.
                             try:
-                                from usenet.climount_client import is_nzb_job_alive as _is_job_alive
+                                from usenet import is_nzb_job_alive as _is_job_alive
                                 if not _is_job_alive(_mem_id):
                                     logging.warning(f'[{item_identifier}] [Memory] Sibling job {_mem_job} no longer alive on provider - not reusing')
                                     continue
@@ -967,7 +967,7 @@ class TorrentProcessor:
                                 # cleaned up (or never existed) will ghost every retry forever if
                                 # reused blindly, since nothing else ever re-checks it afterward.
                                 try:
-                                    from usenet.climount_client import is_nzb_job_alive as _is_job_alive
+                                    from usenet import is_nzb_job_alive as _is_job_alive
                                     _sib_job_hash = _sibling[0][4:] if _sibling[0].startswith('nzb:') else _sibling[0]
                                     if not _is_job_alive(_sib_job_hash):
                                         logging.warning(f'[{item_identifier}] Sibling job {_sibling[0]} no longer alive on provider - not reusing, submitting fresh')
@@ -1021,7 +1021,7 @@ class TorrentProcessor:
                                 finally:
                                     _conn2.close()
                                 if _individuals:
-                                    from usenet.climount_client import get_climount_client as _get_dc
+                                    from usenet import get_usenet_client as _get_dc
                                     _dc = _get_dc()
                                     _cancelled = set()
                                     for _ind_id, _ind_tid in _individuals:
@@ -1190,7 +1190,7 @@ class TorrentProcessor:
                         # is_nzb_job_alive() fix closed for the sibling-pack reuse sites,
                         # just not here).
                         try:
-                            from usenet.climount_client import is_nzb_job_alive as _is_job_alive
+                            from usenet import is_nzb_job_alive as _is_job_alive
                             if not _is_job_alive(_existing_hash):
                                 logging.warning(f'[{item_identifier}] Matched job {_existing_hash} in cli_mount listing no longer alive on provider - not reusing')
                                 continue
@@ -1755,8 +1755,8 @@ class TorrentProcessor:
                                             import time as _t
                                             logging.info(f'[DebridNaming] Thread started for {ident!r} hash={h!r}')
                                             try:
-                                                from usenet.climount_client import get_climount_client
-                                                _dc = get_climount_client()
+                                                from usenet import get_usenet_client
+                                                _dc = get_usenet_client()
                                                 if not hasattr(_dc, 'rename_nzb'):
                                                     logging.info(f'[DebridNaming] Client has no rename_nzb for {ident!r}')
                                                     return  # active usenet provider (e.g. nzbdav) has no rename semantics
