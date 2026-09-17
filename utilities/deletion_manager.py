@@ -1016,7 +1016,6 @@ class DeletionManager:
                         section_type = 'show'
 
                     # Use parent folder path for scanning (more efficient than full section scan)
-                    import os
                     scan_paths = [os.path.dirname(item_path)] if item_path else None
 
                     scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
@@ -2104,7 +2103,6 @@ class DeletionManager:
                                     section_type = 'show'
 
                                 # Use parent folder path for scanning
-                                import os
                                 scan_paths = [os.path.dirname(path_for_plex_api)] if path_for_plex_api else None
 
                                 scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)

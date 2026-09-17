@@ -5113,9 +5113,14 @@ class ProgramRunner:
                         reconciliation_logger.info(f"Deleted {deleted_count_filepath} true duplicate items (file-based reconciliation). IDs: {true_dupes}")
 
             # --- Step 1b: Replace Season/Movie cleanup ---
+            # Periodic backstop for the same manual_replace=1 cleanup that
+            # handle_state_change() -> replace_cleanup_after_collect() already runs
+            # right after a collect event (utilities/post_processing.py) - this sweep
+            # additionally catches stale items left behind across restarts or races.
             # When new items are promoted to Collected, remove old entries flagged with
-            # manual_replace=1 (from a different torrent), remove the old debrid torrent,
-            # and remove old items from Plex (with scan+empty trash fallback).
+            # manual_replace=1 (from a different torrent/NZB job), remove the old
+            # debrid/usenet entry, unlink the old symlink and original file (Symlinked/
+            # Local mode), and remove old items from Plex (with scan+empty trash fallback).
             deleted_count_replace = 0
             if items_to_update:
                 try:
@@ -5131,7 +5136,56 @@ class ProgramRunner:
                     ids_to_delete_replace = set()
                     _recon_plex_paths = set()
                     _recon_section_types = set()
-                    _recon_select = 'id, filled_by_torrent_id, filled_by_file, location_on_disk, title, episode_title'
+                    _recon_select = ('id, filled_by_torrent_id, filled_by_file, location_on_disk, '
+                                      'original_path_for_symlink, title, episode_title')
+                    _recon_is_symlink_mode = get_setting('File Management', 'file_collection_management') == 'Symlinked/Local'
+                    _recon_mount_location = get_setting('Plex', 'mounted_file_location', '')
+
+                    def _recon_remove_old_provider_entry(old_torrent_id, removal_reason, log_tag, old_id):
+                        """Remove the old torrent/NZB job via whichever provider actually owns it -
+                        an NZB job id 404s against the debrid provider's remove_torrent()."""
+                        if str(old_torrent_id).startswith('nzb:'):
+                            try:
+                                from usenet import get_usenet_client
+                                get_usenet_client().remove_nzb(old_torrent_id[4:])
+                                logging.info(f"[{log_tag}] Removed old NZB job {old_torrent_id} for replaced item {old_id}")
+                            except Exception as _nzb_err:
+                                if '404' in str(_nzb_err):
+                                    logging.debug(f"[{log_tag}] Old NZB job {old_torrent_id} already removed (404)")
+                                else:
+                                    logging.error(f"[{log_tag}] Failed to remove old NZB job {old_torrent_id}: {_nzb_err}")
+                        elif _debrid_prov:
+                            try:
+                                _debrid_prov.remove_torrent(old_torrent_id, removal_reason=removal_reason)
+                                logging.info(f"[{log_tag}] Removed debrid torrent {old_torrent_id} for replaced item {old_id}")
+                            except Exception as _debrid_err:
+                                if '404' in str(_debrid_err):
+                                    logging.debug(f"[{log_tag}] Old torrent {old_torrent_id} already removed (404)")
+                                else:
+                                    logging.error(f"[{log_tag}] Failed to remove torrent {old_torrent_id}: {_debrid_err}")
+
+                    def _recon_unlink_old_files(old_row, log_tag, old_id):
+                        """Directly unlink the old symlink and original mount file - the DB-row
+                        deletion below never touched the filesystem on its own, and provider
+                        removal only clears the debrid/NZB side, not a Symlinked/Local mode
+                        symlink or (for a non-debrid-mount source) the file behind it."""
+                        if not _recon_is_symlink_mode:
+                            return
+                        location_on_disk = old_row['location_on_disk']
+                        original_path = old_row['original_path_for_symlink']
+                        try:
+                            if location_on_disk and _os_recon.path.islink(location_on_disk):
+                                _os_recon.unlink(location_on_disk)
+                                logging.info(f"[{log_tag}] Removed old symlink {location_on_disk} for replaced item {old_id}")
+                        except Exception as _sym_err:
+                            logging.warning(f"[{log_tag}] Failed to remove old symlink {location_on_disk}: {_sym_err}")
+                        try:
+                            if (original_path and _os_recon.path.exists(original_path)
+                                    and not (_recon_mount_location and original_path.startswith(_recon_mount_location))):
+                                _os_recon.remove(original_path)
+                                logging.info(f"[{log_tag}] Removed old original file {original_path} for replaced item {old_id}")
+                        except Exception as _orig_err:
+                            logging.warning(f"[{log_tag}] Failed to remove old original file {original_path}: {_orig_err}")
 
                     # Per-episode/movie cleanup: find old entries with manual_replace=1 for each promoted item
                     for promoted in promoted_rows:
@@ -5171,7 +5225,7 @@ class ProgramRunner:
                         for old_item in old_replace_rows:
                             old_id = old_item['id']
                             old_torrent_id = old_item['filled_by_torrent_id']
-                            if old_torrent_id and old_torrent_id != new_torrent_id and _debrid_prov:
+                            if old_torrent_id and old_torrent_id != new_torrent_id:
                                 _sibs = cursor.execute(
                                     "SELECT COUNT(*) FROM media_items "
                                     "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
@@ -5180,14 +5234,7 @@ class ProgramRunner:
                                 if _sibs:
                                     logging.info(f"[{log_tag}] Skipping debrid removal of {old_torrent_id} for replaced item {old_id} — {_sibs} sibling(s) still active")
                                 else:
-                                    try:
-                                        _debrid_prov.remove_torrent(old_torrent_id, removal_reason=removal_reason)
-                                        logging.info(f"[{log_tag}] Removed debrid torrent {old_torrent_id} for replaced item {old_id}")
-                                    except Exception as _debrid_err:
-                                        if '404' in str(_debrid_err):
-                                            logging.debug(f"[{log_tag}] Old torrent {old_torrent_id} already removed (404)")
-                                        else:
-                                            logging.error(f"[{log_tag}] Failed to remove torrent {old_torrent_id}: {_debrid_err}")
+                                    _recon_remove_old_provider_entry(old_torrent_id, removal_reason, log_tag, old_id)
                             if old_id not in items_to_delete_filepath and old_id not in items_to_update:
                                 # Plex removal
                                 _old_path = old_item['location_on_disk'] or old_item['filled_by_file']
@@ -5201,6 +5248,7 @@ class ProgramRunner:
                                     except Exception as _plex_err:
                                         logging.warning(f"[{log_tag}] Plex removal error for item {old_id}: {_plex_err}")
                                     _recon_plex_paths.add(_os_recon.path.dirname(_old_path))
+                                _recon_unlink_old_files(old_item, log_tag, old_id)
                                 ids_to_delete_replace.add(old_id)
                                 logging.info(f"[{log_tag}] Queued old {entry_label} entry {old_id} for deletion after replacement")
 
@@ -5240,7 +5288,7 @@ class ProgramRunner:
                                         logging.info(f"[REPLACE_SEASON] Cleared manual_replace for promoted stale item {_sid}")
                                     elif _sid not in items_to_delete_filepath and _sid not in ids_to_delete_replace:
                                         _st = _sr['filled_by_torrent_id']
-                                        if _st and _debrid_prov:
+                                        if _st:
                                             _sw_sibs = cursor.execute(
                                                 "SELECT COUNT(*) FROM media_items "
                                                 "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
@@ -5249,12 +5297,7 @@ class ProgramRunner:
                                             if _sw_sibs:
                                                 logging.info(f"[REPLACE_SEASON] Skipping debrid removal of {_st} for stale item {_sid} — {_sw_sibs} sibling(s) still active")
                                             else:
-                                                try:
-                                                    _debrid_prov.remove_torrent(_st, removal_reason='Replaced by new season pack')
-                                                    logging.info(f"[REPLACE_SEASON] Removed debrid torrent {_st} for stale item {_sid}")
-                                                except Exception as _de:
-                                                    if '404' not in str(_de):
-                                                        logging.error(f"[REPLACE_SEASON] Failed to remove torrent {_st}: {_de}")
+                                                _recon_remove_old_provider_entry(_st, 'Replaced by new season pack', 'REPLACE_SEASON', _sid)
                                         _sw_path = _sr['location_on_disk'] or _sr['filled_by_file']
                                         if _sw_path:
                                             try:
@@ -5266,6 +5309,7 @@ class ProgramRunner:
                                                 logging.warning(f"[REPLACE_SEASON] Plex removal error for stale item {_sid}: {_pe}")
                                             _recon_plex_paths.add(_os_recon.path.dirname(_sw_path))
                                             _recon_section_types.add('show')
+                                        _recon_unlink_old_files(_sr, 'REPLACE_SEASON', _sid)
                                         ids_to_delete_replace.add(_sid)
                                         logging.info(f"[REPLACE_SEASON] Queued stale episode {_sid} for deletion (broader sweep)")
                         elif _sw_info['type'] == 'movie':
@@ -5289,7 +5333,7 @@ class ProgramRunner:
                                     logging.info(f"[REPLACE_MOVIE] Cleared manual_replace for promoted stale item {_sid}")
                                 elif _sid not in items_to_delete_filepath and _sid not in ids_to_delete_replace:
                                     _st = _sr['filled_by_torrent_id']
-                                    if _st and _debrid_prov:
+                                    if _st:
                                         _sw_sibs = cursor.execute(
                                             "SELECT COUNT(*) FROM media_items "
                                             "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
@@ -5298,12 +5342,7 @@ class ProgramRunner:
                                         if _sw_sibs:
                                             logging.info(f"[REPLACE_MOVIE] Skipping debrid removal of {_st} for stale item {_sid} — {_sw_sibs} sibling(s) still active")
                                         else:
-                                            try:
-                                                _debrid_prov.remove_torrent(_st, removal_reason='Replaced by new movie torrent')
-                                                logging.info(f"[REPLACE_MOVIE] Removed debrid torrent {_st} for stale item {_sid}")
-                                            except Exception as _de:
-                                                if '404' not in str(_de):
-                                                    logging.error(f"[REPLACE_MOVIE] Failed to remove torrent {_st}: {_de}")
+                                            _recon_remove_old_provider_entry(_st, 'Replaced by new movie torrent', 'REPLACE_MOVIE', _sid)
                                     _sw_path = _sr['location_on_disk'] or _sr['filled_by_file']
                                     if _sw_path:
                                         try:
@@ -5315,6 +5354,7 @@ class ProgramRunner:
                                             logging.warning(f"[REPLACE_MOVIE] Plex removal error for stale item {_sid}: {_pe}")
                                         _recon_plex_paths.add(_os_recon.path.dirname(_sw_path))
                                         _recon_section_types.add('movie')
+                                    _recon_unlink_old_files(_sr, 'REPLACE_MOVIE', _sid)
                                     ids_to_delete_replace.add(_sid)
                                     logging.info(f"[REPLACE_MOVIE] Queued stale movie {_sid} for deletion (broader sweep)")
 

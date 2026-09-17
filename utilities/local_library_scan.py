@@ -1885,95 +1885,14 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     elif new_state == 'Upgrading':
                         handle_state_change(dict(updated_item))
 
-                # --- REPLACE SEASON/MOVIE HOOK ---
-                # If any other entry with the same imdb_id (and season/episode for shows) has
-                # manual_replace=1, we've just replaced it — clean up the old entry from
-                # Debrid, Plex, and the database.
-                _item_type = item.get('type')
-                _item_imdb = item.get('imdb_id')
-                if new_state == 'Collected' and _item_imdb and _item_type in ('episode', 'movie'):
-                    _is_episode = _item_type == 'episode'
-                    _has_coords = not _is_episode or (item.get('season_number') is not None and item.get('episode_number') is not None)
-                    if _has_coords:
-                        _log_tag = 'REPLACE_SEASON' if _is_episode else 'REPLACE_MOVIE'
-                        try:
-                            from database.core import get_db_connection as _get_conn
-                            _conn = _get_conn()
-                            _sel = 'id, filled_by_torrent_id, filled_by_file, location_on_disk, title, episode_title'
-                            if _is_episode:
-                                old_replace_items = _conn.execute(
-                                    f'''SELECT {_sel} FROM media_items
-                                       WHERE imdb_id = ? AND season_number = ? AND episode_number = ?
-                                       AND type = 'episode' AND manual_replace = 1 AND id != ?''',
-                                    (_item_imdb, item['season_number'], item['episode_number'], item['id'])
-                                ).fetchall()
-                                _removal_reason = 'Replaced by new season pack'
-                                _entry_label = 'episode'
-                                _section_type = 'show'
-                            else:
-                                old_replace_items = _conn.execute(
-                                    f'''SELECT {_sel} FROM media_items
-                                       WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?''',
-                                    (_item_imdb, item['id'])
-                                ).fetchall()
-                                _removal_reason = 'Replaced by new movie torrent'
-                                _entry_label = 'movie'
-                                _section_type = 'movie'
-                            _conn.close()
-
-                            if old_replace_items:
-                                from database.database_writing import remove_from_media_items as _remove_item
-                                from debrid import get_debrid_provider as _get_debrid
-                                from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
-                                import os as _os_scan
-                                _debrid = _get_debrid()  # May be None in symlink/usenet-only mode
-                                new_torrent_id = item.get('filled_by_torrent_id')
-                                _scan_paths = set()
-
-                                for old_entry in old_replace_items:
-                                    old_id = old_entry['id']
-                                    old_torrent_id = old_entry['filled_by_torrent_id']
-
-                                    # Remove old debrid torrent if different from new torrent
-                                    if old_torrent_id and old_torrent_id != new_torrent_id and _debrid:
-                                        try:
-                                            _debrid.remove_torrent(old_torrent_id, removal_reason=_removal_reason)
-                                            logging.info(f"[{_log_tag}] Removed old debrid torrent {old_torrent_id} for item {old_id}")
-                                        except Exception as _debrid_err:
-                                            if '404' in str(_debrid_err):
-                                                logging.debug(f"[{_log_tag}] Old torrent {old_torrent_id} already removed (404)")
-                                            else:
-                                                logging.error(f"[{_log_tag}] Failed to remove old torrent {old_torrent_id}: {_debrid_err}")
-
-                                    # Remove old entry from Plex
-                                    _old_path = old_entry['location_on_disk'] or old_entry['filled_by_file']
-                                    if _old_path:
-                                        _ep_title = old_entry['episode_title'] if _is_episode else None
-                                        try:
-                                            if not remove_file_from_plex(old_entry['title'] or '', _old_path, _ep_title):
-                                                logging.warning(f"[{_log_tag}] Direct Plex removal failed for item {old_id}, will scan+empty trash")
-                                            else:
-                                                logging.info(f"[{_log_tag}] Removed item {old_id} from Plex")
-                                        except Exception as _plex_err:
-                                            logging.warning(f"[{_log_tag}] Plex removal error for item {old_id}: {_plex_err}")
-                                        _scan_paths.add(_os_scan.path.dirname(_old_path))
-
-                                    # Hard-delete old entry from database
-                                    if _remove_item(old_id):
-                                        logging.info(f"[{_log_tag}] Deleted old {_entry_label} entry {old_id} after replacement")
-                                    else:
-                                        logging.warning(f"[{_log_tag}] Failed to delete old {_entry_label} entry {old_id}")
-
-                                # Scan & empty Plex trash for all affected paths
-                                if _scan_paths:
-                                    try:
-                                        scan_and_empty_plex_trash(paths=list(_scan_paths), section_type=_section_type)
-                                        logging.info(f"[{_log_tag}] Triggered Plex scan+empty trash for paths: {list(_scan_paths)}")
-                                    except Exception as _scan_err:
-                                        logging.warning(f"[{_log_tag}] Plex scan+empty trash failed: {_scan_err}")
-                        except Exception as _replace_err:
-                            logging.error(f"[{_log_tag}] Error in replace hook: {_replace_err}")
-                # --- END REPLACE SEASON/MOVIE HOOK ---
+                # Cleanup of any old manual_replace=1 entry for this media (debrid/usenet
+                # torrent, symlink, original mount file, media server entry, DB row) is
+                # handled centrally by handle_state_change() -> replace_cleanup_after_collect()
+                # (utilities/post_processing.py), called just above when new_state is
+                # Collected/Upgrading. This used to be duplicated here with its own
+                # incomplete version (debrid+Plex only, no direct symlink/file unlink) -
+                # removed to avoid two independent implementations of the same cleanup
+                # drifting out of sync again.
 
                 # Add notification for all collections (including previously collected)
                 # Check the item's state *before* this function's update.
