@@ -302,7 +302,11 @@ class TestSourceShapeRegression(unittest.TestCase):
         this count drops, a reuse site has lost its liveness check again.
         Counts real import/call sites only, not comments mentioning the name."""
         src = self._read('queues/torrent_processor.py')
-        import_sites = src.count('from usenet.climount_client import is_nzb_job_alive')
+        # Migrated from usenet.climount_client to the provider-agnostic usenet
+        # factory (see PR #502) so is_nzb_job_alive dispatches to whichever
+        # Usenet Provider is actually configured instead of always querying
+        # climount - same three call sites, different import path.
+        import_sites = src.count('from usenet import is_nzb_job_alive')
         self.assertEqual(import_sites, 3)
 
     def test_db_dedup_reuse_site_is_unchanged_by_fix_a(self):
