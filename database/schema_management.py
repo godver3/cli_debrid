@@ -209,6 +209,9 @@ def migrate_schema():
         if 'disable_not_wanted_check' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN disable_not_wanted_check BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added disable_not_wanted_check column to media_items table.")
+        if 'excluded_release_id' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN excluded_release_id TEXT')
+            logging.info("Successfully added excluded_release_id column to media_items table.")
         if 'content_source_detail' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN content_source_detail TEXT')
             logging.info("Successfully added content_source_detail column to media_items table.")
@@ -989,6 +992,7 @@ def create_tables():
                 imdb_aliases TEXT,
                 title_aliases TEXT,
                 disable_not_wanted_check BOOLEAN DEFAULT FALSE,
+                excluded_release_id TEXT,
                 physical_release_date DATE,
                 plex_verified BOOLEAN DEFAULT FALSE,
                 upgrading_from_version TEXT,
