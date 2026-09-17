@@ -1208,6 +1208,30 @@ def confirm_manual_assignment():
                 try:
                     record_time = datetime.fromisoformat(str(record['timestamp']))
                     if (datetime.now() - record_time).total_seconds() < 120:
+                        # Only block if that prior assignment's items are still actually
+                        # present - if the user deleted them (e.g. to redo a bad
+                        # assignment) there's nothing left to duplicate, so a fresh
+                        # confirm within the window must be allowed to go through
+                        # regardless of how recently the deleted attempt was.
+                        prior_torrent_id = prior_item_data.get('torrent_id')
+                        still_present = True
+                        if prior_torrent_id and prior_tmdb_id:
+                            try:
+                                from database import get_db_connection as _gdb_dedupe
+                                _conn_dedupe = _gdb_dedupe()
+                                try:
+                                    still_present = bool(_conn_dedupe.execute(
+                                        "SELECT 1 FROM media_items WHERE filled_by_torrent_id = ? AND tmdb_id = ? LIMIT 1",
+                                        (prior_torrent_id, prior_tmdb_id)
+                                    ).fetchone())
+                                finally:
+                                    _conn_dedupe.close()
+                            except Exception as _presence_err:
+                                logging.warning(f"Dedup presence check failed for torrent_id={prior_torrent_id!r}, assuming still present: {_presence_err}")
+                                still_present = True
+                        if not still_present:
+                            logging.info(f"Prior manual assignment for hash {torrent_hash} tmdb_id={prior_tmdb_id!r} was deleted - allowing re-assignment despite recent timestamp.")
+                            continue
                         logging.warning(f"Duplicate manual assignment submission detected for hash {torrent_hash} tmdb_id={prior_tmdb_id!r} ({(datetime.now() - record_time).total_seconds():.0f}s after prior confirm); ignoring re-submission.")
                         return jsonify({'success': False, 'error': 'This torrent was already assigned moments ago. Refresh the page before assigning again.'}), 409
                 except (ValueError, TypeError):
