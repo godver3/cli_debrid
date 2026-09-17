@@ -672,6 +672,13 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
              missing_show_imdb_ids = show_imdb_ids_to_fetch
 
     # --- Step 2.5: Individual Fetch for Missing Items ---
+    # Each fetch is an independent network round-trip (battery/Trakt/TMDB) keyed
+    # only by imdb_id_val, and every worker only reads its own representative_item_val
+    # and returns a (imdb_id_val, media_type_val, fetched_metadata) tuple - the
+    # bulk_movie_metadata/bulk_show_metadata dicts are only written back on the main
+    # thread once every future has finished, so this is safe to run concurrently:
+    # a startup with hundreds of wanted items previously fetched these one at a
+    # time and dominated init time (see startup-performance investigation).
     if missing_movie_imdb_ids or missing_show_imdb_ids:
         logging.debug(f"Attempting individual metadata fetch for {len(missing_movie_imdb_ids)} movies and {len(missing_show_imdb_ids)} shows missing from battery.")
         ids_to_fetch_individually = {}
@@ -680,12 +687,10 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
         for id_ in missing_show_imdb_ids:
              if id_ in items_by_imdb_id: ids_to_fetch_individually[id_] = items_by_imdb_id[id_][0]
 
-        fetched_individually_count = 0
-        for imdb_id_val, representative_item_val in ids_to_fetch_individually.items():
+        def _fetch_one_missing(imdb_id_val, representative_item_val):
             try:
                 if not trakt_client._check_rate_limit():
                     logging.warning("Trakt rate limit reached during individual fetches. Waiting (handled by TraktMetadata).")
-                
                 logging.debug(f"Fetching individual metadata for missing IMDb: {imdb_id_val}")
                 fetched_metadata = get_metadata(
                     imdb_id=imdb_id_val,
@@ -693,22 +698,78 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                     item_media_type=representative_item_val.get('media_type'),
                     original_item=representative_item_val
                 )
+                return imdb_id_val, representative_item_val.get('media_type', '').lower(), fetched_metadata, None
+            except Exception as e:
+                return imdb_id_val, None, None, e
+
+        fetched_individually_count = 0
+        from concurrent.futures import ThreadPoolExecutor as _TPE_missing
+        _missing_workers = min(8, max(1, len(ids_to_fetch_individually)))
+        with _TPE_missing(max_workers=_missing_workers) as _missing_pool:
+            _missing_futures = [
+                _missing_pool.submit(_fetch_one_missing, imdb_id_val, representative_item_val)
+                for imdb_id_val, representative_item_val in ids_to_fetch_individually.items()
+            ]
+            for _fut in _missing_futures:
+                imdb_id_val, media_type_val, fetched_metadata, err = _fut.result()
+                if err is not None:
+                    logging.error(f"Error during individual metadata fetch for {imdb_id_val}: {err}", exc_info=True)
+                    continue
                 if fetched_metadata:
                     fetched_individually_count += 1
-                    media_type_val = representative_item_val.get('media_type', '').lower()
                     if media_type_val == 'movie':
                         bulk_movie_metadata[imdb_id_val] = fetched_metadata
                     elif media_type_val in ['tv', 'show', 'episode']:
-                         bulk_show_metadata[imdb_id_val] = fetched_metadata
+                        bulk_show_metadata[imdb_id_val] = fetched_metadata
                     logging.debug(f"Successfully fetched and added metadata for missing IMDb: {imdb_id_val}")
                 else:
-                     logging.warning(f"Individual fetch failed for missing IMDb: {imdb_id_val}")
-            except Exception as e:
-                logging.error(f"Error during individual metadata fetch for {imdb_id_val}: {e}", exc_info=True)
+                    logging.warning(f"Individual fetch failed for missing IMDb: {imdb_id_val}")
         logging.debug(f"Finished individual fetch process. Successfully fetched metadata for {fetched_individually_count} items.")
 
     # --- Step 3: Removed Pre-fetch DB presence/state info in bulk ---
     # db_item_states = {} # Removed
+
+    # --- Step 3.5: Pre-fetch stale show metadata concurrently ---
+    # Step 4 below force-refreshes any show whose bulk-fetched metadata is stale,
+    # one at a time, inline in its main per-item loop - previously the dominant
+    # cost of a startup with many wanted shows (see startup-performance
+    # investigation). Doing that same check here first, before Step 4 runs, and
+    # fetching every stale show concurrently, means Step 4's own staleness check
+    # finds already-fresh data and its inline refresh becomes a no-op - Step 4
+    # itself is untouched.
+    try:
+        from cli_battery.app.staleness import is_stale as _is_battery_stale_prefetch
+        _stale_show_imdb_ids = [
+            imdb_id_ for imdb_id_, meta_ in bulk_show_metadata.items()
+            if meta_ and 'last_trakt_fetch' in meta_
+            and _is_battery_stale_prefetch('show', meta_.get('media_status'), meta_['last_trakt_fetch'])
+        ]
+        if _stale_show_imdb_ids:
+            logging.info(f"Pre-fetching {len(_stale_show_imdb_ids)} stale show(s) concurrently before per-item processing.")
+            from concurrent.futures import ThreadPoolExecutor as _TPE_stale
+
+            def _refresh_one_stale(imdb_id_):
+                try:
+                    refreshed, _src = direct_api.force_refresh_metadata(imdb_id_)
+                    return imdb_id_, refreshed, None
+                except Exception as e:
+                    return imdb_id_, None, e
+
+            _stale_workers = min(8, max(1, len(_stale_show_imdb_ids)))
+            with _TPE_stale(max_workers=_stale_workers) as _stale_pool:
+                _stale_futures = [_stale_pool.submit(_refresh_one_stale, iid) for iid in _stale_show_imdb_ids]
+                for _fut in _stale_futures:
+                    imdb_id_, refreshed, err = _fut.result()
+                    if err is not None:
+                        logging.error(f"Exception during pre-fetch refresh for stale item {imdb_id_}: {err}", exc_info=True)
+                        continue
+                    if refreshed:
+                        bulk_show_metadata[imdb_id_] = refreshed
+                        logging.debug(f"Pre-fetched refreshed metadata for stale item {imdb_id_}.")
+                    else:
+                        logging.warning(f"Pre-fetch refresh failed for stale item {imdb_id_}; Step 4 will retry inline.")
+    except Exception as e_prefetch:
+        logging.warning(f"Stale-show pre-fetch step failed, falling back to Step 4's inline per-item refresh: {e_prefetch}")
 
     # --- Step 4: Process Items Using Fetched Data ---
     logging.debug("Processing items using fetched metadata...")

@@ -142,9 +142,18 @@ class ProgramRunner:
         if hasattr(self, '_initialized_runner_attributes') and self._initialized_runner_attributes:
             return
         
-        self._running = False 
-        self._initializing = False 
+        self._running = False
+        self._initializing = False
         self._stopping = False # ADDED: New state for stopping phase
+        # Tracks whether self.scheduler.start() has ever actually been called on
+        # this scheduler instance - distinct from scheduler.running, which is
+        # False both before the very first start AND after a real crash/zombie.
+        # _execute_start_program's "scheduler exists but isn't running" check
+        # needs this to tell those two states apart; without it, the freshly
+        # __init__-created scheduler on every process boot looked identical to a
+        # zombie and got discarded/rebuilt (with the wrong timezone, since the
+        # rebuild path reads a different setting) before it ever got to run once.
+        self._scheduler_started_once = False
         
         # --- START EDIT: Use pause_info instead of pause_reason ---
         self.pause_info = {
@@ -2629,7 +2638,8 @@ class ProgramRunner:
             logging.info("Starting APScheduler...")
             if self.scheduler and not self.scheduler.running:
                 start_paused = self._is_within_pause_schedule()
-                self.scheduler.start(paused=start_paused) 
+                self.scheduler.start(paused=start_paused)
+                self._scheduler_started_once = True
                 logging.info(f"APScheduler started. Paused: {start_paused}")
             elif not self.scheduler:
                 logging.error("ProgramRunner.start: CRITICAL - Scheduler not initialized. Cannot start.")
@@ -5647,6 +5657,7 @@ class ProgramRunner:
                     if self.scheduler and not self.scheduler.running:
                         start_paused = self._is_within_pause_schedule()
                         self.scheduler.start(paused=start_paused)
+                        self._scheduler_started_once = True
                         logging.info(f"Scheduler restarted after reinitialization. Paused: {start_paused}")
 
             logging.info("ProgramRunner reinitialized successfully.")
