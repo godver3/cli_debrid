@@ -635,9 +635,18 @@ class TorrentProcessor:
         # written back to the DB.
         if adding_queue_items:
             for _mem_item in adding_queue_items:
+                # A genuine complete-series pack spans many seasons, but this
+                # candidate lookup used to require an exact season_number match -
+                # so the first episode of every *new* season could never see the
+                # pack as a sibling, fell through to an independent scrape, found
+                # the pack already not-wanted from an earlier season's successful
+                # add, and blacklisted itself with a perfectly good release
+                # sitting right there. _try_reuse below already proves
+                # per-episode containment via a S{season}E{ep} filename match,
+                # so dropping the season restriction here only widens the
+                # candidate pool, not what gets reused.
                 if (_mem_item.get('id') == item.get('id') or
                         _mem_item.get('imdb_id') != _imdb or
-                        _mem_item.get('season_number') != _season or
                         (_mem_item.get('version') or '').rstrip('*') != _item_version):
                     continue
                 _mem_torrent_id = _mem_item.get('filled_by_torrent_id')
@@ -669,13 +678,13 @@ class TorrentProcessor:
                     "FROM media_items "
                     "WHERE id IN ("
                     "  SELECT MIN(id) FROM media_items "
-                    "  WHERE imdb_id=? AND season_number=? AND type='episode' "
+                    "  WHERE imdb_id=? AND type='episode' "
                     "  AND id!=? AND filled_by_torrent_id IS NOT NULL AND filled_by_torrent_id NOT LIKE 'nzb:%' "
                     "  AND REPLACE(COALESCE(version,''),'*','')=? "
                     "  AND state IN ('Adding','Checking','Collected','Upgrading') "
                     "  GROUP BY filled_by_torrent_id"
                     ") LIMIT 5",
-                    (_imdb, _season, item.get('id', -1), _item_version)
+                    (_imdb, item.get('id', -1), _item_version)
                 ).fetchall()
             finally:
                 _conn.close()
