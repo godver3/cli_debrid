@@ -409,8 +409,13 @@ class TorrentProcessor:
         Returns torrent info dict from whichever provider succeeded, or None.
         """
         temp_file = None
-        get_info_max_retries = 3
-        get_info_retry_delay = 2
+        # A several-hundred-GB complete-series pack can take far longer than
+        # ~6s for the debrid provider to hash/index before its file list is
+        # ready - the original budget was tuned for small single-episode
+        # torrents and gives up on big packs long before they are actually
+        # indexed.
+        get_info_max_retries = 15
+        get_info_retry_delay = 4
 
         caller_frame = inspect.currentframe().f_back
         caller_info = f"{caller_frame.f_code.co_filename}:{caller_frame.f_code.co_name}:{caller_frame.f_lineno}"
