@@ -1451,6 +1451,25 @@ def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file
         logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
 
 
+def _find_file_in_folder_tree(base_folder: str, filename: str, max_depth: int = 6) -> Optional[str]:
+    """Search base_folder and its subdirectories (bounded depth) for an exact
+    filename match. Some releases (especially large multi-series/'saga' packs)
+    nest actual episode files several folders below the torrent's own root
+    folder instead of directly inside it."""
+    base_depth = base_folder.rstrip(os.sep).count(os.sep)
+    try:
+        for root, dirs, files in os.walk(base_folder):
+            current_depth = root.rstrip(os.sep).count(os.sep) - base_depth
+            if current_depth >= max_depth:
+                dirs[:] = []
+                continue
+            if filename in files:
+                return os.path.join(root, filename)
+    except OSError as error:
+        logging.warning(f"Nested file search failed under '{base_folder}': {error}")
+    return None
+
+
 def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False, on_success_callback: Optional[Callable[[str], None]] = None, skip_multifile_scan: bool = False) -> bool:
     """
     Check if the local file for the item exists and create symlink if needed.
@@ -1600,6 +1619,39 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     found_file = True
                     logging.info(f"Found file using filename-as-folder pattern: {source_file}")
 
+            # 8.5. COMPAT: large "complete series" packs often nest the actual
+            # episode files several folders deep (grouped by story arc/saga/disc,
+            # e.g. "<Torrent>/1a. TV Series/01. The SAIYAN Saga/S01E001....mkv")
+            # instead of directly inside the torrent's own root folder. None of
+            # the direct-child checks above account for that extra nesting, so
+            # do one bounded recursive search inside each already-identified
+            # candidate folder before falling back to a full extended scan of
+            # the entire library.
+            if not found_file:
+                candidate_names = []
+                for name in (
+                    debrid_folder_name,
+                    original_torrent_title,
+                    os.path.splitext(original_torrent_title)[0] if original_torrent_title else '',
+                    real_debrid_original_title,
+                    os.path.splitext(real_debrid_original_title)[0] if real_debrid_original_title else '',
+                    filled_by_title,
+                    os.path.splitext(filled_by_title)[0] if filled_by_title else '',
+                ):
+                    if name and name not in candidate_names:
+                        candidate_names.append(name)
+                for name in candidate_names:
+                    candidate_folder = os.path.join(original_path, name)
+                    if not os.path.isdir(candidate_folder):
+                        continue
+                    nested_path = _find_file_in_folder_tree(candidate_folder, current_filename)
+                    if nested_path:
+                        source_file = nested_path
+                        source_folder = os.path.dirname(nested_path)
+                        found_file = True
+                        logging.info(f"Found file via nested search inside '{name}': {source_file}")
+                        break
+
             # 9. Extended search: scan original_path subdirectories for the file.
             # Only runs when extended_search=True (activated after 900s in checking queue)
             # and all named-folder attempts have failed.
@@ -1616,6 +1668,13 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             source_folder = candidate_folder
                             found_file = True
                             logging.info(f"Extended search found file in folder '{folder_name}': {source_file}")
+                            break
+                        nested_path = _find_file_in_folder_tree(candidate_folder, current_filename)
+                        if nested_path:
+                            source_file = nested_path
+                            source_folder = os.path.dirname(nested_path)
+                            found_file = True
+                            logging.info(f"Extended search found file via nested search in folder '{folder_name}': {source_file}")
                             break
                 except Exception as ext_err:
                     logging.warning(f"Extended search failed: {ext_err}")
