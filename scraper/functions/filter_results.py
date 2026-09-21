@@ -947,7 +947,13 @@ def filter_results(
                 title_lower_for_f1_check = title.lower()
                 is_formula_1 = ("formula 1" in title_lower_for_f1_check) and ("drive to survive" not in title_lower_for_f1_check)
 
-                if not is_formula_1: # Only perform year check if not Formula 1
+                # Season 0 (specials/extras) is exempt from year matching entirely -
+                # specials are routinely re-released, remastered, or rebroadcast
+                # decades after their original air date (e.g. a 2018 HD remaster
+                # of a 1991 special), so comparing a release's year against the
+                # special's original air year rejects genuinely correct files for
+                # no good reason.
+                if not is_formula_1 and season != 0: # Only perform year check if not Formula 1 or a special
                     parsed_year = parsed_info.get('year')
                     
                     # If PTT didn't parse a year, try our own simple extraction
