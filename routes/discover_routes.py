@@ -4192,17 +4192,33 @@ def _prewarm_discover_cache():
 
         # ── FlixPatrol top10 (all platforms, type=all) ─────────────────────────
         try:
+            _fp_consecutive_failures = 0
             for platform_key in ['netflix', 'disney', 'amazon', 'hbo', 'apple', 'paramount', 'hulu', 'peacock']:
                 fp_cache_key = f'{platform_key}:all'
                 with _flixpatrol_cache_lock:
                     fp_existing = _flixpatrol_cache.get(fp_cache_key)
                 if fp_existing and datetime.now() < fp_existing.get('expires', datetime.min):
                     continue
+                # Each fetch can trigger a real ~60s Cloudflare-challenge
+                # browser-automation attempt when clearance isn't cached yet.
+                # When FlixPatrol's bypass is failing outright, retrying it
+                # identically for all 8 platforms burns 8+ minutes of CPU-heavy
+                # browser automation on every single startup, starving every
+                # other thread in this process (including the Checking queue)
+                # via GIL contention for the whole process's lifetime.
+                # Confirmed live: py-spy showed this thread pegging the process
+                # at ~100% CPU for its entire 10+ minute uptime. Stop after 2
+                # consecutive failures instead of blindly trying all 8.
+                if _fp_consecutive_failures >= 2:
+                    logging.warning("[Prewarm] Skipping remaining FlixPatrol platforms after repeated failures this run")
+                    break
                 try:
                     from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _ac
                     result = fetch_flixpatrol_top10(platform_key, media_type='all')
                     if 'error' in result:
+                        _fp_consecutive_failures += 1
                         continue
+                    _fp_consecutive_failures = 0
                     items = result.get('items', [])
                     enriched_items = []
                     if items:
@@ -4271,6 +4287,7 @@ def _prewarm_discover_cache():
                     logging.info(f"[Prewarm] FlixPatrol {platform_key}: {len(enriched_items)} items cached")
                 except Exception as e:
                     logging.warning(f"[Prewarm] FlixPatrol {platform_key} failed: {e}")
+                    _fp_consecutive_failures += 1
         except Exception as e:
             logging.warning(f"[Prewarm] FlixPatrol prewarm failed: {e}")
 
