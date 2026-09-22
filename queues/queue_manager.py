@@ -421,6 +421,30 @@ class QueueManager:
             return
 
         try:
+            # CheckingQueue.__init__ starts with an empty self.items and only
+            # ever grows it one at a time via add_item() as items freshly
+            # transition into Checking during this process's own lifetime.
+            # update_all_queues() - the only other place that calls .update() to
+            # bulk-reload from the database - is itself never invoked anywhere in
+            # the codebase. That means any item already sitting in 'Checking'
+            # state in the database from before a process restart is silently
+            # invisible to this loop forever: it never gets its file re-checked
+            # again, no matter how long it waits.
+            #
+            # Reload once, on this process's first tick only - not every cycle.
+            # An earlier version of this fix called .update() unconditionally on
+            # every tick (mirroring process_scraping()'s pattern), but Checking's
+            # own reload does a full state='Checking' table scan and diff, and
+            # doing that every ~30s indefinitely, on top of every other queue's
+            # constant DB traffic, produced a real production hang: the run that
+            # started right after such a reload never logged a single
+            # checking_queue.py line and never completed, silently blocking every
+            # later tick (APScheduler will not overlap the same job). A one-time
+            # reload is all that's needed - re-entries into Checking during this
+            # process's own lifetime already flow through add_item() correctly.
+            if not getattr(self, '_checking_queue_reloaded_from_db', False):
+                self.queues["Checking"].update()
+                self._checking_queue_reloaded_from_db = True
             # Call the CheckingQueue process method directly, passing QueueManager (self) and ProgramRunner
             self.queues["Checking"].process(self, program_runner)
             
