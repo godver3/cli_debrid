@@ -59,6 +59,17 @@ def _set_last_sync_ts(ts: int) -> None:
         logger.debug(f'[CMSync] Could not save last sync timestamp: {e}')
 
 
+def _same_cli_ids(current, wanted: dict) -> bool:
+    """True if cli_mount's reported {filename: item_id} map already equals `wanted`."""
+    if not isinstance(current, dict):
+        return False
+    try:
+        return ({k: int(v) for k, v in current.items() if k} ==
+                {k: int(v) for k, v in wanted.items() if k})
+    except (TypeError, ValueError):
+        return False
+
+
 def _fetch_changes(since_ts: int) -> list:
     try:
         from usenet.climount_client import get_climount_client
@@ -425,9 +436,15 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                     if not _cli_ids_to_register and single_file and item_ids:
                         _cli_ids_to_register = {single_file: item_ids[0]}
 
-                    # Register cli_debrid IDs with cli_mount — always send the complete map
+                    # Register cli_debrid IDs with cli_mount — always send the complete map,
+                    # but only when it differs from what cli_mount already holds. cli_mount
+                    # saves the entry on every register call, which bumps its UpdatedAt past
+                    # this pass's since-timestamp, so an unconditional register made every
+                    # entry "changed" again on the next pass - a self-sustaining loop that
+                    # re-registered the whole library every 5 minutes (~1 call/sec).
                     _info_hash = entry.get('info_hash') or ''
-                    if _cli_ids_to_register and _info_hash:
+                    if _cli_ids_to_register and _info_hash and not _same_cli_ids(
+                            entry.get('cli_debrid_ids'), _cli_ids_to_register):
                         try:
                             if _batch_count:
                                 conn.commit()
@@ -441,10 +458,16 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
 
                     # Push tags to cli_mount — Plex mode only, checked inside push_tags().
                     # Uses the first matched item's tags column (comma-separated string).
+                    # Only tags not yet pushed (same condition push_pending_tags uses):
+                    # cli_mount's addTags saves the entry even when every tag is already
+                    # present, bumping UpdatedAt, so re-pushing unchanged tags here kept
+                    # the entry in every future sync pass, the same loop as cli_ids above.
                     if _info_hash and item_ids:
                         try:
                             _tags_row = conn.execute(
-                                'SELECT tags FROM media_items WHERE id = ?', (item_ids[0],)
+                                'SELECT tags FROM media_items WHERE id = ? '
+                                'AND (tags_pushed_at IS NULL OR last_updated > tags_pushed_at)',
+                                (item_ids[0],)
                             ).fetchone()
                             if _tags_row and _tags_row[0]:
                                 if _batch_count:
