@@ -147,5 +147,56 @@ class TestTriggerHealthScanSignature(unittest.TestCase):
         self.assertTrue(c.trigger_health_scan(full=False, wait=True, timeout=300))
 
 
+class TestGetJobStatusNamesJob(unittest.TestCase):
+    """Zurg serves un-filtered SAB history as a bounded window and evicts older
+    completions from it; only a request naming the job via nzo_ids still finds
+    an evicted one. get_job_status used to omit nzo_ids, so a finished job read
+    as "not found" and was declared a ghost, blacklisted, and rescraped."""
+
+    EVICTED = 'SABnzbd_nzo_eee795e1ba20742ffb7855ef25a205545c703707'
+
+    def setUp(self):
+        self.nc = _load_nzbdav_module()
+        self.calls = []
+        evicted = self.EVICTED
+
+        class _Resp:
+            status_code = 200
+
+            def __init__(self, payload):
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        def fake_get(url, params=None, timeout=None):
+            params = params or {}
+            self.calls.append(dict(params))
+            if params.get('mode') == 'queue':
+                return _Resp({'queue': {'slots': []}})
+            window = [{'nzo_id': f'visible_{i}', 'status': 'Completed', 'name': f'v{i}'}
+                      for i in range(60)]
+            if params.get('nzo_ids') == evicted:
+                return _Resp({'history': {'slots': [
+                    {'nzo_id': evicted, 'status': 'Completed', 'name': 'I Love Lucy S01E35'}]}})
+            return _Resp({'history': {'slots': window}})
+
+        self.nc.api = types.SimpleNamespace(get=fake_get, post=None)
+        self.client = self.nc.NzbdavClient.__new__(self.nc.NzbdavClient)
+        self.client.base_url = 'http://127.0.0.1:9999'
+        self.client.api_key = 'k'
+
+    def test_evicted_completed_job_is_still_found(self):
+        status = self.client.get_job_status(self.EVICTED)
+        self.assertEqual(status['state'], 'completed')
+        self.assertTrue(status['raw'], 'raw must be populated - empty raw is the "not found" signal')
+        self.assertEqual(status['name'], 'I Love Lucy S01E35')
+
+    def test_both_polls_send_nzo_ids(self):
+        self.client.get_job_status(self.EVICTED)
+        self.assertEqual([c.get('mode') for c in self.calls], ['queue', 'history'])
+        self.assertTrue(all(c.get('nzo_ids') == self.EVICTED for c in self.calls))
+
+
 if __name__ == '__main__':
     unittest.main()
