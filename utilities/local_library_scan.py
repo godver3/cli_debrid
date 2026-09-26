@@ -1184,6 +1184,13 @@ def _apply_nzb_naming(source_file: str, item: Dict[str, Any]) -> str:
 
 def _prefer_largest_nzb_source(item: Dict[str, Any], source_folder: str, source_file: str) -> str:
     """When a folder holds multiple video files, prefer the largest episode match."""
+    # NZB-only: this exists to pick the real file over RAR splits/junk in an NZB job
+    # folder. A debrid torrent's filled_by_file was already chosen deliberately from
+    # the torrent's own file list (adding_queue matcher or manual assign), and
+    # second-guessing it by size swaps in the wrong file - e.g. every movie assigned
+    # from a multi-movie collection pack was symlinked to the pack's largest film.
+    if not str(item.get('filled_by_torrent_id') or '').startswith('nzb:'):
+        return source_file
     if not source_folder or not os.path.isdir(source_folder):
         return source_file
 
