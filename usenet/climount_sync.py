@@ -125,9 +125,21 @@ def _find_item_ids(conn, entry: dict, infohash_map: dict = None, location_map: d
     # Strategy 0: cli_debrid_ids direct lookup.
     # Collected but don't early-return — other strategies may find additional items
     # (e.g. duplicates or items collected via different paths) so we accumulate all.
+    # Live states only, like every other strategy: cli_mount keeps these ids after
+    # cli_debrid has abandoned the job (item moved back to Wanted), and matching
+    # a Wanted/Scraping/Adding item here wrote the dead job's id and obfuscated
+    # filename back onto it - the NZB health check then tracked the dead job,
+    # declared it broken, and the item resubmitted the same release.
     cli_debrid_ids = entry.get('cli_debrid_ids') or {}
-    if cli_debrid_ids:
-        _add([v for v in cli_debrid_ids.values() if isinstance(v, int) and v > 0])
+    _cli_id_candidates = [v for v in cli_debrid_ids.values() if isinstance(v, int) and v > 0]
+    if _cli_id_candidates:
+        _placeholders = ','.join('?' * len(_cli_id_candidates))
+        rows = conn.execute(
+            f"SELECT id FROM media_items WHERE id IN ({_placeholders}) AND state IN {_LIVE_STATES}",
+            _cli_id_candidates,
+        ).fetchall()
+        _live = {r[0] for r in rows}
+        _add([v for v in _cli_id_candidates if v in _live])
 
     # Strategy 1: NZB — exact filled_by_torrent_id match
     if protocol == 'nzb' and provider_id:
@@ -229,13 +241,22 @@ def _build_update(entry: dict, existing: dict = None, file_name: str = None) -> 
         sets.append('filled_by_magnet = ?')
         params.append(magnet)
 
-    # NZB: clear any stale magnet left over from a previous debrid grab
+    # NZB: clear any stale magnet left over from a previous debrid grab. Only an
+    # actual magnet - for an NZB item this column holds the indexer's NZB URL,
+    # which every NZB blacklist path reads to add the release's GUID to
+    # not-wanted. Nulling it unconditionally meant a failed NZB was only ever
+    # blacklisted by job hash (new on every submit), so the same dead release
+    # was scraped and resubmitted again and again.
     if protocol == 'nzb':
-        sets.append('filled_by_magnet = NULL')
+        sets.append("filled_by_magnet = CASE WHEN filled_by_magnet LIKE 'magnet:%' THEN NULL ELSE filled_by_magnet END")
 
-    # NZB only: nzb_segment_id — always overwrite when available
+    # NZB only: nzb_segment_id — fill when missing, never overwrite. cli_debrid
+    # stores the segment it extracts from the NZB file at submit time, and the
+    # pre-submit not-wanted check compares against that same extraction.
+    # cli_mount's first-segment id can come from a different file in the NZB, so
+    # overwriting with it made segment blacklisting miss the release it was for.
     if protocol == 'nzb' and nzb_segment_id:
-        sets.append('nzb_segment_id = ?')
+        sets.append('nzb_segment_id = CASE WHEN (nzb_segment_id IS NULL OR nzb_segment_id = "") THEN ? ELSE nzb_segment_id END')
         params.append(nzb_segment_id)
 
     return sets, params

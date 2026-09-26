@@ -186,3 +186,65 @@ def test_same_cli_ids_normalises_types(sync_env):
     assert sync._same_cli_ids({"a.mkv": "5"}, {"a.mkv": 5})
     assert not sync._same_cli_ids(None, {"a.mkv": 5})
     assert not sync._same_cli_ids({"a.mkv": 5}, {"a.mkv": 5, "b.mkv": 6})
+
+
+def _row(sync_mod_conn_factory, item_id):
+    conn = sync_mod_conn_factory()
+    try:
+        conn.row_factory = sqlite3.Row
+        return dict(conn.execute("SELECT * FROM media_items WHERE id = ?", (item_id,)).fetchone())
+    finally:
+        conn.close()
+
+
+def test_sync_keeps_nzb_url_and_own_segment_id(sync_env):
+    """The NZB URL is what blacklisting reads to add the release's GUID; the stored
+    segment id is what the pre-submit check compares against. The sync used to
+    null the URL and overwrite the segment with cli_mount's (different) one."""
+    sync, mount, _ = sync_env
+    get_conn = sys.modules["database.core"].get_db_connection
+    conn = get_conn()
+    conn.execute("UPDATE media_items SET filled_by_magnet = ?, nzb_segment_id = ? WHERE id = 1",
+                 ("https://api.indexer.test/getnzb/dd49a3a2.nzb&i=1&r=key", "oawhy-own@seg"))
+    conn.commit()
+    conn.close()
+    mount.entries[HASH]["nzb_segment_id"] = "6dbXq-climount@seg"
+
+    sync.sync_changes_from_climount(force_full=True)
+
+    row = _row(get_conn, 1)
+    assert row["filled_by_magnet"] == "https://api.indexer.test/getnzb/dd49a3a2.nzb&i=1&r=key"
+    assert row["nzb_segment_id"] == "oawhy-own@seg"
+
+
+def test_sync_still_clears_a_leftover_debrid_magnet(sync_env):
+    sync, _, _ = sync_env
+    get_conn = sys.modules["database.core"].get_db_connection
+    conn = get_conn()
+    conn.execute("UPDATE media_items SET filled_by_magnet = 'magnet:?xt=urn:btih:abc' WHERE id = 1")
+    conn.commit()
+    conn.close()
+
+    sync.sync_changes_from_climount(force_full=True)
+    assert _row(get_conn, 1)["filled_by_magnet"] is None
+
+
+def test_abandoned_item_is_not_relinked_via_cli_debrid_ids(sync_env):
+    """cli_mount keeps cli_debrid_ids after cli_debrid gives up on a job and moves
+    the item back to Wanted (clearing its filled_by fields). The sync must not
+    write the dead job back onto it."""
+    sync, mount, _ = sync_env
+    get_conn = sys.modules["database.core"].get_db_connection
+    sync.sync_changes_from_climount(force_full=True)  # registers {file: 1}
+    conn = get_conn()
+    conn.execute("UPDATE media_items SET state = 'Wanted', filled_by_torrent_id = NULL, "
+                 "filled_by_file = NULL WHERE id = 1")
+    conn.commit()
+    conn.close()
+    mount.entries[HASH]["updated_at"] = time.time()
+
+    _pass_after_clock_tick(sync)
+
+    row = _row(get_conn, 1)
+    assert row["filled_by_torrent_id"] is None
+    assert row["filled_by_file"] is None

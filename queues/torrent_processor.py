@@ -1146,6 +1146,16 @@ class TorrentProcessor:
 
         _job_prefix = _title_prefix(job_title)
 
+        # GUID blacklist, checked here too and not only at scrape time: the Adding
+        # queue submits from scrape results stored before an earlier attempt at
+        # the same release failed and was blacklisted.
+        if not (item or {}).get('disable_not_wanted_check'):
+            from database.not_wanted_magnets import is_nzb_guid_not_wanted
+            _guid_src = (result.get('parsed_info') or {}).get('guid') or nzb_url
+            if _guid_src and is_nzb_guid_not_wanted(_guid_src):
+                logging.info(f'[{item_identifier}] Skipping NZB {title!r} — guid in not-wanted list')
+                return None
+
         # Fetch NZB XML once for segment blacklist checks on reuse and submit paths.
         _nzb_xml = None
         try:
