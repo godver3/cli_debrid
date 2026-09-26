@@ -57,6 +57,37 @@ _NZB_CACHE_TTL = 600  # 10 minutes
 _NZB_INFLIGHT = SingleFlightGuard()
 
 
+def _normalize_imdb(value: str) -> str:
+    """'tt0121955' / '0121955' / '121955' -> '121955' (0 or empty -> '')."""
+    digits = (value or '').strip().lower()
+    if digits.startswith('tt'):
+        digits = digits[2:]
+    digits = digits.lstrip('0')
+    return digits if digits.isdigit() else ''
+
+
+def _drop_other_titles(results: List[Dict[str, Any]], requested_imdb: str, instance: str) -> List[Dict[str, Any]]:
+    """Drop ID-search results the indexer itself tags with a different IMDb id.
+
+    Some indexers (seen with NZBPlanet) answer t=tvsearch&imdbid=X&season&ep
+    with every show's release for that season/episode when they don't match X
+    - e.g. The Penguin, Schmigadoon and The Real Rooneys S01E05 for a South Park
+    S01E05 search - and some of those then got past the title-similarity filter
+    and were downloaded. A result carrying its own, different imdb id is not
+    this title. Results with no imdb attr are kept; the title filter still
+    applies to them.
+    """
+    wanted = _normalize_imdb(requested_imdb)
+    if not wanted:
+        return results
+    kept = [r for r in results
+            if (r.get('parsed_info') or {}).get('newznab_imdb', '') in ('', wanted)]
+    dropped = len(results) - len(kept)
+    if dropped:
+        logging.info(f"Newznab '{instance}': dropped {dropped} ID-search result(s) tagged with a different IMDb id than tt{requested_imdb}")
+    return kept
+
+
 def _cache_key(endpoint: str, params: dict) -> str:
     params_no_key = {k: v for k, v in params.items() if k != 'apikey'}
     stable = f"{endpoint}|{sorted(params_no_key.items())}"
@@ -101,6 +132,9 @@ def _build_params_list(
             params_list.append({
                 'apikey': api_key, 't': 'movie',
                 'imdbid': clean_imdb, 'cat': cats, 'limit': 100,
+                # extended=1 makes the indexer include each result's own imdb
+                # attr, which _drop_other_titles checks against the one we asked for.
+                'extended': 1,
             })
         # 2. Title+year text search
         raw = _SANITIZE_RE.sub('', f'{title} {year or ""}'.strip()).strip()
@@ -113,7 +147,7 @@ def _build_params_list(
             id_params: Dict[str, Any] = {
                 'apikey': api_key, 't': 'tvsearch',
                 'imdbid': clean_imdb, 'season': season,
-                'cat': cats, 'limit': 100,
+                'cat': cats, 'limit': 100, 'extended': 1,
             }
             if episode is not None and not multi:
                 id_params['ep'] = episode
@@ -203,12 +237,15 @@ def scrape_newznab_instance(
     _wait_timeout = (timeout + 5) if timeout else 35
 
     def _fetch_coalesced(params):
-        return _NZB_INFLIGHT.call(
+        results = _NZB_INFLIGHT.call(
             _cache_key(endpoint, params),
             lambda: _fetch(params),
             wait_timeout=_wait_timeout,
             copy_fn=copy.deepcopy,
         )
+        if params.get('imdbid'):
+            results = _drop_other_titles(results, params['imdbid'], instance)
+        return results
 
     # Run both queries in parallel if there are 2, otherwise just run one
     all_results: List[Dict[str, Any]] = []
@@ -332,6 +369,13 @@ def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
 
         size_gb = round(size_bytes / (1024 ** 3), 2) if size_bytes else 0.0
 
+        # The indexer's own IMDb id for this release (present with extended=1).
+        result_imdb = ''
+        for attr in item.findall('newznab:attr', ns):
+            if attr.get('name') == 'imdb':
+                result_imdb = _normalize_imdb(attr.get('value', ''))
+                break
+
         cats = []
         for cat_el in item.findall('category'):
             if cat_el.text:
@@ -366,6 +410,7 @@ def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
             'is_hdr': bool(ptt.get('hdr')),
             'trash': ptt.get('trash', False),
             'original_title': title,
+            'newznab_imdb': result_imdb,
         }
 
         result = {
@@ -465,18 +510,19 @@ def scrape_newznab_season_aggregate(
             id_params = {
                 'apikey': api_key, 't': 'tvsearch', 'imdbid': clean_imdb,
                 'season': season, 'ep': ep_num, 'cat': cats, 'limit': 20,
+                'extended': 1,
             }
             ck = _cache_key(ep_endpoint, id_params)
             cached = _cache_get(ck)
             if cached is not None:
-                results.extend(cached)
+                results.extend(_drop_other_titles(cached, clean_imdb, instance))
             else:
                 try:
                     r = api.get(ep_endpoint, params=id_params, timeout=timeout)
                     if r.status_code == 200:
                         parsed = _parse_newznab_xml(r.text, instance)
                         _cache_set(ck, parsed)  # Cache even empty
-                        results.extend(parsed)
+                        results.extend(_drop_other_titles(parsed, clean_imdb, instance))
                     elif r.status_code == 429:
                         _cache_set(ck, [])  # Cache 429 to avoid retry
                 except Exception:
