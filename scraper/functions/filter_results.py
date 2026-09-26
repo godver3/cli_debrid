@@ -206,10 +206,14 @@ def filter_results(
             
             #logging.debug(f"Processing result: {original_title}")
             
-            # Quick UFC check
-            if "UFC" in original_title.upper():
-                is_ufc = True
-                similarity_threshold = 0.35
+            # Quick UFC check - per result. This used to set is_ufc/similarity_threshold
+            # for the whole remaining batch: one UFC-titled release anywhere in the
+            # results (e.g. in an indexer's "every S01E05" answer to an ID search)
+            # dropped the threshold to 0.35 for every result after it, letting other
+            # shows through (The Penguin S01E05 downloaded for South Park S01E05).
+            # Only relaxed when the searched title is itself a UFC event.
+            is_ufc = "UFC" in original_title.upper() and "UFC" in title.upper()
+            result_similarity_threshold = 0.35 if is_ufc else similarity_threshold
             
             # Get parsed info from result (should be already parsed by PTT)
             if not parsed_info:
@@ -690,8 +694,8 @@ def filter_results(
             
             # --- ANIME-SPECIFIC SANITY CHECK ---
             # For anime, add additional validation to prevent false matches from fuzzy token overlap
-            if is_anime and best_sim >= similarity_threshold:
-                # logging.info(f"DEBUG SANITY: Running anime sanity check for '{original_title}' (best_sim={best_sim:.3f}, threshold={similarity_threshold:.3f})")
+            if is_anime and best_sim >= result_similarity_threshold:
+                # logging.info(f"DEBUG SANITY: Running anime sanity check for '{original_title}' (best_sim={best_sim:.3f}, threshold={result_similarity_threshold:.3f})")
                 
                 # Check if we have substantial character overlap, not just token fragments
                 query_chars = set(normalized_query_title.replace('.', ''))
@@ -756,15 +760,15 @@ def filter_results(
                 logging.info(f"  Alias similarities: {alias_similarities}")
                 logging.info(f"  Best alias sim: {best_alias_sim:.3f}")
                 logging.info(f"  Translated title sim: {translated_title_sim:.3f}")
-                logging.info(f"  Final best sim: {best_sim:.3f}, threshold: {similarity_threshold:.3f}")
+                logging.info(f"  Final best sim: {best_sim:.3f}, threshold: {result_similarity_threshold:.3f}")
                 logging.info(f"  API aliases fetched: {len(item_aliases)} categories")
                 for alias_cat, alias_list in item_aliases.items():
                     logging.info(f"    {alias_cat}: {alias_list[:3]}...")  # Show first 3 aliases per category
 
-            if best_sim < similarity_threshold:
+            if best_sim < result_similarity_threshold:
                 # Log the failure reason including all comparison scores
-                result['filter_reason'] = f"Title similarity too low (best={best_sim:.2f} < {similarity_threshold})"
-                logging.info(f"Rejected: Title similarity too low (best={best_sim:.2f} < {similarity_threshold}) for '{original_title}' (Size: {result['size']:.2f}GB)")
+                result['filter_reason'] = f"Title similarity too low (best={best_sim:.2f} < {result_similarity_threshold})"
+                logging.info(f"Rejected: Title similarity too low (best={best_sim:.2f} < {result_similarity_threshold}) for '{original_title}' (Size: {result['size']:.2f}GB)")
                 continue
             
             # --- Hard-coded Dragon Ball Series Differentiation ---
