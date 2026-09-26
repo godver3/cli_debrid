@@ -947,7 +947,13 @@ def filter_results(
                 title_lower_for_f1_check = title.lower()
                 is_formula_1 = ("formula 1" in title_lower_for_f1_check) and ("drive to survive" not in title_lower_for_f1_check)
 
-                if not is_formula_1: # Only perform year check if not Formula 1
+                # Season 0 (specials/extras) is exempt from season-year matching -
+                # specials are routinely re-released, remastered, or rebroadcast
+                # decades after their original air date (e.g. a 2018 HD remaster
+                # of a 1991 special), and a single "season year" for S00 is just the
+                # first special's air year. Specials only get the looser
+                # "not before the show existed" check below instead.
+                if not is_formula_1 and season != 0: # Only perform year check if not Formula 1 or a special
                     parsed_year = parsed_info.get('year')
                     
                     # If PTT didn't parse a year, try our own simple extraction
@@ -1105,6 +1111,18 @@ def filter_results(
                             # Optionally, you could reject here if strict year parsing is required
                             # result['filter_reason'] = f"Invalid year format: {parsed_year}"
                             # continue
+                elif season == 0 and not is_formula_1:
+                    # Keep the one guarantee year matching still gives specials: a
+                    # release dated before the show premiered is a different
+                    # same-titled show, not a remaster of this one.
+                    parsed_year = parsed_info.get('year') or extract_year_from_title(original_title)
+                    if parsed_year and year is not None:
+                        _special_years = parsed_year if isinstance(parsed_year, list) else [parsed_year]
+                        _special_years = [int(py) for py in _special_years if str(py).isdigit()]
+                        if _special_years and all(py < year - 1 for py in _special_years):
+                            result['filter_reason'] = f"Year mismatch: {parsed_year} predates show premiere ({year})"
+                            logging.info(f"Rejected: Special's release year {parsed_year} predates show premiere {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
+                            continue
                 else:
                     logging.info(f"Skipping year check for Formula 1 title: '{title}'")
                 

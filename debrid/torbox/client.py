@@ -87,6 +87,24 @@ class TorboxProvider(DebridProvider):
             })
         return files
 
+    @staticmethod
+    def _common_root_folder(files: List[Dict[str, Any]]) -> str:
+        """The top-level folder every file path shares, or '' if there isn't one.
+
+        TorBox file names carry the torrent's own root folder
+        ("<Pack Folder>/Season 1/ep.mkv"), which is the folder that appears on the
+        mount. The torrent's separate 'name' field can diverge from it - e.g. a pack
+        whose name is one episode's filename (godver3/cli_debrid#515) - and a stored
+        folder name that doesn't exist on the mount can never be resolved.
+        """
+        roots = set()
+        for f in files:
+            parts = [p for p in (f.get('path') or '').replace('\\', '/').split('/') if p]
+            if len(parts) < 2:
+                return ''  # a file at the torrent root: no shared folder to trust
+            roots.add(parts[0])
+        return roots.pop() if len(roots) == 1 else ''
+
     def _map_status(self, info: Dict[str, Any]) -> TorrentStatus:
         state = (info.get('download_state') or '').lower()
         if state in {'cached', 'completed', 'downloaded'} or info.get('cached') or info.get('download_finished'):
@@ -109,8 +127,11 @@ class TorboxProvider(DebridProvider):
         normalized['id'] = str(info.get('id', ''))
         normalized['hash'] = (info.get('hash') or '').lower()
         normalized['filename'] = info.get('name', '')
-        normalized['debrid_folder_name'] = info.get('name', '') or info.get('download_path', '')
         normalized['files'] = self._normalize_files(info)
+        normalized['debrid_folder_name'] = (
+            self._common_root_folder(normalized['files'])
+            or info.get('name', '') or info.get('download_path', '')
+        )
         normalized['bytes'] = info.get('size', 0)
         normalized['progress'] = progress
         if status == TorrentStatus.CACHED:

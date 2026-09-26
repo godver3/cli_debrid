@@ -852,10 +852,20 @@ class NzbdavClient:
           2. If not in queue, check mode=history — if found, completed
           3. Otherwise unknown (likely deleted/expired)
         Returns dict matching CliMountClient.get_job_status shape.
+
+        Both calls name the job via nzo_ids (standard SABnzbd filter). Zurg's SAB
+        emulation serves an un-filtered history as a bounded, time-limited window
+        and evicts older completions from it; an evicted job is then absent from
+        both un-filtered responses, so it looked "not found" -> ghost job ->
+        blacklisted and rescraped, despite having completed fine. Naming the job
+        gets an answer about it regardless of that window, and the server filters
+        before building the response instead of dumping the whole job table on
+        every poll. Slots are still matched by id below, so a backend that
+        ignores nzo_ids behaves exactly as before.
         """
         try:
             # Queue first
-            r = api.get(self._sab_url(), params=self._sab_params(mode='queue'), timeout=10)
+            r = api.get(self._sab_url(), params=self._sab_params(mode='queue', nzo_ids=job_id), timeout=10)
             if r.status_code == 200:
                 q = r.json().get('queue', {}) if isinstance(r.json(), dict) else {}
                 for slot in q.get('slots', []) or []:
@@ -876,7 +886,7 @@ class NzbdavClient:
             # History fallback
             r = api.get(
                 self._sab_url(),
-                params=self._sab_params(mode='history', limit=500),
+                params=self._sab_params(mode='history', nzo_ids=job_id, limit=500),
                 timeout=10,
             )
             if r.status_code == 200:

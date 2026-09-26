@@ -78,6 +78,14 @@ class CheckingQueue:
             cls._instance.debrid_provider = get_debrid_provider()  # May be None for usenet-only setups
             cls._instance.uncached_torrents = {}  # Dict of {torrent_hash: {last_check_time, item_ids[]}}
             cls._instance.unknown_strikes = {} # Tracks consecutive unknown states for torrents
+            # COMPAT: a single "missing" poll from the debrid provider used to
+            # condemn the torrent's magnet forever via handle_missing_torrent.
+            # Under heavy concurrent load (large packs, many simultaneous
+            # adds/checks) TorBox has been observed to return a transient
+            # false-negative for a torrent that is actually fine, permanently
+            # blacklisting a perfectly good release. Require a few consecutive
+            # misses before treating it as real, mirroring unknown_strikes.
+            cls._instance.missing_strikes = {} # Tracks consecutive 'missing' polls for torrents
             cls._instance._torrent_providers = {}  # torrent_id -> provider name that holds it
             cls._instance._rediscovery_exhausted = set()  # probed the whole chain, nobody had it
         return cls._instance
@@ -810,6 +818,19 @@ class CheckingQueue:
             progress_or_status = self.get_torrent_progress(torrent_id)
 
             if progress_or_status == PROGRESS_RESULT_MISSING:
+                # Only the authoritative process() pass may count strikes or condemn the
+                # torrent. get_contents() (the Checking queue UI, polled every few seconds)
+                # calls this with increment_strikes=False; letting it count would burn the
+                # whole strike budget in seconds whenever the queue page is open.
+                if not increment_strikes:
+                    return 'unknown'
+                max_missing_strikes = get_setting('Debug', 'max_missing_strikes', default=3)
+                self.missing_strikes[torrent_id] = self.missing_strikes.get(torrent_id, 0) + 1
+                strikes = self.missing_strikes[torrent_id]
+                if strikes < max_missing_strikes:
+                    logging.warning(f"Torrent {torrent_id} reported missing by provider (strike {strikes}/{max_missing_strikes}); a transient provider hiccup can look identical to a real removal, so waiting for confirmation before blacklisting its magnet.")
+                    return 'unknown'
+                self.missing_strikes.pop(torrent_id, None)
                 logging.info(f"Torrent {torrent_id} is missing. Handling via handle_missing_torrent.")
                 if torrent_id in self.unknown_strikes: 
                     del self.unknown_strikes[torrent_id]
@@ -830,6 +851,7 @@ class CheckingQueue:
 
             elif isinstance(progress_or_status, (int, float)):
                 current_progress = progress_or_status
+                self.missing_strikes.pop(torrent_id, None)
 
                 if int(current_progress) == 100:
                     if torrent_id in self.unknown_strikes: 
@@ -1096,6 +1118,7 @@ class CheckingQueue:
             if torrent_id in self.unknown_strikes:
                 del self.unknown_strikes[torrent_id]
                 logging.debug(f"Cleaned up unknown strikes for torrent {torrent_id} as it has no more associated items.")
+            self.missing_strikes.pop(torrent_id, None)
         
         # Also clean up any uncached torrent tracking if this was the last item
         try:

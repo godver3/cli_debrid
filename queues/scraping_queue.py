@@ -1334,7 +1334,19 @@ class ScrapingQueue:
                     #                   f"Match S:{season_match}, E:{episode_match}")
                 else: # Original logic for non-F1 or F1 with XEM
                     season_match = (target_season is None or parsed_seasons == [target_season])
-                    episode_match = (target_episode is None or parsed_episodes == [target_episode])
+                    # A multi-episode pack that reached this point already passed
+                    # filter_results.py's bitrate/size gate using its real per-episode
+                    # size (not the pack's raw total) - so if the target episode number
+                    # is genuinely present in the pack's parsed episode list, downloading
+                    # it is exactly as bandwidth-reasonable as a true single-episode
+                    # release. Strict single-episode equality used to reject every
+                    # legitimate small pack (e.g. a ~1GB 28-episode range) exactly like
+                    # a 700GB monster.
+                    episode_match = (
+                        target_episode is None or
+                        parsed_episodes == [target_episode] or
+                        (len(parsed_episodes) > 1 and target_episode in parsed_episodes)
+                    )
                 
                 # Define original_filename for use in fallback logic
                 original_filename = parsed_info.get('original_filename', '')
@@ -1563,7 +1575,19 @@ class ScrapingQueue:
                 else: # Original logic for non-F1 or F1 with XEM
                     logging.debug(f"{log_prefix} Applying Non-F1/XEM matching logic.")
                     season_match = (target_season is None or parsed_seasons == [target_season])
-                    episode_match = (target_episode is None or parsed_episodes == [target_episode])
+                    # A multi-episode pack that reached this point already passed
+                    # filter_results.py's bitrate/size gate using its real per-episode
+                    # size (not the pack's raw total) - so if the target episode number
+                    # is genuinely present in the pack's parsed episode list, downloading
+                    # it is exactly as bandwidth-reasonable as a true single-episode
+                    # release. Strict single-episode equality used to reject every
+                    # legitimate small pack (e.g. a ~1GB 28-episode range) exactly like
+                    # a 700GB monster.
+                    episode_match = (
+                        target_episode is None or
+                        parsed_episodes == [target_episode] or
+                        (len(parsed_episodes) > 1 and target_episode in parsed_episodes)
+                    )
                     logging.debug(f"{log_prefix} Non-F1/XEM S_match:{season_match} (PTT_S:{parsed_seasons} vs TargetS:{target_season}), E_match:{episode_match} (PTT_E:{parsed_episodes} vs TargetE:{target_episode}).")
 
                 if season_match and episode_match:

@@ -409,8 +409,15 @@ class TorrentProcessor:
         Returns torrent info dict from whichever provider succeeded, or None.
         """
         temp_file = None
-        get_info_max_retries = 3
-        get_info_retry_delay = 2
+        # A several-hundred-GB complete-series pack can take far longer than
+        # ~6s for the debrid provider to hash/index before its file list is
+        # ready - the original budget was tuned for small single-episode
+        # torrents and gives up on big packs long before they are actually
+        # indexed. Capped at ~24s rather than longer: this loop blocks the
+        # Adding queue, and dead/uncached torrents never produce a file list,
+        # so every bad candidate in a row costs the full budget.
+        get_info_max_retries = 8
+        get_info_retry_delay = 3
 
         caller_frame = inspect.currentframe().f_back
         caller_info = f"{caller_frame.f_code.co_filename}:{caller_frame.f_code.co_name}:{caller_frame.f_lineno}"
@@ -608,7 +615,11 @@ class TorrentProcessor:
                 # whoever uploaded it). check_local_file_for_item's first folder-name guess
                 # (debrid_folder_name) needs the real one to succeed without depending on the
                 # other, title-based fallback guesses also happening to match by luck.
-                info['debrid_folder_name'] = info.get('filename') or info.get('original_filename') or check_title
+                # A provider that already derived the real folder (TorBox, from its file
+                # paths) keeps it - its 'filename' can be one episode's name, and reuse
+                # would copy that wrong folder onto every sibling (#515).
+                info['debrid_folder_name'] = (info.get('debrid_folder_name') or info.get('filename')
+                                              or info.get('original_filename') or check_title)
                 logging.info(f"[{item.get('title', 'Unknown')}] Season pack already submitted for "
                              f"S{_season:02d} (torrent_id={torrent_id}) — reusing instead of duplicate submission")
                 # chosen_result_info must reflect THIS reused torrent's own title, not None -
@@ -626,21 +637,50 @@ class TorrentProcessor:
                 return info, magnet, chosen_result_info
             return None
 
+        # Complete-series / multi-season packs span seasons, so a sibling on a
+        # *different* season may already hold this episode. Without this, the first
+        # episode of every new season fell through to a fresh scrape, found the pack
+        # already not-wanted (blacklisted by an earlier season's successful add), and
+        # rejected a release that was already sitting in the account. Cross-season
+        # candidates are limited to titles that look multi-season, so ordinary
+        # single-season packs from other seasons don't each cost a provider API call
+        # per episode per tick; _try_reuse still proves per-episode containment.
+        _multi_season_re = _re_sib.compile(
+            r'\bcomplete\b'
+            r'|\bS\d{1,2}\s*(?:-|to|~)\s*S?\d{1,2}\b'
+            r'|\bseasons?\s*\d{1,2}\s*(?:-|to|~|&|and)\s*\d{1,2}\b'
+            r'|\bS\d{1,2}[ ._]S\d{1,2}\b',
+            _re_sib.IGNORECASE,
+        )
+
+        def _looks_multi_season(*titles: str) -> bool:
+            return any(t and _multi_season_re.search(t) for t in titles)
+
         # In-memory check first: catches a sibling submitted this same tick, before it's
-        # written back to the DB.
+        # written back to the DB. Same-season siblings first, then multi-season packs
+        # from other seasons.
         if adding_queue_items:
+            _mem_same, _mem_cross = [], []
             for _mem_item in adding_queue_items:
                 if (_mem_item.get('id') == item.get('id') or
                         _mem_item.get('imdb_id') != _imdb or
-                        _mem_item.get('season_number') != _season or
                         (_mem_item.get('version') or '').rstrip('*') != _item_version):
                     continue
                 _mem_torrent_id = _mem_item.get('filled_by_torrent_id')
                 if not _mem_torrent_id or str(_mem_torrent_id).startswith('nzb:'):
                     continue
                 _mem_check_title = _mem_item.get('original_scraped_torrent_title') or _mem_item.get('filled_by_file') or ''
-                reused = _try_reuse(_mem_torrent_id, _mem_check_title, _mem_item.get('filled_by_magnet'),
-                                    filled_by_title=_mem_item.get('filled_by_title') or '')
+                _mem_filled_by_title = _mem_item.get('filled_by_title') or ''
+                if _mem_item.get('season_number') == _season:
+                    _mem_same.append((_mem_torrent_id, _mem_check_title, _mem_item.get('filled_by_magnet'), _mem_filled_by_title))
+                elif _ep_pattern is not None and _looks_multi_season(_mem_check_title, _mem_filled_by_title):
+                    _mem_cross.append((_mem_torrent_id, _mem_check_title, _mem_item.get('filled_by_magnet'), _mem_filled_by_title))
+            _tried = set()
+            for _tid, _title, _magnet, _fbt in _mem_same + _mem_cross:
+                if _tid in _tried:
+                    continue
+                _tried.add(_tid)
+                reused = _try_reuse(_tid, _title, _magnet, filled_by_title=_fbt)
                 if reused:
                     return reused
 
@@ -658,20 +698,36 @@ class TorrentProcessor:
                 # release's title onto the correct, already-working torrent_id, breaking the
                 # downstream folder-name guess in check_local_file_for_item for every episode
                 # that inherited the wrong title.
-                _siblings = _conn.execute(
+                _sibling_sql = (
                     "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title, filled_by_magnet, "
                     "filled_by_title "
                     "FROM media_items "
                     "WHERE id IN ("
                     "  SELECT MIN(id) FROM media_items "
-                    "  WHERE imdb_id=? AND season_number=? AND type='episode' "
+                    "  WHERE imdb_id=? AND {season_clause} AND type='episode' "
                     "  AND id!=? AND filled_by_torrent_id IS NOT NULL AND filled_by_torrent_id NOT LIKE 'nzb:%' "
                     "  AND REPLACE(COALESCE(version,''),'*','')=? "
                     "  AND state IN ('Adding','Checking','Collected','Upgrading') "
                     "  GROUP BY filled_by_torrent_id"
-                    ") LIMIT 5",
+                    "){limit}"
+                )
+                _siblings = _conn.execute(
+                    _sibling_sql.format(season_clause="season_number=?", limit=" LIMIT 5"),
                     (_imdb, _season, item.get('id', -1), _item_version)
                 ).fetchall()
+                _cross_siblings = []
+                if _ep_pattern is not None:
+                    # No LIMIT in SQL: the multi-season title filter runs here in Python
+                    # (no API calls), and only its survivors are capped, so an arbitrary
+                    # LIMIT can't hide the one complete pack behind ordinary season packs.
+                    _cross_rows = _conn.execute(
+                        _sibling_sql.format(season_clause="season_number!=?", limit=""),
+                        (_imdb, _season, item.get('id', -1), _item_version)
+                    ).fetchall()
+                    _cross_siblings = [
+                        r for r in _cross_rows
+                        if _looks_multi_season(r[2] or '', r[1] or '', r[4] or '')
+                    ][:5]
             finally:
                 _conn.close()
         except Exception as e:
@@ -682,16 +738,18 @@ class TorrentProcessor:
         # target episode - prefer the most complete pack (most files) when more than one
         # legitimately covers this episode, so a still-pending episode lands on the bigger of two
         # known sibling packs instead of whichever was found first.
-        best, best_file_count = None, -1
-        for _sib in _siblings:
-            _sib_check_title = _sib[2] or _sib[1] or ''
-            reused = _try_reuse(_sib[0], _sib_check_title, _sib[3], filled_by_title=_sib[4] or '')
-            if reused:
-                file_count = len(reused[0].get('files', []))
-                if file_count > best_file_count:
-                    best, best_file_count = reused, file_count
+        def _best_of(candidates):
+            best, best_file_count = None, -1
+            for _sib in candidates:
+                _sib_check_title = _sib[2] or _sib[1] or ''
+                reused = _try_reuse(_sib[0], _sib_check_title, _sib[3], filled_by_title=_sib[4] or '')
+                if reused:
+                    file_count = len(reused[0].get('files', []))
+                    if file_count > best_file_count:
+                        best, best_file_count = reused, file_count
+            return best
 
-        return best
+        return _best_of(_siblings) or _best_of(_cross_siblings)
 
     def _consolidate_covered_siblings(self, item: Optional[Dict], torrent_info: Dict) -> None:
         """If the torrent just finalized for `item` also fully covers other episodes that are

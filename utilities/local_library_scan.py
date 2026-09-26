@@ -1184,6 +1184,13 @@ def _apply_nzb_naming(source_file: str, item: Dict[str, Any]) -> str:
 
 def _prefer_largest_nzb_source(item: Dict[str, Any], source_folder: str, source_file: str) -> str:
     """When a folder holds multiple video files, prefer the largest episode match."""
+    # NZB-only: this exists to pick the real file over RAR splits/junk in an NZB job
+    # folder. A debrid torrent's filled_by_file was already chosen deliberately from
+    # the torrent's own file list (adding_queue matcher or manual assign), and
+    # second-guessing it by size swaps in the wrong file - e.g. every movie assigned
+    # from a multi-movie collection pack was symlinked to the pack's largest film.
+    if not str(item.get('filled_by_torrent_id') or '').startswith('nzb:'):
+        return source_file
     if not source_folder or not os.path.isdir(source_folder):
         return source_file
 
@@ -1451,6 +1458,31 @@ def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file
         logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
 
 
+def _folder_match_key(name: str) -> str:
+    """Case- and punctuation-insensitive key for comparing a stored folder name
+    with the real one on the mount (only letters and digits survive)."""
+    return ''.join(ch for ch in (name or '').casefold() if ch.isalnum())
+
+
+def _find_file_in_folder_tree(base_folder: str, filename: str, max_depth: int = 6) -> Optional[str]:
+    """Search base_folder and its subdirectories (bounded depth) for an exact
+    filename match. Some releases (especially large multi-series/'saga' packs)
+    nest actual episode files several folders below the torrent's own root
+    folder instead of directly inside it."""
+    base_depth = base_folder.rstrip(os.sep).count(os.sep)
+    try:
+        for root, dirs, files in os.walk(base_folder):
+            current_depth = root.rstrip(os.sep).count(os.sep) - base_depth
+            if current_depth >= max_depth:
+                dirs[:] = []
+                continue
+            if filename in files:
+                return os.path.join(root, filename)
+    except OSError as error:
+        logging.warning(f"Nested file search failed under '{base_folder}': {error}")
+    return None
+
+
 def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False, on_success_callback: Optional[Callable[[str], None]] = None, skip_multifile_scan: bool = False) -> bool:
     """
     Check if the local file for the item exists and create symlink if needed.
@@ -1600,6 +1632,76 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     found_file = True
                     logging.info(f"Found file using filename-as-folder pattern: {source_file}")
 
+            # 8.5. COMPAT: large "complete series" packs often nest the actual
+            # episode files several folders deep (grouped by story arc/saga/disc,
+            # e.g. "<Torrent>/1a. TV Series/01. The SAIYAN Saga/S01E001....mkv")
+            # instead of directly inside the torrent's own root folder. None of
+            # the direct-child checks above account for that extra nesting, so
+            # do one bounded recursive search inside each already-identified
+            # candidate folder before falling back to a full extended scan of
+            # the entire library.
+            if not found_file:
+                candidate_names = []
+                for name in (
+                    debrid_folder_name,
+                    original_torrent_title,
+                    os.path.splitext(original_torrent_title)[0] if original_torrent_title else '',
+                    real_debrid_original_title,
+                    os.path.splitext(real_debrid_original_title)[0] if real_debrid_original_title else '',
+                    filled_by_title,
+                    os.path.splitext(filled_by_title)[0] if filled_by_title else '',
+                ):
+                    if name and name not in candidate_names:
+                        candidate_names.append(name)
+                for name in candidate_names:
+                    candidate_folder = os.path.join(original_path, name)
+                    if not os.path.isdir(candidate_folder):
+                        continue
+                    nested_path = _find_file_in_folder_tree(candidate_folder, current_filename)
+                    if nested_path:
+                        source_file = nested_path
+                        source_folder = os.path.dirname(nested_path)
+                        found_file = True
+                        logging.info(f"Found file via nested search inside '{name}': {source_file}")
+                        break
+
+            # 8.6. The stored folder name can differ from the real one on the mount only
+            # by characters the mount layer dropped or changed (e.g. every '&' stripped
+            # from "[Anime Time] Jujutsu Kaisen (Season 1 & 2 + ...)" while the debrid
+            # API still reports it - godver3/cli_debrid#515). One listing of the mount
+            # root, compared with case and punctuation ignored, finds it; the real name
+            # is written back so the next lookup hits attempt 0 directly instead of
+            # never resolving until someone edits the DB by hand.
+            if not found_file and candidate_names:
+                wanted_keys = {_folder_match_key(n) for n in candidate_names} - {''}
+                try:
+                    root_entries = os.listdir(original_path) if wanted_keys else []
+                except OSError as list_err:
+                    logging.warning(f"Could not list '{original_path}' for folder-name matching: {list_err}")
+                    root_entries = []
+                for folder_name in root_entries:
+                    if folder_name in candidate_names or _folder_match_key(folder_name) not in wanted_keys:
+                        continue
+                    candidate_folder = os.path.join(original_path, folder_name)
+                    if not os.path.isdir(candidate_folder):
+                        continue
+                    direct_path = os.path.join(candidate_folder, current_filename)
+                    matched_path = (direct_path if os.path.exists(direct_path)
+                                    else _find_file_in_folder_tree(candidate_folder, current_filename))
+                    if not matched_path:
+                        continue
+                    source_file = matched_path
+                    source_folder = os.path.dirname(matched_path)
+                    found_file = True
+                    logging.info(f"Found file via normalized folder-name match '{folder_name}': {source_file}")
+                    item['debrid_folder_name'] = folder_name
+                    if item.get('id'):
+                        try:
+                            update_media_item(item['id'], debrid_folder_name=folder_name)
+                        except Exception as persist_err:
+                            logging.debug(f"Could not persist corrected debrid_folder_name for item {item.get('id')}: {persist_err}")
+                    break
+
             # 9. Extended search: scan original_path subdirectories for the file.
             # Only runs when extended_search=True (activated after 900s in checking queue)
             # and all named-folder attempts have failed.
@@ -1617,6 +1719,10 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             found_file = True
                             logging.info(f"Extended search found file in folder '{folder_name}': {source_file}")
                             break
+                        # Deliberately no recursive _find_file_in_folder_tree() here: this loop
+                        # visits every torrent folder on the mount, and a depth-6 walk of each one
+                        # over a FUSE/rclone mount is thousands of directory listings per item per
+                        # tick. Nested lookup is scoped to the item's own candidate folders (8.5).
                 except Exception as ext_err:
                     logging.warning(f"Extended search failed: {ext_err}")
 
