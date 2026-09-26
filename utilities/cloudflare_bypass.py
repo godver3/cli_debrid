@@ -32,6 +32,14 @@ _MAX_COOKIE_AGE_SECONDS = 2 * 60 * 60  # 2 hours
 
 _refresh_lock = Lock()
 
+# After a failed solve, don't launch another browser for the same domain for a
+# while. A solve costs up to ~60s of CPU-heavy headed-browser work, and with no
+# memory of failures every caller (startup prewarm, Discover page, adaptive
+# lists, plus the 403 force-refresh retry) re-attempted it back-to-back while
+# the challenge was consistently unsolvable.
+_FAILED_SOLVE_COOLDOWN_SECONDS = 10 * 60
+_last_failed_solve: Dict[str, float] = {}
+
 
 def _browser_environment(user_data_dir: str) -> Dict[str, str]:
     """Return an environment where Chromium can initialize its profile.
@@ -282,8 +290,17 @@ def get_clearance(domain: str, challenge_url: str, force_refresh: bool = False) 
         if not force_refresh and entry and (time.time() - entry.get('obtained_at', 0)) < _MAX_COOKIE_AGE_SECONDS:
             return {'cookies': entry['cookies'], 'user_agent': entry['user_agent']}
 
+        _since_fail = time.time() - _last_failed_solve.get(domain, 0)
+        if _since_fail < _FAILED_SOLVE_COOLDOWN_SECONDS:
+            logging.debug(f"[CloudflareBypass] Last solve for {domain} failed {int(_since_fail)}s ago — "
+                          f"not retrying for another {int(_FAILED_SOLVE_COOLDOWN_SECONDS - _since_fail)}s")
+            if entry:
+                return {'cookies': entry['cookies'], 'user_agent': entry['user_agent']}
+            return None
+
         result = _solve_challenge(challenge_url)
         if not result:
+            _last_failed_solve[domain] = time.time()
             # Keep serving stale clearance rather than nothing, if we have it —
             # it may still work even past our conservative refresh window.
             if entry:
@@ -291,6 +308,7 @@ def get_clearance(domain: str, challenge_url: str, force_refresh: bool = False) 
                 return {'cookies': entry['cookies'], 'user_agent': entry['user_agent']}
             return None
 
+        _last_failed_solve.pop(domain, None)
         cache['domains'][domain] = {
             'cookies': result['cookies'],
             'user_agent': result['user_agent'],
