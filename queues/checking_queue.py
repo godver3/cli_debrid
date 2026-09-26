@@ -361,6 +361,47 @@ class CheckingQueue:
             del self.unknown_strikes[torrent_id]
             logging.debug(f"Cleared unknown strikes for missing torrent {torrent_id}")
 
+    def _remove_abandoned_nzb_job(self, torrent_id: str, abandoned_items: list) -> None:
+        """Remove an NZB job the Checking queue is giving up on from the usenet provider.
+
+        The debrid branch of the same timeout removes its torrent; the NZB branch
+        used to leave the job behind. Every abandoned attempt then stayed on the
+        mount, and in Plex mode (Plex scans the whole mount) each one showed up as
+        another copy of the episode, while resubmitting the same release got a
+        "(1)" name. Skipped when any other item still uses the job (a season pack
+        shared with already-collected episodes), or when that can't be verified.
+        """
+        job_hash = str(torrent_id)[4:] if str(torrent_id).startswith('nzb:') else ''
+        if not job_hash:
+            return
+        abandoned_ids = {i.get('id') for i in abandoned_items}
+        try:
+            from database import get_db_connection
+            conn = get_db_connection()
+            try:
+                rows = conn.execute(
+                    "SELECT id FROM media_items WHERE filled_by_torrent_id = ? "
+                    "AND state IN ('Collected','Upgrading','Checking','Adding')",
+                    (torrent_id,),
+                ).fetchall()
+            finally:
+                conn.close()
+        except Exception as e:
+            logging.warning(f"[NZB] Could not check other users of {torrent_id} — leaving the job in place: {e}")
+            return
+        if any(r[0] not in abandoned_ids for r in rows):
+            logging.info(f"[NZB] Leaving timed-out job {torrent_id} in place — still used by another item")
+            return
+        entry_name = next((i.get('filled_by_title') or i.get('original_scraped_torrent_title') or ''
+                           for i in abandoned_items), '')
+        try:
+            from usenet import get_usenet_client
+            client = get_usenet_client()
+            if client and client.is_enabled() and client.remove_nzb(job_hash, entry_name):
+                logging.info(f"[NZB] Removed timed-out job {torrent_id} from the usenet provider")
+        except Exception as e:
+            logging.warning(f"[NZB] Failed to remove timed-out job {torrent_id}: {e}")
+
     def _resolve_nzb_file_info(self, torrent_id: str, items: list) -> None:
         """
         When an NZB download completes, query cli_mount to find the actual folder and
@@ -1610,6 +1651,7 @@ class CheckingQueue:
                                         _add_nzb_guid_t(_nzb_url)
                                 except Exception:
                                     pass
+                            self._remove_abandoned_nzb_job(torrent_id, current_items_for_torrent)
                         else:
                             logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)")
                             try:
