@@ -818,6 +818,12 @@ class CheckingQueue:
             progress_or_status = self.get_torrent_progress(torrent_id)
 
             if progress_or_status == PROGRESS_RESULT_MISSING:
+                # Only the authoritative process() pass may count strikes or condemn the
+                # torrent. get_contents() (the Checking queue UI, polled every few seconds)
+                # calls this with increment_strikes=False; letting it count would burn the
+                # whole strike budget in seconds whenever the queue page is open.
+                if not increment_strikes:
+                    return 'unknown'
                 max_missing_strikes = get_setting('Debug', 'max_missing_strikes', default=3)
                 self.missing_strikes[torrent_id] = self.missing_strikes.get(torrent_id, 0) + 1
                 strikes = self.missing_strikes[torrent_id]
@@ -1112,6 +1118,7 @@ class CheckingQueue:
             if torrent_id in self.unknown_strikes:
                 del self.unknown_strikes[torrent_id]
                 logging.debug(f"Cleaned up unknown strikes for torrent {torrent_id} as it has no more associated items.")
+            self.missing_strikes.pop(torrent_id, None)
         
         # Also clean up any uncached torrent tracking if this was the last item
         try:
