@@ -1669,13 +1669,10 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             found_file = True
                             logging.info(f"Extended search found file in folder '{folder_name}': {source_file}")
                             break
-                        nested_path = _find_file_in_folder_tree(candidate_folder, current_filename)
-                        if nested_path:
-                            source_file = nested_path
-                            source_folder = os.path.dirname(nested_path)
-                            found_file = True
-                            logging.info(f"Extended search found file via nested search in folder '{folder_name}': {source_file}")
-                            break
+                        # Deliberately no recursive _find_file_in_folder_tree() here: this loop
+                        # visits every torrent folder on the mount, and a depth-6 walk of each one
+                        # over a FUSE/rclone mount is thousands of directory listings per item per
+                        # tick. Nested lookup is scoped to the item's own candidate folders (8.5).
                 except Exception as ext_err:
                     logging.warning(f"Extended search failed: {ext_err}")
 
