@@ -615,7 +615,11 @@ class TorrentProcessor:
                 # whoever uploaded it). check_local_file_for_item's first folder-name guess
                 # (debrid_folder_name) needs the real one to succeed without depending on the
                 # other, title-based fallback guesses also happening to match by luck.
-                info['debrid_folder_name'] = info.get('filename') or info.get('original_filename') or check_title
+                # A provider that already derived the real folder (TorBox, from its file
+                # paths) keeps it - its 'filename' can be one episode's name, and reuse
+                # would copy that wrong folder onto every sibling (#515).
+                info['debrid_folder_name'] = (info.get('debrid_folder_name') or info.get('filename')
+                                              or info.get('original_filename') or check_title)
                 logging.info(f"[{item.get('title', 'Unknown')}] Season pack already submitted for "
                              f"S{_season:02d} (torrent_id={torrent_id}) — reusing instead of duplicate submission")
                 # chosen_result_info must reflect THIS reused torrent's own title, not None -

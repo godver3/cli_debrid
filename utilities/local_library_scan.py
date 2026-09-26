@@ -1458,6 +1458,12 @@ def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file
         logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
 
 
+def _folder_match_key(name: str) -> str:
+    """Case- and punctuation-insensitive key for comparing a stored folder name
+    with the real one on the mount (only letters and digits survive)."""
+    return ''.join(ch for ch in (name or '').casefold() if ch.isalnum())
+
+
 def _find_file_in_folder_tree(base_folder: str, filename: str, max_depth: int = 6) -> Optional[str]:
     """Search base_folder and its subdirectories (bounded depth) for an exact
     filename match. Some releases (especially large multi-series/'saga' packs)
@@ -1658,6 +1664,43 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         found_file = True
                         logging.info(f"Found file via nested search inside '{name}': {source_file}")
                         break
+
+            # 8.6. The stored folder name can differ from the real one on the mount only
+            # by characters the mount layer dropped or changed (e.g. every '&' stripped
+            # from "[Anime Time] Jujutsu Kaisen (Season 1 & 2 + ...)" while the debrid
+            # API still reports it - godver3/cli_debrid#515). One listing of the mount
+            # root, compared with case and punctuation ignored, finds it; the real name
+            # is written back so the next lookup hits attempt 0 directly instead of
+            # never resolving until someone edits the DB by hand.
+            if not found_file and candidate_names:
+                wanted_keys = {_folder_match_key(n) for n in candidate_names} - {''}
+                try:
+                    root_entries = os.listdir(original_path) if wanted_keys else []
+                except OSError as list_err:
+                    logging.warning(f"Could not list '{original_path}' for folder-name matching: {list_err}")
+                    root_entries = []
+                for folder_name in root_entries:
+                    if folder_name in candidate_names or _folder_match_key(folder_name) not in wanted_keys:
+                        continue
+                    candidate_folder = os.path.join(original_path, folder_name)
+                    if not os.path.isdir(candidate_folder):
+                        continue
+                    direct_path = os.path.join(candidate_folder, current_filename)
+                    matched_path = (direct_path if os.path.exists(direct_path)
+                                    else _find_file_in_folder_tree(candidate_folder, current_filename))
+                    if not matched_path:
+                        continue
+                    source_file = matched_path
+                    source_folder = os.path.dirname(matched_path)
+                    found_file = True
+                    logging.info(f"Found file via normalized folder-name match '{folder_name}': {source_file}")
+                    item['debrid_folder_name'] = folder_name
+                    if item.get('id'):
+                        try:
+                            update_media_item(item['id'], debrid_folder_name=folder_name)
+                        except Exception as persist_err:
+                            logging.debug(f"Could not persist corrected debrid_folder_name for item {item.get('id')}: {persist_err}")
+                    break
 
             # 9. Extended search: scan original_path subdirectories for the file.
             # Only runs when extended_search=True (activated after 900s in checking queue)
