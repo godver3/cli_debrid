@@ -355,8 +355,11 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
             logging.error(f"Could not connect to Plex.tv cloud service with provided token for user {username}")
             return [([], versions)]
         
-        if account.username != username: # Verify token belongs to the expected user
-            logging.error(f"Plex.tv cloud token for user {username} seems to belong to {account.username} (expected {username}). Aborting.")
+        # Managed Plex Home users have no plex.tv username (account.username is empty),
+        # so fall back to the profile title when verifying the token's owner.
+        token_owner = account.username or account.title
+        if token_owner != username: # Verify token belongs to the expected user
+            logging.error(f"Plex.tv cloud token for user {username} seems to belong to {token_owner} (expected {username}). Aborting.")
             return [([], versions)]
                     
         logging.info(f"Fetching initial watchlist for user {username} from Plex.tv cloud service")
