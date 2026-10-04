@@ -916,6 +916,28 @@ def _junk_nzb_source_reason(item: dict, location_on_disk: str) -> Optional[str]:
     return None
 
 
+def _parse_item_genres(raw):
+    """Genres as a list from a media_items row: JSON array, comma-separated or a list.
+
+    Some rows store a plain string ("Animation, Anime"); json.loads() on those
+    raised and every repair scrape for the item failed before it started.
+    """
+    if not raw:
+        return None
+    if isinstance(raw, (list, tuple)):
+        return list(raw)
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, str):
+            raw = parsed
+    except (ValueError, TypeError):
+        pass
+    genres = [g.strip() for g in str(raw).split(',') if g.strip()]
+    return genres or None
+
+
 def _is_junk_replacement_result(result: dict) -> bool:
     """True when a scrape candidate must not be submitted as a repair replacement."""
     from debrid.common.utils import is_unwanted_file
@@ -1022,7 +1044,7 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
             season=item.get('season_number') if is_episode else None,
             episode=item.get('episode_number') if is_episode else None,
             multi=False,
-            genres=json.loads(item['genres']) if item.get('genres') else None,
+            genres=_parse_item_genres(item.get('genres')),
             skip_cache_check=True,
         )
 
