@@ -42,6 +42,11 @@ class TorrentAdditionError(TorrentProcessingError):
     """Raised when a torrent fails to be added to the debrid service"""
     pass
 
+# Returned by _process_nzb_result when the result's indexer is cooling down after
+# refusing downloads: the result is kept (not dropped from scrape_results) and
+# the next one is tried.
+NZB_DEFERRED_INDEXER_COOLDOWN = object()
+
 class TorrentProcessor:
     """Handles torrent file/magnet processing and caching checks"""
 
@@ -1161,7 +1166,9 @@ class TorrentProcessor:
         # Set when this indexer refused downloads for a limit, now or moments ago.
         # Reusing an in-flight job (below) doesn't need the indexer, so only a
         # fresh submission is blocked.
-        from usenet.nzb_fetch_cooldown import cooldown_reason, is_indexer_limit_response, record_indexer_limit
+        from usenet.nzb_fetch_cooldown import (
+            classify_refusal, cooldown_reason, first_skip_this_window, record_indexer_limit,
+        )
         _indexer_refusal = cooldown_reason(nzb_url)
         if not _indexer_refusal:
             try:
@@ -1173,12 +1180,15 @@ class TorrentProcessor:
                     if is_nzb_segment_not_wanted(_nzb_xml):
                         logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
                         return None
-                elif is_indexer_limit_response(_nr_early.status_code, _nr_early.text[:2000]):
-                    # cli_mount's URL fetch and the direct-upload fallback would hit
-                    # the same limit, so don't send either.
-                    record_indexer_limit(nzb_url)
-                    _indexer_refusal = (f'indexer refused the download (HTTP {_nr_early.status_code}, limit); '
-                                        f'skipping its NZBs for a while')
+                else:
+                    _cooldown_s = classify_refusal(_nr_early.status_code, getattr(_nr_early, 'headers', None),
+                                                   _nr_early.text[:2000])
+                    if _cooldown_s:
+                        # cli_mount's URL fetch and the direct-upload fallback would hit
+                        # the same refusal, so don't send either.
+                        record_indexer_limit(nzb_url, _cooldown_s)
+                        _indexer_refusal = (f'indexer refused the download (HTTP {_nr_early.status_code}); '
+                                            f'skipping its NZBs for {max(1, _cooldown_s // 60)} min')
             except Exception as _nzb_early_err:
                 logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_early_err}')
 
@@ -1322,8 +1332,10 @@ class TorrentProcessor:
             pass
 
         if _indexer_refusal:
-            logging.warning(f'[{item_identifier}] Not submitting NZB {title!r} — {_indexer_refusal}; trying the next result')
-            return None
+            if first_skip_this_window((item or {}).get('id'), nzb_url):
+                logging.warning(f'[{item_identifier}] Not submitting NZB {title!r} — {_indexer_refusal}; '
+                                f'keeping it for later and trying the next result')
+            return NZB_DEFERRED_INDEXER_COOLDOWN
 
         logging.info(f'[{item_identifier}] Submitting NZB to cli_mount: {job_title}')
         if _nzb_xml:
@@ -1471,11 +1483,18 @@ class TorrentProcessor:
                 # NZB results are handled by cli_mount, not debrid — route them separately
                 if result.get('protocol') == 'nzb' or result.get('nzb_url'):
                     nzb_result = self._process_nzb_result(result, item, adding_queue_items=adding_queue_items)
+                    if nzb_result is NZB_DEFERRED_INDEXER_COOLDOWN:
+                        # Its indexer is refusing downloads for now. Keep the result for
+                        # a later tick and try the next one; if every remaining result is
+                        # cooling down, the item just stays in Adding with them intact.
+                        continue
                     if nzb_result:
                         return nzb_result
                     # NZB rejected — pop this result from scrape_results in DB so the next
                     # tick tries the next candidate, then return so the Adding queue can
                     # move on to other items immediately (one attempt per item per tick).
+                    # Pop the attempted result itself: earlier ones may have been kept
+                    # above because their indexer is cooling down.
                     if item:
                         try:
                             import json as _json_tp
@@ -1483,8 +1502,18 @@ class TorrentProcessor:
                             _sr = item.get('scrape_results', [])
                             if isinstance(_sr, str):
                                 _sr = _json_tp.loads(_sr)
-                            if isinstance(_sr, list) and _sr:
-                                _sr = _sr[1:]
+                            # Not found means it was already dropped (Hybrid mode runs this
+                            # a second time with the original list); drop nothing else.
+                            # Match by URL + title: the Adding queue adds fields to its
+                            # copy of the results, so whole dicts don't compare equal.
+                            def _result_key(r):
+                                return ((r.get('nzb_url') or r.get('magnet') or r.get('link') or ''),
+                                        r.get('title', '')) if isinstance(r, dict) else None
+                            _want = _result_key(result)
+                            _drop = next((i for i, r in enumerate(_sr) if _result_key(r) == _want), None) \
+                                if isinstance(_sr, list) else None
+                            if _drop is not None:
+                                _sr = _sr[:_drop] + _sr[_drop + 1:]
                                 item['scrape_results'] = _sr
                                 _umi_tp(item['id'], scrape_results=_json_tp.dumps(_sr))
                         except Exception:

@@ -31,18 +31,47 @@ class TestCooldownModule(unittest.TestCase):
         cd.reset_fetch_cooldowns()
 
     def test_limit_responses(self):
-        self.assertTrue(cd.is_indexer_limit_response(503, ''))
-        self.assertTrue(cd.is_indexer_limit_response(429, ''))
-        self.assertTrue(cd.is_indexer_limit_response(200, LIMIT_XML))
-        self.assertTrue(cd.is_indexer_limit_response(
-            200, '<error code="500" description="Request limit reached"/>'))
+        self.assertEqual(cd.classify_refusal(429, {}, ''), cd.COOLDOWN_SECONDS)
+        self.assertEqual(cd.classify_refusal(200, {}, LIMIT_XML), cd.COOLDOWN_SECONDS)
+        self.assertEqual(cd.classify_refusal(
+            200, {}, '<error code="500" description="Request limit reached"/>'), cd.COOLDOWN_SECONDS)
+        # Code alone is enough (spec codes 500/501, and 429 used by some indexers) ...
+        self.assertTrue(cd.classify_refusal(200, {}, '<error code="429" description="Slow down"/>'))
+        # ... and so is limit wording under another code.
+        self.assertTrue(cd.classify_refusal(
+            200, {}, '<error code="100" description="Daily API quota exceeded"/>'))
+        self.assertTrue(cd.classify_refusal(
+            200, {}, '<error description="Maximum grabs reached for today" code="102"/>'))
+
+    def test_plain_and_json_bodies(self):
+        self.assertTrue(cd.classify_refusal(200, {}, 'You have reached your download limit for today.'))
+        self.assertTrue(cd.classify_refusal(403, {}, '{"message": "Grab limit reached"}'))
+        self.assertTrue(cd.classify_refusal(402, {}, '<html>Download quota exceeded</html>'))
+
+    def test_bare_503_is_short(self):
+        self.assertEqual(cd.classify_refusal(503, {}, 'Service Unavailable'), cd.UNAVAILABLE_COOLDOWN_SECONDS)
+        self.assertEqual(cd.classify_refusal(503, {}, 'Download limit reached'), cd.COOLDOWN_SECONDS)
+
+    def test_retry_after_is_honoured_and_clamped(self):
+        self.assertEqual(cd.classify_refusal(429, {'Retry-After': '600'}, ''), 600)
+        self.assertEqual(cd.classify_refusal(503, {'Retry-After': '5'}, ''), 60)
+        self.assertEqual(cd.classify_refusal(429, {'Retry-After': '86400'}, ''), 3600)
+        self.assertEqual(cd.classify_refusal(429, {'Retry-After': 'garbage'}, ''), cd.COOLDOWN_SECONDS)
 
     def test_non_limit_errors_are_ignored(self):
-        self.assertFalse(cd.is_indexer_limit_response(404, 'not found'))
-        self.assertFalse(cd.is_indexer_limit_response(500, 'boom'))
-        self.assertFalse(cd.is_indexer_limit_response(
-            200, '<error code="300" description="No such item"/>'))
-        self.assertFalse(cd.is_indexer_limit_response(200, NZB_XML))
+        self.assertIsNone(cd.classify_refusal(404, {}, 'not found, rate limit page'))
+        self.assertIsNone(cd.classify_refusal(500, {}, 'boom'))
+        self.assertIsNone(cd.classify_refusal(200, {}, '<error code="300" description="No such item"/>'))
+        self.assertIsNone(cd.classify_refusal(200, {}, '<error code="100" description="Incorrect user credentials"/>'))
+        self.assertIsNone(cd.classify_refusal(200, {}, '<html>Generated page, moderate traffic</html>'))
+
+    def test_longer_cooldown_is_not_shortened(self):
+        url = 'https://api.nzbplanet.net/getnzb/abc.nzb'
+        with mock.patch.object(cd.time, 'monotonic', return_value=1000.0):
+            cd.record_indexer_limit(url, cd.COOLDOWN_SECONDS)
+            cd.record_indexer_limit(url, cd.UNAVAILABLE_COOLDOWN_SECONDS)
+        with mock.patch.object(cd.time, 'monotonic', return_value=1000.0 + cd.UNAVAILABLE_COOLDOWN_SECONDS + 1):
+            self.assertIsNotNone(cd.cooldown_reason(url))
 
     def test_cooldown_is_per_indexer_host(self):
         cd.record_indexer_limit('https://api.nzbplanet.net/getnzb/abc.nzb&i=1&r=key')
@@ -53,6 +82,11 @@ class TestCooldownModule(unittest.TestCase):
         cd.record_indexer_limit('http://prowlarr:9696/3/download?apikey=k&link=a')
         self.assertIsNotNone(cd.cooldown_reason('http://prowlarr:9696/3/download?apikey=k&link=b'))
         self.assertIsNone(cd.cooldown_reason('http://prowlarr:9696/7/download?apikey=k&link=c'))
+
+    def test_prowlarr_behind_url_base(self):
+        cd.record_indexer_limit('https://host/prowlarr/3/download?apikey=k&link=a')
+        self.assertIsNotNone(cd.cooldown_reason('https://host/prowlarr/3/download?link=b'))
+        self.assertIsNone(cd.cooldown_reason('https://host/prowlarr/7/download?link=c'))
 
     def test_cooldown_expires(self):
         url = 'https://api.nzbplanet.net/getnzb/abc.nzb'
@@ -66,7 +100,7 @@ class TestCooldownModule(unittest.TestCase):
 
 try:
     import database  # noqa: F401  (app import order; avoids a debrid<->routes cycle)
-    from queues.torrent_processor import TorrentProcessor
+    from queues.torrent_processor import NZB_DEFERRED_INDEXER_COOLDOWN, TorrentProcessor
     _IMPORT_ERR = None
 except Exception as exc:  # pragma: no cover - env without deps
     TorrentProcessor = None
@@ -74,9 +108,10 @@ except Exception as exc:  # pragma: no cover - env without deps
 
 
 class _Resp:
-    def __init__(self, status, text):
+    def __init__(self, status, text, headers=None):
         self.status_code = status
         self.text = text
+        self.headers = headers or {}
 
 
 class _FakeClient:
@@ -127,20 +162,20 @@ class TestProcessNzbResult(unittest.TestCase):
 
     def test_limit_response_skips_submission_and_retries(self):
         out, hits = self._run(_Resp(503, 'Service Unavailable'))
-        self.assertIsNone(out)
+        self.assertIs(out, NZB_DEFERRED_INDEXER_COOLDOWN)
         self.assertEqual(hits, 1, 'the limited indexer must be fetched once, not three times')
         self.client.add_nzb.assert_not_called()
         self.client.add_nzb_content.assert_not_called()
 
         # The next attempt (e.g. the rescrape minutes later) doesn't touch the indexer at all.
         out, hits = self._run(_Resp(200, NZB_XML))
-        self.assertIsNone(out)
+        self.assertIs(out, NZB_DEFERRED_INDEXER_COOLDOWN)
         self.assertEqual(hits, 0)
         self.client.add_nzb_content.assert_not_called()
 
     def test_newznab_limit_error_with_http_200(self):
         out, hits = self._run(_Resp(200, LIMIT_XML))
-        self.assertIsNone(out)
+        self.assertIs(out, NZB_DEFERRED_INDEXER_COOLDOWN)
         self.assertEqual(hits, 1)
         self.client.add_nzb.assert_not_called()
 
@@ -156,6 +191,51 @@ class TestProcessNzbResult(unittest.TestCase):
         self.assertIsNotNone(out)
         self.assertEqual(hits, 1)
         self.client.add_nzb_content.assert_called_once()
+
+
+@unittest.skipIf(TorrentProcessor is None, f'torrent_processor not importable: {_IMPORT_ERR}')
+class TestProcessResultsKeepsCooledResults(unittest.TestCase):
+    """A cooled-down indexer's results are kept; only the attempted result is dropped."""
+
+    def setUp(self):
+        self.proc = TorrentProcessor.__new__(TorrentProcessor)
+        self.proc._check_sibling_debrid_pack = lambda *a, **k: None
+        self.results = [
+            {'title': 'A', 'nzb_url': 'https://cooled/a', 'protocol': 'nzb'},
+            {'title': 'B', 'nzb_url': 'https://other/b', 'protocol': 'nzb'},
+            {'title': 'C', 'nzb_url': 'https://cooled/c', 'protocol': 'nzb'},
+        ]
+        self.item = {'id': 1, 'title': 'X', 'scrape_results': list(self.results)}
+        p = mock.patch('database.database_writing.update_media_item')
+        self.update = p.start()
+        self.addCleanup(p.stop)
+
+    def _run(self, outcome):
+        self.proc._process_nzb_result = lambda r, item, adding_queue_items=None: outcome(r)
+        return self.proc._process_results_inner(list(self.item['scrape_results']), False, self.item)
+
+    def test_cooled_results_kept_and_attempted_one_dropped(self):
+        out = self._run(lambda r: NZB_DEFERRED_INDEXER_COOLDOWN if 'cooled' in r['nzb_url'] else None)
+        self.assertEqual(out, (None, None, None))
+        self.assertEqual([r['title'] for r in self.item['scrape_results']], ['A', 'C'])
+
+    def test_stored_json_without_queue_added_fields_still_matches(self):
+        import json
+        self.item['scrape_results'] = json.dumps(self.results)
+        results = [dict(r, original_scraped_torrent_title=r['title']) for r in self.results]
+        self.proc._process_nzb_result = lambda r, item, adding_queue_items=None: (
+            NZB_DEFERRED_INDEXER_COOLDOWN if 'cooled' in r['nzb_url'] else None)
+        self.proc._process_results_inner(results, False, self.item)
+        self.assertEqual([r['title'] for r in self.item['scrape_results']], ['A', 'C'])
+        # Hybrid mode's second pass over the same list must not drop another result.
+        self.proc._process_results_inner(results, True, self.item)
+        self.assertEqual([r['title'] for r in self.item['scrape_results']], ['A', 'C'])
+
+    def test_all_cooled_keeps_everything(self):
+        out = self._run(lambda r: NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(out, (None, None, None))
+        self.assertEqual(len(self.item['scrape_results']), 3)
+        self.update.assert_not_called()
 
 
 if __name__ == '__main__':
