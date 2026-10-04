@@ -638,6 +638,10 @@ function updateDashboard() {
           }
 
           var count = mem.open_files ? mem.open_files.count || 0 : 0;
+          if (mem.open_files && mem.open_files.open_handles !== undefined) {
+            // Windows: open files aren't collected (too slow); show the handle count instead.
+            count = mem.open_files.open_handles + ' handles';
+          }
           document.getElementById('open-files-count').textContent = count;
 
           var types = openFiles.map(function(f) { return f.path.split('.').pop(); }).filter(function(v, i, a) { return a.indexOf(v) === i; });

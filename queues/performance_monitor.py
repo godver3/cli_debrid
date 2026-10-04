@@ -23,14 +23,23 @@ def _open_files(process):
     return process.open_files()
 
 
-def _open_handle_count(process, open_files):
-    """Open files count; on Windows the handle count (one cheap call) stands in."""
-    if _IS_WINDOWS:
-        try:
-            return process.num_handles()
-        except Exception:
-            return 0
-    return len(open_files)
+def _open_handles(process):
+    """Windows only: total handle count (files, registry keys, threads, ...), else None.
+
+    Reported separately from the open-files count: it is not a file count.
+    """
+    if not _IS_WINDOWS:
+        return None
+    try:
+        return process.num_handles()
+    except Exception:
+        return None
+
+
+def _open_files_text(open_files, handles):
+    if handles is not None:
+        return f"not collected on Windows ({handles} handles of all types)"
+    return str(len(open_files))
 
 class PerformanceMonitor:
     """Monitor system performance metrics"""
@@ -266,6 +275,7 @@ class PerformanceMonitor:
             
             # Get open files
             open_files = _open_files(process)
+            open_handles = _open_handles(process)
             file_sizes = defaultdict(int)
             for f in open_files:
                 try:
@@ -304,9 +314,10 @@ class PerformanceMonitor:
                         'formatted_size': self._format_size(total_file)
                     },
                     'open_files': {
-                        'count': _open_handle_count(process, open_files),
+                        'count': len(open_files),
                         'total_size': sum(file_sizes.values()),
-                        'files': [{'path': k, 'size': v} for k, v in file_sizes.items()]
+                        'files': [{'path': k, 'size': v} for k, v in file_sizes.items()],
+                        **({'open_handles': open_handles} if open_handles is not None else {}),
                     },
                     'network': {
                         'total_connections': len(connections),
@@ -348,7 +359,7 @@ Threads:
                 len(anon_maps),
                 self._format_size(total_file),
                 len(file_maps),
-                _open_handle_count(process, open_files),
+                _open_files_text(open_files, open_handles),
                 self._format_size(sum(file_sizes.values())),
                 len(connections),
                 dict(conn_states),
@@ -387,6 +398,7 @@ No memory growth data available""")
         try:
             process = psutil.Process(os.getpid())
             open_files = _open_files(process)
+            open_handles = _open_handles(process)
             open_connections = process.connections()
             
             file_types = defaultdict(int)
@@ -406,7 +418,7 @@ No memory growth data available""")
 
 🌐 Network Connections: {}
    By Status: {}""".format(
-                _open_handle_count(process, open_files),
+                _open_files_text(open_files, open_handles),
                 ', '.join(f"{ext}: {count}" for ext, count in file_types.items()),
                 len(open_connections),
                 ', '.join(f"{status}: {count}" for status, count in conn_status.items()) if conn_status else "None"
@@ -417,7 +429,8 @@ No memory growth data available""")
                 "timestamp": datetime.now().isoformat(),
                 "type": "file_descriptors",
                 "metrics": {
-                    "open_files_count": _open_handle_count(process, open_files),
+                    "open_files_count": len(open_files),
+                    **({"open_handles": open_handles} if open_handles is not None else {}),
                     "file_types": {ext: count for ext, count in file_types.items()},
                     "network_connections_count": len(open_connections),
                     "connection_statuses": {str(status): count for status, count in conn_status.items()}

@@ -42,13 +42,17 @@ class TestWindowsSkipsHandleWalk(unittest.TestCase):
         self.monitor._log_detailed_memory()
         self.monitor.performance_logger.error.assert_not_called()
         entry = self.monitor._write_entry.call_args.args[0]
-        self.assertEqual(entry['memory']['open_files']['count'], 1300)
+        self.assertEqual(entry['memory']['open_files']['count'], 0)
+        self.assertEqual(entry['memory']['open_files']['open_handles'], 1300)
 
     def test_file_descriptors(self):
         self.monitor._log_file_descriptors()
         self.monitor.performance_logger.error.assert_not_called()
         entry = self.monitor._write_entry.call_args.args[0]
-        self.assertEqual(entry['metrics']['open_files_count'], 1300)
+        self.assertEqual(entry['metrics']['open_files_count'], 0)
+        self.assertEqual(entry['metrics']['open_handles'], 1300)
+        text = self.monitor.performance_logger.info.call_args.args[0]
+        self.assertIn('not collected on Windows (1300 handles', text)
 
     def test_non_windows_unchanged(self):
         with mock.patch.object(pm, '_IS_WINDOWS', False):
@@ -56,6 +60,8 @@ class TestWindowsSkipsHandleWalk(unittest.TestCase):
             self.monitor._log_file_descriptors()
         self.proc.open_files.assert_called_once()
         self.proc.num_handles.assert_not_called()
+        entry = self.monitor._write_entry.call_args.args[0]
+        self.assertNotIn('open_handles', entry['metrics'])
 
 
 if __name__ == '__main__':
