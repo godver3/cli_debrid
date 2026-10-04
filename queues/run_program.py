@@ -6378,8 +6378,10 @@ class ProgramRunner:
             surfaced to Plex (scanned or searched for) — so a confirmed-broken
             file is rejected and re-scraped before Plex has any chance to add
             it, avoiding a "recently added" flicker.
-            Returns True if the item should proceed, False if it was rejected
-            (already reverted to Wanted; caller should skip further processing).
+            Returns True if the item should proceed, False if the caller should
+            skip it this pass: either rejected (already reverted to Wanted) or
+            deferred (NZB job still downloading; stays in Checking and is
+            re-checked next pass). An inconclusive probe passes.
             """
             # In Symlinked/Local mode, check_local_file_for_item is already the
             # authoritative ffprobe gate for this item - it runs synchronously
@@ -6443,8 +6445,10 @@ class ProgramRunner:
                     from usenet import get_usenet_client
                     job_status = get_usenet_client().get_job_status(job_hash)
                     if job_status and job_status.get('state') != 'completed' and job_status.get('progress', 100) < 95:
+                        # Skip this pass rather than proceed: proceeding sent the item on to
+                        # the Plex scan and the tick-based force-collect without ever probing it.
                         logging.info(f"[ffprobe] Deferring {probe_key} for item {item.get('id')} — job {job_hash} still downloading ({job_status.get('progress', 0)}%)")
-                        return True
+                        return False
                 except Exception as e:
                     logging.debug(f"[ffprobe] Could not check job download progress for {torrent_id}: {e}")
 

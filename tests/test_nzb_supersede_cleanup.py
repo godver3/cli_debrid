@@ -9,6 +9,14 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import tempfile
+for _var in ('USER_CONFIG', 'USER_DB_CONTENT', 'USER_LOGS'):
+    os.environ.setdefault(_var, tempfile.mkdtemp())
+
+# App import order: importing queues.adding_queue first hits a debrid <-> routes
+# import cycle. These tests only passed when an earlier test imported database.
+import database  # noqa: E402,F401
+
 
 class TestCancelSupersededNzbJob(unittest.TestCase):
     def test_cancels_prior_job_when_binding_new_one(self):

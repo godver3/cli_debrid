@@ -2133,6 +2133,29 @@ def find_plex_library_and_section(plex: PlexServer, item_path: str) -> Tuple[Opt
         logger.error(f"Error finding Plex section for path '{item_path}': {e}", exc_info=True)
         return None, None
 
+def _mirrored_library_path(directory: str, section_locations, max_levels: int = 3):
+    """Find `directory` mirrored under a library location beside one of its ancestors.
+
+    /data2/__all__/<release> with a library location /data2/shows returns
+    /data2/shows/<release> when that path exists. Returns None otherwise.
+    """
+    locations = [os.path.abspath(os.path.normpath(loc)) for loc in section_locations if loc]
+    ancestor = os.path.dirname(directory)
+    for _ in range(max_levels):
+        parent = os.path.dirname(ancestor)
+        if not parent or parent == ancestor:
+            break
+        rest = os.path.relpath(directory, ancestor)
+        for loc in locations:
+            if loc == ancestor or os.path.dirname(loc) != parent:
+                continue
+            candidate = os.path.normpath(os.path.join(loc, rest))
+            if os.path.exists(candidate):
+                return candidate
+        ancestor = parent
+    return None
+
+
 def plex_update_item(item: Dict[str, Any]) -> bool:
     # Get display name for logging (title if available, otherwise path)
     item_display = item.get('title')
@@ -2303,6 +2326,27 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
                 except Exception as e:
                     logger.error(f"Error updating section '{section.title}': {str(e)}", exc_info=True)
                     continue
+
+        # Fallback: the file sits in the mount's all-folder (e.g. /data2/__all__/<release>)
+        # while the Plex library points at a sibling category folder that mirrors it
+        # (/data2/shows/<release>), the layout the zurg/cli_mount docs recommend for
+        # Plex mode. Scan the mirrored path in that library, but only if it exists.
+        if not found_matching_section and item_type:
+            for section in plex.library.sections():
+                try:
+                    if item_type == 'movie' and section.type != 'movie':
+                        continue
+                    if item_type == 'episode' and section.type != 'show':
+                        continue
+                    if allowed_library_keys is not None and str(section.key) not in allowed_library_keys:
+                        continue
+                    mirrored = _mirrored_library_path(directory, getattr(section, 'locations', None) or [])
+                    if mirrored:
+                        logger.info(f"Directory '{directory}' is mirrored in section '{section.title}' as '{mirrored}', scanning that")
+                        if _update_section_with_timeout(section, mirrored):
+                            return True
+                except Exception as e:
+                    logger.debug(f"Error trying mirrored path in section '{getattr(section, 'title', '?')}': {e}")
 
         # Fallback: Try to match by content type folder for custom folders
         # This handles cases like /mnt/symlinked/Test/Movies where the exact path doesn't match

@@ -19,6 +19,8 @@ log = logging.getLogger(__name__)
 _worker_lock = threading.Lock()
 ELIGIBLE_REASONS = {
     'usenet_segment_missing', 'media_probe_failed', 'media_no_playable_stream',
+    # cli_mount: the file's local segment map (.meta) is missing or corrupt.
+    'usenet_manifest_missing', 'usenet_manifest_invalid',
 }
 # A stale_target ack response is usually just the mount not having caught up
 # yet with a supersession decypharr already applied, or transient contention

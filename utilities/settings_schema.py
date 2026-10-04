@@ -2311,7 +2311,7 @@ SETTINGS_SCHEMA = {
             },
             "Other Plex Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
-                "username": {"type": "string", "default": ""},
+                "username": {"type": "string", "default": "", "description": "plex.tv username of the account. For a managed Plex Home user (no plex.tv username), use the profile name."},
                 "token": {"type": "string", "default": "", "sensitive": True},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},

@@ -9,8 +9,9 @@ Repair workflow:
      (protocol=torrent, status=broken)
   2. If failure_reason == 'missing_provider_link': re-insert via
      /api/repair/health/{name}/check (re-triggers cli_mount's link resolver)
-  3. Otherwise: scrape for a replacement torrent, delete from Plex + cli_mount,
-     reset CLI DB item to Adding with new torrent info
+  3. Otherwise: reset only the flagged file's DB item to Wanted. A season pack
+     is one torrent shared by many episodes — the torrent is deleted only when
+     no other live item still references it.
   4. Log all outcomes to nzb_repair_activity with broken_nzb_id='debrid:{hash}'
 """
 
@@ -579,27 +580,37 @@ def reinsert_entry(entry_name: str, info_hash: str) -> dict:
                 triggered_by='debrid_repair',
             )
             return {'outcome': 'ambiguous', 'message': 'Multiple versions ambiguously match — refusing to guess which to repair'}
-        db_item = db_items[0] if db_items else {}
-
-        # Orphan check — DB item is already collected via a different provider
-        if _is_orphan_entry(db_item, info_hash):
-            _delete_from_climount(info_hash, entry_name)
-            _delete_from_plex_by_entry_name(entry_name)
-            logger.info(f'[DebridRepair] reinsert_entry {entry_name!r}: orphan detected '
-                        f'(DB item already collected via {db_item.get("filled_by_torrent_id")!r}), '
-                        f'deleted from cli_mount and Plex')
-            log_repair_activity(
-                item_id=db_item.get('id'),
-                title=db_item.get('title'),
-                media_type=db_item.get('type'),
-                season_number=db_item.get('season_number'),
-                episode_number=db_item.get('episode_number'),
-                broken_nzb_id=f'debrid:{info_hash}',
-                broken_nzb_title=entry_name,
-                outcome='plex_deleted',
-                triggered_by='debrid_repair',
+        # One replaced episode must not decide the fate of the rest of a pack.
+        # Only treat the torrent as an orphan when every matched row has moved on.
+        if db_items and all(_is_orphan_entry(i, info_hash) for i in db_items):
+            deleted = _delete_torrent_if_unshared(
+                info_hash, entry_name, {i.get('id') for i in db_items},
             )
-            return {'outcome': 'plex_deleted', 'message': 'Orphan entry removed from cli_mount'}
+            if deleted:
+                _delete_from_plex_by_entry_name(entry_name)
+                db_item = db_items[0]
+                logger.info(f'[DebridRepair] reinsert_entry {entry_name!r}: orphan detected '
+                            f'(DB item already collected via {db_item.get("filled_by_torrent_id")!r}), '
+                            f'deleted from cli_mount and Plex')
+                log_repair_activity(
+                    item_id=db_item.get('id'),
+                    title=db_item.get('title'),
+                    media_type=db_item.get('type'),
+                    season_number=db_item.get('season_number'),
+                    episode_number=db_item.get('episode_number'),
+                    broken_nzb_id=f'debrid:{info_hash}',
+                    broken_nzb_title=entry_name,
+                    outcome='plex_deleted',
+                    triggered_by='debrid_repair',
+                )
+                return {'outcome': 'plex_deleted', 'message': 'Orphan entry removed from cli_mount'}
+            logger.info(
+                f'[DebridRepair] reinsert_entry {entry_name!r}: matched rows already moved on, '
+                f'but other items still use this torrent — reinserting by hash'
+            )
+            db_items = []
+
+        db_item = next((i for i in db_items if not _is_orphan_entry(i, info_hash)), {})
 
         # Re-add to the enabled debrid provider directly
         from debrid import get_debrid_provider
@@ -607,23 +618,29 @@ def reinsert_entry(entry_name: str, info_hash: str) -> dict:
         if not provider:
             return {'outcome': 'error', 'message': 'No debrid provider configured'}
 
-        # Build magnet from hash
+        # Prefer a row that still belongs to this torrent. An orphan row's magnet
+        # is the replacement source, not the pack we are trying to restore.
         magnet = db_item.get('filled_by_magnet') or ''
         if not magnet and info_hash:
             magnet = f'magnet:?xt=urn:btih:{info_hash}'
         if not magnet:
-            # No magnet and no DB entry — this is an orphan with no way to re-insert
-            # Delete from cli_mount and trigger Plex cleanup
-            _delete_from_climount(info_hash, entry_name)
-            _delete_from_plex_by_entry_name(entry_name)
-            logger.info(f'[DebridRepair] reinsert_entry {entry_name!r}: no magnet/DB entry, deleted orphan from cli_mount and Plex')
+            # No magnet and no DB entry — this is an orphan with no way to re-insert.
+            # Delete from cli_mount only when nothing else still references it.
+            deleted = _delete_torrent_if_unshared(info_hash, entry_name, set())
+            if deleted:
+                _delete_from_plex_by_entry_name(entry_name)
+                logger.info(f'[DebridRepair] reinsert_entry {entry_name!r}: no magnet/DB entry, deleted orphan from cli_mount and Plex')
+            else:
+                logger.info(f'[DebridRepair] reinsert_entry {entry_name!r}: no magnet, torrent kept for siblings')
             log_repair_activity(
                 broken_nzb_id=f'debrid:{info_hash}',
                 broken_nzb_title=entry_name,
-                outcome='plex_deleted',
+                outcome='plex_deleted' if deleted else 'kept_shared',
                 triggered_by='debrid_repair',
             )
-            return {'outcome': 'plex_deleted', 'message': 'No magnet available — orphan deleted from cli_mount'}
+            if deleted:
+                return {'outcome': 'plex_deleted', 'message': 'No magnet available — orphan deleted from cli_mount'}
+            return {'outcome': 'kept_shared', 'message': 'No magnet available — torrent kept because other items still use it'}
 
         try:
             new_id = provider.add_torrent(magnet)
@@ -751,14 +768,264 @@ def reinsert_entry(entry_name: str, info_hash: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Replace entry (scrape + submit + delete broken + reset DB)
+# Pack-aware targeting
+#
+# cli_mount health reports one torrent entry for a whole season/series pack,
+# with broken_files naming the files that actually failed. Matching the torrent
+# name returns every episode. Acting on db_items[0] and deleting the torrent
+# resets the wrong episode and breaks every sibling symlink.
 # ---------------------------------------------------------------------------
 
-def replace_entry(entry_name: str, info_hash: str, version_override: str = None) -> dict:
+_LIVE_STATES = ('Collected', 'Checking', 'Upgrading', 'Adding')
+_EP_RE = re.compile(r'[Ss](\d{1,2})[Ee](\d{1,3})')
+
+
+def _as_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _episode_from_text(text):
+    if not text:
+        return None
+    match = _EP_RE.search(str(text))
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _magnet_allows(magnet, info_hash) -> bool:
+    """True when this row can still belong to info_hash.
+
+    An empty magnet is not evidence against the row. A magnet that names a
+    different hash means the episode was already collected from somewhere else.
     """
-    Replace a broken torrent entry by calling CLI's existing rescrape_item endpoint.
-    This handles: delete from Plex, delete from cli_mount, reset to Wanted, re-scrape.
-    Falls back to manual delete+reset if no DB item found.
+    if not info_hash:
+        return True
+    magnet = (magnet or '').strip()
+    if not magnet:
+        return True
+    return info_hash.lower() in magnet.lower()
+
+
+def select_broken_db_items(db_items, broken_files, info_hash='', fetch_by_id=None):
+    """Narrow a torrent's DB rows to the files cli_mount flagged.
+
+    Returns (items, status) where status is 'ok', 'partial', or 'unresolved'.
+    'unresolved' means several rows matched the torrent and the broken file
+    could not be identified — callers must not guess and must not delete it.
+    'partial' means some flagged files matched and some did not; repair the
+    matches, but keep the torrent.
+    """
+    db_items = [i for i in (db_items or []) if isinstance(i, dict)]
+    broken_files = [b for b in (broken_files or []) if isinstance(b, dict)]
+    by_id = {}
+    for item in db_items:
+        item_id = _as_int(item.get('id'))
+        if item_id is not None:
+            by_id[item_id] = item
+
+    if not broken_files:
+        if len(db_items) <= 1:
+            return db_items, 'ok'
+        return [], 'unresolved'
+
+    targets = []
+    seen = set()
+    missed = False
+
+    def _add(item):
+        item_id = _as_int(item.get('id'))
+        key = item_id if item_id is not None else id(item)
+        if key in seen:
+            return
+        seen.add(key)
+        targets.append(item)
+
+    for broken in broken_files:
+        item = None
+        cli_id = _as_int(broken.get('cli_debrid_id'))
+        if cli_id is not None:
+            item = by_id.get(cli_id)
+            if item is None and fetch_by_id:
+                fetched = fetch_by_id(cli_id)
+                if isinstance(fetched, dict):
+                    item = fetched
+            if item is not None and not _magnet_allows(item.get('filled_by_magnet'), info_hash):
+                item = None
+        if item is None:
+            file_name = broken.get('file_name') or broken.get('filename') or broken.get('name') or ''
+            episode_key = _episode_from_text(file_name)
+            matches = []
+            if episode_key:
+                matches = [
+                    row for row in db_items
+                    if _as_int(row.get('season_number')) == episode_key[0]
+                    and _as_int(row.get('episode_number')) == episode_key[1]
+                    and _magnet_allows(row.get('filled_by_magnet'), info_hash)
+                ]
+            if len(matches) == 1:
+                item = matches[0]
+            elif len(matches) > 1:
+                missed = True
+            else:
+                base = str(file_name).replace('\\', '/').rsplit('/', 1)[-1].lower()
+                file_matches = []
+                if base:
+                    for row in db_items:
+                        if not _magnet_allows(row.get('filled_by_magnet'), info_hash):
+                            continue
+                        blob = ' '.join(filter(None, [
+                            row.get('filled_by_file'),
+                            row.get('location_on_disk'),
+                            row.get('original_path_for_symlink'),
+                        ])).lower()
+                        if base in blob:
+                            file_matches.append(row)
+                if len(file_matches) == 1:
+                    item = file_matches[0]
+                elif len(file_matches) > 1:
+                    missed = True
+        if item is None:
+            missed = True
+            continue
+        _add(item)
+
+    if not targets:
+        return [], 'unresolved'
+    if missed:
+        return targets, 'partial'
+    return targets, 'ok'
+
+
+def count_torrent_siblings(conn, info_hash: str, entry_name: str, exclude_ids) -> int:
+    """Live items, other than exclude_ids, that still need this torrent."""
+    info_hash = (info_hash or '').strip()
+    entry_name = entry_name or ''
+    exclude = []
+    for item_id in exclude_ids or []:
+        parsed = _as_int(item_id)
+        if parsed is not None:
+            exclude.append(parsed)
+    if not info_hash and not entry_name:
+        return 0
+    params = list(exclude)
+    excl_sql = ''
+    if exclude:
+        excl_sql = f"AND id NOT IN ({','.join('?' * len(exclude))})"
+    params.extend([info_hash, info_hash, entry_name, entry_name])
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*) FROM media_items
+        WHERE state IN ('Collected','Checking','Upgrading','Adding')
+        {excl_sql}
+        AND COALESCE(filled_by_torrent_id, '') NOT LIKE 'nzb:%'
+        AND (
+            (? != '' AND INSTR(LOWER(COALESCE(filled_by_magnet, '')), LOWER(?)) > 0)
+            OR (
+                ? != '' AND debrid_folder_name = ?
+                AND TRIM(COALESCE(filled_by_magnet, '')) = ''
+            )
+        )
+        """,
+        params,
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def _torrent_sibling_count(info_hash: str, entry_name: str, exclude_ids) -> int:
+    try:
+        from database.core import get_db_connection
+        conn = get_db_connection()
+        try:
+            return count_torrent_siblings(conn, info_hash, entry_name, exclude_ids)
+        finally:
+            conn.close()
+    except Exception as e:
+        # Fail closed. A lookup error must not be treated as "no siblings".
+        logger.warning(
+            f'[DebridRepair] sibling lookup failed for {info_hash!r}: {e} — keeping torrent'
+        )
+        return 1
+
+
+def _fetch_media_item(item_id):
+    try:
+        from database.core import get_db_connection
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                'SELECT * FROM media_items WHERE id = ?', (int(item_id),)
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug(f'[DebridRepair] media item lookup failed for {item_id}: {e}')
+        return None
+
+
+def _unlink_item_symlink(item: dict) -> None:
+    """Remove only this item's symlink. Leave the shared torrent folder alone."""
+    path = item.get('location_on_disk') or ''
+    if not path:
+        return
+    try:
+        import os
+        if os.path.islink(path):
+            os.unlink(path)
+            logger.info(f'[DebridRepair] Removed symlink {path}')
+    except Exception as e:
+        logger.warning(f'[DebridRepair] Failed to remove symlink {path}: {e}')
+
+
+def _delete_torrent_if_unshared(info_hash: str, entry_name: str, exclude_ids, force_keep: bool = False) -> bool:
+    """Delete the cli_mount torrent only when no other live item still uses it."""
+    if force_keep:
+        logger.info(
+            f'[DebridRepair] Keeping torrent {info_hash!r} ({entry_name!r}) — '
+            f'not every broken file was identified'
+        )
+        return False
+    siblings = _torrent_sibling_count(info_hash, entry_name, exclude_ids)
+    if siblings:
+        logger.info(
+            f'[DebridRepair] Keeping torrent {info_hash!r} ({entry_name!r}) — '
+            f'{siblings} sibling(s) still rely on it'
+        )
+        return False
+    return _delete_from_climount(info_hash, entry_name)
+
+
+def _reset_item_to_wanted(item_id) -> bool:
+    try:
+        from routes.debug_routes import move_item_to_wanted
+        move_item_to_wanted(item_id, None)
+        return True
+    except Exception as reset_err:
+        logger.warning(f'[DebridRepair] move_item_to_wanted failed for {item_id}: {reset_err}')
+        try:
+            from database.database_writing import update_media_item_state
+            update_media_item_state(item_id, 'Wanted')
+            return True
+        except Exception as db_err:
+            logger.warning(f'[DebridRepair] DB reset failed for item {item_id}: {db_err}')
+            return False
+
+
+# ---------------------------------------------------------------------------
+# Replace entry (reset the broken file only; keep a shared torrent)
+# ---------------------------------------------------------------------------
+
+def replace_entry(entry_name: str, info_hash: str, version_override: str = None, broken_files=None) -> dict:
+    """
+    Replace the broken file(s) inside a torrent.
+
+    Delete that item from Plex, unlink its symlink, and reset it to Wanted so
+    it is scraped again. Delete the cli_mount torrent only when no sibling
+    episode still depends on it.
     """
     try:
         from database.nzb_repair_activity import log_repair_activity
@@ -773,94 +1040,148 @@ def replace_entry(entry_name: str, info_hash: str, version_override: str = None)
                 triggered_by='debrid_repair',
             )
             return {'outcome': 'ambiguous', 'message': 'Multiple versions ambiguously match — refusing to guess which to repair'}
-        db_items = [i for i in db_items if i.get('state') in ('Collected', 'Checking', 'Upgrading', 'Adding')]
+        if not isinstance(db_items, list):
+            db_items = []
 
-        if not db_items:
-            # No DB item — just delete from cli_mount
-            _delete_from_climount(info_hash, entry_name)
+        targets, status = select_broken_db_items(
+            db_items, broken_files or [], info_hash, fetch_by_id=_fetch_media_item,
+        )
+        if status == 'unresolved':
+            logger.warning(
+                f'[DebridRepair] replace_entry {entry_name!r}: {len(db_items)} DB row(s) share this torrent '
+                f'and the broken file was not identified — refusing to guess or delete the torrent'
+            )
+            log_repair_activity(
+                broken_nzb_id=f'debrid:{info_hash}',
+                broken_nzb_title=entry_name,
+                outcome='ambiguous',
+                triggered_by='debrid_repair',
+            )
+            return {
+                'outcome': 'ambiguous',
+                'message': 'Pack has multiple episodes and the broken file was not identified — torrent left in place',
+            }
+
+        live = [i for i in targets if i.get('state') in _LIVE_STATES]
+        keep_torrent = status == 'partial'
+
+        if not live:
+            deleted = _delete_torrent_if_unshared(info_hash, entry_name, set(), force_keep=keep_torrent)
+            if deleted:
+                _delete_from_plex_by_entry_name(entry_name)
             log_repair_activity(
                 broken_nzb_id=f'debrid:{info_hash}',
                 broken_nzb_title=entry_name,
                 outcome='not_found',
                 triggered_by='debrid_repair',
             )
-            return {'outcome': 'not_found', 'message': f'No DB item found for {entry_name!r}'}
-
-        db_item = db_items[0]
-        item_id = db_item.get('id')
+            message = f'No DB item found for {entry_name!r}'
+            if not deleted:
+                message += ' — torrent kept because other items still use it'
+            return {'outcome': 'not_found', 'message': message, 'torrent_deleted': deleted}
 
         from usenet.repair_engine import _junk_nzb_source_reason
-        _junk_reason = _junk_nzb_source_reason(db_item, db_item.get('location_on_disk', '') or '')
-        if _junk_reason:
+
+        repairable = []
+        junk_reason = None
+        for item in live:
+            reason = _junk_nzb_source_reason(item, item.get('location_on_disk', '') or '')
+            if reason:
+                junk_reason = reason
+                logger.info(
+                    f'[DebridRepair] replace_entry {entry_name!r}: junk source ({reason}); '
+                    f'skipping item {item.get("id")}'
+                )
+                continue
+            if _is_orphan_entry(item, info_hash):
+                logger.info(
+                    f'[DebridRepair] replace_entry {entry_name!r}: item {item.get("id")} '
+                    f'already collected via {item.get("filled_by_torrent_id")!r}; leaving it'
+                )
+                continue
+            repairable.append(item)
+
+        if not repairable:
+            deleted = _delete_torrent_if_unshared(
+                info_hash, entry_name, {i.get('id') for i in live}, force_keep=keep_torrent,
+            )
+            if junk_reason and not any(_is_orphan_entry(i, info_hash) for i in live):
+                sample = live[0]
+                log_repair_activity(
+                    item_id=sample.get('id'),
+                    title=sample.get('title'),
+                    media_type=sample.get('type'),
+                    season_number=sample.get('season_number'),
+                    episode_number=sample.get('episode_number'),
+                    broken_nzb_id=f'debrid:{info_hash}',
+                    broken_nzb_title=entry_name,
+                    replacement_title=junk_reason,
+                    outcome='skipped_junk_source',
+                    triggered_by='debrid_repair',
+                )
+                return {'outcome': 'skipped_junk_source', 'message': junk_reason, 'torrent_deleted': False}
+            if deleted:
+                _delete_from_plex_by_entry_name(entry_name)
+                sample = live[0]
+                log_repair_activity(
+                    item_id=sample.get('id'),
+                    title=sample.get('title'),
+                    media_type=sample.get('type'),
+                    season_number=sample.get('season_number'),
+                    episode_number=sample.get('episode_number'),
+                    broken_nzb_id=f'debrid:{info_hash}',
+                    broken_nzb_title=entry_name,
+                    outcome='plex_deleted',
+                    triggered_by='debrid_repair',
+                )
+                return {'outcome': 'plex_deleted', 'message': 'Orphan entry removed from cli_mount', 'torrent_deleted': True}
             logger.info(
-                f'[DebridRepair] replace_entry {entry_name!r}: junk source ({_junk_reason}); '
-                f'skipping repair for item {item_id} (no state change)'
+                f'[DebridRepair] replace_entry {entry_name!r}: broken item already replaced; '
+                f'torrent kept for siblings'
             )
+            return {
+                'outcome': 'kept_shared',
+                'message': 'Broken item already replaced; torrent kept because other episodes still use it',
+                'torrent_deleted': False,
+            }
+
+        moved = []
+        for item in repairable:
+            item_id = item.get('id')
+            _delete_from_plex(item)
+            _unlink_item_symlink(item)
+            if _reset_item_to_wanted(item_id):
+                moved.append(item_id)
+                logger.info(
+                    f'[DebridRepair] replace_entry {entry_name!r}: item {item_id} '
+                    f'(S{item.get("season_number")}E{item.get("episode_number")}) moved to Wanted'
+                )
             log_repair_activity(
                 item_id=item_id,
-                title=db_item.get('title'),
-                media_type=db_item.get('type'),
-                season_number=db_item.get('season_number'),
-                episode_number=db_item.get('episode_number'),
+                title=item.get('title'),
+                media_type=item.get('type'),
+                season_number=item.get('season_number'),
+                episode_number=item.get('episode_number'),
                 broken_nzb_id=f'debrid:{info_hash}',
                 broken_nzb_title=entry_name,
-                replacement_title=_junk_reason,
-                outcome='skipped_junk_source',
+                outcome='replaced' if item_id in moved else 'no_replacement',
                 triggered_by='debrid_repair',
             )
-            return {'outcome': 'skipped_junk_source', 'message': _junk_reason}
 
-        # Orphan check — DB item already collected via a different provider
-        if _is_orphan_entry(db_item, info_hash):
-            _delete_from_climount(info_hash, entry_name)
-            _delete_from_plex_by_entry_name(entry_name)
-            logger.info(f'[DebridRepair] replace_entry {entry_name!r}: orphan detected, deleted from cli_mount and Plex')
-            log_repair_activity(
-                item_id=item_id,
-                title=db_item.get('title'),
-                media_type=db_item.get('type'),
-                season_number=db_item.get('season_number'),
-                episode_number=db_item.get('episode_number'),
-                broken_nzb_id=f'debrid:{info_hash}',
-                broken_nzb_title=entry_name,
-                outcome='plex_deleted',
-                triggered_by='debrid_repair',
+        deleted = False
+        if moved:
+            # Only the rows that actually left the torrent are excluded. A row
+            # whose reset failed is still Collected and must keep the torrent.
+            deleted = _delete_torrent_if_unshared(
+                info_hash, entry_name, set(moved), force_keep=keep_torrent,
             )
-            return {'outcome': 'plex_deleted', 'message': 'Orphan entry removed from cli_mount'}
-
-        # Delete from Plex and cli_mount first
-        _delete_from_plex(db_item)
-        _delete_from_climount(info_hash, entry_name)
-
-        # Move to Wanted using the existing move_item_to_wanted function
-        # This resets all filled_by fields and triggers re-scrape
-        try:
-            from routes.debug_routes import move_item_to_wanted
-            move_item_to_wanted(item_id, None)
-            outcome = 'replaced'
-            logger.info(f'[DebridRepair] replace_entry {entry_name!r}: item {item_id} moved to Wanted')
-        except Exception as reset_err:
-            # Fallback: direct DB update
-            try:
-                from database.database_writing import update_media_item_state
-                update_media_item_state(item_id, 'Wanted')
-                outcome = 'replaced'
-            except Exception as db_err:
-                logger.warning(f'[DebridRepair] DB reset failed for {entry_name!r}: {db_err}')
-                outcome = 'no_replacement'
-
-        log_repair_activity(
-            item_id=item_id,
-            title=db_item.get('title'),
-            media_type=db_item.get('type'),
-            season_number=db_item.get('season_number'),
-            episode_number=db_item.get('episode_number'),
-            broken_nzb_id=f'debrid:{info_hash}',
-            broken_nzb_title=entry_name,
-            outcome=outcome,
-            triggered_by='debrid_repair',
-        )
-        return {'outcome': outcome, 'success': outcome == 'replaced'}
+        outcome = 'replaced' if moved else 'no_replacement'
+        return {
+            'outcome': outcome,
+            'success': outcome == 'replaced',
+            'item_ids': moved,
+            'torrent_deleted': deleted,
+        }
     except Exception as e:
         logger.error(f'[DebridRepair] replace_entry error for {entry_name!r}: {e}', exc_info=True)
         return {'outcome': 'error', 'message': str(e)}
@@ -887,6 +1208,7 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
             'replaced': 0,
             'not_found': 0,
             'skipped_junk_source': 0,
+            'ambiguous': 0,
             'errors': 0,
         }
 
@@ -918,7 +1240,11 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
                     else:
                         summary['errors'] += 1
                 else:
-                    result = replace_entry(entry_name, info_hash, version_override=version_override)
+                    result = replace_entry(
+                        entry_name, info_hash,
+                        version_override=version_override,
+                        broken_files=broken_files,
+                    )
                     outcome = result.get('outcome', 'error')
                     if outcome == 'replaced':
                         summary['replaced'] += 1
@@ -926,6 +1252,8 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
                         summary['skipped_junk_source'] += 1
                     elif outcome == 'not_found':
                         summary['not_found'] += 1
+                    elif outcome in ('ambiguous', 'kept_shared'):
+                        summary['ambiguous'] += 1
                     else:
                         summary['errors'] += 1
             except Exception as e:
@@ -958,23 +1286,41 @@ def delete_all_broken() -> dict:
 
         for entry in broken:
             entry_name = entry.get('entry_name') or entry.get('name') or ''
-            info_hash = entry.get('info_hash') or entry.get('hash') or ''
-
-            if _delete_from_climount(info_hash, entry_name):
-                deleted_climount += 1
+            broken_files = entry.get('broken_files') or []
+            info_hash = (entry.get('info_hash') or entry.get('hash') or
+                         (broken_files[0].get('info_hash') if broken_files else '') or '')
 
             db_items = _find_db_items_by_entry_name(entry_name, info_hash) if entry_name else []
             if db_items is AMBIGUOUS:
-                logger.warning(f'[DebridRepair] delete_all_broken: ambiguous multi-version match for {entry_name!r} — skipping DB reset for this entry')
+                logger.warning(f'[DebridRepair] delete_all_broken: ambiguous multi-version match for {entry_name!r} — skipping this entry')
+                continue
+            if not isinstance(db_items, list):
                 db_items = []
-            for item in db_items:
+            targets, status = select_broken_db_items(
+                db_items, broken_files, info_hash, fetch_by_id=_fetch_media_item,
+            )
+            if status == 'unresolved':
+                logger.warning(
+                    f'[DebridRepair] delete_all_broken: {entry_name!r} is a shared torrent and the '
+                    f'broken file was not identified — skipping so siblings are not reset'
+                )
+                continue
+            live = [i for i in targets if i.get('state') in _LIVE_STATES and not _is_orphan_entry(i, info_hash)]
+            reset_ids = []
+            for item in live:
+                _unlink_item_symlink(item)
                 if _delete_from_plex(item):
                     deleted_plex += 1
                 try:
                     update_media_item_state(item['id'], 'Wanted')
                     reset_db += 1
+                    reset_ids.append(item['id'])
                 except Exception as dbe:
                     logger.warning(f'[DebridRepair] DB reset failed for item {item.get("id")}: {dbe}')
+            if _delete_torrent_if_unshared(
+                info_hash, entry_name, set(reset_ids), force_keep=(status == 'partial'),
+            ):
+                deleted_climount += 1
 
         return {'deleted_climount': deleted_climount, 'deleted_plex': deleted_plex, 'reset_db': reset_db}
     except Exception as e:

@@ -215,6 +215,24 @@ _MARKER_RE = re.compile(
 )
 
 
+# Literal pre-check for _MARKER_RE. The regex (case-insensitive alternation with
+# \b groups) can't use a fast literal scan, and it ran on every log line: ~50 us
+# a line, minutes for a log-share upload of 1.5M lines. Every _MARKER_RE match
+# contains one of these lowercase substrings, so a line without any can't match
+# and skips the regex; a line with one still goes through _MARKER_RE unchanged.
+_ALL_KEY_WORDS = set(_SENSITIVE_FRAGMENTS) | set(_SENSITIVE_EXACT)
+_MARKER_SUBSTRINGS = tuple(sorted(
+    w for w in _ALL_KEY_WORDS if not any(o != w and o in w for o in _ALL_KEY_WORDS)
+))
+
+
+def _has_marker(text: str) -> bool:
+    lowered = text.casefold()  # casefold, not lower: matches IGNORECASE folding (e.g. "ſ" -> "s")
+    if not any(sub in lowered for sub in _MARKER_SUBSTRINGS):
+        return False
+    return _MARKER_RE.search(text) is not None
+
+
 def _replace_kv(match) -> str:
     return match.group('prefix') + PLACEHOLDER
 
@@ -238,7 +256,7 @@ def scrub(text: str) -> str:
         if pattern is not None:
             text = pattern.sub(PLACEHOLDER, text)
 
-        if _MARKER_RE.search(text):
+        if _has_marker(text):
             text = _QUOTED_KV_RE.sub(_replace_quoted_kv, text)
             text = _BARE_KV_RE.sub(_replace_kv, text)
             text = _BEARER_RE.sub(_replace_kv, text)
