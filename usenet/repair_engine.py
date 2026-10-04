@@ -550,6 +550,33 @@ def _media_duration_seconds(file_path: str, timeout: int = 10):
     return None
 
 
+def _media_lacks_video(file_path: str, timeout: int = 10) -> bool:
+    """True only when ffprobe parsed the header and found streams but no video.
+
+    A file whose container parses yet holds no video stream (e.g. RAR volumes
+    stitched in the wrong order, which Plex shows with no audio/video) still
+    yields packets, so the packet read below would pass it. Any ffprobe error,
+    timeout or missing binary returns False: that is not proof of anything.
+    """
+    import json as _json_lv
+    import subprocess as _sp
+    import shutil as _sh
+    if not _sh.which('ffprobe'):
+        return False
+    try:
+        r = _sp.run(
+            ['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_type',
+             '-of', 'json', file_path],
+            timeout=timeout, capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            return False
+        types = [st.get('codec_type') for st in (_json_lv.loads(r.stdout or '{}').get('streams') or [])]
+        return bool(types) and 'video' not in types
+    except Exception:
+        return False
+
+
 def _probe_readable_once(file_path: str, offset_seconds=None, timeout: int = 10):
     """One readability probe of a file on the (possibly lazy/FUSE/debrid) mount.
 
@@ -598,6 +625,59 @@ def _probe_readable_once(file_path: str, offset_seconds=None, timeout: int = 10)
         return None
 
 
+def probe_file_playable(location_on_disk: str, timeout: int = 10, attempts: int = 3):
+    """Tri-state playability probe: True readable, False confidently dead, None inconclusive.
+
+    New-addition gates use this directly so an inconclusive probe (every
+    attempt timed out, e.g. a mount read hanging on missing articles) defers
+    the item instead of accepting it. See _verify_file_readable for the
+    conservative bool used by repair of existing files.
+    """
+    if not location_on_disk:
+        return False
+    import os as _os
+    import time as _t
+    # Translate /debrid/ path to the actual mount path inside the container.
+    file_path = location_on_disk
+    if location_on_disk.startswith('/debrid/'):
+        mount = get_setting('Usenet Provider', 'mount_path', '/debrid').rstrip('/')
+        file_path = mount + location_on_disk[len('/debrid'):]
+
+    if not _os.path.exists(file_path):
+        logger.debug(f'[NZBRepair] File not on mount: {file_path!r}')
+        return False
+
+    if _media_lacks_video(file_path, timeout=timeout):
+        logger.warning(f'[NZBRepair] no video stream in {file_path!r} — treating as unplayable')
+        return False
+
+    # Pick a read offset deeper into the file (once per call — the retries below
+    # then probe the SAME spot so they only ride out transient blips, not move the
+    # goalposts). A RANDOM fraction in [0.2, 0.8] of the duration: well past the
+    # cached header, away from the very end (padding/short-reads), and varied
+    # across repair runs so partial rot elsewhere in the file is eventually
+    # sampled instead of always testing one fixed point. Falls back to a
+    # start/first-block read when the duration is unknown (or ffprobe is absent).
+    import random as _rnd
+    duration = _media_duration_seconds(file_path, timeout=timeout)
+    offset = duration * _rnd.uniform(0.2, 0.8) if (duration and duration > 1) else None
+
+    results = []
+    for attempt in range(max(1, attempts)):
+        res = _probe_readable_once(file_path, offset_seconds=offset, timeout=timeout)
+        if res is True:
+            return True
+        results.append(res)
+        if attempt < attempts - 1:
+            _t.sleep(1.0)
+
+    if any(r is None for r in results):
+        return None
+
+    logger.debug(f'[NZBRepair] read test failed across {len(results)} attempts for {file_path!r}')
+    return False
+
+
 def _verify_file_readable(location_on_disk: str, timeout: int = 10, attempts: int = 3) -> bool:
     """Return True if a file is confirmed-readable, False only if confidently dead.
 
@@ -620,51 +700,16 @@ def _verify_file_readable(location_on_disk: str, timeout: int = 10, attempts: in
     eventually sampled. Falls back to a start/first-block read when the duration
     is unknown or ffprobe is absent.
     """
-    if not location_on_disk:
-        return False
-    import os as _os
-    import time as _t
-    # Translate /debrid/ path to the actual mount path inside the container.
-    file_path = location_on_disk
-    if location_on_disk.startswith('/debrid/'):
-        mount = get_setting('Usenet Provider', 'mount_path', '/debrid').rstrip('/')
-        file_path = mount + location_on_disk[len('/debrid'):]
-
-    if not _os.path.exists(file_path):
-        logger.debug(f'[NZBRepair] File not on mount: {file_path!r}')
-        return False
-
-    # Pick a read offset deeper into the file (once per call — the 3 retries below
-    # then probe the SAME spot so they only ride out transient blips, not move the
-    # goalposts). A RANDOM fraction in [0.2, 0.8] of the duration: well past the
-    # cached header, away from the very end (padding/short-reads), and varied
-    # across repair runs so partial rot elsewhere in the file is eventually
-    # sampled instead of always testing one fixed point. Falls back to a
-    # start/first-block read when the duration is unknown (or ffprobe is absent).
-    import random as _rnd
-    duration = _media_duration_seconds(file_path, timeout=timeout)
-    offset = duration * _rnd.uniform(0.2, 0.8) if (duration and duration > 1) else None
-
-    results = []
-    for attempt in range(max(1, attempts)):
-        res = _probe_readable_once(file_path, offset_seconds=offset, timeout=timeout)
-        if res is True:
-            return True
-        results.append(res)
-        if attempt < attempts - 1:
-            _t.sleep(1.0)
-
-    if any(r is None for r in results):
+    result = probe_file_playable(location_on_disk, timeout=timeout, attempts=attempts)
+    if result is None:
         # Never got a clean answer — treat as readable so a busy/unready mount
         # can't trigger a false-positive repair/deletion.
         logger.info(
             f'[NZBRepair] readability inconclusive (mount busy/unready?) for '
-            f'{file_path!r} — treating as readable to avoid a false-positive repair'
+            f'{location_on_disk!r} — treating as readable to avoid a false-positive repair'
         )
         return True
-
-    logger.debug(f'[NZBRepair] read test failed across {len(results)} attempts for {file_path!r}')
-    return False
+    return result
 
 
 # ---------------------------------------------------------------------------
