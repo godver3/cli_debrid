@@ -5449,11 +5449,14 @@ function _debridRenderActivity(rows, container, pagination) {
             : r.outcome === 'replaced' ? '#00d4aa'
             : r.outcome === 'reinserted' ? '#a78bfa'
             : r.outcome === 'not_found'  ? '#ffaa44'
+            : r.outcome === 'ambiguous' || r.outcome === 'kept_shared' ? '#ffaa44'
             : '#ff4444';
         const outcomeLabel = isJunk ? 'Junk'
             : r.outcome === 'replaced'   ? 'Replaced'
             : r.outcome === 'reinserted' ? 'Re-inserted'
             : r.outcome === 'not_found'  ? 'Not Found'
+            : r.outcome === 'ambiguous'  ? 'Skipped'
+            : r.outcome === 'kept_shared' ? 'Pack kept'
             : (r.outcome || '—');
         const outcomeTooltip = _buildOutcomeTooltip(r);
         const epSub = r.season_number
@@ -5586,6 +5589,8 @@ async function _debridScanPoll() {
     } catch(e) { _debridSetScanningState(false); }
 }
 
+let _debridBrokenItems = [];
+
 async function debridViewBroken() {
     const list = document.getElementById('dr-broken-list');
     if (list.style.display !== 'none') { list.style.display = 'none'; return; }
@@ -5594,26 +5599,26 @@ async function debridViewBroken() {
         const d = await r.json();
         const tbody = document.getElementById('dr-broken-tbody');
         if (!d.success || !d.items || d.items.length === 0) {
+            _debridBrokenItems = [];
             tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#666;padding:20px 12px">No broken torrent items</td></tr>';
         } else {
+            _debridBrokenItems = d.items;
             tbody.innerHTML = d.items.map((item, idx) => {
                 const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
                 const name        = _esc(item.entry_name || item.name || item.title || '—');
                 const rawName     = (item.entry_name || item.name || item.title || '').replace(/'/g, "\\'");
-                const rawHash     = (item.info_hash || item.hash || (item.broken_files && item.broken_files[0] && item.broken_files[0].info_hash) || '').replace(/'/g, "\\'");
-                const broken      = item.broken_count || item.broken_files || '?';
+                const broken      = item.broken_count || (item.broken_files ? item.broken_files.length : '?');
                 const reason      = item.failure_reason || '—';
                 const isGhost     = item.is_ghost === true;
                 const isMissing   = reason === 'missing_provider_link';
                 const actionLabel = isMissing ? 'Re-insert' : 'Replace';
-                const actionVal   = isMissing ? 'reinsert' : 'replace';
                 const rowOpacity  = isGhost ? 'opacity:0.5' : '';
                 const reasonCell  = isGhost
                     ? `<span style="color:#f59e0b">ghost</span>`
                     : `<span style="color:#CE93D8">${_esc(reason)}</span>`;
                 const actionCell  = isGhost
                     ? `<button onclick="debridDeleteGhostSingle('${rawName}', this)" class="un-btn" style="padding:4px 12px;font-size:12px;color:#f59e0b;border-color:#f59e0b"><i class="fa-solid fa-ghost"></i> Delete</button>`
-                    : `<button onclick="debridFixSingle('${rawName}', '${rawHash}', '${actionVal}', this)" class="un-btn" style="padding:4px 12px;font-size:12px">${actionLabel}</button>`;
+                    : `<button onclick="debridFixSingle(${idx}, this)" class="un-btn" style="padding:4px 12px;font-size:12px">${actionLabel}</button>`;
                 return `<tr style="border-bottom:1px solid var(--border-color,#2a2a2a);background:${bg};${rowOpacity}">
                     <td style="padding:8px 12px;font-weight:500">${name}</td>
                     <td style="padding:8px 12px;font-size:12px">${reasonCell}</td>
@@ -5626,7 +5631,12 @@ async function debridViewBroken() {
     } catch(e) { console.error('[Debrid] view broken error', e); }
 }
 
-async function debridFixSingle(entryName, infoHash, action, btn) {
+async function debridFixSingle(idx, btn) {
+    const item = _debridBrokenItems[idx];
+    if (!item) return;
+    const entryName = item.entry_name || item.name || item.title || '';
+    const infoHash = item.info_hash || item.hash || (item.broken_files && item.broken_files[0] && item.broken_files[0].info_hash) || '';
+    const action = item.failure_reason === 'missing_provider_link' ? 'reinsert' : 'replace';
     const orig = btn.textContent;
     btn.disabled = true;
     btn.textContent = '…';
@@ -5634,13 +5644,24 @@ async function debridFixSingle(entryName, infoHash, action, btn) {
         const r = await fetch('/debrid_manager/api/debrid/repair/fix_single', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({entry_name: entryName, info_hash: infoHash, action: action})
+            body: JSON.stringify({
+                entry_name: entryName,
+                info_hash: infoHash,
+                action: action,
+                broken_files: item.broken_files || [],
+            })
         });
         const d = await r.json();
-        if (d.success) {
+        const outcome = d.result && d.result.outcome;
+        if (d.success && (outcome === 'replaced' || outcome === 'reinserted')) {
             btn.textContent = '✓';
             btn.style.color = '#4caf50';
             setTimeout(() => debridViewBroken(), 2000);
+        } else if (d.success) {
+            btn.textContent = '✗';
+            btn.style.color = '#ffaa44';
+            alert((d.result && d.result.message) || outcome || 'Repair left the torrent in place');
+            setTimeout(() => { btn.textContent = orig; btn.disabled = false; btn.style.color = ''; }, 3000);
         } else {
             btn.textContent = '✗';
             btn.style.color = '#ff4444';
@@ -5694,7 +5715,7 @@ async function debridDeleteAllBroken() {
     const orig = btn.innerHTML;
     const brokenCount = parseInt(document.getElementById('dr-stat-broken')?.textContent || '0') || 0;
     const label = brokenCount > 0 ? `${brokenCount} broken` : 'all broken';
-    if (!confirm(`Delete ${label} debrid torrents?\n\nThis will:\n• Delete from cli_mount\n• Delete from Plex\n• Reset items to Wanted (will re-scrape)\n\nContinue?`)) return;
+    if (!confirm(`Repair ${label} debrid files?\n\nThis will:\n• Reset only the broken file to Wanted (it will re-scrape)\n• Remove that file from Plex\n• Delete the torrent only when no other episode still uses it\n\nContinue?`)) return;
     btn.disabled = true;
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Deleting…';
     try {
@@ -5789,7 +5810,7 @@ function _debridPollRepairProgress() {
             } else if (d.status === 'done' && d.summary) {
                 if (barEl)    barEl.style.width = '100%';
                 if (statusEl) statusEl.textContent =
-                    `Done — ${d.summary.reinserted || 0} re-inserted, ${d.summary.replaced || 0} replaced, ${d.summary.errors || 0} errors`;
+                    `Done — ${d.summary.reinserted || 0} re-inserted, ${d.summary.replaced || 0} replaced, ${d.summary.ambiguous || 0} skipped, ${d.summary.errors || 0} errors`;
                 if (fixBtn) {
                     fixBtn.disabled = false;
                     fixBtn.innerHTML = '<i class="fa-solid fa-check" style="color:#4ade80"></i> Done';

@@ -5961,13 +5961,26 @@ def debrid_fix_single():
         info_hash = body.get('info_hash', '').strip()
         action = body.get('action', 'replace')
         version_override = body.get('version_override') or None
+        broken_files = body.get('broken_files')
+        if not isinstance(broken_files, list):
+            broken_files = None
+        if not broken_files and (body.get('file_name') or body.get('cli_debrid_id')):
+            broken_files = [{
+                'file_name': body.get('file_name') or '',
+                'cli_debrid_id': body.get('cli_debrid_id'),
+                'info_hash': info_hash,
+            }]
         if not entry_name:
             return jsonify(success=False, error='entry_name required'), 400
         from usenet.debrid_repair_engine import reinsert_entry, replace_entry
         if action == 'reinsert':
             result = reinsert_entry(entry_name, info_hash)
         else:
-            result = replace_entry(entry_name, info_hash, version_override=version_override)
+            result = replace_entry(
+                entry_name, info_hash,
+                version_override=version_override,
+                broken_files=broken_files,
+            )
         return jsonify(success=True, result=result)
     except Exception as e:
         logging.error(f'[DebridRepair] fix_single error: {e}')
