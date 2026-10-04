@@ -1998,9 +1998,12 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             # would incorrectly report the file as readable and skip a real repair.
             # Guard: verify the broken entry name is referenced in location_on_disk.
             _failure_reason = entry.get('failure_reason', '')
-            # Skip readability check when cli_mount explicitly reports usenet_segment_missing
-            # — that is a definitive diagnosis, not a transient server hiccup.
-            _skip_readability = bool(playback_target) or _failure_reason == 'usenet_segment_missing'
+            # Skip readability check when cli_mount explicitly reports a missing
+            # segment or a lost/corrupt segment map — definitive diagnoses, not a
+            # transient server hiccup.
+            _skip_readability = bool(playback_target) or _failure_reason in (
+                'usenet_segment_missing', 'usenet_manifest_missing', 'usenet_manifest_invalid',
+            )
             if not _skip_readability:
                 # Also skip when location_on_disk points to a different version.
                 # Compare the parent folder against entry_name — mismatch means
