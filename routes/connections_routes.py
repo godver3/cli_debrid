@@ -1235,9 +1235,13 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 # Try to connect with the token
                 account = MyPlexAccount(token=token) # Instantiate account
 
+                # Managed Plex Home users have no plex.tv username; their profile
+                # title stands in (same fallback as the watchlist fetch).
+                token_owner = account.username or account.title
+
                 # For Other Plex Watchlist, verify username matches
-                if source_type == 'Other Plex Watchlist' and account.username != username:
-                    base_response['error'] = f'Token does not match username. Expected: {username}, Got: {account.username}'
+                if source_type == 'Other Plex Watchlist' and token_owner != username:
+                    base_response['error'] = f'Token does not match username. Expected: {username}, Got: {token_owner}'
                     base_response['connected'] = False
                     # No need to return here, let it fall through to sample fetch attempt if desired,
                     # but mark as disconnected
@@ -1245,7 +1249,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                     # If we get here, connection was successful
                     base_response['connected'] = True
                     base_response['details'].update({
-                        'username': account.username,
+                        'username': token_owner,
                         'email': account.email
                     })
 
