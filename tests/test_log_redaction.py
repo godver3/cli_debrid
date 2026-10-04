@@ -155,3 +155,18 @@ class TestRedactingFormatter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMarkerPrefilter(unittest.TestCase):
+    """_has_marker's literal pre-check must never reject a line _MARKER_RE matches."""
+
+    def test_agrees_with_marker_regex(self):
+        from utilities import log_redaction as lr
+        samples = [
+            'plain line with nothing in it',
+            'API_KEY=abcdef123', 'Authorization: Bearer abcdefgh', '{"Username": "friend"}',
+            'monkey business', 'keyboard', 'the pass was ok', 'PaſſWORD=hunter22',
+            'refresh_TOKEN: x', 'webHook url', 'Client_Secret', 'passkey=1',
+        ]
+        for line in samples:
+            self.assertEqual(lr._has_marker(line), lr._MARKER_RE.search(line) is not None, line)
