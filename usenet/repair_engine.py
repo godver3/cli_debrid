@@ -628,10 +628,8 @@ def _probe_readable_once(file_path: str, offset_seconds=None, timeout: int = 10)
 def probe_file_playable(location_on_disk: str, timeout: int = 10, attempts: int = 3):
     """Tri-state playability probe: True readable, False confidently dead, None inconclusive.
 
-    New-addition gates use this directly so an inconclusive probe (every
-    attempt timed out, e.g. a mount read hanging on missing articles) defers
-    the item instead of accepting it. See _verify_file_readable for the
-    conservative bool used by repair of existing files.
+    Callers that must not act on an unverified file (repair, new-addition
+    gates) use _verify_file_readable, which treats inconclusive as readable.
     """
     if not location_on_disk:
         return False

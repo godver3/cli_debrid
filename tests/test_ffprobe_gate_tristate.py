@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""New-addition ffprobe gate: inconclusive probes defer, no-video files fail.
+"""ffprobe playability probe: inconclusive stays readable, no-video files fail.
 
-Reported 2026-09-16 (poison_dagger47, "probe all NZBs on addition" enabled):
-broken files sat in the library for hours because a probe whose reads all
-timed out (cli_mount hanging on missing articles) was treated as readable,
-and files Plex showed with no audio/video passed because a packet was read.
+Files Plex showed with no audio/video (RAR volumes stitched out of order)
+passed because a packet was read. An inconclusive probe (every read timed
+out) is still treated as readable by the gates, so a busy mount never
+rejects or holds back a good file.
 """
 
 import os

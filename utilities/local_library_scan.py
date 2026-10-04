@@ -1772,16 +1772,8 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     pass
             if get_setting(_probe_section, _probe_key, False) and not _skip_probe_for_replacement:
                 logging.info(f"[ffprobe] Running playability check ({_probe_key}) on '{source_file}'")
-                from usenet.repair_engine import probe_file_playable
-                _playable = probe_file_playable(source_file)
-                if _playable is None:
-                    # Every read timed out (e.g. the mount hanging on missing articles).
-                    # Don't accept an unverified file: stay in Checking and re-probe next
-                    # pass. A file that never answers hits the Checking timeout, which
-                    # blacklists the release and moves the item back to Wanted.
-                    logging.warning(f"[ffprobe] Playability check inconclusive for '{source_file}' — keeping item in Checking to re-check")
-                    return False
-                if _playable:
+                from usenet.repair_engine import _verify_file_readable
+                if _verify_file_readable(source_file):
                     logging.info(f"[ffprobe] Playability check passed for '{source_file}'")
                 else:
                     logging.warning(f"[ffprobe] Playability check FAILED for '{source_file}' — rejecting and reverting to Wanted")

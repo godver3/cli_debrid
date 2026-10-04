@@ -6380,8 +6380,8 @@ class ProgramRunner:
             it, avoiding a "recently added" flicker.
             Returns True if the item should proceed, False if the caller should
             skip it this pass: either rejected (already reverted to Wanted) or
-            deferred (still downloading / probe inconclusive; stays in Checking
-            and is re-checked next pass).
+            deferred (NZB job still downloading; stays in Checking and is
+            re-checked next pass). An inconclusive probe passes.
             """
             # In Symlinked/Local mode, check_local_file_for_item is already the
             # authoritative ffprobe gate for this item - it runs synchronously
@@ -6453,15 +6453,8 @@ class ProgramRunner:
                     logging.debug(f"[ffprobe] Could not check job download progress for {torrent_id}: {e}")
 
             logging.info(f"[ffprobe] Running playability check ({probe_key}) on '{actual_file_path}'")
-            from usenet.repair_engine import probe_file_playable
-            playable = probe_file_playable(actual_file_path)
-            if playable is None:
-                # Every read timed out (e.g. the mount hanging on missing articles).
-                # Re-check next pass; a file that never answers hits the Checking
-                # timeout, which blacklists the release and moves it back to Wanted.
-                logging.warning(f"[ffprobe] Playability check inconclusive for '{actual_file_path}' — keeping item {item.get('id')} in Checking to re-check")
-                return False
-            if playable:
+            from usenet.repair_engine import _verify_file_readable
+            if _verify_file_readable(actual_file_path):
                 logging.info(f"[ffprobe] Playability check passed for '{actual_file_path}'")
                 return True
 
