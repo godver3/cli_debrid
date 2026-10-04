@@ -1158,17 +1158,29 @@ class TorrentProcessor:
 
         # Fetch NZB XML once for segment blacklist checks on reuse and submit paths.
         _nzb_xml = None
-        try:
-            from routes.api_tracker import api as _nzb_api_early
-            _nr_early = _nzb_api_early.get(nzb_url, timeout=15, allow_redirects=True)
-            if _nr_early.status_code == 200 and '<nzb' in _nr_early.text.lower():
-                _nzb_xml = _nr_early.text
-                from database.not_wanted_magnets import is_nzb_segment_not_wanted
-                if is_nzb_segment_not_wanted(_nzb_xml):
-                    logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
-                    return None
-        except Exception as _nzb_early_err:
-            logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_early_err}')
+        # Set when this indexer refused downloads for a limit, now or moments ago.
+        # Reusing an in-flight job (below) doesn't need the indexer, so only a
+        # fresh submission is blocked.
+        from usenet.nzb_fetch_cooldown import cooldown_reason, is_indexer_limit_response, record_indexer_limit
+        _indexer_refusal = cooldown_reason(nzb_url)
+        if not _indexer_refusal:
+            try:
+                from routes.api_tracker import api as _nzb_api_early
+                _nr_early = _nzb_api_early.get(nzb_url, timeout=15, allow_redirects=True)
+                if _nr_early.status_code == 200 and '<nzb' in _nr_early.text.lower():
+                    _nzb_xml = _nr_early.text
+                    from database.not_wanted_magnets import is_nzb_segment_not_wanted
+                    if is_nzb_segment_not_wanted(_nzb_xml):
+                        logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
+                        return None
+                elif is_indexer_limit_response(_nr_early.status_code, _nr_early.text[:2000]):
+                    # cli_mount's URL fetch and the direct-upload fallback would hit
+                    # the same limit, so don't send either.
+                    record_indexer_limit(nzb_url)
+                    _indexer_refusal = (f'indexer refused the download (HTTP {_nr_early.status_code}, limit); '
+                                        f'skipping its NZBs for a while')
+            except Exception as _nzb_early_err:
+                logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_early_err}')
 
         def _blocked_nzb_job_reuse(existing_hash: str) -> bool:
             """True when an existing cli_mount job must not be reused for this result."""
@@ -1308,6 +1320,10 @@ class TorrentProcessor:
                 _tags_exclusive = bool(_cs_cfg.get('tags_exclusive', False))
         except Exception:
             pass
+
+        if _indexer_refusal:
+            logging.warning(f'[{item_identifier}] Not submitting NZB {title!r} — {_indexer_refusal}; trying the next result')
+            return None
 
         logging.info(f'[{item_identifier}] Submitting NZB to cli_mount: {job_title}')
         if _nzb_xml:
