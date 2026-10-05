@@ -71,7 +71,9 @@ class RealDebridProvider(DebridProvider):
         """Check provider connectivity and return a tuple of (ok, error_detail)."""
         try:
             # Simple auth-protected endpoint to validate API key and connectivity
-            _ = make_request('GET', '/user', self.api_key)
+            user_info = make_request('GET', '/user', self.api_key)
+            if not isinstance(user_info, dict) or 'id' not in user_info or 'type' not in user_info:
+                raise ProviderUnavailableError('Account endpoint returned an invalid response')
             return True, None
         except RealDebridAuthError as e:
             return False, {
@@ -129,10 +131,11 @@ class RealDebridProvider(DebridProvider):
                 return {'days_remaining': None, 'expiration': None, 'premium': False}
 
             user_info = make_request('GET', '/user', self.api_key)
-            if not isinstance(user_info, dict):
-                logging.error(f"Unexpected response type from /user: {type(user_info)}")
-                user_info = {}
-            premium = bool(user_info.get('premium', False))
+            if not isinstance(user_info, dict) or 'id' not in user_info or 'type' not in user_info:
+                return {'days_remaining': None, 'expiration': None, 'premium': None,
+                        'error': 'Account endpoint returned an invalid response'}
+            value = user_info.get('premium')
+            premium = bool(value) if isinstance(value, (int, float, bool)) else None
             expiration = user_info.get('expiration') or user_info.get('premium_until')
 
             days_remaining = None
@@ -161,6 +164,10 @@ class RealDebridProvider(DebridProvider):
                             except Exception:
                                 exp_dt = None
                     if exp_dt is not None:
+                        # Convert an explicit offset to UTC before comparing.
+                        if exp_dt.tzinfo is not None:
+                            from datetime import timezone
+                            exp_dt = exp_dt.astimezone(timezone.utc).replace(tzinfo=None)
                         now = datetime.utcnow()
                         delta = exp_dt - now
                         days_remaining = max(0, delta.days)
