@@ -688,6 +688,12 @@ class CliMountClient:
             )
             if r.status_code == 200:
                 logging.info(f'[cli_mount] Renamed entry {info_hash!r} -> {new_name!r}')
+                # An item symlinked just before the rename landed now points at the old path.
+                try:
+                    from utilities.debrid_rename_reconcile import repoint_symlinks_after_rename_async
+                    repoint_symlinks_after_rename_async(info_hash, new_name)
+                except Exception as repoint_err:
+                    logging.debug(f'[cli_mount] Could not start symlink re-point for {info_hash!r}: {repoint_err}')
                 return True, False
             logging.warning(f'[cli_mount] rename_nzb failed for {info_hash!r}: HTTP {r.status_code} {r.text[:100]}')
             return False, r.status_code == 404

@@ -296,7 +296,7 @@ SETTINGS_SCHEMA = {
         },
         "enable_debrid_naming": {
             "type": "boolean",
-            "description": "Name debrid torrent folders in cli_mount's DFS mount using a structured format: {title} ({year}) - {imdb-id} - {version} - (original) for movies and {title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original) for episodes. Requires cli_mount as the usenet provider (URL configured). Only renames the virtual folder in cli_mount — the actual file on the debrid service is unchanged.",
+            "description": "Name debrid torrent folders in cli_mount's DFS mount using a structured format: {title} ({year}) - {imdb-id} - {version} - (original) for movies and {title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original) for episodes. Requires cli_mount as the usenet provider (URL configured). Renames the entry in cli_mount only (single-file torrents get the file renamed too; the folder shows the new name only when cli_mount's Folder Naming is 'File name') — the actual file on the debrid service is unchanged.",
             "default": False
         },
         "include_version_in_debrid_naming": {
