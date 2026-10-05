@@ -187,7 +187,9 @@ def check_user_plex_pin():
                 )
                 if user_info_response.status_code == 200:
                     user_data = user_info_response.json()
-                    username = user_data.get('username', 'Unknown Plex User')
+                    # Managed Plex Home users come back with an empty username; key them by
+                    # profile title so the token isn't stored under '' and dropped on assignment.
+                    username = user_data.get('username') or user_data.get('title') or 'Unknown Plex User'
 
                     # Immediately store the token upon successful verification
                     tokens = load_user_tokens()

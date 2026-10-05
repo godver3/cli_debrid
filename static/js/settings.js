@@ -1306,6 +1306,7 @@ function updateContentSourceCheckPeriods() {
         'Other Plex Watchlist': 900,
         'My Plex RSS Watchlist': 900,
         'My Friends Plex RSS Watchlist': 900,
+        'Plex Friends Watchlist': 900,
         'Adaptive List': 900
     };
 

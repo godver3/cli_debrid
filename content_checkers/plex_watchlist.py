@@ -31,6 +31,7 @@ import time
 import aiohttp
 import asyncio
 import xml.etree.ElementTree as ET
+from types import SimpleNamespace
 
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -74,11 +75,12 @@ async def fetch_item_details_and_extract_ids(session, item_data, plex_token_str)
                 media_element = None
                 # Plex usually wraps the single item in MediaContainer
                 if root.tag == 'MediaContainer':
+                    # Element truthiness is its child count, so compare against None explicitly.
                     media_element = root.find('./Video')  # For movies
-                    if not media_element:
+                    if media_element is None:
                         media_element = root.find('./Directory')  # For shows
                 
-                if not media_element: # Should not happen if XML is as expected
+                if media_element is None: # Should not happen if XML is as expected
                     logging.warning(f"AsyncFetch: Could not find Video or Directory tag in XML for {title} from {url}")
                     return {'imdb_id': None, 'tmdb_id': None, 'media_type': None, 'original_plex_item': original_plex_item, 'error': 'XMLParseError'}
 
@@ -98,7 +100,8 @@ async def fetch_item_details_and_extract_ids(session, item_data, plex_token_str)
                 return {'imdb_id': imdb_id_found, 'tmdb_id': tmdb_id_found, 'media_type': fetched_media_type, 'original_plex_item': original_plex_item}
 
             else:
-                logging.error(f"AsyncFetch: Error fetching details for {title} from {url}. Status: {response.status}, Response: {await response.text()[:200]}")
+                body_preview = (await response.text())[:200]
+                logging.error(f"AsyncFetch: Error fetching details for {title} from {url}. Status: {response.status}, Response: {body_preview}")
                 return {'imdb_id': None, 'tmdb_id': None, 'media_type': None, 'original_plex_item': original_plex_item, 'error': f'HTTP{response.status}'}
     except asyncio.TimeoutError:
         logging.error(f"AsyncFetch: Timeout fetching details for {title} from {url}")
@@ -169,6 +172,43 @@ def get_show_status(imdb_id: str) -> str:
         logging.debug(f"Getting show status for {imdb_id} took {time.time() - start_time:.4f} seconds before error.")
     return ''
 
+def _resolve_imdb_id(title: str, imdb_id, tmdb_id, media_type, log_prefix: str = ''):
+    """Return the IMDb ID for a watchlist item, converting from TMDB when Plex has no IMDb Guid.
+
+    Plex's discover metadata often lacks an IMDb Guid for new, upcoming and anime titles.
+    """
+    if imdb_id or not tmdb_id or not media_type:
+        return imdb_id
+    conversion_type = 'show' if media_type in ('show', 'tv') else 'movie'
+    logging.info(f"{log_prefix}No IMDB ID for '{title}', attempting TMDB ({tmdb_id}, type: {conversion_type}) to IMDB conversion.")
+    conversion_start_time = time.time()
+    try:
+        converted_imdb_id, source = DirectAPI().tmdb_to_imdb(str(tmdb_id), media_type=conversion_type)
+        if converted_imdb_id:
+            logging.info(f"{log_prefix}Converted TMDB ID {tmdb_id} to IMDB ID {converted_imdb_id} for '{title}' via {source}. Took {time.time() - conversion_start_time:.4f}s.")
+            return converted_imdb_id
+        logging.warning(f"{log_prefix}TMDB to IMDB conversion failed for '{title}' (TMDB: {tmdb_id}). Took {time.time() - conversion_start_time:.4f}s.")
+    except Exception as e_conv:
+        logging.error(f"{log_prefix}Error during TMDB to IMDB conversion for '{title}': {e_conv}. Took {time.time() - conversion_start_time:.4f}s.")
+    return None
+
+def _log_skipped_titles(skipped_titles: List[str], log_prefix: str = '') -> None:
+    """Surface skipped watchlist items at INFO so users can see why something never got added."""
+    if not skipped_titles:
+        return
+    shown = ', '.join(f"'{t}'" for t in skipped_titles[:25])
+    more = f" (+{len(skipped_titles) - 25} more)" if len(skipped_titles) > 25 else ''
+    logging.info(f"{log_prefix}Skipped {len(skipped_titles)} watchlist item(s) with no usable IMDB ID or a fetch error: {shown}{more}")
+
+def plex_account_owner_names(account) -> List[str]:
+    """Names that identify a Plex account: username, email, and the profile title (managed Home users have no username)."""
+    return [n for n in (getattr(account, 'username', None), getattr(account, 'email', None), getattr(account, 'title', None)) if n]
+
+def plex_token_matches_username(account, username: str) -> bool:
+    """Case-insensitive check that a token belongs to the configured username, email or Home profile name."""
+    expected = (username or '').strip().casefold()
+    return bool(expected) and any(n.strip().casefold() == expected for n in plex_account_owner_names(account))
+
 def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     overall_start_time = time.time()
     all_wanted_items = []
@@ -231,6 +271,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
         skipped_count = 0
         removed_count = 0
         retained_series_count = 0
+        skipped_titles = []
         
         processing_loop_start_time = time.time()
         for item_details in fetched_data_list:
@@ -240,6 +281,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             if item_details.get('error'):
                 logging.warning(f"Skipping item '{title}' due to error during async fetch: {item_details['error']}")
                 skipped_count +=1
+                skipped_titles.append(title)
                 continue
 
             imdb_id = item_details['imdb_id']
@@ -248,22 +290,11 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             media_type = item_details['media_type'] if item_details['media_type'] else original_plex_item.type
 
 
-            if not imdb_id and tmdb_id and media_type:
-                logging.info(f"No IMDB ID for '{title}', attempting TMDB ({tmdb_id}, type: {media_type}) to IMDB conversion.")
-                conversion_start_time = time.time()
-                try:
-                    api = DirectAPI()
-                    converted_imdb_id, source = api.tmdb_to_imdb(tmdb_id, media_type=media_type)
-                    if converted_imdb_id:
-                        imdb_id = converted_imdb_id
-                        logging.info(f"Successfully converted TMDB ID {tmdb_id} to IMDB ID {imdb_id} for '{title}' via {source}. Took {time.time() - conversion_start_time:.4f}s.")
-                    else:
-                        logging.warning(f"TMDB to IMDB conversion failed for '{title}' (TMDB: {tmdb_id}). Took {time.time() - conversion_start_time:.4f}s.")
-                except Exception as e_conv:
-                    logging.error(f"Error during TMDB to IMDB conversion for '{title}': {e_conv}. Took {time.time() - conversion_start_time:.4f}s.")
-            
+            imdb_id = _resolve_imdb_id(title, imdb_id, tmdb_id, media_type)
+
             if not imdb_id:
                 skipped_count += 1
+                skipped_titles.append(title)
                 logging.debug(f"Skipping item '{title}' - no IMDB ID found after async fetch and potential conversion.")
                 continue
             
@@ -323,6 +354,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
         logging.info(f"Items skipped (no IMDB ID or fetch error): {skipped_count}")
         logging.info(f"Items removed from watchlist: {removed_count}")
         logging.info(f"Retained TV series processed: {retained_series_count}")
+        _log_skipped_titles(skipped_titles)
         logging.info(f"New items added to wanted list: {len(processed_items_for_current_run)}")
         
         all_wanted_items.append((processed_items_for_current_run, versions))
@@ -355,11 +387,16 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
             logging.error(f"Could not connect to Plex.tv cloud service with provided token for user {username}")
             return [([], versions)]
         
-        # Managed Plex Home users have no plex.tv username (account.username is empty),
-        # so fall back to the profile title when verifying the token's owner.
+        # Verify the token belongs to the configured user. Accept the plex.tv username,
+        # email, or (for managed Plex Home users, who have no username) the profile title,
+        # case-insensitively, so a capitalisation difference doesn't silently stop the source.
         token_owner = account.username or account.title
-        if token_owner != username: # Verify token belongs to the expected user
-            logging.error(f"Plex.tv cloud token for user {username} seems to belong to {token_owner} (expected {username}). Aborting.")
+        if not plex_token_matches_username(account, username):
+            logging.error(
+                f"Other Plex Watchlist: the token configured for '{username}' belongs to '{token_owner}'. "
+                f"Set the source's username to '{token_owner}', or collect {username}'s own token via "
+                f"Settings > Collect User Tokens. Skipping this source until fixed."
+            )
             return [([], versions)]
                     
         logging.info(f"Fetching initial watchlist for user {username} from Plex.tv cloud service")
@@ -397,6 +434,7 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
 
         items_processed_count = 0
         items_skipped_no_imdb = 0
+        skipped_titles = []
 
         for item_details in fetched_data_list:
             original_plex_item = item_details['original_plex_item']
@@ -405,30 +443,31 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
             if item_details.get('error'):
                 logging.warning(f"User {username}: Skipping item '{title}' due to error during async fetch: {item_details['error']}")
                 items_skipped_no_imdb +=1 # Count as skipped if we can't get ID
+                skipped_titles.append(title)
                 continue
 
-            imdb_id = item_details['imdb_id']
-            # This function does not typically do TMDB to IMDB conversion.
-            # If imdb_id is None, we skip.
-            
+            media_type = item_details['media_type'] if item_details['media_type'] else original_plex_item.type
+            imdb_id = _resolve_imdb_id(title, item_details['imdb_id'], item_details['tmdb_id'], media_type, log_prefix=f"User {username}: ")
+
             if not imdb_id:
                 items_skipped_no_imdb += 1
-                logging.debug(f"User {username}: Skipping item '{title}' - no IMDB ID found after async fetch.")
+                skipped_titles.append(title)
+                logging.debug(f"User {username}: Skipping item '{title}' - no IMDB ID found after async fetch and potential conversion.")
                 continue
-            
-            media_type = item_details['media_type'] if item_details['media_type'] else original_plex_item.type
+
             if media_type == 'show': media_type = 'tv' # Normalize 'show' to 'tv'
             
             wanted_item = {
                 'imdb_id': imdb_id,
                 'media_type': media_type,
-                'content_source_detail': account.username # Username of the other Plex account
+                'content_source_detail': token_owner # Managed Home users have no username, so this falls back to the profile title
             }
             processed_items_for_current_run.append(wanted_item)
             items_processed_count += 1
             logging.debug(f"User {username}: Added '{title}' (IMDB: {imdb_id}, Type: {media_type}) to processed items.")
             
         logging.info(f"User {username}: Retrieved {items_processed_count} wanted items from watchlist. Skipped {items_skipped_no_imdb} (no IMDB or fetch error).")
+        _log_skipped_titles(skipped_titles, log_prefix=f"User {username}: ")
         
     except Exception as e:
         logging.error(f"Error fetching {username}'s Plex watchlist: {str(e)}", exc_info=True)
@@ -437,6 +476,120 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
     all_wanted_items.append((processed_items_for_current_run, versions))
     logging.info(f"get_wanted_from_other_plex_watchlist for user {username} completed in {time.time() - overall_start_time:.4f} seconds.")
     return all_wanted_items
+
+PLEX_COMMUNITY_API_URL = 'https://community.plex.tv/api'
+PLEX_DISCOVER_METADATA_URL = 'https://discover.provider.plex.tv/library/metadata'
+
+_PLEX_FRIENDS_QUERY = 'query { allFriendsV2 { user { id username displayName } } }'
+_PLEX_FRIEND_WATCHLIST_QUERY = """query GetWatchlistHub($uuid: ID = "", $first: PaginationInt!, $after: String) {
+  user(id: $uuid) { watchlist(first: $first, after: $after) {
+    nodes { id title type } pageInfo { hasNextPage endCursor } } } }"""
+
+def _plex_community_query(token: str, query: str, variables: Dict[str, Any] = None) -> Dict[str, Any]:
+    """POST a GraphQL query to Plex's community API (what Plex Web uses for friends' watchlists)."""
+    import requests as _req
+    response = _req.post(
+        PLEX_COMMUNITY_API_URL,
+        headers={'X-Plex-Token': token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
+        json={'query': query, 'variables': variables or {}},
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get('errors'):
+        raise RuntimeError(f"Plex community API error: {payload['errors']}")
+    return payload.get('data') or {}
+
+def get_plex_friends(token: str) -> List[Dict[str, str]]:
+    """Return the token owner's Plex friends as [{'id', 'username', 'displayName'}]."""
+    data = _plex_community_query(token, _PLEX_FRIENDS_QUERY)
+    return [f['user'] for f in (data.get('allFriendsV2') or []) if f.get('user', {}).get('id')]
+
+def _get_friend_watchlist_nodes(token: str, friend_id: str) -> List[Dict[str, Any]]:
+    nodes, after = [], None
+    while True:
+        data = _plex_community_query(token, _PLEX_FRIEND_WATCHLIST_QUERY, {'uuid': friend_id, 'first': 100, 'after': after})
+        watchlist = ((data.get('user') or {}).get('watchlist')) or {}
+        nodes.extend(watchlist.get('nodes') or [])
+        page_info = watchlist.get('pageInfo') or {}
+        after = page_info.get('endCursor')
+        if not page_info.get('hasNextPage') or not after:
+            return nodes
+
+def get_wanted_from_plex_friends_watchlist(source_config: Dict[str, Any], versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    """Read friends' watchlists through the Plex community API using the main Plex token.
+
+    Unlike the friends RSS feed (capped at 25 items, up to ~48h stale), this returns full,
+    current watchlists, and unlike Other Plex Watchlist it needs no token from each friend.
+    Friends must share their watchlist with friends in their Plex privacy settings.
+    """
+    overall_start_time = time.time()
+    account, token = get_plex_client()
+    if not token:
+        logging.error("Plex Friends Watchlist: no main Plex token configured.")
+        return [([], versions)]
+
+    wanted_names = {n.strip().casefold() for n in str(source_config.get('friends', '') or '').split(',') if n.strip()}
+    try:
+        friends = get_plex_friends(token)
+    except Exception as e:
+        logging.error(f"Plex Friends Watchlist: failed to load friends list: {e}")
+        return [([], versions)]
+
+    if wanted_names:
+        selected = [f for f in friends if {(f.get('username') or '').casefold(), (f.get('displayName') or '').casefold()} & wanted_names]
+        matched = {n for f in selected for n in ((f.get('username') or '').casefold(), (f.get('displayName') or '').casefold())}
+        for missing in sorted(wanted_names - matched):
+            logging.warning(f"Plex Friends Watchlist: '{missing}' is not in this Plex account's friends list.")
+    else:
+        selected = friends
+    logging.info(f"Plex Friends Watchlist: reading watchlists for {len(selected)} of {len(friends)} friend(s).")
+
+    items_to_process_async = []
+    seen_ids = set()
+    for friend in selected:
+        friend_name = friend.get('username') or friend.get('displayName') or friend['id']
+        try:
+            nodes = _get_friend_watchlist_nodes(token, friend['id'])
+        except Exception as e:
+            logging.error(f"Plex Friends Watchlist: failed to read {friend_name}'s watchlist: {e}")
+            continue
+        logging.info(f"Plex Friends Watchlist: {friend_name} has {len(nodes)} watchlist item(s).")
+        for node in nodes:
+            if not node.get('id') or node['id'] in seen_ids:
+                continue
+            seen_ids.add(node['id'])
+            items_to_process_async.append({
+                'title': node.get('title') or node['id'],
+                'url': f"{PLEX_DISCOVER_METADATA_URL}/{node['id']}",
+                'original_plex_item': SimpleNamespace(title=node.get('title') or node['id'], type=(node.get('type') or '').lower(), friend=friend_name),
+            })
+
+    if not items_to_process_async:
+        return [([], versions)]
+
+    fetched_data_list = asyncio.run(run_async_fetches(items_to_process_async, token))
+    processed_items, skipped_titles = [], []
+    for item_details in fetched_data_list:
+        node = item_details['original_plex_item']
+        if item_details.get('error'):
+            logging.warning(f"Plex Friends Watchlist: skipping '{node.title}' due to error during fetch: {item_details['error']}")
+            skipped_titles.append(node.title)
+            continue
+        media_type = item_details['media_type'] or node.type
+        imdb_id = _resolve_imdb_id(node.title, item_details['imdb_id'], item_details['tmdb_id'], media_type, log_prefix="Plex Friends Watchlist: ")
+        if not imdb_id:
+            skipped_titles.append(node.title)
+            continue
+        processed_items.append({
+            'imdb_id': imdb_id,
+            'media_type': 'tv' if media_type == 'show' else media_type,
+            'content_source_detail': node.friend,
+        })
+
+    _log_skipped_titles(skipped_titles, log_prefix="Plex Friends Watchlist: ")
+    logging.info(f"Plex Friends Watchlist: {len(processed_items)} wanted item(s) from {len(selected)} friend(s) in {time.time() - overall_start_time:.2f}s.")
+    return [(processed_items, versions)]
 
 def _check_plex_token(token, label):
     """Check a single Plex token by hitting /api/v2/user directly.

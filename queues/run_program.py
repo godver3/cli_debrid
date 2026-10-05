@@ -1519,6 +1519,7 @@ class ProgramRunner:
                 'Other Plex Watchlist': 900,
                 'My Plex RSS Watchlist': 900,
                 'My Friends Plex RSS Watchlist': 900,
+                'Plex Friends Watchlist': 900,
                 'My Friends Trakt Watchlist': 900,
                 'Special Trakt Lists': 900,
                 'Scrob Lists': 900,
@@ -2083,6 +2084,9 @@ class ProgramRunner:
             elif source_type == 'My Friends Plex RSS Watchlist':
                 plex_rss_url = data.get('url', '')
                 wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config)
+            elif source_type == 'Plex Friends Watchlist':
+                from content_checkers.plex_watchlist import get_wanted_from_plex_friends_watchlist
+                wanted_content = get_wanted_from_plex_friends_watchlist(data, versions_from_config)
             elif source_type == 'Other Plex Watchlist':
                 # Import the function here
                 from content_checkers.plex_watchlist import get_wanted_from_other_plex_watchlist

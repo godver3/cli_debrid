@@ -29,14 +29,19 @@ class TestWatchlistTokenOwner(unittest.TestCase):
         with mock.patch.object(pw, 'MyPlexAccount', return_value=account), \
              mock.patch.object(pw.logging, 'error') as err:
             pw.get_wanted_from_other_plex_watchlist(username, 'tok', {'Default': True})
-        return [c.args[0] for c in err.call_args_list if 'seems to belong to' in c.args[0]]
+        return [c.args[0] for c in err.call_args_list if 'belongs to' in c.args[0]]
 
     def test_managed_user_matches_profile_title(self):
         self.assertEqual(self._fetch(_account('', 'Kids'), 'Kids'), [])
 
     def test_regular_account_still_compares_username(self):
         self.assertEqual(self._fetch(_account('realuser', 'Real User'), 'realuser'), [])
-        self.assertTrue(self._fetch(_account('realuser', 'Kids'), 'Kids'))
+        self.assertTrue(self._fetch(_account('realuser', 'Real User'), 'Kids'))
+
+    def test_match_is_case_insensitive_and_accepts_email(self):
+        acct = SimpleNamespace(username='RealUser', title='Real User', email='Real@Example.com', watchlist=lambda: [])
+        self.assertEqual(self._fetch(acct, 'realuser'), [])
+        self.assertEqual(self._fetch(acct, 'real@example.com'), [])
 
 
 class TestConnectionsPageTokenOwner(unittest.TestCase):

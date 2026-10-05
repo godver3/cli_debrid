@@ -217,13 +217,12 @@ class PlexRssRetentionTests(unittest.TestCase):
     def run_fetcher(self, state, media_type, keep_series, removal=True,
                     show_status='returning series'):
         module = self.module
-        entry = types.SimpleNamespace(
-            title='Test title',
-            guid='imdb://tt1234567',
-            category='show' if media_type == 'tv' else 'movie',
-        )
-        module.feedparser.parse = lambda url: types.SimpleNamespace(
-            bozo=False, entries=[entry])
+        entry = {
+            'title': 'Test title',
+            'guids': ['imdb://tt1234567'],
+            'category': 'show' if media_type == 'tv' else 'movie',
+        }
+        module.fetch_plex_rss_entries = lambda url: [entry]
         module.get_setting = lambda section, key, default=False: {
             'plex_watchlist_removal': removal,
             'plex_watchlist_keep_series': keep_series,

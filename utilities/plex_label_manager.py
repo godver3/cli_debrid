@@ -1842,6 +1842,12 @@ def _fetch_live_imdb_ids_for_source(src_id: str, src_cfg: dict, all_settings: di
                 for items, _ in results:
                     _ingest(items)
 
+        elif src_type == 'Plex Friends Watchlist':
+            from content_checkers.plex_watchlist import get_wanted_from_plex_friends_watchlist
+            results = get_wanted_from_plex_friends_watchlist(src_cfg, versions)
+            for items, _ in results:
+                _ingest(items)
+
         else:
             # Unsupported type (Overseerr/Agregarr are requester-mode, handled elsewhere)
             return None

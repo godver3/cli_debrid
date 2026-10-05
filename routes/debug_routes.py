@@ -949,7 +949,7 @@ def update_trakt_settings(content_sources):
 def get_and_add_wanted_content(source_id):
     from content_checkers.overseerr import get_wanted_from_overseerr
     from content_checkers.collected import get_wanted_from_collected
-    from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
+    from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist, get_wanted_from_plex_friends_watchlist
     from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
     from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist, get_wanted_from_special_trakt_lists
     from content_checkers.scrob import get_wanted_from_scrob_lists, get_wanted_from_scrob_collection, get_wanted_from_scrob_special
@@ -1030,6 +1030,8 @@ def get_and_add_wanted_content(source_id):
                 logging.error(f"Missing URL for source: {source_id}")
                 return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Missing URL for {source_id}"}
             wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config)
+        elif source_type == 'Plex Friends Watchlist':
+            wanted_content = get_wanted_from_plex_friends_watchlist(source_data, versions_from_config)
         elif source_type == 'Other Plex Watchlist':
             wanted_content = get_wanted_from_other_plex_watchlist(
                 username=source_data.get('username', ''),
