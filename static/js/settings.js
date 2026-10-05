@@ -1107,7 +1107,11 @@ export function updateSettings() {
         if (usenetFolder) settingsData['Usenet Provider']['download_folder'] = usenetFolder.value;
         if (usenetDataPath) settingsData['Usenet Provider']['data_path'] = usenetDataPath.value;
         if (usenetNzbNaming) settingsData['Usenet Provider']['enable_nzb_naming'] = usenetNzbNaming.checked;
-        if (usenetRetentionDays) settingsData['Usenet Provider']['retention_days'] = parseInt(usenetRetentionDays.value) || 5000;
+        if (usenetRetentionDays) {
+            // 0 is a real choice (retention filter off); only an empty/invalid field falls back to the default.
+            const retentionDays = parseInt(usenetRetentionDays.value, 10);
+            settingsData['Usenet Provider']['retention_days'] = Number.isNaN(retentionDays) ? 5000 : Math.max(0, retentionDays);
+        }
         if (usenetDisableSeasonPacks) settingsData['Usenet Provider']['disable_nzb_season_packs'] = usenetDisableSeasonPacks.checked;
     }
 
