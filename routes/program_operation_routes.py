@@ -473,90 +473,12 @@ def check_service_connectivity():
             services_reachable = False
             failed_services_details.append({"service": "Plex", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
 
-    # Check provider connectivity — requires at least debrid OR usenet (cli_mount) to be configured
-    debrid_configured = bool(debrid_provider and debrid_api_key)
-    usenet_enabled = get_setting('Usenet Provider', 'enabled', False)
-    usenet_url = get_setting('Usenet Provider', 'url', '')
-
-    if not debrid_configured and not usenet_enabled:
+    # Acquisition backends are alternatives; shared prerequisites above are not.
+    from utilities.acquisition_health import check_acquisition_providers
+    acquisition_ok, provider_failures = check_acquisition_providers(get_setting)
+    if not acquisition_ok:
         services_reachable = False
-        failed_services_details.append({
-            "service": "Provider",
-            "type": "NO_PROVIDER_CONFIGURED",
-            "message": "No provider configured — set up a Debrid provider or a Usenet provider (cli_mount) to continue"
-        })
-    elif debrid_configured:
-        # Check Debrid Provider connectivity
-        try:
-            from debrid import get_debrid_provider
-            provider = get_debrid_provider()
-            if provider and hasattr(provider, 'check_connectivity'):
-                ok, error_detail = provider.check_connectivity()
-                if not ok:
-                    services_reachable = False
-                    failed_services_details.append(error_detail or {"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": "Connectivity check failed"})
-            else:
-                logging.info("Provider does not implement connectivity check; skipping provider connectivity validation.")
-
-            # Verify subscription days remaining > 0
-            try:
-                subscription_info = None
-                if provider and hasattr(provider, 'get_subscription_status'):
-                    subscription_info = provider.get_subscription_status()
-                if subscription_info is not None:
-                    days_remaining = subscription_info.get('days_remaining')
-                    premium = subscription_info.get('premium')
-                    expiration = subscription_info.get('expiration')
-                    logging.info(f"Debrid subscription status: days_remaining={days_remaining}, premium={premium}, expiration={expiration}")
-                    if days_remaining is None or not isinstance(days_remaining, (int, float)) or days_remaining <= 0:
-                        services_reachable = False
-                        failed_services_details.append({
-                            "service": "Debrid Subscription",
-                            "type": "SUBSCRIPTION_EXPIRED",
-                            "message": f"Debrid subscription expired or invalid. days_remaining={days_remaining}, premium={premium}, expiration={expiration}"
-                        })
-                else:
-                    logging.warning("Debrid subscription status unavailable from provider; skipping days remaining check")
-            except Exception as sub_err:
-                logging.error(f"Error checking Debrid subscription status: {sub_err}")
-                services_reachable = False
-                failed_services_details.append({
-                    "service": "Debrid Subscription",
-                    "type": "SUBSCRIPTION_CHECK_ERROR",
-                    "message": str(sub_err)
-                })
-        except Exception as e:
-            logging.error(f"Failed to perform provider connectivity check: {e}")
-            services_reachable = False
-            failed_services_details.append({"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
-
-    if usenet_enabled and usenet_url:
-        # Provider-agnostic connectivity check via usenet-client factory.
-        # Supports cli_mount (default) and NzbDAV via 'Usenet Provider.provider'.
-        try:
-            from usenet import get_usenet_client
-            _client = get_usenet_client()
-            _provider_label = getattr(_client, 'PROVIDER_NAME', 'Usenet Provider')
-            _ok, _err = _client.check_connectivity()
-            if not _ok:
-                services_reachable = False
-                failed_services_details.append({
-                    "service": f"Usenet Provider ({_provider_label})",
-                    "type": "CONNECTION_ERROR",
-                    "status_code": None,
-                    "message": f"Cannot reach {_provider_label} at {usenet_url}: {_err}"
-                })
-            else:
-                logging.info(f"Usenet provider ({_provider_label}) reachable at {usenet_url}")
-        except Exception as _ue:
-            services_reachable = False
-            failed_services_details.append({
-                "service": "Usenet Provider",
-                "type": "CONNECTION_ERROR",
-                "status_code": None,
-                "message": f"Connectivity check error: {_ue}"
-            })
-
+        failed_services_details.extend(provider_failures)
     # Check Trakt authorization — only if the user has actually configured Trakt.
     # Trakt is an optional integration; an unconfigured or unauthorized Trakt
     # account must never block program start or pause the running queues.
@@ -591,7 +513,7 @@ def check_service_connectivity():
     else:
         logging.debug("Trakt is not configured; skipping Trakt authorization check.")
 
-    return services_reachable, failed_services_details
+    return services_reachable and not failed_services_details, failed_services_details
 
 def attempt_trakt_auto_reauth():
     """
