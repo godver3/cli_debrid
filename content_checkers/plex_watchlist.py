@@ -21,12 +21,11 @@ from typing import List, Dict, Any, Tuple
 from utilities.settings import get_setting
 from database.database_reading import get_media_item_presence, get_media_item_presence_overall
 from queues.config_manager import load_config
-from cli_battery.app import trakt_client
 from cli_battery.app.direct_api import DirectAPI
 import os
 import pickle
 from datetime import datetime, timedelta
-from .plex_token_manager import update_token_status, get_token_status
+from .plex_token_manager import update_token_status, get_token_status, load_token_status
 import time
 import aiohttp
 import asyncio
@@ -56,12 +55,13 @@ def save_plex_cache(cache, cache_file):
     except Exception as e:
         logging.error(f"Error saving Plex watchlist cache: {e}")
 
-async def fetch_item_details_and_extract_ids(session, item_data, plex_token_str):
+async def _fetch_item_details_once(session, item_data, plex_token_str):
     """
     Fetches full metadata for a single Plex item and extracts IMDB ID, TMDB ID, and media type.
     item_data is a dict: {'title': str, 'url': str, 'original_plex_item': PlexAPIObject}
     """
-    headers = {'X-Plex-Token': plex_token_str, 'Accept': 'application/xml'}
+    # plexapi's client headers (X-Plex-Client-Identifier/Product), as its own requests send.
+    headers = {**_plex_client_headers(), 'X-Plex-Token': plex_token_str, 'Accept': 'application/xml'}
     url = item_data['url']
     title = item_data['title']
     original_plex_item = item_data['original_plex_item']
@@ -110,6 +110,27 @@ async def fetch_item_details_and_extract_ids(session, item_data, plex_token_str)
         logging.error(f"AsyncFetch: Exception fetching or parsing details for {title} from {url}: {e}")
         return {'imdb_id': None, 'tmdb_id': None, 'media_type': None, 'original_plex_item': original_plex_item, 'error': str(e)}
 
+def _plex_client_headers():
+    try:
+        from plexapi import BASE_HEADERS
+        return {k: v for k, v in BASE_HEADERS.items() if k.startswith('X-Plex-') and k != 'X-Plex-Token'}
+    except Exception:
+        return {}
+
+_RETRYABLE_FETCH_ERRORS = ('Timeout', 'HTTP429', 'HTTP500', 'HTTP502', 'HTTP503', 'HTTP504')
+
+async def fetch_item_details_and_extract_ids(session, item_data, plex_token_str, retry_delay: float = 2.0):
+    """Fetch one item's details, retrying once on a timeout, 429 or 5xx.
+
+    Every detail request starts at once (10 per host), so on large watchlists later items
+    can time out waiting for a connection; without a retry they were skipped until the next run.
+    """
+    result = await _fetch_item_details_once(session, item_data, plex_token_str)
+    if result.get('error') in _RETRYABLE_FETCH_ERRORS:
+        await asyncio.sleep(retry_delay)
+        result = await _fetch_item_details_once(session, item_data, plex_token_str)
+    return result
+
 async def run_async_fetches(watchlist_items_with_urls, plex_token_str):
     """
     Runs all async fetch tasks concurrently.
@@ -124,12 +145,13 @@ async def run_async_fetches(watchlist_items_with_urls, plex_token_str):
         results = await asyncio.gather(*tasks, return_exceptions=False) # Errors handled in fetch_item_details
         return results
 
+def _main_plex_token():
+    """The main Plex token: Plex:token, falling back to the symlink-mode token."""
+    return get_setting('Plex', 'token') or get_setting('File Management', 'plex_token_for_symlink')
+
 def get_plex_client():
     start_time = time.time()
-    # Prefer main Plex token, fallback to symlink token if primary not set
-    plex_token = get_setting('Plex', 'token')
-    if not plex_token:
-        plex_token = get_setting('File Management', 'plex_token_for_symlink')
+    plex_token = _main_plex_token()
     
     if not plex_token:
         logging.error("Plex token not configured. Please add Plex token in settings (Plex:token or File Management:plex_token_for_symlink).")
@@ -148,29 +170,50 @@ def get_plex_client():
         logging.error(f"Plex client connection attempt took {time.time() - start_time:.4f} seconds before failing")
         return None, None
 
+_ENDED_SHOW_STATUSES = {'ended', 'canceled', 'cancelled'}
+
 def get_show_status(imdb_id: str) -> str:
-    """Get the status of a TV show from Trakt."""
-    start_time = time.time()
+    """Return a show's status from the metadata battery ('' when unknown).
+
+    The battery maps TVDB/TMDB status to 'ended', 'canceled', 'returning series', ...
+    (cli_battery/app/tvdb_client._map_status), so no Trakt account is needed.
+    """
     try:
-        search_result = trakt_client.search_by_imdb(imdb_id)
-        if search_result and search_result['type'] == 'show':
-            show = search_result['show']
-            slug = show['ids']['slug']
-            
-            # Get the full show data using the slug
-            url = f"{trakt_client.TRAKT_BASE_URL}/shows/{slug}?extended=full"
-            response = trakt_client._make_request(url)
-            if response and response.status_code == 200:
-                show_data = response.json()
-                status = show_data.get('status', '').lower()
-                logging.debug(f"Getting show status for {imdb_id} took {time.time() - start_time:.4f} seconds. Status: {status}")
-                if status == 'canceled':
-                    return 'ended'
-                return status
+        metadata, _source = DirectAPI.get_show_metadata(imdb_id)
     except Exception as e:
-        logging.error(f"Error getting show status for {imdb_id}: {str(e)}")
-        logging.debug(f"Getting show status for {imdb_id} took {time.time() - start_time:.4f} seconds before error.")
-    return ''
+        logging.warning(f"Could not read show status for {imdb_id} from the metadata battery: {e}")
+        return ''
+    status = str((metadata or {}).get('media_status') or (metadata or {}).get('status') or '').strip().lower()
+    return 'ended' if status in _ENDED_SHOW_STATUSES else status
+
+def should_remove_from_watchlist(imdb_id: str, media_type: str, item_state: str = None) -> Tuple[bool, str]:
+    """Shared rule for taking a collected title off a Plex watchlist.
+
+    Used by fetch-time removal (My Plex), RSS suppression and post-processing removal so
+    they cannot disagree. Returns (remove, reason).
+    - Movies: only when every wanted version is collected ('Collected'), not 'Partial'.
+    - Shows: never with keep_series; otherwise only once the show has ended, so an ongoing
+      show stays on the watchlist and keeps feeding new episodes.
+    """
+    if item_state is None:
+        item_state = get_media_item_presence_overall(imdb_id=imdb_id)
+    if media_type in ('tv', 'show', 'episode'):
+        if item_state not in ('Collected', 'Partial'):
+            return False, f'not collected ({item_state})'
+        if get_setting('Debug', 'plex_watchlist_keep_series', False):
+            return False, 'keep_series is enabled'
+        status = get_show_status(imdb_id)
+        if status != 'ended':
+            return False, f"show not ended (status: {status or 'unknown'})"
+        return True, 'collected and ended'
+    if item_state != 'Collected':
+        return False, f'not fully collected ({item_state})'
+    return True, 'collected'
+
+def _guid_matches_imdb(guid, imdb_id: str) -> bool:
+    """Exact IMDb match: 'imdb://tt1234567' must not match 'imdb://tt12345678'."""
+    guid_str = str(guid.id) if hasattr(guid, 'id') else str(guid)
+    return guid_str.strip() == f'imdb://{imdb_id}'
 
 def _resolve_imdb_id(title: str, imdb_id, tmdb_id, media_type, log_prefix: str = ''):
     """Return the IMDb ID for a watchlist item, converting from TMDB when Plex has no IMDb Guid.
@@ -209,7 +252,8 @@ def plex_token_matches_username(account, username: str) -> bool:
     expected = (username or '').strip().casefold()
     return bool(expected) and any(n.strip().casefold() == expected for n in plex_account_owner_names(account))
 
-def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_plex_watchlist(versions: Dict[str, bool], read_only: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    """Fetch My Plex Watchlist. read_only=True never removes or hides collected titles (used by label sync)."""
     overall_start_time = time.time()
     all_wanted_items = []
     processed_items_for_current_run = [] # Changed variable name
@@ -274,75 +318,70 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
         skipped_titles = []
         
         processing_loop_start_time = time.time()
+        source_detail = account.username or account.title  # managed Home accounts have no username
         for item_details in fetched_data_list:
             original_plex_item = item_details['original_plex_item']
-            title = original_plex_item.title # Use title from original object for consistency in logs
+            title = getattr(original_plex_item, 'title', 'Unknown Title')  # Use title from original object for consistency in logs
+            try:
+                if item_details.get('error'):
+                    logging.warning(f"Skipping item '{title}' due to error during async fetch: {item_details['error']}")
+                    skipped_count += 1
+                    skipped_titles.append(title)
+                    continue
 
-            if item_details.get('error'):
-                logging.warning(f"Skipping item '{title}' due to error during async fetch: {item_details['error']}")
-                skipped_count +=1
-                skipped_titles.append(title)
-                continue
+                tmdb_id = item_details['tmdb_id']
+                # Use media_type from fetched details, fallback to original plex item type
+                media_type = item_details['media_type'] if item_details['media_type'] else original_plex_item.type
+                imdb_id = _resolve_imdb_id(title, item_details['imdb_id'], tmdb_id, media_type)
 
-            imdb_id = item_details['imdb_id']
-            tmdb_id = item_details['tmdb_id']
-            # Use media_type from fetched details, fallback to original plex item type
-            media_type = item_details['media_type'] if item_details['media_type'] else original_plex_item.type
+                if not imdb_id:
+                    skipped_count += 1
+                    skipped_titles.append(title)
+                    logging.debug(f"Skipping item '{title}' - no IMDB ID found after async fetch and potential conversion.")
+                    continue
 
+                # Ensure media_type is 'tv' or 'movie' for consistency downstream
+                if media_type == 'show': media_type = 'tv'
 
-            imdb_id = _resolve_imdb_id(title, imdb_id, tmdb_id, media_type)
+                item_state = get_media_item_presence_overall(imdb_id=imdb_id)
+                logging.debug(f"Item '{title}' (IMDB: {imdb_id}) - Presence: {item_state}")
+                monitor_missing_episodes_only = False
 
-            if not imdb_id:
-                skipped_count += 1
-                skipped_titles.append(title)
-                logging.debug(f"Skipping item '{title}' - no IMDB ID found after async fetch and potential conversion.")
-                continue
-            
-            # Ensure media_type is 'tv' or 'movie' for consistency downstream
-            if media_type == 'show': media_type = 'tv' 
-            
-            item_state = get_media_item_presence_overall(imdb_id=imdb_id)
-            logging.debug(f"Item '{title}' (IMDB: {imdb_id}) - Presence: {item_state}")
-            monitor_missing_episodes_only = False
-
-            if item_state in ("Collected", "Partial") and should_remove:
-                should_remove_item = False
-                if media_type == 'tv':
-                    if keep_series:
-                        logging.debug(f"Retaining and processing collected TV series: '{title}' (IMDB: {imdb_id}) - keep_series is enabled.")
+                # read_only (label sync) lists every title as-is: it must neither remove anything
+                # from Plex nor hide the collected titles it is meant to label.
+                if item_state in ("Collected", "Partial") and should_remove and not read_only:
+                    remove_item, reason = should_remove_from_watchlist(imdb_id, media_type, item_state)
+                    if media_type == 'tv' and not remove_item:
+                        # Collected series stay on the watchlist and keep feeding new episodes.
+                        logging.debug(f"Retaining and processing collected TV series: '{title}' (IMDB: {imdb_id}) - {reason}.")
                         retained_series_count += 1
                         monitor_missing_episodes_only = True
-                    else:
-                        show_status = get_show_status(imdb_id)
-                        if show_status != 'ended':
-                            logging.debug(f"Retaining and processing collected ongoing/non-ended TV series: '{title}' (IMDB: {imdb_id}) - status: {show_status or 'unknown'}.")
-                            retained_series_count += 1
-                            monitor_missing_episodes_only = True
-                        else:
-                            logging.debug(f"Identified collected and ended TV series for removal: '{title}' (IMDB: {imdb_id}) - status: {show_status}.")
-                            should_remove_item = True
-                else: # movie
-                    logging.debug(f"Identified collected movie for removal: '{title}' (IMDB: {imdb_id}).")
-                    should_remove_item = True
+                    elif remove_item:
+                        try:
+                            remove_item_start_time = time.time()
+                            account.removeFromWatchlist([original_plex_item]) # Use the original PlexAPI object
+                            removed_count += 1
+                            logging.info(f"Successfully removed '{title}' (IMDB: {imdb_id}) from watchlist ({reason}). Took {time.time() - remove_item_start_time:.4f}s.")
+                            continue
+                        except Exception as e_remove:
+                            logging.error(f"Failed to remove '{title}' (IMDB: {imdb_id}) from watchlist: {e_remove}")
+                            # Process the item when removal fails so it is not silently lost.
 
-                if should_remove_item:
-                    try:
-                        remove_item_start_time = time.time()
-                        account.removeFromWatchlist([original_plex_item]) # Use the original PlexAPI object
-                        removed_count += 1
-                        logging.info(f"Successfully removed '{title}' (IMDB: {imdb_id}) from watchlist. Took {time.time() - remove_item_start_time:.4f}s.")
-                        continue
-                    except Exception as e_remove:
-                        logging.error(f"Failed to remove '{title}' (IMDB: {imdb_id}) from watchlist: {e_remove}")
-                        # Process the item when removal fails so it is not silently lost.
-            
-            processed_items_for_current_run.append({
-                'imdb_id': imdb_id,
-                'media_type': media_type,
-                'content_source_detail': account.username,
-                'monitor_missing_episodes_only': monitor_missing_episodes_only,
-            })
-            logging.debug(f"Added '{title}' (IMDB: {imdb_id}, Type: {media_type}) to processed items from source: {account.username}")
+                wanted_item = {
+                    'imdb_id': imdb_id,
+                    'media_type': media_type,
+                    'content_source_detail': source_detail,
+                    'monitor_missing_episodes_only': monitor_missing_episodes_only,
+                }
+                if tmdb_id:
+                    wanted_item['tmdb_id'] = tmdb_id
+                processed_items_for_current_run.append(wanted_item)
+                logging.debug(f"Added '{title}' (IMDB: {imdb_id}, Type: {media_type}) to processed items from source: {source_detail}")
+            except Exception as e_item:
+                # One bad item (e.g. a locked DB during the presence check) must not empty the whole source.
+                skipped_count += 1
+                skipped_titles.append(title)
+                logging.error(f"Error processing watchlist item '{title}': {e_item}", exc_info=True)
 
         processing_loop_end_time = time.time()
         logging.info(f"Main processing loop for {total_items_from_async} fetched items took {processing_loop_end_time - processing_loop_start_time:.4f} seconds.")
@@ -438,33 +477,41 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
 
         for item_details in fetched_data_list:
             original_plex_item = item_details['original_plex_item']
-            title = original_plex_item.title
+            title = getattr(original_plex_item, 'title', 'Unknown Title')
+            try:
+                if item_details.get('error'):
+                    logging.warning(f"User {username}: Skipping item '{title}' due to error during async fetch: {item_details['error']}")
+                    items_skipped_no_imdb +=1 # Count as skipped if we can't get ID
+                    skipped_titles.append(title)
+                    continue
 
-            if item_details.get('error'):
-                logging.warning(f"User {username}: Skipping item '{title}' due to error during async fetch: {item_details['error']}")
-                items_skipped_no_imdb +=1 # Count as skipped if we can't get ID
-                skipped_titles.append(title)
-                continue
+                media_type = item_details['media_type'] if item_details['media_type'] else original_plex_item.type
+                tmdb_id = item_details['tmdb_id']
+                imdb_id = _resolve_imdb_id(title, item_details['imdb_id'], tmdb_id, media_type, log_prefix=f"User {username}: ")
 
-            media_type = item_details['media_type'] if item_details['media_type'] else original_plex_item.type
-            imdb_id = _resolve_imdb_id(title, item_details['imdb_id'], item_details['tmdb_id'], media_type, log_prefix=f"User {username}: ")
+                if not imdb_id:
+                    items_skipped_no_imdb += 1
+                    skipped_titles.append(title)
+                    logging.debug(f"User {username}: Skipping item '{title}' - no IMDB ID found after async fetch and potential conversion.")
+                    continue
 
-            if not imdb_id:
+                if media_type == 'show': media_type = 'tv' # Normalize 'show' to 'tv'
+
+                wanted_item = {
+                    'imdb_id': imdb_id,
+                    'media_type': media_type,
+                    'content_source_detail': token_owner # Managed Home users have no username, so this falls back to the profile title
+                }
+                if tmdb_id:
+                    wanted_item['tmdb_id'] = tmdb_id
+                processed_items_for_current_run.append(wanted_item)
+                items_processed_count += 1
+                logging.debug(f"User {username}: Added '{title}' (IMDB: {imdb_id}, Type: {media_type}) to processed items.")
+            except Exception as e_item:
+                # One bad item must not empty the whole source.
                 items_skipped_no_imdb += 1
                 skipped_titles.append(title)
-                logging.debug(f"User {username}: Skipping item '{title}' - no IMDB ID found after async fetch and potential conversion.")
-                continue
-
-            if media_type == 'show': media_type = 'tv' # Normalize 'show' to 'tv'
-            
-            wanted_item = {
-                'imdb_id': imdb_id,
-                'media_type': media_type,
-                'content_source_detail': token_owner # Managed Home users have no username, so this falls back to the profile title
-            }
-            processed_items_for_current_run.append(wanted_item)
-            items_processed_count += 1
-            logging.debug(f"User {username}: Added '{title}' (IMDB: {imdb_id}, Type: {media_type}) to processed items.")
+                logging.error(f"User {username}: Error processing watchlist item '{title}': {e_item}", exc_info=True)
             
         logging.info(f"User {username}: Retrieved {items_processed_count} wanted items from watchlist. Skipped {items_skipped_no_imdb} (no IMDB or fetch error).")
         _log_skipped_titles(skipped_titles, log_prefix=f"User {username}: ")
@@ -505,16 +552,21 @@ def get_plex_friends(token: str) -> List[Dict[str, str]]:
     data = _plex_community_query(token, _PLEX_FRIENDS_QUERY)
     return [f['user'] for f in (data.get('allFriendsV2') or []) if f.get('user', {}).get('id')]
 
+_FRIEND_WATCHLIST_MAX_PAGES = 50  # 5,000 items; guards against a cursor that never advances
+
 def _get_friend_watchlist_nodes(token: str, friend_id: str) -> List[Dict[str, Any]]:
     nodes, after = [], None
-    while True:
+    for _ in range(_FRIEND_WATCHLIST_MAX_PAGES):
         data = _plex_community_query(token, _PLEX_FRIEND_WATCHLIST_QUERY, {'uuid': friend_id, 'first': 100, 'after': after})
         watchlist = ((data.get('user') or {}).get('watchlist')) or {}
         nodes.extend(watchlist.get('nodes') or [])
         page_info = watchlist.get('pageInfo') or {}
-        after = page_info.get('endCursor')
-        if not page_info.get('hasNextPage') or not after:
+        next_after = page_info.get('endCursor')
+        if not page_info.get('hasNextPage') or not next_after or next_after == after:
             return nodes
+        after = next_after
+    logging.warning(f"Plex Friends Watchlist: stopped paging friend {friend_id} after {_FRIEND_WATCHLIST_MAX_PAGES} pages.")
+    return nodes
 
 def get_wanted_from_plex_friends_watchlist(source_config: Dict[str, Any], versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     """Read friends' watchlists through the Plex community API using the main Plex token.
@@ -524,9 +576,9 @@ def get_wanted_from_plex_friends_watchlist(source_config: Dict[str, Any], versio
     Friends must share their watchlist with friends in their Plex privacy settings.
     """
     overall_start_time = time.time()
-    account, token = get_plex_client()
+    token = _main_plex_token()
     if not token:
-        logging.error("Plex Friends Watchlist: no main Plex token configured.")
+        logging.error("Plex Friends Watchlist: no main Plex token configured (Plex:token or File Management:plex_token_for_symlink).")
         return [([], versions)]
 
     wanted_names = {n.strip().casefold() for n in str(source_config.get('friends', '') or '').split(',') if n.strip()}
@@ -572,20 +624,28 @@ def get_wanted_from_plex_friends_watchlist(source_config: Dict[str, Any], versio
     processed_items, skipped_titles = [], []
     for item_details in fetched_data_list:
         node = item_details['original_plex_item']
-        if item_details.get('error'):
-            logging.warning(f"Plex Friends Watchlist: skipping '{node.title}' due to error during fetch: {item_details['error']}")
+        try:
+            if item_details.get('error'):
+                logging.warning(f"Plex Friends Watchlist: skipping '{node.title}' due to error during fetch: {item_details['error']}")
+                skipped_titles.append(node.title)
+                continue
+            media_type = item_details['media_type'] or node.type
+            tmdb_id = item_details['tmdb_id']
+            imdb_id = _resolve_imdb_id(node.title, item_details['imdb_id'], tmdb_id, media_type, log_prefix="Plex Friends Watchlist: ")
+            if not imdb_id:
+                skipped_titles.append(node.title)
+                continue
+            wanted_item = {
+                'imdb_id': imdb_id,
+                'media_type': 'tv' if media_type == 'show' else media_type,
+                'content_source_detail': node.friend,
+            }
+            if tmdb_id:
+                wanted_item['tmdb_id'] = tmdb_id
+            processed_items.append(wanted_item)
+        except Exception as e_item:
             skipped_titles.append(node.title)
-            continue
-        media_type = item_details['media_type'] or node.type
-        imdb_id = _resolve_imdb_id(node.title, item_details['imdb_id'], item_details['tmdb_id'], media_type, log_prefix="Plex Friends Watchlist: ")
-        if not imdb_id:
-            skipped_titles.append(node.title)
-            continue
-        processed_items.append({
-            'imdb_id': imdb_id,
-            'media_type': 'tv' if media_type == 'show' else media_type,
-            'content_source_detail': node.friend,
-        })
+            logging.error(f"Plex Friends Watchlist: error processing '{node.title}': {e_item}", exc_info=True)
 
     _log_skipped_titles(skipped_titles, log_prefix="Plex Friends Watchlist: ")
     logging.info(f"Plex Friends Watchlist: {len(processed_items)} wanted item(s) from {len(selected)} friend(s) in {time.time() - overall_start_time:.2f}s.")
@@ -721,14 +781,9 @@ def remove_from_plex_watchlist_by_item(item: dict) -> dict:
         # Find the item in the watchlist by IMDB ID
         item_to_remove = None
         for watchlist_item in watchlist:
-            # Check if this item matches by IMDB ID
-            item_guids = getattr(watchlist_item, 'guids', [])
-            for guid in item_guids:
-                guid_str = str(guid.id) if hasattr(guid, 'id') else str(guid)
-                if f'imdb://{imdb_id}' in guid_str or imdb_id in guid_str:
-                    item_to_remove = watchlist_item
-                    break
-            if item_to_remove:
+            # Exact IMDb match: a substring test let tt1234567 match tt12345678.
+            if any(_guid_matches_imdb(guid, imdb_id) for guid in getattr(watchlist_item, 'guids', [])):
+                item_to_remove = watchlist_item
                 break
 
         if not item_to_remove:
@@ -788,29 +843,26 @@ def remove_from_other_plex_watchlist_by_item(item: dict, token: str) -> dict:
         logging.warning(f"[PLEX_WATCHLIST_REMOVE_OTHER] {result['message']}")
         return result
 
+    owner = account.username or account.title  # managed Home users have no username
     logging.info(f"[PLEX_WATCHLIST_REMOVE_OTHER] Attempting to remove '{title}' (IMDB: {imdb_id}) "
-                 f"from {account.username}'s Plex Watchlist")
+                 f"from {owner}'s Plex Watchlist")
     try:
         watchlist = account.watchlist()
         item_to_remove = None
         for watchlist_item in watchlist:
-            for guid in getattr(watchlist_item, 'guids', []):
-                guid_str = str(guid.id) if hasattr(guid, 'id') else str(guid)
-                if f'imdb://{imdb_id}' in guid_str or imdb_id in guid_str:
-                    item_to_remove = watchlist_item
-                    break
-            if item_to_remove:
+            if any(_guid_matches_imdb(guid, imdb_id) for guid in getattr(watchlist_item, 'guids', [])):
+                item_to_remove = watchlist_item
                 break
 
         if not item_to_remove:
-            result['message'] = f"'{title}' (IMDB: {imdb_id}) not found in {account.username}'s Plex Watchlist"
+            result['message'] = f"'{title}' (IMDB: {imdb_id}) not found in {owner}'s Plex Watchlist"
             result['not_found'] = True
             logging.info(f"[PLEX_WATCHLIST_REMOVE_OTHER] {result['message']}")
             return result
 
         account.removeFromWatchlist(item_to_remove)
         result['success'] = True
-        result['message'] = (f"Successfully removed '{title}' from {account.username}'s Plex Watchlist "
+        result['message'] = (f"Successfully removed '{title}' from {owner}'s Plex Watchlist "
                              f"(took {time.time() - start_time:.4f}s)")
         logging.info(f"[PLEX_WATCHLIST_REMOVE_OTHER] {result['message']}")
 

@@ -69,6 +69,7 @@ def _install_import_stubs():
     token_manager = types.ModuleType('content_checkers.plex_token_manager')
     token_manager.update_token_status = lambda *args, **kwargs: None
     token_manager.get_token_status = lambda *args, **kwargs: None
+    token_manager.load_token_status = lambda *args, **kwargs: {}
     sys.modules['content_checkers.plex_token_manager'] = token_manager
 
     if 'feedparser' not in sys.modules:

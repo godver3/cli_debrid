@@ -94,7 +94,7 @@ class TestOtherPlexTmdbFallback(unittest.TestCase):
              mock.patch.object(pw, 'run_async_fetches', _async_result(fetched)), \
              mock.patch.object(pw, 'DirectAPI', return_value=api):
             result = pw.get_wanted_from_other_plex_watchlist('friend', 'tok', {'Default': True})
-        self.assertEqual(result[0][0], [{'imdb_id': 'tt0000077', 'media_type': 'movie', 'content_source_detail': 'friend'}])
+        self.assertEqual(result[0][0], [{'imdb_id': 'tt0000077', 'media_type': 'movie', 'content_source_detail': 'friend', 'tmdb_id': '77'}])
         api.tmdb_to_imdb.assert_called_once_with('77', media_type='movie')
 
 
@@ -147,7 +147,7 @@ class TestPlexFriendsWatchlist(unittest.TestCase):
                     for i in items]
 
         with mock.patch.object(pw, '_plex_community_query', side_effect=self._community), \
-             mock.patch.object(pw, 'get_plex_client', return_value=(object(), 'tok')), \
+             mock.patch.object(pw, '_main_plex_token', return_value='tok'), \
              mock.patch.object(pw, 'run_async_fetches', _async_result(fetched)):
             result = pw.get_wanted_from_plex_friends_watchlist({'friends': friends_setting}, {'Default': True})
         return result[0][0], seen_urls

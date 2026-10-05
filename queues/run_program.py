@@ -6145,8 +6145,10 @@ class ProgramRunner:
         from content_checkers.plex_watchlist import validate_plex_tokens
         token_status = validate_plex_tokens()
         for username, status in token_status.items():
-            if not status['valid']:
+            if status.get('valid') is False:
                 logging.error(f"Invalid Plex token detected during periodic check for user {username}")
+            elif status.get('valid') is None:
+                logging.warning(f"Could not verify the Plex token for user {username} (plex.tv unreachable?)")
             else:
                 logging.debug(f"Plex token for user {username} is valid")
 
