@@ -1,6 +1,7 @@
 """Offline fault injection: no provider, database or application imports."""
 import ast
 import importlib.util
+import json
 import logging
 import os
 import sys
@@ -139,6 +140,30 @@ def test_missing_factory_response_fails_closed():
     ok, failures = health.check_acquisition_providers(settings(nzb=False), lambda: None, lambda: None)
     assert not ok
     assert failures[0]['type'] == 'CONFIG_ERROR'
+
+
+def test_upstream_candidate_retirement_preserves_unavailable_predecessor(monkeypatch):
+    """Current dev already owns exact retirement; do not replace that fix."""
+    tree = ast.parse((ROOT / 'queues/torrent_processor.py').read_text())
+    guard = next(n for n in ast.walk(tree) if isinstance(n, ast.If) and
+                 isinstance(n.test, ast.Name) and n.test.id == 'item' and
+                 any(isinstance(child, ast.Name) and child.id == '_drop'
+                     for child in ast.walk(n)))
+    writes = []
+    module = types.ModuleType('database.database_writing')
+    module.update_media_item = lambda *args, **kwargs: writes.append(kwargs)
+    monkeypatch.setitem(sys.modules, 'database.database_writing', module)
+    unavailable = {'magnet': 'example', 'title': 'torrent'}
+    nzb = {'protocol': 'nzb', 'nzb_url': 'example', 'title': 'nzb'}
+    namespace = {'item': {'id': 1, 'scrape_results': json.dumps([unavailable, nzb])},
+                 'result': dict(nzb, original_scraped_torrent_title='nzb')}
+    compiled = compile(ast.Module(body=[guard], type_ignores=[]), 'CandidateRetirement', 'exec')
+    exec(compiled, namespace)
+    assert namespace['item']['scrape_results'] == [unavailable]
+    assert json.loads(writes[0]['scrape_results']) == [unavailable]
+    exec(compiled, namespace)
+    assert namespace['item']['scrape_results'] == [unavailable]
+    assert len(writes) == 1
 
 
 def function(path, name, namespace, class_name=None):
