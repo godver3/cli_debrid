@@ -429,12 +429,12 @@ class AddingQueue:
                     continue
 
                 from debrid import get_debrid_providers
-                from utilities.acquisition_health import usable_results
+                from utilities.acquisition_health import usable_results, log_deferred
                 # Keep the durable candidate list intact. An unavailable
                 # backend is not a dead release or an acquisition failure.
                 results = usable_results(results, get_debrid_providers())
                 if not results:
-                    logging.debug('Adding deferred: candidate backend unavailable')
+                    log_deferred(item_identifier, 'every release needs an acquisition backend that is unavailable')
                     continue
 
                 logging.info(f"Found {len(results)} scrape results for {item_identifier}")
@@ -532,7 +532,7 @@ class AddingQueue:
                            for r in _all_candidates):
                         # A healthy candidate can fail without exhausting the
                         # preserved candidates of an unavailable alternative.
-                        logging.debug('Adding deferred: unavailable alternatives remain')
+                        log_deferred(item_identifier, 'remaining releases need an acquisition backend that is unavailable')
                         continue
                     logging.error(f"No valid torrent info or magnet found for {item_identifier} after checking cache/uncached modes.")
                     if torrent_info and torrent_info.get('id'):

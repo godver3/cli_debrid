@@ -1,6 +1,7 @@
 """Offline fault injection: no provider, database or application imports."""
 import ast
 import importlib.util
+import itertools
 import json
 import logging
 import os
@@ -26,9 +27,14 @@ def reset():
     health._availability.clear()
 
 
+_account_ids = itertools.count()
+
+
 class Provider:
     PROVIDER_NAME = 'ExampleDebrid'
-    def __init__(self, ok=True, subscription=None):
+    def __init__(self, ok=True, subscription=None, api_key=None):
+        # Each instance is its own account unless given the same key, as in production.
+        self.api_key = api_key or f'example-account-{next(_account_ids)}'
         self.ok = ok
         self.subscription = subscription or {'premium': True, 'days_remaining': 20}
         self.calls = 0
@@ -249,3 +255,45 @@ def test_actual_torrent_processor_filters_known_offline_chain(monkeypatch):
     providers = function('queues/torrent_processor.py', '_providers',
                          {'get_debrid_providers': lambda: [primary, fallback]}, 'TorrentProcessor')
     assert providers(None) == [fallback]
+
+
+def test_new_instance_of_same_account_keeps_its_verdict():
+    """reset_provider() builds new instances on every settings save; a queue still
+    holding the old one must not see a healthy account as unavailable."""
+    startup = Provider(api_key='same-account')
+    assert check([startup], nzb=False)[0]
+    after_save = Provider(api_key='same-account')
+    assert check([after_save], nzb=False)[0]
+    assert health.provider_available(startup)
+
+
+def test_positive_days_are_usable_even_when_premium_flag_is_false():
+    # TorBox derives premium from is_subscribed; an account with time left is usable.
+    assert health.subscription_failure({'premium': False, 'days_remaining': 12}) is None
+    assert health.subscription_failure({'premium': False, 'days_remaining': 12,
+                                        'expiration': '2999-01-01T00:00:00Z'}) is None
+
+
+def test_failure_keeps_the_real_reason():
+    bad_key = Provider(False)
+    bad_key.check_connectivity = lambda: (False, {'type': 'AUTH_ERROR', 'status_code': 401,
+                                                  'message': 'Invalid API key'})
+    ok, failures = check([bad_key], nzb=False)
+    assert not ok
+    assert failures[0]['type'] == 'AUTH_ERROR'
+    assert failures[0]['status_code'] == 401
+    assert 'Invalid API key' in failures[0]['message']
+
+
+def test_deferred_item_logs_info_once_per_outage(caplog):
+    import logging
+    caplog.set_level(logging.DEBUG)
+    check([Provider(False)], nzb=True)
+    health.log_deferred('Dune (2021)', 'backend down')
+    health.log_deferred('Dune (2021)', 'backend down')
+    infos = [r for r in caplog.records if r.levelno == logging.INFO and 'Dune (2021)' in r.getMessage()]
+    assert len(infos) == 1
+    check([Provider(True)], nzb=True)  # health changed: next outage logs again
+    health.log_deferred('Dune (2021)', 'backend down')
+    infos = [r for r in caplog.records if r.levelno == logging.INFO and 'Dune (2021)' in r.getMessage()]
+    assert len(infos) == 2
