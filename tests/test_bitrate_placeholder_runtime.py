@@ -10,7 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from database import database_reading
+from database import database_reading, database_writing
 from scraper.functions import file_processing
 
 
@@ -88,6 +88,82 @@ class MediaInfoForBitrateTests(unittest.TestCase):
         runtime = self._run('episode', None, 42)
         mbps = file_processing.calculate_bitrate(1.81, runtime) / 1000
         self.assertLess(mbps, 18.0)
+
+
+class TvdbShowRuntimeTests(unittest.TestCase):
+    """Root cause: defaultSeasonType (1 = Aired Order) was used as the runtime fallback."""
+
+    def _runtime(self, raw):
+        from cli_battery.app import tvdb_client
+        base = {'name': 'Below', 'firstAired': '2026-10-08', 'defaultSeasonType': 1}
+        return tvdb_client._build_show_dict({**base, **raw}, 'tt35934755', 1).get('runtime')
+
+    def test_missing_average_runtime_is_none_not_season_type(self):
+        self.assertIsNone(self._runtime({'averageRuntime': None}))
+        self.assertIsNone(self._runtime({}))
+
+    def test_average_runtime_used(self):
+        self.assertEqual(self._runtime({'averageRuntime': 42}), 42)
+
+
+class RefreshedEpisodeRuntimeTests(unittest.TestCase):
+    def _get(self, metadata, season=1, episode=2):
+        from metadata.metadata import _refreshed_episode_runtime
+        return _refreshed_episode_runtime(metadata, season, episode)
+
+    def test_prefers_episode_runtime(self):
+        md = {'runtime': '53', 'seasons': {1: {'episodes': {2: {'runtime': 50}}}}}
+        self.assertEqual(self._get(md), 50)
+
+    def test_falls_back_to_show_runtime(self):
+        md = {'runtime': '42', 'seasons': {1: {'episodes': {2: {'runtime': 0}}}}}
+        self.assertEqual(self._get(md), 42)
+
+    def test_string_keys(self):
+        md = {'seasons': {'1': {'episodes': {'2': {'runtime': 44}}}}}
+        self.assertEqual(self._get(md), 44)
+
+    def test_placeholder_or_missing_returns_none(self):
+        self.assertIsNone(self._get({'runtime': '1', 'seasons': {1: {'episodes': {2: {'runtime': None}}}}}))
+        self.assertIsNone(self._get({}))
+        self.assertIsNone(self._get(None))
+
+
+class UpdateReleaseDateRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix='.db')
+        os.close(fd)
+        self.addCleanup(os.remove, self.db_path)
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('CREATE TABLE media_items (id INTEGER PRIMARY KEY, release_date TEXT, state TEXT, '
+                     'last_updated TEXT, airtime TEXT, runtime INTEGER)')
+        conn.execute("INSERT INTO media_items VALUES (1, '2026-10-08', 'Unreleased', NULL, '21:00', 1)")
+        conn.commit()
+        conn.close()
+
+        def _connect():
+            c = sqlite3.connect(self.db_path)
+            c.row_factory = sqlite3.Row
+            return c
+
+        patcher = mock.patch.object(database_writing, 'get_db_connection', _connect)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _runtime(self):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            return conn.execute('SELECT runtime FROM media_items WHERE id = 1').fetchone()[0]
+        finally:
+            conn.close()
+
+    def test_runtime_written_when_given(self):
+        database_writing.update_release_date_and_state(1, '2026-10-08', 'Wanted', runtime=55)
+        self.assertEqual(self._runtime(), 55)
+
+    def test_runtime_untouched_when_omitted(self):
+        database_writing.update_release_date_and_state(1, '2026-10-08', 'Wanted')
+        self.assertEqual(self._runtime(), 1)
 
 
 if __name__ == '__main__':
