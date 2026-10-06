@@ -17,6 +17,7 @@ window.discoverState = {
     hasMore: true,
     isLoading: false,
     listModeActive: false, // true when list content (MDBList/FlixPatrol/Personal/sidebar) is displayed
+    contentGen: 0, // bumped by every load that replaces the results view; see beginContentLoad()
     autoLoadCount: 0, // Track consecutive auto-loads to prevent infinite loops
     maxAutoLoads: 1,  // Maximum pages to auto-load before requiring user scroll
     liveFilterEnabled: true, // Enable live filtering when filter values change
@@ -2010,6 +2011,25 @@ function isIDSearch(searchTerm) {
 /**
  * Handle search input
  */
+/**
+ * Each load that replaces the results view (search, filters, lists, trending) takes a new
+ * generation and renders only if it is still the newest, so a slow list or an older search
+ * response can't overwrite what the user asked for last.
+ */
+function beginContentLoad() {
+    return ++window.discoverState.contentGen;
+}
+
+function isStaleContentLoad(gen) {
+    return gen !== window.discoverState.contentGen;
+}
+
+/** True once the user has typed a search, including while the input debounce is pending. */
+function searchIsActive() {
+    const input = searchInput || document.getElementById('search-input');
+    return !!(input && input.value.trim());
+}
+
 function handleSearch() {
     const query = searchInput.value.trim();
     window.discoverState.searchTerm = query;
@@ -2017,7 +2037,17 @@ function handleSearch() {
     if (query.length === 0) {
         searchClearBtn.style.display = 'none';
         localStorage.removeItem('discoverSearchTerm');
-        loadTrending();
+        beginContentLoad(); // drop any search still in flight
+        // Go back to the selected list if there is one, otherwise trending
+        const listsState = window.sidebarListsState;
+        const hasSidebarLists = listsState && listsState.selectedLists && listsState.selectedLists.length > 0;
+        if (window.discoverState.listModeActive && listsState && listsState.rawResults.length > 0) {
+            filterAndRenderListResults();
+        } else if (hasSidebarLists) {
+            loadAllSelectedLists();
+        } else {
+            loadTrending();
+        }
         return;
     }
 
@@ -2400,6 +2430,7 @@ function runDiscoverFilterQuery() {
  */
 async function fetchAdvancedFilterResults(params) {
     const isInitialLoad = window.discoverState.page === 1;
+    const gen = isInitialLoad ? beginContentLoad() : window.discoverState.contentGen;
     window.discoverState.listModeActive = false;
 
     // Cancel any in-flight filter request before starting a new one
@@ -2418,6 +2449,7 @@ async function fetchAdvancedFilterResults(params) {
         }
 
         const data = await response.json();
+        if (isStaleContentLoad(gen)) return;
         window.discoverState.hasMore = data.page < data.total_pages;
 
         if (isInitialLoad) {
@@ -2462,6 +2494,7 @@ async function fetchAdvancedFilterResults(params) {
  */
 async function searchContent(query) {
     const isInitialLoad = window.discoverState.page === 1;
+    const gen = isInitialLoad ? beginContentLoad() : window.discoverState.contentGen;
     try {
         setLoadingFlag();
         
@@ -2493,6 +2526,7 @@ async function searchContent(query) {
         }
 
         const data = await response.json();
+        if (isStaleContentLoad(gen)) return; // a newer search or view replaced this one
         window.discoverState.hasMore = data.page < data.total_pages;
 
         if (isInitialLoad) {
@@ -2536,6 +2570,7 @@ async function searchContent(query) {
 async function loadTrending() {
     // Don't override if list mode is active (sidebar lists take priority)
     if (window.discoverState.listModeActive) return;
+    beginContentLoad();
 
     // Show tab content regardless, even if already loaded
     if (trendingContent) trendingContent.style.display = 'block';
@@ -2604,6 +2639,7 @@ let _trendingLoaded = false; // Only fetch once per page load
 let _recLoaded = false;  // Only fetch once per page load
 
 async function loadRecommendations() {
+    beginContentLoad();
     if (recommendationsContent) recommendationsContent.style.display = 'block';
     if (trendingContent) trendingContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'none';
@@ -7306,7 +7342,7 @@ async function loadMDBListOptions() {
                 try {
                     const savedList = JSON.parse(saved);
                     const list = allLists.find(l => l.key === savedList.key);
-                    if (list) {
+                    if (list && !searchIsActive()) {
                         await selectMDBList(list);
                     }
                 } catch (e) {
@@ -7489,6 +7525,7 @@ async function loadMDBListContent(listKey) {
 
     window.discoverState.listModeActive = true;
     window.mdblistState.isLoading = true;
+    const gen = beginContentLoad();
     setLoadingFlag();
 
     // Clear existing results
@@ -7508,6 +7545,7 @@ async function loadMDBListContent(listKey) {
             response = await fetch(`/discover/api/mdblist/list/${listKey}?type=${mediaType}&limit=40`);
         }
         const data = await response.json();
+        if (isStaleContentLoad(gen)) return;
 
         if (data.success && data.results) {
             // Store raw results for client-side filtering/sorting
@@ -7591,7 +7629,8 @@ async function initFlixPatrol() {
                 try {
                     const savedPlatform = JSON.parse(saved);
                     const platform = data.platforms.find(p => p.id === savedPlatform.id);
-                    if (platform) {
+                    // Skip if the user already started a search while the platforms loaded
+                    if (platform && !searchIsActive()) {
                         await selectFlixPatrolPlatform(platform, savedPlatform.period || 'today');
                     }
                 } catch (e) {
@@ -7743,6 +7782,7 @@ async function loadFlixPatrolContent(platformId, period = 'today') {
 
     window.discoverState.listModeActive = true;
     window.flixpatrolState.isLoading = true;
+    const gen = beginContentLoad();
     setLoadingFlag();
 
     // Clear existing results
@@ -7757,6 +7797,7 @@ async function loadFlixPatrolContent(platformId, period = 'today') {
             : `/discover/api/flixpatrol/top10/${platformId}`;
         const response = await fetch(`${baseUrl}?type=${mediaType}`);
         const data = await response.json();
+        if (isStaleContentLoad(gen)) return;
 
         if (data.success && data.results) {
             // Store raw results for client-side filtering/sorting
@@ -7859,9 +7900,12 @@ async function initSidebarListsFilter() {
         
         // Update filter availability
         updateFilterAvailability();
-        
-        // Load the content
-        loadAllSelectedLists();
+
+        // Load the content, unless the user already started a search while the lists loaded
+        // (the list loads when the search is cleared, see handleSearch)
+        if (!searchIsActive()) {
+            loadAllSelectedLists();
+        }
     }
 
     // Toggle dropdown on button click
@@ -8465,6 +8509,8 @@ async function loadAllSelectedLists() {
     const state = window.discoverState;
     const listsState = window.sidebarListsState;
 
+    const gen = beginContentLoad();
+
     // If no lists selected, clear results
     if (listsState.selectedLists.length === 0) {
         const resultsGrid = document.getElementById('results-grid');
@@ -8603,6 +8649,8 @@ async function loadAllSelectedLists() {
                 showNotification('Failed to load Adaptive Discover results', 'error');
             }
         }
+
+        if (isStaleContentLoad(gen)) return; // a search or another list load replaced this one
 
         // Store merged results for filtering
         listsState.rawResults = allResults;
@@ -8745,6 +8793,7 @@ async function loadSidebarListContent(source, listId) {
     state.page = 1;
     state.autoLoadCount = 0;
 
+    const gen = beginContentLoad();
     setLoadingFlag();
 
     try {
@@ -8763,7 +8812,8 @@ async function loadSidebarListContent(source, listId) {
         } else {
             throw new Error('Invalid list source');
         }
-        
+        if (isStaleContentLoad(gen)) return;
+
         // Store raw results for filtering
         listsState.rawResults = data.results || [];
         
@@ -8845,8 +8895,10 @@ async function filterAndRenderListResults() {
     const hasKeywordFilter = (filters.selectedKeywords && filters.selectedKeywords.length > 0) ||
                               (filters.excludedKeywords && filters.excludedKeywords.length > 0);
 
+    const gen = beginContentLoad();
     if (hasKeywordFilter) {
         await prefetchKeywordsForItems(listsState.rawResults);
+        if (isStaleContentLoad(gen)) return;
     }
 
     // Apply current filters to list results
@@ -8878,8 +8930,10 @@ async function applyListFiltersAndRender(results) {
     const filters = window.discoverState.filters;
     const hasKeywordFilter = (filters.selectedKeywords && filters.selectedKeywords.length > 0) ||
                               (filters.excludedKeywords && filters.excludedKeywords.length > 0);
+    const gen = beginContentLoad();
     if (hasKeywordFilter) {
         await prefetchKeywordsForItems(results);
+        if (isStaleContentLoad(gen)) return;
     }
     const filtered = filterListResults(results);
     renderResults(filtered);
@@ -9779,7 +9833,7 @@ async function initPersonal() {
             // Validate the saved object has required fields
             if (sel && sel.type && sel.key && sel.name) {
                 // Defer until after page init so grid is ready
-                setTimeout(() => selectPersonalList(sel, true), 0);
+                setTimeout(() => { if (!searchIsActive()) selectPersonalList(sel, true); }, 0);
             } else {
                 localStorage.removeItem('discoverPersonal');
             }
@@ -9875,6 +9929,7 @@ async function loadPersonalContent() {
     if (!resultsGrid) resultsGrid = document.getElementById('results-grid');
     window.discoverState.listModeActive = true;
     window.personalState.isLoading = true;
+    const gen = beginContentLoad();
     setLoadingFlag();
     if (resultsGrid) resultsGrid.innerHTML = '';
 
@@ -9895,6 +9950,7 @@ async function loadPersonalContent() {
 
         const resp = await fetch(url);
         const data = await resp.json();
+        if (isStaleContentLoad(gen)) return;
 
         if (data.success && data.results) {
             // Store raw results for client-side filtering/sorting
