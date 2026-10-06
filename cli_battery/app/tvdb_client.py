@@ -280,6 +280,80 @@ def _cache_tvdb_mapping(tvdb_id: str, imdb_id: str, media_type: str):
         logger.debug(f"Could not cache TVDB mapping {tvdb_id}→{imdb_id}: {e}")
 
 
+def _imdb_from_remote_ids(raw: dict) -> Optional[str]:
+    """Pull an IMDb ID (tt...) out of a TVDB record's remoteIds."""
+    remote_ids = (raw or {}).get('remoteIds') or (raw or {}).get('remote_ids') or []
+    if not isinstance(remote_ids, list):
+        return None
+    for rid in remote_ids:
+        if isinstance(rid, dict) and 'imdb' in (rid.get('sourceName', '') or '').lower():
+            value = str(rid.get('id', '') or '').strip()
+            if value.startswith('tt'):
+                return value
+    return None
+
+
+def convert_tvdb_to_imdb(tvdb_id: str, media_type: str = 'show') -> Optional[str]:
+    """TVDB series ID -> IMDb ID without Trakt.
+
+    Order: cached mapping, TVDB's own remoteIds (needs a TVDB key), TMDB /find by TVDB ID
+    followed by the TMDB->IMDb conversion (needs a TMDB key). Successful results are cached.
+    """
+    tvdb_id = str(tvdb_id).strip()
+    if not tvdb_id.isdigit():
+        return None
+
+    try:
+        cached = DatabaseManager.get_imdb_from_tvdb(tvdb_id)
+        if cached:
+            return cached
+    except Exception as e:
+        logger.debug(f"TVDB mapping cache lookup failed for {tvdb_id}: {e}")
+
+    tmdb_id = None
+    if is_available():
+        resp = _make_request(f"{TVDB_BASE_URL}/series/{tvdb_id}/extended?short=true")
+        if resp is not None and resp.status_code == 200:
+            raw = resp.json().get('data') or {}
+            imdb_id = _imdb_from_remote_ids(raw)
+            if imdb_id:
+                _cache_tvdb_mapping(tvdb_id, imdb_id, media_type)
+                logger.info(f"TVDB: converted TVDB ID {tvdb_id} to {imdb_id} via TVDB remoteIds")
+                return imdb_id
+            tmdb_id = _extract_tmdb_id_from_remote_ids(raw)
+
+    api_key = _get_tmdb_api_key()
+    if not api_key:
+        return None
+
+    if not tmdb_id:
+        try:
+            resp = requests.get(
+                f"https://api.themoviedb.org/3/find/{tvdb_id}",
+                params={'api_key': api_key, 'external_source': 'tvdb_id'},
+                timeout=REQUEST_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                tv_results = resp.json().get('tv_results') or []
+                if tv_results:
+                    tmdb_id = tv_results[0].get('id')
+        except Exception as e:
+            logger.debug(f"TMDB find by TVDB ID error for {tvdb_id}: {e}")
+    if not tmdb_id:
+        return None
+
+    try:
+        from .direct_api import DirectAPI
+        imdb_id, source = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='show')
+    except Exception as e:
+        logger.debug(f"TMDB->IMDb conversion failed for TVDB {tvdb_id} (TMDB {tmdb_id}): {e}")
+        return None
+    if imdb_id:
+        _cache_tvdb_mapping(tvdb_id, imdb_id, media_type)
+        logger.info(f"TVDB: converted TVDB ID {tvdb_id} to {imdb_id} via TMDB {tmdb_id} ({source})")
+    return imdb_id
+
+
 def get_season_poster_url(imdb_id: str, season_number: int) -> Optional[str]:
     """Return the best English season poster URL from TVDB for a TV show season.
 
@@ -700,7 +774,7 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
     seasons = _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone, imdb_id, tmdb_id)
     if not seasons:
         # Fallback to extended response (may have non-English titles)
-        seasons = _extract_seasons_from_extended(raw)
+        seasons = _extract_seasons_from_extended(raw, imdb_id)
     show_data['seasons'] = seasons
 
     # TVDB marks many canceled shows as 'Ended' — cross-check with Trakt
@@ -917,7 +991,7 @@ def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
     return show_data
 
 
-def _extract_seasons_from_extended(raw: dict) -> Optional[dict]:
+def _extract_seasons_from_extended(raw: dict, imdb_id: str = None) -> Optional[dict]:
     """Extract seasons/episodes from an extended series response."""
     seasons_raw = raw.get('seasons', [])
     episodes_raw = raw.get('episodes', [])
@@ -1028,7 +1102,7 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
     seasons = _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone, imdb_id, tmdb_id)
     if not seasons:
         # Fallback to extended response (may have non-English titles)
-        seasons = _extract_seasons_from_extended(raw)
+        seasons = _extract_seasons_from_extended(raw, imdb_id)
 
     if seasons and not include_specials:
         seasons.pop(0, None)

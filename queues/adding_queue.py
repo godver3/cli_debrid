@@ -428,6 +428,15 @@ class AddingQueue:
                     self._handle_failed_item(item, "No results found", queue_manager)
                     continue
 
+                from debrid import get_debrid_providers
+                from utilities.acquisition_health import usable_results, log_deferred
+                # Keep the durable candidate list intact. An unavailable
+                # backend is not a dead release or an acquisition failure.
+                results = usable_results(results, get_debrid_providers())
+                if not results:
+                    log_deferred(item_identifier, 'every release needs an acquisition backend that is unavailable')
+                    continue
+
                 logging.info(f"Found {len(results)} scrape results for {item_identifier}")
 
                 # Add original_scraped_torrent_title to results if missing (important for later matching)
@@ -516,6 +525,15 @@ class AddingQueue:
 
                 # Use torrent_info and magnet for the check, chosen_result_info is handled later
                 if (not torrent_info or not magnet): # Check again after potential uncached attempt
+                    _all_candidates = item.get('scrape_results', [])
+                    if isinstance(_all_candidates, str):
+                        _all_candidates = json.loads(_all_candidates)
+                    if any(r not in usable_results(_all_candidates, get_debrid_providers())
+                           for r in _all_candidates):
+                        # A healthy candidate can fail without exhausting the
+                        # preserved candidates of an unavailable alternative.
+                        log_deferred(item_identifier, 'remaining releases need an acquisition backend that is unavailable')
+                        continue
                     logging.error(f"No valid torrent info or magnet found for {item_identifier} after checking cache/uncached modes.")
                     if torrent_info and torrent_info.get('id'):
                        item['torrent_id'] = torrent_info.get('id')

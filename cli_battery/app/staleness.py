@@ -7,6 +7,9 @@ _ENDED_SHOW_THRESHOLD = timedelta(days=30)
 _MOVIE_THRESHOLD = timedelta(days=90)
 _NULL_AIRDATE_RECHECK = timedelta(hours=24)
 _TMDB_MAPPING_THRESHOLD = timedelta(days=21)
+# A cached "no IMDb ID exists" (imdb_id NULL) is retried much sooner: newly announced titles
+# usually get an IMDb ID within a day or two, and 21 days of silence dropped them from watchlists.
+_TMDB_NEGATIVE_MAPPING_THRESHOLD = timedelta(hours=24)
 
 
 def is_stale(item_type: str, media_status: str | None, last_trakt_fetch: datetime | None, force: bool = False) -> bool:
@@ -62,11 +65,16 @@ def should_recheck_null_airdate(checked_at: datetime | None) -> bool:
     return (now - checked_at) >= _NULL_AIRDATE_RECHECK
 
 
-def is_tmdb_mapping_stale(updated_at: datetime | None) -> bool:
-    """Should a TMDB-to-IMDB mapping be refreshed?"""
+def is_tmdb_mapping_stale(updated_at: datetime | None, negative: bool = False) -> bool:
+    """Should a TMDB-to-IMDB mapping be refreshed?
+
+    ``negative`` marks a cached failure (imdb_id NULL), which is retried after 24 hours
+    instead of the 21 days a successful mapping lasts.
+    """
     if updated_at is None:
         return True
     now = datetime.now(timezone.utc)
     if updated_at.tzinfo is None:
         updated_at = updated_at.replace(tzinfo=timezone.utc)
-    return (now - updated_at) >= _TMDB_MAPPING_THRESHOLD
+    threshold = _TMDB_NEGATIVE_MAPPING_THRESHOLD if negative else _TMDB_MAPPING_THRESHOLD
+    return (now - updated_at) >= threshold

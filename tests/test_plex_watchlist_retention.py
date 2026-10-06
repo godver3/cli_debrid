@@ -7,6 +7,7 @@ import os
 import sys
 import types
 import unittest
+from unittest import mock
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -69,6 +70,7 @@ def _install_import_stubs():
     token_manager = types.ModuleType('content_checkers.plex_token_manager')
     token_manager.update_token_status = lambda *args, **kwargs: None
     token_manager.get_token_status = lambda *args, **kwargs: None
+    token_manager.load_token_status = lambda *args, **kwargs: {}
     sys.modules['content_checkers.plex_token_manager'] = token_manager
 
     if 'feedparser' not in sys.modules:
@@ -213,26 +215,34 @@ class PlexRssRetentionTests(unittest.TestCase):
             'content_checkers.plex_rss_watchlist',
             'content_checkers/plex_rss_watchlist.py',
         )
+        # The RSS module shares the removal rule from plex_watchlist (imported lazily).
+        cls.watchlist_module = _load_module(
+            'content_checkers.plex_watchlist',
+            'content_checkers/plex_watchlist.py',
+        )
 
     def run_fetcher(self, state, media_type, keep_series, removal=True,
-                    show_status='returning series'):
+                    show_status='returning series', read_only=False):
         module = self.module
-        entry = types.SimpleNamespace(
-            title='Test title',
-            guid='imdb://tt1234567',
-            category='show' if media_type == 'tv' else 'movie',
-        )
-        module.feedparser.parse = lambda url: types.SimpleNamespace(
-            bozo=False, entries=[entry])
+        entry = {
+            'title': 'Test title',
+            'guids': ['imdb://tt1234567'],
+            'category': 'show' if media_type == 'tv' else 'movie',
+        }
+        module.fetch_plex_rss_entries = lambda url: [entry]
         module.get_setting = lambda section, key, default=False: {
             'plex_watchlist_removal': removal,
             'plex_watchlist_keep_series': keep_series,
         }.get(key, default)
         module.get_media_item_presence_overall = lambda **kwargs: state
-        module.get_show_status = lambda imdb_id: show_status
-        with self.assertLogs(level=logging.INFO) as captured:
+        shared = self.watchlist_module
+        shared.get_setting = module.get_setting
+        shared.get_media_item_presence_overall = module.get_media_item_presence_overall
+        shared.get_show_status = lambda imdb_id: show_status
+        with mock.patch.dict(sys.modules, {'content_checkers.plex_watchlist': shared}), \
+                self.assertLogs(level=logging.INFO) as captured:
             batches = module.get_wanted_from_plex_rss(
-                'https://plex.test/rss', {'1080p': True})
+                'https://plex.test/rss', {'1080p': True}, read_only=read_only)
         returned = [entry for batch, _ in batches for entry in batch]
         return returned, '\n'.join(captured.output)
 

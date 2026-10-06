@@ -296,7 +296,7 @@ SETTINGS_SCHEMA = {
         },
         "enable_debrid_naming": {
             "type": "boolean",
-            "description": "Name debrid torrent folders in cli_mount's DFS mount using a structured format: {title} ({year}) - {imdb-id} - {version} - (original) for movies and {title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original) for episodes. Requires cli_mount as the usenet provider (URL configured). Only renames the virtual folder in cli_mount — the actual file on the debrid service is unchanged.",
+            "description": "Name debrid torrent folders in cli_mount's DFS mount using a structured format: {title} ({year}) - {imdb-id} - {version} - (original) for movies and {title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original) for episodes. Requires cli_mount as the usenet provider (URL configured). Renames the entry in cli_mount only (single-file torrents get the file renamed too; the folder shows the new name only when cli_mount's Folder Naming is 'File name') — the actual file on the debrid service is unchanged.",
             "default": False
         },
         "include_version_in_debrid_naming": {
@@ -905,12 +905,12 @@ SETTINGS_SCHEMA = {
         },
         "plex_watchlist_removal": {
             "type": "boolean",
-            "description": "Remove items from Plex Watchlist when they have been collected (only works with My Plex Watchlist and Other Plex Watchlist sources)",
+            "description": "Remove items from the Plex Watchlist once they have been collected. Movies are removed when every wanted version is collected; shows only once the series has ended (a running show stays on the watchlist so new episodes keep being added). Removes from My Plex Watchlist and Other Plex Watchlist; for the Plex RSS sources, which are read-only, collected items are skipped instead of removed.",
             "default": False
         },
         "plex_watchlist_keep_series": {
             "type": "boolean",
-            "description": "Keep series in Plex Watchlist when they have been collected, only delete movies",
+            "description": "Never remove or skip series, even ended ones, when they have been collected; only movies are removed. Applies to the Plex Watchlist and Plex RSS sources.",
             "default": False
         },
         "trakt_watchlist_removal": {
@@ -2393,7 +2393,7 @@ SETTINGS_SCHEMA = {
             },
             "My Plex RSS Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
-                "url": {"type": "string", "default": "", "validate": "url"},
+                "url": {"type": "string", "default": "", "validate": "url", "description": "Note: Plex caps watchlist RSS feeds at the 25 most recent items and may serve them up to ~48h stale; use 'My Plex Watchlist' for the full list."},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "My Plex RSS Watchlist"},
@@ -2474,10 +2474,91 @@ SETTINGS_SCHEMA = {
             },
             "My Friends Plex RSS Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
-                "url": {"type": "string", "default": "", "validate": "url"},
+                "url": {"type": "string", "default": "", "validate": "url", "description": "Note: Plex caps watchlist RSS feeds at the 25 most recent items and may serve them up to ~48h stale; use 'Plex Friends Watchlist' for full, current friends' watchlists."},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "My Friends Plex RSS Watchlist"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
+                    "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
+                    "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
+                },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
+                }
+            },
+            "Plex Friends Watchlist": {
+                "enabled": {"type": "boolean", "default": False},
+                "friends": {"type": "string", "default": "", "description": "Comma-separated Plex usernames or display names of friends whose watchlists to add. Leave empty for all friends. Uses your main Plex token; each friend must allow their watchlist to be shared with friends in their Plex privacy settings."},
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
+                "display_name": {"type": "string", "default": "Plex Friends Watchlist"},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",

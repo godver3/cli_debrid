@@ -90,6 +90,26 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
         }
         airtime_cache = {}
 
+        # Which watchlist titles were not added and why. The skip summary only had counts, so a
+        # watchlist item blocked by the blacklist, ghostlist, watch history or an existing row looked
+        # like it had simply vanished. Bounded, deduplicated per title and reason.
+        skipped_watchlist_titles = {}
+        added_watchlist_titles = {}
+        def _note_skip(reason, item_):
+            if 'Plex' not in str(item_.get('content_source') or ''):
+                return
+            title_ = item_.get('title') or item_.get('imdb_id') or item_.get('tmdb_id') or 'Unknown'
+            titles_ = skipped_watchlist_titles.setdefault((reason, item_.get('content_source')), {})
+            if title_ in titles_ or len(titles_) < 100:
+                titles_[title_] = titles_.get(title_, 0) + 1
+        def _note_added(item_):
+            # What a Plex watchlist source actually added (episodes are counted per show).
+            if 'Plex' not in str(item_.get('content_source') or ''):
+                return
+            title_ = item_.get('title') or item_.get('imdb_id') or item_.get('tmdb_id') or 'Unknown'
+            per_source_ = added_watchlist_titles.setdefault(item_.get('content_source'), {})
+            per_source_[title_] = per_source_.get(title_, 0) + 1
+
         # Load IMDB→Trakt ID cache to avoid redundant API calls
         imdb_trakt_cache = load_imdb_trakt_cache()
         cache_hits = 0
@@ -368,7 +388,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         if conditions_wh:
                             query_wh += " OR ".join(conditions_wh)
                             if watch_history_conn.execute(query_wh, params_wh).fetchone():
-                                skip_stats['already_watched'] += 1; items_skipped += 1; continue
+                                skip_stats['already_watched'] += 1; items_skipped += 1; _note_skip('watch history', item); continue
                 else:
                     # TIERED FALLBACK: Check watch history with IMDb, then TMDb, then show_title
                     # This prevents cross-ID matching and handles title mismatches
@@ -403,6 +423,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         if is_watched:
                             skip_stats['already_watched'] += 1
                             items_skipped += 1
+                            _note_skip('watch history', item)
                             continue
             
             is_blacklisted_in_db = False
@@ -453,7 +474,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                             logging.info(f"Unblacklisted item id={db_item_id} ({item.get('title', 'Unknown')}) per source unblacklist setting")
                             # Allow item to proceed — do not skip
                     else:
-                        skip_stats['existing_blacklisted'] += 1; items_skipped += 1; continue
+                        skip_stats['existing_blacklisted'] += 1; items_skipped += 1; _note_skip('existing version is Blacklisted/Ghostlisted', item); continue
 
             # Check if item is already Collected or Upgrading (prevent duplicate re-addition)
             is_collected_or_upgrading_in_db = False
@@ -545,7 +566,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                                         "UPDATE media_items SET source_position=? WHERE id=?",
                                         (item['source_position'], lookup_id)
                                     )
-                    skip_stats['already_collected_or_upgrading'] += 1; items_skipped += 1; continue
+                    skip_stats['already_collected_or_upgrading'] += 1; items_skipped += 1; _note_skip('already Collected/Upgrading', item); continue
 
             if item_type == 'movie':
                 skip = False; media_id_vs = imdb_id or tmdb_id
@@ -577,6 +598,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         if media_id_vs not in version_summary['movies']:
                             version_summary['movies'][media_id_vs] = {'existing': existing_versions_set_vs, 'added': set(), 'title': normalized_title, 'states': existing_states_set_vs}
                 if skip:
+                    _note_skip('a version already exists', item)
                     if _plex_labels_active:
                         new_source = item.get('content_source')
                         new_detail = item.get('content_source_detail')
@@ -622,6 +644,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         if episode_key_vs not in version_summary['episodes']:
                              version_summary['episodes'][episode_key_vs] = {'existing': existing_versions_set_vs, 'added': set(), 'title': normalized_title, 'states': existing_states_set_vs}
                 if skip:
+                    _note_skip('a version already exists', item)
                     if _plex_labels_active:
                         new_source = item.get('content_source')
                         new_detail = item.get('content_source_detail')
@@ -654,6 +677,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
             if is_item_blacklisted:
                 skip_stats['blacklisted'] += 1
                 items_skipped += 1
+                _note_skip('manually blacklisted', item)
                 continue
 
             if not item.get('tmdb_id'):
@@ -838,6 +862,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                     )
                     movies_to_insert.append(movie_data)
                     items_added += 1
+                    _note_added(item)
                 else: # episode
                     if item.get('imdb_id') or item.get('tmdb_id'):
                         show_titles_to_potentially_update.add(
@@ -893,6 +918,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                     )
                     episodes_to_insert.append(episode_data)
                     items_added += 1
+                    _note_added(item)
         
         # Perform deferred show title updates
         updated_any_title = False
@@ -1143,6 +1169,14 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
 
         if skip_report:
             logging.info("Wanted items processing complete. Skip summary:\n" + "\n".join(skip_report))
+        for (reason_, source_), titles_ in skipped_watchlist_titles.items():
+            shown_ = ', '.join(repr(t) if n == 1 else f"{t!r} ({n} entries)" for t, n in list(titles_.items())[:25])
+            more_ = f" (+{len(titles_) - 25} more)" if len(titles_) > 25 else ''
+            logging.info(f"Plex watchlist items not added from {source_} ({reason_}): {shown_}{more_}")
+        for source_, per_source_ in added_watchlist_titles.items():
+            parts_ = [repr(t) if n == 1 else f"{t!r} ({n} entries)" for t, n in list(per_source_.items())[:25]]
+            more_ = f" (+{len(per_source_) - 25} more)" if len(per_source_) > 25 else ''
+            logging.info(f"Plex watchlist items added from {source_}: {', '.join(parts_)}{more_}")
         logging.info(f"Final stats - Added: {items_added}, Updated: {items_updated}, Total Skipped: {items_skipped}")
         
         return items_added

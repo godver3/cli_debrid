@@ -1702,6 +1702,39 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             logging.debug(f"Could not persist corrected debrid_folder_name for item {item.get('id')}: {persist_err}")
                     break
 
+            # 8.7. Debrid naming renamed the file itself. For a single-file entry cli_mount
+            # renames the file to "<new name><ext>" along with the entry, but the folder only
+            # follows when cli_mount's folder naming is file-name based - with "Original
+            # name" it stays as is. filled_by_file still holds the original debrid filename,
+            # so look for the renamed file in every candidate folder and adopt its name.
+            if not found_file and candidate_names:
+                _ext = os.path.splitext(current_filename)[1]
+                renamed_filenames = []
+                for stem in (filled_by_title, debrid_folder_name):
+                    if not stem or not _ext:
+                        continue
+                    renamed = stem if stem.lower().endswith(_ext.lower()) else stem + _ext
+                    if renamed != current_filename and renamed not in renamed_filenames:
+                        renamed_filenames.append(renamed)
+                for renamed in renamed_filenames:
+                    for name in candidate_names:
+                        candidate_path = os.path.join(original_path, name, renamed)
+                        if os.path.exists(candidate_path):
+                            source_file = candidate_path
+                            source_folder = os.path.dirname(candidate_path)
+                            found_file = True
+                            break
+                    if found_file:
+                        logging.info(f"Found debrid-renamed file '{renamed}' (was '{current_filename}'): {source_file}")
+                        current_filename = renamed
+                        item['filled_by_file'] = renamed
+                        if item.get('id'):
+                            try:
+                                update_media_item(item['id'], filled_by_file=renamed)
+                            except Exception as persist_err:
+                                logging.debug(f"Could not persist renamed filled_by_file for item {item.get('id')}: {persist_err}")
+                        break
+
             # 9. Extended search: scan original_path subdirectories for the file.
             # Only runs when extended_search=True (activated after 900s in checking queue)
             # and all named-folder attempts have failed.

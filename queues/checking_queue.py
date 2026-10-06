@@ -1075,6 +1075,9 @@ class CheckingQueue:
 
     def check_uncached_torrents(self, phalanx_db_manager):
         """Periodically check if uncached torrents have become cached"""
+        from utilities.acquisition_health import provider_available
+        if not provider_available(self.debrid_provider):
+            return
         current_time = time.time()
         cache_check_interval = get_setting('Debug', 'cache_check_interval', default=900)  # 15 minutes default
         
@@ -1277,6 +1280,16 @@ class CheckingQueue:
         for torrent_id, current_items_for_torrent in items_by_torrent_id_to_process.items():
             if not current_items_for_torrent: # Should not happen due to pre-filtering but good check
                 logging.debug(f"Torrent {torrent_id} has no items left after filtering, skipping.")
+                continue
+            from utilities.acquisition_health import provider_available, usenet_available
+            backend_ok = (usenet_available() if str(torrent_id).startswith('nzb:')
+                          else provider_available(self._provider_for_torrent(torrent_id)))
+            if not backend_ok:
+                # Connectivity is not a missing/stalled torrent. Keep the job,
+                # strikes and request intact, and do not age its progress timer
+                # while a healthy alternative continues independently.
+                if torrent_id in self.progress_checks:
+                    self.progress_checks[torrent_id]['last_check'] = current_time
                 continue
             try:
                 logging.debug(f"Processing torrent {torrent_id} with {len(current_items_for_torrent)} associated items")

@@ -64,7 +64,8 @@ class TorrentProcessor:
     @property
     def _providers(self):
         """Ordered list of providers: primary first, then fallbacks."""
-        return get_debrid_providers()
+        from utilities.acquisition_health import provider_available
+        return [p for p in get_debrid_providers() if provider_available(p)]
         
     def _should_direct_check(self, hash_value: str) -> bool:
         """

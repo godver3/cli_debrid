@@ -64,11 +64,11 @@ class TestDebugManualIngestionRoutePassesUnblacklist(unittest.TestCase):
 
     def test_add_wanted_items_calls_receive_unblacklist_flag(self):
         self.assertIn(
-            "add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_from_config, unblacklist=unblacklist_on_source_run)",
+            "add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_dict, unblacklist=unblacklist_on_source_run)",
             self.source,
         )
         self.assertIn(
-            "add_wanted_items(final_items_for_db_non_batch, versions_from_config, unblacklist=unblacklist_on_source_run)",
+            "add_wanted_items(final_items_for_db_non_batch, versions_dict, unblacklist=unblacklist_on_source_run)",
             self.source,
         )
 

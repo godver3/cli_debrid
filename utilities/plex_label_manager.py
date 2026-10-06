@@ -1787,7 +1787,7 @@ def _fetch_live_imdb_ids_for_source(src_id: str, src_cfg: dict, all_settings: di
 
         elif src_type == 'My Plex Watchlist':
             from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist
-            results = get_wanted_from_plex_watchlist(versions)
+            results = get_wanted_from_plex_watchlist(versions, read_only=True)
             for items, _ in results:
                 _ingest(items)
 
@@ -1830,7 +1830,7 @@ def _fetch_live_imdb_ids_for_source(src_id: str, src_cfg: dict, all_settings: di
             from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss
             rss_url = src_cfg.get('url', '')
             if rss_url:
-                results = get_wanted_from_plex_rss(rss_url, versions)
+                results = get_wanted_from_plex_rss(rss_url, versions, read_only=True)
                 for items, _ in results:
                     _ingest(items)
 
@@ -1838,9 +1838,15 @@ def _fetch_live_imdb_ids_for_source(src_id: str, src_cfg: dict, all_settings: di
             from content_checkers.plex_rss_watchlist import get_wanted_from_friends_plex_rss
             rss_url = src_cfg.get('url', '')
             if rss_url:
-                results = get_wanted_from_friends_plex_rss(rss_url, versions)
+                results = get_wanted_from_friends_plex_rss(rss_url, versions, read_only=True)
                 for items, _ in results:
                     _ingest(items)
+
+        elif src_type == 'Plex Friends Watchlist':
+            from content_checkers.plex_watchlist import get_wanted_from_plex_friends_watchlist
+            results = get_wanted_from_plex_friends_watchlist(src_cfg, versions)
+            for items, _ in results:
+                _ingest(items)
 
         else:
             # Unsupported type (Overseerr/Agregarr are requester-mode, handled elsewhere)

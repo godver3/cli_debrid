@@ -1239,8 +1239,12 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 # title stands in (same fallback as the watchlist fetch).
                 token_owner = account.username or account.title
 
+                # Imported here, not at module level: plex_watchlist imports database -> routes, so a
+                # top-level import of a name defined late in plex_watchlist is a circular import
+                # when plex_watchlist is the first of the two to load (as in main.py).
+                from content_checkers.plex_watchlist import plex_token_matches_username
                 # For Other Plex Watchlist, verify username matches
-                if source_type == 'Other Plex Watchlist' and token_owner != username:
+                if source_type == 'Other Plex Watchlist' and not plex_token_matches_username(account, username):
                     base_response['error'] = f'Token does not match username. Expected: {username}, Got: {token_owner}'
                     base_response['connected'] = False
                     # No need to return here, let it fall through to sample fetch attempt if desired,
@@ -1283,6 +1287,22 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
 
             # Sample data fetching removed to improve performance
             # Connection check should only verify connectivity, not fetch data
+
+        # --- Plex Friends Watchlist (community API, main token) ---
+        elif source_type == 'Plex Friends Watchlist':
+            token = get_setting('Plex', 'token') or get_setting('File Management', 'plex_token_for_symlink')
+            if not token:
+                base_response['error'] = 'Plex token not configured'
+                base_response['connected'] = False
+                return base_response
+            try:
+                from content_checkers.plex_watchlist import get_plex_friends
+                friends = get_plex_friends(token)
+                base_response['connected'] = True
+                base_response['details'].update({'friends': len(friends)})
+            except Exception as e:
+                base_response['error'] = f'Failed to load Plex friends: {e}'
+                base_response['connected'] = False
 
         # --- Adaptive List ---
         elif source_type == 'Adaptive List':

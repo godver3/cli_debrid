@@ -442,6 +442,7 @@ def add_onboarding_content_source():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @onboarding_bp.route('/content_sources/get', methods=['GET'])
+@admin_required  # returns every content source's config, including Other Plex Watchlist account tokens
 def get_onboarding_content_sources():
     config = load_config()
     content_source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())

@@ -250,12 +250,6 @@ def _handle_plex_watchlist_removal(item: Dict[str, Any]) -> None:
     if not get_setting('Debug', 'plex_watchlist_removal', False):
         return
 
-    # Respect the keep_series setting: skip episodes/shows if enabled
-    keep_series = get_setting('Debug', 'plex_watchlist_keep_series', False)
-    if keep_series and item.get('type') in ('episode', 'show'):
-        logging.debug(f"[WATCHLIST_REMOVE] Skipping series '{item.get('title')}' (plex_watchlist_keep_series enabled)")
-        return
-
     content_source = item.get('content_source', '')
     if not content_source:
         return
@@ -265,6 +259,20 @@ def _handle_plex_watchlist_removal(item: Dict[str, Any]) -> None:
     config = load_config()
     source_config = config.get('Content Sources', {}).get(content_source, {})
     source_type = source_config.get('type', '')
+    if source_type not in ('My Plex Watchlist', 'Other Plex Watchlist'):
+        return
+
+    # Same rule as fetch-time removal (keep_series, movies only when every version is collected,
+    # shows only once ended), so one collected episode can't take a running show off the watchlist.
+    from content_checkers.plex_watchlist import should_remove_from_watchlist
+    imdb_id = item.get('imdb_id')
+    media_type = 'tv' if item.get('type') in ('episode', 'show') else 'movie'
+    if not imdb_id:
+        return
+    remove, reason = should_remove_from_watchlist(imdb_id, media_type)
+    if not remove:
+        logging.debug(f"[WATCHLIST_REMOVE] Keeping '{item.get('title')}' on the watchlist: {reason}")
+        return
 
     if source_type == 'My Plex Watchlist':
         from content_checkers.plex_watchlist import remove_from_plex_watchlist_by_item

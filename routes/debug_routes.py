@@ -42,8 +42,10 @@ import asyncio
 from utilities.plex_functions import get_collected_from_plex, plex_update_item
 from content_checkers.content_cache_management import (
     load_source_cache, save_source_cache,
-    update_cache_for_item
+    update_cache_for_item,
+    normalize_enabled_versions, metadata_output_ids, item_has_metadata_output, UNRESOLVED_RETRY_HOURS
 )
+from content_checkers.source_run_report import SourceRunReport
 import traceback
 from database.symlink_verification import get_unverified_files, get_verification_stats
 from content_checkers.content_source_detail import append_content_source_detail
@@ -949,7 +951,7 @@ def update_trakt_settings(content_sources):
 def get_and_add_wanted_content(source_id):
     from content_checkers.overseerr import get_wanted_from_overseerr
     from content_checkers.collected import get_wanted_from_collected
-    from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
+    from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist, get_wanted_from_plex_friends_watchlist
     from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
     from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist, get_wanted_from_special_trakt_lists
     from content_checkers.scrob import get_wanted_from_scrob_lists, get_wanted_from_scrob_collection, get_wanted_from_scrob_special
@@ -1000,6 +1002,16 @@ def get_and_add_wanted_content(source_id):
     
     cutoff_date = parsed_cutoff_date # Use the parsed_cutoff_date
 
+    # Same version handling as run_program.process_content_source: only enabled versions count,
+    # and a source with none cannot be processed.
+    versions_dict = normalize_enabled_versions(versions_from_config)
+    if not versions_dict:
+        logging.error(
+            f"Content source {source_id} has no enabled versions in current settings. "
+            "Skipping this run before metadata processing; select and save at least one version."
+        )
+        return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Source {source_id} has no enabled versions"}
+
     logging.info(f"Processing source: {source_id}")
     logging.debug(f"Source type: {source_type}, media type: {source_media_type}, versions (as dict): {versions_from_config}")
     
@@ -1011,6 +1023,7 @@ def get_and_add_wanted_content(source_id):
     media_type_skipped = 0
     genre_skipped = 0
     cutoff_date_skipped = 0
+    report = SourceRunReport(source_id, source_type)  # no-op except for Plex watchlist sources
 
     wanted_content = []
     try: # Add try block for source fetching
@@ -1030,6 +1043,8 @@ def get_and_add_wanted_content(source_id):
                 logging.error(f"Missing URL for source: {source_id}")
                 return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Missing URL for {source_id}"}
             wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config)
+        elif source_type == 'Plex Friends Watchlist':
+            wanted_content = get_wanted_from_plex_friends_watchlist(source_data, versions_from_config)
         elif source_type == 'Other Plex Watchlist':
             wanted_content = get_wanted_from_other_plex_watchlist(
                 username=source_data.get('username', ''),
@@ -1104,6 +1119,9 @@ def get_and_add_wanted_content(source_id):
                 wanted_content = wanted_content[:list_length_limit]
                 logging.info(f"Applied list length limit to {source_id}: limited to {list_length_limit} items from {original_length}")
 
+    report.fetched(wanted_content)
+    if not wanted_content:
+        report.log()  # fetcher returned nothing: say so explicitly
     if wanted_content:
         try: # Add try block for processing
             if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
@@ -1129,25 +1147,27 @@ def get_and_add_wanted_content(source_id):
                         if items_to_process_raw:
                             batch_items_processed += len(items_to_process_raw)
                             
-                            # Convert versions from tuple if necessary
-                            if isinstance(item_versions_from_source_tuple, list):
-                                versions_to_inject = {v: True for v in item_versions_from_source_tuple}
-                            elif isinstance(item_versions_from_source_tuple, dict):
-                                versions_to_inject = item_versions_from_source_tuple
-                            else:
-                                logging.warning(f"Unexpected format for versions in tuple for {source_id}. Using main source versions dict.")
-                                versions_to_inject = versions_from_config # Fallback to the converted source versions
+                            # Normalise versions from the fetcher tuple (only enabled ones)
+                            versions_to_inject = normalize_enabled_versions(item_versions_from_source_tuple)
+                            if not versions_to_inject:
+                                logging.warning(f"Unexpected or empty versions in tuple for {source_id}. Using main source versions dict.")
+                                versions_to_inject = versions_dict # Fallback to the converted source versions
 
                             # Inject the CONVERTED versions dictionary into each item
                             items_for_metadata = []
                             for item_dict_raw in items_to_process_raw:
                                 item_dict_processed = item_dict_raw.copy()
                                 item_dict_processed['versions'] = versions_to_inject # Inject the dict
+                                item_dict_processed['content_source'] = source_id  # Needed by metadata.py for per-source allow_specials/seasons_per_show
                                 items_for_metadata.append(item_dict_processed)
 
                             processed_items_meta = process_metadata(items_for_metadata)
+                            if not processed_items_meta:
+                                report.metadata_failed(items_to_process_raw)
                             if processed_items_meta:
-                                all_items_meta_processed_batch = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', [])
+                                all_items_meta_processed_batch = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', []) + processed_items_meta.get('anime', [])
+                                output_ids = metadata_output_ids(all_items_meta_processed_batch)
+                                report.metadata_done(items_to_process_raw, output_ids, all_items_meta_processed_batch, UNRESOLVED_RETRY_HOURS)
                                 for item in all_items_meta_processed_batch:
                                     item['content_source'] = source_id
                                     item = append_content_source_detail(item, source_type=source_type)
@@ -1203,7 +1223,9 @@ def get_and_add_wanted_content(source_id):
                                             release_date = item.get('release_date')
                                         
                                         if not release_date or release_date.lower() == 'unknown':
-                                            final_items_for_db_batch.append(item)
+                                            # A cutoff is set, so an unknown release date is dropped (as in the scheduled run)
+                                            current_batch_cutoff_skipped += 1
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to unknown release date (cutoff date is set)")
                                             continue
                                         try:
                                             item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
@@ -1213,8 +1235,8 @@ def get_and_add_wanted_content(source_id):
                                                 current_batch_cutoff_skipped += 1
                                                 logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date}")
                                         except ValueError:
-                                            final_items_for_db_batch.append(item)
-                                            logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through (pre-DB add)")
+                                            current_batch_cutoff_skipped += 1
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to invalid date format: {release_date} (cutoff date is set)")
                                 else:
                                     # No cutoff date, so all processed items are candidates for DB for this batch
                                     final_items_for_db_batch = all_items_meta_processed_batch
@@ -1224,15 +1246,18 @@ def get_and_add_wanted_content(source_id):
                                 if current_batch_cutoff_skipped > 0: # Log if items were skipped in this batch
                                     logging.debug(f"Batch {source_id}: Skipped {current_batch_cutoff_skipped} items due to cutoff date (pre-DB add)")
                                 
+                                report.filters_done(final_items_for_db_batch)
                                 if final_items_for_db_batch:
                                     from database import add_wanted_items
-                                    added_count = add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_from_config, unblacklist=unblacklist_on_source_run)
+                                    added_count = add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_dict, unblacklist=unblacklist_on_source_run)
+                                    report.added(len(final_items_for_db_batch), added_count)
                                     batch_total_items_added += added_count or 0
                                     
                                     # Update cache for all items that were processed (regardless of whether they made it through filtering)
                                     # This prevents reprocessing the same items repeatedly
                                     for item_original in items_to_process_raw:
-                                        update_cache_for_item(item_original, source_id, source_cache)
+                                        update_cache_for_item(item_original, source_id, source_cache,
+                                                              retry_after_hours=None if item_has_metadata_output(item_original, output_ids) else UNRESOLVED_RETRY_HOURS)
 
                     except Exception as batch_error:
                         logging.error(f"Error processing batch from {source_id}: {str(batch_error)}", exc_info=True)
@@ -1261,12 +1286,17 @@ def get_and_add_wanted_content(source_id):
                     for item_dict_raw in items_to_process_raw:
                         item_dict_processed = item_dict_raw.copy()
                         # Use the CONVERTED source-level versions_dict here
-                        item_dict_processed['versions'] = versions_from_config 
+                        item_dict_processed['versions'] = versions_dict
+                        item_dict_processed['content_source'] = source_id  # Needed by metadata.py for per-source allow_specials/seasons_per_show
                         items_for_metadata.append(item_dict_processed)
                         
                     processed_items_meta = process_metadata(items_for_metadata)
+                    if not processed_items_meta:
+                        report.metadata_failed(items_to_process_raw)
                     if processed_items_meta:
-                        all_items_meta_processed_non_batch = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', [])
+                        all_items_meta_processed_non_batch = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', []) + processed_items_meta.get('anime', [])
+                        output_ids = metadata_output_ids(all_items_meta_processed_non_batch)
+                        report.metadata_done(items_to_process_raw, output_ids, all_items_meta_processed_non_batch, UNRESOLVED_RETRY_HOURS)
                         for item in all_items_meta_processed_non_batch:
                             item['content_source'] = source_id
                             item = append_content_source_detail(item, source_type=source_type)
@@ -1323,7 +1353,8 @@ def get_and_add_wanted_content(source_id):
                                     release_date = item.get('release_date')
                                 
                                 if not release_date or release_date.lower() == 'unknown':
-                                    final_items_for_db_non_batch.append(item)
+                                    current_non_batch_cutoff_skipped += 1
+                                    logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to unknown release date (cutoff date is set)")
                                     continue
                                 try:
                                     item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
@@ -1333,8 +1364,8 @@ def get_and_add_wanted_content(source_id):
                                         current_non_batch_cutoff_skipped += 1
                                         logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date} (pre-DB add for non-batch)")
                                 except ValueError:
-                                    final_items_for_db_non_batch.append(item)
-                                    logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through (pre-DB add for non-batch)")
+                                    current_non_batch_cutoff_skipped += 1
+                                    logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to invalid date format: {release_date} (cutoff date is set)")
                         else:
                             # If no cutoff_date, all items processed from metadata are candidates for DB
                             final_items_for_db_non_batch = all_items_meta_processed_non_batch
@@ -1345,15 +1376,18 @@ def get_and_add_wanted_content(source_id):
                              logging.debug(f"{source_id}: Skipped {current_non_batch_cutoff_skipped} items due to cutoff date (pre-DB add for non-batch)")
 
                         # Add only the date-filtered items to the database
+                        report.filters_done(final_items_for_db_non_batch)
                         if final_items_for_db_non_batch:
                             from database import add_wanted_items # Already imported at your line 1077
-                            added_count = add_wanted_items(final_items_for_db_non_batch, versions_from_config, unblacklist=unblacklist_on_source_run)
+                            added_count = add_wanted_items(final_items_for_db_non_batch, versions_dict, unblacklist=unblacklist_on_source_run)
+                            report.added(len(final_items_for_db_non_batch), added_count)
                             total_items_added += added_count or 0
                             
                             # Update cache for all items that were processed (regardless of whether they made it through filtering)
                             # This prevents reprocessing the same items repeatedly
                             for item_original in items_to_process_raw:
-                                update_cache_for_item(item_original, source_id, source_cache)
+                                update_cache_for_item(item_original, source_id, source_cache,
+                                                      retry_after_hours=None if item_has_metadata_output(item_original, output_ids) else UNRESOLVED_RETRY_HOURS)
 
             # Save the updated cache
             save_source_cache(source_id, source_cache)
@@ -1367,6 +1401,7 @@ def get_and_add_wanted_content(source_id):
             if cutoff_date_skipped > 0: stats_msg += f", Skipped {cutoff_date_skipped} (cutoff date)"
             if list_length_limit > 0: stats_msg += f", list length limited to {list_length_limit}"
             logging.info(stats_msg)
+            report.log(cache_skipped=cache_skipped)
 
         except Exception as process_error:
             logging.error(f"Error processing items from {source_id}: {str(process_error)}", exc_info=True)

@@ -76,8 +76,10 @@ from utilities.post_processing import handle_state_change
 from content_checkers.content_cache_management import (
     load_source_cache, save_source_cache, 
     should_process_item, update_cache_for_item,
+    metadata_output_ids, item_has_metadata_output, UNRESOLVED_RETRY_HOURS,
     load_live_content_source_config, normalize_enabled_versions
 )
+from content_checkers.source_run_report import SourceRunReport
 from collections import deque # Import deque for efficient queue operations
 from database.symlink_verification import (
     create_overlay_removal_queue_table,
@@ -1519,6 +1521,7 @@ class ProgramRunner:
                 'Other Plex Watchlist': 900,
                 'My Plex RSS Watchlist': 900,
                 'My Friends Plex RSS Watchlist': 900,
+                'Plex Friends Watchlist': 900,
                 'My Friends Trakt Watchlist': 900,
                 'Special Trakt Lists': 900,
                 'Scrob Lists': 900,
@@ -2031,6 +2034,7 @@ class ProgramRunner:
             cache_skipped = 0
             items_processed = 0
             total_items = 0
+            report = SourceRunReport(source, source_type)  # no-op except for Plex watchlist sources
             media_type_skipped = 0
             genre_skipped = 0
             cutoff_date_skipped = 0
@@ -2083,6 +2087,9 @@ class ProgramRunner:
             elif source_type == 'My Friends Plex RSS Watchlist':
                 plex_rss_url = data.get('url', '')
                 wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config)
+            elif source_type == 'Plex Friends Watchlist':
+                from content_checkers.plex_watchlist import get_wanted_from_plex_friends_watchlist
+                wanted_content = get_wanted_from_plex_friends_watchlist(data, versions_from_config)
             elif source_type == 'Other Plex Watchlist':
                 # Import the function here
                 from content_checkers.plex_watchlist import get_wanted_from_other_plex_watchlist
@@ -2115,6 +2122,8 @@ class ProgramRunner:
                 logging.warning(f"Unknown source type: {source_type}")
                 return
 
+            if not wanted_content:
+                report.log()  # fetcher returned nothing: say so explicitly
             if wanted_content:
                 # Apply list length limit if set
                 if list_length_limit > 0:
@@ -2141,18 +2150,17 @@ class ProgramRunner:
                             wanted_content = wanted_content[:list_length_limit]
                             logging.info(f"Applied list length limit to {source}: limited to {list_length_limit} items from {original_length}")
                 
+                report.fetched(wanted_content)
                 if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
                     # Handle list of tuples
                     for items, item_versions_from_source_tuple in wanted_content:
                         logging.debug(f"Processing batch of {len(items)} items from {source}")
 
-                        # Convert versions from tuple if necessary
-                        if isinstance(item_versions_from_source_tuple, list):
-                            versions_to_inject = {v: True for v in item_versions_from_source_tuple}
-                        elif isinstance(item_versions_from_source_tuple, dict):
-                            versions_to_inject = item_versions_from_source_tuple
-                        else:
-                            logging.warning(f"Unexpected format for versions in tuple for {source}. Using main source versions dict.")
+                        # Normalise versions from the fetcher tuple (only enabled ones). A dict such as
+                        # {'1080p': False} used to be injected as-is, giving items no enabled version.
+                        versions_to_inject = normalize_enabled_versions(item_versions_from_source_tuple)
+                        if not versions_to_inject:
+                            logging.warning(f"Unexpected or empty versions in tuple for {source}. Using main source versions dict.")
                             versions_to_inject = versions_dict # Fallback to the converted source versions
 
                         # Track genre filtering stats for this batch
@@ -2179,8 +2187,12 @@ class ProgramRunner:
 
                             from metadata.metadata import process_metadata
                             processed_items = process_metadata(items_to_process)
+                            if not processed_items:
+                                report.metadata_failed(items_to_process_raw)
                             if processed_items:
                                 all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
+                                output_ids = metadata_output_ids(all_items)  # before filters: which raw items produced anything
+                                report.metadata_done(items_to_process_raw, output_ids, all_items, UNRESOLVED_RETRY_HOURS)
                                 
                                 # Set content source and detail for each item
                                 for item in all_items:
@@ -2260,12 +2272,15 @@ class ProgramRunner:
 
                                 from database import add_collected_items, add_wanted_items
                                 # Pass the CONVERTED versions dict to add_wanted_items
-                                add_wanted_items(all_items, versions_to_inject or versions_dict, unblacklist=unblacklist_on_source_run)
+                                report.filters_done(all_items)
+                                report.added(len(all_items), add_wanted_items(all_items, versions_to_inject or versions_dict, unblacklist=unblacklist_on_source_run))
                                 
                                 # Update cache for all items that were processed (regardless of whether they made it through filtering)
                                 # This prevents reprocessing the same items repeatedly
                                 for item_raw in items_to_process_raw:
-                                    update_cache_for_item(item_raw, source, source_cache)
+                                    resolved = item_has_metadata_output(item_raw, output_ids)
+                                    update_cache_for_item(item_raw, source, source_cache,
+                                                          retry_after_hours=None if resolved else UNRESOLVED_RETRY_HOURS)
                                 
                                 total_items += len(all_items)
                                 items_processed += len(items_to_process)
@@ -2296,8 +2311,12 @@ class ProgramRunner:
 
                         from metadata.metadata import process_metadata
                         processed_items = process_metadata(items_to_process)
+                        if not processed_items:
+                            report.metadata_failed(items_to_process_raw)
                         if processed_items:
                             all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
+                            output_ids = metadata_output_ids(all_items)  # before filters: which raw items produced anything
+                            report.metadata_done(items_to_process_raw, output_ids, all_items, UNRESOLVED_RETRY_HOURS)
                             
                             # Set content source and detail for each item
                             for item in all_items:
@@ -2377,12 +2396,15 @@ class ProgramRunner:
 
                             from database import add_collected_items, add_wanted_items
                             # Pass the CONVERTED versions_dict to add_wanted_items
-                            add_wanted_items(all_items, versions_dict, unblacklist=unblacklist_on_source_run)
+                            report.filters_done(all_items)
+                            report.added(len(all_items), add_wanted_items(all_items, versions_dict, unblacklist=unblacklist_on_source_run))
                             
                             # Update cache for all items that were processed (regardless of whether they made it through filtering)
                             # This prevents reprocessing the same items repeatedly
                             for item_raw in items_to_process_raw:
-                                update_cache_for_item(item_raw, source, source_cache)
+                                resolved = item_has_metadata_output(item_raw, output_ids)
+                                update_cache_for_item(item_raw, source, source_cache,
+                                                      retry_after_hours=None if resolved else UNRESOLVED_RETRY_HOURS)
                             
                             total_items += len(all_items)
                             items_processed += len(items_to_process)
@@ -2404,6 +2426,7 @@ class ProgramRunner:
                     stats_msg += f", list length limited to {list_length_limit}"
                 stats_msg += ")"
                 logging.info(stats_msg)
+                report.log(cache_skipped=cache_skipped)
 
             # ── Plex Collection sync — runs even when all items are cached ────
             # Use config 'type' field for matching — source_type is split on '_' which
@@ -6141,8 +6164,10 @@ class ProgramRunner:
         from content_checkers.plex_watchlist import validate_plex_tokens
         token_status = validate_plex_tokens()
         for username, status in token_status.items():
-            if not status['valid']:
+            if status.get('valid') is False:
                 logging.error(f"Invalid Plex token detected during periodic check for user {username}")
+            elif status.get('valid') is None:
+                logging.warning(f"Could not verify the Plex token for user {username} (plex.tv unreachable?)")
             else:
                 logging.debug(f"Plex token for user {username} is valid")
 

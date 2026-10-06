@@ -391,6 +391,16 @@ def delete_content_source(source_id):
     if 'Content Sources' in config and source_id in config['Content Sources']:
         del config['Content Sources'][source_id]
         save_config(config)
+        # Drop the source's item cache: ids are reused ("<type>_<n>"), and a new source that
+        # inherited the old cache would skip items for up to 18h as "already processed".
+        try:
+            from content_checkers.content_cache_management import get_cache_file_path
+            cache_file = get_cache_file_path(source_id)
+            if os.path.exists(cache_file):
+                os.remove(cache_file)
+                logging.info(f"[{process_id}] Removed item cache for deleted content source {source_id}")
+        except Exception as e:
+            logging.warning(f"[{process_id}] Could not remove item cache for {source_id}: {e}")
         logging.info(f"[{process_id}] Content source {source_id} deleted successfully")
         return True
     else:
@@ -423,17 +433,22 @@ def update_content_source(source_id, source_config):
                         value = list(value)
                 config['Content Sources'][source_id][key] = value
         
-        # If this is a Plex watchlist and the token has changed, validate it
-        if (source_config.get('type') == 'Other Plex Watchlist' and 
-            (old_config.get('token') != source_config.get('token') or 
-             old_config.get('username') != source_config.get('username'))):
-            token_status = validate_plex_tokens()
-            username = source_config.get('username')
-            if username in token_status and not token_status[username]['valid']:
-                logging.error(f"Invalid Plex token for newly added/updated user {username}")
-        
         log_config_state(f"[{process_id}] Config after updating content source", config)
         save_config(config)
+
+        # If this is an Other Plex Watchlist whose token/username changed, validate it. This runs
+        # after the save (validate_plex_tokens reads config from disk, so before it checked the
+        # old token) and can never block saving the source.
+        if (source_config.get('type') == 'Other Plex Watchlist' and
+            (old_config.get('token') != source_config.get('token') or
+             old_config.get('username') != source_config.get('username'))):
+            try:
+                token_status = validate_plex_tokens()
+                username = source_config.get('username')
+                if token_status.get(username, {}).get('valid') is False:
+                    logging.error(f"Invalid Plex token for newly added/updated user {username}")
+            except Exception as e:
+                logging.warning(f"Could not validate the Plex token for {source_config.get('username')}: {e}")
         
         # Explicitly reset provider and reinitialize components after updating content source
         reset_provider()
