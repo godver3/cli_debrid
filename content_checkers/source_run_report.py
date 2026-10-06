@@ -48,6 +48,13 @@ class SourceRunReport:
                 total += len(entry[0]) if isinstance(entry, tuple) else 1
         self.counts['fetched'] += total
 
+    def blocked(self, reason: str, raw_item: Dict[str, Any]) -> None:
+        """A blacklisted/ghostlisted title dropped before metadata processing."""
+        if not self.enabled:
+            return
+        self.counts['blocked'] += 1
+        self._drop(f"{reason} (skipped before metadata processing)", _label(raw_item))
+
     def metadata_failed(self, raw_items: Iterable[Dict[str, Any]]) -> None:
         """process_metadata returned nothing for the whole batch."""
         if not self.enabled:
@@ -90,7 +97,7 @@ class SourceRunReport:
         c = self.counts
         not_added = max(c['passed_to_add'] - c['added'], 0)
         logging.info(
-            f"[PLEX_RUN {self.source}] titles: fetched={c['fetched']} cache_skipped={cache_skipped} "
+            f"[PLEX_RUN {self.source}] titles: fetched={c['fetched']} blocked={c['blocked']} cache_skipped={cache_skipped} "
             f"sent_to_metadata={c['sent_to_metadata']} | entries (movies/episodes): "
             f"passed_filters={c['passed_to_add']} newly_added={c['added']} not_added={not_added} "
             f"(see 'Plex watchlist items not added' for why)"

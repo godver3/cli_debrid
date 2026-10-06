@@ -46,6 +46,7 @@ from content_checkers.content_cache_management import (
     normalize_enabled_versions, metadata_output_ids, item_has_metadata_output, UNRESOLVED_RETRY_HOURS
 )
 from content_checkers.source_run_report import SourceRunReport
+from content_checkers.blocked_items import drop_blocked_items
 import traceback
 from database.symlink_verification import get_unverified_files, get_verification_stats
 from content_checkers.content_source_detail import append_content_source_detail
@@ -1120,6 +1121,7 @@ def get_and_add_wanted_content(source_id):
                 logging.info(f"Applied list length limit to {source_id}: limited to {list_length_limit} items from {original_length}")
 
     report.fetched(wanted_content)
+    wanted_content = drop_blocked_items(wanted_content, source_id, source_type, unblacklist_on_source_run, granular_versions, report)
     if not wanted_content:
         report.log()  # fetcher returned nothing: say so explicitly
     if wanted_content:
