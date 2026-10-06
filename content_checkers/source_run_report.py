@@ -88,10 +88,12 @@ class SourceRunReport:
         if not self.enabled:
             return
         c = self.counts
+        not_added = max(c['passed_to_add'] - c['added'], 0)
         logging.info(
-            f"[PLEX_RUN {self.source}] fetched={c['fetched']} cache_skipped={cache_skipped} "
-            f"sent_to_metadata={c['sent_to_metadata']} passed_filters={c['passed_to_add']} newly_added={c['added']} "
-            f"(titles skipped by add_wanted_items are listed there as 'Plex watchlist items not added')"
+            f"[PLEX_RUN {self.source}] titles: fetched={c['fetched']} cache_skipped={cache_skipped} "
+            f"sent_to_metadata={c['sent_to_metadata']} | entries (movies/episodes): "
+            f"passed_filters={c['passed_to_add']} newly_added={c['added']} not_added={not_added} "
+            f"(see 'Plex watchlist items not added' for why)"
         )
         for reason, labels in self.drops.items():
             shown = ', '.join(repr(l) for l in labels[:_MAX_LABELS])

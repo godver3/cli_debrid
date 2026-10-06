@@ -99,9 +99,9 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
             if 'Plex' not in str(item_.get('content_source') or ''):
                 return
             title_ = item_.get('title') or item_.get('imdb_id') or item_.get('tmdb_id') or 'Unknown'
-            titles_ = skipped_watchlist_titles.setdefault((reason, item_.get('content_source')), [])
-            if title_ not in titles_ and len(titles_) < 100:
-                titles_.append(title_)
+            titles_ = skipped_watchlist_titles.setdefault((reason, item_.get('content_source')), {})
+            if title_ in titles_ or len(titles_) < 100:
+                titles_[title_] = titles_.get(title_, 0) + 1
         def _note_added(item_):
             # What a Plex watchlist source actually added (episodes are counted per show).
             if 'Plex' not in str(item_.get('content_source') or ''):
@@ -1170,7 +1170,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
         if skip_report:
             logging.info("Wanted items processing complete. Skip summary:\n" + "\n".join(skip_report))
         for (reason_, source_), titles_ in skipped_watchlist_titles.items():
-            shown_ = ', '.join(repr(t) for t in titles_[:25])
+            shown_ = ', '.join(repr(t) if n == 1 else f"{t!r} ({n} entries)" for t, n in list(titles_.items())[:25])
             more_ = f" (+{len(titles_) - 25} more)" if len(titles_) > 25 else ''
             logging.info(f"Plex watchlist items not added from {source_} ({reason_}): {shown_}{more_}")
         for source_, per_source_ in added_watchlist_titles.items():
