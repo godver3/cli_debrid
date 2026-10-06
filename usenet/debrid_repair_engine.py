@@ -1001,6 +1001,11 @@ def _delete_torrent_if_unshared(info_hash: str, entry_name: str, exclude_ids, fo
 
 def _reset_item_to_wanted(item_id) -> bool:
     try:
+        from database.scraper_grabs import mark_current_grab
+        mark_current_grab(item_id, 'repaired', 'debrid repair: re-scrape')
+    except Exception:
+        pass  # scraper stats are best-effort
+    try:
         from routes.debug_routes import move_item_to_wanted
         move_item_to_wanted(item_id, None)
         return True
@@ -1312,6 +1317,11 @@ def delete_all_broken() -> dict:
                 if _delete_from_plex(item):
                     deleted_plex += 1
                 try:
+                    try:
+                        from database.scraper_grabs import mark_current_grab
+                        mark_current_grab(item['id'], 'repaired', 'debrid repair: broken file')
+                    except Exception:
+                        pass  # scraper stats are best-effort
                     update_media_item_state(item['id'], 'Wanted')
                     reset_db += 1
                     reset_ids.append(item['id'])

@@ -5,6 +5,7 @@ import re
 import threading
 import time
 import xml.etree.ElementTree as ET
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -304,6 +305,22 @@ def scrape_newznab_instance(
     return deduped
 
 
+def _item_indexer_name(item, ns) -> str:
+    """Name of the real indexer behind an aggregator feed, or '' for a plain indexer.
+
+    NZBHydra2 adds a hydraIndexerName newznab:attr; Prowlarr and Jackett add a
+    <prowlarrindexer>/<jackettindexer> element whose text is the indexer name.
+    """
+    for attr in item.findall('newznab:attr', ns):
+        if attr.get('name') == 'hydraIndexerName':
+            return (attr.get('value') or '').strip()
+    for tag in ('prowlarrindexer', 'jackettindexer'):
+        el = item.find(tag)
+        if el is not None and el.text:
+            return el.text.strip()
+    return ''
+
+
 def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
     results = []
     try:
@@ -427,6 +444,12 @@ def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
             'nzb_url': nzb_url,
             'protocol': 'nzb',
             'nzb_files': nzb_files_count,
+            # Scraper stats (database/scraper_grabs.py). Set here rather than only in
+            # ScraperManager because the season aggregate and backup migration call
+            # this parser directly.
+            'scraper_type': 'Newznab',
+            'scraper_instance': instance,
+            'indexer': _item_indexer_name(item, ns),
         }
         results.append(result)
 
@@ -659,6 +682,8 @@ def scrape_newznab_season_aggregate(
         fallback_urls: Dict[int, List[str]] = {}
         episode_sizes: Dict[int, float] = {}
         episode_filenames: Dict[int, str] = {}
+        # Scraper stats: which instance/indexer supplied each episode's primary NZB.
+        episode_sources: Dict[int, Dict[str, str]] = {}
         total_size = 0.0
         # Use the median episode's result as representative (avoids outliers)
         rep_result = ep_map[sorted(ep_map.keys())[len(ep_map) // 2]][0]
@@ -667,6 +692,10 @@ def scrape_newznab_season_aggregate(
             ep_list = ep_map[ep_num]
             ep_result = ep_list[0]
             episode_nzb_urls[ep_num] = ep_result.get('nzb_url', '')
+            episode_sources[ep_num] = {
+                'scraper_instance': ep_result.get('scraper_instance', ''),
+                'indexer': ep_result.get('indexer', ''),
+            }
             fallback_urls[ep_num] = [r.get('nzb_url', '') for r in ep_list[1:] if r.get('nzb_url')]
             ep_size = ep_result.get('size', 0.0)
             episode_sizes[ep_num] = ep_size
@@ -755,6 +784,13 @@ def scrape_newznab_season_aggregate(
             enriched_pi.update({'original_title': display_title, 'seasons': [season],
                                 'episodes': [], 'protocol': 'nzb'})
 
+        # Count the pack under whichever source supplied the most episodes, so
+        # stats never show a lump "NZB Aggregate" row.
+        _src_counts = Counter(
+            (src['scraper_instance'], src['indexer']) for src in episode_sources.values()
+        )
+        (_main_instance, _main_indexer), _ = _src_counts.most_common(1)[0] if _src_counts else (('', ''), 0)
+
         virtual_packs.append({
             'title': display_title,
             'original_title': display_title,
@@ -774,6 +810,10 @@ def scrape_newznab_season_aggregate(
             'fallback_nzb_urls': fallback_urls,
             'episode_sizes': episode_sizes,
             'episode_filenames': episode_filenames,
+            'episode_sources': episode_sources,
+            'scraper_type': 'Newznab',
+            'scraper_instance': _main_instance,
+            'indexer': _main_indexer,
             'episode_count': len(_ep_list),
             'parsed_info': enriched_pi,
             'waterfall_level': lvl,

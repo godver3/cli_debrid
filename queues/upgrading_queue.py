@@ -197,6 +197,18 @@ class UpgradingQueue:
             # self.save_upgrade_states()
             return False
 
+        # Scraper stats: the upgrade grab failed and the old file is coming back.
+        # Every failed-upgrade path (Adding, Checking, Scraping) restores here.
+        # Must run before the restore: writing state back to Collected fires
+        # scraper_grabs' collected trigger, which would settle the failed
+        # upgrade grab as collected.
+        try:
+            from database.scraper_grabs import mark_current_grab
+            mark_current_grab(item_id, 'failed', 'upgrade failed; previous file restored',
+                              only_trigger='upgrade')
+        except Exception:
+            pass  # scraper stats are best-effort
+
         conn = None
         try:
             conn = get_db_connection()

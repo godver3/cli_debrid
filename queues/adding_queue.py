@@ -14,6 +14,7 @@ from utilities.settings import get_setting
 from .torrent_processor import TorrentProcessor
 from .media_matcher import MediaMatcher
 from database.torrent_tracking import update_adding_error
+from database.scraper_grabs import record_grab, mark_current_grab, queue_grab_trigger
 
 
 def torrent_has_other_active_owner(torrent_id: str, exclude_item_id) -> bool:
@@ -687,6 +688,8 @@ class AddingQueue:
                     # Keep segment ID in memory on the item dict for health check failure handling
                     item['_nzb_segment_id'] = nzb_segment_id
                     self._nzb_submitted_ids.add(item['id'])
+                    record_grab(item, chosen_result_info, kind='nzb', release_title=nzb_original_title,
+                                trigger=queue_grab_trigger(item))
                     logging.info(f"[NZB] Item '{item_identifier}' submitted to cli_mount (checking_id={checking_id}). Staying in Adding for health check.")
                     processed_this_item = True
                     continue
@@ -819,6 +822,8 @@ class AddingQueue:
                     debrid_folder_name=debrid_folder_name,
                     debrid_provider=torrent_info.get('_provider'),
                 )
+                record_grab(item, chosen_result_info, kind='torrent', release_title=torrent_title,
+                            info_hash=torrent_info.get('hash'), trigger=queue_grab_trigger(item))
                 processed_this_item = True # Mark primary item as processed for delay logic
 
                 logging.info(f"Removing successfully processed item {item_id} from adding queue memory")
@@ -869,6 +874,8 @@ class AddingQueue:
                                 # back to polling the primary and 404 on its own.
                                 debrid_provider=torrent_info.get('_provider'),
                             )
+                            record_grab(related_item, chosen_result_info, kind='torrent',
+                                        release_title=torrent_title, info_hash=torrent_info.get('hash'))
                             # move_to_checking handles removal from original queue (Scraping/Wanted)
 
                 success = True # Mark overall success if primary item processed
@@ -937,6 +944,7 @@ class AddingQueue:
         is_upgrade = item.get('upgrading') or item.get('upgrading_from') is not None
         upgrading_queue = None
         item_id = item.get('id') # Get item ID early
+        mark_current_grab(item_id, 'failed', error)
 
         try:
             if is_upgrade:
