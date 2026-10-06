@@ -27,7 +27,8 @@ LIMITATIONS vs climount:
     `api.categories` config (default: audio,software,tv,movies — extendable).
   * Browse-by-folder-name is not part of nzbdav's API; we fall back to a
     filesystem listing of the mounted WebDAV root (env var NZBDAV_MOUNT_PATH or
-    config 'mounted_file_location' minus '/__all__').
+    config 'mounted_file_location' minus '/__all__'; kept as-is for Zurg, where
+    __all__ is the folder holding the job folders).
 """
 
 import hashlib
@@ -43,6 +44,10 @@ from routes.api_tracker import api
 
 # Video-file extensions used for "is this a media file" checks in browse helpers.
 _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
+
+# Shortest normalised name (alphanumerics only) allowed to substring-match in
+# _find_nzb_folder's fuzzy fallback. Exact normalised matches are unaffected.
+_FUZZY_MIN_SUBSTRING_LEN = 6
 
 # ── Category taxonomy (single source of truth) ─────────────────────────────
 #
@@ -263,21 +268,25 @@ class NzbdavClient:
         # Host-side filesystem path to where the nzbdav WebDAV mount appears
         # (used for browse helpers since nzbdav has no /browse API). Default to
         # the standard rclone-sidecar mount point shipped with nzbdav docs.
+        # Zurg (and other generic SAB-emulating mounts) store content flat as
+        # <mount_path>/<job_name>/ instead of NzbDAV's <mount_path>/<cat>/<job_name>/.
+        # The 'provider' key still selects this class (same submit/poll/health-check
+        # logic applies); this flag only changes how the WebDAV mount is browsed.
+        # Assigned before the __all__ strip below, which depends on it.
+        self.flat_layout = (cfg.get('provider') or '').strip().lower() == 'zurg'
         # rstrip/endswith both slash flavors - Windows configs store
         # mounted_file_location with backslashes (e.g. "Z:\__all__").
+        # Only strip for nested (NzbDAV) layouts: for Zurg, __all__ IS the folder
+        # holding the release folders, so stripping it pointed every lookup at
+        # the mount root and made completed jobs look broken.
         self.mount_path = cfg.get('mounted_file_location', '').rstrip('/\\')
-        if self.mount_path.endswith(('/__all__', '\\__all__')):
+        if not self.flat_layout and self.mount_path.endswith(('/__all__', '\\__all__')):
             self.mount_path = self.mount_path[: -len('/__all__')]
         if not self.mount_path:
             self.mount_path = '/mnt/remote/nzbdav'
         # Flag set by add_nzb_content when nzbdav reports ARTICLE_NOT_FOUND-style
         # errors (matches CliMountClient.last_missing_segments contract).
         self.last_missing_segments = False
-        # Zurg (and other generic SAB-emulating mounts) store content flat as
-        # <mount_path>/<job_name>/ instead of NzbDAV's <mount_path>/<cat>/<job_name>/.
-        # The 'provider' key still selects this class (same submit/poll/health-check
-        # logic applies); this flag only changes how the WebDAV mount is browsed.
-        self.flat_layout = (cfg.get('provider') or '').strip().lower() == 'zurg'
 
     # -- internal helpers ---------------------------------------------------
 
@@ -565,12 +574,23 @@ class NzbdavClient:
                              f'for {original_name!r}, picked newest {best!r}')
             return best
 
-        # Fuzzy fallback: normalised match (unchanged behaviour).
+        # Fuzzy fallback: normalised match. Provider system folders (__all__,
+        # __nzb__, __dump__, ...) are never release folders, and a very short
+        # normalised name must not substring-match: '__all__' normalises to
+        # 'all', which used to "match" any release containing "all".
         try:
             for cat_path in self._entry_parent_dirs(content_root):
                 for entry in os.listdir(cat_path):
+                    if entry.startswith('__') and entry.endswith('__'):
+                        continue
                     name_norm = _norm(entry)
-                    if name_norm == job_norm or job_norm in name_norm or name_norm in job_norm:
+                    if not name_norm:
+                        continue
+                    if name_norm == job_norm:
+                        return entry
+                    if min(len(name_norm), len(job_norm)) < _FUZZY_MIN_SUBSTRING_LEN:
+                        continue
+                    if job_norm in name_norm or name_norm in job_norm:
                         return entry
         except Exception as exc:
             logging.warning(f'[NzbDAV] _find_nzb_folder error: {exc}')

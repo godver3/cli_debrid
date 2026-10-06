@@ -99,6 +99,69 @@ class TestFlatLayoutFolderResolution(unittest.TestCase):
         self.assertEqual(found, job)
 
 
+class TestMountPathAllStrip(unittest.TestCase):
+    """0.7.56 regression: a trailing __all__ was stripped for every provider,
+    but for Zurg __all__ is the folder holding the release folders, so every
+    lookup ran against the mount root (MaddGuru, 2026-09-30)."""
+
+    def _client(self, provider, mount):
+        orig = nc.get_setting
+        nc.get_setting = lambda *a, **k: {'provider': provider, 'mounted_file_location': mount}
+        try:
+            return nc.NzbdavClient()
+        finally:
+            nc.get_setting = orig
+
+    def test_zurg_keeps_all_posix(self):
+        self.assertEqual(self._client('zurg', '/mnt/zurg/__all__/').mount_path, '/mnt/zurg/__all__')
+
+    def test_zurg_keeps_all_windows(self):
+        self.assertEqual(self._client('zurg', 'Z:\\__all__').mount_path, 'Z:\\__all__')
+
+    def test_nzbdav_still_strips_posix(self):
+        self.assertEqual(self._client('nzbdav', '/mnt/nzbdav/__all__').mount_path, '/mnt/nzbdav')
+
+    def test_nzbdav_still_strips_windows(self):
+        self.assertEqual(self._client('nzbdav', 'Z:\\__all__').mount_path, 'Z:')
+
+
+class TestFuzzyFallbackSystemFolders(unittest.TestCase):
+    """The fuzzy fallback matched '__all__' (normalised 'all') against any
+    release containing "all", then walked the whole library for a video."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        for d in ('__all__', '__nzb__', '__dump__'):
+            os.makedirs(os.path.join(self.root, d))
+
+    def _client(self):
+        c = nc.NzbdavClient()
+        c.flat_layout = True
+        c.mount_path = self.root
+        return c
+
+    @staticmethod
+    def _norm(s):
+        return nc.re.sub(r'[^a-z0-9]', '', s.lower())
+
+    def test_system_folder_not_matched(self):
+        job = 'All.American.S08E13.1080p.HEVC.x265-MeGusta'
+        self.assertIsNone(self._client()._find_nzb_folder(self._norm(job), original_name=job))
+
+    def test_short_name_does_not_substring_match(self):
+        os.makedirs(os.path.join(self.root, 'Doc'))
+        job = 'Doc.2025.S03E02.1080p.AV1.10bit-MeGusta'
+        self.assertIsNone(self._client()._find_nzb_folder(self._norm(job), original_name=job))
+
+    def test_real_fuzzy_match_still_works(self):
+        # Spaces-vs-dots variant of the same release still resolves.
+        folder = 'THE CREEP TAPES S03E06 JODY plus BRIE 1080p AMZN WEB-DL DDP5 1 H 264-RAWR'
+        os.makedirs(os.path.join(self.root, folder))
+        job = 'THE.CREEP.TAPES.S03E06.JODY.plus.BRIE.1080p.AMZN.WEB-DL.DDP5.1.H.264-RAWR'
+        self.assertEqual(self._client()._find_nzb_folder(self._norm(job), original_name=job), folder)
+
+
 class TestFilenameHashSuffix(unittest.TestCase):
     def setUp(self):
         self.posted = {}
