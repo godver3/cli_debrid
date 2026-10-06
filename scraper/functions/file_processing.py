@@ -1,7 +1,7 @@
 import logging
 import re
 from typing import List, Dict, Any, Union
-from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count
+from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count, MIN_PLAUSIBLE_RUNTIME_MINUTES
 from fuzzywuzzy import fuzz
 from PTT import parse_title
 from babelfish import Language
@@ -266,6 +266,14 @@ def parse_torrent_info(title: str, size: Union[str, int, float] = None) -> Dict[
     results = batch_parse_torrent_info([title], [size])
     return results[0]
 
+def _plausible_runtime(value: Any, default: int) -> int:
+    """Return value as int minutes, or default when missing or a placeholder (e.g. TVDB's 1)."""
+    try:
+        minutes = int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
+    return minutes if minutes >= MIN_PLAUSIBLE_RUNTIME_MINUTES else default
+
 def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     from metadata.metadata import get_tmdb_id_and_media_type, get_metadata
     processed_items = []
@@ -297,7 +305,7 @@ def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[s
                         metadata = get_metadata(tmdb_id=tmdb_id_for_meta, imdb_id=imdb_id_for_meta, item_media_type='movie')
                         metadata_duration = time.time() - metadata_start_time
                         total_metadata_time += metadata_duration
-                        item['runtime'] = int(metadata.get('runtime', 100) or 100)
+                        item['runtime'] = _plausible_runtime(metadata.get('runtime'), 100)
                     else:
                         logging.warning(f"Could not fetch details for movie: {item.get('title', 'N/A')}")
                         item['runtime'] = 100
@@ -333,7 +341,7 @@ def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[s
                         metadata_duration = time.time() - metadata_start_time
                         total_metadata_time += metadata_duration
                         #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') get_metadata (tv) took {metadata_duration:.4f}s")
-                        item['runtime'] = int(metadata.get('runtime', 30) or 30)
+                        item['runtime'] = _plausible_runtime(metadata.get('runtime'), 30)
                         seasons = metadata.get('seasons', {})
                         item['episode_count'] = sum(season.get('episode_count', 0) for season in seasons.values())
                     else:
