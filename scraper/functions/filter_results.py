@@ -1813,6 +1813,9 @@ def filter_results(
                 
                 # Use per-item size with per-item runtime for consistent calculation
                 bitrate = calculate_bitrate(size_gb_for_filter, runtime) 
+            elif runtime is None:
+                # Unknown runtime is logged once per scrape in get_media_info_for_bitrate.
+                bitrate = 0
             else:
                 runtime_str = f"{runtime}min" if runtime is not None else "None"
                 logging.warning(f"Skipping bitrate calculation for '{original_title}' due to non-positive runtime ({runtime_str}) or size_gb_for_filter ({size_gb_for_filter:.3f}GB). Bitrate set to 0.")

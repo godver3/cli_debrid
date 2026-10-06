@@ -77,12 +77,15 @@ class MediaInfoForBitrateTests(unittest.TestCase):
     def test_episode_falls_back_to_show_metadata_runtime(self):
         self.assertEqual(self._run('episode', None, 42), 42)
 
-    def test_episode_placeholder_metadata_uses_default(self):
-        self.assertEqual(self._run('episode', None, 1), 30)
-        self.assertEqual(self._run('episode', None, '1'), 30)
+    def test_episode_placeholder_metadata_is_unknown(self):
+        # Unknown, not a guess: filter_results skips the bitrate check for None.
+        self.assertIsNone(self._run('episode', None, 1))
+        self.assertIsNone(self._run('episode', None, '1'))
+        self.assertIsNone(self._run('episode', None, None))
 
-    def test_movie_placeholder_metadata_uses_default(self):
-        self.assertEqual(self._run('movie', None, 1), 100)
+    def test_movie_placeholder_metadata_is_unknown(self):
+        self.assertIsNone(self._run('movie', None, 1))
+        self.assertIsNone(self._run('movie', None, 0))
 
     def test_line_of_fire_bitrate_now_passes(self):
         runtime = self._run('episode', None, 42)
@@ -164,6 +167,37 @@ class UpdateReleaseDateRuntimeTests(unittest.TestCase):
     def test_runtime_untouched_when_omitted(self):
         database_writing.update_release_date_and_state(1, '2026-10-08', 'Wanted')
         self.assertEqual(self._runtime(), 1)
+
+
+class FilterResultsUnknownRuntimeTests(unittest.TestCase):
+    """End to end through the real bitrate filter, with min and max bitrate both set."""
+
+    VERSION = {"similarity_threshold": 0.85, "similarity_threshold_anime": 0.8, "max_resolution": "2160p",
+               "resolution_wanted": "<=", "min_size_gb": 0.01, "max_size_gb": None,
+               "min_bitrate_mbps": 5.0, "max_bitrate_mbps": 18.0}
+    TITLE = "Line.of.Fire.2026.S01E01.Pilot.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb"
+
+    def _passes(self, runtime, size=3.06):
+        from PTT import parse_title
+        from scraper.functions.filter_results import filter_results
+        info = parse_title(self.TITLE)
+        result = {"title": self.TITLE, "original_title": self.TITLE, "size": size, "parsed_info": info,
+                  "scraper_type": "Newznab", "scraper_instance": "NZBGeek_1",
+                  "nzb_url": "https://indexer.test/x", "protocol": "nzb"}
+        passed, _ = filter_results([result], "321958", "Line of Fire", 2026, "episode", 1, 1, False,
+                                   self.VERSION, runtime, 8, {1: 8}, ["Drama"], imdb_id="tt39365612")
+        return bool(passed)
+
+    def test_placeholder_runtime_rejected_everything(self):
+        self.assertFalse(self._passes(1))  # the original bug: 438 Mbps
+
+    def test_unknown_runtime_skips_bitrate_check(self):
+        self.assertTrue(self._passes(None))
+        self.assertTrue(self._passes(None, size=0.5))  # would fail min bitrate under any guess
+
+    def test_real_runtime_still_filters(self):
+        self.assertTrue(self._passes(42))
+        self.assertFalse(self._passes(42, size=0.5))  # 1.6 Mbps < 5 min
 
 
 if __name__ == '__main__':
