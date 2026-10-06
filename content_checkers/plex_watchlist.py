@@ -175,15 +175,18 @@ _ENDED_SHOW_STATUSES = {'ended', 'canceled', 'cancelled'}
 def get_show_status(imdb_id: str) -> str:
     """Return a show's status from the metadata battery ('' when unknown).
 
+    This reads the stored status only (DirectAPI.get_show_status): it never loads the show's
+    episodes or triggers a provider refresh, because it runs for every collected show on each run.
+
     The battery maps TVDB/TMDB status to 'ended', 'canceled', 'returning series', ...
     (cli_battery/app/tvdb_client._map_status), so no Trakt account is needed.
     """
     try:
-        metadata, _source = DirectAPI.get_show_metadata(imdb_id)
+        stored_status = DirectAPI.get_show_status(imdb_id)
     except Exception as e:
         logging.warning(f"Could not read show status for {imdb_id} from the metadata battery: {e}")
         return ''
-    status = str((metadata or {}).get('media_status') or (metadata or {}).get('status') or '').strip().lower()
+    status = str(stored_status or '').strip().lower()
     return 'ended' if status in _ENDED_SHOW_STATUSES else status
 
 def should_remove_from_watchlist(imdb_id: str, media_type: str, item_state: str = None) -> Tuple[bool, str]:

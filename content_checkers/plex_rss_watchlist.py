@@ -102,13 +102,14 @@ def resolve_imdb_and_type(guids: List[str], title: str, media_type: str = None) 
     """Pick an IMDB ID from an item's guids: imdb:// first, then tmdb:// and tvdb:// conversion.
 
     ``media_type`` is 'movie'/'tv', or None when the feed item has no <category>. Then a tmdb://
-    guid is tried as a show and as a movie (TMDB numbers movies and shows separately), and a
-    tvdb:// guid means a show. Returns (imdb_id, media_type).
+    guid is treated as a movie (the previous default; TMDB numbers movies and shows separately, so
+    trying a show first could match an unrelated title) and a tvdb:// guid means a show.
+    Returns (imdb_id, media_type).
     """
     for guid in guids:
         if 'imdb://' in guid:
             return guid.split('imdb://')[1].strip(), media_type
-    tmdb_types = [media_type] if media_type else ['tv', 'movie']
+    tmdb_types = [media_type or 'movie']  # no <category>: movie, as before (TMDB numbers shows and movies separately, so guessing show first could pick an unrelated title)
     for guid in guids:
         if 'tmdb://' in guid:
             tmdb_id = guid.split('tmdb://')[1].strip()

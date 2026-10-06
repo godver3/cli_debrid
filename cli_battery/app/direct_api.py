@@ -926,6 +926,24 @@ class DirectAPI:
             return None, None
 
     @staticmethod
+    def get_show_status(imdb_id: str) -> Optional[str]:
+        """Stored media_status of a show ('ended', 'canceled', 'returning series', ...).
+
+        Reads one column from the battery and never refreshes or loads seasons/episodes, so it is
+        cheap enough to call for every collected show on every watchlist run. None when the show
+        is not in the battery.
+        """
+        if not imdb_id or not isinstance(imdb_id, str) or imdb_id == 'None' or not imdb_id.strip():
+            return None
+        try:
+            with managed_session() as session:
+                row = session.query(Item.media_status).filter_by(imdb_id=imdb_id).first()
+                return row[0] if row else None
+        except Exception as e:
+            logging.error(f"DirectAPI.get_show_status {imdb_id}: {e}")
+            return None
+
+    @staticmethod
     def get_show_seasons(imdb_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         # Guard: Prevent None or invalid imdb_id from reaching database
         if not imdb_id or imdb_id == 'None' or not isinstance(imdb_id, str) or not imdb_id.strip():

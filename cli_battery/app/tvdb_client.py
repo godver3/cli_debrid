@@ -774,7 +774,7 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
     seasons = _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone, imdb_id, tmdb_id)
     if not seasons:
         # Fallback to extended response (may have non-English titles)
-        seasons = _extract_seasons_from_extended(raw)
+        seasons = _extract_seasons_from_extended(raw, imdb_id)
     show_data['seasons'] = seasons
 
     # TVDB marks many canceled shows as 'Ended' — cross-check with Trakt
@@ -991,7 +991,7 @@ def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
     return show_data
 
 
-def _extract_seasons_from_extended(raw: dict) -> Optional[dict]:
+def _extract_seasons_from_extended(raw: dict, imdb_id: str = None) -> Optional[dict]:
     """Extract seasons/episodes from an extended series response."""
     seasons_raw = raw.get('seasons', [])
     episodes_raw = raw.get('episodes', [])
@@ -1102,7 +1102,7 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
     seasons = _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone, imdb_id, tmdb_id)
     if not seasons:
         # Fallback to extended response (may have non-English titles)
-        seasons = _extract_seasons_from_extended(raw)
+        seasons = _extract_seasons_from_extended(raw, imdb_id)
 
     if seasons and not include_specials:
         seasons.pop(0, None)

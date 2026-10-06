@@ -259,19 +259,20 @@ class TestTvdbToImdbWithoutTrakt(unittest.TestCase):
 
 
 class TestRssCategoryAndCap(unittest.TestCase):
-    def test_missing_category_tries_show_then_movie(self):
+    def test_missing_category_tries_movie_only(self):
+        """No <category>: a tmdb guid is a movie (as before), never tried as a show first."""
         calls = []
 
         def tmdb_to_imdb(tmdb_id, media_type):
             calls.append(media_type)
-            return ('tt0000666', 'x') if media_type == 'movie' else (None, None)
+            return ('tt0000666', 'x') if media_type == 'movie' else ('tt9999999', 'wrong show')
 
         api = mock.Mock()
         api.tmdb_to_imdb.side_effect = tmdb_to_imdb
         with mock.patch('cli_battery.app.direct_api.DirectAPI', return_value=api):
             imdb_id, media_type = rss.resolve_imdb_and_type(['tmdb://9'], 'Thing', None)
         self.assertEqual((imdb_id, media_type), ('tt0000666', 'movie'))
-        self.assertEqual(calls, ['show', 'movie'])
+        self.assertEqual(calls, ['movie'])
 
     def test_tvdb_only_guid_without_category_is_a_show(self):
         with mock.patch.object(rss, 'extract_imdb_id', return_value='tt0000777'):
@@ -369,15 +370,20 @@ class TestRemovalRule(unittest.TestCase):
 
     def test_battery_status_is_mapped_without_trakt(self):
         direct = mock.Mock()
-        direct.get_show_metadata.return_value = ({'media_status': 'canceled'}, 'battery')
+        direct.get_show_status.return_value = 'canceled'
         with mock.patch.object(pw, 'DirectAPI', direct):
             self.assertEqual(pw.get_show_status('tt0000001'), 'ended')
-        direct.get_show_metadata.return_value = ({'media_status': 'returning series'}, 'battery')
+        direct.get_show_status.return_value = 'returning series'
         with mock.patch.object(pw, 'DirectAPI', direct):
             self.assertEqual(pw.get_show_status('tt0000001'), 'returning series')
-        direct.get_show_metadata.side_effect = RuntimeError('db')
+        direct.get_show_status.return_value = None
         with mock.patch.object(pw, 'DirectAPI', direct):
             self.assertEqual(pw.get_show_status('tt0000001'), '')
+        direct.get_show_status.side_effect = RuntimeError('db')
+        with mock.patch.object(pw, 'DirectAPI', direct):
+            self.assertEqual(pw.get_show_status('tt0000001'), '')
+        # The full show record (all seasons/episodes, possible provider refresh) is never loaded.
+        direct.get_show_metadata.assert_not_called()
 
 
 class TestExactImdbMatch(unittest.TestCase):
@@ -602,3 +608,17 @@ class TestOnboardingContentSourcesNeedAdmin(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestTvdbExtendedSeasonFallback(unittest.TestCase):
+    def test_fallback_extraction_no_longer_raises_name_error(self):
+        """The extended-response fallback used an undefined imdb_id and crashed on any episode."""
+        from cli_battery.app import tvdb_client
+        raw = {
+            'seasons': [{'number': 1, 'type': {'id': 1}}],
+            'episodes': [{'seasonNumber': 1, 'number': 1, 'name': 'Pilot', 'aired': '2020-01-01'}],
+        }
+        seasons = tvdb_client._extract_seasons_from_extended(raw, 'tt0000001')
+        self.assertEqual(seasons[1]['episodes'][1]['title'], 'Pilot')
+        # The imdb_id argument is optional (it is only used for log messages).
+        self.assertIn(1, tvdb_client._extract_seasons_from_extended(raw))

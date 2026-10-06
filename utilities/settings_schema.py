@@ -905,12 +905,12 @@ SETTINGS_SCHEMA = {
         },
         "plex_watchlist_removal": {
             "type": "boolean",
-            "description": "Remove items from Plex Watchlist when they have been collected (only works with My Plex Watchlist and Other Plex Watchlist sources)",
+            "description": "Remove items from the Plex Watchlist once they have been collected. Movies are removed when every wanted version is collected; shows only once the series has ended (a running show stays on the watchlist so new episodes keep being added). Removes from My Plex Watchlist and Other Plex Watchlist; for the Plex RSS sources, which are read-only, collected items are skipped instead of removed.",
             "default": False
         },
         "plex_watchlist_keep_series": {
             "type": "boolean",
-            "description": "Keep series in Plex Watchlist when they have been collected, only delete movies",
+            "description": "Never remove or skip series, even ended ones, when they have been collected; only movies are removed. Applies to the Plex Watchlist and Plex RSS sources.",
             "default": False
         },
         "trakt_watchlist_removal": {
