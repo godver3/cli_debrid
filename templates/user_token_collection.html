@@ -63,6 +63,17 @@
 .btn-delete{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:5px;font-family:var(--utc-sans);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;background:transparent;border:1px solid #7f1d1d;color:var(--utc-red)}
 .btn-delete:hover{background:#7f1d1d22;border-color:var(--utc-red)}
 
+.utc-btn-secondary{background:var(--utc-surface3);color:var(--utc-text);border:1px solid var(--utc-border2)}
+.utc-btn-secondary:hover{border-color:var(--utc-accent)}
+.utc-btn-secondary:disabled{opacity:.5;cursor:not-allowed}
+.utc-home-list{list-style:none;margin:.75rem 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+.utc-home-list li{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;background:var(--utc-surface2);border:1px solid var(--utc-border2);border-radius:6px;padding:9px 13px;font-size:13px}
+.utc-home-list .utc-home-name{font-family:monospace;font-weight:500}
+.utc-home-tag{font-size:11px;color:var(--utc-text2);border:1px solid var(--utc-border2);border-radius:10px;padding:1px 8px;margin-left:8px}
+.utc-home-actions{display:flex;align-items:center;gap:8px}
+.utc-pin{width:90px;padding:6px 8px;border-radius:5px;border:1px solid var(--utc-border2);background:var(--utc-surface);color:var(--utc-text);font-family:monospace}
+.utc-note{font-size:12px;color:var(--utc-text2);line-height:1.5;margin:0 0 .75rem}
+
 .utc-no-tokens{font-size:13px;color:var(--utc-text3);padding:.25rem 0}
 </style>
 
@@ -101,6 +112,16 @@
 
     <div id="auth-error" class="utc-alert utc-alert-danger"></div>
     <div id="auth-success" class="utc-alert utc-alert-success"></div>
+  </div>
+
+  <!-- Plex Home / managed users -->
+  <div class="utc-card">
+    <div class="utc-section-title">Plex Home Users (Managed Profiles)</div>
+    <p class="utc-note">Managed Plex Home profiles have no plex.tv login, so the link above can't sign them in. Instead, cli_debrid asks plex.tv for each profile's token using your main Plex token (Settings &gt; Plex), which must belong to the Plex Home admin. Profiles with a PIN need that PIN once. The token is stored here exactly like the others and never shown.</p>
+    <button id="load-home-users-btn" class="utc-btn utc-btn-secondary">Load Plex Home Users</button>
+    <ul id="home-users-list" class="utc-home-list"></ul>
+    <div id="home-users-error" class="utc-alert utc-alert-danger"></div>
+    <div id="home-users-success" class="utc-alert utc-alert-success"></div>
   </div>
 
   <!-- Stored tokens -->
@@ -164,21 +185,25 @@
         }
 
         // Check if user already exists
-        if (document.querySelector(`li[data-username="${username}"]`)) {
+        if (Array.from(document.querySelectorAll('#stored-tokens-list li')).some(li => li.dataset.username === username)) {
              console.log(`Token for ${username} updated.`);
              return; // Already in list, just updated silently
         }
 
+        // Built with textContent: a profile title is free text and must not be parsed as HTML.
         const listItem = document.createElement('li');
         listItem.setAttribute('data-username', username);
-        listItem.innerHTML = `
-            <span>${username}</span>
-            <button class="btn-delete" data-username="${username}">Delete</button>
-        `;
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = username;
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn-delete';
+        deleteBtn.dataset.username = username;
+        deleteBtn.textContent = 'Delete';
+        listItem.appendChild(nameSpan);
+        listItem.appendChild(deleteBtn);
         storedTokensList.appendChild(listItem);
 
         // Add event listener to the new delete button
-        const deleteBtn = listItem.querySelector('.btn-delete');
         addDeleteEventListener(deleteBtn);
     }
 
@@ -294,7 +319,7 @@
 
             if (data.success) {
                 // Remove the list item from the page
-                const listItem = document.querySelector(`li[data-username="${username}"]`);
+                const listItem = Array.from(document.querySelectorAll('#stored-tokens-list li')).find(li => li.dataset.username === username);
                 if (listItem) {
                     listItem.remove();
                 }
@@ -311,6 +336,100 @@
             showPopup({ type: POPUP_TYPES.ERROR, title: 'Deletion Failed', message: error.message });
         }
     }
+
+    // --- Plex Home (managed) users ---
+    const loadHomeBtn = document.getElementById('load-home-users-btn');
+    const homeList = document.getElementById('home-users-list');
+    const homeError = document.getElementById('home-users-error');
+    const homeSuccess = document.getElementById('home-users-success');
+
+    function showHome(el, text) {
+        homeError.style.display = 'none';
+        homeSuccess.style.display = 'none';
+        if (text) { el.textContent = text; el.style.display = 'block'; }
+    }
+
+    function renderHomeUsers(users) {
+        homeList.innerHTML = '';
+        if (!users.length) {
+            showHome(homeError, 'No Plex Home users were found on this account.');
+            return;
+        }
+        users.forEach(user => {
+            const li = document.createElement('li');
+            const name = document.createElement('span');
+            name.className = 'utc-home-name';
+            name.textContent = user.name;
+            [user.managed ? 'managed' : 'home', user.protected ? 'PIN' : null, user.stored ? 'token stored' : null]
+                .filter(Boolean).forEach(label => {
+                    const tag = document.createElement('span');
+                    tag.className = 'utc-home-tag';
+                    tag.textContent = label;
+                    name.appendChild(tag);
+                });
+            const actions = document.createElement('div');
+            actions.className = 'utc-home-actions';
+            let pinInput = null;
+            if (user.protected) {
+                pinInput = document.createElement('input');
+                pinInput.type = 'password';
+                pinInput.placeholder = 'PIN';
+                pinInput.className = 'utc-pin';
+                pinInput.autocomplete = 'off';
+                actions.appendChild(pinInput);
+            }
+            const btn = document.createElement('button');
+            btn.className = 'utc-btn utc-btn-secondary';
+            btn.textContent = user.stored ? 'Refresh token' : 'Get token';
+            btn.addEventListener('click', () => addHomeUserToken(user, btn, pinInput));
+            actions.appendChild(btn);
+            li.appendChild(name);
+            li.appendChild(actions);
+            homeList.appendChild(li);
+        });
+    }
+
+    async function loadHomeUsers() {
+        loadHomeBtn.disabled = true;
+        showHome(null, '');
+        try {
+            const response = await fetch('/user_token/collect_tokens/home_users');
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || 'Failed to load Plex Home users');
+            renderHomeUsers(data.users);
+        } catch (error) {
+            homeList.innerHTML = '';
+            showHome(homeError, `Error: ${error.message}`);
+        } finally {
+            loadHomeBtn.disabled = false;
+        }
+    }
+
+    async function addHomeUserToken(user, btn, pinInput) {
+        btn.disabled = true;
+        showHome(null, '');
+        try {
+            const response = await fetch('/user_token/collect_tokens/home_users/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: user.id, pin: pinInput ? pinInput.value : '' })
+            });
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || 'Failed to fetch the token');
+            showHome(homeSuccess, `Token stored for ${data.username}.`);
+            updateStoredTokensList(data.username);
+            user.stored = true;
+            btn.textContent = 'Refresh token';
+            if (pinInput) pinInput.value = '';
+        } catch (error) {
+            showHome(homeError, `Error: ${error.message}`);
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    loadHomeBtn.addEventListener('click', loadHomeUsers);
+
 
     // Add event listeners to existing delete buttons
     function addDeleteEventListener(button) {
