@@ -622,3 +622,28 @@ class TestTvdbExtendedSeasonFallback(unittest.TestCase):
         self.assertEqual(seasons[1]['episodes'][1]['title'], 'Pilot')
         # The imdb_id argument is optional (it is only used for log messages).
         self.assertIn(1, tvdb_client._extract_seasons_from_extended(raw))
+
+
+class TestImportOrder(unittest.TestCase):
+    def test_plex_watchlist_can_be_imported_first(self):
+        """main.py imports content_checkers.plex_watchlist before routes; that must not be a circular import
+        (plex_watchlist -> database -> routes -> connections_routes -> plex_watchlist)."""
+        import subprocess, sys, tempfile
+        code = (
+            "import os, sys\n"
+            "try:\n"
+            "    from content_checkers.plex_watchlist import validate_plex_tokens\n"
+            "    print('IMPORT_OK')\n"
+            "except Exception as e:\n"
+            "    print('IMPORT_FAILED', type(e).__name__, e)\n"
+            "sys.stdout.flush(); os._exit(0)\n"
+        )
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, PYTHONPATH=repo, USER_CONFIG=os.path.join(tmp, 'config'),
+                       USER_DB_CONTENT=os.path.join(tmp, 'db'), USER_LOGS=os.path.join(tmp, 'logs'))
+            for d in ('config', 'db', 'logs'):
+                os.makedirs(os.path.join(tmp, d), exist_ok=True)
+            proc = subprocess.run([sys.executable, '-c', code], cwd=repo, env=env,
+                                  capture_output=True, text=True, timeout=240)
+        self.assertIn('IMPORT_OK', proc.stdout, proc.stdout[-500:] + proc.stderr[-500:])

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from utilities.settings import get_setting, get_all_settings
 from typing import Dict, List, Any
 from content_checkers.trakt import ensure_trakt_auth, get_trakt_headers, make_trakt_request, parse_trakt_list_url
-from content_checkers.plex_watchlist import MyPlexAccount, plex_token_matches_username
+from content_checkers.plex_watchlist import MyPlexAccount
 import logging
 import feedparser # Keep import for RSS
 from urllib.parse import urlparse
@@ -1239,6 +1239,10 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 # title stands in (same fallback as the watchlist fetch).
                 token_owner = account.username or account.title
 
+                # Imported here, not at module level: plex_watchlist imports database -> routes, so a
+                # top-level import of a name defined late in plex_watchlist is a circular import
+                # when plex_watchlist is the first of the two to load (as in main.py).
+                from content_checkers.plex_watchlist import plex_token_matches_username
                 # For Other Plex Watchlist, verify username matches
                 if source_type == 'Other Plex Watchlist' and not plex_token_matches_username(account, username):
                     base_response['error'] = f'Token does not match username. Expected: {username}, Got: {token_owner}'
