@@ -79,6 +79,7 @@ from content_checkers.content_cache_management import (
     metadata_output_ids, item_has_metadata_output, UNRESOLVED_RETRY_HOURS,
     load_live_content_source_config, normalize_enabled_versions
 )
+from content_checkers.source_run_report import SourceRunReport
 from collections import deque # Import deque for efficient queue operations
 from database.symlink_verification import (
     create_overlay_removal_queue_table,
@@ -2033,6 +2034,7 @@ class ProgramRunner:
             cache_skipped = 0
             items_processed = 0
             total_items = 0
+            report = SourceRunReport(source, source_type)  # no-op except for Plex watchlist sources
             media_type_skipped = 0
             genre_skipped = 0
             cutoff_date_skipped = 0
@@ -2120,6 +2122,8 @@ class ProgramRunner:
                 logging.warning(f"Unknown source type: {source_type}")
                 return
 
+            if not wanted_content:
+                report.log()  # fetcher returned nothing: say so explicitly
             if wanted_content:
                 # Apply list length limit if set
                 if list_length_limit > 0:
@@ -2146,6 +2150,7 @@ class ProgramRunner:
                             wanted_content = wanted_content[:list_length_limit]
                             logging.info(f"Applied list length limit to {source}: limited to {list_length_limit} items from {original_length}")
                 
+                report.fetched(wanted_content)
                 if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
                     # Handle list of tuples
                     for items, item_versions_from_source_tuple in wanted_content:
@@ -2182,9 +2187,12 @@ class ProgramRunner:
 
                             from metadata.metadata import process_metadata
                             processed_items = process_metadata(items_to_process)
+                            if not processed_items:
+                                report.metadata_failed(items_to_process_raw)
                             if processed_items:
                                 all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
                                 output_ids = metadata_output_ids(all_items)  # before filters: which raw items produced anything
+                                report.metadata_done(items_to_process_raw, output_ids, all_items, UNRESOLVED_RETRY_HOURS)
                                 
                                 # Set content source and detail for each item
                                 for item in all_items:
@@ -2264,7 +2272,8 @@ class ProgramRunner:
 
                                 from database import add_collected_items, add_wanted_items
                                 # Pass the CONVERTED versions dict to add_wanted_items
-                                add_wanted_items(all_items, versions_to_inject or versions_dict, unblacklist=unblacklist_on_source_run)
+                                report.filters_done(all_items)
+                                report.added(len(all_items), add_wanted_items(all_items, versions_to_inject or versions_dict, unblacklist=unblacklist_on_source_run))
                                 
                                 # Update cache for all items that were processed (regardless of whether they made it through filtering)
                                 # This prevents reprocessing the same items repeatedly
@@ -2302,9 +2311,12 @@ class ProgramRunner:
 
                         from metadata.metadata import process_metadata
                         processed_items = process_metadata(items_to_process)
+                        if not processed_items:
+                            report.metadata_failed(items_to_process_raw)
                         if processed_items:
                             all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
                             output_ids = metadata_output_ids(all_items)  # before filters: which raw items produced anything
+                            report.metadata_done(items_to_process_raw, output_ids, all_items, UNRESOLVED_RETRY_HOURS)
                             
                             # Set content source and detail for each item
                             for item in all_items:
@@ -2384,7 +2396,8 @@ class ProgramRunner:
 
                             from database import add_collected_items, add_wanted_items
                             # Pass the CONVERTED versions_dict to add_wanted_items
-                            add_wanted_items(all_items, versions_dict, unblacklist=unblacklist_on_source_run)
+                            report.filters_done(all_items)
+                            report.added(len(all_items), add_wanted_items(all_items, versions_dict, unblacklist=unblacklist_on_source_run))
                             
                             # Update cache for all items that were processed (regardless of whether they made it through filtering)
                             # This prevents reprocessing the same items repeatedly
@@ -2413,6 +2426,7 @@ class ProgramRunner:
                     stats_msg += f", list length limited to {list_length_limit}"
                 stats_msg += ")"
                 logging.info(stats_msg)
+                report.log(cache_skipped=cache_skipped)
 
             # ── Plex Collection sync — runs even when all items are cached ────
             # Use config 'type' field for matching — source_type is split on '_' which

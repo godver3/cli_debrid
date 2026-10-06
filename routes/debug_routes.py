@@ -45,6 +45,7 @@ from content_checkers.content_cache_management import (
     update_cache_for_item,
     normalize_enabled_versions, metadata_output_ids, item_has_metadata_output, UNRESOLVED_RETRY_HOURS
 )
+from content_checkers.source_run_report import SourceRunReport
 import traceback
 from database.symlink_verification import get_unverified_files, get_verification_stats
 from content_checkers.content_source_detail import append_content_source_detail
@@ -1022,6 +1023,7 @@ def get_and_add_wanted_content(source_id):
     media_type_skipped = 0
     genre_skipped = 0
     cutoff_date_skipped = 0
+    report = SourceRunReport(source_id, source_type)  # no-op except for Plex watchlist sources
 
     wanted_content = []
     try: # Add try block for source fetching
@@ -1117,6 +1119,9 @@ def get_and_add_wanted_content(source_id):
                 wanted_content = wanted_content[:list_length_limit]
                 logging.info(f"Applied list length limit to {source_id}: limited to {list_length_limit} items from {original_length}")
 
+    report.fetched(wanted_content)
+    if not wanted_content:
+        report.log()  # fetcher returned nothing: say so explicitly
     if wanted_content:
         try: # Add try block for processing
             if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
@@ -1157,9 +1162,12 @@ def get_and_add_wanted_content(source_id):
                                 items_for_metadata.append(item_dict_processed)
 
                             processed_items_meta = process_metadata(items_for_metadata)
+                            if not processed_items_meta:
+                                report.metadata_failed(items_to_process_raw)
                             if processed_items_meta:
                                 all_items_meta_processed_batch = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', []) + processed_items_meta.get('anime', [])
                                 output_ids = metadata_output_ids(all_items_meta_processed_batch)
+                                report.metadata_done(items_to_process_raw, output_ids, all_items_meta_processed_batch, UNRESOLVED_RETRY_HOURS)
                                 for item in all_items_meta_processed_batch:
                                     item['content_source'] = source_id
                                     item = append_content_source_detail(item, source_type=source_type)
@@ -1238,9 +1246,11 @@ def get_and_add_wanted_content(source_id):
                                 if current_batch_cutoff_skipped > 0: # Log if items were skipped in this batch
                                     logging.debug(f"Batch {source_id}: Skipped {current_batch_cutoff_skipped} items due to cutoff date (pre-DB add)")
                                 
+                                report.filters_done(final_items_for_db_batch)
                                 if final_items_for_db_batch:
                                     from database import add_wanted_items
                                     added_count = add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_dict, unblacklist=unblacklist_on_source_run)
+                                    report.added(len(final_items_for_db_batch), added_count)
                                     batch_total_items_added += added_count or 0
                                     
                                     # Update cache for all items that were processed (regardless of whether they made it through filtering)
@@ -1281,9 +1291,12 @@ def get_and_add_wanted_content(source_id):
                         items_for_metadata.append(item_dict_processed)
                         
                     processed_items_meta = process_metadata(items_for_metadata)
+                    if not processed_items_meta:
+                        report.metadata_failed(items_to_process_raw)
                     if processed_items_meta:
                         all_items_meta_processed_non_batch = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', []) + processed_items_meta.get('anime', [])
                         output_ids = metadata_output_ids(all_items_meta_processed_non_batch)
+                        report.metadata_done(items_to_process_raw, output_ids, all_items_meta_processed_non_batch, UNRESOLVED_RETRY_HOURS)
                         for item in all_items_meta_processed_non_batch:
                             item['content_source'] = source_id
                             item = append_content_source_detail(item, source_type=source_type)
@@ -1363,9 +1376,11 @@ def get_and_add_wanted_content(source_id):
                              logging.debug(f"{source_id}: Skipped {current_non_batch_cutoff_skipped} items due to cutoff date (pre-DB add for non-batch)")
 
                         # Add only the date-filtered items to the database
+                        report.filters_done(final_items_for_db_non_batch)
                         if final_items_for_db_non_batch:
                             from database import add_wanted_items # Already imported at your line 1077
                             added_count = add_wanted_items(final_items_for_db_non_batch, versions_dict, unblacklist=unblacklist_on_source_run)
+                            report.added(len(final_items_for_db_non_batch), added_count)
                             total_items_added += added_count or 0
                             
                             # Update cache for all items that were processed (regardless of whether they made it through filtering)
@@ -1386,6 +1401,7 @@ def get_and_add_wanted_content(source_id):
             if cutoff_date_skipped > 0: stats_msg += f", Skipped {cutoff_date_skipped} (cutoff date)"
             if list_length_limit > 0: stats_msg += f", list length limited to {list_length_limit}"
             logging.info(stats_msg)
+            report.log(cache_skipped=cache_skipped)
 
         except Exception as process_error:
             logging.error(f"Error processing items from {source_id}: {str(process_error)}", exc_info=True)

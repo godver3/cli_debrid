@@ -647,3 +647,115 @@ class TestImportOrder(unittest.TestCase):
             proc = subprocess.run([sys.executable, '-c', code], cwd=repo, env=env,
                                   capture_output=True, text=True, timeout=240)
         self.assertIn('IMPORT_OK', proc.stdout, proc.stdout[-500:] + proc.stderr[-500:])
+
+
+# --------------------------------------------------------------------------- logging
+
+class TestSourceRunReport(unittest.TestCase):
+    def _log_lines(self, cm):
+        return [r.getMessage() for r in cm.records]
+
+    def test_plex_source_logs_stage_counts_and_each_drop_reason(self):
+        from content_checkers.source_run_report import SourceRunReport
+        report = SourceRunReport('My Plex Watchlist_1', 'My Plex Watchlist')
+        raw = [{'imdb_id': 'tt0000001'}, {'imdb_id': 'tt0000002'}, {'imdb_id': 'tt0000003'}]
+        produced = [{'imdb_id': 'tt0000001', 'title': 'Kept'}, {'imdb_id': 'tt0000002', 'title': 'Too Old'}]
+        report.fetched([(raw, {})])
+        report.metadata_done(raw, {'imdb_tt0000001', 'imdb_tt0000002'}, produced, 1.0)
+        report.filters_done([produced[0]])
+        report.added(1, 1)
+        with self.assertLogs(level='INFO') as cm:
+            report.log(cache_skipped=4)
+        lines = self._log_lines(cm)
+        self.assertIn('fetched=3 cache_skipped=4 sent_to_metadata=3 passed_filters=1 newly_added=1', lines[0])
+        self.assertTrue(any("no metadata produced" in l and "'tt0000003'" in l for l in lines))
+        self.assertTrue(any("removed by the source filters" in l and "'Too Old'" in l for l in lines))
+
+    def test_non_plex_source_is_silent(self):
+        from content_checkers.source_run_report import SourceRunReport
+        report = SourceRunReport('Overseerr_1', 'Overseerr')
+        report.fetched([([{'imdb_id': 'tt1'}], {})])
+        report.metadata_failed([{'imdb_id': 'tt1'}])
+        report.added(1, 1)
+        with self.assertNoLogs(level='INFO'):
+            report.log()
+
+    def test_empty_fetch_is_reported(self):
+        from content_checkers.source_run_report import SourceRunReport
+        report = SourceRunReport('Plex Friends Watchlist_1', 'Plex Friends Watchlist')
+        report.fetched([])
+        with self.assertLogs(level='INFO') as cm:
+            report.log()
+        self.assertIn('fetched=0', cm.records[0].getMessage())
+
+
+class TestSkipReasonsAreLogged(unittest.TestCase):
+    def test_my_plex_separates_fetch_errors_from_items_without_ids(self):
+        ok, rate_limited, no_id = _FakePlexItem('Fine'), _FakePlexItem('Throttled'), _FakePlexItem('NoIds')
+        account = _FakeAccount([ok, rate_limited, no_id])
+
+        async def fake_fetch(items, token):
+            return [
+                {'imdb_id': 'tt0000001', 'tmdb_id': None, 'media_type': 'movie', 'original_plex_item': ok},
+                {'imdb_id': None, 'tmdb_id': None, 'media_type': None, 'original_plex_item': rate_limited, 'error': 'HTTP429'},
+                {'imdb_id': None, 'tmdb_id': None, 'media_type': 'movie', 'original_plex_item': no_id},
+            ]
+
+        with mock.patch.object(pw, 'get_plex_client', return_value=(account, 'tok')), \
+             mock.patch.object(pw, 'get_setting', return_value=False), \
+             mock.patch.object(pw, 'run_async_fetches', fake_fetch), \
+             mock.patch.object(pw, 'get_media_item_presence_overall', return_value='Missing'), \
+             self.assertLogs(level='INFO') as cm:
+            pw.get_wanted_from_plex_watchlist({'Default': True})
+        lines = [r.getMessage() for r in cm.records]
+        self.assertTrue(any("detail fetch failed (HTTP429)" in l and "'Throttled'" in l for l in lines), lines)
+        self.assertTrue(any("no IMDb ID, and no TMDb ID" in l and "'NoIds'" in l for l in lines), lines)
+        self.assertFalse(any("'Fine'" in l and 'Skipped' in l for l in lines))
+
+    def test_rss_logs_skip_reasons_and_hidden_collected_titles(self):
+        entries = [
+            {'title': 'No Guid', 'guids': [], 'category': 'movie'},
+            {'title': 'Unresolvable', 'guids': ['tvdb://999'], 'category': 'show'},
+            {'title': 'Already Have It', 'guids': ['imdb://tt0000009'], 'category': 'movie'},
+        ]
+        values = {'plex_watchlist_removal': True, 'plex_watchlist_keep_series': False}
+        with mock.patch.object(rss, 'fetch_plex_rss_entries', return_value=entries), \
+             mock.patch.object(rss, 'extract_imdb_id', return_value=None), \
+             mock.patch.object(rss, 'get_setting', side_effect=lambda s, k, d=False: values.get(k, d)), \
+             mock.patch.object(rss, 'get_media_item_presence_overall', return_value='Collected'), \
+             mock.patch.object(pw, 'get_setting', side_effect=lambda s, k, d=False: values.get(k, d)), \
+             self.assertLogs(level='INFO') as cm:
+            rss.get_wanted_from_plex_rss('https://rss.plex.tv/x', {'Default': True})
+        lines = [r.getMessage() for r in cm.records]
+        self.assertTrue(any('feed entry has no guid' in l and "'No Guid'" in l for l in lines), lines)
+        self.assertTrue(any('no IMDb ID from its guids' in l and 'tvdb://999' in l for l in lines), lines)
+        self.assertTrue(any('hid 1 collected title' in l and "'Already Have It'" in l for l in lines), lines)
+
+
+class TestPipelineSummaryIsLogged(unittest.TestCase):
+    def test_debug_dispatcher_logs_a_plex_run_summary_naming_filtered_items(self):
+        if _delegated_to_clean_interpreter(self):
+            return
+        import routes.debug_routes as dbg
+        source = {'versions': ['1080p'], 'media_type': 'All', 'cutoff_date': '2000-01-01', 'enabled': True}
+
+        def fake_metadata(items):
+            return {'movies': [{'imdb_id': 'tt1', 'title': 'Ancient', 'media_type': 'movie', 'release_date': '1990-01-01'},
+                               {'imdb_id': 'tt2', 'title': 'Recent', 'media_type': 'movie', 'release_date': '2024-01-01'}],
+                    'episodes': []}
+
+        with mock.patch.object(dbg, 'get_all_settings', return_value={'Content Sources': {'My Plex Watchlist_1': source}}), \
+             mock.patch.object(dbg, 'get_setting', return_value=False), \
+             mock.patch.object(dbg, 'load_source_cache', return_value={}), \
+             mock.patch.object(dbg, 'save_source_cache'), \
+             mock.patch('content_checkers.plex_watchlist.get_wanted_from_plex_watchlist',
+                        return_value=[([{'imdb_id': 'tt1'}, {'imdb_id': 'tt2'}, {'imdb_id': 'tt3'}], {'1080p': True})]), \
+             mock.patch('metadata.metadata.process_metadata', side_effect=fake_metadata), \
+             mock.patch('database.add_wanted_items', side_effect=lambda items, versions, **kw: len(items)), \
+             self.assertLogs(level='INFO') as cm:
+            dbg.get_and_add_wanted_content('My Plex Watchlist_1')
+        lines = [r.getMessage() for r in cm.records if '[PLEX_RUN' in r.getMessage()]
+        self.assertIn('fetched=3', lines[0])
+        self.assertIn('newly_added=1', lines[0])
+        self.assertTrue(any("no metadata produced" in l and "'tt3'" in l for l in lines), lines)
+        self.assertTrue(any("removed by the source filters" in l and "'Ancient'" in l for l in lines), lines)

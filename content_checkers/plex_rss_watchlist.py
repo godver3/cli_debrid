@@ -8,6 +8,7 @@ from utilities.settings import get_setting
 from database.database_reading import get_media_item_presence, get_media_item_presence_overall
 import requests
 import xml.etree.ElementTree as ET
+from .skipped_items import SkippedItems
 
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -159,8 +160,8 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only:
                 f"are probably not visible. Use the 'My Plex Watchlist', 'Plex Friends Watchlist' or "
                 f"'Other Plex Watchlist' source to see the full list."
             )
-        skipped_count = 0
-        skipped_titles = []
+        skipped = SkippedItems()
+        suppressed_titles = []  # collected titles hidden because removal is on (RSS is read-only)
         cache_skipped = 0
         removed_count = 0
         retained_series_count = 0
@@ -178,22 +179,21 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only:
             try:
                 entry_title = entry['title']
                 # Content type from the RSS category; None when the feed omits it, in which
-                # case the guids decide (tmdb tried as show then movie, tvdb means show).
+                # case the guids decide (a tmdb guid is a movie, a tvdb guid is a show).
                 category = (entry.get('category') or '').strip().lower()
                 media_type = 'tv' if category == 'show' else ('movie' if category == 'movie' else None)
 
                 if not entry['guids']:
                     logging.debug(f"Entry missing guid: {entry_title}")
-                    skipped_count += 1
-                    skipped_titles.append(entry_title)
+                    skipped.add(entry_title, 'feed entry has no guid')
                     continue
 
                 imdb_id, media_type = resolve_imdb_and_type(entry['guids'], entry_title, media_type)
                 media_type = media_type or 'movie'
                 if not imdb_id:
                     logging.debug(f"Could not extract IMDB ID from guids: {entry['guids']} for title: {entry_title}")
-                    skipped_count += 1
-                    skipped_titles.append(entry_title)
+                    skipped.add(f"{entry_title} [{entry['guids'][0]}]",
+                                'no IMDb ID from its guids (no imdb:// guid, and the tmdb/tvdb conversion failed; check the TMDB and TVDB API keys)')
                     continue
 
                 logging.debug(f"Processing entry: {entry_title} (IMDB: {imdb_id})")
@@ -208,6 +208,7 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only:
                     if suppress:
                         logging.debug(f"Skipping (simulating removal) '{entry_title}' from RSS: {imdb_id} - {reason}")
                         removed_count += 1
+                        suppressed_titles.append(entry_title)
                         continue # Simulate removal by suppressing the RSS item from ingestion.
                     if media_type == 'tv':
                         logging.debug(f"Retaining and processing collected TV series from RSS: {imdb_id} ('{entry_title}') - {reason}")
@@ -257,7 +258,8 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only:
                     processed_items.clear()
 
             except Exception as e:
-                logging.error(f"Error processing RSS entry: {str(e)}")
+                skipped.add(entry.get('title') or 'Unknown title', 'processing error (see the ERROR log above)')
+                logging.error(f"Error processing RSS entry '{entry.get('title')}': {str(e)}", exc_info=True)
                 continue
 
         if processed_items:
@@ -268,9 +270,12 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only:
 
         logging.info(f"Plex RSS Watchlist Summary:")
         logging.info(f"- Total entries: {len(entries)}")
-        logging.info(f"- Skipped (no IMDB ID): {skipped_count}")
-        if skipped_titles:
-            logging.info(f"- Skipped titles: {', '.join(repr(t) for t in skipped_titles[:25])}")
+        logging.info(f"- Skipped: {len(skipped)}")
+        skipped.log(log_prefix="Plex RSS: ")
+        if suppressed_titles:
+            shown = ', '.join(repr(t) for t in suppressed_titles[:25])
+            more = f" (+{len(suppressed_titles) - 25} more)" if len(suppressed_titles) > 25 else ''
+            logging.info(f"Plex RSS: hid {len(suppressed_titles)} collected title(s) because Plex watchlist removal is on (RSS feeds are read-only): {shown}{more}")
         if should_remove:
             logging.info(f"- Items 'removed' (collected and not kept): {removed_count}")
             logging.info(f"- Retained TV series processed: {retained_series_count}")
