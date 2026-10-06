@@ -3,11 +3,9 @@ import os
 import pickle
 from datetime import datetime, timedelta
 import feedparser
-from typing import List, Dict, Any, Tuple, Union
+from typing import List, Dict, Any, Optional, Tuple, Union
 from utilities.settings import get_setting
 from database.database_reading import get_media_item_presence, get_media_item_presence_overall
-from cli_battery.app import trakt_client
-from cli_battery.app.database import DatabaseManager
 import requests
 import xml.etree.ElementTree as ET
 
@@ -37,36 +35,19 @@ def save_rss_cache(cache, cache_file):
         logging.error(f"Error saving Plex RSS cache: {e}")
 
 def extract_imdb_id(guid: str, title: str = None) -> str:
-    """Extract IMDB ID from a Plex RSS item guid."""
+    """Extract IMDB ID from a Plex RSS item guid (tvdb:// ids are converted without Trakt)."""
     if 'imdb://' in guid:
         return guid.split('imdb://')[1].strip()
     elif 'tvdb://' in guid:
         tvdb_id = guid.split('tvdb://')[1].strip()
         try:
-            # First check if we have the mapping in our database
-            db_manager = DatabaseManager()
-            imdb_id = db_manager.get_imdb_from_tvdb(tvdb_id)
+            from cli_battery.app.tvdb_client import convert_tvdb_to_imdb
+            imdb_id = convert_tvdb_to_imdb(tvdb_id)
             if imdb_id:
-                logging.debug(f"Found IMDB ID {imdb_id} for TVDB ID {tvdb_id} in database")
+                logging.debug(f"Converted TVDB ID {tvdb_id} to IMDB ID {imdb_id} for {title if title else 'Unknown title'}")
                 return imdb_id
-
-            # If not in database, use Trakt to get it and store for future
-            url = f"{trakt_client.TRAKT_BASE_URL}/search/tvdb/{tvdb_id}?type=show"
-            response = trakt_client._make_request(url)
-            if response and response.status_code == 200:
-                results = response.json()
-                if results and len(results) > 0:
-                    show = results[0]['show']
-                    imdb_id = show['ids'].get('imdb')
-                    if imdb_id:
-                        # Store the mapping for future use
-                        db_manager.add_tvdb_to_imdb_mapping(tvdb_id, imdb_id, 'show')
-                        logging.debug(f"Successfully converted TVDB ID {tvdb_id} to IMDB ID {imdb_id} for {title if title else 'Unknown title'}")
-                        return imdb_id
-                    else:
-                        logging.warning(f"Could not find IMDB ID for TVDB ID {tvdb_id} ({title if title else 'Unknown title'})")
-            else:
-                logging.warning(f"Failed to search TVDB ID {tvdb_id}. Status code: {response.status_code if response else 'No response'}")
+            logging.warning(f"Could not convert TVDB ID {tvdb_id} to an IMDB ID for {title if title else 'Unknown title'} "
+                            f"(needs a TVDB or TMDB API key in settings)")
         except Exception as e:
             logging.error(f"Error converting TVDB ID {tvdb_id} to IMDB ID: {str(e)}")
     return None
@@ -117,51 +98,42 @@ def fetch_plex_rss_entries(rss_url: str) -> List[Dict[str, Any]]:
         entries.append({'title': e.get('title', 'Unknown title'), 'guids': list(dict.fromkeys(guids)), 'category': e.get('category')})
     return entries
 
-def resolve_imdb_from_guids(guids: List[str], title: str, media_type: str) -> str:
-    """Pick an IMDB ID from an item's guids: imdb:// first, then tmdb:// and tvdb:// conversion."""
+def resolve_imdb_and_type(guids: List[str], title: str, media_type: str = None) -> Tuple[Optional[str], Optional[str]]:
+    """Pick an IMDB ID from an item's guids: imdb:// first, then tmdb:// and tvdb:// conversion.
+
+    ``media_type`` is 'movie'/'tv', or None when the feed item has no <category>. Then a tmdb://
+    guid is tried as a show and as a movie (TMDB numbers movies and shows separately), and a
+    tvdb:// guid means a show. Returns (imdb_id, media_type).
+    """
     for guid in guids:
         if 'imdb://' in guid:
-            return guid.split('imdb://')[1].strip()
+            return guid.split('imdb://')[1].strip(), media_type
+    tmdb_types = [media_type] if media_type else ['tv', 'movie']
     for guid in guids:
         if 'tmdb://' in guid:
             tmdb_id = guid.split('tmdb://')[1].strip()
-            try:
-                from cli_battery.app.direct_api import DirectAPI
-                imdb_id, source = DirectAPI().tmdb_to_imdb(tmdb_id, media_type='show' if media_type == 'tv' else 'movie')
-                if imdb_id:
-                    logging.debug(f"Converted TMDB ID {tmdb_id} to IMDB ID {imdb_id} for {title} via {source}")
-                    return imdb_id
-                logging.warning(f"Could not convert TMDB ID {tmdb_id} to IMDB ID for {title}")
-            except Exception as e:
-                logging.error(f"Error converting TMDB ID {tmdb_id} to IMDB ID for {title}: {e}")
+            for candidate in tmdb_types:
+                try:
+                    from cli_battery.app.direct_api import DirectAPI
+                    imdb_id, source = DirectAPI().tmdb_to_imdb(tmdb_id, media_type='show' if candidate == 'tv' else 'movie')
+                    if imdb_id:
+                        logging.debug(f"Converted TMDB ID {tmdb_id} to IMDB ID {imdb_id} for {title} via {source}")
+                        return imdb_id, candidate
+                    logging.warning(f"Could not convert TMDB ID {tmdb_id} ({candidate}) to IMDB ID for {title}")
+                except Exception as e:
+                    logging.error(f"Error converting TMDB ID {tmdb_id} to IMDB ID for {title}: {e}")
     for guid in guids:
         if 'tvdb://' in guid:
             imdb_id = extract_imdb_id(guid, title)
             if imdb_id:
-                return imdb_id
-    return None
+                return imdb_id, media_type or 'tv'
+    return None, media_type
 
-def get_show_status(imdb_id: str) -> str:
-    """Get the status of a TV show from Trakt."""
-    try:
-        search_result = trakt_client.search_by_imdb(imdb_id)
-        if search_result and search_result['type'] == 'show':
-            show = search_result['show']
-            slug = show['ids']['slug']
-            
-            url = f"{trakt_client.TRAKT_BASE_URL}/shows/{slug}?extended=full"
-            response = trakt_client._make_request(url)
-            if response and response.status_code == 200:
-                show_data = response.json()
-                status = show_data.get('status', '').lower()
-                if status == 'canceled':
-                    return 'ended'
-                return status
-    except Exception as e:
-        logging.error(f"Error getting show status for {imdb_id}: {str(e)}")
-    return ''
+def resolve_imdb_from_guids(guids: List[str], title: str, media_type: str) -> str:
+    return resolve_imdb_and_type(guids, title, media_type)[0]
 
-def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    """Fetch a Plex RSS watchlist. read_only=True never suppresses collected titles (used by label sync)."""
     all_wanted_items = []
     processed_items = []
     disable_caching = True  # Hardcoded to True
@@ -178,11 +150,13 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
         entries = fetch_plex_rss_entries(rss_url)
 
         logging.info(f"Successfully parsed RSS feed. Found {len(entries)} entries")
-        if len(entries) == PLEX_RSS_ITEM_CAP:
+        if entries and len(entries) % PLEX_RSS_ITEM_CAP == 0:
+            # Plex's cap is 25 for a user feed; friends feeds have been seen returning exactly 50.
             logging.warning(
-                f"Plex RSS feed returned exactly {PLEX_RSS_ITEM_CAP} items. Plex caps watchlist RSS feeds at "
-                f"{PLEX_RSS_ITEM_CAP} items and may serve them up to ~48h stale, so older watchlist items are not visible. "
-                f"Use the 'My Plex Watchlist' or 'Plex Friends Watchlist' source to see the full list."
+                f"Plex RSS feed returned exactly {len(entries)} items. Plex caps watchlist RSS feeds at "
+                f"{PLEX_RSS_ITEM_CAP} items per feed and may serve them up to ~48h stale, so older watchlist items "
+                f"are probably not visible. Use the 'My Plex Watchlist', 'Plex Friends Watchlist' or "
+                f"'Other Plex Watchlist' source to see the full list."
             )
         skipped_count = 0
         skipped_titles = []
@@ -202,10 +176,10 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
         for entry in entries:
             try:
                 entry_title = entry['title']
-                # Get content type from RSS category
-                media_type = 'movie'  # default to movie
-                if (entry.get('category') or '').lower() == 'show':
-                    media_type = 'tv'
+                # Content type from the RSS category; None when the feed omits it, in which
+                # case the guids decide (tmdb tried as show then movie, tvdb means show).
+                category = (entry.get('category') or '').strip().lower()
+                media_type = 'tv' if category == 'show' else ('movie' if category == 'movie' else None)
 
                 if not entry['guids']:
                     logging.debug(f"Entry missing guid: {entry_title}")
@@ -213,7 +187,8 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
                     skipped_titles.append(entry_title)
                     continue
 
-                imdb_id = resolve_imdb_from_guids(entry['guids'], entry_title, media_type)
+                imdb_id, media_type = resolve_imdb_and_type(entry['guids'], entry_title, media_type)
+                media_type = media_type or 'movie'
                 if not imdb_id:
                     logging.debug(f"Could not extract IMDB ID from guids: {entry['guids']} for title: {entry_title}")
                     skipped_count += 1
@@ -225,29 +200,18 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
                 # Check if the item is already collected
                 item_state = get_media_item_presence_overall(imdb_id=imdb_id)
                 monitor_missing_episodes_only = False
-                if item_state in ("Collected", "Partial") and should_remove:
-                    should_suppress_item = False
-                    if media_type == 'tv':
-                        if keep_series:
-                            logging.debug(f"Retaining and processing collected TV series from RSS: {imdb_id} ('{entry_title}') - keep_series is enabled")
-                            retained_series_count += 1
-                            monitor_missing_episodes_only = True
-                        else:
-                            show_status = get_show_status(imdb_id)
-                            if show_status != 'ended':
-                                logging.debug(f"Retaining and processing ongoing/non-ended TV series from RSS: {imdb_id} ('{entry_title}') - status: {show_status or 'unknown'}")
-                                retained_series_count += 1
-                                monitor_missing_episodes_only = True
-                            else:
-                                logging.debug(f"Skipping (simulating removal) collected and ended/canceled TV series from RSS: {imdb_id} ('{entry_title}') - status: {show_status}")
-                                should_suppress_item = True
-                    else: # Movie
-                        logging.debug(f"Skipping (simulating removal) collected movie from RSS: {imdb_id} ('{entry_title}')")
-                        should_suppress_item = True
-
-                    if should_suppress_item:
+                # read_only (label sync) lists every title: it must not hide collected ones.
+                if item_state in ("Collected", "Partial") and should_remove and not read_only:
+                    from content_checkers.plex_watchlist import should_remove_from_watchlist
+                    suppress, reason = should_remove_from_watchlist(imdb_id, media_type, item_state)
+                    if suppress:
+                        logging.debug(f"Skipping (simulating removal) '{entry_title}' from RSS: {imdb_id} - {reason}")
                         removed_count += 1
                         continue # Simulate removal by suppressing the RSS item from ingestion.
+                    if media_type == 'tv':
+                        logging.debug(f"Retaining and processing collected TV series from RSS: {imdb_id} ('{entry_title}') - {reason}")
+                        retained_series_count += 1
+                        monitor_missing_episodes_only = True
 
                 # Check cache
                 if not disable_caching:
@@ -318,7 +282,7 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
         logging.error(f"Error processing Plex RSS feed: {str(e)}")
         return [([], versions)]
 
-def get_wanted_from_friends_plex_rss(rss_urls: Union[str, List[str]], versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_friends_plex_rss(rss_urls: Union[str, List[str]], versions: Dict[str, bool], read_only: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     """Get wanted items from one or more friends' Plex RSS feeds."""
     all_wanted_items = []
     
@@ -335,7 +299,7 @@ def get_wanted_from_friends_plex_rss(rss_urls: Union[str, List[str]], versions: 
             continue
             
         try:
-            items = get_wanted_from_plex_rss(rss_url, versions)
+            items = get_wanted_from_plex_rss(rss_url, versions, read_only=read_only)
             if items and items[0] and items[0][0]:  # Check if we got any valid items
                 all_wanted_items.extend(items)
                 logging.info(f"Successfully processed friend's RSS feed: {rss_url}")

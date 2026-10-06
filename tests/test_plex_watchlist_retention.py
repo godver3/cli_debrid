@@ -7,6 +7,7 @@ import os
 import sys
 import types
 import unittest
+from unittest import mock
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -214,9 +215,14 @@ class PlexRssRetentionTests(unittest.TestCase):
             'content_checkers.plex_rss_watchlist',
             'content_checkers/plex_rss_watchlist.py',
         )
+        # The RSS module shares the removal rule from plex_watchlist (imported lazily).
+        cls.watchlist_module = _load_module(
+            'content_checkers.plex_watchlist',
+            'content_checkers/plex_watchlist.py',
+        )
 
     def run_fetcher(self, state, media_type, keep_series, removal=True,
-                    show_status='returning series'):
+                    show_status='returning series', read_only=False):
         module = self.module
         entry = {
             'title': 'Test title',
@@ -229,10 +235,14 @@ class PlexRssRetentionTests(unittest.TestCase):
             'plex_watchlist_keep_series': keep_series,
         }.get(key, default)
         module.get_media_item_presence_overall = lambda **kwargs: state
-        module.get_show_status = lambda imdb_id: show_status
-        with self.assertLogs(level=logging.INFO) as captured:
+        shared = self.watchlist_module
+        shared.get_setting = module.get_setting
+        shared.get_media_item_presence_overall = module.get_media_item_presence_overall
+        shared.get_show_status = lambda imdb_id: show_status
+        with mock.patch.dict(sys.modules, {'content_checkers.plex_watchlist': shared}), \
+                self.assertLogs(level=logging.INFO) as captured:
             batches = module.get_wanted_from_plex_rss(
-                'https://plex.test/rss', {'1080p': True})
+                'https://plex.test/rss', {'1080p': True}, read_only=read_only)
         returned = [entry for batch, _ in batches for entry in batch]
         return returned, '\n'.join(captured.output)
 

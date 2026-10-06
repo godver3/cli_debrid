@@ -36,6 +36,14 @@ STATE_PRIORITY = {
     'all_blacklisted': 9  # DELETE candidate
 }
 
+_PLEX_WATCHLIST_SOURCE_TYPES = {'My Plex Watchlist', 'Other Plex Watchlist', 'My', 'Other', 'Plex'}
+
+
+def _item_from_plex_watchlist(item_source_types) -> bool:
+    """True if any recorded source type is a My/Other Plex Watchlist (or its first-word form)."""
+    return any(t in _PLEX_WATCHLIST_SOURCE_TYPES for t in item_source_types)
+
+
 class DeletionManager:
     """
     Unified deletion manager for all library deletion operations
@@ -1434,29 +1442,47 @@ class DeletionManager:
                             result['sources_failed'].append(source_name)
                             result['details'][source_name] = {'success': False, 'message': str(e)}
 
-            # Check Plex Watchlist - SKIP if item not from Plex Watchlist
-            if item_source_types and 'Plex' not in item_source_types and 'My' not in item_source_types:
+            # Check Plex Watchlists (My + Other) - SKIP if item not from a Plex watchlist source.
+            # item_source_types holds the literal source types ("My Plex Watchlist"), or just the
+            # first word ("My", "Other") for ids without an underscore, so match both forms.
+            if item_source_types and not _item_from_plex_watchlist(item_source_types):
                 logging.info(f"[CONTENT_SOURCE_REMOVAL] ⏭️  Skipping Plex Watchlist - item not from Plex source")
             else:
                 for source_key, source_config in content_sources.items():
-                    if source_config.get('type') == 'My Plex Watchlist' and source_config.get('enabled', False):
-                        result['sources_attempted'].append('Plex_Watchlist')
-                        try:
+                    source_type = source_config.get('type')
+                    if source_type not in ('My Plex Watchlist', 'Other Plex Watchlist') or not source_config.get('enabled', False):
+                        continue
+                    if source_type == 'Other Plex Watchlist':
+                        # Each Other source is a different person's watchlist: only touch the one(s)
+                        # that added this item (all of them when the item has no recorded source).
+                        if item_content_sources and source_key not in item_content_sources:
+                            continue
+                        token = source_config.get('token', '')
+                        if not token:
+                            logging.warning(f"[CONTENT_SOURCE_REMOVAL] No token for {source_key}, cannot remove from that watchlist")
+                            continue
+                    detail_key = 'Plex_Watchlist' if source_type == 'My Plex Watchlist' else f'Other_Plex_Watchlist_{source_key}'
+                    result['sources_attempted'].append(detail_key)
+                    try:
+                        if source_type == 'My Plex Watchlist':
                             from content_checkers.plex_watchlist import remove_from_plex_watchlist_by_item
                             removal_result = remove_from_plex_watchlist_by_item(item)
-                            result['details']['Plex_Watchlist'] = removal_result
-                            if removal_result.get('success'):
-                                result['sources_succeeded'].append('Plex_Watchlist')
-                            elif removal_result.get('not_found'):
-                                # Item wasn't in watchlist - not an error, just checked
-                                result['sources_not_found'].append('Plex_Watchlist')
-                                logging.info(f"[CONTENT_SOURCE_REMOVAL] ⊘ Plex Watchlist checked (item not found in source)")
-                            else:
-                                result['sources_failed'].append('Plex_Watchlist')
-                        except Exception as e:
-                            logging.error(f"Error removing from Plex Watchlist: {e}")
-                            result['sources_failed'].append('Plex_Watchlist')
-                            result['details']['Plex_Watchlist'] = {'success': False, 'message': str(e)}
+                        else:
+                            from content_checkers.plex_watchlist import remove_from_other_plex_watchlist_by_item
+                            removal_result = remove_from_other_plex_watchlist_by_item(item, token)
+                        result['details'][detail_key] = removal_result
+                        if removal_result.get('success'):
+                            result['sources_succeeded'].append(detail_key)
+                        elif removal_result.get('not_found'):
+                            # Item wasn't in watchlist - not an error, just checked
+                            result['sources_not_found'].append(detail_key)
+                            logging.info(f"[CONTENT_SOURCE_REMOVAL] ⊘ {source_type} checked (item not found in source)")
+                        else:
+                            result['sources_failed'].append(detail_key)
+                    except Exception as e:
+                        logging.error(f"Error removing from {source_type}: {e}")
+                        result['sources_failed'].append(detail_key)
+                        result['details'][detail_key] = {'success': False, 'message': str(e)}
 
             # Check Overseerr from Content Sources - SKIP if item not from Overseerr
             if item_source_types and 'Overseerr' not in item_source_types:
