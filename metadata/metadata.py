@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import sys, os
 import json
 import time
+import threading
 from utilities.settings import get_setting
 import re
 import pytz
@@ -587,6 +588,21 @@ def get_show_status(imdb_id: str) -> str:
         logging.error(f"Error getting show status for {imdb_id}: {str(e)}")
     return '' # Return empty string on failure
 
+_EPISODELESS_REFRESH_COOLDOWN = 6 * 3600  # seconds
+_episodeless_refresh_at = {}
+_episodeless_refresh_lock = threading.Lock()
+
+def _episodeless_refresh_allowed(imdb_id: str) -> bool:
+    """Throttle forced refreshes of shows that list no episodes: watchlist sources run every
+    15 minutes, and a show that genuinely has no episodes yet would otherwise hit the metadata
+    providers on every run."""
+    now = time.time()
+    with _episodeless_refresh_lock:
+        if now - _episodeless_refresh_at.get(imdb_id, 0) < _EPISODELESS_REFRESH_COOLDOWN:
+            return False
+        _episodeless_refresh_at[imdb_id] = now
+        return True
+
 def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     from database.database_writing import update_blacklisted_date, update_media_item
     from database.core import get_db_connection
@@ -1078,30 +1094,52 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                                 # We have season numbers but none are valid for processing
                                 continue
 
-                        current_item_episodes = []
-                        for season_num_to_process in seasons_to_process_for_this_item_instance:
-                            season_detail = seasons_data_from_metadata.get(str(season_num_to_process)) or seasons_data_from_metadata.get(season_num_to_process)
-                            if not season_detail or not isinstance(season_detail.get('episodes'), dict):
-                                logging.warning(f"Season {season_num_to_process} details or its episodes not found/invalid in metadata for {imdb_id}.")
-                                continue
+                        def _collect_episodes(seasons_data):
+                            current_item_episodes = []
+                            for season_num_to_process in seasons_to_process_for_this_item_instance:
+                                season_detail = seasons_data.get(str(season_num_to_process)) or seasons_data.get(season_num_to_process)
+                                if not season_detail or not isinstance(season_detail.get('episodes'), dict):
+                                    logging.warning(f"Season {season_num_to_process} details or its episodes not found/invalid in metadata for {imdb_id}.")
+                                    continue
 
-                            for ep_num_str, ep_data in season_detail['episodes'].items():
-                                try:
-                                    ep_num_int = int(ep_num_str)
-                                    episode_item_obj = create_episode_item(
-                                        current_item_metadata,
-                                        season_num_to_process,
-                                        ep_num_int,
-                                        ep_data,
-                                        is_anime_show
-                                    )
-                                    episode_item_obj['media_type'] = 'episode'
-                                    episode_item_obj['versions'] = item_from_input_list.get('versions', {})
-                                    current_item_episodes.append(episode_item_obj)
-                                except ValueError:
-                                    logging.warning(f"Invalid episode number format '{ep_num_str}' for S{season_num_to_process}, IMDb {imdb_id}.")
-                                except Exception as e_create_ep:
-                                    logging.error(f"Error creating episode S{season_num_to_process}E{ep_num_str} for {imdb_id}: {e_create_ep}", exc_info=True)
+                                for ep_num_str, ep_data in season_detail['episodes'].items():
+                                    try:
+                                        ep_num_int = int(ep_num_str)
+                                        episode_item_obj = create_episode_item(
+                                            current_item_metadata,
+                                            season_num_to_process,
+                                            ep_num_int,
+                                            ep_data,
+                                            is_anime_show
+                                        )
+                                        episode_item_obj['media_type'] = 'episode'
+                                        episode_item_obj['versions'] = item_from_input_list.get('versions', {})
+                                        current_item_episodes.append(episode_item_obj)
+                                    except ValueError:
+                                        logging.warning(f"Invalid episode number format '{ep_num_str}' for S{season_num_to_process}, IMDb {imdb_id}.")
+                                    except Exception as e_create_ep:
+                                        logging.error(f"Error creating episode S{season_num_to_process}E{ep_num_str} for {imdb_id}: {e_create_ep}", exc_info=True)
+
+                            return current_item_episodes
+
+                        current_item_episodes = _collect_episodes(seasons_data_from_metadata)
+                        if not current_item_episodes and _episodeless_refresh_allowed(imdb_id):
+                            # Seasons exist but none holds an episode (a freshly announced show whose
+                            # battery record was fetched before TVDB/TMDB listed episodes). Force one
+                            # refresh instead of silently dropping the show until the record goes stale.
+                            logging.info(f"Show {current_item_metadata.get('title')} (IMDb {imdb_id}) has no episodes in seasons {sorted(seasons_to_process_for_this_item_instance)}; forcing a metadata refresh.")
+                            try:
+                                from cli_battery.app.direct_api import DirectAPI
+                                refreshed_metadata, _ = DirectAPI.force_refresh_metadata(imdb_id, 'show')
+                                refreshed_seasons = (refreshed_metadata or {}).get('seasons')
+                                if isinstance(refreshed_seasons, dict) and refreshed_seasons:
+                                    current_item_episodes = _collect_episodes(refreshed_seasons)
+                            except Exception as refresh_error:
+                                logging.error(f"Error refreshing episode-less show {imdb_id}: {refresh_error}")
+                            if current_item_episodes:
+                                logging.info(f"Refresh found {len(current_item_episodes)} episodes for {imdb_id}.")
+                            else:
+                                logging.info(f"Show {current_item_metadata.get('title')} (IMDb {imdb_id}) still has no episodes after a refresh; skipping until episodes are listed.")
 
                         episodes_out.extend(current_item_episodes)
                         if current_item_episodes:

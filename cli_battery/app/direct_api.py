@@ -1274,7 +1274,7 @@ class DirectAPI:
                 if _cache_type:
                     q = q.filter_by(media_type=_cache_type)
                 mapping = q.first()
-                if mapping and not is_tmdb_mapping_stale(mapping.updated_at):
+                if mapping and not is_tmdb_mapping_stale(mapping.updated_at, negative=not mapping.imdb_id):
                     return mapping.imdb_id, 'battery'
 
                 # Primary: metadata provider

@@ -162,8 +162,37 @@ def should_process_item(item: Dict[str, Any], source_id: str, cache: Dict[str, A
 
     return False # Cache hit and still valid, skip processing
 
-def update_cache_for_item(item: Dict[str, Any], source_id: str, cache: Dict[str, Any]) -> None:
-    """Update cache entry for a specific item with randomized expiry."""
+# A raw item that produced no metadata output (no IMDb/battery data yet, or a show with no
+# episodes listed) was previously cached for 6-18h like a processed one, so it stayed invisible
+# until the cache expired. Such items are retried after this much shorter period.
+UNRESOLVED_RETRY_HOURS = 1.0
+
+
+def metadata_output_ids(processed_items) -> set:
+    """IDs ('imdb_<id>' / 'tmdb_<id>') of the items process_metadata actually produced."""
+    ids = set()
+    for processed in processed_items or []:
+        if processed.get('imdb_id'):
+            ids.add(f"imdb_{processed['imdb_id']}")
+        if processed.get('tmdb_id'):
+            ids.add(f"tmdb_{processed['tmdb_id']}")
+    return ids
+
+
+def item_has_metadata_output(item: Dict[str, Any], output_ids: set) -> bool:
+    """Did process_metadata produce anything for this raw content-source item?"""
+    return (
+        (bool(item.get('imdb_id')) and f"imdb_{item['imdb_id']}" in output_ids)
+        or (bool(item.get('tmdb_id')) and f"tmdb_{item['tmdb_id']}" in output_ids)
+    )
+
+
+def update_cache_for_item(item: Dict[str, Any], source_id: str, cache: Dict[str, Any],
+                          retry_after_hours: Optional[float] = None) -> None:
+    """Update cache entry for a specific item with randomized expiry.
+
+    ``retry_after_hours`` overrides the randomized expiry (used for unresolved items).
+    """
     cache_key = create_cache_key(item, source_id)
 
     # Calculate randomized expiry duration: 12 hours +/- 6 hours (range 6 to 18)
@@ -172,6 +201,8 @@ def update_cache_for_item(item: Dict[str, Any], source_id: str, cache: Dict[str,
     expiry_duration_hours = base_expiry_hours + random_offset_hours
     # Ensure it's at least a minimum positive duration, e.g., 1 hour
     expiry_duration_hours = max(1.0, expiry_duration_hours)
+    if retry_after_hours is not None:
+        expiry_duration_hours = retry_after_hours
     logging.debug(f"Calculated expiry for {cache_key}: {expiry_duration_hours:.2f} hours")
 
     cache[cache_key] = {

@@ -391,6 +391,16 @@ def delete_content_source(source_id):
     if 'Content Sources' in config and source_id in config['Content Sources']:
         del config['Content Sources'][source_id]
         save_config(config)
+        # Drop the source's item cache: ids are reused ("<type>_<n>"), and a new source that
+        # inherited the old cache would skip items for up to 18h as "already processed".
+        try:
+            from content_checkers.content_cache_management import get_cache_file_path
+            cache_file = get_cache_file_path(source_id)
+            if os.path.exists(cache_file):
+                os.remove(cache_file)
+                logging.info(f"[{process_id}] Removed item cache for deleted content source {source_id}")
+        except Exception as e:
+            logging.warning(f"[{process_id}] Could not remove item cache for {source_id}: {e}")
         logging.info(f"[{process_id}] Content source {source_id} deleted successfully")
         return True
     else:

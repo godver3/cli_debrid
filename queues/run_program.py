@@ -76,6 +76,7 @@ from utilities.post_processing import handle_state_change
 from content_checkers.content_cache_management import (
     load_source_cache, save_source_cache, 
     should_process_item, update_cache_for_item,
+    metadata_output_ids, item_has_metadata_output, UNRESOLVED_RETRY_HOURS,
     load_live_content_source_config, normalize_enabled_versions
 )
 from collections import deque # Import deque for efficient queue operations
@@ -2185,6 +2186,7 @@ class ProgramRunner:
                             processed_items = process_metadata(items_to_process)
                             if processed_items:
                                 all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
+                                output_ids = metadata_output_ids(all_items)  # before filters: which raw items produced anything
                                 
                                 # Set content source and detail for each item
                                 for item in all_items:
@@ -2269,7 +2271,9 @@ class ProgramRunner:
                                 # Update cache for all items that were processed (regardless of whether they made it through filtering)
                                 # This prevents reprocessing the same items repeatedly
                                 for item_raw in items_to_process_raw:
-                                    update_cache_for_item(item_raw, source, source_cache)
+                                    resolved = item_has_metadata_output(item_raw, output_ids)
+                                    update_cache_for_item(item_raw, source, source_cache,
+                                                          retry_after_hours=None if resolved else UNRESOLVED_RETRY_HOURS)
                                 
                                 total_items += len(all_items)
                                 items_processed += len(items_to_process)
@@ -2302,6 +2306,7 @@ class ProgramRunner:
                         processed_items = process_metadata(items_to_process)
                         if processed_items:
                             all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
+                            output_ids = metadata_output_ids(all_items)  # before filters: which raw items produced anything
                             
                             # Set content source and detail for each item
                             for item in all_items:
@@ -2386,7 +2391,9 @@ class ProgramRunner:
                             # Update cache for all items that were processed (regardless of whether they made it through filtering)
                             # This prevents reprocessing the same items repeatedly
                             for item_raw in items_to_process_raw:
-                                update_cache_for_item(item_raw, source, source_cache)
+                                resolved = item_has_metadata_output(item_raw, output_ids)
+                                update_cache_for_item(item_raw, source, source_cache,
+                                                      retry_after_hours=None if resolved else UNRESOLVED_RETRY_HOURS)
                             
                             total_items += len(all_items)
                             items_processed += len(items_to_process)
