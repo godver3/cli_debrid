@@ -6,6 +6,59 @@ import subprocess
 from utilities.settings import get_setting
 
 
+def _is_recollection(item, min_gap_seconds=60):
+    """True when the row was collected before (repair, upgrade): original_collected_at is
+    preserved across re-collections while collected_at is reset."""
+    def _ts(value):
+        if isinstance(value, datetime):
+            return value
+        try:
+            return datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return None
+    first, latest = _ts(item.get('original_collected_at')), _ts(item.get('collected_at'))
+    return bool(first and latest) and (latest - first).total_seconds() > min_gap_seconds
+
+
+def _recently_repaired(item_id, days=7):
+    """True if a repair replaced this item recently (NZB, playback or debrid repair)."""
+    conn = None
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        row = conn.execute(
+            "SELECT 1 FROM nzb_repair_activity WHERE item_id = ? AND outcome = 'replaced' "
+            "AND created_at >= datetime('now', ?) LIMIT 1",
+            (item_id, f'-{int(days)} days'),
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+
+def _has_dangling_symlink_sibling(path):
+    folder = os.path.dirname(path or '')
+    try:
+        return any(
+            entry.is_symlink() and not os.path.exists(entry.path)
+            for entry in os.scandir(folder)
+        ) if folder else False
+    except OSError:
+        return False
+
+
+def _may_have_dead_plex_versions(item):
+    """Cheap checks (no Plex calls) for whether a re-collected item may have left a dead
+    version behind. Debrid repair's reset clears original_collected_at, so the repair
+    activity log covers that path."""
+    return (_is_recollection(item)
+            or _recently_repaired(item.get('id'))
+            or _has_dangling_symlink_sibling(item.get('location_on_disk')))
+
+
 def _same_path(a, b):
     return bool(a and b) and os.path.normpath(str(a)) == os.path.normpath(str(b))
 
@@ -443,6 +496,16 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                     replace_cleanup_after_collect(dict(fresh_item))
                 except Exception as e:
                     logging.error(f"Failed to run replace cleanup after collect: {str(e)}")
+
+                # Repairs/upgrades re-collect the same row under a new file name, leaving the
+                # old version behind in Plex as a dead second version. Only items that look
+                # repaired/re-collected are checked, so a normal collection never polls Plex.
+                if _may_have_dead_plex_versions(fresh_item):
+                    try:
+                        from utilities.plex_functions import start_dead_plex_version_cleanup
+                        start_dead_plex_version_cleanup(dict(fresh_item))
+                    except Exception as e:
+                        logging.error(f"Failed to start dead Plex version cleanup: {str(e)}")
 
             # Remove from Plex Watchlist if the setting is enabled and the item
             # came from a My Plex Watchlist or Other Plex Watchlist source.

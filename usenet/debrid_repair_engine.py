@@ -1151,9 +1151,17 @@ def replace_entry(entry_name: str, info_hash: str, version_override: str = None,
             }
 
         moved = []
+        # Symlinked/Local: the replacement lands as a new file in the same folder, which Plex
+        # attaches to the existing item as a second version. Deleting the Plex item here (by
+        # ratingKey, before the replacement exists) made it come back as a brand-new "recently
+        # added" item. Only the symlink goes now; the dead Plex version is removed once the
+        # replacement is collected (post_processing -> start_dead_plex_version_cleanup).
+        from utilities.settings import get_setting
+        keep_plex_item = get_setting('File Management', 'file_collection_management') == 'Symlinked/Local'
         for item in repairable:
             item_id = item.get('id')
-            _delete_from_plex(item)
+            if not keep_plex_item:
+                _delete_from_plex(item)
             _unlink_item_symlink(item)
             if _reset_item_to_wanted(item_id):
                 moved.append(item_id)
