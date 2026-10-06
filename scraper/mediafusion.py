@@ -228,6 +228,7 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                 'seeders': seeders,
                  # Append source_link to instance name if available
                 'source': f'{instance}{f" - {source_link}" if source_link else ""}', 
+                'indexer': source_link or '',
                 'magnet': magnet_link,
                 'info_hash': info_hash,
                 'parsed_info': parsed_info # Store all extra details

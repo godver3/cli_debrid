@@ -41,6 +41,10 @@ function addToRealDebrid(magnetLink, torrent) {
             formData.append('genres', torrent.genres || '');
             formData.append('original_scraped_torrent_title', torrent.original_title || torrent.title);
             formData.append('current_score', torrent.score_breakdown?.total_score || '0');
+            // Scraper stats: which scraper/indexer this result came from
+            ['source', 'scraper_type', 'scraper_instance', 'indexer'].forEach(k => {
+                if (torrent[k]) formData.append(k, torrent[k]);
+            });
             if (_scraperSourceContext) formData.append('source_context', _scraperSourceContext);
             if (isNzbPack) {
                 formData.append('protocol', 'nzb');

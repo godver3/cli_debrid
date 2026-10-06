@@ -5,6 +5,7 @@ from .content_source_retry import create_retry_queue_table
 from .upgrade_hub_activity import create_upgrade_hub_activity_table
 from .nzb_repair_activity import create_nzb_repair_activity_table
 from .nzb_playback_repair import create_nzb_playback_repair_table
+from .scraper_grabs import create_scraper_grabs_table
 import sqlite3
 import os
 
@@ -16,6 +17,7 @@ def create_database():
     create_upgrade_hub_activity_table()
     create_nzb_repair_activity_table()
     create_nzb_playback_repair_table()
+    create_scraper_grabs_table()
     #TODO: create_upgrading_table()
 
     # Add statistics-specific indexes
@@ -874,6 +876,7 @@ def verify_database():
     # create_database() is only used for a brand-new database, so keeping the
     # playback table solely there leaves upgraded databases without it.
     create_nzb_playback_repair_table()
+    create_scraper_grabs_table()
 
     # Ensure overlay_removal_queue table exists (handles post-delete without restart)
     try:

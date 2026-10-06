@@ -169,6 +169,24 @@ def _download_and_get_hash(url: str) -> str:
     except Exception as e:
         raise Exception(f"Failed to process torrent URL: {str(e)}")
 
+def _record_manual_grab(item_id, kind, release_title, info_hash=None):
+    """Scraper stats: log a grab made from the web UI. The UI posts the chosen
+    result's source fields alongside the add request; never raises."""
+    try:
+        from flask import has_request_context
+        from database.scraper_grabs import record_grab
+        from database.database_reading import get_media_item_by_id
+        result = {}
+        if has_request_context():
+            result = {k: request.form.get(k) for k in ('source', 'scraper_type', 'scraper_instance', 'indexer')
+                      if request.form.get(k)}
+        item = get_media_item_by_id(item_id) or {'id': item_id}
+        record_grab(item, result, trigger='manual', kind=kind,
+                    release_title=release_title, info_hash=info_hash)
+    except Exception as e:
+        logging.debug(f"[ScraperStats] manual grab not recorded for item {item_id}: {e}")
+
+
 @scraper_bp.route('/add_to_debrid', methods=['POST'])
 @user_required
 @scraper_permission_required
@@ -764,6 +782,9 @@ def add_torrent_to_debrid():
                                     episode_id = add_media_item(episode_item, user_initiated=True)
                                     if episode_id:
                                         episode_item['id'] = episode_id
+                                        _record_manual_grab(episode_id, 'torrent',
+                                                            original_scraped_torrent_title or filled_by_title,
+                                                            info_hash=torrent_hash)
                                         # Add to checking queue
                                         from queues.checking_queue import CheckingQueue
                                         checking_queue = CheckingQueue()
@@ -930,6 +951,10 @@ def add_torrent_to_debrid():
                         if not item_id:
                             raise Exception("Failed to add item to database")
                         item['id'] = item_id
+
+                    _record_manual_grab(item['id'], 'torrent',
+                                        original_scraped_torrent_title or filled_by_title,
+                                        info_hash=torrent_hash)
 
                     # Add item to checking queue
                     from queues.checking_queue import CheckingQueue
@@ -2463,6 +2488,7 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
                         original_scraped_torrent_title=ep_label,
                         **_ep_seg_kwargs,
                     )
+                    _record_manual_grab(item_id, 'nzb', ep_label)
             except Exception as _qe:
                 logging.warning(f'[NZBPack] Queue tracking failed for {ep_label}: {_qe}')
         else:
@@ -2626,6 +2652,7 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
                 original_scraped_torrent_title=nzb_title,
                 **_place_seg_kwargs,
             )
+            _record_manual_grab(item_id_to_place, 'nzb', nzb_title)
             logging.info(f'[NZB] Item {item_id_to_place} placed in Adding queue for health check (checking_id={checking_id})')
 
         if item_type == 'episode' and season is not None and episode is None:

@@ -301,6 +301,13 @@ class ScraperManager:
 
                 scraper_call_duration = time.time() - scraper_call_start_time
                 logging.info(f"Scraper {instance} ({scraper_type}) call took {scraper_call_duration:.2f}s, found {len(results)} results.")
+                # Scraper stats (database/scraper_grabs.py): record which configured
+                # scraper produced each result. setdefault keeps any value the scraper
+                # set itself (e.g. Newznab aggregate packs pick their main instance).
+                for r in results or []:
+                    if isinstance(r, dict):
+                        r.setdefault('scraper_type', scraper_type)
+                        r.setdefault('scraper_instance', instance)
                 return instance, scraper_type, results
             except Exception as e:
                 if scraper_call_start_time > 0: # Check if timing started

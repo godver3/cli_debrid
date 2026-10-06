@@ -847,6 +847,7 @@
                         <a class="st-nav-dd-item" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i> Upgrade Hub</a>
                         {% endif %}
                         <a class="st-nav-dd-item" href="{{ url_for('connections.index') }}"><i class="fa-solid fa-plug"></i> Connections</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('statistics.scraper_stats_page') }}"><i class="fa-solid fa-ranking-star"></i> Scraper Stats</a>
                     </div>
                 </div>
 
@@ -1006,6 +1007,7 @@
                             <a class="st-nav-mob-item" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i> Upgrade Hub</a>
                             {% endif %}
                             <a class="st-nav-mob-item" href="{{ url_for('connections.index') }}"><i class="fa-solid fa-plug"></i> Connections</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('statistics.scraper_stats_page') }}"><i class="fa-solid fa-ranking-star"></i> Scraper Stats</a>
                         </div>
                     </div>
 
@@ -1517,7 +1519,8 @@
                         ('database.phalanxdb_status', 'Phalanx DB'),
                         ('performance.performance_dashboard', 'Performance Dashboard')] +
                         ([] if is_limited_environment() or (is_user_system_enabled() and not (current_user.is_authenticated and current_user.role == 'admin')) else [('debrid_manager.index', 'Debrid Manager'), ('upgrade_hub.index', 'Upgrade Hub')]) + [
-                        ('connections.index', 'Connections')
+                        ('connections.index', 'Connections'),
+                        ('statistics.scraper_stats_page', 'Scraper Stats')
                     ],
                     'Tools': [
                         ('scraper.scraper_tester', 'Tester'),

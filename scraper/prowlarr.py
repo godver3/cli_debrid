@@ -299,6 +299,7 @@ def parse_prowlarr_results(data: List[Dict[str, Any]], ins_name: str, seeders_on
             'title': title,
             'size': size_gb,
             'source': source_name,
+            'indexer': item.get('indexer') or '',
             'seeders': seeders,
             'hash': info_hash,
             'parsed_info': parsed_info,

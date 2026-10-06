@@ -27,6 +27,7 @@ from debrid.common import (
 )
 from debrid.status import TorrentStatus
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls, is_magnet_not_wanted
+from database.scraper_grabs import record_grab, queue_grab_trigger
 from utilities.settings import get_setting
 from utilities.rescrape_helpers import rescrape_blocks_any_pack_reuse, rescrape_blocks_pack_reuse
 
@@ -1607,6 +1608,8 @@ class TorrentProcessor:
                                     filled_by_title=result.get('title', ''))
                                 item['filled_by_magnet'] = original_link
                                 item['filled_by_title'] = result.get('title', '')
+                                record_grab(item, result, kind='torrent', trigger=queue_grab_trigger(item),
+                                            release_title=result.get('title', ''))
                             # Return None, original_link, AND the result that triggered this
                             return None, original_link, result
                     except TooManyDownloadsError:
@@ -1618,6 +1621,8 @@ class TorrentProcessor:
                                 filled_by_title=result.get('title', ''))
                             item['filled_by_magnet'] = original_link
                             item['filled_by_title'] = result.get('title', '')
+                            record_grab(item, result, kind='torrent', trigger=queue_grab_trigger(item),
+                                        release_title=result.get('title', ''))
                         # Return None, original_link, AND the result that triggered this
                         return None, original_link, result
                     except Exception as e:

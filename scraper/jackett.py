@@ -219,6 +219,7 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
             'title': title,
             'size': size_gb,
             'source': f"{ins_name} - {tracker}",
+            'indexer': tracker if tracker and tracker != 'N/A' else '',
             'magnet': primary_link, # Use the determined primary link
             'seeders': seeders,
             'hash': info_hash, # Start with InfoHash field if present
