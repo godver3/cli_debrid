@@ -3,6 +3,7 @@
 source fields the scrapers stamp on their results (database/scraper_grabs.py)."""
 
 import os
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -10,13 +11,54 @@ from unittest import mock
 for _var in ('USER_CONFIG', 'USER_DB_CONTENT', 'USER_LOGS'):
     os.environ.setdefault(_var, tempfile.mkdtemp())
 
-import database  # noqa: F401  (app import order)
-from database import scraper_grabs as sg
-from database.core import get_db_connection
+
+def _is_db_module(name):
+    return name == 'database' or name.startswith('database.')
+
+
+def _import_real_database():
+    """Return the real database package modules, keyed like sys.modules.
+
+    Several test modules replace `database` / `database.core` in sys.modules with
+    stubs at import time and never restore them, so in a full run a plain import
+    can hand back a stub. Set any stubs aside, import the real package, then put
+    the stubs back so those tests keep seeing what they installed.
+    """
+    stubs = {k: sys.modules.pop(k) for k in list(sys.modules) if _is_db_module(k)}
+    try:
+        import database  # noqa: F401  (app import order)
+        import database.scraper_grabs  # noqa: F401
+        import database.core  # noqa: F401
+        return {k: m for k, m in sys.modules.items() if _is_db_module(k)}
+    finally:
+        for k in [k for k in sys.modules if _is_db_module(k)]:
+            del sys.modules[k]
+        sys.modules.update(stubs)
+
+
+_REAL_DB_MODULES = _import_real_database()
+sg = _REAL_DB_MODULES['database.scraper_grabs']
+get_db_connection = _REAL_DB_MODULES['database.core'].get_db_connection
+
+
+def _use_real_database(case):
+    """Point sys.modules at the real database package for one test, so lazy
+    `from database... import` calls in the code under test get the real thing."""
+    saved = {k: sys.modules.get(k) for k in _REAL_DB_MODULES}
+    sys.modules.update(_REAL_DB_MODULES)
+
+    def restore():
+        for k, m in saved.items():
+            if m is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = m
+    case.addCleanup(restore)
 
 
 class _DbCase(unittest.TestCase):
     def setUp(self):
+        _use_real_database(self)
         self._prev_db = os.environ['USER_DB_CONTENT']
         os.environ['USER_DB_CONTENT'] = tempfile.mkdtemp()
         conn = get_db_connection()
