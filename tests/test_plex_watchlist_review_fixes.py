@@ -10,6 +10,8 @@ Group 5: onboarding content-source listing needs an admin.
 """
 
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -24,6 +26,32 @@ import content_checkers.plex_watchlist as pw
 import content_checkers.plex_rss_watchlist as rss
 from content_checkers import content_cache_management as ccm
 from cli_battery.app import staleness, tvdb_client
+
+
+# Some other test modules replace flask / utilities.settings in sys.modules and never restore
+# them, so route-level tests (which need the real ones) run in a clean interpreter instead of
+# depending on test order.
+_ISOLATED_ENV = 'PLEX_REVIEW_FIXES_ISOLATED'
+_isolated_results = {}
+
+
+def _delegated_to_clean_interpreter(testcase):
+    """In the parent run, execute this test's class once in a subprocess and assert it passed.
+
+    Returns True when the caller should skip its own body (parent), False inside the subprocess.
+    """
+    if os.environ.get(_ISOLATED_ENV):
+        return False
+    cls = type(testcase)
+    if cls.__name__ not in _isolated_results:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _isolated_results[cls.__name__] = subprocess.run(
+            [sys.executable, '-m', 'pytest', f'{os.path.abspath(__file__)}::{cls.__name__}',
+             '-q', '-p', 'no:cacheprovider', '-W', 'ignore'],
+            cwd=root, env={**os.environ, _ISOLATED_ENV: '1'}, capture_output=True, text=True, timeout=600)
+    proc = _isolated_results[cls.__name__]
+    testcase.assertEqual(proc.returncode, 0, (proc.stdout or '')[-4000:] + (proc.stderr or '')[-1000:])
+    return True
 
 
 def _async_result(results):
@@ -478,6 +506,8 @@ class TestDebugDispatcherMatchesScheduledRun(unittest.TestCase):
         return result, seen, added
 
     def test_content_source_is_set_before_metadata_runs_and_anime_is_kept(self):
+        if _delegated_to_clean_interpreter(self):
+            return
         source = {'versions': ['1080p'], 'media_type': 'All', 'enabled': True}
         raw = [([{'imdb_id': 'tt0000001', 'media_type': 'movie'}], {'1080p': True})]
         result, seen, added = self._run(source, raw)
@@ -486,6 +516,8 @@ class TestDebugDispatcherMatchesScheduledRun(unittest.TestCase):
         self.assertEqual(sorted(i['imdb_id'] for i in added[0][0]), ['tt-anime', 'tt0000001'])
 
     def test_source_without_enabled_versions_is_not_processed(self):
+        if _delegated_to_clean_interpreter(self):
+            return
         source = {'versions': {'1080p': False}, 'media_type': 'All', 'enabled': True}
         result, seen, added = self._run(source, [([{'imdb_id': 'tt0000001', 'media_type': 'movie'}], {})])
         self.assertIn('error', result)
@@ -493,6 +525,8 @@ class TestDebugDispatcherMatchesScheduledRun(unittest.TestCase):
         self.assertNotIn('items', seen)
 
     def test_unknown_release_date_is_dropped_when_a_cutoff_is_set(self):
+        if _delegated_to_clean_interpreter(self):
+            return
         source = {'versions': ['1080p'], 'media_type': 'All', 'cutoff_date': '2000-01-01', 'enabled': True}
         import routes.debug_routes as dbg
 
@@ -527,6 +561,8 @@ class TestContentSourceDetail(unittest.TestCase):
 
 class TestOnboardingContentSourcesNeedAdmin(unittest.TestCase):
     def test_non_admin_is_redirected_and_tokens_are_not_returned(self):
+        if _delegated_to_clean_interpreter(self):
+            return
         from flask import Flask
         from routes import models
         from routes import onboarding_routes
@@ -549,6 +585,8 @@ class TestOnboardingContentSourcesNeedAdmin(unittest.TestCase):
         self.assertNotIn(b'SECRET-TOKEN', getattr(response, 'data', b''))
 
     def test_still_works_before_the_user_system_exists(self):
+        if _delegated_to_clean_interpreter(self):
+            return
         from flask import Flask
         from routes import models
         from routes import onboarding_routes
