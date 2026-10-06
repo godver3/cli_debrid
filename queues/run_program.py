@@ -2151,13 +2151,11 @@ class ProgramRunner:
                     for items, item_versions_from_source_tuple in wanted_content:
                         logging.debug(f"Processing batch of {len(items)} items from {source}")
 
-                        # Convert versions from tuple if necessary
-                        if isinstance(item_versions_from_source_tuple, list):
-                            versions_to_inject = {v: True for v in item_versions_from_source_tuple}
-                        elif isinstance(item_versions_from_source_tuple, dict):
-                            versions_to_inject = item_versions_from_source_tuple
-                        else:
-                            logging.warning(f"Unexpected format for versions in tuple for {source}. Using main source versions dict.")
+                        # Normalise versions from the fetcher tuple (only enabled ones). A dict such as
+                        # {'1080p': False} used to be injected as-is, giving items no enabled version.
+                        versions_to_inject = normalize_enabled_versions(item_versions_from_source_tuple)
+                        if not versions_to_inject:
+                            logging.warning(f"Unexpected or empty versions in tuple for {source}. Using main source versions dict.")
                             versions_to_inject = versions_dict # Fallback to the converted source versions
 
                         # Track genre filtering stats for this batch

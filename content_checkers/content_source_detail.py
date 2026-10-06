@@ -33,6 +33,9 @@ def append_content_source_detail(item: Dict[str, Any], source_type: Optional[str
             detail = item.get('content_source_detail', 'Unknown User')
         elif source_type == 'Plex Friends Watchlist':
             detail = item.get('content_source_detail', 'Unknown User')
+        elif source_type in ('My Plex RSS Watchlist', 'My Friends Plex RSS Watchlist'):
+            # RSS items carry a non-secret feed label set by the fetcher (the URL itself is a secret).
+            detail = item.get('content_source_detail')
         elif source_type == 'Overseerr':
             detail = item.get('content_source_detail')
         elif source_type == 'Agregarr':

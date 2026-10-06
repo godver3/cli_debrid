@@ -132,7 +132,7 @@ def resolve_imdb_and_type(guids: List[str], title: str, media_type: str = None) 
 def resolve_imdb_from_guids(guids: List[str], title: str, media_type: str) -> str:
     return resolve_imdb_and_type(guids, title, media_type)[0]
 
-def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only: bool = False, detail: str = 'Plex RSS') -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     """Fetch a Plex RSS watchlist. read_only=True never suppresses collected titles (used by label sync)."""
     all_wanted_items = []
     processed_items = []
@@ -244,6 +244,7 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only:
                     'imdb_id': imdb_id,
                     'media_type': media_type,
                     'source': 'plex_rss',
+                    'content_source_detail': detail,
                     'monitor_missing_episodes_only': monitor_missing_episodes_only,
                 }
 
@@ -282,6 +283,10 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only:
         logging.error(f"Error processing Plex RSS feed: {str(e)}")
         return [([], versions)]
 
+def _friend_feed_label(rss_url: str) -> str:
+    """Non-secret label for a friend's feed: the URL is a credential, so only its tail is shown."""
+    return f"Friend RSS ...{rss_url.rstrip('/')[-6:]}"
+
 def get_wanted_from_friends_plex_rss(rss_urls: Union[str, List[str]], versions: Dict[str, bool], read_only: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     """Get wanted items from one or more friends' Plex RSS feeds."""
     all_wanted_items = []
@@ -299,7 +304,7 @@ def get_wanted_from_friends_plex_rss(rss_urls: Union[str, List[str]], versions: 
             continue
             
         try:
-            items = get_wanted_from_plex_rss(rss_url, versions, read_only=read_only)
+            items = get_wanted_from_plex_rss(rss_url, versions, read_only=read_only, detail=_friend_feed_label(rss_url))
             if items and items[0] and items[0][0]:  # Check if we got any valid items
                 all_wanted_items.extend(items)
                 logging.info(f"Successfully processed friend's RSS feed: {rss_url}")
