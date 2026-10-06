@@ -5,7 +5,7 @@ import json
 import os
 import uuid
 import time
-from utilities.settings import get_config_dir, load_config, save_config # Import main config functions
+from utilities.settings import get_config_dir, load_config, save_config, get_setting # Import main config functions
 from utilities.file_lock import FileLock # For safe JSON writing
 from datetime import datetime # To timestamp the fetch
 from .models import admin_required # Added import for admin_required
@@ -220,6 +220,97 @@ def check_user_plex_pin():
     except Exception as e:
         current_app.logger.error(f"Error checking user Plex pin: {e}", exc_info=True)
         return jsonify({'success': False, 'status': 'error', 'error': str(e)}), 500
+
+
+# --- Plex Home (managed) users ---
+#
+# A managed Home user has no plex.tv login, so the PIN link above can only ever sign in
+# the admin or a real account. Their token comes from the Home admin's own token:
+# plex.tv issues one per Home profile through the "switch user" endpoint.
+
+def _truthy(value):
+    return str(value).strip().lower() in ('1', 'true')
+
+
+def _home_user_key(user):
+    """The name a Home user's token is stored under (managed users have no username)."""
+    return getattr(user, 'username', '') or getattr(user, 'title', '') or ''
+
+
+def _main_plex_account():
+    """The Plex account behind the configured main Plex token (must be the Home admin)."""
+    from plexapi.myplex import MyPlexAccount
+    token = (get_setting('Plex', 'token', '') or '').strip()
+    if not token:
+        raise ValueError('No main Plex token is configured. Set it under Settings > Plex first.')
+    return MyPlexAccount(token=token, timeout=20)
+
+
+def _home_users(account):
+    return [u for u in account.users() if getattr(u, 'home', False)]
+
+
+@user_token_bp.route('/collect_tokens/home_users', methods=['GET'])
+@admin_required
+def list_home_users():
+    """Lists the Plex Home profiles on the main account, so a token can be fetched for each."""
+    try:
+        account = _main_plex_account()
+        stored = load_user_tokens()
+        users = [{
+            'id': u.id,
+            'name': _home_user_key(u),
+            'managed': _truthy(getattr(u, 'restricted', '')),
+            'protected': bool(getattr(u, 'protected', False)),
+            'stored': _home_user_key(u) in stored,
+        } for u in _home_users(account)]
+        return jsonify({'success': True, 'users': users})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        current_app.logger.error(f"Error listing Plex Home users: {e}")
+        return jsonify({'success': False, 'error': f'Could not list Plex Home users: {e}'}), 502
+
+
+@user_token_bp.route('/collect_tokens/home_users/add', methods=['POST'])
+@admin_required
+def add_home_user_token():
+    """Fetches and stores the token of one Plex Home profile (managed or not)."""
+    from plexapi.exceptions import BadRequest, Unauthorized
+    data = request.get_json(silent=True) or {}
+    user_id = data.get('user_id')
+    pin = str(data.get('pin') or '').strip() or None
+    if user_id in (None, ''):
+        return jsonify({'success': False, 'error': 'user_id is required'}), 400
+    try:
+        account = _main_plex_account()
+        target = next((u for u in _home_users(account) if str(u.id) == str(user_id)), None)
+        if target is None:
+            return jsonify({'success': False, 'error': 'That user is not on this Plex Home.'}), 404
+        if getattr(target, 'protected', False) and not pin:
+            return jsonify({'success': False, 'needs_pin': True,
+                            'error': f'{_home_user_key(target)} is protected by a PIN. Enter it to continue.'}), 400
+        try:
+            user_account = account.switchHomeUser(target, pin=pin)
+        except (Unauthorized, BadRequest) as e:
+            current_app.logger.warning(f"Plex rejected the switch to Home user {_home_user_key(target)!r}: {e}")
+            return jsonify({'success': False, 'needs_pin': bool(getattr(target, 'protected', False)),
+                            'error': 'Plex rejected the request' + (' (is the PIN correct?).' if pin or getattr(target, 'protected', False) else '. The main token may not belong to the Plex Home admin.')}), 400
+        token = getattr(user_account, 'authToken', None)
+        if not token:
+            return jsonify({'success': False, 'error': 'Plex did not return a token for that user.'}), 502
+        key = _home_user_key(user_account) or _home_user_key(target)
+        tokens = load_user_tokens()
+        tokens[key] = token
+        save_user_tokens(tokens)
+        current_app.logger.info(f"Stored a token for Plex Home user {key!r}.")
+        # The token itself is never sent back to the browser.
+        return jsonify({'success': True, 'username': key})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        current_app.logger.error(f"Error fetching token for Plex Home user {user_id}: {e}")
+        return jsonify({'success': False, 'error': f'Could not fetch the token: {e}'}), 502
 
 
 @user_token_bp.route('/collect_tokens/delete', methods=['POST'])

@@ -197,16 +197,44 @@ def _tmdb_to_imdb(tmdb_id: Any, media_type: str) -> Optional[str]:
         return None
 
 
+def _list_item_season(media: Dict[str, Any], raw_type: str) -> Optional[int]:
+    """The season a Scrob *list* entry is limited to, or None for the whole show.
+
+    Scrob lets you list a single season of a series (ListItem.season_number); the
+    list response puts it on the media dict as 'season_number' next to the show's own
+    tmdb_id. Plex watchlists have no season granularity, so this is the only way to
+    ask for one season. Only series rows carry it: an episode row's season_number is
+    the episode's own and keeps rolling up to its show as before.
+    """
+    if raw_type not in ('series', 'show', 'tv'):
+        return None
+    season = media.get('season_number')
+    if isinstance(season, bool):
+        return None
+    try:
+        return int(season) if season is not None and str(season).strip() != '' else None
+    except (TypeError, ValueError):
+        return None
+
+
 def process_scrob_items(items: List[Dict[str, Any]], unblacklist: bool = False) -> List[Dict[str, Any]]:
     """Mirrors content_checkers.trakt.process_trakt_items: reduces raw Scrob
     media dicts down to the minimal {'imdb_id', 'media_type'} shape the shared
     add_wanted_items/process_metadata pipeline expects, applying the same
     ghostlist/blacklist gating Trakt sources use.
+
+    A list entry limited to one season of a show comes back with
+    'requested_seasons' (the same key Overseerr uses), so only that season is
+    grabbed. Several season entries of one show merge into one item, and a
+    whole-show entry for the same show wins over them.
     """
     from database.core import get_db_connection
 
     processed_items = []
     seen_imdb_ids = set()
+    items_by_imdb: Dict[str, Dict[str, Any]] = {}
+    seasons_by_imdb: Dict[str, set] = {}
+    whole_show_imdb_ids = set()
     skipped_count = 0
     duplicate_count = 0
     blacklisted_count = 0
@@ -252,7 +280,17 @@ def process_scrob_items(items: List[Dict[str, Any]], unblacklist: bool = False) 
             skipped_count += 1
             continue
 
+        season_number = _list_item_season(media, raw_type)
+
         if imdb_id in seen_imdb_ids:
+            if imdb_id in items_by_imdb and media_type == 'tv':
+                if season_number is None:
+                    if imdb_id not in whole_show_imdb_ids:
+                        whole_show_imdb_ids.add(imdb_id)
+                        continue
+                elif imdb_id not in whole_show_imdb_ids and season_number not in seasons_by_imdb[imdb_id]:
+                    seasons_by_imdb[imdb_id].add(season_number)
+                    continue
             duplicate_count += 1
             continue
 
@@ -288,7 +326,20 @@ def process_scrob_items(items: List[Dict[str, Any]], unblacklist: bool = False) 
             logging.error(f"Error checking blacklist status for {imdb_id}: {e}")
 
         seen_imdb_ids.add(imdb_id)
-        processed_items.append({'imdb_id': imdb_id, 'media_type': media_type})
+        new_item = {'imdb_id': imdb_id, 'media_type': media_type}
+        processed_items.append(new_item)
+        if media_type == 'tv':
+            items_by_imdb[imdb_id] = new_item
+            seasons_by_imdb[imdb_id] = set()
+            if season_number is None:
+                whole_show_imdb_ids.add(imdb_id)
+            else:
+                seasons_by_imdb[imdb_id].add(season_number)
+
+    for imdb_id, new_item in items_by_imdb.items():
+        if imdb_id not in whole_show_imdb_ids and seasons_by_imdb[imdb_id]:
+            new_item['requested_seasons'] = sorted(seasons_by_imdb[imdb_id])
+            logging.info(f"Scrob list entry for {imdb_id} is limited to season(s) {new_item['requested_seasons']}")
 
     if skipped_count > 0:
         logging.info(f"Skipped {skipped_count} Scrob items due to missing media type or unresolved ID")
