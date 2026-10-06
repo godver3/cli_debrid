@@ -1288,6 +1288,11 @@ def _update_db_for_repair(item: dict, new_job_id: str, replacement_result: dict,
                 pass
 
         _seg_kwargs = {'nzb_segment_id': new_segment_id} if new_segment_id else {}
+        try:
+            from database.scraper_grabs import record_grab
+            record_grab(item, replacement_result, trigger='repair', kind='nzb', release_title=release_title)
+        except Exception:
+            pass  # scraper stats are best-effort
         update_media_item_state(
             item_id, 'Adding',
             filled_by_torrent_id=new_torrent_id,
@@ -1502,6 +1507,11 @@ def _move_to_wanted(item: dict) -> None:
     try:
         from database.database_writing import update_media_item_state, update_media_item
         item_id = item['id']
+        try:
+            from database.scraper_grabs import mark_current_grab
+            mark_current_grab(item_id, 'repaired', 'NZB repair: re-scrape')
+        except Exception:
+            pass  # scraper stats are best-effort
         update_media_item_state(
             item_id, 'Wanted',
             filled_by_torrent_id=None,

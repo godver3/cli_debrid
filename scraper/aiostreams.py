@@ -376,6 +376,7 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                 'size': round(size, 2),
                 'seeders': seeders,
                 'source': f'{instance}{f" - {addon_name}" if addon_name else ""}{f" - {indexer_name}" if indexer_name else ""}',
+                'indexer': indexer_name or addon_name or '',
                 'magnet': final_url,
                 'info_hash': info_hash,
                 'parsed_info': parsed_info
@@ -631,6 +632,7 @@ def parse_api_results(results: List[Dict[str, Any]], instance: str) -> List[Dict
                 'size': round(size_gb, 2),
                 'seeders': seeders,
                 'source': source,
+                'indexer': indexer or addon or '',
                 'magnet': magnet,
                 'info_hash': info_hash,
                 'parsed_info': parsed_info

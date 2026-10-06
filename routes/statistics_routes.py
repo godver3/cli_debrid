@@ -1505,6 +1505,54 @@ def _read_size_cache() -> Optional[Dict]:
         logging.error(f"Failed to read library size cache for initial load: {e}")
         return None
 
+def _scraper_stats_args():
+    raw_days = request.args.get('days', '30')
+    if raw_days == 'all':
+        days = None
+    else:
+        try:
+            days = max(1, min(int(raw_days), 3650))
+        except ValueError:
+            days = 30
+    kind = request.args.get('kind', 'all')
+    return days, (kind if kind in ('torrent', 'nzb') else None)
+
+
+@statistics_bp.route('/scraper_stats')
+@user_required
+def scraper_stats_page():
+    return render_template('scraper_stats.html')
+
+
+@statistics_bp.route('/api/scraper_stats', methods=['GET'])
+@user_required
+def scraper_stats_api():
+    from database.scraper_grabs import get_scraper_stats
+    days, kind = _scraper_stats_args()
+    try:
+        return jsonify({'success': True, **get_scraper_stats(days=days, kind=kind)})
+    except Exception as e:
+        logging.error(f"[ScraperStats] stats query failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@statistics_bp.route('/api/scraper_stats/recent', methods=['GET'])
+@user_required
+def scraper_stats_recent_api():
+    from database.scraper_grabs import get_recent_grabs
+    days, kind = _scraper_stats_args()
+    try:
+        grabs = get_recent_grabs(
+            instance=request.args.get('instance'),
+            indexer=request.args.get('indexer'),
+            days=days, kind=kind, limit=50,
+        )
+        return jsonify({'success': True, 'grabs': grabs})
+    except Exception as e:
+        logging.error(f"[ScraperStats] recent query failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @statistics_bp.route('/api/library_size', methods=['GET'])
 @user_required
 def get_library_size_api():

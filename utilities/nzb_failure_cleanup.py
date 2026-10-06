@@ -82,6 +82,11 @@ def blacklist_and_cleanup_nzb_failure(
 ) -> None:
     """Blacklist a failed/abandoned NZB job and reset item fields that enable reuse loops."""
     item_id = item.get('id')
+    try:
+        from database.scraper_grabs import mark_current_grab
+        mark_current_grab(item_id, 'failed', reason)
+    except Exception:
+        pass  # scraper stats are best-effort
     job_hash = _resolve_job_hash(item)
     nzb_url = item.get('filled_by_magnet', '') or ''
 
