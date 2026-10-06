@@ -1913,6 +1913,80 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
         return False
 
 
+def _plex_has_file(plex, item_title, item_path, episode_title=None) -> bool:
+    """True if Plex already has a media part with item_path's file name under item_title."""
+    target = os.path.basename(item_path)
+    for section in plex.library.sections():
+        if section.type == 'movie':
+            owners = section.search(title=item_title)
+        elif section.type == 'show':
+            owners = []
+            for show in section.search(title=item_title):
+                try:
+                    episodes = show.episodes(title=episode_title) if episode_title else []
+                    owners.extend(episodes or show.episodes())
+                except Exception:
+                    owners.extend(show.episodes())
+        else:
+            continue
+        for owner in owners:
+            for media in getattr(owner, 'media', []) or []:
+                if any(os.path.basename(part.file) == target for part in media.parts):
+                    return True
+    return False
+
+
+def remove_replaced_plex_media_after_scan(item_title, new_path, old_paths, episode_title=None,
+                                          timeout=300, interval=10):
+    """Symlinked/Local Replace: drop the old version from Plex only after the new file is in.
+
+    The replacement is a different file in the same folder, so Plex's scan attaches it to the
+    existing movie/episode as a second version. Deleting the old (only) version before that
+    deletes the whole item, and the replacement then comes back as a brand-new "recently added"
+    item with a fresh addedAt. Waiting first means only the old version is removed and the item
+    keeps its addedAt and watch state. Removing it explicitly also matters when Plex's
+    "empty trash automatically" is off, which would otherwise leave it as an unavailable version.
+
+    On timeout the old versions are removed anyway (the previous behaviour), so a stalled scan
+    can't leave dead versions behind.
+    """
+    try:
+        if get_setting('File Management', 'file_collection_management') == 'Plex':
+            plex_url = get_setting('Plex', 'url').rstrip('/')
+            plex_token = get_setting('Plex', 'token')
+        else:
+            plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
+            plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
+        if not plex_url or not plex_token:
+            logger.warning(f"[REPLACE_PLEX] No Plex URL/token configured; cannot remove replaced version of {item_title}")
+            return False
+        plex = plexapi.server.PlexServer(plex_url, plex_token, timeout=30)
+
+        deadline = time.time() + timeout
+        while True:
+            try:
+                if _plex_has_file(plex, item_title, new_path, episode_title):
+                    logger.info(f"[REPLACE_PLEX] Plex picked up {os.path.basename(new_path)}; removing replaced version(s) of {item_title}")
+                    break
+            except Exception as e:
+                logger.debug(f"[REPLACE_PLEX] Plex lookup for {item_title} failed, retrying: {e}")
+            if time.time() >= deadline:
+                logger.warning(f"[REPLACE_PLEX] Plex hadn't picked up {os.path.basename(new_path)} after {timeout}s; "
+                               f"removing replaced version(s) of {item_title} anyway")
+                break
+            time.sleep(interval)
+
+        removed = True
+        for old_path in old_paths:
+            if not remove_file_from_plex(item_title, old_path, episode_title):
+                removed = False
+                logger.warning(f"[REPLACE_PLEX] Could not remove replaced version {os.path.basename(old_path)} of {item_title} from Plex")
+        return removed
+    except Exception as e:
+        logger.error(f"[REPLACE_PLEX] Error removing replaced version of {item_title}: {e}", exc_info=True)
+        return False
+
+
 def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empty_trash: bool = True) -> dict:
     """
     Scan specific Plex paths and then empty trash to clean up unavailable items.
