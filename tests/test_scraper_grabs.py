@@ -117,6 +117,28 @@ class TestRecordAndOutcomes(_DbCase):
         sg.mark_current_grab(1, 'failed', 'no matching files')
         self.assertEqual([r['outcome'] for r in self.rows(1)], ['collected', 'failed'])
 
+    def test_upgrade_restore_outside_adding_counts_as_failed(self):
+        # e.g. a Checking timeout: UpgradingQueue.restore_item_state puts the old file back.
+        from queues.upgrading_queue import UpgradingQueue
+        self.set_item(1, 'Collected')
+        sg.record_grab({'id': 1}, self.result('A'))
+        self.set_item(1, 'Checking')
+        sg.record_grab({'id': 1}, self.result('B'), trigger='upgrade')
+        q = UpgradingQueue()
+        q.upgrade_states = {1: [{'timestamp': 'then', 'state': {'state': 'Collected'}}]}
+        with mock.patch.object(q, 'save_upgrade_states'):
+            self.assertTrue(q.restore_item_state({'id': 1}))
+        sg.reconcile()
+        self.assertEqual([r['outcome'] for r in self.rows(1)], ['collected', 'failed'])
+        self.assertEqual(self.rows(1)[1]['outcome_reason'], 'upgrade failed; previous file restored')
+
+    def test_upgrade_restore_ignores_non_upgrade_grab(self):
+        # An upgrade that failed before its grab was recorded must not fail the original grab.
+        self.set_item(1, 'Adding')
+        sg.record_grab({'id': 1}, self.result('A'))
+        sg.mark_current_grab(1, 'failed', 'restored', only_trigger='upgrade')
+        self.assertEqual(self.rows(1)[0]['outcome'], 'pending')
+
     def test_failed_auto_grab_does_not_touch_older_rows(self):
         self.set_item(1, 'Collected')
         sg.record_grab({'id': 1}, self.result('A'))

@@ -155,7 +155,7 @@ def queue_grab_trigger(item: Dict[str, Any]) -> str:
 
 def _latest_row(conn, item_id):
     return conn.execute(
-        "SELECT id, outcome, release_title, info_hash, nzb_guid, grabbed_at "
+        "SELECT id, outcome, release_title, info_hash, nzb_guid, grabbed_at, trigger "
         "FROM scraper_grabs WHERE item_id = ? ORDER BY id DESC LIMIT 1",
         (item_id,),
     ).fetchone()
@@ -208,7 +208,7 @@ def record_grab(
         try:
             prev = _latest_row(conn, item_id)
             if prev is not None:
-                prev_id, prev_outcome, prev_title, prev_hash, prev_guid, _ = prev
+                prev_id, prev_outcome, prev_title, prev_hash, prev_guid, _, _ = prev
                 same_release = (
                     prev_title == release_title
                     and (prev_hash or None) == info_hash
@@ -261,12 +261,13 @@ def record_grab(
         return None
 
 
-def mark_current_grab(item_id, outcome: str, reason: str = '') -> None:
+def mark_current_grab(item_id, outcome: str, reason: str = '', *, only_trigger: Optional[str] = None) -> None:
     """Settle an item's latest grab explicitly. Never raises.
 
     'failed' only applies to a grab still pending. 'repaired' applies to a
     pending or collected grab and also counts it as collected (a repair means
     the file reached the library and turned out to be broken).
+    only_trigger: act only if the latest grab was made with this trigger.
     """
     if item_id is None or outcome not in ('failed', 'repaired'):
         return
@@ -277,13 +278,14 @@ def mark_current_grab(item_id, outcome: str, reason: str = '') -> None:
             row = _latest_row(conn, item_id)
             if row is None:
                 return
-            row_id, current = row[0], row[1]
+            row_id, current, trigger = row[0], row[1], row[6]
+            if only_trigger and trigger != only_trigger:
+                return
             if outcome == 'failed' and current == 'pending':
                 _close_row(conn, row_id, 'failed', (reason or '')[:300], now)
                 # A failed upgrade leaves the old file in place: put back the
                 # grab this one marked as replaced.
-                trig = conn.execute("SELECT trigger FROM scraper_grabs WHERE id = ?", (row_id,)).fetchone()
-                if trig and trig[0] == 'upgrade':
+                if trigger == 'upgrade':
                     conn.execute(
                         "UPDATE scraper_grabs SET outcome = 'collected', outcome_reason = NULL, outcome_at = ? "
                         "WHERE id = (SELECT id FROM scraper_grabs WHERE item_id = ? AND id < ? "

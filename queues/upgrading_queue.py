@@ -226,6 +226,14 @@ class UpgradingQueue:
                      logging.warning(f"Attempted to pop state for item {item_id}, but the list was already empty (concurrent modification?).")
 
             logging.info(f"Successfully restored previous state for item {item_id} from snapshot taken at {last_state_entry.get('timestamp')}")
+            # Scraper stats: the upgrade grab failed and the old file is back.
+            # Every failed-upgrade path (Adding, Checking, Scraping) restores here.
+            try:
+                from database.scraper_grabs import mark_current_grab
+                mark_current_grab(item_id, 'failed', 'upgrade failed; previous file restored',
+                                  only_trigger='upgrade')
+            except Exception:
+                pass  # scraper stats are best-effort
             return True
             
         except Exception as e:
