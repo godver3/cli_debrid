@@ -7,7 +7,9 @@ is simply its latest row. Outcomes:
   pending   - grabbed, not yet seen in the library
   collected - the item reached Collected/Upgrading with this grab
   failed    - never made it (adding/health-check failure, or superseded first)
-  replaced  - was collected, later swapped for another release (upgrade etc.)
+  replaced  - was collected, later swapped for a better release by an upgrade
+  removed   - was collected, later left the library without an upgrade or
+              repair (deleted, or reset to Wanted because the file went missing)
   repaired  - was collected, later found broken and repaired away
 
 Recording is strictly best-effort: every public writer swallows its own errors
@@ -68,6 +70,25 @@ def create_scraper_grabs_table() -> None:
             CREATE INDEX IF NOT EXISTS idx_scraper_grabs_item ON scraper_grabs (item_id);
             CREATE INDEX IF NOT EXISTS idx_scraper_grabs_grabbed ON scraper_grabs (grabbed_at);
             CREATE INDEX IF NOT EXISTS idx_scraper_grabs_instance ON scraper_grabs (scraper_instance);
+        """)
+        # Settle a grab the moment its item enters the library, whichever of the
+        # many code paths (queues, Plex/local scans, raw SQL) sets the state, so
+        # a file deleted before anyone opens the stats page still counts as
+        # collected. Also revives a 'removed' grab whose file was found again.
+        # Removals stay lazy (reconcile): they only depend on current state.
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS trg_scraper_grabs_collected
+            AFTER UPDATE OF state ON media_items
+            WHEN NEW.state IN ('Collected', 'Upgrading') AND OLD.state IS NOT NEW.state
+            BEGIN
+                UPDATE scraper_grabs
+                SET outcome = 'collected',
+                    outcome_reason = NULL,
+                    outcome_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime'),
+                    collected_at = COALESCE(collected_at, strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime'))
+                WHERE id = (SELECT MAX(id) FROM scraper_grabs WHERE item_id = NEW.id)
+                  AND outcome IN ('pending', 'removed');
+            END
         """)
         # Runs at startup: keep the log bounded.
         conn.execute(
@@ -231,11 +252,17 @@ def record_grab(
                         )
                     else:
                         _close_row(conn, prev_id, 'failed', 'superseded before collect', now)
+                if prev_outcome == 'removed' and trigger == 'upgrade':
+                    prev_outcome = 'collected'  # reconcile caught the upgrade mid-flight
                 if prev_outcome == 'collected':
                     if trigger == 'repair':
                         _close_row(conn, prev_id, 'repaired', 'replaced by repair', now)
+                    elif trigger == 'upgrade':
+                        _close_row(conn, prev_id, 'replaced', 'replaced by upgrade', now)
                     else:
-                        _close_row(conn, prev_id, 'replaced', f'replaced by {trigger} grab', now)
+                        # Auto/manual grabs only happen once the item has left
+                        # the library, so the old file was removed, not upgraded.
+                        _close_row(conn, prev_id, 'removed', f'left the library before {trigger} re-grab', now)
 
             cur = conn.execute(
                 """INSERT INTO scraper_grabs (
@@ -339,6 +366,31 @@ def reconcile(conn=None) -> None:
                WHERE outcome = 'pending' AND item_id NOT IN (SELECT id FROM media_items)""",
             (now,),
         )
+        # A collected file whose item has left the library (deleted, or reset
+        # to Wanted etc.) without an upgrade or repair was removed. Repairs mark
+        # their grab 'repaired' before resetting the item; an upgrade in flight
+        # can pass through Scraping, so items carrying the upgrade markers
+        # (same check as queue_grab_trigger) are left alone.
+        conn.execute(
+            f"""UPDATE scraper_grabs
+                SET outcome = 'removed', outcome_at = ?,
+                    outcome_reason = COALESCE('item moved to ' ||
+                        (SELECT m.state FROM media_items m WHERE m.id = scraper_grabs.item_id),
+                        'item deleted')
+                WHERE outcome = 'collected' AND id IN ({latest})
+                  AND (item_id NOT IN (SELECT id FROM media_items)
+                       OR item_id IN (SELECT id FROM media_items WHERE state IN ({ret})
+                                      AND COALESCE(upgrading, 0) = 0 AND upgrading_from IS NULL))""",
+            (now, *_RETURNED_STATES),
+        )
+        # ...and comes back if the item returns to the library with no new grab
+        # (e.g. a library scan finds the same file again).
+        conn.execute(
+            f"""UPDATE scraper_grabs SET outcome = 'collected', outcome_reason = NULL, outcome_at = ?
+                WHERE outcome = 'removed' AND id IN ({latest})
+                  AND item_id IN (SELECT id FROM media_items WHERE state IN ({lib}))""",
+            (now, *_LIBRARY_STATES),
+        )
         conn.commit()
     except Exception as e:
         logger.warning(f"[ScraperStats] reconcile failed: {e}")
@@ -375,8 +427,9 @@ def get_scraper_stats(days: Optional[int] = None, kind: Optional[str] = None) ->
                        SUM(g.outcome = 'pending') AS pending,
                        SUM(g.outcome = 'failed') AS failed,
                        SUM(g.outcome = 'replaced') AS replaced,
+                       SUM(g.outcome = 'removed') AS removed,
                        SUM(g.outcome = 'repaired') AS repaired,
-                       SUM(g.outcome IN ('collected', 'replaced', 'repaired')) AS ever_collected,
+                       SUM(g.outcome IN ('collected', 'replaced', 'repaired', 'removed')) AS ever_collected,
                        SUM(g.outcome = 'collected' AND m.state IN ({lib})) AS in_library,
                        MAX(g.grabbed_at) AS last_grab
                 FROM scraper_grabs g
@@ -389,7 +442,7 @@ def get_scraper_stats(days: Optional[int] = None, kind: Optional[str] = None) ->
     finally:
         conn.close()
 
-    counters = ('grabs', 'pending', 'failed', 'replaced', 'repaired', 'ever_collected', 'in_library')
+    counters = ('grabs', 'pending', 'failed', 'replaced', 'removed', 'repaired', 'ever_collected', 'in_library')
     scrapers: Dict[str, Dict[str, Any]] = {}
     for r in rows:
         row = dict(r)

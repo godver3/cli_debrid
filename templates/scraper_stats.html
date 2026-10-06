@@ -57,6 +57,7 @@
 #sstats .b-failed{background:#ef444422;color:var(--red);}
 #sstats .b-repaired{background:#f59e0b22;color:var(--yellow);}
 #sstats .b-replaced{background:#ffffff14;color:var(--text2);}
+#sstats .b-removed{background:#ffffff0a;color:var(--text3);}
 #sstats .rel{max-width:420px;overflow:hidden;text-overflow:ellipsis;}
 @media (max-width:640px){
   #sstats .hide-sm{display:none;}
@@ -77,7 +78,9 @@
   <p class="intro">
     Which scrapers and indexers supply your library. Every release cli_debrid grabs is
     logged with where it came from and how it ended: collected, failed before it reached
-    the library, repaired after it turned out to be broken, or replaced by an upgrade.
+    the library, repaired after it turned out to be broken, replaced by an upgrade, or
+    removed from the library later (deleted, or reset because the file went missing).
+    Removed files still count as a success for the source that supplied them.
     Grabs are counted per media item, so a season pack counts once for each episode it filled.
   </p>
   <div class="toolbar">
@@ -103,11 +106,12 @@
         <th data-k="success_rate" title="Reached the library ÷ grabs that have finished">Success</th>
         <th data-k="failed">Failed</th>
         <th data-k="repaired" class="hide-sm" title="Reached the library, later found broken and repaired">Repaired</th>
-        <th data-k="replaced" class="hide-sm" title="Reached the library, later replaced (e.g. upgraded)">Replaced</th>
+        <th data-k="replaced" class="hide-sm" title="Reached the library, later replaced by an upgrade">Replaced</th>
+        <th data-k="removed" class="hide-sm" title="Reached the library, later deleted or reset without an upgrade or repair">Removed</th>
         <th data-k="pending" class="hide-sm" title="Still downloading or checking">Pending</th>
         <th data-k="last_grab" class="hide-sm">Last grab</th>
       </tr></thead>
-      <tbody id="ss-body"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
+      <tbody id="ss-body"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
     </table>
   </div>
   <div class="recent" id="ss-recent" hidden>
@@ -152,7 +156,8 @@
   function cells(r) {
     return `<td>${num(r.grabs)}</td><td class="hide-sm">${num(r.in_library)}</td><td>${rate(r.success_rate)}</td>` +
       `<td>${num(r.failed, 'bad')}</td><td class="hide-sm">${num(r.repaired, 'warn')}</td>` +
-      `<td class="hide-sm">${num(r.replaced)}</td><td class="hide-sm">${num(r.pending)}</td>` +
+      `<td class="hide-sm">${num(r.replaced)}</td><td class="hide-sm">${num(r.removed)}</td>` +
+      `<td class="hide-sm">${num(r.pending)}</td>` +
       `<td class="hide-sm">${when(r.last_grab)}</td>`;
   }
 
@@ -184,7 +189,7 @@
       ? `Tracking since ${new Date(String(d.tracking_since).replace(' ', 'T')).toLocaleDateString()}` : '';
     if (!d || !d.scrapers.length) {
       $('ss-tiles').innerHTML = '';
-      $('ss-body').innerHTML = `<tr><td colspan="9" class="empty">${d && d.tracking_since
+      $('ss-body').innerHTML = `<tr><td colspan="10" class="empty">${d && d.tracking_since
         ? 'No grabs in this range.'
         : 'No grabs recorded yet. Stats start with the next release cli_debrid grabs — earlier history isn’t available.'}</td></tr>`;
       return;
@@ -218,7 +223,7 @@
       state.data = j;
     } catch (e) {
       state.data = null;
-      $('ss-body').innerHTML = `<tr><td colspan="9" class="empty">Could not load stats: ${esc(e.message)}</td></tr>`;
+      $('ss-body').innerHTML = `<tr><td colspan="10" class="empty">Could not load stats: ${esc(e.message)}</td></tr>`;
       return;
     }
     render();

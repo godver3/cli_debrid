@@ -20,7 +20,8 @@ class _DbCase(unittest.TestCase):
         self._prev_db = os.environ['USER_DB_CONTENT']
         os.environ['USER_DB_CONTENT'] = tempfile.mkdtemp()
         conn = get_db_connection()
-        conn.execute("CREATE TABLE media_items (id INTEGER PRIMARY KEY, state TEXT, collected_at TIMESTAMP)")
+        conn.execute("CREATE TABLE media_items (id INTEGER PRIMARY KEY, state TEXT, collected_at TIMESTAMP, "
+                     "upgrading BOOLEAN DEFAULT FALSE, upgrading_from TEXT)")
         conn.commit()
         conn.close()
         sg.create_scraper_grabs_table()
@@ -28,9 +29,12 @@ class _DbCase(unittest.TestCase):
     def tearDown(self):
         os.environ['USER_DB_CONTENT'] = self._prev_db
 
-    def set_item(self, item_id, state):
+    def set_item(self, item_id, state, upgrading_from=None):
         conn = get_db_connection()
-        conn.execute("INSERT OR REPLACE INTO media_items (id, state) VALUES (?, ?)", (item_id, state))
+        # An UPDATE (not REPLACE) so the collected trigger fires as it does in the app.
+        conn.execute("INSERT INTO media_items (id, state, upgrading_from) VALUES (?, ?, ?) "
+                     "ON CONFLICT(id) DO UPDATE SET state = excluded.state, upgrading_from = excluded.upgrading_from",
+                     (item_id, state, upgrading_from))
         conn.commit()
         conn.close()
 
@@ -144,7 +148,64 @@ class TestRecordAndOutcomes(_DbCase):
         sg.record_grab({'id': 1}, self.result('A'))
         sg.record_grab({'id': 1}, self.result('B'))
         sg.mark_current_grab(1, 'failed', 'broken')
-        self.assertEqual([r['outcome'] for r in self.rows(1)], ['replaced', 'failed'])
+        self.assertEqual([r['outcome'] for r in self.rows(1)], ['removed', 'failed'])
+
+    def test_regrab_after_file_left_library_is_removed_not_replaced(self):
+        self.set_item(1, 'Collected')
+        sg.record_grab({'id': 1}, self.result('A'))
+        sg.record_grab({'id': 1}, self.result('B'), trigger='manual')
+        self.assertEqual(self.rows(1)[0]['outcome'], 'removed')
+        self.assertEqual(self.rows(1)[0]['outcome_reason'], 'left the library before manual re-grab')
+
+    def test_collected_is_recorded_when_the_item_enters_the_library(self):
+        # No reconcile: the media_items trigger settles it immediately.
+        self.set_item(1, 'Checking')
+        sg.record_grab({'id': 1}, self.result('A'))
+        self.set_item(1, 'Collected')
+        row = self.rows(1)[0]
+        self.assertEqual(row['outcome'], 'collected')
+        self.assertIsNotNone(row['collected_at'])
+
+    def test_reconcile_marks_deleted_or_reset_files_removed(self):
+        for item_id in (1, 2, 3):
+            self.set_item(item_id, 'Collected')
+            sg.record_grab({'id': item_id}, self.result(f'R{item_id}'))
+        sg.reconcile()
+        self.set_item(1, 'Wanted')       # file went missing, reset for re-scrape
+        self.delete_item(2)              # item deleted
+        sg.reconcile()
+        self.assertEqual((self.rows(1)[0]['outcome'], self.rows(1)[0]['outcome_reason']),
+                         ('removed', 'item moved to Wanted'))
+        self.assertEqual((self.rows(2)[0]['outcome'], self.rows(2)[0]['outcome_reason']),
+                         ('removed', 'item deleted'))
+        self.assertEqual(self.rows(3)[0]['outcome'], 'collected')
+
+    def test_removed_file_found_again_is_collected(self):
+        self.set_item(1, 'Checking')
+        sg.record_grab({'id': 1}, self.result('A'))
+        self.set_item(1, 'Collected')
+        self.set_item(1, 'Wanted')
+        sg.reconcile()
+        self.set_item(1, 'Collected')    # library scan found the same file, no new grab
+        sg.reconcile()
+        self.assertEqual(self.rows(1)[0]['outcome'], 'collected')
+
+    def test_upgrade_in_flight_through_scraping_is_not_removed(self):
+        self.set_item(1, 'Collected')
+        sg.record_grab({'id': 1}, self.result('A'))
+        sg.reconcile()
+        self.set_item(1, 'Scraping', upgrading_from='A.mkv')
+        sg.reconcile()
+        self.assertEqual(self.rows(1)[0]['outcome'], 'collected')
+
+    def test_upgrade_grab_corrects_a_removed_previous_grab(self):
+        self.set_item(1, 'Checking')
+        sg.record_grab({'id': 1}, self.result('A'))
+        self.set_item(1, 'Collected')
+        self.set_item(1, 'Scraping')     # no upgrade markers yet when reconcile ran
+        sg.reconcile()
+        sg.record_grab({'id': 1}, self.result('B'), trigger='upgrade')
+        self.assertEqual(self.rows(1)[0]['outcome'], 'replaced')
 
     def test_mark_failed_ignores_collected_grab(self):
         self.set_item(1, 'Adding')
@@ -210,11 +271,21 @@ class TestAggregation(_DbCase):
         idx = {i['indexer']: i for i in t['indexers']}
         self.assertEqual((idx['ThePirateBay']['grabs'], idx['ThePirateBay']['success_rate']), (2, 50.0))
         self.assertEqual(idx['1337x']['repaired'], 1)
+        self.assertEqual(t['removed'], 0)
         a = by['altHUB']
         self.assertEqual((a['grabs'], a['pending'], a['success_rate'], a['indexers']), (1, 1, None, []))
         self.assertIsNotNone(stats['tracking_since'])
 
         self.assertEqual([s['instance'] for s in sg.get_scraper_stats(kind='nzb')['scrapers']], ['altHUB'])
+
+    def test_removed_counts_toward_success(self):
+        # Collected, then deleted before anyone opened the stats page.
+        self.set_item(1, 'Checking')
+        sg.record_grab({'id': 1}, self.result('A'))
+        self.set_item(1, 'Collected')
+        self.delete_item(1)
+        t = sg.get_scraper_stats()['scrapers'][0]
+        self.assertEqual((t['removed'], t['in_library'], t['success_rate']), (1, 0, 100.0))
 
     def test_recent_grabs_filter(self):
         self.set_item(1, 'Adding')
