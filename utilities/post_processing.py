@@ -6,6 +6,63 @@ import subprocess
 from utilities.settings import get_setting
 
 
+def _is_recollection(item, min_gap_seconds=60):
+    """True when the row was collected before (repair, upgrade): original_collected_at is
+    preserved across re-collections while collected_at is reset."""
+    def _ts(value):
+        if isinstance(value, datetime):
+            return value
+        try:
+            return datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return None
+    first, latest = _ts(item.get('original_collected_at')), _ts(item.get('collected_at'))
+    return bool(first and latest) and (latest - first).total_seconds() > min_gap_seconds
+
+
+def _recently_repaired(item_id, days=7):
+    """True if a repair replaced this item recently (NZB, playback or debrid repair)."""
+    conn = None
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        row = conn.execute(
+            "SELECT 1 FROM nzb_repair_activity WHERE item_id = ? AND outcome = 'replaced' "
+            "AND created_at >= datetime('now', ?) LIMIT 1",
+            (item_id, f'-{int(days)} days'),
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+
+def _has_dangling_symlink_sibling(path):
+    folder = os.path.dirname(path or '')
+    try:
+        return any(
+            entry.is_symlink() and not os.path.exists(entry.path)
+            for entry in os.scandir(folder)
+        ) if folder else False
+    except OSError:
+        return False
+
+
+def _may_have_dead_plex_versions(item):
+    """Cheap checks (no Plex calls) for whether a re-collected item may have left a dead
+    version behind. Debrid repair's reset clears original_collected_at, so the repair
+    activity log covers that path."""
+    return (_is_recollection(item)
+            or _recently_repaired(item.get('id'))
+            or _has_dangling_symlink_sibling(item.get('location_on_disk')))
+
+
+def _same_path(a, b):
+    return bool(a and b) and os.path.normpath(str(a)) == os.path.normpath(str(b))
+
+
 def replace_cleanup_after_collect(item_dict):
     """
     Called after a new item is promoted to Collected state.
@@ -50,14 +107,14 @@ def replace_cleanup_after_collect(item_dict):
             if season_number is None or episode_number is None:
                 return
             old_rows = cur.execute(
-                '''SELECT id FROM media_items
+                '''SELECT id, title, episode_title, location_on_disk, original_path_for_symlink FROM media_items
                    WHERE imdb_id = ? AND season_number = ? AND episode_number = ?
                    AND type = 'episode' AND manual_replace = 1 AND id != ?
                    AND REPLACE(COALESCE(version,''),'*','') = ?''',
                 (imdb_id, season_number, episode_number, item_id, item_version)
             ).fetchall()
             stale_rows = cur.execute(
-                '''SELECT id FROM media_items m
+                '''SELECT m.id, m.title, m.episode_title, m.location_on_disk, m.original_path_for_symlink FROM media_items m
                    WHERE m.imdb_id = ? AND m.season_number = ? AND m.type = 'episode'
                    AND m.manual_replace = 1 AND m.id != ?
                    AND REPLACE(COALESCE(m.version,''),'*','') = ?
@@ -74,13 +131,13 @@ def replace_cleanup_after_collect(item_dict):
             entry_label = 'episode'
         else:  # movie
             old_rows = cur.execute(
-                '''SELECT id FROM media_items
+                '''SELECT id, title, episode_title, location_on_disk, original_path_for_symlink FROM media_items
                    WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?
                    AND REPLACE(COALESCE(version,''),'*','') = ?''',
                 (imdb_id, item_id, item_version)
             ).fetchall()
             stale_rows = cur.execute(
-                '''SELECT id FROM media_items m
+                '''SELECT m.id, m.title, m.episode_title, m.location_on_disk, m.original_path_for_symlink FROM media_items m
                    WHERE m.imdb_id = ? AND m.type = 'movie'
                    AND m.manual_replace = 1 AND m.id != ?
                    AND REPLACE(COALESCE(m.version,''),'*','') = ?
@@ -96,11 +153,24 @@ def replace_cleanup_after_collect(item_dict):
             entry_label = 'movie'
 
         # Merge, deduplicating by id
-        ids_to_delete = {row['id'] for row in list(old_rows) + list(stale_rows)}
+        rows_to_delete = {row['id']: dict(row) for row in list(old_rows) + list(stale_rows)}
         conn.close()
         conn = None
-        if not ids_to_delete:
+        if not rows_to_delete:
             return  # Nothing to clean up
+
+        # Symlinked/Local + Plex: the old version is removed from Plex only after Plex has
+        # scanned in the replacement (see remove_replaced_plex_media_after_scan). Deleting
+        # it straight away removed the whole Plex item, so the replacement came back as a
+        # brand-new "recently added" entry. Jellyfin/Emby keep the immediate removal.
+        new_path = item_dict.get('location_on_disk')
+        defer_plex = (
+            bool(new_path)
+            and get_setting('File Management', 'file_collection_management') == 'Symlinked/Local'
+            and not (get_setting('Debug', 'emby_jellyfin_url', default='') or '').strip()
+        )
+        new_original = item_dict.get('original_path_for_symlink')
+        deferred_plex_paths = []
 
         from debrid import get_debrid_provider
         from utilities.deletion_manager import DeletionManager
@@ -111,24 +181,44 @@ def replace_cleanup_after_collect(item_dict):
             debrid_provider = None
         deletion_manager = DeletionManager(debrid_provider=debrid_provider)
 
-        for old_id in ids_to_delete:
+        for old_id, old_row in rows_to_delete.items():
+            old_path = old_row.get('location_on_disk')
+            # Templates without {original_filename} put the replacement at the old symlink path,
+            # and re-grabbing the same release reuses the old mount file: deleting those would
+            # delete the replacement itself.
+            same_symlink = _same_path(old_path, new_path)
+            same_original = _same_path(old_row.get('original_path_for_symlink'), new_original)
             try:
                 result = deletion_manager.delete_single_item(
                     old_id,
-                    delete_from_debrid=True,
-                    delete_from_media_server=True,
-                    delete_files=True,
-                    delete_symlinks=True,
+                    delete_from_debrid=not same_original,
+                    delete_from_media_server=not defer_plex and not same_symlink,
+                    delete_files=not same_original,
+                    delete_symlinks=not same_symlink,
                     clear_cache=False,
                     remove_from_content_source=False,
                     skip_database=False,
                 )
+                if defer_plex and old_path and not same_symlink:
+                    deferred_plex_paths.append(old_path)
                 if result.get('success'):
                     logging.info(f"[{log_tag}] Cleaned up replaced {entry_label} entry {old_id}: {result}")
                 else:
                     logging.warning(f"[{log_tag}] Cleanup for replaced {entry_label} entry {old_id} reported errors: {result.get('errors')}")
             except Exception as del_err:
                 logging.error(f"[{log_tag}] Failed to clean up replaced {entry_label} entry {old_id}: {del_err}", exc_info=True)
+
+        if deferred_plex_paths:
+            import threading
+            from utilities.plex_functions import remove_replaced_plex_media_after_scan
+            # Runs off the queue thread: it waits for the Checking queue's scan to land.
+            threading.Thread(
+                target=remove_replaced_plex_media_after_scan,
+                args=(item_dict.get('title'), new_path, deferred_plex_paths, item_dict.get('episode_title')),
+                name=f"replace-plex-{item_id}",
+                daemon=True,
+            ).start()
+            logging.info(f"[{log_tag}] Deferred Plex removal of {len(deferred_plex_paths)} replaced version(s) until the replacement is scanned in")
 
     except Exception as err:
         logging.error(f"[REPLACE] Error in replace cleanup after collect: {err}", exc_info=True)
@@ -406,6 +496,16 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                     replace_cleanup_after_collect(dict(fresh_item))
                 except Exception as e:
                     logging.error(f"Failed to run replace cleanup after collect: {str(e)}")
+
+                # Repairs/upgrades re-collect the same row under a new file name, leaving the
+                # old version behind in Plex as a dead second version. Only items that look
+                # repaired/re-collected are checked, so a normal collection never polls Plex.
+                if _may_have_dead_plex_versions(fresh_item):
+                    try:
+                        from utilities.plex_functions import start_dead_plex_version_cleanup
+                        start_dead_plex_version_cleanup(dict(fresh_item))
+                    except Exception as e:
+                        logging.error(f"Failed to start dead Plex version cleanup: {str(e)}")
 
             # Remove from Plex Watchlist if the setting is enabled and the item
             # came from a My Plex Watchlist or Other Plex Watchlist source.

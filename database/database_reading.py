@@ -206,10 +206,17 @@ def get_media_item_by_id(item_id):
     finally:
         conn.close()
 
+# Runtimes below this are TVDB/TMDB placeholders (typically 1) stored when an
+# unreleased show was added; they are never refreshed and inflate bitrate ~40x.
+MIN_PLAUSIBLE_RUNTIME_MINUTES = 5
+
 def get_movie_runtime(tmdb_id):
     conn = get_db_connection()
     try:
-        cursor = conn.execute('SELECT runtime FROM media_items WHERE tmdb_id = ? AND type = "movie"', (tmdb_id,))
+        cursor = conn.execute(
+            'SELECT runtime FROM media_items WHERE tmdb_id = ? AND type = "movie" AND runtime >= ?',
+            (tmdb_id, MIN_PLAUSIBLE_RUNTIME_MINUTES),
+        )
         result = cursor.fetchone()
         return result['runtime'] if result else None
     except Exception as e:
@@ -222,12 +229,14 @@ def get_episode_runtime(tmdb_id):
     conn = get_db_connection()
     query_start_time = None # Initialize
     try:
+        # Season 0 specials/extras are legitimately short clips and would skew the average.
         query = '''
-            SELECT AVG(runtime) as runtime FROM media_items 
+            SELECT AVG(runtime) as runtime FROM media_items
             WHERE tmdb_id = ? AND type = "episode"
+              AND runtime >= ? AND COALESCE(season_number, 1) != 0
         '''
         query_start_time = time.time()
-        cursor = conn.execute(query, (tmdb_id,))
+        cursor = conn.execute(query, (tmdb_id, MIN_PLAUSIBLE_RUNTIME_MINUTES))
         result = cursor.fetchone()
         query_duration = time.time() - query_start_time
         #logging.debug(f"get_episode_runtime query for TMDB ID {tmdb_id} took {query_duration:.4f}s")

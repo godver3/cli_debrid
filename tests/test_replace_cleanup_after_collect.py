@@ -63,7 +63,9 @@ class TestReplaceCleanupAfterCollect(unittest.TestCase):
                 id INTEGER PRIMARY KEY,
                 imdb_id TEXT, type TEXT, state TEXT, version TEXT,
                 season_number INTEGER, episode_number INTEGER,
-                manual_replace INTEGER DEFAULT 0
+                manual_replace INTEGER DEFAULT 0,
+                title TEXT, episode_title TEXT,
+                location_on_disk TEXT, original_path_for_symlink TEXT
             )
         ''')
 
@@ -89,9 +91,16 @@ class TestReplaceCleanupAfterCollect(unittest.TestCase):
         fake_dm_module.DeletionManager = _FakeDeletionManager
         sys.modules['utilities.deletion_manager'] = fake_dm_module
 
+        self.deferred_calls = []
+        fake_plex_module = types.ModuleType('utilities.plex_functions')
+        fake_plex_module.remove_replaced_plex_media_after_scan = lambda *a: self.deferred_calls.append(a)
+        sys.modules['utilities.plex_functions'] = fake_plex_module
+        self._orig_get_setting = pp.get_setting
+
     def tearDown(self):
         self.conn.close()
-        for name in ('database', 'debrid', 'utilities.deletion_manager'):
+        pp.get_setting = self._orig_get_setting
+        for name in ('database', 'debrid', 'utilities.deletion_manager', 'utilities.plex_functions'):
             sys.modules.pop(name, None)
 
     def test_stale_movie_replaced_deleted_via_deletion_manager_not_plex_only(self):
@@ -158,6 +167,74 @@ class TestReplaceCleanupAfterCollect(unittest.TestCase):
 
         self.assertEqual(len(self.delete_calls), 1)
         self.assertEqual(self.delete_calls[0][0], 10)
+
+
+    # --- Symlinked/Local: old Plex version removed only after the replacement is scanned in ---
+    # Reported: Spider-Man: Brand New Day replaced from the library showed up as the newest
+    # "recently added" movie, because the old (only) Plex version was deleted before Plex had
+    # scanned in the replacement, which deleted the whole Plex item.
+
+    OLD = '/sym/Movies/Spider-Man (2026)/Spider-Man (2026) - tt1 - 1080p - (TURG).mkv'
+    NEW = '/sym/Movies/Spider-Man (2026)/Spider-Man (2026) - tt1 - 1080p - (GL0P).mkv'
+
+    def _settings(self, mode='Symlinked/Local', jellyfin=''):
+        values = {('File Management', 'file_collection_management'): mode,
+                  ('Debug', 'emby_jellyfin_url'): jellyfin}
+        pp.get_setting = lambda section, key, default=None: values.get((section, key), default)
+
+    def _replace_movie(self, old_path, new_path, old_orig='/mnt/TURG/a.mkv', new_orig='/mnt/GL0P/b.mkv'):
+        self.conn.execute(
+            "INSERT INTO media_items (id, imdb_id, type, state, version, manual_replace, title, "
+            "location_on_disk, original_path_for_symlink) VALUES "
+            "(1, 'tt1', 'movie', 'Collected', '1080p', 1, 'Spider-Man', ?, ?)", (old_path, old_orig))
+        self.conn.commit()
+        pp.replace_cleanup_after_collect({
+            'id': 2, 'imdb_id': 'tt1', 'type': 'movie', 'version': '1080p', 'title': 'Spider-Man',
+            'location_on_disk': new_path, 'original_path_for_symlink': new_orig,
+        })
+        import threading
+        for t in threading.enumerate():
+            if t.name.startswith('replace-plex-'):
+                t.join(timeout=5)
+
+    def test_symlink_mode_defers_plex_removal_until_replacement_scanned(self):
+        self._settings()
+        self._replace_movie(self.OLD, self.NEW)
+        _, kwargs = self.delete_calls[0]
+        self.assertFalse(kwargs['delete_from_media_server'])
+        self.assertTrue(kwargs['delete_symlinks'])
+        self.assertTrue(kwargs['delete_files'])
+        self.assertEqual(self.deferred_calls, [('Spider-Man', self.NEW, [self.OLD], None)])
+
+    def test_same_symlink_path_never_deletes_the_replacement(self):
+        # Template without {original_filename}: the replacement sits at the old path.
+        self._settings()
+        self._replace_movie(self.NEW, self.NEW)
+        _, kwargs = self.delete_calls[0]
+        self.assertFalse(kwargs['delete_symlinks'])
+        self.assertFalse(kwargs['delete_from_media_server'])
+        self.assertEqual(self.deferred_calls, [])
+
+    def test_same_original_file_never_deleted(self):
+        self._settings()
+        self._replace_movie(self.OLD, self.NEW, old_orig='/mnt/X/a.mkv', new_orig='/mnt/X/a.mkv')
+        _, kwargs = self.delete_calls[0]
+        self.assertFalse(kwargs['delete_files'])
+        self.assertFalse(kwargs['delete_from_debrid'])
+
+    def test_jellyfin_keeps_immediate_removal(self):
+        self._settings(jellyfin='http://jellyfin:8096')
+        self._replace_movie(self.OLD, self.NEW)
+        _, kwargs = self.delete_calls[0]
+        self.assertTrue(kwargs['delete_from_media_server'])
+        self.assertEqual(self.deferred_calls, [])
+
+    def test_plex_mode_keeps_immediate_removal(self):
+        self._settings(mode='Plex')
+        self._replace_movie(self.OLD, self.NEW)
+        _, kwargs = self.delete_calls[0]
+        self.assertTrue(kwargs['delete_from_media_server'])
+        self.assertEqual(self.deferred_calls, [])
 
 
 if __name__ == '__main__':

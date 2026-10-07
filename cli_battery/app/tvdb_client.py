@@ -974,7 +974,9 @@ def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
         'year': year,
         'ids': ids,
         'overview': overview,
-        'runtime': raw.get('averageRuntime') or raw.get('defaultSeasonType'),
+        # averageRuntime is null until episodes air; never fall back to
+        # defaultSeasonType (season-order id, 1 = Aired Order), which stored runtime=1.
+        'runtime': raw.get('averageRuntime') or None,
         'status': _map_status(raw.get('status', {}).get('name') if isinstance(raw.get('status'), dict) else raw.get('status')),
         'network': raw.get('originalNetwork', {}).get('name', '') if isinstance(raw.get('originalNetwork'), dict) else '',
         'genres': [g.get('name', '') for g in (raw.get('genres') or []) if isinstance(g, dict)],

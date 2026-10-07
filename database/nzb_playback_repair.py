@@ -1024,8 +1024,22 @@ def process_pending_playback_repairs():
                                   'location_on_disk': os.path.dirname(item.get('location_on_disk') or '')})
             except Exception as exc:
                 log.warning('[NZBPlayback] Post-cleanup Plex refresh failed: %s', exc)
+            _start_dead_version_cleanup(item['id'])
     finally:
         _worker_lock.release()
+
+
+def _start_dead_version_cleanup(item_id):
+    """The old file is gone from the mount now, but its symlink and Plex version are not:
+    the replacement has a different file name, so Plex keeps the old one as an unavailable
+    second version (Symlinked/Local). Hand off to the background dead-version sweep."""
+    try:
+        item = _media_item(item_id) if item_id else None
+        if item:
+            from utilities.plex_functions import start_dead_plex_version_cleanup
+            start_dead_plex_version_cleanup(dict(item))
+    except Exception as exc:
+        log.warning('[NZBPlayback] Dead Plex version cleanup failed to start for item %s: %s', item_id, exc)
 
 
 def retry_deferred_playback_cleanups():
@@ -1099,6 +1113,7 @@ def retry_deferred_playback_cleanups():
         try:
             if not still_pending:
                 log.info('[NZBPlayback] Background cleanup completed repair=%s after handoff', repair['id'])
+                _start_dead_version_cleanup(repair.get('cli_debrid_id'))
                 conn.execute(
                     "UPDATE nzb_playback_repairs SET cleanup_targets_json=?,cleanup_status='complete',"
                     "next_attempt_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",

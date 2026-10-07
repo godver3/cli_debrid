@@ -193,6 +193,27 @@ class TestReplaceEntryKeepsSharedTorrent(unittest.TestCase):
         self.assertTrue(result['torrent_deleted'])
         self.assertEqual(len(self.deleted), 1)
 
+    def _replace_single(self, mode):
+        plex_deleted, unlinked = [], []
+        eng._delete_from_plex = lambda item: plex_deleted.append(item['id']) or True
+        eng._unlink_item_symlink = lambda item: unlinked.append(item['id'])
+        self._patch('utilities.settings', 'get_setting',
+                    lambda section, key, default=None: mode if key == 'file_collection_management' else default)
+        self.rows = [_ep(9, 1, 1)]
+        eng.replace_entry('Movie.mkv', HASH, broken_files=[{'file_name': 'Movie.mkv', 'cli_debrid_id': 9}])
+        return plex_deleted, unlinked
+
+    def test_symlink_mode_keeps_the_plex_item_and_unlinks_the_symlink(self):
+        # Deleting the Plex item before the replacement exists made it come back as
+        # "recently added"; the dead version is cleaned up after re-collection instead.
+        plex_deleted, unlinked = self._replace_single('Symlinked/Local')
+        self.assertEqual(plex_deleted, [])
+        self.assertEqual(unlinked, [9])
+
+    def test_plex_mode_still_deletes_from_plex(self):
+        plex_deleted, unlinked = self._replace_single('Plex')
+        self.assertEqual(plex_deleted, [9])
+
     def test_unidentified_pack_is_not_deleted_or_reset(self):
         self.rows = [_ep(1, 1, 1), _ep(2, 1, 2)]
         self.siblings = 0

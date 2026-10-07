@@ -2255,15 +2255,16 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             # Step 7: Delete broken from provider (once per entry)
             # Step 8: Update DB to Adding with new torrent_id
             #
-            # Symlinked/Local mode: get_symlink_path is deterministic
-            # (title/season/episode/version, not the specific release), so a
-            # replacement always lands at the exact same symlink path as the
-            # broken original — the rescan the Checking queue already
-            # triggers once the new symlink exists updates the existing Plex
-            # item in place (keeping addedAt/watch history) instead of it
-            # reappearing as a fresh "recently added" entry. Deleting first
-            # only orphans that match. Same reasoning already applied to
-            # retry_exhausted_item's manual-retry path.
+            # Symlinked/Local mode: the replacement lands in the same folder
+            # (with the default template, under a new file name that includes
+            # the release), and the rescan the Checking queue triggers once the
+            # new symlink exists attaches it to the existing Plex item as a
+            # second version, keeping addedAt/watch history. Deleting the Plex
+            # item first made it come back as a fresh "recently added" entry.
+            # The old version, now dead, is removed after the replacement is
+            # collected (post_processing -> start_dead_plex_version_cleanup).
+            # Same reasoning already applied to retry_exhausted_item's
+            # manual-retry path.
             #
             # Plex mode is NOT the same: per _symlink_matches (database/
             # nzb_playback_repair.py), location_on_disk there is the real

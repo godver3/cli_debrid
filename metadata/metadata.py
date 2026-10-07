@@ -1336,6 +1336,32 @@ def get_imdb_id_if_missing(item: Dict[str, Any]) -> Optional[str]:
     imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type=api_media_type)
     return imdb_id
 
+def _refreshed_episode_runtime(metadata, season_number, episode_number) -> Optional[int]:
+    """Episode runtime (falling back to the show's) from fresh metadata, or None if
+    missing or a placeholder. media_items.runtime is otherwise only set at insert,
+    so episodes added before premiere would keep a missing/placeholder value forever."""
+    from database.database_reading import MIN_PLAUSIBLE_RUNTIME_MINUTES
+    if not isinstance(metadata, dict):
+        return None
+    candidates = []
+    seasons = metadata.get('seasons')
+    if isinstance(seasons, dict):
+        season_data = seasons.get(str(season_number)) or seasons.get(season_number) or {}
+        episodes = season_data.get('episodes') if isinstance(season_data, dict) else None
+        if isinstance(episodes, dict):
+            episode_data = episodes.get(episode_number) or episodes.get(str(episode_number))
+            if isinstance(episode_data, dict):
+                candidates.append(episode_data.get('runtime'))
+    candidates.append(metadata.get('runtime'))
+    for value in candidates:
+        try:
+            minutes = int(float(str(value).strip()))
+        except (TypeError, ValueError):
+            continue
+        if minutes >= MIN_PLAUSIBLE_RUNTIME_MINUTES:
+            return minutes
+    return None
+
 def refresh_release_dates(force_bypass_cache: bool = False):
     """Recheck release dates for all in-flight movies/episodes.
 
@@ -1411,6 +1437,7 @@ def refresh_release_dates(force_bypass_cache: bool = False):
             new_physical_release_date = None
             new_theatrical_release_date = None
             new_airtime = None
+            new_runtime = None
 
             if media_type == 'movie':
                 metadata, source = DirectAPI.get_movie_metadata(imdb_id)
@@ -1621,6 +1648,7 @@ def refresh_release_dates(force_bypass_cache: bool = False):
 
                 new_airtime = get_episode_airtime(imdb_id, season_number, episode_number)
                 # logging.info(f"New airtime from metadata: {new_airtime}")
+                new_runtime = _refreshed_episode_runtime(metadata, season_number, episode_number)
 
                 def _keep_existing_or_unknown(reason):
                     if is_valid_date_str(existing_release_date):
@@ -1699,6 +1727,7 @@ def refresh_release_dates(force_bypass_cache: bool = False):
             if (new_state != item_dict['state'] or
                 new_release_date != item_dict.get('release_date') or
                 (media_type == 'episode' and new_airtime != item_dict.get('airtime')) or
+                (new_runtime is not None and new_runtime != item_dict.get('runtime')) or
                 item_dict.get('early_release', False) != item_dict.get('early_release_original', False) or
                 item_dict.get('no_early_release', False) != item_dict.get('no_early_release_original', False) or
                 (media_type == 'movie' and new_physical_release_date != item_dict.get('physical_release_date_original')) or
@@ -1711,7 +1740,8 @@ def refresh_release_dates(force_bypass_cache: bool = False):
                     early_release=item_dict.get('early_release', False),
                     physical_release_date=new_physical_release_date if media_type == 'movie' else None,
                     theatrical_release_date=new_theatrical_release_date if media_type == 'movie' else None,
-                    no_early_release=item_dict.get('no_early_release', False)
+                    no_early_release=item_dict.get('no_early_release', False),
+                    runtime=new_runtime
                 )
                 log_msg = f"Updated DB for ID {db_item_id}: State={new_state}, ReleaseDate={new_release_date}"
                 if media_type == 'movie': 

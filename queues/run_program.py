@@ -80,6 +80,7 @@ from content_checkers.content_cache_management import (
     load_live_content_source_config, normalize_enabled_versions
 )
 from content_checkers.source_run_report import SourceRunReport
+from content_checkers.blocked_items import drop_blocked_items
 from collections import deque # Import deque for efficient queue operations
 from database.symlink_verification import (
     create_overlay_removal_queue_table,
@@ -2151,6 +2152,7 @@ class ProgramRunner:
                             logging.info(f"Applied list length limit to {source}: limited to {list_length_limit} items from {original_length}")
                 
                 report.fetched(wanted_content)
+                wanted_content = drop_blocked_items(wanted_content, source, source_type, unblacklist_on_source_run, granular_versions, report)
                 if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
                     # Handle list of tuples
                     for items, item_versions_from_source_tuple in wanted_content:

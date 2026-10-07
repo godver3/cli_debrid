@@ -1913,6 +1913,218 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
         return False
 
 
+def _find_plex_owner_of_file(plex, item_title, item_path, episode_title=None):
+    """(movie/episode, media) in Plex whose media part has item_path's file name, or (None, None)."""
+    target = os.path.basename(item_path)
+    for section in plex.library.sections():
+        if section.type == 'movie':
+            owners = section.search(title=item_title)
+        elif section.type == 'show':
+            owners = []
+            for show in section.search(title=item_title):
+                try:
+                    episodes = show.episodes(title=episode_title) if episode_title else []
+                    owners.extend(episodes or show.episodes())
+                except Exception:
+                    owners.extend(show.episodes())
+        else:
+            continue
+        for owner in owners:
+            for media in getattr(owner, 'media', []) or []:
+                if any(os.path.basename(part.file) == target for part in media.parts):
+                    return owner, media
+    return None, None
+
+
+def _plex_has_file(plex, item_title, item_path, episode_title=None) -> bool:
+    """True if Plex already has a media part with item_path's file name under item_title."""
+    return _find_plex_owner_of_file(plex, item_title, item_path, episode_title)[0] is not None
+
+
+def _file_management_plex():
+    """PlexServer for the configured file-management mode, or None if not configured."""
+    if get_setting('File Management', 'file_collection_management') == 'Plex':
+        plex_url = (get_setting('Plex', 'url') or '').rstrip('/')
+        plex_token = get_setting('Plex', 'token')
+    else:
+        plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
+        plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
+    if not plex_url or not plex_token:
+        return None
+    return plexapi.server.PlexServer(plex_url, plex_token, timeout=30)
+
+
+def _wait_for_plex_file(plex, item_title, item_path, episode_title, timeout, interval):
+    """Poll until Plex has item_path under item_title; returns (owner, media) or (None, None)."""
+    deadline = time.time() + timeout
+    while True:
+        try:
+            owner, media = _find_plex_owner_of_file(plex, item_title, item_path, episode_title)
+            if owner is not None:
+                return owner, media
+        except Exception as e:
+            logger.debug(f"[REPLACE_PLEX] Plex lookup for {item_title} failed, retrying: {e}")
+        if time.time() >= deadline:
+            return None, None
+        time.sleep(interval)
+
+
+def remove_replaced_plex_media_after_scan(item_title, new_path, old_paths, episode_title=None,
+                                          timeout=300, interval=10):
+    """Symlinked/Local Replace: drop the old version from Plex only after the new file is in.
+
+    The replacement is a different file in the same folder, so Plex's scan attaches it to the
+    existing movie/episode as a second version. Deleting the old (only) version before that
+    deletes the whole item, and the replacement then comes back as a brand-new "recently added"
+    item with a fresh addedAt. Waiting first means only the old version is removed and the item
+    keeps its addedAt and watch state. Removing it explicitly also matters when Plex's
+    "empty trash automatically" is off, which would otherwise leave it as an unavailable version.
+
+    On timeout the old versions are removed anyway (the previous behaviour), so a stalled scan
+    can't leave dead versions behind.
+    """
+    try:
+        plex = _file_management_plex()
+        if plex is None:
+            logger.warning(f"[REPLACE_PLEX] No Plex URL/token configured; cannot remove replaced version of {item_title}")
+            return False
+
+        owner, _ = _wait_for_plex_file(plex, item_title, new_path, episode_title, timeout, interval)
+        if owner is not None:
+            logger.info(f"[REPLACE_PLEX] Plex picked up {os.path.basename(new_path)}; removing replaced version(s) of {item_title}")
+        else:
+            logger.warning(f"[REPLACE_PLEX] Plex hadn't picked up {os.path.basename(new_path)} after {timeout}s; "
+                           f"removing replaced version(s) of {item_title} anyway")
+
+        removed = True
+        for old_path in old_paths:
+            if not remove_file_from_plex(item_title, old_path, episode_title):
+                removed = False
+                logger.warning(f"[REPLACE_PLEX] Could not remove replaced version {os.path.basename(old_path)} of {item_title} from Plex")
+        return removed
+    except Exception as e:
+        logger.error(f"[REPLACE_PLEX] Error removing replaced version of {item_title}: {e}", exc_info=True)
+        return False
+
+
+def _paths_tracked_in_db(paths):
+    """The subset of paths (normalized) that a media item still has as its location_on_disk.
+
+    Raises on a DB error so the caller can skip rather than guess."""
+    from database import get_db_connection
+    wanted = {os.path.normpath(p) for p in paths}
+    if not wanted:
+        return set()
+    conn = get_db_connection()
+    try:
+        placeholders = ','.join('?' * len(wanted))
+        rows = conn.execute(
+            f"SELECT location_on_disk FROM media_items WHERE location_on_disk IN ({placeholders})",
+            list(wanted),
+        ).fetchall()
+        return {os.path.normpath(row[0]) for row in rows if row[0]}
+    finally:
+        conn.close()
+
+
+def remove_dead_plex_versions_after_scan(item_title, new_path, episode_title=None, timeout=300, interval=10):
+    """After a repaired/replaced item is re-collected, drop the versions it left behind.
+
+    Repairs replace the file under a new name in the same folder (the default symlink
+    template includes {original_filename}), so Plex shows the replacement as a second
+    version of the same item. The old version's symlink is left dangling (or already
+    unlinked) and, with Plex's "empty trash automatically" off, stays as an unavailable
+    version forever.
+
+    Once Plex has new_path, every OTHER version of that same Plex item that lives in the
+    same folder and whose file no longer exists on disk is removed, along with its dangling
+    symlink. A version whose file still exists is never touched (real duplicates, or an old
+    file a repair hasn't cleaned up yet), and new_path resolving proves the mount is up, so
+    an outage can't make live files look dead. new_path only proves its own mount is up, so a
+    version that a media item still has as its location_on_disk (e.g. a symlink into another
+    mount that is down right now) is also left alone. Returns the number of versions removed.
+    """
+    try:
+        local_dir = os.path.dirname(new_path)
+        if not os.path.exists(new_path):
+            logger.info(f"[PLEX_DEAD_VERSIONS] {new_path} doesn't resolve; skipping dead-version cleanup for {item_title}")
+            return 0
+        plex = _file_management_plex()
+        if plex is None:
+            return 0
+        owner, new_media = _wait_for_plex_file(plex, item_title, new_path, episode_title, timeout, interval)
+        if owner is None:
+            logger.info(f"[PLEX_DEAD_VERSIONS] Plex hasn't picked up {os.path.basename(new_path)} after {timeout}s; skipping {item_title}")
+            return 0
+        plex_dir = os.path.dirname(new_media.parts[0].file)
+        candidates = []
+        for media in list(owner.media):
+            if media is new_media or media.id == new_media.id:
+                continue
+            files = [part.file for part in media.parts]
+            # Same folder as the new file in Plex's own path terms, so the local path is
+            # unambiguous whatever path mapping Plex and cli_debrid use.
+            if not files or any(os.path.dirname(f) != plex_dir for f in files):
+                continue
+            local_files = [os.path.join(local_dir, os.path.basename(f)) for f in files]
+            if any(os.path.exists(f) for f in local_files):
+                continue
+            candidates.append((media, files, local_files))
+        if not candidates:
+            return 0
+        tracked = _paths_tracked_in_db(f for _, _, local_files in candidates for f in local_files)
+        removed = 0
+        for media, files, local_files in candidates:
+            if any(os.path.normpath(f) in tracked for f in local_files):
+                logger.info(f"[PLEX_DEAD_VERSIONS] {os.path.basename(files[0])} of {item_title} doesn't resolve but "
+                            f"is still a media item's location_on_disk (its mount may be down); leaving it")
+                continue
+            label = os.path.basename(files[0])
+            try:
+                media.delete()
+                removed += 1
+                logger.info(f"[PLEX_DEAD_VERSIONS] Removed dead Plex version {label} of {item_title}")
+            except Exception as e:
+                logger.warning(f"[PLEX_DEAD_VERSIONS] Could not remove dead Plex version {label} of {item_title}: {e}")
+                continue
+            for f in local_files:
+                if os.path.islink(f):  # dangling, checked above
+                    try:
+                        os.unlink(f)
+                        logger.info(f"[PLEX_DEAD_VERSIONS] Removed dangling symlink {f}")
+                    except OSError as e:
+                        logger.warning(f"[PLEX_DEAD_VERSIONS] Could not remove dangling symlink {f}: {e}")
+        return removed
+    except Exception as e:
+        logger.error(f"[PLEX_DEAD_VERSIONS] Error cleaning dead versions of {item_title}: {e}", exc_info=True)
+        return 0
+
+
+def start_dead_plex_version_cleanup(item):
+    """Run remove_dead_plex_versions_after_scan for a collected item in the background.
+
+    Symlinked/Local with Plex only (Jellyfin/Emby and Plex mode are left alone)."""
+    try:
+        if get_setting('File Management', 'file_collection_management') != 'Symlinked/Local':
+            return False
+        if (get_setting('Debug', 'emby_jellyfin_url', default='') or '').strip():
+            return False
+        new_path = item.get('location_on_disk')
+        if not new_path:
+            return False
+        import threading
+        threading.Thread(
+            target=remove_dead_plex_versions_after_scan,
+            args=(item.get('title'), new_path, item.get('episode_title')),
+            name=f"plex-dead-versions-{item.get('id')}",
+            daemon=True,
+        ).start()
+        return True
+    except Exception as e:
+        logger.warning(f"[PLEX_DEAD_VERSIONS] Could not start cleanup for {item.get('title')}: {e}")
+        return False
+
+
 def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empty_trash: bool = True) -> dict:
     """
     Scan specific Plex paths and then empty trash to clean up unavailable items.

@@ -667,7 +667,7 @@ class TestSourceRunReport(unittest.TestCase):
         with self.assertLogs(level='INFO') as cm:
             report.log(cache_skipped=4)
         lines = self._log_lines(cm)
-        self.assertIn('titles: fetched=3 cache_skipped=4 sent_to_metadata=3 | entries (movies/episodes): passed_filters=1 newly_added=1 not_added=0', lines[0])
+        self.assertIn('titles: fetched=3 blocked=0 cache_skipped=4 sent_to_metadata=3 | entries (movies/episodes): passed_filters=1 newly_added=1 not_added=0', lines[0])
         self.assertTrue(any("no metadata produced" in l and "'tt0000003'" in l for l in lines))
         self.assertTrue(any("removed by the source filters" in l and "'Too Old'" in l for l in lines))
 
