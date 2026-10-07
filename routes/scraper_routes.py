@@ -2714,6 +2714,27 @@ def api_battery_search():
         return jsonify({'results': [], 'error': 'No query provided'}), 400
     try:
         results, source = DirectAPI.search_media(query)
+        # TVDB ranks e.g. Parasite (2019) outside its top 50 for "Parasite", so
+        # when the query ends in a year ("Parasite 2019" / "Parasite (2019)")
+        # also search the title filtered to that year and list those first.
+        # The plain search stays in so "Blade Runner 2049" still works.
+        year_match = re.match(r'^(.+?)\s*\(?((?:19|20)\d{2})\)?$', query)
+        if year_match:
+            base_title = year_match.group(1).strip()
+            year_results, year_source = DirectAPI.search_media(
+                base_title, year=int(year_match.group(2)))
+            if year_results:
+                # Exact title matches first (TVDB puts "Paradise ..." above Parasite)
+                year_results.sort(key=lambda r: base_title.lower() not in (
+                    (r.get('title') or '').lower(), (r.get('original_title') or '').lower()))
+                seen = set()
+                merged = []
+                for r in year_results + (results or []):
+                    key = (r.get('type'), r.get('imdb_id') or r.get('tmdb_id') or r.get('title'), r.get('year'))
+                    if key not in seen:
+                        seen.add(key)
+                        merged.append(r)
+                results, source = merged, source or year_source
         if not results:
             return jsonify({'results': []})
         normalized = []
@@ -2723,6 +2744,7 @@ def api_battery_search():
                 'tmdb_id': r.get('tmdb_id'),
                 'imdb_id': r.get('imdb_id'),
                 'title': r.get('title'),
+                'original_title': r.get('original_title'),
                 'year': r.get('year'),
                 'media_type': 'tv' if r.get('type') == 'show' else r.get('type', 'movie'),
             })

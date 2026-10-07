@@ -1561,6 +1561,9 @@ class DirectAPI:
             if not title:
                 continue
             score = fuzz.WRatio(cleaned, title.lower())
+            original_title = result.get('original_title')
+            if original_title and original_title != title:
+                score = max(score, fuzz.WRatio(cleaned, original_title.lower()))
             if query_year is not None and result.get('year') == query_year:
                 score += year_match_boost
             if score > highest:

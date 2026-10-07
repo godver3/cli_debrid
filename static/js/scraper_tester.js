@@ -169,13 +169,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const row = table.insertRow();
             row.className = 'search-result';
 
-            const title = result.title || 'N/A';
             const year = result.year || 'N/A';
             const mediaType = result.mediaType === 'tv' || result.mediaType === 'show' ? 'TV Show' :
                               result.mediaType === 'movie' ? 'Movie' : 'N/A';
             const imdbId = result.imdbId || 'N/A';
 
-            [title, year, mediaType, imdbId].forEach(cellText => {
+            const titleCell = row.insertCell();
+            titleCell.appendChild(createTitleWithOriginal(result));
+
+            [year, mediaType, imdbId].forEach(cellText => {
                 const cell = row.insertCell();
                 cell.textContent = cellText;
             });
@@ -188,6 +190,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
         searchResultsElement.appendChild(table);
         Loading.hide();
+    }
+
+    // The title the scrape searches with, plus the original-language title
+    // in brackets when it differs (e.g. "Demon Slayer: Kimetsu no Yaiba (鬼滅の刃)").
+    function createTitleWithOriginal(item) {
+        const fragment = document.createDocumentFragment();
+        const title = item.title || item.name || 'N/A';
+        fragment.appendChild(document.createTextNode(title));
+        const original = item.original_title;
+        if (original && original !== title) {
+            const span = document.createElement('span');
+            span.className = 'original-title';
+            span.textContent = ` (${original})`;
+            fragment.appendChild(span);
+        }
+        return fragment;
     }
     
     // Update event listeners
@@ -230,12 +248,13 @@ document.addEventListener('DOMContentLoaded', function() {
             
             selectedItemElement.innerHTML = `
                 <table class="selected-item-table">
-                    <tr><th>Title:</th><td>${title}</td></tr>
+                    <tr><th>Search title:</th><td class="selected-item-title"></td></tr>
                     <tr><th>Year:</th><td>${year}</td></tr>
                     <tr><th>Type:</th><td>${mediaType}</td></tr>
                     <tr><th>IMDB ID:</th><td>${imdbId}</td></tr>
                 </table>
             `;
+            selectedItemElement.querySelector('.selected-item-title').appendChild(createTitleWithOriginal(item));
         } else {
             console.warn('selected-item element not found in the DOM');
         }
@@ -1219,12 +1238,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const container = document.getElementById(`${col}-results`);
             if (!container) return;
             const checkbox = container.querySelector(`#show-filtered-${col}`);
-            const filteredRows = container.querySelectorAll('tr.filtered-out-item');
             // Hide by default
-            filteredRows.forEach(r => r.style.display = 'none');
+            container.querySelectorAll('tr.filtered-out-item').forEach(r => r.style.display = 'none');
             if (checkbox) {
+                // Re-query on change: the rows are cloned/replaced below when
+                // click listeners are attached, so a NodeList captured here
+                // would point at detached rows.
                 checkbox.addEventListener('change', () => {
-                    filteredRows.forEach(r => r.style.display = checkbox.checked ? '' : 'none');
+                    container.querySelectorAll('tr.filtered-out-item')
+                        .forEach(r => r.style.display = checkbox.checked ? '' : 'none');
                 });
             }
         });
