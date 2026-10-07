@@ -2007,6 +2007,26 @@ def remove_replaced_plex_media_after_scan(item_title, new_path, old_paths, episo
         return False
 
 
+def _paths_tracked_in_db(paths):
+    """The subset of paths (normalized) that a media item still has as its location_on_disk.
+
+    Raises on a DB error so the caller can skip rather than guess."""
+    from database import get_db_connection
+    wanted = {os.path.normpath(p) for p in paths}
+    if not wanted:
+        return set()
+    conn = get_db_connection()
+    try:
+        placeholders = ','.join('?' * len(wanted))
+        rows = conn.execute(
+            f"SELECT location_on_disk FROM media_items WHERE location_on_disk IN ({placeholders})",
+            list(wanted),
+        ).fetchall()
+        return {os.path.normpath(row[0]) for row in rows if row[0]}
+    finally:
+        conn.close()
+
+
 def remove_dead_plex_versions_after_scan(item_title, new_path, episode_title=None, timeout=300, interval=10):
     """After a repaired/replaced item is re-collected, drop the versions it left behind.
 
@@ -2020,7 +2040,9 @@ def remove_dead_plex_versions_after_scan(item_title, new_path, episode_title=Non
     same folder and whose file no longer exists on disk is removed, along with its dangling
     symlink. A version whose file still exists is never touched (real duplicates, or an old
     file a repair hasn't cleaned up yet), and new_path resolving proves the mount is up, so
-    an outage can't make live files look dead. Returns the number of versions removed.
+    an outage can't make live files look dead. new_path only proves its own mount is up, so a
+    version that a media item still has as its location_on_disk (e.g. a symlink into another
+    mount that is down right now) is also left alone. Returns the number of versions removed.
     """
     try:
         local_dir = os.path.dirname(new_path)
@@ -2035,7 +2057,7 @@ def remove_dead_plex_versions_after_scan(item_title, new_path, episode_title=Non
             logger.info(f"[PLEX_DEAD_VERSIONS] Plex hasn't picked up {os.path.basename(new_path)} after {timeout}s; skipping {item_title}")
             return 0
         plex_dir = os.path.dirname(new_media.parts[0].file)
-        removed = 0
+        candidates = []
         for media in list(owner.media):
             if media is new_media or media.id == new_media.id:
                 continue
@@ -2046,6 +2068,16 @@ def remove_dead_plex_versions_after_scan(item_title, new_path, episode_title=Non
                 continue
             local_files = [os.path.join(local_dir, os.path.basename(f)) for f in files]
             if any(os.path.exists(f) for f in local_files):
+                continue
+            candidates.append((media, files, local_files))
+        if not candidates:
+            return 0
+        tracked = _paths_tracked_in_db(f for _, _, local_files in candidates for f in local_files)
+        removed = 0
+        for media, files, local_files in candidates:
+            if any(os.path.normpath(f) in tracked for f in local_files):
+                logger.info(f"[PLEX_DEAD_VERSIONS] {os.path.basename(files[0])} of {item_title} doesn't resolve but "
+                            f"is still a media item's location_on_disk (its mount may be down); leaving it")
                 continue
             label = os.path.basename(files[0])
             try:

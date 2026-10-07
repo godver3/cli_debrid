@@ -56,10 +56,13 @@ class DeadVersionSweepTests(unittest.TestCase):
         self.old = os.path.join(self.folder, 'Jim (2014) - 1080p - (sadpanda).mkv')
         os.symlink(os.path.join(self.tmp, 'gone.mkv'), self.old)  # dangling
 
-    def _sweep(self, owner_media, new_media):
+    def _sweep(self, owner_media, new_media, tracked=()):
         owner = SimpleNamespace(media=owner_media)
+        tracked = {os.path.normpath(p) for p in tracked}
         with mock.patch.object(self.pf, '_file_management_plex', return_value=object()), \
-             mock.patch.object(self.pf, '_wait_for_plex_file', return_value=(owner, new_media)):
+             mock.patch.object(self.pf, '_wait_for_plex_file', return_value=(owner, new_media)), \
+             mock.patch.object(self.pf, '_paths_tracked_in_db',
+                               side_effect=lambda paths: {os.path.normpath(p) for p in paths} & tracked):
             return self.pf.remove_dead_plex_versions_after_scan('Jim Gaffigan: Obsessed', self.new)
 
     def test_dead_version_and_dangling_symlink_removed(self):
@@ -85,6 +88,24 @@ class DeadVersionSweepTests(unittest.TestCase):
         self.assertEqual(self._sweep([elsewhere, new_m], new_m), 0)
         self.assertFalse(elsewhere.deleted)
 
+    def test_dangling_version_still_tracked_in_db_is_left_alone(self):
+        # Another version's symlink points into a different mount that is down: it looks
+        # dangling, but a media item still has it as location_on_disk, so it isn't dead.
+        new_m, old_m = _Media(self.new), _Media(self.old)
+        self.assertEqual(self._sweep([old_m, new_m], new_m, tracked=[self.old]), 0)
+        self.assertFalse(old_m.deleted)
+        self.assertTrue(os.path.lexists(self.old))
+
+    def test_db_error_skips_removal(self):
+        new_m, old_m = _Media(self.new), _Media(self.old)
+        owner = SimpleNamespace(media=[old_m, new_m])
+        with mock.patch.object(self.pf, '_file_management_plex', return_value=object()), \
+             mock.patch.object(self.pf, '_wait_for_plex_file', return_value=(owner, new_m)), \
+             mock.patch.object(self.pf, '_paths_tracked_in_db', side_effect=RuntimeError('db locked')):
+            self.assertEqual(self.pf.remove_dead_plex_versions_after_scan('Jim', self.new), 0)
+        self.assertFalse(old_m.deleted)
+        self.assertTrue(os.path.lexists(self.old))
+
     def test_unresolved_new_file_skips_everything(self):
         # Mount down: the new symlink doesn't resolve, so nothing may be judged dead.
         os.unlink(self.new)
@@ -92,6 +113,22 @@ class DeadVersionSweepTests(unittest.TestCase):
         with mock.patch.object(self.pf, '_file_management_plex') as plex:
             self.assertEqual(self.pf.remove_dead_plex_versions_after_scan('Jim', self.new), 0)
             plex.assert_not_called()
+
+
+class TrackedPathsQueryTests(unittest.TestCase):
+    def test_returns_only_paths_a_media_item_points_at(self):
+        import sqlite3
+        pf = _real('utilities.plex_functions')
+        db = sqlite3.connect(':memory:')
+        db.execute('CREATE TABLE media_items (id INTEGER, location_on_disk TEXT)')
+        db.executemany('INSERT INTO media_items VALUES (?, ?)',
+                       [(1, '/lib/Movie/a.mkv'), (2, None), (3, '/lib/Other/c.mkv')])
+        conn = mock.Mock(wraps=db)
+        conn.close = mock.Mock()
+        with mock.patch('database.get_db_connection', return_value=conn):
+            tracked = pf._paths_tracked_in_db(['/lib/Movie/a.mkv', '/lib/Movie//b.mkv'])
+        self.assertEqual(tracked, {'/lib/Movie/a.mkv'})
+        conn.close.assert_called_once()
 
 
 class DeadVersionTriggerTests(unittest.TestCase):
