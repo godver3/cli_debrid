@@ -73,13 +73,16 @@ def _delete_replaced_files(item_dict, old_rows, log_tag, entry_label, snapshots=
     # it straight away removed the whole Plex item, so the replacement came back as a
     # brand-new "recently added" entry. Jellyfin/Emby keep the immediate removal.
     new_path = item_dict.get('location_on_disk')
+    # Plex mode defers too for snapshots: a force-collected replacement may not be in Plex yet.
+    defer_modes = ('Symlinked/Local', 'Plex') if snapshots else ('Symlinked/Local',)
     defer_plex = (
         bool(new_path)
-        and get_setting('File Management', 'file_collection_management') == 'Symlinked/Local'
+        and get_setting('File Management', 'file_collection_management') in defer_modes
         and not (get_setting('Debug', 'emby_jellyfin_url', default='') or '').strip()
     )
     new_original = item_dict.get('original_path_for_symlink')
     new_torrent_id = item_dict.get('filled_by_torrent_id')
+    new_name = os.path.basename(new_original or new_path or item_dict.get('filled_by_file') or '')
     deferred_plex_paths = []
 
     from debrid import get_debrid_provider
@@ -99,11 +102,22 @@ def _delete_replaced_files(item_dict, old_rows, log_tag, entry_label, snapshots=
         # delete the replacement itself.
         same_symlink = _same_path(old_path, new_path)
         same_original = _same_path(old_row.get('original_path_for_symlink'), new_original)
-        same_job = snapshots and bool(new_torrent_id) and old_row.get('filled_by_torrent_id') == new_torrent_id
+        if snapshots:
+            # Plex mode's library sync can re-collect the row on the old file itself (it still
+            # matches location_basename); that file is the one in use now, so keep everything.
+            old_name = os.path.basename(old_row.get('original_path_for_symlink') or old_path
+                                        or old_row.get('filled_by_file') or '')
+            if old_name and old_name == new_name:
+                logging.info(f"[{log_tag}] Item {item_id} was re-collected on its old file {old_name}; nothing to remove")
+                continue
+            # A row re-collected without a provider job of its own gives no proof the old job is unused.
+            keep_job = not new_torrent_id or old_row.get('filled_by_torrent_id') == new_torrent_id
+        else:
+            keep_job = False
         try:
             result = deletion_manager.delete_single_item(
                 old_id,
-                delete_from_debrid=not same_original and not same_job,
+                delete_from_debrid=not same_original and not keep_job,
                 delete_from_media_server=not defer_plex and not same_symlink,
                 delete_files=not same_original,
                 delete_symlinks=not same_symlink,

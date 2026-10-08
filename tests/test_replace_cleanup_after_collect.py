@@ -306,6 +306,30 @@ class TestReplaceCleanupAfterCollect(unittest.TestCase):
         self.assertFalse(kwargs['delete_from_media_server'])
         self.assertFalse(kwargs['delete_from_debrid'])
 
+    def test_move_to_wanted_recollected_on_old_file_keeps_it(self):
+        # Plex mode: the library sync matched the old file by name and re-collected the row on it.
+        self._settings(mode='Plex')
+        old = dict(self.OLD_EP, location_on_disk='/mnt/zurg/shows/TURG/Show.S01E05.mkv', original_path_for_symlink=None)
+        self._move_to_wanted_episode([old], '/mnt/zurg/__all__/TURG/Show.S01E05.mkv', new_orig=None, new_job=None)
+        self.assertEqual(self.delete_calls, [])
+
+    def test_move_to_wanted_plex_mode_new_release(self):
+        self._settings(mode='Plex')
+        old = dict(self.OLD_EP, location_on_disk='/mnt/zurg/shows/TURG/Show.S01E05.TURG.mkv', original_path_for_symlink=None)
+        new = '/mnt/zurg/shows/GL0P/Show.S01E05.GL0P.mkv'
+        self._move_to_wanted_episode([old], new, new_orig=None, new_job='RDHASH')
+        _, kwargs = self.delete_calls[0]
+        self.assertTrue(kwargs['delete_from_debrid'])
+        self.assertFalse(kwargs['delete_from_media_server'])
+        self.assertEqual(self.deferred_calls, [('Show', new, [old['location_on_disk']], None)])
+
+    def test_move_to_wanted_no_new_job_keeps_old_job(self):
+        self._settings()
+        self._move_to_wanted_episode([self.OLD_EP], self.NEW_EP, new_job=None)
+        _, kwargs = self.delete_calls[0]
+        self.assertFalse(kwargs['delete_from_debrid'])
+        self.assertTrue(kwargs['delete_symlinks'])
+
     def test_no_replaced_files_is_noop(self):
         self._settings()
         pp.cleanup_files_replaced_by_move_to_wanted({'id': 1, 'replaced_files': None})
