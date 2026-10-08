@@ -1855,7 +1855,7 @@ class DeletionManager:
                           delete_from_media_server: bool = True, delete_files: bool = True,
                           delete_symlinks: bool = True, remove_from_content_source: bool = False,
                           skip_database: bool = False, force_delete_parent_folder: bool = False,
-                          skip_filesystem_wait: bool = False) -> dict:
+                          skip_filesystem_wait: bool = False, item: Optional[dict] = None) -> dict:
         """
         Delete single item with configurable layers
 
@@ -1871,6 +1871,7 @@ class DeletionManager:
             skip_database: If True, skip database operations (for ghostlist where DB already updated)
             force_delete_parent_folder: If True, delete parent folder even if not empty (whole show/movie delete)
             skip_filesystem_wait: If True, skip the 1-second filesystem wait (used in batch operations where wait happens once for entire batch)
+            item: Use this snapshot instead of reading item_id's row (files the row no longer points to)
 
         Returns:
         {
@@ -1905,7 +1906,8 @@ class DeletionManager:
 
         try:
             # Get item from database
-            item = get_item_by_id(item_id)
+            if item is None:
+                item = get_item_by_id(item_id)
             if not item:
                 result['errors'].append(f"Item {item_id} not found")
                 result['success'] = False  # Explicit for clarity (already False from init)

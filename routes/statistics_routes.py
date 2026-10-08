@@ -1359,6 +1359,30 @@ def refresh_usage():
         logging.error(f"Error refreshing usage: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+_REPLACED_FILE_FIELDS = (
+    'id', 'imdb_id', 'tmdb_id', 'type', 'title', 'episode_title', 'season_number',
+    'episode_number', 'version', 'state', 'location_on_disk', 'original_path_for_symlink',
+    'filled_by_torrent_id', 'filled_by_file', 'filled_by_title', 'location_basename',
+)
+
+
+def _stash_replaced_files(cursor, rows):
+    """Return (id, json) pairs: each row's current files appended to its replaced_files list."""
+    stashed = []
+    for row in rows:
+        row = dict(row)
+        if not (row.get('location_on_disk') or row.get('original_path_for_symlink')
+                or row.get('filled_by_torrent_id')):
+            continue
+        try:
+            pending = json.loads(row.get('replaced_files') or '[]')
+        except (TypeError, ValueError):
+            pending = []
+        pending.append({k: row.get(k) for k in _REPLACED_FILE_FIELDS})
+        stashed.append((row['id'], json.dumps(pending, default=str)))
+    return stashed
+
+
 @statistics_bp.route('/move_to_wanted', methods=['POST'])
 @user_required
 def move_to_wanted():
@@ -1458,10 +1482,20 @@ def move_to_wanted():
             """
             params = (datetime.now(), imdb_id, tmdb_id)
 
+        # Remember the files this release left behind (symlink, mount file, provider
+        # job) before the UPDATE wipes them, so they're removed once the replacement is
+        # collected (see cleanup_files_replaced_by_move_to_wanted). Without this the old
+        # symlink, the mount-side torrent/NZB and the Plex entry were all orphaned.
+        select_query = "SELECT * FROM media_items WHERE " + query.split("WHERE", 1)[1]
+        stashed = _stash_replaced_files(cursor, cursor.execute(select_query, params[1:]).fetchall())
+
         cursor.execute(query, params)
+        updated = cursor.rowcount
+        for row_id, replaced_files in stashed:
+            cursor.execute("UPDATE media_items SET replaced_files = ? WHERE id = ?", (replaced_files, row_id))
         conn.commit()
-        
-        if cursor.rowcount > 0:
+
+        if updated > 0:
             return jsonify({'success': True}), 200
         else:
             return jsonify({'success': False, 'error': 'No matching items found or items already in Wanted/Scraping/Adding state'}), 404
