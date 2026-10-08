@@ -491,6 +491,11 @@ input[type="checkbox"].settings-input {
     max-width: 100%;
 }
 
+.search-results-table .original-title,
+.selected-item-table .original-title {
+    color: #aaa;
+}
+
 #selected-item {
     margin-top: 12px;
     margin-bottom: 0;

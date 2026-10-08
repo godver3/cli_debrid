@@ -327,7 +327,8 @@ class ScrapingQueue:
                         try:
                             _sibling_nzb = _cconn.execute(
                                 "SELECT filled_by_torrent_id, filled_by_file, filled_by_magnet, "
-                                "filled_by_title, original_scraped_torrent_title, nzb_segment_id "
+                                "filled_by_title, original_scraped_torrent_title, nzb_segment_id, "
+                                "current_score, resolution "
                                 "FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' "
                                 "AND state IN ('Adding','Checking','Collected','Upgrading') "
                                 "AND filled_by_torrent_id LIKE 'nzb:%' "
@@ -375,6 +376,11 @@ class ScrapingQueue:
                                 from database.database_writing import update_media_item, update_media_item_state
                                 update_media_item_state(item_to_process['id'], 'Adding')
                                 _coal_seg_kwargs = {'nzb_segment_id': _job_seg} if _job_seg else {}
+                                # Same release as the sibling's job, so same score/resolution.
+                                if _sibling_nzb[6]:
+                                    _coal_seg_kwargs['current_score'] = _sibling_nzb[6]
+                                if _sibling_nzb[7]:
+                                    _coal_seg_kwargs['resolution'] = _sibling_nzb[7]
                                 update_media_item(item_to_process['id'],
                                     filled_by_torrent_id=_job_id,
                                     filled_by_magnet=_job_url,
@@ -670,6 +676,7 @@ class ScrapingQueue:
                     # same show+season+version are waiting in Scraping. If so, submit them all
                     # as an NZB aggregate pack (up to 30 at a time) instead of scraping individually.
                     _nzb_batch_handled = False
+                    _prescraped_results = None
                     if (item_to_process.get('type') == 'episode' and
                             get_setting('Usenet Provider', 'enabled', False)):
                         try:
@@ -728,7 +735,62 @@ class ScrapingQueue:
 
                                 _disable_nzb_season_packs = get_setting('Usenet Provider', 'disable_nzb_season_packs', True)
 
-                                if _all_eps_requested and is_multi_pack and not _disable_nzb_season_packs:
+                                # "Disable NZB Season Packs" only applies to NZB packs — it must not
+                                # stop a debrid/torrent season pack from being picked. Run the normal
+                                # season-pack scrape first (the filter already drops NZB packs), and
+                                # only fall back to the per-episode batch if no non-NZB pack is found.
+                                # The results are reused by the normal path below so it doesn't scrape twice.
+                                # Skipped when the item is flagged fall_back_to_single_scraper (a previous
+                                # pack attempt failed in Adding, e.g. every debrid pack refused):
+                                # scrape_with_fallback would silently run a single-episode scrape, and its
+                                # single-episode torrents must not be mistaken for a season pack.
+                                _debrid_pack_found = False
+                                _fell_back_to_single = False
+                                if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs:
+                                    try:
+                                        from database import get_media_item_by_id as _get_item_fb
+                                        _fell_back_to_single = bool(
+                                            (_get_item_fb(item_to_process['id']) or {}).get('fall_back_to_single_scraper')
+                                        )
+                                    except Exception:
+                                        _fell_back_to_single = False
+                                if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs and not _fell_back_to_single:
+                                    _pre_results, _pre_filtered = self.scrape_with_fallback(
+                                        item_to_process,
+                                        is_multi_pack,
+                                        queue_manager,
+                                        check_pack_wantedness=check_pack_wantedness_for_initial_scrape
+                                    )
+                                    _pre_results = _pre_results if _pre_results is not None else []
+
+                                    # Must be a pack for this whole season: a 2-episode release
+                                    # (S02E01E02) or a partial range (S02 E01-E12) only covers a few
+                                    # siblings, and the rest would wait behind it in Adding.
+                                    def _is_debrid_season_pack(r):
+                                        if r.get('protocol') == 'nzb' or r.get('nzb_url'):
+                                            return False
+                                        _sei = (r.get('parsed_info') or {}).get('season_episode_info') or {}
+                                        _sp = str(_sei.get('season_pack') or '')
+                                        if _sp == 'Complete':
+                                            return True
+                                        if str(_curr_season) not in _sp.split(','):
+                                            return False
+                                        _eps = _sei.get('episodes') or []
+                                        return not _eps or len(_eps) >= _season_total
+
+                                    # Only the top result counts: the normal path below picks
+                                    # results[0], so a pack further down the list would never be
+                                    # used and a higher-ranked single episode would go to Adding alone.
+                                    _debrid_pack_found = bool(_pre_results) and _is_debrid_season_pack(_pre_results[0])
+                                    if _debrid_pack_found:
+                                        _prescraped_results = (_pre_results, _pre_filtered)
+                                        logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '
+                                                     f'NZB season packs disabled but the top result is a debrid season pack, using it')
+                                    else:
+                                        logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '
+                                                     f'top result is not a debrid season pack, batching episodes individually')
+
+                                if _all_eps_requested and is_multi_pack and (not _disable_nzb_season_packs or _debrid_pack_found):
                                     # Full season in batch and multi-pack mode — current item will
                                     # scrape as season pack; siblings will coalesce onto its job.
                                     # No special handling needed here; fall through to normal scrape.
@@ -872,12 +934,15 @@ class ScrapingQueue:
                         return True
 
                     logging.info(f"Scraping for {item_identifier} (multi-pack: {is_multi_pack}) with initial check_pack_wantedness={check_pack_wantedness_for_initial_scrape}")
-                    results, filtered_out_results = self.scrape_with_fallback(
-                        item_to_process,
-                        is_multi_pack,
-                        queue_manager,
-                        check_pack_wantedness=check_pack_wantedness_for_initial_scrape
-                    )
+                    if _prescraped_results is not None:
+                        results, filtered_out_results = _prescraped_results
+                    else:
+                        results, filtered_out_results = self.scrape_with_fallback(
+                            item_to_process,
+                            is_multi_pack,
+                            queue_manager,
+                            check_pack_wantedness=check_pack_wantedness_for_initial_scrape
+                        )
 
                     # Ensure both results and filtered_out_results are lists
                     results = results if results is not None else []

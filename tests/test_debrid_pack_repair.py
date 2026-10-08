@@ -223,5 +223,29 @@ class TestReplaceEntryKeepsSharedTorrent(unittest.TestCase):
         self.assertEqual(self.deleted, [])
 
 
+class EntryIsEpisodeTests(unittest.TestCase):
+    """Plex cleanup/scan after a repair picks shows/ vs movies/ from the entry name."""
+
+    def test_separated_and_ep_prefixed_markers_are_episodes(self):
+        for name in ('Lost S01 EP01 1080p BluRay DTS x264-CtrlHD', 'Show.S01.E01.1080p',
+                     'Show.S01E01.1080p', 'Show.S01E101.WEB-DL'):
+            self.assertTrue(eng._entry_is_episode(name), name)
+
+    def test_movie_is_not_an_episode(self):
+        self.assertFalse(eng._entry_is_episode('Parasite.2019.1080p.BluRay.x264'))
+
+    def test_both_plex_paths_use_the_helper(self):
+        src = (PROJECT_ROOT / 'usenet' / 'debrid_repair_engine.py').read_text()
+        self.assertEqual(src.count('is_episode = _entry_is_episode(entry_name)'), 2)
+        self.assertNotIn(r"[Ss]\d{1,2}[Ee]\d{1,2}'", src)
+
+    def test_pattern_matches_shared_season_pack_marker(self):
+        spec = importlib.util.spec_from_file_location(
+            'debrid_common_utils_under_test', PROJECT_ROOT / 'debrid' / 'common' / 'utils.py')
+        utils = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(utils)
+        self.assertEqual(eng._EPISODE_MARKER_RE.pattern, utils._SEASON_PACK_EPISODE_RE.pattern)
+
+
 if __name__ == '__main__':
     unittest.main()

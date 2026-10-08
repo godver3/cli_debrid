@@ -475,6 +475,18 @@ def _delete_from_plex(item: dict) -> bool:
         return False
 
 
+# Same pattern as debrid/common/utils.py _SEASON_PACK_EPISODE_RE (kept local: a cold
+# `import debrid` hits a circular import). Accepts separated forms too ("Lost S01 EP01",
+# "Show.S01.E01"): the old S01E01-only pattern sent those entries' Plex cleanup and
+# scans to the movies folder and movie section.
+_EPISODE_MARKER_RE = re.compile(r"[Ss]\d{1,2}[\s._-]*[Ee](?:[Pp]\s*)?\d{1,3}")
+
+
+def _entry_is_episode(entry_name: str) -> bool:
+    """True if a cli_mount entry name carries an episode marker."""
+    return bool(entry_name and _EPISODE_MARKER_RE.search(entry_name))
+
+
 def _delete_from_plex_by_entry_name(entry_name: str) -> bool:
     """
     Delete an orphan cli_mount entry from Plex by scanning its specific folder path
@@ -486,11 +498,10 @@ def _delete_from_plex_by_entry_name(entry_name: str) -> bool:
     if not entry_name:
         return False
     try:
-        import re as _re
         import threading as _threading
         from utilities.settings import get_setting
 
-        is_episode = bool(_re.search(r'[Ss]\d{1,2}[Ee]\d{1,2}', entry_name))
+        is_episode = _entry_is_episode(entry_name)
         subfolder = 'shows' if is_episode else 'movies'
         mount = get_setting('Usenet Provider', 'mount_path', '/debrid').rstrip('/')
         folder_path = f'{mount}/{subfolder}/{entry_name}'
@@ -741,9 +752,8 @@ def reinsert_entry(entry_name: str, info_hash: str) -> dict:
                     logger.debug(f'[DebridRepair] Recheck error (non-critical): {_re}')
                 # Trigger Plex scan so Plex picks up the re-inserted file
                 try:
-                    import re as _re2
                     from utilities.settings import get_setting as _gs
-                    is_episode = bool(_re2.search(r'[Ss]\d{1,2}[Ee]\d{1,2}', entry_name))
+                    is_episode = _entry_is_episode(entry_name)
                     subfolder = 'shows' if is_episode else 'movies'
                     mount = _gs('Usenet Provider', 'mount_path', '/debrid').rstrip('/')
                     folder_path = f'{mount}/{subfolder}/{entry_name}'

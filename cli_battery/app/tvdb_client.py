@@ -1963,7 +1963,12 @@ def search_media(query: str, year: Optional[int] = None,
         else:
             continue
 
-        title = item.get('name', '') or item.get('translated_name', '')
+        # TVDB's 'name' is the original-language title (e.g. '鬼滅の刃' for
+        # Demon Slayer), so prefer the English translation when there is one.
+        original_title = item.get('name', '') or item.get('translated_name', '')
+        translations = item.get('translations') or {}
+        eng_title = translations.get('eng') if isinstance(translations, dict) else None
+        title = eng_title or original_title
         item_year = None
         if item.get('year'):
             try:
@@ -2001,6 +2006,7 @@ def search_media(query: str, year: Optional[int] = None,
 
         results.append({
             'title': title,
+            'original_title': original_title,
             'year': item_year,
             'imdb_id': imdb_id,
             'tmdb_id': tmdb_id,

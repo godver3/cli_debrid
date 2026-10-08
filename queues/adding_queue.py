@@ -158,6 +158,22 @@ def remove_unwanted_torrent(torrent_id: str, is_nzb: bool = False, debrid_provid
         logging.error(f"Failed to remove unwanted torrent {torrent_id}: {str(e)}", exc_info=True)
 
 
+def chosen_result_score_fields(chosen_result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """current_score and resolution to store for the release an item was filled with.
+
+    Only keys with a value are returned, so a missing score never overwrites one.
+    """
+    if not chosen_result:
+        return {}
+    fields = {}
+    score = (chosen_result.get('score_breakdown') or {}).get('total_score')
+    if score is not None:
+        fields['current_score'] = score
+    if chosen_result.get('resolution'):
+        fields['resolution'] = chosen_result['resolution']
+    return fields
+
+
 class AddingQueue:
     """Manages the queue of items being added to the debrid service"""
     
@@ -671,6 +687,10 @@ class AddingQueue:
                     # Store the checking_id on the item so we can poll it next tick
                     from database.database_writing import update_media_item
                     _seg_id_kwargs = {'nzb_segment_id': nzb_segment_id} if nzb_segment_id else {}
+                    # The torrent path writes score/resolution further down, but NZB items
+                    # `continue` before reaching it, so every queue-added NZB item used to be
+                    # saved with score 0 and no resolution.
+                    _nzb_score_kwargs = chosen_result_score_fields(chosen_result_info)
                     update_media_item(item['id'],
                         filled_by_torrent_id=checking_id,
                         filled_by_file=nzb_title,
@@ -678,7 +698,9 @@ class AddingQueue:
                         filled_by_magnet=nzb_url,
                         original_scraped_torrent_title=nzb_original_title,
                         **_seg_id_kwargs,
+                        **_nzb_score_kwargs,
                     )
+                    item.update(_nzb_score_kwargs)
                     # Update in-memory dict so next Adding tick skips this item (line 206 check)
                     item['filled_by_torrent_id'] = checking_id
                     item['filled_by_file'] = nzb_title

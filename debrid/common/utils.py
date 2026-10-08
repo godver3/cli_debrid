@@ -23,7 +23,11 @@ _EPISODE_RE = re.compile(r"[Ss]\d{1,2}[Ee]\d{1,2}(?![0-9])")
 # S01E101). Used across sibling-reuse/coalescing checks that must tell a real
 # season pack apart from a single episode release before reusing an in-flight
 # job for a different episode.
-_SEASON_PACK_EPISODE_RE = re.compile(r"[Ss]\d{1,2}[Ee]\d{1,3}")
+# Also accepts a separator and an "EP" prefix between season and episode
+# ("Lost S01 EP01", "Show.S01.E01", "Show S01 E01"): "Lost S01 EP01 ..." was read
+# as a season pack and every other episode of S01 coalesced onto that one
+# episode's NZB job.
+_SEASON_PACK_EPISODE_RE = re.compile(r"[Ss]\d{1,2}[\s._-]*[Ee](?:[Pp]\s*)?\d{1,3}")
 
 
 def release_identity_has_episode_marker(*identity_fields: Optional[str]) -> bool:
