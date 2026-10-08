@@ -670,6 +670,7 @@ class ScrapingQueue:
                     # same show+season+version are waiting in Scraping. If so, submit them all
                     # as an NZB aggregate pack (up to 30 at a time) instead of scraping individually.
                     _nzb_batch_handled = False
+                    _prescraped_results = None
                     if (item_to_process.get('type') == 'episode' and
                             get_setting('Usenet Provider', 'enabled', False)):
                         try:
@@ -728,7 +729,30 @@ class ScrapingQueue:
 
                                 _disable_nzb_season_packs = get_setting('Usenet Provider', 'disable_nzb_season_packs', True)
 
-                                if _all_eps_requested and is_multi_pack and not _disable_nzb_season_packs:
+                                # "Disable NZB Season Packs" only applies to NZB packs — it must not
+                                # stop a debrid/torrent season pack from being picked. Run the normal
+                                # season-pack scrape first (the filter already drops NZB packs), and
+                                # only fall back to the per-episode batch if no non-NZB pack is found.
+                                # The results are reused by the normal path below so it doesn't scrape twice.
+                                _debrid_pack_found = False
+                                if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs:
+                                    _pre_results, _pre_filtered = self.scrape_with_fallback(
+                                        item_to_process,
+                                        is_multi_pack,
+                                        queue_manager,
+                                        check_pack_wantedness=check_pack_wantedness_for_initial_scrape
+                                    )
+                                    _pre_results = _pre_results if _pre_results is not None else []
+                                    _debrid_pack_found = any(r.get('protocol') != 'nzb' for r in _pre_results)
+                                    if _debrid_pack_found:
+                                        _prescraped_results = (_pre_results, _pre_filtered)
+                                        logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '
+                                                     f'NZB season packs disabled but a debrid season pack was found, using it')
+                                    else:
+                                        logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '
+                                                     f'no debrid season pack found, batching episodes individually')
+
+                                if _all_eps_requested and is_multi_pack and (not _disable_nzb_season_packs or _debrid_pack_found):
                                     # Full season in batch and multi-pack mode — current item will
                                     # scrape as season pack; siblings will coalesce onto its job.
                                     # No special handling needed here; fall through to normal scrape.
@@ -872,12 +896,15 @@ class ScrapingQueue:
                         return True
 
                     logging.info(f"Scraping for {item_identifier} (multi-pack: {is_multi_pack}) with initial check_pack_wantedness={check_pack_wantedness_for_initial_scrape}")
-                    results, filtered_out_results = self.scrape_with_fallback(
-                        item_to_process,
-                        is_multi_pack,
-                        queue_manager,
-                        check_pack_wantedness=check_pack_wantedness_for_initial_scrape
-                    )
+                    if _prescraped_results is not None:
+                        results, filtered_out_results = _prescraped_results
+                    else:
+                        results, filtered_out_results = self.scrape_with_fallback(
+                            item_to_process,
+                            is_multi_pack,
+                            queue_manager,
+                            check_pack_wantedness=check_pack_wantedness_for_initial_scrape
+                        )
 
                     # Ensure both results and filtered_out_results are lists
                     results = results if results is not None else []
