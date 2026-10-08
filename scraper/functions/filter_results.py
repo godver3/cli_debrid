@@ -274,6 +274,13 @@ def filter_results(
             # Calculate similarities using a blended approach for better accuracy.
             # We combine a lenient check on the full title with a stricter check on the parsed title.
             parsed_title_str = parsed_info.get('title', '')
+            if not parsed_title_str:
+                # PTT found no title. Without one, the check below falls back to token_set
+                # on the whole release name, which scores 1.0 whenever every word of the
+                # query appears anywhere in it ("Below" vs "Below Deck Adventure"), and the
+                # extra-words penalties are skipped. Use the name's title part instead.
+                from scraper.functions.ptt_parser import title_before_markers
+                parsed_title_str = title_before_markers(original_title)
             # logging.debug(f"  - Parsed info title: '{parsed_title_str}', parsed_info keys: {list(parsed_info.keys()) if parsed_info else 'None'}")
             normalized_parsed_title = normalize_title(parsed_title_str).lower() if parsed_title_str else None
 

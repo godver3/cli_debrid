@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional, Union
 from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count, MIN_PLAUSIBLE_RUNTIME_MINUTES
 from fuzzywuzzy import fuzz
 from PTT import parse_title
+from scraper.functions.ptt_parser import parse_title_unwrapped
 from babelfish import Language
 from scraper.functions import *
 from scraper.functions.common import detect_season_episode_info
@@ -22,7 +23,7 @@ _LEFTOVER_SITE_PREFIX_PATTERN = _SITE_PREFIX_PATTERN
 def _parse_with_ptt(title: str) -> Dict[str, Any]:
     """Cached PTT parsing"""
     # Get the raw result from PTT
-    raw_result = parse_title(title)
+    raw_result = parse_title_unwrapped(title, parse=parse_title)
     
     # Create a copy to avoid modifying the original
     result = raw_result.copy()
