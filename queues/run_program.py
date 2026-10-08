@@ -4114,12 +4114,14 @@ class ProgramRunner:
                                         for _we in _wanted_e:
                                             try:
                                                 _seg_e_kw = {'nzb_segment_id': _seg_e} if _seg_e else {}
+                                                # Same release as the pack, so same score/resolution.
+                                                _score_e_kw = {k: item.get(k) for k in ('current_score', 'resolution') if item.get(k)}
                                                 _umi_e(_we[0], filled_by_torrent_id=torrent_id,
                                                        filled_by_file=_folder_e,
                                                        filled_by_magnet=_nzb_url_e,
                                                        filled_by_title=nzb_title,
                                                        original_scraped_torrent_title=_orig_e,
-                                                       **_seg_e_kw)
+                                                       **_seg_e_kw, **_score_e_kw)
                                                 _umis_e(_we[0], 'Adding')
                                                 logging.info(f'[NZB] Pulled Wanted sibling {_we[0]} into Adding (pack waiting for Scraping)')
                                             except Exception:
@@ -4307,6 +4309,8 @@ class ProgramRunner:
                                 for _ws in _wanted_sibs:
                                     try:
                                         _pull_seg_kwargs = {'nzb_segment_id': _pull_seg_id} if _pull_seg_id else {}
+                                        # Same release as the pack, so same score/resolution.
+                                        _pull_score_kwargs = {k: item.get(k) for k in ('current_score', 'resolution') if item.get(k)}
                                         _umi_pull(_ws[0],
                                             filled_by_torrent_id=torrent_id,
                                             filled_by_file=_folder_pull,
@@ -4314,6 +4318,7 @@ class ProgramRunner:
                                             filled_by_title=nzb_title,
                                             original_scraped_torrent_title=nzb_original_title,
                                             **_pull_seg_kwargs,
+                                            **_pull_score_kwargs,
                                         )
                                         from database.database_writing import update_media_item_state as _umis_pull
                                         _umis_pull(_ws[0], 'Adding')

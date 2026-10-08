@@ -327,7 +327,8 @@ class ScrapingQueue:
                         try:
                             _sibling_nzb = _cconn.execute(
                                 "SELECT filled_by_torrent_id, filled_by_file, filled_by_magnet, "
-                                "filled_by_title, original_scraped_torrent_title, nzb_segment_id "
+                                "filled_by_title, original_scraped_torrent_title, nzb_segment_id, "
+                                "current_score, resolution "
                                 "FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' "
                                 "AND state IN ('Adding','Checking','Collected','Upgrading') "
                                 "AND filled_by_torrent_id LIKE 'nzb:%' "
@@ -375,6 +376,11 @@ class ScrapingQueue:
                                 from database.database_writing import update_media_item, update_media_item_state
                                 update_media_item_state(item_to_process['id'], 'Adding')
                                 _coal_seg_kwargs = {'nzb_segment_id': _job_seg} if _job_seg else {}
+                                # Same release as the sibling's job, so same score/resolution.
+                                if _sibling_nzb[6]:
+                                    _coal_seg_kwargs['current_score'] = _sibling_nzb[6]
+                                if _sibling_nzb[7]:
+                                    _coal_seg_kwargs['resolution'] = _sibling_nzb[7]
                                 update_media_item(item_to_process['id'],
                                     filled_by_torrent_id=_job_id,
                                     filled_by_magnet=_job_url,
