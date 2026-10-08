@@ -18,6 +18,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -104,7 +105,8 @@ class TestNzbBatchDebridPackProbe(unittest.TestCase):
             year INT, type TEXT, state TEXT, version TEXT, season_number INT, episode_number INT,
             release_date TEXT, filled_by_torrent_id TEXT, filled_by_file TEXT, filled_by_magnet TEXT,
             filled_by_title TEXT, original_scraped_torrent_title TEXT, nzb_segment_id TEXT,
-            fall_back_to_single_scraper INT DEFAULT 0, genres TEXT)"""
+            fall_back_to_single_scraper INT DEFAULT 0, genres TEXT, current_score REAL DEFAULT 0,
+            resolution TEXT)"""
         )
         for ep in range(1, N_EPS + 1):
             c.execute(
@@ -119,7 +121,8 @@ class TestNzbBatchDebridPackProbe(unittest.TestCase):
         c.close()
 
     # --- driver ----------------------------------------------------------
-    def _run(self, multi_results, disable=True, collected=(), fallback_ids=()):
+    def _run(self, multi_results, disable=True, collected=(), fallback_ids=(), debrid='usable'):
+        """debrid: 'usable', 'down' (provider configured but unavailable) or 'none' (usenet-only)."""
         self._setup_db(collected, fallback_ids)
         q = sq.ScrapingQueue.__new__(sq.ScrapingQueue)
         q.items = [self._by_id(ep) for ep in range(1, N_EPS + 1) if ep not in collected]
@@ -145,6 +148,11 @@ class TestNzbBatchDebridPackProbe(unittest.TestCase):
                 return {'1080p': {}}
             return default
 
+        provider = object()
+        debrid_stub = types.ModuleType('debrid')
+        debrid_stub.get_debrid_providers = lambda: [] if debrid == 'none' else [provider]
+        import utilities.acquisition_health as acquisition_health
+
         qm = mock.MagicMock()
         qm.generate_identifier.side_effect = lambda it: f"Lost S02E{it['episode_number']:02d}"
         qm.queues = {}
@@ -159,7 +167,10 @@ class TestNzbBatchDebridPackProbe(unittest.TestCase):
                 mock.patch.object(database.core, 'get_db_connection', self._conn), \
                 mock.patch.object(database, 'get_all_media_items', self._rows), \
                 mock.patch.object(database, 'get_media_item_by_id', self._by_id), \
-                mock.patch.object(database.database_reading, 'get_all_media_items', self._rows):
+                mock.patch.object(database.database_reading, 'get_all_media_items', self._rows), \
+                mock.patch.dict(sys.modules, {'debrid': debrid_stub}), \
+                mock.patch.object(acquisition_health, 'provider_available',
+                                  lambda p: debrid == 'usable' and p is provider):
             q.process(qm)
         adds = [(c.args[0]['episode_number'], c.args[2]) for c in qm.move_to_adding.call_args_list]
         return scrape_calls, adds
@@ -217,6 +228,19 @@ class TestNzbBatchDebridPackProbe(unittest.TestCase):
 
     def test_no_results(self):
         self._assert_per_episode_batch([])
+
+    # --- no usable debrid provider -> no probe scrape at all ---------------
+    def test_usenet_only_skips_probe(self):
+        # A torrent scraper left enabled can put a torrent pack on top, but Adding
+        # would drop it with no debrid provider, and E01 would go alone.
+        calls, adds = self._run([DEBRID_PACK], debrid='none')
+        self.assertNotIn(True, calls, 'usenet-only must not run the season-pack scrape')
+        self.assertEqual(len(adds), N_EPS)
+
+    def test_debrid_down_skips_probe(self):
+        calls, adds = self._run([DEBRID_PACK], debrid='down')
+        self.assertNotIn(True, calls)
+        self.assertEqual(len(adds), N_EPS)
 
 
 if __name__ == '__main__':

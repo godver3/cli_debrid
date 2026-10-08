@@ -744,9 +744,27 @@ class ScrapingQueue:
                                 # pack attempt failed in Adding, e.g. every debrid pack refused):
                                 # scrape_with_fallback would silently run a single-episode scrape, and its
                                 # single-episode torrents must not be mistaken for a season pack.
+                                # Also skipped when no debrid provider is usable (usenet-only setup, or the
+                                # debrid service is down or expired): Adding drops torrent results then, so
+                                # a torrent pack on top would send one episode to Adding alone with an NZB
+                                # and the rest of the season would wait behind it. Checked first so
+                                # usenet-only setups don't pay for an extra season scrape.
                                 _debrid_pack_found = False
                                 _fell_back_to_single = False
+                                _debrid_providers = []
+                                _debrid_usable = False
                                 if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs:
+                                    try:
+                                        from debrid import get_debrid_providers as _get_debrid_providers
+                                        from utilities.acquisition_health import provider_available as _provider_available
+                                        _debrid_providers = _get_debrid_providers()
+                                        _debrid_usable = any(_provider_available(p) for p in _debrid_providers)
+                                    except Exception:
+                                        _debrid_usable = False
+                                    if not _debrid_usable:
+                                        logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '
+                                                     f'no usable debrid provider, batching episodes individually')
+                                if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs and _debrid_usable:
                                     try:
                                         from database import get_media_item_by_id as _get_item_fb
                                         _fell_back_to_single = bool(
@@ -754,7 +772,7 @@ class ScrapingQueue:
                                         )
                                     except Exception:
                                         _fell_back_to_single = False
-                                if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs and not _fell_back_to_single:
+                                if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs and _debrid_usable and not _fell_back_to_single:
                                     _pre_results, _pre_filtered = self.scrape_with_fallback(
                                         item_to_process,
                                         is_multi_pack,
@@ -781,7 +799,13 @@ class ScrapingQueue:
                                     # Only the top result counts: the normal path below picks
                                     # results[0], so a pack further down the list would never be
                                     # used and a higher-ranked single episode would go to Adding alone.
-                                    _debrid_pack_found = bool(_pre_results) and _is_debrid_season_pack(_pre_results[0])
+                                    # Judged after the same usable-backend filter Adding applies.
+                                    try:
+                                        from utilities.acquisition_health import usable_results as _usable_results
+                                        _pre_usable = _usable_results(_pre_results, _debrid_providers)
+                                    except Exception:
+                                        _pre_usable = _pre_results
+                                    _debrid_pack_found = bool(_pre_usable) and _is_debrid_season_pack(_pre_usable[0])
                                     if _debrid_pack_found:
                                         _prescraped_results = (_pre_results, _pre_filtered)
                                         logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '

@@ -32,6 +32,48 @@ def extract_parenthesized_title(title: str) -> str | None:
     return candidate
 
 
+# A release name wrapped whole in brackets, e.g. "[ Show.S01E05.1080p.WEB-DL-GRP ] -" (seen
+# from NinjaCentral). PTT returns an empty title for these.
+_WRAPPED_RELEASE_RE = re.compile(r'^\s*[\[(]\s*(?P<inner>[^\[\]()]+?)\s*[\])][\s._-]*$')
+# Where the title part of a release name ends: season/episode, year or resolution.
+_TITLE_END_RE = re.compile(
+    r'(?i)(?:^|[\s._-])(?:s\d{1,2}(?:[\s._-]*e\d{1,3})?|season[\s._-]*\d|\d{1,2}x\d{1,3}|(?:19|20)\d{2}|\d{3,4}p)'
+    r'(?=$|[\s._\-\])])'
+)
+
+
+def unwrap_release_title(title: str) -> str | None:
+    """Inner name of a release wrapped whole in brackets, or None if it isn't wrapped."""
+    m = _WRAPPED_RELEASE_RE.match(title or '')
+    return m.group('inner') if m else None
+
+
+def parse_title_unwrapped(title: str, parse=parse_title) -> Dict[str, Any]:
+    """PTT parse that retries without the wrapper when a bracket-wrapped name yields no title."""
+    result = parse(title)
+    if not result.get('title'):
+        inner = unwrap_release_title(title)
+        if inner:
+            unwrapped = parse(inner)
+            if unwrapped.get('title'):
+                return unwrapped
+    return result
+
+
+def title_before_markers(title: str) -> str:
+    """Title part of a release name PTT couldn't title.
+
+    Unwraps the name, drops leading [tags] and cuts at the first season/episode, year or
+    resolution marker. Returns '' when there is no marker to cut at.
+    """
+    name = unwrap_release_title(title) or title or ''
+    name = re.sub(r'^(?:\s*\[[^\]]*\])+\s*', '', name)
+    m = _TITLE_END_RE.search(name)
+    if not m:
+        return ''
+    return re.sub(r'[\s._\-\[\]()]+', ' ', name[:m.start()]).strip()
+
+
 def _cap_digits_to_season_episode(digits: str) -> tuple:
     """Split 3-4 digit Cap. number into (season, episode).
     Last 2 digits = episode, preceding digits = season.
@@ -75,7 +117,7 @@ def parse_with_ptt(title: str) -> Dict[str, Any]:
     """
     try:
         # Get the raw result from PTT
-        result = parse_title(title)
+        result = parse_title_unwrapped(title)
 
         
         # Convert to our standard format
