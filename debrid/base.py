@@ -55,6 +55,39 @@ class RateLimitError(DebridProviderError):
     """Exception raised when the debrid service rate limit is exceeded"""
     pass
 
+# HTTP statuses that describe the provider or the account, never the torrent:
+# auth, rate limit, a per-provider legal block (451) and server errors.
+_PROVIDER_FAULT_HTTP_CODES = {401, 403, 408, 429, 451}
+_PROVIDER_FAULT_MARKERS = ('temporarily unavailable', 'temporary', 'timed out', 'timeout',
+                           'connection', 'too_many', 'too many')
+
+def is_provider_fault(exc: BaseException) -> bool:
+    """True when a cache-check/add error says the provider can't serve the hash
+    right now (451 legal block, rate limit, outage, auth, account full) rather
+    than that the torrent itself is bad. Callers must not add the hash to the
+    install-wide not-wanted list for these: another provider in the chain may
+    serve it, and the same provider may serve it later."""
+    import re
+    import requests
+    # Raised by add_torrent for torrent problems (no video files, metadata
+    # never arrived) - those stay blacklistable.
+    if isinstance(exc, TorrentAdditionError):
+        return False
+    if isinstance(exc, (RateLimitError, TooManyDownloadsError,
+                        requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+        return True
+    if type(exc).__name__.endswith('AuthError'):
+        return True
+    msg = str(exc)
+    status = re.search(r'\b([45]\d\d)\b', msg)
+    if status:
+        code = int(status.group(1))
+        return code in _PROVIDER_FAULT_HTTP_CODES or code >= 500
+    if isinstance(exc, ProviderUnavailableError):
+        return True
+    lowered = msg.lower()
+    return any(marker in lowered for marker in _PROVIDER_FAULT_MARKERS)
+
 class DebridProvider(ABC):
     """Abstract base class that defines the interface for debrid providers.
 
