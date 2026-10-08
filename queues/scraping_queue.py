@@ -757,21 +757,32 @@ class ScrapingQueue:
                                     )
                                     _pre_results = _pre_results if _pre_results is not None else []
 
-                                    def _is_debrid_pack(r):
-                                        if r.get('protocol') == 'nzb':
+                                    # Must be a pack for this whole season: a 2-episode release
+                                    # (S02E01E02) or a partial range (S02 E01-E12) only covers a few
+                                    # siblings, and the rest would wait behind it in Adding.
+                                    def _is_debrid_season_pack(r):
+                                        if r.get('protocol') == 'nzb' or r.get('nzb_url'):
                                             return False
                                         _sei = (r.get('parsed_info') or {}).get('season_episode_info') or {}
-                                        return (_sei.get('season_pack') not in (None, 'N/A', 'Unknown')
-                                                or len(_sei.get('episodes') or []) > 1)
+                                        _sp = str(_sei.get('season_pack') or '')
+                                        if _sp == 'Complete':
+                                            return True
+                                        if str(_curr_season) not in _sp.split(','):
+                                            return False
+                                        _eps = _sei.get('episodes') or []
+                                        return not _eps or len(_eps) >= _season_total
 
-                                    _debrid_pack_found = any(_is_debrid_pack(r) for r in _pre_results)
+                                    # Only the top result counts: the normal path below picks
+                                    # results[0], so a pack further down the list would never be
+                                    # used and a higher-ranked single episode would go to Adding alone.
+                                    _debrid_pack_found = bool(_pre_results) and _is_debrid_season_pack(_pre_results[0])
                                     if _debrid_pack_found:
                                         _prescraped_results = (_pre_results, _pre_filtered)
                                         logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '
-                                                     f'NZB season packs disabled but a debrid season pack was found, using it')
+                                                     f'NZB season packs disabled but the top result is a debrid season pack, using it')
                                     else:
                                         logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '
-                                                     f'no debrid season pack found, batching episodes individually')
+                                                     f'top result is not a debrid season pack, batching episodes individually')
 
                                 if _all_eps_requested and is_multi_pack and (not _disable_nzb_season_packs or _debrid_pack_found):
                                     # Full season in batch and multi-pack mode — current item will
