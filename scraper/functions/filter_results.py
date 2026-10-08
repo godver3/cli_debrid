@@ -1781,7 +1781,13 @@ def filter_results(
                          logging.warning(f"Pack '{original_title}': num_episodes_in_pack was 0, used PTT parsed_episodes_list_from_parse length: {num_episodes_in_pack}")
 
 
-                    if provides_per_item_size:
+                    # A season/multi-episode pack labeled result is not actually a
+                    # per-item size even when the scraper normally reports one - the
+                    # pack-detection above already identified this result as covering
+                    # multiple episodes, so trusting the raw total unsplit inflates
+                    # bitrate by 10-100x and wrongly rejects real per-episode releases
+                    # against a bitrate ceiling.
+                    if provides_per_item_size and not is_identified_as_pack:
                         logging.debug(f"Scraper '{result_scraper_type}' provides per-item size. Using total_size_gb ({total_size_gb:.2f}GB) directly for filtering '{original_title}'.")
                         size_gb_for_filter = total_size_gb # Already the per-item size
                         # num_episodes_in_pack is still needed for accurate bitrate of the single item Torrentio/MediaFusion represents
