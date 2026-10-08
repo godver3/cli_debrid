@@ -734,8 +734,21 @@ class ScrapingQueue:
                                 # season-pack scrape first (the filter already drops NZB packs), and
                                 # only fall back to the per-episode batch if no non-NZB pack is found.
                                 # The results are reused by the normal path below so it doesn't scrape twice.
+                                # Skipped when the item is flagged fall_back_to_single_scraper (a previous
+                                # pack attempt failed in Adding, e.g. every debrid pack refused):
+                                # scrape_with_fallback would silently run a single-episode scrape, and its
+                                # single-episode torrents must not be mistaken for a season pack.
                                 _debrid_pack_found = False
+                                _fell_back_to_single = False
                                 if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs:
+                                    try:
+                                        from database import get_media_item_by_id as _get_item_fb
+                                        _fell_back_to_single = bool(
+                                            (_get_item_fb(item_to_process['id']) or {}).get('fall_back_to_single_scraper')
+                                        )
+                                    except Exception:
+                                        _fell_back_to_single = False
+                                if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs and not _fell_back_to_single:
                                     _pre_results, _pre_filtered = self.scrape_with_fallback(
                                         item_to_process,
                                         is_multi_pack,
@@ -743,7 +756,15 @@ class ScrapingQueue:
                                         check_pack_wantedness=check_pack_wantedness_for_initial_scrape
                                     )
                                     _pre_results = _pre_results if _pre_results is not None else []
-                                    _debrid_pack_found = any(r.get('protocol') != 'nzb' for r in _pre_results)
+
+                                    def _is_debrid_pack(r):
+                                        if r.get('protocol') == 'nzb':
+                                            return False
+                                        _sei = (r.get('parsed_info') or {}).get('season_episode_info') or {}
+                                        return (_sei.get('season_pack') not in (None, 'N/A', 'Unknown')
+                                                or len(_sei.get('episodes') or []) > 1)
+
+                                    _debrid_pack_found = any(_is_debrid_pack(r) for r in _pre_results)
                                     if _debrid_pack_found:
                                         _prescraped_results = (_pre_results, _pre_filtered)
                                         logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '

@@ -48,6 +48,20 @@ class TestReleaseIdentityHasEpisodeMarker(unittest.TestCase):
         # Long-running anime, e.g. S01E101 — the old pattern capped at 2 digits.
         self.assertTrue(utils.release_identity_has_episode_marker('Show.S01E101.WEB-DL'))
 
+    def test_detects_separated_and_ep_prefixed_markers(self):
+        # "Lost S01 EP01 ..." was read as a season pack and all of S01 coalesced onto it.
+        self.assertTrue(utils.release_identity_has_episode_marker('Lost S01 EP01 1080p BluRay DTS x264-CtrlHD'))
+        self.assertTrue(utils.release_identity_has_episode_marker('Show.S01.E01.1080p'))
+        self.assertTrue(utils.release_identity_has_episode_marker('Show S01 E01 1080p'))
+        self.assertTrue(utils.release_identity_has_episode_marker('Show.S01-E12.720p'))
+        self.assertFalse(utils.is_likely_season_pack('Lost S01 EP01 1080p BluRay DTS x264-CtrlHD'))
+
+    def test_season_pack_tags_are_not_episode_markers(self):
+        for title in ('Show S01 ENG 1080p', 'Show.S01.EAC3.1080p', 'Show S01 Extras 1080p',
+                      'Show.S01.1080p.WEB-DL', 'Lost S01-S06 Complete 1080p'):
+            self.assertFalse(utils.release_identity_has_episode_marker(title), title)
+            self.assertTrue(utils.is_likely_season_pack(title), title)
+
 
 class TestIsLikelySeasonPack(unittest.TestCase):
     def test_pack_title_with_no_episode_marker(self):
