@@ -1919,6 +1919,8 @@ class ScrapingQueue:
                 self.reset_not_wanted_check(item['id'])
                 self.remove_item(item) # Remove from current queue
         else: # Item is NOT old, check wake limits
+            if self._try_scrape_time_fallback(item, queue_manager):
+                return
             logging.warning(f"No results found for {item_identifier}. Checking wake count limits before moving to Sleeping or Final_Check/Blacklisted.")
             # Get wake count settings for this item's version
             version_settings = get_setting('Scraping', 'versions', {}).get(item.get('version', ''), {})
@@ -1948,6 +1950,79 @@ class ScrapingQueue:
             self.reset_not_wanted_check(item['id'])
             if moved and self.contains_item_id(item.get('id')) and max_wake_count > 0 and current_wake_count < max_wake_count:
                  self.remove_item(item)
+
+    def _try_scrape_time_fallback(self, item: Dict[str, Any], queue_manager) -> bool:
+        """Opt-in per version (fallback_at_scrape_time). fallback_version is otherwise only
+        applied by blacklist_item(), i.e. after the whole sleep/Final_Check cycle (~20h on
+        common settings) even when the strict version can never match. Probe the fallback
+        version once; if it finds results, hand the item to the blacklist-time fallback now
+        (original blacklisted silently, fallback item created as Wanted and scraped through
+        the normal pipeline). If the probe finds nothing, the caller sleeps the item as usual.
+        Returns True if the item was handed off."""
+        item_identifier = queue_manager.generate_identifier(item)
+        current_version = item.get('version') or ''
+        versions = get_setting('Scraping', 'versions', {}) or {}
+        version_settings = versions.get(current_version, {})
+        if not version_settings.get('fallback_at_scrape_time'):
+            return False
+
+        fallback_version = version_settings.get('fallback_version', 'None')
+        if not fallback_version or fallback_version in ('None', current_version) or fallback_version not in versions:
+            return False
+        # blacklist_item() turns a not-yet-released early_release item back to Unreleased
+        # instead of falling back, so a probe would be wasted.
+        if item.get('early_release'):
+            return False
+
+        from database import get_wake_count
+        attempts = get_wake_count(item['id']) + 1  # includes the scrape that just failed
+        try:
+            required_attempts = int(version_settings.get('fallback_after_attempts') or 0)
+        except (TypeError, ValueError):
+            required_attempts = 0
+        if attempts < required_attempts:
+            logging.info(f"Scrape-time fallback for {item_identifier}: attempt {attempts}/{required_attempts}, not probing '{fallback_version}' yet.")
+            return False
+
+        # If the fallback item already exists, blacklist_item() would only blacklist the
+        # original (no new item), so leave this one on its normal retry cycle.
+        from database.database_reading import check_existing_media_item
+        if check_existing_media_item(
+            item_details={
+                'type': item.get('type'),
+                'imdb_id': item.get('imdb_id'),
+                'tmdb_id': item.get('tmdb_id'),
+                'season_number': item.get('season_number') if item.get('type') == 'episode' else None,
+                'episode_number': item.get('episode_number') if item.get('type') == 'episode' else None,
+            },
+            target_version=fallback_version,
+            target_states=['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased',
+                           'Pending Uncached', 'Upgrading', 'Collected', 'Final_Check'],
+        ):
+            logging.info(f"Scrape-time fallback for {item_identifier}: '{fallback_version}' item already exists, skipping probe.")
+            return False
+
+        logging.info(f"Scrape-time fallback for {item_identifier}: no results for '{current_version}' (attempt {attempts}), probing '{fallback_version}'.")
+        try:
+            probe_results, _ = self.scrape_with_fallback(
+                dict(item, version=fallback_version),
+                is_multi_pack=item.get('type') == 'episode',
+                queue_manager=queue_manager,
+            )
+        except Exception as e:
+            logging.error(f"Scrape-time fallback probe failed for {item_identifier}: {e}", exc_info=True)
+            return False
+
+        if not probe_results:
+            logging.info(f"Scrape-time fallback for {item_identifier}: '{fallback_version}' found nothing either, keeping '{current_version}' on its retry cycle.")
+            return False
+
+        logging.info(f"Scrape-time fallback for {item_identifier}: '{fallback_version}' found {len(probe_results)} result(s), switching to it now.")
+        queue_manager.move_to_blacklisted(item, "Scraping")
+        self.reset_not_wanted_check(item['id'])
+        if self.contains_item_id(item.get('id')):
+            self.remove_item(item)
+        return True
 
     def is_item_old(self, item: Dict[str, Any]) -> bool:
         # If early release flag is set, it's never considered old for the purpose of immediate blacklisting

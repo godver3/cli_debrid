@@ -918,7 +918,7 @@ document.addEventListener('scrapingContentLoaded', function() {
         {# Get list of scraper IDs to exclude from automatic rendering #}
         {% set scraper_ids = settings.Scrapers.keys()|list %}
         {% for key in sorted_keys %}
-            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'jackett_seeders_only', 'fallback_version', 'enable_scraper_priorities', 'scraper_priorities', 'preferred-filter-out-term', 'preferred-filter-out-weight', 'preferred-filter-in-term', 'preferred-filter-in-weight'] and key not in scraper_ids %}
+            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'jackett_seeders_only', 'fallback_version', 'fallback_at_scrape_time', 'fallback_after_attempts', 'enable_scraper_priorities', 'scraper_priorities', 'preferred-filter-out-term', 'preferred-filter-out-weight', 'preferred-filter-in-term', 'preferred-filter-in-weight'] and key not in scraper_ids %}
                 {% set value = config[key] %}
                 <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' %}style="display: none !important;"{% endif %}>
                     {% if value is boolean %}
@@ -1073,7 +1073,29 @@ document.addEventListener('scrapingContentLoaded', function() {
                     {% endif %}
                 {% endfor %}
             </select>
-            <p class="settings-description">Version to use if this one is blacklisted. Select 'None' to disable.</p>
+            <p class="settings-description">Version to try instead once this one has exhausted its retries and the item is blacklisted. Select 'None' to disable.</p>
+        </div>
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox" id="scraping-{{ version }}-fallback_at_scrape_time"
+                       name="Scraping.versions.{{ version }}.fallback_at_scrape_time"
+                       data-section="Scraping"
+                       data-key="versions.{{ version }}.fallback_at_scrape_time"
+                       {% if settings.Scraping.versions[version].get('fallback_at_scrape_time') %}checked{% endif %}>
+                Fallback at Scrape Time
+            </label>
+            <p class="settings-description">When a scrape finds nothing, try the Fallback Version right away instead of waiting for this version's sleep/blacklist cycle. If the fallback finds results, this item is blacklisted and the fallback version is requested; if not, this item keeps retrying as usual.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="scraping-{{ version }}-fallback_after_attempts" class="settings-title">Fallback After Attempts:</label>
+            <input type="number" id="scraping-{{ version }}-fallback_after_attempts"
+                   name="Scraping.versions.{{ version }}.fallback_after_attempts"
+                   value="{{ settings.Scraping.versions[version].get('fallback_after_attempts', 0) or 0 }}"
+                   class="settings-input"
+                   min="0" step="1"
+                   data-section="Scraping"
+                   data-key="versions.{{ version }}.fallback_after_attempts">
+            <p class="settings-description">With Fallback at Scrape Time: number of failed scrapes before the fallback is tried. 0 or 1 = on the first failure.</p>
         </div>
         
         <div class="filter-section">
