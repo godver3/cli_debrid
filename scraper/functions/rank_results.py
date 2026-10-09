@@ -39,6 +39,25 @@ def check_preferred(patterns_weights, fields, is_bonus):
 
 _MULTI_AUDIO_RE = re.compile(r'(?i)\bmulti\b(?![ ._-]?subs?\b)|\bdual[ ._-]?audio\b|(?<!web[ ._-])\bdl\b')
 
+# Subtitle tags PTT reports as plain languages: SWESUB/ESub/SUBFRENCH, VOSTFR, NORDiC
+# (Nordic subs) and a bare Sub/Subs with the word next to it (Subs.Spanish, Eng Sub,
+# Multi.Subs).
+_SUBTITLE_TAG_RE = re.compile(
+    r'(?i)\b(?:[a-z]{1,6}subs?|subs?[a-z]{2,8}|vost[a-z]*|nordic|subbed)\b'
+    r'|\b(?:[a-z]+[ ._-])?subs?(?:[ ._-][a-z]+)?\b'
+)
+
+
+def _audio_languages(torrent_title, parsed_info, detected_languages):
+    """The detected languages minus those that only come from subtitle tags, so an
+    English release with Swedish subs isn't treated as Swedish audio. A DUBBED release
+    keeps all of them: its language tags do describe the audio."""
+    if parsed_info.get('dubbed') or not _SUBTITLE_TAG_RE.search(torrent_title):
+        return detected_languages
+    from PTT import parse_title
+    stripped = _SUBTITLE_TAG_RE.sub('.', torrent_title)
+    return [str(l).lower() for l in (parse_title(stripped).get('languages') or [])]
+
 
 def rank_result_key(
     result: Dict[str, Any], all_results: List[Dict[str, Any]],
@@ -69,9 +88,9 @@ def rank_result_key(
     language_weight = float(version_settings.get('language_weight', 3.0))
     year_match_weight = float(version_settings.get('year_match_weight', 3.0)) # New weight
     try:
-        foreign_language_penalty_setting = abs(float(version_settings.get('foreign_language_penalty', 300)))
+        foreign_language_penalty_setting = abs(float(version_settings.get('foreign_language_penalty', 30)))
     except (TypeError, ValueError):
-        foreign_language_penalty_setting = 300.0
+        foreign_language_penalty_setting = 30.0
 
     # Upgrade Hub mode: size, bitrate, country and language are irrelevant when
     # comparing quality upgrades — they cause REMUX files to be mis-scored and
@@ -398,10 +417,15 @@ def rank_result_key(
     foreign_language_penalty = 0.0
     if preferred_language:
         preferred_language_lower = preferred_language.lower()
-        if preferred_language_lower in detected_release_languages:
+        # English releases are normally untagged, so an explicit ENG/ESub tag marks a
+        # subtitled or foreign dual-audio rip rather than a better match: no bonus for 'en'.
+        if preferred_language_lower in detected_release_languages and preferred_language_lower != 'en':
             language_score += 75
             language_reason += f" + Bonus for matching preferred language '{preferred_language_lower}' in release ({detected_release_languages})"
-        elif detected_release_languages and preferred_language_lower not in detected_release_languages:
+        # The penalty looks at audio languages only: SWESUB, VOSTFR or NORDiC on an
+        # English release are subtitles, and ESub.Hindi is Hindi audio, not English.
+        audio_languages = _audio_languages(torrent_title, parsed_info, detected_release_languages) if detected_release_languages else []
+        if audio_languages and preferred_language_lower not in audio_languages:
             # Release has detected languages but not the preferred one — only
             # penalize if it's *not* multi-language (MULTI releases typically
             # include the preferred language as an undubbed extra track PTT
@@ -409,12 +433,11 @@ def rank_result_key(
             # PTT never emits 'multi' (MULTi only sets dubbed=True, same as
             # GERMAN.DUBBED), so multi-audio is detected from the name itself.
             # The scene 'DL' tag means dual-language; WEB-DL must not match.
-            # Applied unweighted (not via language_weight) so the setting is the
-            # exact number of points taken off the total score.
-            is_multi_audio = 'multi' in detected_release_languages or bool(_MULTI_AUDIO_RE.search(torrent_title))
+            # Scaled by language_weight like the other language scores.
+            is_multi_audio = 'multi' in audio_languages or bool(_MULTI_AUDIO_RE.search(torrent_title))
             if not is_multi_audio:
-                foreign_language_penalty = -foreign_language_penalty_setting
-                language_reason += f" - Penalty {foreign_language_penalty:.0f} for missing preferred language '{preferred_language_lower}' (found {detected_release_languages})"
+                foreign_language_penalty = -foreign_language_penalty_setting * language_weight
+                language_reason += f" - Penalty {foreign_language_penalty:.0f} for missing preferred language '{preferred_language_lower}' (audio {audio_languages})"
     # --- End Preferred Audio/Sub Language Ranking ---
 
     normalized_language = language_score # Use the raw score

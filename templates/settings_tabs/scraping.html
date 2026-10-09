@@ -914,7 +914,7 @@
                         {% if key == 'language_code' %}
                             <p class="settings-description">Preferred language code(s), comma-separated (e.g., fr, es, ja). The first language found will be used. See ISO 639-1.</p>
                         {% elif key == 'foreign_language_penalty' %}
-                            <p class="settings-description">Points subtracted from a release tagged with a different audio language (e.g. GERMAN for an 'en' version). MULTi, Dual Audio and DL (dual-language) releases are exempt. Scores usually span 100-150 points, so 300 makes such releases a last resort. 0 disables.</p>
+                            <p class="settings-description">Penalty for a release tagged with a different audio language (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. 0 disables.</p>
                         {% endif %}
                     {% endif %}
                 </div>

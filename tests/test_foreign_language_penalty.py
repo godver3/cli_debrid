@@ -1,8 +1,8 @@
 """A release tagged with an audio language other than the version's language
 code must rank below untagged releases. Repro: How I Met Your Mother S01E18
 (language_code 'en') picked '...Der.Anstaendige.GERMAN.WS.HDTV...' over English
-WEB-DLs because preferred_language was None for 'en' and the old -30 penalty
-(x language_weight 3) was smaller than the size/bitrate gap anyway."""
+WEB-DLs because preferred_language was None for 'en', so no penalty applied.
+The penalty is foreign_language_penalty (default 30) x language_weight."""
 import os
 import sys
 import unittest
@@ -36,19 +36,20 @@ def _score(title, preferred_language='en', upgrade_mode=False, **settings):
 
 
 class ForeignLanguagePenaltyTests(unittest.TestCase):
-    def test_default_penalty_is_300_unweighted(self):
+    def test_default_penalty_is_30_times_language_weight(self):
         german, english = _score(GERMAN), _score(ENGLISH)
-        self.assertEqual(german['foreign_language_penalty'], -300)
+        self.assertEqual(german['foreign_language_penalty'], -90)
         self.assertEqual(english['foreign_language_penalty'], 0)
         # Same size/bitrate inputs, so the gap is the penalty alone.
-        self.assertAlmostEqual(english['total_score'] - german['total_score'], 300, delta=1)
+        self.assertAlmostEqual(english['total_score'] - german['total_score'], 90, delta=1)
 
     def test_setting_overrides_and_zero_disables(self):
-        self.assertEqual(_score(GERMAN, foreign_language_penalty=120)['foreign_language_penalty'], -120)
+        self.assertEqual(_score(GERMAN, foreign_language_penalty=120)['foreign_language_penalty'], -360)
         self.assertEqual(_score(GERMAN, foreign_language_penalty=0)['foreign_language_penalty'], 0)
 
-    def test_language_weight_does_not_scale_it(self):
+    def test_language_weight_scales_it(self):
         self.assertEqual(_score(GERMAN, language_weight=10)['foreign_language_penalty'], -300)
+        self.assertEqual(_score(GERMAN, language_weight=0)['foreign_language_penalty'], 0)
 
     def test_multi_audio_exempt(self):
         # PTT returns ['de'] for these (never 'multi'); the name marks dual audio.
@@ -63,7 +64,36 @@ class ForeignLanguagePenaltyTests(unittest.TestCase):
                       'How.I.Met.Your.Mother.S01E18.GERMAN.1080p.WEB-DL.x264-X',
                       'How.I.Met.Your.Mother.S01E18.GERMAN.Multi.Subs.1080p.WEB.x264-X'):
             with self.subTest(title=title):
-                self.assertEqual(_score(title)['foreign_language_penalty'], -300)
+                self.assertEqual(_score(title)['foreign_language_penalty'], -90)
+
+    def test_subtitle_only_tags_not_penalized(self):
+        # English audio; PTT reports the subtitle language as a plain language.
+        for title in ('How.I.Met.Your.Mother.S01E18.1080p.BluRay.x264.SWESUB-GRP',
+                      'How.I.Met.Your.Mother.S01E18.1080p.WEB.h264.VOSTFR',
+                      'How.I.Met.Your.Mother.S01E18.NORDiC.1080p.BluRay.x264',
+                      'How.I.Met.Your.Mother.S01E18.1080p.WEB-DL.Subs.Spanish'):
+            with self.subTest(title=title):
+                self.assertEqual(_score(title)['foreign_language_penalty'], 0)
+
+    def test_foreign_audio_with_subtitle_tag_still_penalized(self):
+        for title in ('How.I.Met.Your.Mother.S01E18.1080p.WEB.x264.ESub.Hindi',
+                      'How.I.Met.Your.Mother.S01E18.GERMAN.DUBBED.1080p.SWESUB',
+                      'How.I.Met.Your.Mother.S01E18.NORDiC.DUBBED.1080p.BluRay'):
+            with self.subTest(title=title):
+                self.assertEqual(_score(title)['foreign_language_penalty'], -90)
+
+    def test_no_bonus_for_english_tag(self):
+        # An untagged English release must not lose to ESub / ENG-tagged rips.
+        english = _score(ENGLISH)['total_score']
+        for title in ('How.I.Met.Your.Mother.S01E18.1080p.AMZN.WEBRip.DDP5.1.x264.ESub',
+                      'How.I.Met.Your.Mother.S01E18.1080p.AMZN.WEBRip.DDP5.1.x264.RUS.ENG'):
+            with self.subTest(title=title):
+                self.assertLessEqual(_score(title)['total_score'], english)
+
+    def test_non_english_preference_keeps_bonus(self):
+        french = _score('How.I.Met.Your.Mother.S01E18.FRENCH.1080p.WEB.x264-X', preferred_language='fr')
+        untagged = _score(ENGLISH, preferred_language='fr')
+        self.assertGreater(french['total_score'], untagged['total_score'])
 
     def test_no_preferred_language_no_penalty(self):
         self.assertEqual(_score(GERMAN, preferred_language=None)['foreign_language_penalty'], 0)

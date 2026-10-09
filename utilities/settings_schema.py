@@ -764,8 +764,8 @@ SETTINGS_SCHEMA = {
                 },
                 "foreign_language_penalty": {
                     "type": "number",
-                    "default": 300,
-                    "description": "Points subtracted from a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version). MULTi, Dual Audio and DL (dual-language) releases are exempt. 0 disables."
+                    "default": 30,
+                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. 0 disables."
                 },
                 "wake_count": {
                     "type": "integer",

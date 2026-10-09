@@ -2289,9 +2289,9 @@ def main():
         versions_updated = False
         for version_name, version_config in config['Scraping']['versions'].items():
             if isinstance(version_config, dict) and 'foreign_language_penalty' not in version_config:
-                version_config['foreign_language_penalty'] = 300
+                version_config['foreign_language_penalty'] = 30
                 versions_updated = True
-                logging.info(f"Adding default foreign_language_penalty 300 to version {version_name}")
+                logging.info(f"Adding default foreign_language_penalty 30 to version {version_name}")
         if versions_updated:
             save_config(config)
     # --- End foreign_language_penalty migration ---
