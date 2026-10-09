@@ -17,6 +17,66 @@ from database.torrent_tracking import update_adding_error
 from database.scraper_grabs import record_grab, mark_current_grab, queue_grab_trigger
 
 
+def accepts_uncached_now(item: Dict[str, Any], item_identifier: str) -> bool:
+    """Whether the Adding queue takes uncached torrents for this item on its first pass:
+    released within accept_uncached_within_hours, or uncached_content_handling Full.
+    Hybrid mode's cached-then-uncached second pass is separate (hybrid_mode)."""
+    accept_uncached_within_hours = int(get_setting('Scraping', 'accept_uncached_within_hours', 0))
+    accept_uncached = False
+    # Determine if we should accept uncached based on recency
+    logging.info(f"Accepting uncached within {accept_uncached_within_hours} hours")
+    if accept_uncached_within_hours > 0:
+        release_date_str = item.get('release_date')
+        airtime_str = item.get('airtime')
+        release_datetime = None
+        if release_date_str and release_date_str != 'Unknown':
+            try:
+                release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                if airtime_str:
+                    try:
+                        try:
+                            airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
+                        except ValueError:
+                            airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                    except ValueError:
+                        airtime = datetime.strptime("00:00", '%H:%M').time()
+                else:
+                    airtime = datetime.strptime("00:00", '%H:%M').time()
+                release_datetime = datetime.combine(release_date, airtime)
+                # Apply offset based on type
+                offset_hours = 0.0
+                if item.get('type') == 'movie':
+                    offset_setting = get_setting("Queue", "movie_airtime_offset", "19")
+                    try:
+                        offset_hours = float(offset_setting)
+                    except (ValueError, TypeError):
+                        offset_hours = 19.0
+                elif item.get('type') == 'episode':
+                    offset_setting = get_setting("Queue", "episode_airtime_offset", "0")
+                    try:
+                        offset_hours = float(offset_setting)
+                    except (ValueError, TypeError):
+                        offset_hours = 0.0
+                release_datetime += timedelta(hours=offset_hours)
+                now = datetime.now()
+                hours_since_release = (now - release_datetime).total_seconds() / 3600.0
+                logging.info(f"Hours since release: {hours_since_release}")
+                if 0 <= hours_since_release <= accept_uncached_within_hours:
+                    logging.info(f"Accepting uncached release for {item_identifier} because it was released within the last {accept_uncached_within_hours} hours")
+                    accept_uncached = True
+            except Exception:
+                pass
+    # If not set by recency, use normal uncached_content_handling
+    if not accept_uncached:
+        if get_setting('Scraping', 'uncached_content_handling', 'None') == 'None':
+            accept_uncached = False
+        elif get_setting('Scraping', 'uncached_content_handling') == 'Full':
+            accept_uncached = True
+        else: # Hybrid mode is the default if not None or Full
+            accept_uncached = False # Start with cached only for hybrid
+    return accept_uncached
+
+
 def torrent_has_other_active_owner(torrent_id: str, exclude_item_id) -> bool:
     """True if another media_items row still actively depends on this torrent_id.
 
@@ -462,59 +522,7 @@ class AddingQueue:
                          result['original_scraped_torrent_title'] = result.get('original_title')
 
                 # --- Select Torrent (cached/uncached logic) ---
-                accept_uncached_within_hours = int(get_setting('Scraping', 'accept_uncached_within_hours', 0))
-                accept_uncached = False
-                # Determine if we should accept uncached based on recency
-                logging.info(f"Accepting uncached within {accept_uncached_within_hours} hours")
-                if accept_uncached_within_hours > 0:
-                    release_date_str = item.get('release_date')
-                    airtime_str = item.get('airtime')
-                    release_datetime = None
-                    if release_date_str and release_date_str != 'Unknown':
-                        try:
-                            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-                            if airtime_str:
-                                try:
-                                    try:
-                                        airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
-                                    except ValueError:
-                                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                                except ValueError:
-                                    airtime = datetime.strptime("00:00", '%H:%M').time()
-                            else:
-                                airtime = datetime.strptime("00:00", '%H:%M').time()
-                            release_datetime = datetime.combine(release_date, airtime)
-                            # Apply offset based on type
-                            offset_hours = 0.0
-                            if item.get('type') == 'movie':
-                                offset_setting = get_setting("Queue", "movie_airtime_offset", "19")
-                                try:
-                                    offset_hours = float(offset_setting)
-                                except (ValueError, TypeError):
-                                    offset_hours = 19.0
-                            elif item.get('type') == 'episode':
-                                offset_setting = get_setting("Queue", "episode_airtime_offset", "0")
-                                try:
-                                    offset_hours = float(offset_setting)
-                                except (ValueError, TypeError):
-                                    offset_hours = 0.0
-                            release_datetime += timedelta(hours=offset_hours)
-                            now = datetime.now()
-                            hours_since_release = (now - release_datetime).total_seconds() / 3600.0
-                            logging.info(f"Hours since release: {hours_since_release}")
-                            if 0 <= hours_since_release <= accept_uncached_within_hours:
-                                logging.info(f"Accepting uncached release for {item_identifier} because it was released within the last {accept_uncached_within_hours} hours")
-                                accept_uncached = True
-                        except Exception:
-                            pass
-                # If not set by recency, use normal uncached_content_handling
-                if not accept_uncached:
-                    if get_setting('Scraping', 'uncached_content_handling', 'None') == 'None':
-                        accept_uncached = False
-                    elif get_setting('Scraping', 'uncached_content_handling') == 'Full':
-                        accept_uncached = True
-                    else: # Hybrid mode is the default if not None or Full
-                        accept_uncached = False # Start with cached only for hybrid
+                accept_uncached = accepts_uncached_now(item, item_identifier)
 
                 # Mark if this is an NZB item — one attempt per tick to keep queue flowing
                 _first_res = results[0] if results else {}

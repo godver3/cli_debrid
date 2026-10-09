@@ -111,10 +111,9 @@ class ProbeAddableResultTest(unittest.TestCase):
     """_probe_has_addable_result: cached-only settings need a cached torrent."""
     MAGNET = 'magnet:?xt=urn:btih:' + 'a' * 40
 
-    def _check(self, results, cached=(), uncached_handling='None', hybrid=False):
+    def _check(self, results, cached=(), accepts_uncached=False, hybrid=False):
         def fake_get_setting(section, key, default=None):
-            return {('Scraping', 'uncached_content_handling'): uncached_handling,
-                    ('Scraping', 'hybrid_mode'): hybrid}.get((section, key), default)
+            return {('Scraping', 'hybrid_mode'): hybrid}.get((section, key), default)
 
         provider = mock.Mock(PROVIDER_NAME='RD')
         processor = mock.Mock(_providers=[provider])
@@ -122,14 +121,16 @@ class ProbeAddableResultTest(unittest.TestCase):
         statuses = iter(cached)
         processor.check_cache_status.side_effect = lambda *a, **k: (next(statuses, False), 'direct_check')
         with mock.patch('queues.scraping_queue.get_setting', side_effect=fake_get_setting), \
+             mock.patch('queues.adding_queue.accepts_uncached_now', return_value=accepts_uncached), \
              mock.patch('debrid.get_debrid_provider', return_value=provider), \
              mock.patch('queues.torrent_processor.TorrentProcessor', return_value=processor):
             ok = ScrapingQueue()._probe_has_addable_result(results, dict(ITEM), 'Aladdin (1992)')
         return ok, processor
 
     def test_uncached_allowed_skips_cache_check(self):
-        for handling, hybrid in (('Full', False), ('None', True)):
-            ok, processor = self._check([{'magnet': self.MAGNET}], uncached_handling=handling, hybrid=hybrid)
+        # Full / inside accept_uncached_within_hours, or Hybrid's uncached second pass
+        for accepts_uncached, hybrid in ((True, False), (False, True)):
+            ok, processor = self._check([{'magnet': self.MAGNET}], accepts_uncached=accepts_uncached, hybrid=hybrid)
             self.assertTrue(ok)
             processor.check_cache_status.assert_not_called()
 
@@ -153,6 +154,33 @@ class ProbeAddableResultTest(unittest.TestCase):
         ok, processor = self._check([{'magnet': self.MAGNET}, {'nzb_url': 'http://x/nzb'}])
         self.assertTrue(ok)
         processor.check_cache_status.assert_not_called()
+
+
+class AcceptsUncachedNowTest(unittest.TestCase):
+    """The Adding queue's first-pass uncached rule, shared with the probe."""
+
+    def _accepts(self, release_date, handling='None', within_hours=24):
+        from queues import adding_queue
+
+        def fake_get_setting(section, key, default=None):
+            return {('Scraping', 'accept_uncached_within_hours'): within_hours,
+                    ('Scraping', 'uncached_content_handling'): handling,
+                    ('Queue', 'episode_airtime_offset'): '0'}.get((section, key), default)
+
+        item = {'type': 'episode', 'release_date': release_date, 'airtime': None}
+        with mock.patch('queues.adding_queue.get_setting', side_effect=fake_get_setting):
+            return adding_queue.accepts_uncached_now(item, 'Show S01E01')
+
+    def test_recent_release_inside_window(self):
+        from datetime import date
+        self.assertTrue(self._accepts(date.today().isoformat()))
+
+    def test_old_release_outside_window(self):
+        self.assertFalse(self._accepts('2001-01-01'))
+        self.assertFalse(self._accepts('Unknown'))
+
+    def test_full_always_accepts(self):
+        self.assertTrue(self._accepts('2001-01-01', handling='Full'))
 
 
 if __name__ == '__main__':

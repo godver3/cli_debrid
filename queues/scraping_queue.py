@@ -2030,14 +2030,14 @@ class ScrapingQueue:
     _PROBE_CACHE_CHECK_LIMIT = 5
 
     def _probe_has_addable_result(self, results, item, item_identifier) -> bool:
-        """Whether the Adding queue could take one of the probe's results. With cached-only
-        settings (uncached_content_handling None, hybrid_mode off) an uncached torrent can't
-        be added, and switching to a fallback that then sleeps would have blacklisted the
-        original for nothing. Checks the top few torrents with the Adding queue's own cache
-        check; NZB results don't need one. An error counts as not cached, which only keeps
-        the original on its retry cycle."""
-        if (get_setting('Scraping', 'uncached_content_handling', 'None') != 'None'
-                or get_setting('Scraping', 'hybrid_mode', False)):
+        """Whether the Adding queue could take one of the probe's results. When it would only
+        take cached torrents (uncached_content_handling None, hybrid_mode off, outside the
+        accept_uncached_within_hours window) an uncached torrent can't be added, and switching
+        to a fallback that then sleeps would have blacklisted the original for nothing. Checks
+        the top few torrents with the Adding queue's own cache check; NZB results don't need
+        one. An error counts as not cached, which only keeps the original on its retry cycle."""
+        from queues.adding_queue import accepts_uncached_now
+        if accepts_uncached_now(item, item_identifier) or get_setting('Scraping', 'hybrid_mode', False):
             return True
         if any(r.get('protocol') == 'nzb' or r.get('nzb_url') for r in results):
             return True
