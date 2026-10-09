@@ -7,8 +7,9 @@ a strict "1080p only" version that can never match old content took ~20h and nin
 identical scrapes before the permissive fallback was tried.
 
 With fallback_at_scrape_time on, an empty scrape probes the fallback version once. If
-the probe finds results the item goes through the existing blacklist-time fallback
-(move_to_blacklisted) now; if not, it sleeps exactly as before.
+the probe finds results the Adding queue could take (with cached-only settings: at least
+one cached torrent, or any NZB) the item goes through the existing blacklist-time
+fallback (move_to_blacklisted) now; if not, it sleeps exactly as before.
 """
 
 import unittest
@@ -30,7 +31,7 @@ def _versions(**strict):
 
 
 class ScrapeTimeFallbackTest(unittest.TestCase):
-    def _run(self, versions, probe_results=(), wake_count=0, fallback_exists=False, item=ITEM):
+    def _run(self, versions, probe_results=(), wake_count=0, fallback_exists=False, item=ITEM, addable=True):
         q = ScrapingQueue()
         q.add_item(dict(item))
         qm = mock.Mock()
@@ -48,6 +49,7 @@ class ScrapeTimeFallbackTest(unittest.TestCase):
              mock.patch('database.database_reading.check_existing_media_item', return_value=fallback_exists), \
              mock.patch.object(ScrapingQueue, 'is_item_old', return_value=False), \
              mock.patch.object(ScrapingQueue, 'reset_not_wanted_check'), \
+             mock.patch.object(ScrapingQueue, '_probe_has_addable_result', return_value=addable), \
              mock.patch.object(ScrapingQueue, 'scrape_with_fallback',
                                return_value=(list(probe_results), [])) as probe:
             q.handle_no_results(dict(item), qm)
@@ -62,6 +64,12 @@ class ScrapeTimeFallbackTest(unittest.TestCase):
 
     def test_probe_miss_keeps_retry_cycle(self):
         qm, probe = self._run(_versions(), probe_results=[])
+        probe.assert_called_once()
+        qm.move_to_blacklisted.assert_not_called()
+        qm.move_to_sleeping.assert_called_once()
+
+    def test_probe_hit_with_nothing_addable_keeps_retry_cycle(self):
+        qm, probe = self._run(_versions(), probe_results=[{'title': 'x'}], addable=False)
         probe.assert_called_once()
         qm.move_to_blacklisted.assert_not_called()
         qm.move_to_sleeping.assert_called_once()
@@ -97,6 +105,54 @@ class ScrapeTimeFallbackTest(unittest.TestCase):
                               item=dict(ITEM, early_release=True))
         probe.assert_not_called()
         qm.move_to_sleeping.assert_called_once()
+
+
+class ProbeAddableResultTest(unittest.TestCase):
+    """_probe_has_addable_result: cached-only settings need a cached torrent."""
+    MAGNET = 'magnet:?xt=urn:btih:' + 'a' * 40
+
+    def _check(self, results, cached=(), uncached_handling='None', hybrid=False):
+        def fake_get_setting(section, key, default=None):
+            return {('Scraping', 'uncached_content_handling'): uncached_handling,
+                    ('Scraping', 'hybrid_mode'): hybrid}.get((section, key), default)
+
+        provider = mock.Mock(PROVIDER_NAME='RD')
+        processor = mock.Mock(_providers=[provider])
+        processor.process_torrent.side_effect = lambda link: (link, None)
+        statuses = iter(cached)
+        processor.check_cache_status.side_effect = lambda *a, **k: (next(statuses, False), 'direct_check')
+        with mock.patch('queues.scraping_queue.get_setting', side_effect=fake_get_setting), \
+             mock.patch('debrid.get_debrid_provider', return_value=provider), \
+             mock.patch('queues.torrent_processor.TorrentProcessor', return_value=processor):
+            ok = ScrapingQueue()._probe_has_addable_result(results, dict(ITEM), 'Aladdin (1992)')
+        return ok, processor
+
+    def test_uncached_allowed_skips_cache_check(self):
+        for handling, hybrid in (('Full', False), ('None', True)):
+            ok, processor = self._check([{'magnet': self.MAGNET}], uncached_handling=handling, hybrid=hybrid)
+            self.assertTrue(ok)
+            processor.check_cache_status.assert_not_called()
+
+    def test_cached_only_needs_a_cached_torrent(self):
+        ok, processor = self._check([{'magnet': self.MAGNET}] * 2, cached=(False, False))
+        self.assertFalse(ok)
+        self.assertEqual(processor.check_cache_status.call_count, 2)
+        ok, _ = self._check([{'magnet': self.MAGNET}] * 2, cached=(False, True))
+        self.assertTrue(ok)
+
+    def test_probe_removes_what_it_checked(self):
+        _, processor = self._check([{'magnet': self.MAGNET}], cached=(True,))
+        self.assertTrue(processor.check_cache_status.call_args.kwargs['remove_cached'])
+
+    def test_checks_at_most_five(self):
+        ok, processor = self._check([{'magnet': self.MAGNET}] * 8)
+        self.assertFalse(ok)
+        self.assertEqual(processor.check_cache_status.call_count, 5)
+
+    def test_nzb_result_needs_no_cache_check(self):
+        ok, processor = self._check([{'magnet': self.MAGNET}, {'nzb_url': 'http://x/nzb'}])
+        self.assertTrue(ok)
+        processor.check_cache_status.assert_not_called()
 
 
 if __name__ == '__main__':

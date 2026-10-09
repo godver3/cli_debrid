@@ -2016,6 +2016,9 @@ class ScrapingQueue:
         if not probe_results:
             logging.info(f"Scrape-time fallback for {item_identifier}: '{fallback_version}' found nothing either, keeping '{current_version}' on its retry cycle.")
             return False
+        if not self._probe_has_addable_result(probe_results, item, item_identifier):
+            logging.info(f"Scrape-time fallback for {item_identifier}: '{fallback_version}' found {len(probe_results)} result(s) but none cached, keeping '{current_version}' on its retry cycle.")
+            return False
 
         logging.info(f"Scrape-time fallback for {item_identifier}: '{fallback_version}' found {len(probe_results)} result(s), switching to it now.")
         queue_manager.move_to_blacklisted(item, "Scraping")
@@ -2023,6 +2026,60 @@ class ScrapingQueue:
         if self.contains_item_id(item.get('id')):
             self.remove_item(item)
         return True
+
+    _PROBE_CACHE_CHECK_LIMIT = 5
+
+    def _probe_has_addable_result(self, results, item, item_identifier) -> bool:
+        """Whether the Adding queue could take one of the probe's results. With cached-only
+        settings (uncached_content_handling None, hybrid_mode off) an uncached torrent can't
+        be added, and switching to a fallback that then sleeps would have blacklisted the
+        original for nothing. Checks the top few torrents with the Adding queue's own cache
+        check; NZB results don't need one. An error counts as not cached, which only keeps
+        the original on its retry cycle."""
+        if (get_setting('Scraping', 'uncached_content_handling', 'None') != 'None'
+                or get_setting('Scraping', 'hybrid_mode', False)):
+            return True
+        if any(r.get('protocol') == 'nzb' or r.get('nzb_url') for r in results):
+            return True
+
+        from debrid import get_debrid_provider
+        from queues.torrent_processor import TorrentProcessor
+        try:
+            processor = TorrentProcessor(get_debrid_provider())
+            providers = processor._providers
+        except Exception as e:
+            logging.warning(f"Scrape-time fallback for {item_identifier}: cache check unavailable ({e})")
+            return False
+
+        for result in results[:self._PROBE_CACHE_CHECK_LIMIT]:
+            link = result.get('magnet') or result.get('link')
+            if not link:
+                continue
+            magnet, temp_file = processor.process_torrent(link)
+            try:
+                if not magnet and not temp_file:
+                    continue
+                for provider in providers:
+                    try:
+                        cached, _ = processor.check_cache_status(
+                            magnet if not temp_file else "", temp_file,
+                            remove_cached=True,  # the probe adds nothing; don't leave it on the account
+                            item=dict(item, title=result.get('title', item.get('title'))),
+                            provider=provider,
+                        )
+                    except Exception as e:
+                        logging.warning(f"Scrape-time fallback for {item_identifier}: cache check failed on {provider.PROVIDER_NAME}: {e}")
+                        continue
+                    if cached:
+                        logging.info(f"Scrape-time fallback for {item_identifier}: '{result.get('title')}' is cached on {provider.PROVIDER_NAME}.")
+                        return True
+            finally:
+                if temp_file and os.path.exists(temp_file):
+                    try:
+                        os.unlink(temp_file)
+                    except OSError:
+                        pass
+        return False
 
     def is_item_old(self, item: Dict[str, Any]) -> bool:
         # If early release flag is set, it's never considered old for the purpose of immediate blacklisting
