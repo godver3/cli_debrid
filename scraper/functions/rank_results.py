@@ -37,6 +37,9 @@ def check_preferred(patterns_weights, fields, is_bonus):
 
     return score_change, breakdown
 
+_MULTI_AUDIO_RE = re.compile(r'(?i)\bmulti\b(?![ ._-]?subs?\b)|\bdual[ ._-]?audio\b|(?<!web[ ._-])\bdl\b')
+
+
 def rank_result_key(
     result: Dict[str, Any], all_results: List[Dict[str, Any]],
     query: str, query_year: int, query_season: int, query_episode: int,
@@ -65,6 +68,10 @@ def rank_result_key(
     country_weight = float(version_settings.get('country_weight', 3.0))
     language_weight = float(version_settings.get('language_weight', 3.0))
     year_match_weight = float(version_settings.get('year_match_weight', 3.0)) # New weight
+    try:
+        foreign_language_penalty_setting = abs(float(version_settings.get('foreign_language_penalty', 300)))
+    except (TypeError, ValueError):
+        foreign_language_penalty_setting = 300.0
 
     # Upgrade Hub mode: size, bitrate, country and language are irrelevant when
     # comparing quality upgrades — they cause REMUX files to be mis-scored and
@@ -74,6 +81,7 @@ def rank_result_key(
         bitrate_weight = 0.0
         country_weight = 0.0
         language_weight = 0.0
+        foreign_language_penalty_setting = 0.0
 
     # Calculate base scores
     normalized_query = normalize_title(query).lower()
@@ -387,6 +395,7 @@ def rank_result_key(
     # user's preferred language code, so a non-English audio preference actually
     # affects ranking for titles with no distinct translated title.
     detected_release_languages = [str(l).lower() for l in (parsed_info.get('languages') or [])]
+    foreign_language_penalty = 0.0
     if preferred_language:
         preferred_language_lower = preferred_language.lower()
         if preferred_language_lower in detected_release_languages:
@@ -397,9 +406,15 @@ def rank_result_key(
             # penalize if it's *not* multi-language (MULTI releases typically
             # include the preferred language as an undubbed extra track PTT
             # doesn't always tag, so don't punish those).
-            if 'multi' not in detected_release_languages:
-                language_score -= 30
-                language_reason += f" - Penalty for missing preferred language '{preferred_language_lower}' (found {detected_release_languages})"
+            # PTT never emits 'multi' (MULTi only sets dubbed=True, same as
+            # GERMAN.DUBBED), so multi-audio is detected from the name itself.
+            # The scene 'DL' tag means dual-language; WEB-DL must not match.
+            # Applied unweighted (not via language_weight) so the setting is the
+            # exact number of points taken off the total score.
+            is_multi_audio = 'multi' in detected_release_languages or bool(_MULTI_AUDIO_RE.search(torrent_title))
+            if not is_multi_audio:
+                foreign_language_penalty = -foreign_language_penalty_setting
+                language_reason += f" - Penalty {foreign_language_penalty:.0f} for missing preferred language '{preferred_language_lower}' (found {detected_release_languages})"
     # --- End Preferred Audio/Sub Language Ranking ---
 
     normalized_language = language_score # Use the raw score
@@ -537,6 +552,7 @@ def rank_result_key(
         single_episode_score +
         preferred_filter_score +
         language_code_penalty +
+        foreign_language_penalty +
         indexer_bonus +
         scraper_priority +
         version_scraper_priority
@@ -687,7 +703,7 @@ def rank_result_key(
                      f"{season_match_score * 5:.2f} (season) + {episode_match_score * 5:.2f} (ep) + " +
                      f"{multi_pack_score:.2f} (pack_bonus) + {single_episode_score:.2f} (single_ep_penalty) + " +
                      f"{preferred_filter_score:.2f} (pref_filter) + {content_type_score:.2f} (content_type) + " +
-                     f"{language_code_penalty:.2f} (lang_code_penalty)")
+                     f"{language_code_penalty:.2f} (lang_code_penalty) + {foreign_language_penalty:.2f} (foreign_lang_penalty)")
         logging.info(f"  Calculated Total Score (before rounding for breakdown): {total_score}")
         logging.info(f"--- End Detailed Score Debug for: {target_debug_title} ---")
     # --- END DEBUG LOGGING FOR SPECIFIC TITLE ---
@@ -711,6 +727,7 @@ def rank_result_key(
         'preferred_filter_out_breakdown': preferred_filter_out_breakdown, # Contains original patterns that matched
         'content_type_score': content_type_score,
         'language_code_penalty': language_code_penalty, # Add language code penalties
+        'foreign_language_penalty': foreign_language_penalty,
         'version_scraper_priority_score': version_scraper_priority, # Add per-version scraper priority score
         'scraper_priority_score': scraper_priority, # Add global scraper priority score
         'total_score': round(total_score, 2)

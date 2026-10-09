@@ -907,6 +907,7 @@ document.addEventListener('scrapingContentLoaded', function() {
             'wake_count',
             'require_physical_release',
             'language_code',
+            'foreign_language_penalty',
             'anime_filter_mode',
             'enable_spanish_episode_parsing',
             'use_alternative_titles'
@@ -1047,6 +1048,8 @@ document.addEventListener('scrapingContentLoaded', function() {
                                data-key="versions.{{ version }}.{{ key }}">
                         {% if key == 'language_code' %}
                             <p class="settings-description">Preferred language code(s), comma-separated (e.g., fr, es, ja). The first language found will be used. See ISO 639-1.</p>
+                        {% elif key == 'foreign_language_penalty' %}
+                            <p class="settings-description">Points subtracted from a release tagged with a different audio language (e.g. GERMAN for an 'en' version). MULTi, Dual Audio and DL (dual-language) releases are exempt. Scores usually span 100-150 points, so 300 makes such releases a last resort. 0 disables.</p>
                         {% endif %}
                     {% endif %}
                 </div>

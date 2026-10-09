@@ -2283,6 +2283,19 @@ def main():
             logging.info("Successfully migrated version settings to include year_match_weight")
     # --- End year_match_weight migration ---
 
+    # --- Add migration for foreign_language_penalty in versions ---
+    # The Versions page only renders keys present in the config, so backfill it.
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions_updated = False
+        for version_name, version_config in config['Scraping']['versions'].items():
+            if isinstance(version_config, dict) and 'foreign_language_penalty' not in version_config:
+                version_config['foreign_language_penalty'] = 300
+                versions_updated = True
+                logging.info(f"Adding default foreign_language_penalty 300 to version {version_name}")
+        if versions_updated:
+            save_config(config)
+    # --- End foreign_language_penalty migration ---
+
     # --- Add migration for anime_filter_mode in versions ---
     if 'Scraping' in config and 'versions' in config['Scraping']:
         versions_updated = False
