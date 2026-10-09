@@ -25,13 +25,13 @@ def _result(title):
             'size': 1.2, 'bitrate': 6000}
 
 
-def _score(title, preferred_language='en', upgrade_mode=False, **settings):
+def _score(title, preferred_language='en', upgrade_mode=False, original_language=None, **settings):
     version = {'max_resolution': '1080p', 'language_code': 'en'}
     version.update(settings)
     result = _result(title)
     rank_result_key(result, [result], 'How I Met Your Mother', 2005, 1, 18, False,
                     'episode', version, preferred_language=preferred_language,
-                    upgrade_mode=upgrade_mode)
+                    upgrade_mode=upgrade_mode, original_language=original_language)
     return result['score_breakdown']
 
 
@@ -103,6 +103,23 @@ class ForeignLanguagePenaltyTests(unittest.TestCase):
         # A real French audio tag next to a subtitle tag still counts.
         both = _score('How.I.Met.Your.Mother.S01E18.FRENCH.1080p.WEB.x264.SUBFRENCH', preferred_language='fr')
         self.assertGreater(both['total_score'], untagged['total_score'])
+
+    def test_subbed_with_language_word_is_subtitles(self):
+        # Dutch subs on English audio (seen on a live Inception scrape).
+        self.assertEqual(_score('Inception (2010) 720P.X264.NL.SUBBED.Bradje')['foreign_language_penalty'], 0)
+        self.assertEqual(_score('How.I.Met.Your.Mother.S01E18.GERMAN.Subbed.1080p.WEB.x264-X')['foreign_language_penalty'], 0)
+
+    def test_original_language_audio_not_penalized(self):
+        # Parasite.KOREAN is the same Korean track an untagged Parasite release has.
+        korean = 'Parasite.2019.KOREAN.1080p.BluRay.x264.DTS-FGT'
+        self.assertEqual(_score(korean, original_language='ko')['foreign_language_penalty'], 0)
+        self.assertEqual(_score('Parasite (2019) [BluRay Rip 1080p ITA-KOR DTS-AC3 SUBS]',
+                                original_language='ko')['foreign_language_penalty'], 0)
+        # A dub into a third language is still penalized.
+        self.assertEqual(_score('Parasite.2019.PL.1080p.BluRay.x264.AC3-KRT',
+                                original_language='ko')['foreign_language_penalty'], -90)
+        # Without the original language it's the old behaviour.
+        self.assertEqual(_score(korean)['foreign_language_penalty'], -90)
 
     def test_no_preferred_language_no_penalty(self):
         self.assertEqual(_score(GERMAN, preferred_language=None)['foreign_language_penalty'], 0)

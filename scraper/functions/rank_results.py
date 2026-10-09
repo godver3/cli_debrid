@@ -40,11 +40,11 @@ def check_preferred(patterns_weights, fields, is_bonus):
 _MULTI_AUDIO_RE = re.compile(r'(?i)\bmulti\b(?![ ._-]?subs?\b)|\bdual[ ._-]?audio\b|(?<!web[ ._-])\bdl\b')
 
 # Subtitle tags PTT reports as plain languages: SWESUB/ESub/SUBFRENCH, VOSTFR, NORDiC
-# (Nordic subs) and a bare Sub/Subs with the word next to it (Subs.Spanish, Eng Sub,
-# Multi.Subs).
+# (Nordic subs) and a bare Sub/Subs/Subbed with the word next to it (Subs.Spanish,
+# Eng Sub, Multi.Subs, NL.SUBBED).
 _SUBTITLE_TAG_RE = re.compile(
-    r'(?i)\b(?:[a-z]{1,6}subs?|subs?[a-z]{2,8}|vost[a-z]*|nordic|subbed)\b'
-    r'|\b(?:[a-z]+[ ._-])?subs?(?:[ ._-][a-z]+)?\b'
+    r'(?i)\b(?:[a-z]{1,6}subs?|subs?[a-z]{2,8}|vost[a-z]*|nordic)\b'
+    r'|\b(?:[a-z]+[ ._-])?sub(?:s|bed)?(?:[ ._-][a-z]+)?\b'
 )
 
 
@@ -67,6 +67,7 @@ def rank_result_key(
     translated_title: str = None,
     show_season_episode_counts: Optional[Dict[int, int]] = None,
     upgrade_mode: bool = False,
+    original_language: Optional[str] = None,
 ) -> Tuple:
     torrent_title = result.get('title', '')
     parsed_info = result.get('parsed_info', {})
@@ -436,7 +437,10 @@ def rank_result_key(
             # The scene 'DL' tag means dual-language; WEB-DL must not match.
             # Scaled by language_weight like the other language scores.
             is_multi_audio = 'multi' in audio_languages or bool(_MULTI_AUDIO_RE.search(torrent_title))
-            if not is_multi_audio:
+            # The title's own language is the original audio (Parasite.KOREAN is the same
+            # track as an untagged Parasite release), not a dub.
+            is_original_audio = bool(original_language) and original_language.lower() in audio_languages
+            if not is_multi_audio and not is_original_audio:
                 foreign_language_penalty = -foreign_language_penalty_setting * language_weight
                 language_reason += f" - Penalty {foreign_language_penalty:.0f} for missing preferred language '{preferred_language_lower}' (audio {audio_languages})"
     # --- End Preferred Audio/Sub Language Ranking ---

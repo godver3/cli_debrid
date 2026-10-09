@@ -273,6 +273,29 @@ def convert_anime_episode_format(season: int, episode: int, season_episode_count
     logging.info(f"Generated single episode formats: {formats}")
     return formats
 
+_ORIGINAL_LANGUAGE_CACHE: Dict[Tuple[str, str], str] = {}
+
+
+def _original_language(tmdb_id, content_type) -> Optional[str]:
+    """TMDB original_language ('ko' for Parasite), cached per process. Failures aren't
+    cached, and return None, which leaves the foreign-language penalty as it was."""
+    if not tmdb_id:
+        return None
+    media_type = 'movie' if (content_type or '').lower() == 'movie' else 'tv'
+    key = (str(tmdb_id), media_type)
+    if key not in _ORIGINAL_LANGUAGE_CACHE:
+        try:
+            from metadata.metadata import get_tmdb_metadata
+            language = ((get_tmdb_metadata(str(tmdb_id), media_type) or {}).get('original_language') or '').lower()
+        except Exception as e:
+            logging.warning(f"Could not get original language for TMDB {media_type} {tmdb_id}: {e}")
+            return None
+        if not language:
+            return None
+        _ORIGINAL_LANGUAGE_CACHE[key] = language
+    return _ORIGINAL_LANGUAGE_CACHE[key]
+
+
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, skip_cache_check: bool = False, check_pack_wantedness: bool = False) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     from metadata.metadata import get_tmdb_id_and_media_type, get_metadata, get_media_country_code
     logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}, skip_cache_check={skip_cache_check}, check_pack_wantedness={check_pack_wantedness}")
@@ -1429,6 +1452,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         # Parse scraping settings for final sorting
         # version_settings already loaded and defaulted/merged above
 
+        # The title's original language exempts its own audio from the foreign-language
+        # penalty; only looked up when a preferred language makes the penalty possible.
+        original_language = _original_language(tmdb_id, content_type) if preferred_language else None
+
         # Sort all results together
         def stable_rank_key(x):
             # Make sure is_anime flag is set in each result
@@ -1440,7 +1467,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 content_type, version_settings,
                 preferred_language=preferred_language, # Pass new arg
                 translated_title=translated_title,     # Pass new arg
-                show_season_episode_counts=show_season_episode_counts_for_query # MODIFIED: Pass the fetched counts
+                show_season_episode_counts=show_season_episode_counts_for_query, # MODIFIED: Pass the fetched counts
+                original_language=original_language,
             )
 
         # Apply ultimate sort order if present
