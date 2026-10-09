@@ -762,6 +762,11 @@ SETTINGS_SCHEMA = {
                     "type": "number",
                     "default": 3
                 },
+                "foreign_language_penalty": {
+                    "type": "number",
+                    "default": 30,
+                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. 0 disables."
+                },
                 "wake_count": {
                     "type": "integer",
                     "default": None,
@@ -769,8 +774,18 @@ SETTINGS_SCHEMA = {
                 },
                 "fallback_version": {
                     "type": "string",
-                    "description": "Version to fall back to if the current version fails and the item is blacklisted. Select 'None' to disable fallback.",
+                    "description": "Version to try instead once this version has exhausted its retries and the item is blacklisted. Select 'None' to disable fallback.",
                     "default": "None"
+                },
+                "fallback_at_scrape_time": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "When a scrape finds nothing, try the Fallback Version right away instead of waiting for this version's sleep/blacklist cycle. If the fallback finds results, this item is blacklisted and the fallback version is requested; if not, this item keeps retrying as usual."
+                },
+                "fallback_after_attempts": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "With Fallback at Scrape Time: number of failed scrapes before the fallback is tried. 0 or 1 = on the first failure."
                 },
                 "anime_filter_mode": {
                     "type": "string",

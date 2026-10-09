@@ -1,0 +1,132 @@
+"""A release tagged with an audio language other than the version's language
+code must rank below untagged releases. Repro: How I Met Your Mother S01E18
+(language_code 'en') picked '...Der.Anstaendige.GERMAN.WS.HDTV...' over English
+WEB-DLs because preferred_language was None for 'en', so no penalty applied.
+The penalty is foreign_language_penalty (default 30) x language_weight."""
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from PTT import parse_title
+
+from scraper.functions.rank_results import rank_result_key
+
+GERMAN = 'How.I.Met.Your.Mother.S01E18.Der.Anstaendige.GERMAN.WS.HDTV.AC3.1080p.x264-ATG'
+ENGLISH = 'How.I.Met.Your.Mother.S01E18.1080p.AMZN.WEBRip.DDP5.1.x264-NOGRP'
+MULTI = 'How.I.Met.Your.Mother.S01E18.MULTi.GERMAN.1080p.WEB.x264-X'
+
+
+def _result(title):
+    parsed = parse_title(title)
+    parsed['resolution_rank'] = 3
+    return {'title': title, 'original_title': title, 'parsed_info': parsed,
+            'size': 1.2, 'bitrate': 6000}
+
+
+def _score(title, preferred_language='en', upgrade_mode=False, original_language=None, **settings):
+    version = {'max_resolution': '1080p', 'language_code': 'en'}
+    version.update(settings)
+    result = _result(title)
+    rank_result_key(result, [result], 'How I Met Your Mother', 2005, 1, 18, False,
+                    'episode', version, preferred_language=preferred_language,
+                    upgrade_mode=upgrade_mode, original_language=original_language)
+    return result['score_breakdown']
+
+
+class ForeignLanguagePenaltyTests(unittest.TestCase):
+    def test_default_penalty_is_30_times_language_weight(self):
+        german, english = _score(GERMAN), _score(ENGLISH)
+        self.assertEqual(german['foreign_language_penalty'], -90)
+        self.assertEqual(english['foreign_language_penalty'], 0)
+        # Same size/bitrate inputs, so the gap is the penalty alone.
+        self.assertAlmostEqual(english['total_score'] - german['total_score'], 90, delta=1)
+
+    def test_setting_overrides_and_zero_disables(self):
+        self.assertEqual(_score(GERMAN, foreign_language_penalty=120)['foreign_language_penalty'], -360)
+        self.assertEqual(_score(GERMAN, foreign_language_penalty=0)['foreign_language_penalty'], 0)
+
+    def test_language_weight_scales_it(self):
+        self.assertEqual(_score(GERMAN, language_weight=10)['foreign_language_penalty'], -300)
+        self.assertEqual(_score(GERMAN, language_weight=0)['foreign_language_penalty'], 0)
+
+    def test_multi_audio_exempt(self):
+        # PTT returns ['de'] for these (never 'multi'); the name marks dual audio.
+        for title in (MULTI,
+                      'How.I.Met.Your.Mother.S04E10.Weicheier.German.DD20.Synced.DL.1080p.BD.x264-TVS',
+                      'How.I.Met.Your.Mother.S01E18.Dual-Audio.GERMAN.1080p.WEB.x264-X'):
+            with self.subTest(title=title):
+                self.assertEqual(_score(title)['foreign_language_penalty'], 0)
+
+    def test_dubbed_and_web_dl_not_mistaken_for_multi_audio(self):
+        for title in ('How.I.Met.Your.Mother.S04E23.Hilfe.wider.Willen.GERMAN.DUBBED.720p.BLURAY.x264-ZZGtv',
+                      'How.I.Met.Your.Mother.S01E18.GERMAN.1080p.WEB-DL.x264-X',
+                      'How.I.Met.Your.Mother.S01E18.GERMAN.Multi.Subs.1080p.WEB.x264-X'):
+            with self.subTest(title=title):
+                self.assertEqual(_score(title)['foreign_language_penalty'], -90)
+
+    def test_subtitle_only_tags_not_penalized(self):
+        # English audio; PTT reports the subtitle language as a plain language.
+        for title in ('How.I.Met.Your.Mother.S01E18.1080p.BluRay.x264.SWESUB-GRP',
+                      'How.I.Met.Your.Mother.S01E18.1080p.WEB.h264.VOSTFR',
+                      'How.I.Met.Your.Mother.S01E18.NORDiC.1080p.BluRay.x264',
+                      'How.I.Met.Your.Mother.S01E18.1080p.WEB-DL.Subs.Spanish'):
+            with self.subTest(title=title):
+                self.assertEqual(_score(title)['foreign_language_penalty'], 0)
+
+    def test_foreign_audio_with_subtitle_tag_still_penalized(self):
+        for title in ('How.I.Met.Your.Mother.S01E18.1080p.WEB.x264.ESub.Hindi',
+                      'How.I.Met.Your.Mother.S01E18.GERMAN.DUBBED.1080p.SWESUB',
+                      'How.I.Met.Your.Mother.S01E18.NORDiC.DUBBED.1080p.BluRay'):
+            with self.subTest(title=title):
+                self.assertEqual(_score(title)['foreign_language_penalty'], -90)
+
+    def test_no_bonus_for_english_tag(self):
+        # An untagged English release must not lose to ESub / ENG-tagged rips.
+        english = _score(ENGLISH)['total_score']
+        for title in ('How.I.Met.Your.Mother.S01E18.1080p.AMZN.WEBRip.DDP5.1.x264.ESub',
+                      'How.I.Met.Your.Mother.S01E18.1080p.AMZN.WEBRip.DDP5.1.x264.RUS.ENG'):
+            with self.subTest(title=title):
+                self.assertLessEqual(_score(title)['total_score'], english)
+
+    def test_non_english_preference_keeps_bonus(self):
+        french = _score('How.I.Met.Your.Mother.S01E18.FRENCH.1080p.WEB.x264-X', preferred_language='fr')
+        untagged = _score(ENGLISH, preferred_language='fr')
+        self.assertGreater(french['total_score'], untagged['total_score'])
+
+    def test_subtitle_tag_earns_no_bonus(self):
+        # VOSTFR is the original audio with French subs: same score as untagged for 'fr'.
+        vostfr = _score('How.I.Met.Your.Mother.S01E18.1080p.WEB.h264.VOSTFR', preferred_language='fr')
+        untagged = _score(ENGLISH, preferred_language='fr')
+        self.assertAlmostEqual(vostfr['total_score'], untagged['total_score'], delta=1)
+        # A real French audio tag next to a subtitle tag still counts.
+        both = _score('How.I.Met.Your.Mother.S01E18.FRENCH.1080p.WEB.x264.SUBFRENCH', preferred_language='fr')
+        self.assertGreater(both['total_score'], untagged['total_score'])
+
+    def test_subbed_with_language_word_is_subtitles(self):
+        # Dutch subs on English audio (seen on a live Inception scrape).
+        self.assertEqual(_score('Inception (2010) 720P.X264.NL.SUBBED.Bradje')['foreign_language_penalty'], 0)
+        self.assertEqual(_score('How.I.Met.Your.Mother.S01E18.GERMAN.Subbed.1080p.WEB.x264-X')['foreign_language_penalty'], 0)
+
+    def test_original_language_audio_not_penalized(self):
+        # Parasite.KOREAN is the same Korean track an untagged Parasite release has.
+        korean = 'Parasite.2019.KOREAN.1080p.BluRay.x264.DTS-FGT'
+        self.assertEqual(_score(korean, original_language='ko')['foreign_language_penalty'], 0)
+        self.assertEqual(_score('Parasite (2019) [BluRay Rip 1080p ITA-KOR DTS-AC3 SUBS]',
+                                original_language='ko')['foreign_language_penalty'], 0)
+        # A dub into a third language is still penalized.
+        self.assertEqual(_score('Parasite.2019.PL.1080p.BluRay.x264.AC3-KRT',
+                                original_language='ko')['foreign_language_penalty'], -90)
+        # Without the original language it's the old behaviour.
+        self.assertEqual(_score(korean)['foreign_language_penalty'], -90)
+
+    def test_no_preferred_language_no_penalty(self):
+        self.assertEqual(_score(GERMAN, preferred_language=None)['foreign_language_penalty'], 0)
+
+    def test_upgrade_mode_ignores_it(self):
+        self.assertEqual(_score(GERMAN, upgrade_mode=True)['foreign_language_penalty'], 0)
+
+
+if __name__ == '__main__':
+    unittest.main()

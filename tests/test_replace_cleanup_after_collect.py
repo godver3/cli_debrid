@@ -65,12 +65,24 @@ class TestReplaceCleanupAfterCollect(unittest.TestCase):
                 season_number INTEGER, episode_number INTEGER,
                 manual_replace INTEGER DEFAULT 0,
                 title TEXT, episode_title TEXT,
-                location_on_disk TEXT, original_path_for_symlink TEXT
+                location_on_disk TEXT, original_path_for_symlink TEXT,
+                filled_by_torrent_id TEXT, replaced_files TEXT
             )
         ''')
 
+        class _UnclosableConn:
+            # The code under test closes its connection; keep the in-memory DB readable.
+            def __init__(_self, conn):
+                _self._conn = conn
+
+            def close(_self):
+                pass
+
+            def __getattr__(_self, name):
+                return getattr(_self._conn, name)
+
         fake_db_module = types.ModuleType('database')
-        fake_db_module.get_db_connection = lambda: self.conn
+        fake_db_module.get_db_connection = lambda: _UnclosableConn(self.conn)
         sys.modules['database'] = fake_db_module
 
         fake_debrid_module = types.ModuleType('debrid')
@@ -235,6 +247,93 @@ class TestReplaceCleanupAfterCollect(unittest.TestCase):
         _, kwargs = self.delete_calls[0]
         self.assertTrue(kwargs['delete_from_media_server'])
         self.assertEqual(self.deferred_calls, [])
+
+    # --- Library "Move back to Wanted": the old files are removed once the replacement lands ---
+    # Reported: sending an episode back to Wanted left the old symlink, the old torrent/NZB on
+    # the mount and the old Plex version behind after the new episode was collected, because
+    # the route cleared every file column and nothing remembered what to delete.
+
+    def _move_to_wanted_episode(self, old_files, new_path, new_orig='/mnt/GL0P/b.mkv', new_job='nzb:new'):
+        import json
+        raw = json.dumps(old_files)
+        self.conn.execute(
+            "INSERT INTO media_items (id, imdb_id, type, state, version, season_number, episode_number, "
+            "title, location_on_disk, original_path_for_symlink, filled_by_torrent_id, replaced_files) VALUES "
+            "(20, 'tt9', 'episode', 'Collected', '1080p', 1, 5, 'Show', ?, ?, ?, ?)",
+            (new_path, new_orig, new_job, raw))
+        self.conn.commit()
+        item = dict(self.conn.execute("SELECT * FROM media_items WHERE id = 20").fetchone())
+        pp.cleanup_files_replaced_by_move_to_wanted(item)
+        import threading
+        for t in threading.enumerate():
+            if t.name.startswith('replace-plex-'):
+                t.join(timeout=5)
+        return item
+
+    OLD_EP = {'id': 20, 'title': 'Show', 'type': 'episode', 'state': 'Collected',
+              'location_on_disk': '/sym/Show/Season 01/Show - S01E05 - (TURG).mkv',
+              'original_path_for_symlink': '/mnt/TURG/a.mkv', 'filled_by_torrent_id': 'nzb:old'}
+    NEW_EP = '/sym/Show/Season 01/Show - S01E05 - (GL0P).mkv'
+
+    def test_move_to_wanted_old_files_deleted_from_snapshot_not_db_row(self):
+        self._settings()
+        item = self._move_to_wanted_episode([self.OLD_EP], self.NEW_EP)
+        self.assertEqual(len(self.delete_calls), 1)
+        item_id, kwargs = self.delete_calls[0]
+        self.assertEqual(item_id, 20)
+        self.assertEqual(kwargs['item'], self.OLD_EP)
+        # The row now holds the replacement: never delete or blacklist it.
+        self.assertTrue(kwargs['skip_database'])
+        self.assertTrue(kwargs['delete_symlinks'])
+        self.assertTrue(kwargs['delete_files'])
+        self.assertTrue(kwargs['delete_from_debrid'])
+        self.assertFalse(kwargs['delete_from_media_server'])
+        self.assertEqual(self.deferred_calls, [('Show', self.NEW_EP, [self.OLD_EP['location_on_disk']], None)])
+        self.assertIsNone(self.conn.execute("SELECT replaced_files FROM media_items WHERE id = 20").fetchone()[0])
+
+    def test_move_to_wanted_cleanup_runs_once(self):
+        self._settings()
+        item = self._move_to_wanted_episode([self.OLD_EP], self.NEW_EP)
+        pp.cleanup_files_replaced_by_move_to_wanted(item)  # stale dict, list already claimed
+        self.assertEqual(len(self.delete_calls), 1)
+
+    def test_move_to_wanted_same_paths_and_job_kept(self):
+        self._settings()
+        old = dict(self.OLD_EP, location_on_disk=self.NEW_EP)
+        self._move_to_wanted_episode([old], self.NEW_EP, new_orig='/mnt/X/c.mkv', new_job='nzb:old')
+        _, kwargs = self.delete_calls[0]
+        self.assertFalse(kwargs['delete_symlinks'])
+        self.assertFalse(kwargs['delete_from_media_server'])
+        self.assertFalse(kwargs['delete_from_debrid'])
+
+    def test_move_to_wanted_recollected_on_old_file_keeps_it(self):
+        # Plex mode: the library sync matched the old file by name and re-collected the row on it.
+        self._settings(mode='Plex')
+        old = dict(self.OLD_EP, location_on_disk='/mnt/zurg/shows/TURG/Show.S01E05.mkv', original_path_for_symlink=None)
+        self._move_to_wanted_episode([old], '/mnt/zurg/__all__/TURG/Show.S01E05.mkv', new_orig=None, new_job=None)
+        self.assertEqual(self.delete_calls, [])
+
+    def test_move_to_wanted_plex_mode_new_release(self):
+        self._settings(mode='Plex')
+        old = dict(self.OLD_EP, location_on_disk='/mnt/zurg/shows/TURG/Show.S01E05.TURG.mkv', original_path_for_symlink=None)
+        new = '/mnt/zurg/shows/GL0P/Show.S01E05.GL0P.mkv'
+        self._move_to_wanted_episode([old], new, new_orig=None, new_job='RDHASH')
+        _, kwargs = self.delete_calls[0]
+        self.assertTrue(kwargs['delete_from_debrid'])
+        self.assertFalse(kwargs['delete_from_media_server'])
+        self.assertEqual(self.deferred_calls, [('Show', new, [old['location_on_disk']], None)])
+
+    def test_move_to_wanted_no_new_job_keeps_old_job(self):
+        self._settings()
+        self._move_to_wanted_episode([self.OLD_EP], self.NEW_EP, new_job=None)
+        _, kwargs = self.delete_calls[0]
+        self.assertFalse(kwargs['delete_from_debrid'])
+        self.assertTrue(kwargs['delete_symlinks'])
+
+    def test_no_replaced_files_is_noop(self):
+        self._settings()
+        pp.cleanup_files_replaced_by_move_to_wanted({'id': 1, 'replaced_files': None})
+        self.assertEqual(self.delete_calls, [])
 
 
 if __name__ == '__main__':

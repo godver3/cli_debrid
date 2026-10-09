@@ -214,6 +214,9 @@ def migrate_schema():
         if 'excluded_release_id' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN excluded_release_id TEXT')
             logging.info("Successfully added excluded_release_id column to media_items table.")
+        if 'replaced_files' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN replaced_files TEXT')
+            logging.info("Successfully added replaced_files column to media_items table.")
         if 'content_source_detail' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN content_source_detail TEXT')
             logging.info("Successfully added content_source_detail column to media_items table.")
@@ -996,6 +999,7 @@ def create_tables():
                 title_aliases TEXT,
                 disable_not_wanted_check BOOLEAN DEFAULT FALSE,
                 excluded_release_id TEXT,
+                replaced_files TEXT,
                 physical_release_date DATE,
                 plex_verified BOOLEAN DEFAULT FALSE,
                 upgrading_from_version TEXT,

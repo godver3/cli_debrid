@@ -63,6 +63,125 @@ def _same_path(a, b):
     return bool(a and b) and os.path.normpath(str(a)) == os.path.normpath(str(b))
 
 
+def _delete_replaced_files(item_dict, old_rows, log_tag, entry_label, snapshots=False):
+    """Remove each old row's provider job, symlink, mount file and media server entry
+    via DeletionManager. With snapshots=True the rows are saved copies of files item_dict's
+    own row used to hold, so the DB row is left alone."""
+    item_id = item_dict.get('id')
+    # Symlinked/Local + Plex: the old version is removed from Plex only after Plex has
+    # scanned in the replacement (see remove_replaced_plex_media_after_scan). Deleting
+    # it straight away removed the whole Plex item, so the replacement came back as a
+    # brand-new "recently added" entry. Jellyfin/Emby keep the immediate removal.
+    new_path = item_dict.get('location_on_disk')
+    # Plex mode defers too for snapshots: a force-collected replacement may not be in Plex yet.
+    defer_modes = ('Symlinked/Local', 'Plex') if snapshots else ('Symlinked/Local',)
+    defer_plex = (
+        bool(new_path)
+        and get_setting('File Management', 'file_collection_management') in defer_modes
+        and not (get_setting('Debug', 'emby_jellyfin_url', default='') or '').strip()
+    )
+    new_original = item_dict.get('original_path_for_symlink')
+    new_torrent_id = item_dict.get('filled_by_torrent_id')
+    new_name = os.path.basename(new_original or new_path or item_dict.get('filled_by_file') or '')
+    deferred_plex_paths = []
+
+    from debrid import get_debrid_provider
+    from utilities.deletion_manager import DeletionManager
+
+    try:
+        debrid_provider = get_debrid_provider()
+    except Exception:
+        debrid_provider = None
+    deletion_manager = DeletionManager(debrid_provider=debrid_provider)
+
+    for old_row in old_rows:
+        old_id = item_id if snapshots else old_row['id']
+        old_path = old_row.get('location_on_disk')
+        # Templates without {original_filename} put the replacement at the old symlink path,
+        # and re-grabbing the same release reuses the old mount file: deleting those would
+        # delete the replacement itself.
+        same_symlink = _same_path(old_path, new_path)
+        same_original = _same_path(old_row.get('original_path_for_symlink'), new_original)
+        if snapshots:
+            # Plex mode's library sync can re-collect the row on the old file itself (it still
+            # matches location_basename); that file is the one in use now, so keep everything.
+            old_name = os.path.basename(old_row.get('original_path_for_symlink') or old_path
+                                        or old_row.get('filled_by_file') or '')
+            if old_name and old_name == new_name:
+                logging.info(f"[{log_tag}] Item {item_id} was re-collected on its old file {old_name}; nothing to remove")
+                continue
+            # A row re-collected without a provider job of its own gives no proof the old job is unused.
+            keep_job = not new_torrent_id or old_row.get('filled_by_torrent_id') == new_torrent_id
+        else:
+            keep_job = False
+        try:
+            result = deletion_manager.delete_single_item(
+                old_id,
+                delete_from_debrid=not same_original and not keep_job,
+                delete_from_media_server=not defer_plex and not same_symlink,
+                delete_files=not same_original,
+                delete_symlinks=not same_symlink,
+                clear_cache=False,
+                remove_from_content_source=False,
+                skip_database=snapshots,
+                item=old_row if snapshots else None,
+            )
+            if defer_plex and old_path and not same_symlink:
+                deferred_plex_paths.append(old_path)
+            if result.get('success'):
+                logging.info(f"[{log_tag}] Cleaned up replaced {entry_label} entry {old_id}: {result}")
+            else:
+                logging.warning(f"[{log_tag}] Cleanup for replaced {entry_label} entry {old_id} reported errors: {result.get('errors')}")
+        except Exception as del_err:
+            logging.error(f"[{log_tag}] Failed to clean up replaced {entry_label} entry {old_id}: {del_err}", exc_info=True)
+
+    if deferred_plex_paths:
+        import threading
+        from utilities.plex_functions import remove_replaced_plex_media_after_scan
+        # Runs off the queue thread: it waits for the Checking queue's scan to land.
+        threading.Thread(
+            target=remove_replaced_plex_media_after_scan,
+            args=(item_dict.get('title'), new_path, deferred_plex_paths, item_dict.get('episode_title')),
+            name=f"replace-plex-{item_id}",
+            daemon=True,
+        ).start()
+        logging.info(f"[{log_tag}] Deferred Plex removal of {len(deferred_plex_paths)} replaced version(s) until the replacement is scanned in")
+
+
+def cleanup_files_replaced_by_move_to_wanted(item_dict):
+    """
+    Called after an item is promoted to Collected. "Move back to Wanted" on the library
+    page clears the row's file columns but saves the old files in replaced_files; now
+    that the replacement has landed, remove those old files the same way Replace does.
+    """
+    raw = item_dict.get('replaced_files')
+    item_id = item_dict.get('id')
+    if not raw or not item_id:
+        return
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            # Claim the list first so a second Collected transition can't delete twice.
+            claimed = conn.execute(
+                "UPDATE media_items SET replaced_files = NULL WHERE id = ? AND replaced_files = ?",
+                (item_id, raw)
+            ).rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        if not claimed:
+            return
+        import json
+        old_files = [f for f in json.loads(raw) if isinstance(f, dict)]
+    except Exception as err:
+        logging.error(f"[MOVE_TO_WANTED] Could not read replaced files for item {item_id}: {err}", exc_info=True)
+        return
+    if old_files:
+        logging.info(f"[MOVE_TO_WANTED] Item {item_id} re-collected; removing {len(old_files)} file(s) it replaced")
+        _delete_replaced_files(item_dict, old_files, 'MOVE_TO_WANTED', item_dict.get('type') or 'item', snapshots=True)
+
+
 def replace_cleanup_after_collect(item_dict):
     """
     Called after a new item is promoted to Collected state.
@@ -159,66 +278,7 @@ def replace_cleanup_after_collect(item_dict):
         if not rows_to_delete:
             return  # Nothing to clean up
 
-        # Symlinked/Local + Plex: the old version is removed from Plex only after Plex has
-        # scanned in the replacement (see remove_replaced_plex_media_after_scan). Deleting
-        # it straight away removed the whole Plex item, so the replacement came back as a
-        # brand-new "recently added" entry. Jellyfin/Emby keep the immediate removal.
-        new_path = item_dict.get('location_on_disk')
-        defer_plex = (
-            bool(new_path)
-            and get_setting('File Management', 'file_collection_management') == 'Symlinked/Local'
-            and not (get_setting('Debug', 'emby_jellyfin_url', default='') or '').strip()
-        )
-        new_original = item_dict.get('original_path_for_symlink')
-        deferred_plex_paths = []
-
-        from debrid import get_debrid_provider
-        from utilities.deletion_manager import DeletionManager
-
-        try:
-            debrid_provider = get_debrid_provider()
-        except Exception:
-            debrid_provider = None
-        deletion_manager = DeletionManager(debrid_provider=debrid_provider)
-
-        for old_id, old_row in rows_to_delete.items():
-            old_path = old_row.get('location_on_disk')
-            # Templates without {original_filename} put the replacement at the old symlink path,
-            # and re-grabbing the same release reuses the old mount file: deleting those would
-            # delete the replacement itself.
-            same_symlink = _same_path(old_path, new_path)
-            same_original = _same_path(old_row.get('original_path_for_symlink'), new_original)
-            try:
-                result = deletion_manager.delete_single_item(
-                    old_id,
-                    delete_from_debrid=not same_original,
-                    delete_from_media_server=not defer_plex and not same_symlink,
-                    delete_files=not same_original,
-                    delete_symlinks=not same_symlink,
-                    clear_cache=False,
-                    remove_from_content_source=False,
-                    skip_database=False,
-                )
-                if defer_plex and old_path and not same_symlink:
-                    deferred_plex_paths.append(old_path)
-                if result.get('success'):
-                    logging.info(f"[{log_tag}] Cleaned up replaced {entry_label} entry {old_id}: {result}")
-                else:
-                    logging.warning(f"[{log_tag}] Cleanup for replaced {entry_label} entry {old_id} reported errors: {result.get('errors')}")
-            except Exception as del_err:
-                logging.error(f"[{log_tag}] Failed to clean up replaced {entry_label} entry {old_id}: {del_err}", exc_info=True)
-
-        if deferred_plex_paths:
-            import threading
-            from utilities.plex_functions import remove_replaced_plex_media_after_scan
-            # Runs off the queue thread: it waits for the Checking queue's scan to land.
-            threading.Thread(
-                target=remove_replaced_plex_media_after_scan,
-                args=(item_dict.get('title'), new_path, deferred_plex_paths, item_dict.get('episode_title')),
-                name=f"replace-plex-{item_id}",
-                daemon=True,
-            ).start()
-            logging.info(f"[{log_tag}] Deferred Plex removal of {len(deferred_plex_paths)} replaced version(s) until the replacement is scanned in")
+        _delete_replaced_files(item_dict, list(rows_to_delete.values()), log_tag, entry_label)
 
     except Exception as err:
         logging.error(f"[REPLACE] Error in replace cleanup after collect: {err}", exc_info=True)
@@ -496,6 +556,10 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                     replace_cleanup_after_collect(dict(fresh_item))
                 except Exception as e:
                     logging.error(f"Failed to run replace cleanup after collect: {str(e)}")
+                try:
+                    cleanup_files_replaced_by_move_to_wanted(dict(fresh_item))
+                except Exception as e:
+                    logging.error(f"Failed to clean up files replaced via Move to Wanted: {str(e)}")
 
                 # Repairs/upgrades re-collect the same row under a new file name, leaving the
                 # old version behind in Plex as a dead second version. Only items that look

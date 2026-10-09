@@ -37,6 +37,28 @@ def check_preferred(patterns_weights, fields, is_bonus):
 
     return score_change, breakdown
 
+_MULTI_AUDIO_RE = re.compile(r'(?i)\bmulti\b(?![ ._-]?subs?\b)|\bdual[ ._-]?audio\b|(?<!web[ ._-])\bdl\b')
+
+# Subtitle tags PTT reports as plain languages: SWESUB/ESub/SUBFRENCH, VOSTFR, NORDiC
+# (Nordic subs) and a bare Sub/Subs/Subbed with the word next to it (Subs.Spanish,
+# Eng Sub, Multi.Subs, NL.SUBBED).
+_SUBTITLE_TAG_RE = re.compile(
+    r'(?i)\b(?:[a-z]{1,6}subs?|subs?[a-z]{2,8}|vost[a-z]*|nordic)\b'
+    r'|\b(?:[a-z]+[ ._-])?sub(?:s|bed)?(?:[ ._-][a-z]+)?\b'
+)
+
+
+def _audio_languages(torrent_title, parsed_info, detected_languages):
+    """The detected languages minus those that only come from subtitle tags, so an
+    English release with Swedish subs isn't treated as Swedish audio. A DUBBED release
+    keeps all of them: its language tags do describe the audio."""
+    if parsed_info.get('dubbed') or not _SUBTITLE_TAG_RE.search(torrent_title):
+        return detected_languages
+    from PTT import parse_title
+    stripped = _SUBTITLE_TAG_RE.sub('.', torrent_title)
+    return [str(l).lower() for l in (parse_title(stripped).get('languages') or [])]
+
+
 def rank_result_key(
     result: Dict[str, Any], all_results: List[Dict[str, Any]],
     query: str, query_year: int, query_season: int, query_episode: int,
@@ -45,6 +67,7 @@ def rank_result_key(
     translated_title: str = None,
     show_season_episode_counts: Optional[Dict[int, int]] = None,
     upgrade_mode: bool = False,
+    original_language: Optional[str] = None,
 ) -> Tuple:
     torrent_title = result.get('title', '')
     parsed_info = result.get('parsed_info', {})
@@ -65,6 +88,10 @@ def rank_result_key(
     country_weight = float(version_settings.get('country_weight', 3.0))
     language_weight = float(version_settings.get('language_weight', 3.0))
     year_match_weight = float(version_settings.get('year_match_weight', 3.0)) # New weight
+    try:
+        foreign_language_penalty_setting = abs(float(version_settings.get('foreign_language_penalty', 30)))
+    except (TypeError, ValueError):
+        foreign_language_penalty_setting = 30.0
 
     # Upgrade Hub mode: size, bitrate, country and language are irrelevant when
     # comparing quality upgrades — they cause REMUX files to be mis-scored and
@@ -74,6 +101,7 @@ def rank_result_key(
         bitrate_weight = 0.0
         country_weight = 0.0
         language_weight = 0.0
+        foreign_language_penalty_setting = 0.0
 
     # Calculate base scores
     normalized_query = normalize_title(query).lower()
@@ -387,19 +415,34 @@ def rank_result_key(
     # user's preferred language code, so a non-English audio preference actually
     # affects ranking for titles with no distinct translated title.
     detected_release_languages = [str(l).lower() for l in (parsed_info.get('languages') or [])]
+    foreign_language_penalty = 0.0
     if preferred_language:
         preferred_language_lower = preferred_language.lower()
-        if preferred_language_lower in detected_release_languages:
+        # Both checks look at audio languages only: SWESUB, VOSTFR or NORDiC are
+        # subtitles (a French user's VOSTFR has the original audio), and ESub.Hindi is
+        # Hindi audio, not English.
+        audio_languages = _audio_languages(torrent_title, parsed_info, detected_release_languages) if detected_release_languages else []
+        # English releases are normally untagged, so an explicit ENG tag marks a foreign
+        # dual-audio rip rather than a better match: no bonus for 'en'.
+        if preferred_language_lower in audio_languages and preferred_language_lower != 'en':
             language_score += 75
-            language_reason += f" + Bonus for matching preferred language '{preferred_language_lower}' in release ({detected_release_languages})"
-        elif detected_release_languages and preferred_language_lower not in detected_release_languages:
+            language_reason += f" + Bonus for matching preferred language '{preferred_language_lower}' in release audio ({audio_languages})"
+        if audio_languages and preferred_language_lower not in audio_languages:
             # Release has detected languages but not the preferred one — only
             # penalize if it's *not* multi-language (MULTI releases typically
             # include the preferred language as an undubbed extra track PTT
             # doesn't always tag, so don't punish those).
-            if 'multi' not in detected_release_languages:
-                language_score -= 30
-                language_reason += f" - Penalty for missing preferred language '{preferred_language_lower}' (found {detected_release_languages})"
+            # PTT never emits 'multi' (MULTi only sets dubbed=True, same as
+            # GERMAN.DUBBED), so multi-audio is detected from the name itself.
+            # The scene 'DL' tag means dual-language; WEB-DL must not match.
+            # Scaled by language_weight like the other language scores.
+            is_multi_audio = 'multi' in audio_languages or bool(_MULTI_AUDIO_RE.search(torrent_title))
+            # The title's own language is the original audio (Parasite.KOREAN is the same
+            # track as an untagged Parasite release), not a dub.
+            is_original_audio = bool(original_language) and original_language.lower() in audio_languages
+            if not is_multi_audio and not is_original_audio:
+                foreign_language_penalty = -foreign_language_penalty_setting * language_weight
+                language_reason += f" - Penalty {foreign_language_penalty:.0f} for missing preferred language '{preferred_language_lower}' (audio {audio_languages})"
     # --- End Preferred Audio/Sub Language Ranking ---
 
     normalized_language = language_score # Use the raw score
@@ -537,6 +580,7 @@ def rank_result_key(
         single_episode_score +
         preferred_filter_score +
         language_code_penalty +
+        foreign_language_penalty +
         indexer_bonus +
         scraper_priority +
         version_scraper_priority
@@ -687,7 +731,7 @@ def rank_result_key(
                      f"{season_match_score * 5:.2f} (season) + {episode_match_score * 5:.2f} (ep) + " +
                      f"{multi_pack_score:.2f} (pack_bonus) + {single_episode_score:.2f} (single_ep_penalty) + " +
                      f"{preferred_filter_score:.2f} (pref_filter) + {content_type_score:.2f} (content_type) + " +
-                     f"{language_code_penalty:.2f} (lang_code_penalty)")
+                     f"{language_code_penalty:.2f} (lang_code_penalty) + {foreign_language_penalty:.2f} (foreign_lang_penalty)")
         logging.info(f"  Calculated Total Score (before rounding for breakdown): {total_score}")
         logging.info(f"--- End Detailed Score Debug for: {target_debug_title} ---")
     # --- END DEBUG LOGGING FOR SPECIFIC TITLE ---
@@ -711,6 +755,7 @@ def rank_result_key(
         'preferred_filter_out_breakdown': preferred_filter_out_breakdown, # Contains original patterns that matched
         'content_type_score': content_type_score,
         'language_code_penalty': language_code_penalty, # Add language code penalties
+        'foreign_language_penalty': foreign_language_penalty,
         'version_scraper_priority_score': version_scraper_priority, # Add per-version scraper priority score
         'scraper_priority_score': scraper_priority, # Add global scraper priority score
         'total_score': round(total_score, 2)

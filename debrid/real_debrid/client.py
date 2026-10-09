@@ -11,7 +11,7 @@ import asyncio
 import math
 import json
 
-from ..base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError, TorrentAdditionError
+from ..base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError, TorrentAdditionError, is_provider_fault
 from ..common import (
     extract_hash_from_magnet,
     download_and_extract_hash,
@@ -352,8 +352,9 @@ class RealDebridProvider(DebridProvider):
                 
                 if not info:
                     logging.error(f"{log_prefix} Failed to get torrent info for ID: {torrent_id}")
+                    # A failed info fetch (rate limit, outage) says nothing about the
+                    # torrent, so don't blacklist the hash - just clean up and move on.
                     try:
-                        add_to_not_wanted(hash_value)
                         self.remove_torrent(torrent_id, "Failed to get torrent info during cache check")
                     except Exception as e:
                         logging.error(f"{log_prefix} Error in cleanup after info fetch failure: {str(e)}")
@@ -466,10 +467,15 @@ class RealDebridProvider(DebridProvider):
                     except Exception as rm_err:
                         logging.error(f"{log_prefix} Error removing torrent after unhandled error: {str(rm_err)}")
                         self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
-                try:
-                    add_to_not_wanted(hash_value)
-                except Exception as add_err:
-                    logging.error(f"{log_prefix} Failed to add to not wanted list: {str(add_err)}")
+                if is_provider_fault(e):
+                    # e.g. RD's 451 legal block: this provider won't serve the hash,
+                    # but another provider in the chain (or this one later) may.
+                    logging.warning(f"{log_prefix} Provider-side failure - not adding hash to not-wanted list")
+                else:
+                    try:
+                        add_to_not_wanted(hash_value)
+                    except Exception as add_err:
+                        logging.error(f"{log_prefix} Failed to add to not wanted list: {str(add_err)}")
                 results[hash_value] = None
 
         logging.debug(f"{log_prefix} Cache check complete. Results: {results}")
