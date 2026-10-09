@@ -417,14 +417,15 @@ def rank_result_key(
     foreign_language_penalty = 0.0
     if preferred_language:
         preferred_language_lower = preferred_language.lower()
-        # English releases are normally untagged, so an explicit ENG/ESub tag marks a
-        # subtitled or foreign dual-audio rip rather than a better match: no bonus for 'en'.
-        if preferred_language_lower in detected_release_languages and preferred_language_lower != 'en':
-            language_score += 75
-            language_reason += f" + Bonus for matching preferred language '{preferred_language_lower}' in release ({detected_release_languages})"
-        # The penalty looks at audio languages only: SWESUB, VOSTFR or NORDiC on an
-        # English release are subtitles, and ESub.Hindi is Hindi audio, not English.
+        # Both checks look at audio languages only: SWESUB, VOSTFR or NORDiC are
+        # subtitles (a French user's VOSTFR has the original audio), and ESub.Hindi is
+        # Hindi audio, not English.
         audio_languages = _audio_languages(torrent_title, parsed_info, detected_release_languages) if detected_release_languages else []
+        # English releases are normally untagged, so an explicit ENG tag marks a foreign
+        # dual-audio rip rather than a better match: no bonus for 'en'.
+        if preferred_language_lower in audio_languages and preferred_language_lower != 'en':
+            language_score += 75
+            language_reason += f" + Bonus for matching preferred language '{preferred_language_lower}' in release audio ({audio_languages})"
         if audio_languages and preferred_language_lower not in audio_languages:
             # Release has detected languages but not the preferred one — only
             # penalize if it's *not* multi-language (MULTI releases typically

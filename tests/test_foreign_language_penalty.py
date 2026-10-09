@@ -95,6 +95,15 @@ class ForeignLanguagePenaltyTests(unittest.TestCase):
         untagged = _score(ENGLISH, preferred_language='fr')
         self.assertGreater(french['total_score'], untagged['total_score'])
 
+    def test_subtitle_tag_earns_no_bonus(self):
+        # VOSTFR is the original audio with French subs: same score as untagged for 'fr'.
+        vostfr = _score('How.I.Met.Your.Mother.S01E18.1080p.WEB.h264.VOSTFR', preferred_language='fr')
+        untagged = _score(ENGLISH, preferred_language='fr')
+        self.assertAlmostEqual(vostfr['total_score'], untagged['total_score'], delta=1)
+        # A real French audio tag next to a subtitle tag still counts.
+        both = _score('How.I.Met.Your.Mother.S01E18.FRENCH.1080p.WEB.x264.SUBFRENCH', preferred_language='fr')
+        self.assertGreater(both['total_score'], untagged['total_score'])
+
     def test_no_preferred_language_no_penalty(self):
         self.assertEqual(_score(GERMAN, preferred_language=None)['foreign_language_penalty'], 0)
 
