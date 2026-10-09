@@ -934,7 +934,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         # releases against the preferred audio/sub language (detected via PTT)
         # even for titles that are identical across languages (e.g. "Inception"),
         # where no distinct translated title would ever be found.
-        preferred_language = languages_to_try[0] if languages_to_try else None
+        # 'en' is skipped for translation above but is still a preference: without
+        # it an English user's ranking never penalizes e.g. a GERMAN-only release.
+        all_languages = [lang.strip().lower() for lang in language_setting.split(',') if lang.strip()]
+        preferred_language = languages_to_try[0] if languages_to_try else (all_languages[0] if all_languages else None)
         translated_title = None
 
         if languages_to_try:
