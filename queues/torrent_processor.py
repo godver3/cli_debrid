@@ -408,10 +408,12 @@ class TorrentProcessor:
             logging.error(f"Error checking cache: {str(e)}", exc_info=True)
             return None
         
-    def add_to_account(self, magnet_or_url: str) -> Optional[Dict]:
+    def add_to_account(self, magnet_or_url: str, preferred_provider: Optional[DebridProvider] = None) -> Optional[Dict]:
         """Add a magnet/torrent to the debrid account, trying each provider in order.
 
-        Tries the primary provider first with 429 retry logic.
+        Tries the primary provider first with 429 retry logic, or preferred_provider when
+        given (the provider whose cache check found it cached, so the cached copy is used
+        rather than an uncached download on the primary).
         On 451 (DMCA) or exhausted retries it moves on to the next fallback provider.
         Returns torrent info dict from whichever provider succeeded, or None.
         """
@@ -437,6 +439,8 @@ class TorrentProcessor:
                 return None
 
             providers = self._providers
+            if preferred_provider is not None and preferred_provider in providers:
+                providers = [preferred_provider] + [p for p in providers if p is not preferred_provider]
             last_error = None
 
             for provider in providers:
@@ -1571,17 +1575,24 @@ class TorrentProcessor:
                 elif len(providers) == 1:
                     winning_provider, is_cached, cache_source = _check_one(providers[0])
                 else:
+                    _outcomes = {}
                     with ThreadPoolExecutor(max_workers=len(providers)) as _ex:
                         _futures = {_ex.submit(_check_one, p): p for p in providers}
                         for _fut in _as_completed(_futures):
                             _prov, _cached, _src = _fut.result()
                             logging.info(f"[{_prov.PROVIDER_NAME}] cache={_cached} src={_src}")
-                            if _cached and not is_cached:
-                                is_cached = True
-                                cache_source = _src
-                                winning_provider = _prov
-                                # Update processor's active provider so add_to_account uses same one
-                                self.debrid_provider = _prov
+                            _outcomes[id(_prov)] = (_cached, _src)
+                    # Every check has finished by now, so take the first cached provider
+                    # in the configured order rather than whichever answered first.
+                    for _prov in providers:
+                        _cached, _src = _outcomes.get(id(_prov), (None, None))
+                        if _cached:
+                            is_cached = True
+                            cache_source = _src
+                            winning_provider = _prov
+                            # Update processor's active provider so add_to_account uses same one
+                            self.debrid_provider = _prov
+                            break
 
                 if is_cached:
                     logging.info(f"[{item_identifier}] Cached on {winning_provider.PROVIDER_NAME}")
@@ -1678,7 +1689,7 @@ class TorrentProcessor:
                                 except Exception as remove_err:
                                     logging.warning(f"[{item_identifier}] Could not remove errored torrent {existing_torrent_id}: {remove_err}")
                                 logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service (after removing errored torrent)")
-                                info = self.add_to_account(original_link)
+                                info = self.add_to_account(original_link, preferred_provider=winning_provider if is_cached else None)
                             else:
                                 logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Reusing existing torrent ID: {existing_torrent_id}")
                                 info = existing_info
@@ -1688,7 +1699,7 @@ class TorrentProcessor:
                                     info['_provider'] = self.debrid_provider.PROVIDER_NAME
                         else:
                             logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service")
-                            info = self.add_to_account(original_link)
+                            info = self.add_to_account(original_link, preferred_provider=winning_provider if is_cached else None)
                         
                         if info:
                             # Extract hash after successful addition
