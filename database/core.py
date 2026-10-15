@@ -234,6 +234,14 @@ def _open_raw_connection(db_path):
     # Enable synchronous=NORMAL for better performance with WAL
     conn.execute('PRAGMA synchronous = NORMAL')
 
+    # Connections are pooled per thread, so a larger page cache and mmap
+    # reads pay off across calls. media_items rows are wide (scrape_results).
+    # mmap pages live in the shared OS page cache; cache_size is private to
+    # each connection, so it stays modest.
+    conn.execute('PRAGMA cache_size = -16384')  # 16 MiB
+    conn.execute('PRAGMA mmap_size = 268435456')  # 256 MiB
+    conn.execute('PRAGMA temp_store = MEMORY')
+
     conn.row_factory = sqlite3.Row
     return conn
 

@@ -613,18 +613,20 @@ def get_media_item_by_filename(filename: str) -> Optional[Dict]:
     """
     conn = get_db_connection()
     try:
-        # Select all columns for the matching filename
-        # Check multiple location fields to find the item
-        query = '''
-            SELECT * FROM media_items 
-            WHERE filled_by_file = ? 
-               OR location_on_disk LIKE ? 
-               OR location_basename = ?
-        '''
-        # Use LIKE for location_on_disk to handle full paths, exact match for others
-        location_on_disk_pattern = f'%{filename}'
-        cursor = conn.execute(query, (filename, location_on_disk_pattern, filename))
+        # Indexed exact matches first. The location_on_disk suffix LIKE is a
+        # full table scan, so it only runs when they miss (e.g. NZB rows,
+        # which the location_basename triggers skip).
+        cursor = conn.execute(
+            'SELECT * FROM media_items WHERE filled_by_file = ? OR location_basename = ?',
+            (filename, filename),
+        )
         item = cursor.fetchone()
+        if not item:
+            cursor = conn.execute(
+                'SELECT * FROM media_items WHERE location_on_disk LIKE ?',
+                (f'%{filename}',),
+            )
+            item = cursor.fetchone()
         
         if item:
             item_dict = row_to_dict(item) # Use existing helper function
