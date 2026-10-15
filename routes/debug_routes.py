@@ -1442,8 +1442,8 @@ def get_rate_limit_info():
     current_time = time.time()
     
     for domain in api.monitored_domains:
-        hourly_calls = [t for t in api.rate_limiter.hourly_calls[domain] if t > current_time - 3600]
-        five_minute_calls = [t for t in api.rate_limiter.five_minute_calls[domain] if t > current_time - 300]
+        hourly_calls = [t for t in list(api.rate_limiter.hourly_calls[domain]) if t > current_time - 3600]
+        five_minute_calls = [t for t in list(api.rate_limiter.five_minute_calls[domain]) if t > current_time - 300]
         
         rate_limit_info[domain] = {
             'five_minute': {
