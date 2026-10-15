@@ -5,6 +5,8 @@ import json
 import pickle
 from pathlib import Path
 import os
+import threading
+from utilities.atomic_io import atomic_write_bytes
 from utilities.post_processing import handle_state_change
 from typing import List
 import sqlite3
@@ -453,6 +455,10 @@ def delete_items_batch(item_ids, blacklist=False):
         if conn:
             conn.close()
 
+# Serializes the read-append-write below; concurrent callers lost entries.
+_collected_notifications_lock = threading.Lock()
+
+
 def add_to_collected_notifications(media_item):
     # Get db_content directory from environment variable with fallback
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -460,17 +466,17 @@ def add_to_collected_notifications(media_item):
     
     try:
         os.makedirs(notifications_file.parent, exist_ok=True)
-        
-        if notifications_file.exists():
-            with open(notifications_file, "rb") as f:
-                notifications = pickle.load(f)
-        else:
-            notifications = []
-        
-        notifications.append(media_item)
-        
-        with open(notifications_file, "wb") as f:
-            pickle.dump(notifications, f)
+
+        with _collected_notifications_lock:
+            if notifications_file.exists():
+                with open(notifications_file, "rb") as f:
+                    notifications = pickle.load(f)
+            else:
+                notifications = []
+
+            notifications.append(media_item)
+
+            atomic_write_bytes(str(notifications_file), pickle.dumps(notifications))
         
         logging.debug(f"Added notification for collected item: {media_item['title']} (ID: {media_item['id']})")
     except Exception as e:

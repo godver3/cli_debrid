@@ -10,6 +10,7 @@ from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
 import os
 import pickle
 from pathlib import Path
+from utilities.atomic_io import atomic_write_bytes
 from database.database_writing import update_media_item
 from database.core import get_db_connection
 from difflib import SequenceMatcher
@@ -66,8 +67,9 @@ class UpgradingQueue:
             return {}
 
     def save_upgrades_data(self):
-        with open(self.upgrades_file, 'wb') as f:
-            pickle.dump(self.upgrades_data, f)
+        # Atomic: a crash mid-write used to leave a truncated file, which the
+        # loader then treated as corrupt and replaced with empty data.
+        atomic_write_bytes(str(self.upgrades_file), pickle.dumps(self.upgrades_data))
 
     def load_failed_upgrades(self):
         try:
@@ -96,8 +98,7 @@ class UpgradingQueue:
             return {}
 
     def save_failed_upgrades(self):
-        with open(self.failed_upgrades_file, 'wb') as f:
-            pickle.dump(self.failed_upgrades, f)
+        atomic_write_bytes(str(self.failed_upgrades_file), pickle.dumps(self.failed_upgrades))
 
     def load_upgrade_states(self):
         try:
@@ -127,8 +128,7 @@ class UpgradingQueue:
 
     def save_upgrade_states(self):
         try:
-            with open(self.upgrade_states_file, 'wb') as f:
-                pickle.dump(self.upgrade_states, f)
+            atomic_write_bytes(str(self.upgrade_states_file), pickle.dumps(self.upgrade_states))
         except (IOError, pickle.PicklingError, EOFError) as e:
             logging.error(f"Failed to save upgrade states to {self.upgrade_states_file}: {str(e)}", exc_info=True)
 
@@ -145,8 +145,7 @@ class UpgradingQueue:
     def save_upgrade_times(self):
         """Persist upgrade_times to disk so start_time survives restarts."""
         try:
-            with open(self.upgrade_times_file, 'wb') as f:
-                pickle.dump(self.upgrade_times, f)
+            atomic_write_bytes(str(self.upgrade_times_file), pickle.dumps(self.upgrade_times))
         except (IOError, pickle.PicklingError, EOFError) as e:
             logging.error(f"Failed to save upgrade_times: {str(e)}", exc_info=True)
 

@@ -497,7 +497,6 @@ class ProgramRunner:
 
         # Initialize content_sources attribute FIRST
         self.content_sources = None
-        self.file_location_cache = {}  # Cache to store known file locations
 
         self.start_time = time.time()
 
@@ -6599,7 +6598,6 @@ class ProgramRunner:
 
                 if file_found_on_disk:
                     logging.info(f"Confirmed file exists on disk: {actual_file_path} for item {item_id}") # Log actual path found
-                    self.file_location_cache[cache_key] = 'exists'
 
                     if not _ffprobe_gate_or_reject(item_dict, actual_file_path, cache_key):
                         continue
@@ -6864,7 +6862,6 @@ class ProgramRunner:
                     item_title_for_log = item_dict['title'] if item_dict['title'] else 'N/A'
                     logging.info(f"Plex Check (checks enabled): Found file for item {item_id} ('{item_title_for_log}') at: {actual_file_path} (Type: {found_path_type_log}, Folder for scan: '{folder_name_for_plex_scan}')")
                     logging.debug(f"Confirmed file exists on disk: {actual_file_path} for item {item_id}")
-                    self.file_location_cache[cache_key] = 'exists'
                     current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
                     self.plex_scan_tick_counts[cache_key] = current_tick
 
