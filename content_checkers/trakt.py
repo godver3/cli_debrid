@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
 from utilities.settings import get_all_settings
 import trakt.core
+import threading
 import time
 import pickle
 import os

@@ -4746,7 +4746,7 @@ def movie_detail_data(media_id):
                     logging.error(f"Error fetching TMDB metadata for movie {tmdb_id}: {e}")
             else:
                 logging.warning(f"TMDB API key not configured, skipping metadata fetch for movie {tmdb_id}")
-        elif not battery_metadata:
+        else:
             logging.warning(f"No TMDB ID or IMDb ID available for movie {movie_data['title']}, skipping metadata fetch")
 
         # Get content source display name

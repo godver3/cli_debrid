@@ -9,33 +9,27 @@ import ctypes
 import platform
 import gc
 from utilities.log_redaction import RedactingFormatter
-# *** START EDIT: Import tracemalloc ***
+# Import tracemalloc
 try:
     import tracemalloc
     tracemalloc_available = True
 except ImportError:
     tracemalloc = None # Define as None if import fails
     tracemalloc_available = False
-# *** END EDIT ***
-# *** START EDIT: Add psutil import ***
+# Add psutil import
 try:
     import psutil
 except ImportError:
     psutil = None # Handle missing import gracefully
-# *** END EDIT ***
-# *** START EDIT ***
 from apscheduler.schedulers.background import BackgroundScheduler
-# --- START EDIT: Add ThreadPoolExecutor for explicit configuration ---
+# Add ThreadPoolExecutor for explicit configuration
 from apscheduler.executors.pool import ThreadPoolExecutor
-# --- END EDIT ---
 from apscheduler.triggers.interval import IntervalTrigger
-# --- START EDIT: Add threading.Lock ---
+# Add threading.Lock
 import threading # For scheduler lock, concurrent queue processing, AND heavy task lock
-# --- END EDIT ---
 import functools # Added for partial
 import apscheduler.events # Added for listener events
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED, EVENT_JOB_SUBMITTED, EVENT_JOB_MAX_INSTANCES
-# *** END EDIT ***
 from queues.initialization import initialize
 from utilities.settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
@@ -103,9 +97,8 @@ from database.database_reading import get_media_item_by_id
 from utilities.local_library_scan import check_local_file_for_item # Add local scan import
 from cli_battery.app.direct_api import DirectAPI # Import DirectAPI
 import json # Added for loading intervals
-# --- START EDIT: Add Debrid imports for library size task ---
+# Add Debrid imports for library size task
 from debrid import get_debrid_provider, ProviderUnavailableError
-# --- END EDIT ---
 from utilities.plex_removal_cache import process_removal_cache # Added import for standalone removal processing
 import sys # Add for checking apscheduler.events
 from collections import defaultdict  # Added alongside deque above for runtime tracking
@@ -173,7 +166,7 @@ class ProgramRunner:
         # rebuild path reads a different setting) before it ever got to run once.
         self._scheduler_started_once = False
         
-        # --- START EDIT: Use pause_info instead of pause_reason ---
+        # Use pause_info instead of pause_reason
         self.pause_info = {
             "reason_string": None,
             "error_type": None,  # e.g., "CONNECTION_ERROR", "UNAUTHORIZED", "SYSTEM_SCHEDULED", "RATE_LIMIT", "DB_HEALTH"
@@ -181,7 +174,6 @@ class ProgramRunner:
             "status_code": None,  # HTTP status code if applicable
             "retry_count": 0
         }
-        # --- END EDIT ---
         self.connectivity_failure_time = None
         self.connectivity_retry_count = 0 # This will now primarily be for logging/timing, actual count in pause_info
         self.queue_paused = False
@@ -248,7 +240,7 @@ class ProgramRunner:
         
         logging.info("Successfully initialized QueueManager with queues: " + ", ".join(self.queue_manager.queues.keys()))
         
-        # --- START EDIT: Define queue_processing_map FIRST ---
+        # Define queue_processing_map FIRST
         # Define queue processing map needed early by _normalize_task_name
         # This map connects queue names (often used in toggles/settings)
         # to the corresponding processing methods in QueueManager.
@@ -265,9 +257,8 @@ class ProgramRunner:
             'final_check_queue': 'process_final_check', # Use lowercase key matching the task ID
             'Pre_release': 'process_pre_release'
         }
-        # --- END EDIT ---
 
-        # --- START EDIT: Define BASE set of heavy DB tasks ---
+        # Define BASE set of heavy DB tasks
         # Add tasks that are always considered heavy, except content sources
         # Content source tasks ('task_..._wanted') will NOT use this lock.
         self.HEAVY_DB_TASKS = {
@@ -285,7 +276,6 @@ class ProgramRunner:
         }
         # --- Updated log message ---
         logging.info(f"Defined {len(self.HEAVY_DB_TASKS)} base tasks requiring exclusive execution lock. Global sequential execution is handled by scheduler config.")
-        # --- END EDIT ---
 
         # Base Task Intervals
         self.task_intervals = {
@@ -336,7 +326,7 @@ class ProgramRunner:
             'task_plex_full_scan': 1800, # Run every hour (Can be adjusted)
             # NEW Load Adjustment Task
             # 'task_adjust_intervals_for_load': 120, # Run every 2 minutes
-            # --- START EDIT: Add new task for library size refresh ---
+            # Add new task for library size refresh
             'task_refresh_library_size_cache': 12 * 60 * 60, # Run every 12 hours
             'task_backup_database': 24 * 60 * 60, # Run every 24 hours (daily backup)
             'task_backup_debrid': 24 * 60 * 60, # Run every 24 hours (disabled by default)
@@ -352,23 +342,18 @@ class ProgramRunner:
             'task_nzb_playback_cleanup_retry': 20 * 60, # Background retry for old-file cleanup deferred after finalization
             'task_backfill_plex_guids': 24 * 60 * 60,    # Run once (disabled by default)
             'task_backfill_plex_ms_item_id': 24 * 60 * 60, # Run once (disabled by default)
-            # --- END EDIT ---
             'task_process_standalone_plex_removals': 60 * 60, # Run every hour
-            # --- START EDIT: Add media analysis task interval ---
+            # Add media analysis task interval
             'task_analyze_media_files': 1 * 60 * 60, # Once an hour
-            # --- END EDIT ---
-            # --- START EDIT: Add manual Plex full scan task ---
+            # Add manual Plex full scan task
             'task_manual_plex_full_scan': 3600, # Run every 60 minutes, disabled by default
-            # --- END EDIT ---
-            # --- START EDIT: Add bulk subtitle processing task ---
+            # Add bulk subtitle processing task
             'task_process_bulk_subtitles': 3600, # Run every hour, disabled by default
-            # --- END EDIT ---
-            # --- START EDIT: Add Plex overlay tasks ---
+            # Add Plex overlay tasks
             'task_overlay_sync': 3600, # Run every 1 hour (if overlays enabled)
             'task_overlay_cleanup': 86400, # Run every 24 hours (if overlays enabled)
             'task_plex_smart_collection_posters': 86400, # Run every 24 hours (if Plex mode)
             'task_plex_movie_boxsets': 86400, # Run every 24 hours (if Plex mode)
-            # --- END EDIT ---
             # 'task_artificial_long_run': 1*60*60, # Run every 2 minutes
             'task_regulate_system_load': 30, # Check system load every 30 seconds
             'task_upgrade_hub_scan': 24 * 60 * 60, # Run every 24 hours (disabled by default)
@@ -379,73 +364,63 @@ class ProgramRunner:
         self.original_task_intervals = self.task_intervals.copy()
         logging.info(f"Base default task intervals defined: {len(self.original_task_intervals)}")
 
-        # --- START EDIT: Load custom intervals ---
+        # Load custom intervals
         custom_intervals_applied = 0
         intervals_file_path = None # Define outside try
         try:
-            # --- START EDIT: Add import os ---
+            # Add import os
             import os
             import json
-            # --- END EDIT ---
             from routes.program_operation_routes import _get_task_intervals_file_path # Import helper
             intervals_file_path = _get_task_intervals_file_path()
             if os.path.exists(intervals_file_path): # Error occurred here
-                # --- START EDIT: Added log ---
+                # Added log
                 logging.info(f"Loading custom task intervals from {intervals_file_path}")
-                # --- END EDIT ---
                 with open(intervals_file_path, 'r') as f:
-                    # --- START EDIT: Added try-except for JSON decode ---
+                    # Added try-except for JSON decode
                     try:
                         saved_intervals = json.load(f)
                         logging.debug(f"Successfully loaded JSON data: {saved_intervals}") # Log loaded data
                     except json.JSONDecodeError as json_e:
                         logging.error(f"Failed to decode JSON from {intervals_file_path}: {json_e}")
                         saved_intervals = {} # Use empty dict on decode error
-                    # --- END EDIT ---
 
                 # Process values as SECONDS
                 for task_name, interval_seconds_val in saved_intervals.items(): # Rename loop variable
-                    # --- START EDIT: Log raw values ---
+                    # Log raw values
                     logging.debug(f"Processing raw custom interval: Task='{task_name}', Value='{interval_seconds_val}'")
-                    # --- END EDIT ---
                     normalized_name = self._normalize_task_name(task_name) # Normalize saved task name
-                    # --- START EDIT: Log normalized name ---
+                    # Log normalized name
                     logging.debug(f"Normalized task name: '{normalized_name}'")
-                    # --- END EDIT ---
 
                     # Check if this task exists in our task_intervals (which start as defaults)
                     if normalized_name in self.task_intervals: # Check against task_intervals
-                        # --- START EDIT: Log default interval ---
+                        # Log default interval
                         # default_interval here refers to the current value in self.task_intervals,
                         # which might have already been set by a previous custom rule if keys overlap, or is the hardcoded default.
                         current_effective_interval = self.task_intervals[normalized_name]
                         logging.debug(f"Task '{normalized_name}' exists. Current effective interval: {current_effective_interval}s")
-                        # --- END EDIT ---
 
                         if interval_seconds_val is not None: # Ignore None values (means reset)
                             try:
                                 # Value is already in seconds
                                 interval_sec_int = int(interval_seconds_val)
-                                # --- START EDIT: Log parsed custom interval ---
+                                # Log parsed custom interval
                                 logging.debug(f"Parsed custom interval for '{normalized_name}' as {interval_sec_int} seconds.")
-                                # --- END EDIT ---
 
                                 MIN_INTERVAL_SECONDS = 1 # Define or import this constant
                                 if interval_sec_int >= MIN_INTERVAL_SECONDS:
-                                    # --- START EDIT: Log comparison ---
+                                    # Log comparison
                                     # Compare with current effective, not original_task_intervals necessarily
                                     logging.debug(f"Comparing current effective ({current_effective_interval}s) with custom ({interval_sec_int}s) for '{normalized_name}'")
-                                    # --- END EDIT ---
                                     if current_effective_interval != interval_sec_int: # Apply if different
-                                        # --- START EDIT: Log application ---
+                                        # Log application
                                         logging.info(f"Applying custom interval to '{normalized_name}': {interval_sec_int} seconds (Previous effective: {current_effective_interval}s)")
-                                        # --- END EDIT ---
                                         self.task_intervals[normalized_name] = interval_sec_int # MODIFIES task_intervals ONLY
                                         custom_intervals_applied += 1
                                     else:
-                                        # --- START EDIT: Log skipping ---
+                                        # Log skipping
                                         logging.debug(f"Custom interval ({interval_sec_int}s) for '{normalized_name}' matches current effective ({current_effective_interval}s). Skipping update.")
-                                        # --- END EDIT ---
                                 else:
                                     logging.warning(f"Skipping invalid custom interval for '{normalized_name}': {interval_sec_int}s (must be >= {MIN_INTERVAL_SECONDS} seconds).")
                             except (ValueError, TypeError) as parse_e:
@@ -490,9 +465,8 @@ class ProgramRunner:
 
         if custom_intervals_applied > 0:
              logging.info(f"Applied {custom_intervals_applied} custom task intervals to effective set.")
-        # --- END EDIT ---
 
-        # --- START EDIT: Define constants for dynamic interval adjustment ---
+        # Define constants for dynamic interval adjustment
         # Based on slowdown_candidates logic from task_adjust_intervals_for_load
         self.DYNAMIC_INTERVAL_TASKS = {
             'Checking', 'Sleeping', 'Blacklisted', 'Pending Uncached', 'Upgrading',
@@ -505,17 +479,14 @@ class ProgramRunner:
             'task_verify_symlinked_files', 'task_update_statistics_summary',
             'task_precompute_airing_shows',
             'task_update_tv_show_status',
-            # --- START EDIT: Add new task to dynamic intervals ---
+            # Add new task to dynamic intervals
             'task_refresh_library_size_cache',
-            # --- END EDIT ---
             'task_process_standalone_plex_removals', # Add to dynamic intervals as well
             'task_scan_mount_for_external_adds',
-            # --- START EDIT: Add media analysis task to dynamic intervals ---
+            # Add media analysis task to dynamic intervals
             'task_analyze_media_files',
-            # --- END EDIT ---
-            # --- START EDIT: Add manual plex scan to dynamic intervals ---
+            # Add manual plex scan to dynamic intervals
             'task_manual_plex_full_scan',
-            # --- END EDIT ---
         }
         # Add content source tasks with interval > 900s (15 min) to dynamic set
         # This needs to happen *after* content sources are processed, let's refine this later if needed
@@ -523,7 +494,6 @@ class ProgramRunner:
 
         self.MAX_INTERVAL_MULTIPLIER = 4 # Example: Max increase is 4x original
         self.ABSOLUTE_MAX_INTERVAL = 24 * 60 * 60 # Example: Max interval is 24 hours
-            # --- END EDIT ---
 
         # Initialize content_sources attribute FIRST
         self.content_sources = None
@@ -573,19 +543,15 @@ class ProgramRunner:
             # 'task_update_tv_show_status',
             # NEW Load Adjustment Task
             # 'task_adjust_intervals_for_load',
-            # --- START EDIT: Add 'task_verify_plex_removals' back to default set ---
+            # Add 'task_verify_plex_removals' back to default set
             'task_verify_plex_removals',
-            # --- END EDIT ---
-            # --- START EDIT: Enable new library size task by default ---
+            # Enable new library size task by default
             'task_refresh_library_size_cache',
-            # --- END EDIT ---
-            # --- START EDIT: Enable database backup task by default ---
+            # Enable database backup task by default
             'task_backup_database',
-            # --- END EDIT ---
             'task_process_standalone_plex_removals', # Enable by default
-            # --- START EDIT: Enable media analysis task by default ---
+            # Enable media analysis task by default
             # 'task_analyze_media_files', # disabled by default
-            # --- END EDIT ---
             # 'task_artificial_long_run',
             'task_trim_memory',
             'task_sync_library_metadata',
@@ -598,9 +564,8 @@ class ProgramRunner:
         # (The accurate default snapshot will be captured later, after content-source and conditional tasks.)
 
         # 2. Load task_toggles.json ONCE and update enabled_tasks
-        # --- START EDIT: Initialize saved_states before try block ---
+        # Initialize saved_states before try block
         saved_states = {} # Ensure saved_states exists even if file loading fails
-        # --- END EDIT ---
 
         try:
             import os
@@ -627,7 +592,7 @@ class ProgramRunner:
         logging.info("Content source processing complete.")
 
         # 4. Apply remaining get_setting() checks for specific tasks
-        # --- START EDIT: Add file_collection_management check before other settings ---
+        # Add file_collection_management check before other settings
         file_management_mode = get_setting('File Management', 'file_collection_management', 'Symlinked/Local') # Default for safety
         logging.info(f"File management mode: {file_management_mode}")
 
@@ -876,7 +841,7 @@ class ProgramRunner:
         # Log the final set of enabled tasks right before starting the scheduling process
         logging.info(f"Final enabled tasks before initial scheduling: {sorted(list(self.enabled_tasks))}")
 
-        # --- START EDIT: Serialize all scheduled tasks ---
+        # Serialize all scheduled tasks
         # To address potential DB contention by making all scheduled tasks run sequentially.
         # logging.info("Configuring all scheduled tasks to run sequentially to prevent DB contention.") # This logic is now handled by scheduler config
         # if not hasattr(self, 'task_intervals') or not self.task_intervals:
@@ -886,20 +851,18 @@ class ProgramRunner:
         # else:
             # self.HEAVY_DB_TASKS = set(self.task_intervals.keys()) # REVERTED: Scheduler now handles global sequential execution. HEAVY_DB_TASKS reverts to original intent.
             # logging.info(f"All {len(self.HEAVY_DB_TASKS)} tasks defined in task_intervals will now use the exclusive execution lock, effectively running sequentially.")
-        # --- END EDIT ---
 
-        # --- START EDIT: Capture baseline enabled tasks snapshot ---
+        # Capture baseline enabled tasks snapshot
         # Store the set of tasks that were enabled immediately after initialization (including
         # any changes applied from task_toggles.json, content-source processing, and settings).
         # When the user later saves toggle states we can compare against this snapshot and only
         # persist differences, keeping the JSON file minimal.
         self.initial_enabled_tasks_snapshot = set(self.enabled_tasks)
-        # --- END EDIT ---
 
         # Schedule initial tasks
         self._schedule_initial_tasks()
 
-        # *** START EDIT: Modify tracemalloc conditional start in __init__ ***
+        # Modify tracemalloc conditional start in __init__
         # Track if tracemalloc is enabled via setting AND if it was imported
         self._tracemalloc_enabled = tracemalloc_available and get_setting('Debug', 'enable_tracemalloc', False)
         if self._tracemalloc_enabled:
@@ -915,9 +878,8 @@ class ProgramRunner:
                  # Should not happen if _tracemalloc_enabled is True, but log just in case
                  logging.warning("Tracemalloc setting enabled but module not available. Disabling.")
                  self._tracemalloc_enabled = False
-        # *** END EDIT ***
 
-        # *** START EDIT: Add task execution counter and sample rate for tracemalloc ***
+        # Add task execution counter and sample rate for tracemalloc
         self.task_execution_count = 0
         # Read sample rate from settings, default to 100 (sample 1 in every 100 tasks)
         self.tracemalloc_sample_rate = int(get_setting('Debug', 'tracemalloc_sample_rate', 100))
@@ -925,31 +887,27 @@ class ProgramRunner:
         if self.tracemalloc_sample_rate < 1:
             logging.warning(f"Invalid tracemalloc_sample_rate ({self.tracemalloc_sample_rate}), defaulting to 1.")
             self.tracemalloc_sample_rate = 1
-        # *** END EDIT ***
 
-        # *** START EDIT: Add variable to store previous snapshot ***
+        # Add variable to store previous snapshot
         self.previous_tracemalloc_snapshot = None
-        # *** END EDIT ***
-        # *** START EDIT: Log tracemalloc status with sample rate ***
+        # Log tracemalloc status with sample rate
         if self._tracemalloc_enabled:
             logging.warning(f"Tracemalloc memory tracking is ENABLED (Sample Rate: 1/{self.tracemalloc_sample_rate}). This adds overhead.")
             # Check again if it's actually tracing (might have failed to start)
             if not (tracemalloc_available and tracemalloc and tracemalloc.is_tracing()):
                  logging.error("Tracemalloc was enabled but is not tracing. Check for startup errors.")
                  self._tracemalloc_enabled = False # Ensure flag reflects reality
-        # *** END EDIT ***
         # ... rest of __init__ ...
 
         self.current_running_task = None
         self._running_task_lock = threading.Lock() # Lock for thread-safe access
 
-        # --- START EDIT: Add inter-task sleep variables ---
+        # Add inter-task sleep variables
         self.base_inter_task_sleep = float(get_setting('Queue', 'main_loop_sleep_seconds', 0.0))
         self.current_inter_task_sleep = self.base_inter_task_sleep
         logging.info(f"Initialized inter-task sleep to {self.current_inter_task_sleep}s based on settings.")
-        # --- END EDIT ---
 
-        # --- START EDIT: Add long-running content source tasks to DYNAMIC_INTERVAL_TASKS ---
+        # Add long-running content source tasks to DYNAMIC_INTERVAL_TASKS
         # This should run *after* self.content_sources is populated and intervals set
         # Ideally placed after self.get_content_sources(force_refresh=True) call inside __init__
         if self.content_sources: # Check if sources were loaded
@@ -958,32 +916,28 @@ class ProgramRunner:
                  if task_id.startswith('task_') and task_id.endswith('_wanted') and interval > 900:
                       self.DYNAMIC_INTERVAL_TASKS.add(task_id)
             logging.info(f"Updated DYNAMIC_INTERVAL_TASKS with long-running content sources. Total: {len(self.DYNAMIC_INTERVAL_TASKS)}")
-        # --- END EDIT ---
 
-        # --- START EDIT: Add currently_executing_tasks set ---
+        # Add currently_executing_tasks set
         self.currently_executing_tasks = set()
-        # --- END EDIT ---
 
-        # --- START EDIT: Remove single current_running_task ---
+        # Remove single current_running_task
         # self.current_running_task = None # Removed
-        # --- END EDIT ---
         self._running_task_lock = threading.Lock() # Lock for thread-safe access to the set
 
 
-        # --- START EDIT: Add task execution counter and sample rate for tracemalloc ---
+        # Add task execution counter and sample rate for tracemalloc
         self.task_execution_count = 0
         # ... (rest of __init__)
 
         # In __init__, add:
         self.manual_tasks = set()  # Track manually triggered tasks
         self._initialized_runner_attributes = True # Mark as initialized at the end of actual init logic
-        # --- START EDIT: Runtime tracking attributes ---
+        # Runtime tracking attributes
         self.task_runtime_totals = defaultdict(float)  # Accumulated runtime per task in current window
         self.task_runtime_lock = threading.Lock()  # Protect access to task_runtime_totals
         self._runtime_log_interval_sec = 300  # How often to emit runtime percentage report (seconds)
         self._last_runtime_log_time = time.monotonic()
-        # --- END EDIT ---
-        # --- START EDIT: CPU usage tracking attributes ---
+        # CPU usage tracking attributes
         # Accumulate per-task CPU seconds in current window
         self.task_cpu_totals = defaultdict(float)
         self.task_cpu_lock = threading.Lock()
@@ -992,9 +946,8 @@ class ProgramRunner:
         self._last_cpu_log_time = time.monotonic()
         # Control per-run CPU logging via environment variable
         self._log_per_run_cpu = os.environ.get('LOG_PER_RUN_CPU', 'false').lower() == 'true'
-        # --- END EDIT ---
 
-    # *** START EDIT: New method to get task target ***
+    # New method to get task target
     def _get_task_target(self, task_name: str, manual: bool = False):
         """Resolves the target function and arguments for a given task name."""
         target_func = None
@@ -1046,10 +999,9 @@ class ProgramRunner:
 
         logging.debug(f"Resolved task '{task_name}' as Type: {task_type_determined}")
         return target_func, args, kwargs
-    # *** END EDIT ***
 
 
-    # *** START EDIT: Use _get_task_target in _schedule_task ***
+    # Use _get_task_target in _schedule_task
     def _schedule_task(self, task_name: str, interval_seconds: int, initial_run: bool = False, initial_delay_seconds: int = 0):
         """Schedules a single task in APScheduler, wrapped for duration measurement.
 
@@ -1113,11 +1065,10 @@ class ProgramRunner:
                         # (apscheduler.util.obj_to_ref unconditionally rejects partials), which crashes
                         # scheduling with "This Job cannot be serialized...".
 
-                        # *** START EDIT: Explicitly pass scheduler's timezone to add_job ***
+                        # Explicitly pass scheduler's timezone to add_job
                         # This should prevent the IntervalTrigger from calling tzlocal.get_localzone()
                         resolved_timezone = self.scheduler.timezone
                         logging.debug(f"Passing timezone '{resolved_timezone}' explicitly to add_job for task '{job_id}'")
-                        # *** END EDIT ***
 
                         # *** START STAGGER EDIT: Support initial delay for startup staggering ***
                         # Create trigger with start_date if delay is specified
@@ -1187,12 +1138,11 @@ class ProgramRunner:
 
                         self.scheduler.add_job(**add_job_kwargs)
 
-                        # *** START EDIT: Updated log message with stagger info ***
+                        # Updated log message with stagger info
                         if initial_delay_seconds > 0:
                             logging.info(f"Scheduled task '{job_id}' to run every {interval_seconds}s (staggered start: +{initial_delay_seconds}s, max_instances=1)")
                         else:
                             logging.info(f"Scheduled task '{job_id}' to run every {interval_seconds} seconds (max_instances=1, wrapped for duration measurement).")
-                        # *** END EDIT ***
                         return True
                     except Exception as e:
                         logging.error(f"Error scheduling task '{job_id}': {e}", exc_info=True)
@@ -1206,7 +1156,6 @@ class ProgramRunner:
                 logging.info(f"SCHED_TASK_FINALLY: Releasing scheduler_lock implicitly for task '{task_name}' (Thread: {current_thread_id_finally}, Lock Acquired: True).")
             else:
                 logging.info(f"SCHED_TASK_FINALLY: Lock was not acquired or error for task '{task_name}' (Thread: {current_thread_id_finally}, Lock Acquired: False).")
-    # *** END EDIT ***
 
 
     def _schedule_initial_tasks(self):
@@ -1363,7 +1312,7 @@ class ProgramRunner:
             else:
                 logging.info("Program running...is your fridge?")
 
-        # *** START EDIT: Add psutil memory logging ***
+        # Add psutil memory logging
         if psutil:
             try:
                 # 1. Explicitly run garbage collection
@@ -1407,9 +1356,8 @@ class ProgramRunner:
             # Log less frequently if psutil is missing
             if random_number < 10: # Log warning occasionally
                  logging.warning("psutil not installed, cannot report detailed memory usage in heartbeat.")
-        # *** END EDIT ***
 
-        # *** START EDIT: Add tracemalloc snapshot comparison in heartbeat ***
+        # Add tracemalloc snapshot comparison in heartbeat
         # Check if enabled AND available before using
         if self._tracemalloc_enabled and tracemalloc_available and tracemalloc and tracemalloc.is_tracing():
             try:
@@ -1434,7 +1382,6 @@ class ProgramRunner:
 
             except Exception as e_trace_hb:
                 logging.error(f"[Tracemalloc Heartbeat] Error processing snapshot comparison: {e_trace_hb}")
-        # *** END EDIT ***
 
         # Watchdog: ensure critical queue tasks are still scheduled.
         # APScheduler can silently drop jobs when misfire_grace_time=None and the thread
@@ -1695,9 +1642,8 @@ class ProgramRunner:
 
 
         logging.warning(f"Pausing program queue due to connectivity failure: {current_pause_info['reason_string']}")
-        # --- START EDIT: Update self.pause_info ---
+        # Update self.pause_info
         self.pause_info = current_pause_info
-        # --- END EDIT ---
         self.pause_queue() 
         
         if not self.connectivity_failure_time:
@@ -1734,12 +1680,11 @@ class ProgramRunner:
                     logging.info("Service connectivity restored")
                     self.connectivity_failure_time = None
                     self.connectivity_retry_count = 0
-                    # --- START EDIT: Clear pause_info on resume ---
+                    # Clear pause_info on resume
                     self.pause_info = {
                         "reason_string": None, "error_type": None, "service_name": None,
                         "status_code": None, "retry_count": 0
                     }
-                    # --- END EDIT ---
                     self.resume_queue()
                     return
             except Exception as e:
@@ -1747,7 +1692,7 @@ class ProgramRunner:
             
             logging.warning(f"Service connectivity check failed. Overall retry attempt {self.connectivity_retry_count}")
 
-            # --- START EDIT: Update self.pause_info with new details ---
+            # Update self.pause_info with new details
             updated_pause_info = {
                 "reason_string": f"Connectivity failure - waiting for services (Retry {self.connectivity_retry_count})",
                 "error_type": "CONNECTION_ERROR",
@@ -1781,7 +1726,6 @@ class ProgramRunner:
                     updated_pause_info["service_name"] = failed_services_details[0].get("service", "Unknown Service")
 
             self.pause_info = updated_pause_info
-            # --- END EDIT ---
             # The old logic to stop the program after 5 retries is already commented out, which is good.
 
     def pause_queue(self):
@@ -1796,7 +1740,7 @@ class ProgramRunner:
 
         self.last_pause_time = now
 
-        # *** START EDIT: Pause ALL running jobs ***
+        # Pause ALL running jobs
         with self.scheduler_lock:
             if self.scheduler.state != 1: # 1 = STATE_RUNNING
                 logging.warning("Scheduler is not running, cannot pause jobs.")
@@ -1839,16 +1783,14 @@ class ProgramRunner:
 
             # Use the existing QueueManager pause state if needed for UI/status
         from queues.queue_manager import QueueManager
-        # --- START EDIT: Pass the reason_string to QueueManager's pause ---
+        # Pass the reason_string to QueueManager's pause
         reason_for_qm = self.pause_info.get("reason_string") if self.pause_info else "Unknown reason"
         QueueManager().pause_queue(reason=reason_for_qm)
-        # --- END EDIT ---
 
         self.queue_paused = True
-        # --- START EDIT: Log using pause_info ---
+        # Log using pause_info
         log_reason = self.pause_info.get('reason_string', 'Unknown') if self.pause_info else 'Unknown'
         logging.info(f"Queue paused. Attempted to pause all running jobs (except essential monitoring tasks)... Reason: {log_reason}")
-        # --- END EDIT ---
 
     def resume_queue(self):
         # THROTTLING: Prevent rapid resume operations
@@ -1862,7 +1804,7 @@ class ProgramRunner:
 
         self.last_resume_time = now
 
-        # *** START EDIT: Resume logic remains the same, but update log context ***
+        # Resume logic remains the same, but update log context
         logging.info(f"[Resume Queue] Starting resume process. Queue paused: {self.queue_paused}, Pause type: {self.pause_info.get('error_type') if self.pause_info else 'None'}")
 
         with self.scheduler_lock:
@@ -1914,12 +1856,11 @@ class ProgramRunner:
         self.queue_paused = False
         self.connectivity_failure_time = None
         self.connectivity_retry_count = 0
-        # --- START EDIT: Clear pause_info ---
+        # Clear pause_info
         self.pause_info = {
             "reason_string": None, "error_type": None, "service_name": None,
             "status_code": None, "retry_count": 0
         }
-        # --- END EDIT ---
         logging.info(f"[Resume Queue] Queue resumed successfully. Resumed {resumed_count} jobs.")  # Better log message
 
     def task_plex_full_scan(self):
@@ -1940,7 +1881,7 @@ class ProgramRunner:
         logging.info("Triggering queue reconciliation after full Plex scan.")
         self.task_reconcile_queues()
         
-    # --- START EDIT: Add manual Plex full scan task method ---
+    # Add manual Plex full scan task method
     def task_manual_plex_full_scan(self):
         """Manually trigger a full Plex scan, bypassing the mode check."""
         logging.info("Executing manual Plex full scan task...")
@@ -1960,7 +1901,6 @@ class ProgramRunner:
         # Add reconciliation call after full scan processing
         logging.info("Triggering queue reconciliation after manual Plex full scan.")
         self.task_reconcile_queues()
-    # --- END EDIT ---
     
     def process_content_source(self, source, data, bypass_cache=False):
         from datetime import datetime, timedelta # Add this import
@@ -2777,7 +2717,7 @@ class ProgramRunner:
             # Pass the is_restart parameter to run_initialization
             self.run_initialization(is_restart=getattr(self, '_is_restart', False))
 
-            # *** START EDIT: Simplified run loop with CPU monitoring ***
+            # Simplified run loop with CPU monitoring
             # The main loop now just keeps the script alive while the scheduler runs.
             # We can add checks here if needed (e.g., monitoring scheduler health).
             
@@ -2818,7 +2758,7 @@ class ProgramRunner:
                         pause_end = get_setting('Queue', 'pause_end_time', '00:00')
                         new_reason_string = f"Scheduled pause active ({pause_start} - {pause_end})"
                         
-                        # --- START EDIT: Update pause_info for scheduled pause ---
+                        # Update pause_info for scheduled pause
                         self.pause_info = {
                             "reason_string": new_reason_string,
                             "error_type": "SYSTEM_SCHEDULED",
@@ -2826,21 +2766,19 @@ class ProgramRunner:
                             "status_code": None,
                             "retry_count": 0
                         }
-                        # --- END EDIT ---
                         self.pause_queue()
                         logging.info(f"Queue automatically paused due to schedule: {new_reason_string}")
                     elif not is_scheduled_pause and self.queue_paused and current_pause_type == "SYSTEM_SCHEDULED":
                         logging.info("Scheduled pause period ended. Resuming queue.")
-                        # --- START EDIT: Clear pause_info on resume ---
+                        # Clear pause_info on resume
                         self.pause_info = {
                             "reason_string": None, "error_type": None, "service_name": None,
                             "status_code": None, "retry_count": 0
                         }
-                        # --- END EDIT ---
                         self.resume_queue()
                     # ... (sleep) ...
 
-                    # --- START EDIT: CPU monitoring and main loop sleep ---
+                    # CPU monitoring and main loop sleep
                     loop_count += 1
                     current_time = time.time()
                     
@@ -2897,7 +2835,6 @@ class ProgramRunner:
                     if main_loop_sleep_seconds < 0.1:
                         main_loop_sleep_seconds = 0.1
                     time.sleep(main_loop_sleep_seconds) # Check status based on setting
-                    # --- END EDIT ---
 
                 except Exception as loop_error:
                      logging.error(f"Error in main monitoring loop: {loop_error}", exc_info=True)
@@ -2907,7 +2844,6 @@ class ProgramRunner:
             # Ensure scheduler is stopped if loop exits unexpectedly
             if self.scheduler and self.scheduler.running:
                  self.stop()
-            # *** END EDIT ***
 
         except Exception as e:
             logging.error(f"Fatal error in run method: {str(e)}")
@@ -5814,7 +5750,6 @@ class ProgramRunner:
                 "status_code": None, "retry_count": 0
             }
             self.queue_paused = False
-        # --- END EDIT ---
 
 
     def task_local_library_scan(self):
@@ -6504,14 +6439,13 @@ class ProgramRunner:
             updated_items = 0
             not_found_items = 0
             
-            # --- START EDIT: Initialize scan tracking and tick counts ---
+            # Initialize scan tracking and tick counts
             paths_to_scan_by_section = {} # Store {section_title: set(constructed_paths)}
             sections_map = {}
             if plex and sections: # Only map if connection succeeded
                 sections_map = {s.title: s for s in sections} # Map titles to section objects
             if not hasattr(self, 'plex_scan_tick_counts'):
                 self.plex_scan_tick_counts = {}
-            # --- END EDIT ---
 
             # If mounted file location is blank/empty, mark all items as Collected without file checks
             if not plex_file_location or plex_file_location.strip() == '':
@@ -6647,7 +6581,7 @@ class ProgramRunner:
                     if not _ffprobe_gate_or_reject(item_dict, actual_file_path, cache_key):
                         continue
 
-                    # --- START EDIT: Add Tick Check and Scan Path Gathering ---
+                    # Add Tick Check and Scan Path Gathering
                     should_trigger_scan = False
                     current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
                     self.plex_scan_tick_counts[cache_key] = current_tick
@@ -6767,14 +6701,13 @@ class ProgramRunner:
                 else: # File not found on disk
                     not_found_items += 1
                     logging.debug(f"File not found on disk for item {item_id}. Checked paths:\n  " + "\n  ".join(checked_paths_log))
-                    # --- START EDIT: Reset tick count if file missing ---
+                    # Reset tick count if file missing
                     if cache_key in self.plex_scan_tick_counts:
                         logging.debug(f"Resetting Plex scan tick count for missing file '{current_filename}'.")
                         del self.plex_scan_tick_counts[cache_key]
-                    # --- END EDIT ---
                     continue
 
-            # --- START EDIT: Add Scan Triggering Logic ---
+            # Add Scan Triggering Logic
             if paths_to_scan_by_section and plex and sections_map: # Check connection exists
                 logging.info(f"Triggering scans for {len(paths_to_scan_by_section)} sections based on detected files (library checks disabled)...")
                 final_updated_sections = set() # Track unique section titles updated
@@ -6796,7 +6729,6 @@ class ProgramRunner:
 
                 if final_updated_sections:
                     logging.info(f"Plex sections triggered for update in this run: {', '.join(sorted(list(final_updated_sections)))}")
-            # --- END EDIT ---
 
             # Log summary of operations
             logging.info(f"Plex check summary (checks disabled): {updated_items} items found on disk and marked Collected, {not_found_items} items not found.")
@@ -7401,9 +7333,8 @@ class ProgramRunner:
                     if cache_key in self.plex_scan_tick_counts:
                         logging.debug(f"Resetting Plex scan tick count for missing file '{current_filename}'.")
                         del self.plex_scan_tick_counts[cache_key]
-                    # --- START EDIT: Need to continue loop if file not found --- # This comment is from a previous edit, still relevant
+                    # Need to continue loop if file not found --- # This comment is from a previous edit, still relevant
                     continue 
-                    # --- END EDIT ---
 
                 # --- START: Logic to identify scan paths (original location)
                 if should_trigger_scan:
@@ -8085,7 +8016,7 @@ class ProgramRunner:
         try:
             if not verify_database_health():
                 logging.error("Database health check failed during periodic check")
-                # --- START EDIT: Update pause_info for DB health ---
+                # Update pause_info for DB health
                 self.pause_info = {
                     "reason_string": "Database corruption detected - check logs for details",
                     "error_type": "DB_HEALTH",
@@ -8093,7 +8024,6 @@ class ProgramRunner:
                     "status_code": None,
                     "retry_count": 0
                 }
-                # --- END EDIT ---
                 self.pause_queue()
 
                 # Send notification about database corruption
@@ -8403,10 +8333,8 @@ class ProgramRunner:
             # Actually call the function to populate the cache
             logging.info("Precomputing airing shows data...")
             start_time = time.time()
-            # *** START EDIT ***
             # Call the function without the unsupported force_refresh argument
             recently_aired, airing_soon = get_recently_aired_and_airing_soon()
-            # *** END EDIT ***
 
             duration = time.time() - start_time
             logging.info(f"Precomputed airing shows data in {duration:.2f}s. Found {len(recently_aired)} recently aired and {len(airing_soon)} airing soon shows.")
@@ -8691,7 +8619,7 @@ class ProgramRunner:
         logging.info(f"[TASK] TV show status update finished in {duration:.2f}s. Processed Shows: {len(processed_shows)}, Base Info Updated: {updated_count}, Versions Updated: {len(shows_with_versions_updated)}, Failed: {failed_count}.")
     # --- END: New Task Implementation ---
 
-    # *** START EDIT: Add task method to update queue views ***
+    # Add task method to update queue views
     def task_update_queue_views(self):
         """Periodically updates the in-memory queue views from the database."""
         if not hasattr(self, 'queue_manager') or not self.queue_manager:
@@ -8719,9 +8647,8 @@ class ProgramRunner:
             # logging.debug(f"Finished task_update_queue_views in {duration:.3f}s. Updated {updated_count} queues.")
         except Exception as e:
             logging.error(f"Unexpected error in task_update_queue_views: {e}", exc_info=True)
-    # *** END EDIT ***
 
-    # *** START EDIT: Add Listener Method ***
+    # Add Listener Method
     def _job_listener(self, event: apscheduler.events.JobEvent):
         """Listener called for various job events to track executing tasks."""
         task_id_for_log = getattr(event, 'job_id', 'unknown_job')
@@ -8779,9 +8706,8 @@ class ProgramRunner:
         # Original comment: Handle Interval Adjustment (Only for successful execution)
         # The logic here ensures that only EVENT_JOB_EXECUTED reaches this point.
         # ... (rest of interval adjustment logic remains the same) ...
-    # *** END EDIT ***
 
-    # *** START EDIT: Modify _run_and_measure_task for tracemalloc sampling AND heavy task locking ***
+    # Modify _run_and_measure_task for tracemalloc sampling AND heavy task locking
     def _run_and_measure_task(self, actual_job_id_from_scheduler, task_name_for_logging, func, args, kwargs): # Added task_name_for_log
         """Wraps a task function to measure execution duration, track memory usage with tracemalloc, and handle locking for heavy DB tasks."""
         start_time = time.monotonic()
@@ -8807,12 +8733,11 @@ class ProgramRunner:
                  # logging.info(f"Heavy task lock acquired for '{task_name_for_logging}'. Proceeding with execution.") # REVERTED
         # --- End Heavy Task Lock Handling ---
 
-        # --- START EDIT: Manage currently_executing_tasks ---
+        # Manage currently_executing_tasks
         with self._running_task_lock:
             self.currently_executing_tasks.add(actual_job_id_from_scheduler)
             if log_display_name != 'Wanted' and log_display_name != 'Scraping' and log_display_name != 'Adding':
                 logging.info(f"Task '{log_display_name}' started execution, added to currently_executing_tasks.")
-        # --- END EDIT ---
 
         # Record start time for UI stifling
         # 'start_time' is already time.monotonic() from the beginning of this function
@@ -8844,17 +8769,15 @@ class ProgramRunner:
              logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available/tracing at point of memory check.")
              run_tracemalloc_sample = False
 
-        # --- START EDIT: Capture CPU time before task execution ---
+        # Capture CPU time before task execution
         cpu_start = self._get_current_thread_cpu_seconds()
-        # --- END EDIT ---
 
         try:
             # Execute the original task function
             func(*args, **kwargs)
             duration = time.monotonic() - start_time # Measure duration regardless
-            # --- START EDIT: Record runtime on successful completion ---
+            # Record runtime on successful completion
             self._record_task_runtime(task_name_for_logging, duration)
-            # --- END EDIT ---
 
             # Persist next-run time for tasks with interval >= 20 min so the schedule
             # survives restarts. Only for regular scheduled tasks (not manual runs).
@@ -8894,14 +8817,13 @@ class ProgramRunner:
                 # Log if we intended to sample but tracemalloc became unavailable
                  logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available at point of 'after' memory check.")
 
-            # --- START EDIT: Capture CPU time after task execution ---
+            # Capture CPU time after task execution
             cpu_end = self._get_current_thread_cpu_seconds()
             cpu_seconds = cpu_end - cpu_start
             cpu_util = (cpu_seconds / duration) * 100 if duration > 0 else 0
             self._record_task_cpu(task_name_for_logging, cpu_seconds)
             if self._log_per_run_cpu:
                 logging.debug(f"[CPU] Task '{log_display_name}' cpu={cpu_seconds:.3f}s, wall={duration:.3f}s, util={cpu_util:.1f}%")
-            # --- END EDIT ---
 
             # Optional: Log normal duration if not sampling (can be noisy)
             # else:
@@ -8912,9 +8834,8 @@ class ProgramRunner:
         except Exception as e:
             duration = time.monotonic() - start_time
             logging.error(f"Error during execution of job '{log_display_name}': {e}", exc_info=True)
-            # --- START EDIT: Record runtime even on error ---
+            # Record runtime even on error
             self._record_task_runtime(task_name_for_logging, duration)
-            # --- END EDIT ---
 
             # Log memory even on error if sampling this execution
             # Check available again just before use
@@ -8933,25 +8854,23 @@ class ProgramRunner:
                  # Log if we intended to sample but tracemalloc became unavailable
                  logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available at point of error memory check.")
 
-            # --- START EDIT: Capture CPU time after task execution on error ---
+            # Capture CPU time after task execution on error
             cpu_end = self._get_current_thread_cpu_seconds()
             cpu_seconds = cpu_end - cpu_start
             cpu_util = (cpu_seconds / duration) * 100 if duration > 0 else 0
             self._record_task_cpu(task_name_for_logging, cpu_seconds)
             if self._log_per_run_cpu:
                 logging.debug(f"[CPU] Task '{log_display_name}' cpu={cpu_seconds:.3f}s, wall={duration:.3f}s, util={cpu_util:.1f}%")
-            # --- END EDIT ---
 
             raise # Re-raise the exception
         finally:
-            # --- START EDIT: Manage currently_executing_tasks ---
+            # Manage currently_executing_tasks
             with self._running_task_lock:
                 self.currently_executing_tasks.discard(actual_job_id_from_scheduler)
                 if log_display_name != 'Wanted' and log_display_name != 'Scraping' and log_display_name != 'Adding':
                     logging.info(f"Task '{log_display_name}' finished execution, removed from currently_executing_tasks.")
-            # --- END EDIT ---
                     
-            # --- START EDIT: Add inter-task sleep for low power mode ---
+            # Add inter-task sleep for low power mode
             try:
                 inter_task_sleep_seconds = self.current_inter_task_sleep
                 if inter_task_sleep_seconds > 0:
@@ -8960,7 +8879,6 @@ class ProgramRunner:
             except (ValueError, TypeError):
                 # If setting is invalid, don't sleep
                 pass
-            # --- END EDIT ---
 
             # Clear start time for UI stifling
             with self._executing_task_start_times_lock:
@@ -9022,7 +8940,7 @@ class ProgramRunner:
                 self.current_inter_task_sleep = max(new_sleep, base_sleep)
                 logging.debug(f"System load normal. Inter-task sleep adjusted to {self.current_inter_task_sleep:.2f}s")
 
-    # --- START EDIT: Add method for live interval updates ---
+    # Add method for live interval updates
     def update_task_interval(self, task_name: str, interval_seconds: int | None):
         """
         Updates the interval (in seconds) for a specific task live.
@@ -9034,9 +8952,8 @@ class ProgramRunner:
             logging.error(f"Cannot update interval for '{normalized_name}': Task not defined.")
             return False
 
-        # --- START EDIT: Define minimum seconds ---
+        # Define minimum seconds
         MIN_INTERVAL_SECONDS = 1 # Must match validation
-        # --- END EDIT ---
 
         target_interval_seconds = 0
         is_resetting = interval_seconds is None
@@ -9050,13 +8967,12 @@ class ProgramRunner:
             # Validate the provided seconds
             try:
                 interval_sec_int = int(interval_seconds)
-                 # --- START EDIT: Validate seconds ---
+                 # Validate seconds
                 if interval_sec_int >= MIN_INTERVAL_SECONDS:
                     target_interval_seconds = interval_sec_int
                 else:
                     logging.error(f"Invalid interval for '{normalized_name}': {interval_seconds} (must be >= {MIN_INTERVAL_SECONDS} seconds). Cannot apply live update.")
                     return False
-                 # --- END EDIT ---
             except (ValueError, TypeError):
                 logging.error(f"Invalid interval format for '{normalized_name}': {interval_seconds}. Cannot apply live update.")
                 return False
@@ -9081,9 +8997,8 @@ class ProgramRunner:
             except Exception as e:
                 logging.error(f"Error rescheduling job '{normalized_name}' with new interval: {e}", exc_info=True)
                 return False
-    # --- END EDIT ---
 
-    # --- START EDIT: Modified task for library size cache refresh (now fully synchronous structure) ---
+    # Modified task for library size cache refresh (now fully synchronous structure)
     def task_refresh_library_size_cache(self):
         """Scheduled task to refresh the Debrid library size cache."""
         logging.info("Initiating scheduled library size cache refresh task.")
@@ -9109,9 +9024,8 @@ class ProgramRunner:
              logging.error(f"Background task: Runtime error during library size cache refresh: {e_runtime}", exc_info=True)
         except Exception as e:
             logging.error(f"Background task: General error during library size cache refresh: {e}", exc_info=True)
-    # --- END EDIT ---
 
-    # --- START EDIT: Add media analysis task method ---
+    # Add media analysis task method
     def task_analyze_media_files(self):
         """Scheduled task to analyze and repair media files."""
         from utilities.analyze_library import analyze_and_repair_media_files
@@ -9136,9 +9050,8 @@ class ProgramRunner:
 
         except Exception as e:
             logging.error(f"Error during scheduled media file analysis and repair: {e}", exc_info=True)
-    # --- END EDIT ---
 
-    # --- START EDIT: Add bulk subtitle processing task ---
+    # Add bulk subtitle processing task
     def task_process_bulk_subtitles(self):
         """Scheduled task to process bulk subtitles using the bulk_subs.sh script."""
         import subprocess
@@ -9205,7 +9118,6 @@ class ProgramRunner:
             logging.error("Bulk subtitle processing timed out after 1 hour")
         except Exception as e:
             logging.error(f"Error during bulk subtitle processing: {e}", exc_info=True)
-    # --- END EDIT ---
 
     def _get_plex_mount_base(self):
         """Get the actual mount base path from Plex mounted_file_location, stripping /__all__."""
@@ -9267,7 +9179,7 @@ class ProgramRunner:
                 logging.debug(f"[BulkSubs/Plex] Skipped {full_path}: {e}")
         logging.info(f"[BulkSubs/Plex] Processed {processed} items.")
 
-    # *** START EDIT: Add the new long-running task method ***
+    # Add the new long-running task method
     def task_artificial_long_run(self):
         task_name = 'task_artificial_long_run'
         logging.info(f"'{task_name}' has started.")
@@ -9278,7 +9190,6 @@ class ProgramRunner:
         time.sleep(duration_seconds)
         
         logging.info(f"'{task_name}' has finished sleeping and is now complete.")
-    # *** END EDIT ***
 
     def task_overlay_sync(self):
         """Scheduled task to sync overlay data and regenerate changed posters."""
@@ -9702,7 +9613,7 @@ class ProgramRunner:
         self.task_runtime_totals.clear()
         self._last_runtime_log_time = now
 
-    # --- START EDIT: Add method to get current thread CPU seconds ---
+    # Add method to get current thread CPU seconds
     def _get_current_thread_cpu_seconds(self):
         """Get the current thread's CPU time in seconds."""
         try:
@@ -9716,9 +9627,8 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error getting current thread CPU time: {e}", exc_info=True)
             return 0
-    # --- END EDIT ---
 
-    # --- START EDIT: Add method to record task CPU seconds ---
+    # Add method to record task CPU seconds
     def _record_task_cpu(self, task_name: str, cpu_seconds: float):
         """Accumulate task CPU seconds and periodically log per-task CPU share."""
         now = time.monotonic()
@@ -9741,7 +9651,6 @@ class ProgramRunner:
         logging.info(f"[CPU] Last {self._cpu_log_interval_sec} s: "+", ".join(parts)+f"  (total_cpu={total:.2f} s)")
         self.task_cpu_totals.clear()
         self._last_cpu_log_time = now
-    # --- END EDIT ---
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
@@ -9879,7 +9788,7 @@ def generate_airtime_report():
     current_datetime_local = datetime.now(_get_local_timezone()) # Use local timezone
     report = []
 
-    # --- START EDIT: Add try-except for float conversions ---
+    # Add try-except for float conversions
     try:
         movie_airtime_offset_min = float(get_setting("Queue", "movie_airtime_offset", "19")) * 60
     except (ValueError, TypeError):
@@ -9889,7 +9798,6 @@ def generate_airtime_report():
         episode_airtime_offset_min = float(get_setting("Queue", "episode_airtime_offset", "0")) * 60
     except (ValueError, TypeError):
         episode_airtime_offset_min = 0.0 * 60
-    # --- END EDIT ---
 
     logging.info(f"Movie airtime offset: {movie_airtime_offset_min / 60} hours")
     logging.info(f"Episode airtime offset: {episode_airtime_offset_min / 60} hours")
@@ -9938,10 +9846,8 @@ def generate_airtime_report():
         try:
             # Assume release_date and airtime are naive, localize them to the system's configured timezone
             naive_release_datetime = datetime.combine(release_date, airtime)
-            # *** START EDIT ***
             # Use replace() for zoneinfo, which handles DST transitions (raises errors for invalid times, assumes standard time for ambiguous times by default)
             local_release_datetime = naive_release_datetime.replace(tzinfo=tz) 
-            # *** END EDIT ***
 
             # Calculate scrape datetime by adding offset
             scrape_datetime_local = local_release_datetime + timedelta(minutes=airtime_offset_minutes)
@@ -10606,7 +10512,7 @@ def run_recent_local_library_scan():
     logging.info("Recent library scan disabled for now")
     #recent_local_library_scan()
 
-# *** START EDIT: Add Listener Setup Method ***
+# Add Listener Setup Method
 def _setup_scheduler_listeners(runner_instance):
     """
     Ensures the scheduler is initialized and adds necessary event listeners.
@@ -10698,7 +10604,6 @@ def _setup_scheduler_listeners(runner_instance):
             raise RuntimeError(f"Failed to schedule tasks on newly created scheduler: {e_schedule_tasks}")
 
     logging.info(f"[_setup_scheduler_listeners] Completed. Final runner_instance.scheduler ID: {id(runner_instance.scheduler) if runner_instance.scheduler else 'None'}. initial_listeners_setup_complete: {getattr(runner_instance, 'initial_listeners_setup_complete', 'N/A')}")
-# *** END EDIT ***
 
 def run_program():
     global program_runner
@@ -10707,12 +10612,11 @@ def run_program():
     if program_runner is None or not program_runner.is_running():
         logging.info("Initializing ProgramRunner...")
         program_runner = ProgramRunner()
-        # *** START EDIT: Setup listeners after init ***
+        # Setup listeners after init
         try:
             _setup_scheduler_listeners(program_runner) # Use the correct function name
         except Exception as e:
              logging.error(f"Failed to set up scheduler listeners during startup: {e}", exc_info=True)
-        # *** END EDIT ***
         # Update the program runner in program_operation_routes
         from routes.program_operation_routes import program_operation_bp
         program_operation_bp.program_runner = program_runner # Ensure routes use the instance

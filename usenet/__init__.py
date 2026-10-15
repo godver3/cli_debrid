@@ -35,17 +35,18 @@ Caller migration path:
       client = get_usenet_client()
 """
 
-from typing import Union, Optional
+from typing import TYPE_CHECKING, Union, Optional
 
 from utilities.settings import get_setting
+
+if TYPE_CHECKING:
+    from usenet.climount_client import CliMountClient
+    from usenet.nzbdav_client import NzbdavClient
 
 
 # Type alias for any concrete usenet client.
 # Both classes implement the same duck-typed interface (see module docstring).
-UsenetClient = Union[
-    'usenet.climount_client.CliMountClient',
-    'usenet.nzbdav_client.NzbdavClient',
-]
+UsenetClient = Union['CliMountClient', 'NzbdavClient']
 
 
 def _get_provider_key() -> str:

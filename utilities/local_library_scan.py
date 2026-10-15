@@ -2081,7 +2081,6 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         on_success_callback(relative_path_to_remove)
                     except Exception as cb_err:
                         logging.error(f"Error executing on_success_callback for {relative_path_to_remove}: {cb_err}")
-                # --- END EDIT ---
 
                 # --- MULTIFILE SUPPORT FOR SYMLINK MODE ---
                 # For both movies and episodes, scan the source folder for additional video files and create

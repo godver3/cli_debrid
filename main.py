@@ -1650,11 +1650,10 @@ def migrate_theatrical_release_dates():
 def main():
     logging.info("Starting the program...")
 
-    # --- START EDIT: Import flask_app and _execute_start_program here ---
+    # Import flask_app and _execute_start_program here
     from routes.extensions import app as flask_app 
     from routes.program_operation_routes import _execute_start_program
     import os
-    # --- END EDIT ---
 
     # Check for database restore request BEFORE any database operations
     restore_performed = check_and_perform_restore()
@@ -2406,7 +2405,7 @@ def main():
         # Add delay to ensure server is ready for app_context usage
         time.sleep(3)  # Increased delay slightly to ensure Flask app is fully up for app_context
         
-        # --- START EDIT: Directly call _execute_start_program ---
+        # Directly call _execute_start_program
         # The readiness check via HTTP is less critical if we call the Python function directly,
         # but ensuring flask_app.program_runner is ready is vital.
         # The __main__ block should have set up flask_app.program_runner and its listeners.
@@ -2435,13 +2434,12 @@ def main():
         except Exception as e_direct_call:
             print(f"Critical error during direct call to _execute_start_program for auto-start: {e_direct_call}")
             logging.error(f"Critical error during direct call to _execute_start_program for auto-start: {e_direct_call}", exc_info=True)
-        # --- END EDIT ---
 
     # Set up signal handling
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # --- START EDIT: Supervisor attributes ---
+    # Supervisor attributes
     # Using function attributes for state to keep them local to main() context
     if not hasattr(main, 'last_supervisor_check_time'):
         main.last_supervisor_check_time = 0
@@ -2449,7 +2447,6 @@ def main():
         main.supervisor_resume_attempts = 0
     SUPERVISOR_CHECK_INTERVAL = 300 # 5 minutes
     SUPERVISOR_MAX_RESUME_ATTEMPTS = 3 
-    # --- END EDIT ---
 
     # Prepare MemProbe timing
     if not hasattr(main, 'last_memprobe_time'):
@@ -2489,7 +2486,7 @@ def main():
                 pass
             # ────────────────────────────────────────────────────────
 
-            # --- START EDIT: Supervisor Logic ---
+            # Supervisor Logic
             # No 'global' keyword needed here to access the module-level variable
             if global_program_runner_instance and global_program_runner_instance.is_running() and False:
                 if global_program_runner_instance.queue_paused and global_program_runner_instance.pause_info.get("error_type"):
@@ -2559,7 +2556,6 @@ def main():
                         main.supervisor_resume_attempts = 0
                     main.last_supervisor_check_time = time.time() # Update check time even if not paused to delay next check
 
-            # --- END EDIT: Supervisor Logic ---
 
     except KeyboardInterrupt:
         from routes.program_operation_routes import cleanup_port

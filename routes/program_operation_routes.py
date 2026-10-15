@@ -551,7 +551,7 @@ def attempt_trakt_auto_reauth():
         logging.error(f"Error during automatic Trakt re-authentication: {str(e)}", exc_info=True)
         return False
 
-# --- START EDIT: New internal function for program start logic ---
+# New internal function for program start logic
 def _execute_start_program(skip_connectivity_check: bool = False, is_restart: bool = False):
     """
     Core logic to start the program.
@@ -677,12 +677,11 @@ def _execute_start_program(skip_connectivity_check: bool = False, is_restart: bo
     finally:
         if _program_op_lock.locked(): # Ensure it was acquired by this thread before releasing
              _program_op_lock.release()
-# --- END EDIT ---
 
 @program_operation_bp.route('/api/start_program', methods=['POST'])
 @admin_required # This decorator remains for HTTP API calls
 def start_program():
-    # --- START EDIT: Delegate to the new internal function ---
+    # Delegate to the new internal function
     logging.info("--- /api/start_program HTTP endpoint called, delegating to _execute_start_program ---")
     # _execute_start_program uses current_app.program_runner which is set up in main.py
     # The Flask app context is active here.
@@ -720,7 +719,6 @@ def start_program():
         except Exception:
             pass
     return jsonify(result), http_status_code
-    # --- END EDIT ---
 
 def stop_program():
     if not _program_op_lock.acquire(blocking=False):
@@ -1275,19 +1273,18 @@ def load_task_toggles():
         logging.error(f"Error loading task toggles: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
 
-# --- START EDIT: Helper function for interval file path ---
+# Helper function for interval file path
 def _get_task_intervals_file_path():
     """Gets the absolute path for the task_intervals.json file."""
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
     return os.path.join(db_content_dir, 'task_intervals.json')
-# --- END EDIT ---
 
 def _get_task_toggles_file_path():
     """Gets the absolute path for the task_toggles.json file."""
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
     return os.path.join(db_content_dir, 'task_toggles.json')
 
-# --- START EDIT: Add routes for saving/loading custom intervals ---
+# Add routes for saving/loading custom intervals
 @program_operation_bp.route('/save_task_intervals', methods=['POST'])
 @admin_required
 def save_task_intervals():
@@ -1406,7 +1403,7 @@ def load_task_intervals():
 
     return jsonify(success=True, task_intervals=saved_intervals_seconds) # Return seconds
 
-# --- START EDIT: Modify reset_all_task_settings endpoint ---
+# Modify reset_all_task_settings endpoint
 @program_operation_bp.route('/api/reset_all_task_settings', methods=['POST'])
 @admin_required
 def reset_all_task_settings():
@@ -1452,9 +1449,8 @@ def reset_all_task_settings():
     except Exception as e:
         logging.error(f"Critical error in reset_all_task_settings: {str(e)}", exc_info=True)
         return jsonify({'status': 'error', 'message': f"An unexpected critical error occurred during reset: {str(e)}"}), 500
-# --- END EDIT ---
 
-# --- START EDIT: Define the missing helper function ---
+# Define the missing helper function
 def _format_task_display_name(task_name, queue_map, content_sources_map):
     """Formats the internal task name into a user-friendly display name."""
     
@@ -1473,7 +1469,7 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
         source_key = task_name[5:-7] # Extract potential key 'My_Overseerr' etc.
         
         # Try to find a matching entry in the content_sources_map
-        # --- START EDIT: Prioritize configured display_name ---
+        # Prioritize configured display_name
         if content_sources_map and source_key in content_sources_map:
             source_config = content_sources_map[source_key]
             # Check if the source config has a non-empty 'display_name' field
@@ -1486,7 +1482,6 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
                 display_name = source_key.replace('_', ' ').strip()
                 # Basic capitalization (capitalize first letter of each word)
                 return ' '.join(word.capitalize() for word in display_name.split())
-        # --- END EDIT ---
         else:
             # Fallback if key not found in map (shouldn't happen often if maps are synced)
              logging.debug(f"Could not find source key '{source_key}' in content_sources_map for display name formatting.")
@@ -1508,7 +1503,6 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
 
     # Default fallback if no rule matches (should be rare)
     return task_name.replace('_', ' ').capitalize()
-# --- END EDIT ---
 
 
 # ---------------------------------------------------------------------------

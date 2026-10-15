@@ -27,7 +27,7 @@ class TestTriggerTaskBypassesCacheForContentSources(unittest.TestCase):
 
     def test_manual_content_source_tasks_set_bypass_cache_kwarg(self):
         method_start = self.source.index("def _get_task_target(self, task_name: str, manual: bool = False):")
-        method_end = self.source.index("\n    # *** END EDIT ***", method_start)
+        method_end = self.source.index("\n    def ", method_start + 1)
         method = self.source[method_start:method_end]
         self.assertIn("if manual:", method)
         self.assertIn("kwargs = {'bypass_cache': True}", method)

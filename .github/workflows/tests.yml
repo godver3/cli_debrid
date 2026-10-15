@@ -18,6 +18,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip "setuptools<78" wheel
-          pip install -r requirements-linux.txt pytest pytest-timeout
+          pip install -r requirements-linux.txt pytest pytest-timeout pyflakes
+      - name: No undefined names
+        # Undefined names are NameErrors waiting on a rarely-hit branch
+        # (error handlers, fallbacks); fail the build on any of them.
+        run: |
+          out=$(find . -name '*.py' -not -path './tests/*' -not -path './phalanx_db_hyperswarm/*' \
+                | xargs python -m pyflakes 2>/dev/null | grep "undefined name '" || true)
+          if [ -n "$out" ]; then echo "$out"; exit 1; fi
       - name: Run tests
         run: python -m pytest -q --timeout=300

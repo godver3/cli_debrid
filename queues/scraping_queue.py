@@ -431,9 +431,8 @@ class ScrapingQueue:
                 # logging.info(f"Starting to process scraping results for {item_identifier}")
                 processed_an_item_this_cycle = True # Mark that we started processing
 
-                # --- START EDIT: Add content source check ---
+                # Add content source check
                 is_magnet_assigned = item_to_process.get('content_source') == 'Magnet_Assigner'
-                # --- END EDIT ---
 
                 # Check release date logic - skip for early release items AND magnet assigned items
                 # --- Use item_to_process instead of item throughout ---
@@ -486,7 +485,7 @@ class ScrapingQueue:
                                     processed_successfully_or_moved = True
 
                     except ValueError:
-                         # --- START EDIT: Add content source check ---
+                         # Add content source check
                         # Only move back if not magnet assigned and date is bad
                         if not is_magnet_assigned:
                             if str(item_id_being_processed) == DEBUG_ITEM_ID:
@@ -502,7 +501,6 @@ class ScrapingQueue:
                             # Log but allow Magnet Assigned items to proceed
                             # logging.warning(f"Magnet Assigned item {item_identifier} has an invalid release date format: {item_to_process['release_date']}. Proceeding anyway.")
                             pass
-                        # --- END EDIT ---
                         # Removed return
 
                 # Proceed only if the item wasn't moved back to Wanted due to release date
@@ -1259,17 +1257,15 @@ class ScrapingQueue:
                 if processed_an_item_this_cycle:
                     processed_count += 1
 
-            # --- START EDIT: Fetch setting from Queue section ---
+            # Fetch setting from Queue section
             if processed_an_item_this_cycle:
-                # --- START EDIT: Add try-except for float conversion ---
+                # Add try-except for float conversion
                 try:
                     delay_seconds = float(get_setting('Queue', 'item_process_delay_seconds', 0.0))
                 except (ValueError, TypeError):
                     delay_seconds = 0.0
-                # --- END EDIT ---
                 if delay_seconds > 0:
                     time.sleep(delay_seconds)
-            # --- END EDIT ---
 
         # Return True if there are more items potentially left to process in the queue
         # Or if we actually processed an item in this call (even if it resulted in removal)
