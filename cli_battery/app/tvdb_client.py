@@ -24,6 +24,9 @@ from .database import (
     TVDBToIMDBMapping, DatabaseManager,
 )
 
+# One pooled session: keeps TLS connections to the API alive across calls.
+_http = requests.Session()
+
 TVDB_BASE_URL = "https://api4.thetvdb.com/v4"
 REQUEST_TIMEOUT = 15
 
@@ -130,7 +133,7 @@ def _ensure_token() -> bool:
             if not api_key:
                 return False
 
-            resp = requests.post(
+            resp = _http.post(
                 f"{TVDB_BASE_URL}/login",
                 json={"apikey": api_key},
                 timeout=REQUEST_TIMEOUT,
@@ -161,7 +164,7 @@ def _make_request(url: str, max_retries: int = 4, initial_delay: float = 5) -> O
     delay = initial_delay
     for attempt in range(max_retries):
         try:
-            resp = requests.get(
+            resp = _http.get(
                 url,
                 headers={"Authorization": f"Bearer {_token}"},
                 timeout=REQUEST_TIMEOUT,
@@ -328,7 +331,7 @@ def convert_tvdb_to_imdb(tvdb_id: str, media_type: str = 'show') -> Optional[str
 
     if not tmdb_id:
         try:
-            resp = requests.get(
+            resp = _http.get(
                 f"https://api.themoviedb.org/3/find/{tvdb_id}",
                 params={'api_key': api_key, 'external_source': 'tvdb_id'},
                 timeout=REQUEST_TIMEOUT,
@@ -469,7 +472,7 @@ def _batch_fetch_episode_air_dates(imdb_id: str, tmdb_id: int = None) -> dict:
             if tmdb_api_key:
                 logger.info(f"Batch-fetching episode air dates from TMDB for {imdb_id} (TMDB ID: {tmdb_id})")
                 url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={tmdb_api_key}&append_to_response=external_ids"
-                resp = requests.get(url, timeout=15)
+                resp = _http.get(url, timeout=15)
                 if resp.status_code == 200:
                     data = resp.json()
                     seasons = data.get('seasons', [])
@@ -481,7 +484,7 @@ def _batch_fetch_episode_air_dates(imdb_id: str, tmdb_id: int = None) -> dict:
                             continue
 
                         season_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_num}?api_key={tmdb_api_key}"
-                        season_resp = requests.get(season_url, timeout=15)
+                        season_resp = _http.get(season_url, timeout=15)
                         if season_resp.status_code == 200:
                             season_data = season_resp.json()
                             episodes = season_data.get('episodes', [])
@@ -819,7 +822,7 @@ def _fetch_tmdb_title_only(tmdb_id: Optional[int], imdb_id: str, api_key: str, m
         return None
     endpoint = 'tv' if media_type == 'show' else 'movie'
     try:
-        resp = requests.get(
+        resp = _http.get(
             f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}",
             params={'api_key': api_key},
             timeout=REQUEST_TIMEOUT,
@@ -1430,7 +1433,7 @@ def _fetch_tmdb_release_dates(tmdb_id: int, api_key: str) -> Optional[dict]:
     Returns Trakt-compatible dict: {'us': [{'date': 'YYYY-MM-DD', 'type': 'theatrical'}, ...], ...}
     """
     try:
-        resp = requests.get(
+        resp = _http.get(
             f"https://api.themoviedb.org/3/movie/{tmdb_id}/release_dates",
             params={'api_key': api_key},
             timeout=REQUEST_TIMEOUT,
@@ -1469,7 +1472,7 @@ def _fetch_tmdb_release_dates(tmdb_id: int, api_key: str) -> Optional[dict]:
 def _resolve_tmdb_id_from_imdb(imdb_id: str, api_key: str, media_type: str = 'movie') -> Optional[int]:
     """Resolve an IMDb ID to a TMDB ID via TMDB's /find endpoint."""
     try:
-        resp = requests.get(
+        resp = _http.get(
             f"https://api.themoviedb.org/3/find/{imdb_id}",
             params={'api_key': api_key, 'external_source': 'imdb_id'},
             timeout=REQUEST_TIMEOUT,
@@ -1530,7 +1533,7 @@ def _search_tmdb_by_title(title: str, year: Optional[int], api_key: str, media_t
         endpoint = 'tv' if media_type == 'show' else 'movie'
         title_field = 'name' if media_type == 'show' else 'title'
         date_field = 'first_air_date' if media_type == 'show' else 'release_date'
-        resp = requests.get(
+        resp = _http.get(
             f"https://api.themoviedb.org/3/search/{endpoint}",
             params={'api_key': api_key, 'query': title},
             timeout=REQUEST_TIMEOUT,
@@ -1567,7 +1570,7 @@ def _fetch_tmdb_movie_data(imdb_id: str, api_key: str) -> Optional[dict]:
         return None
 
     try:
-        resp = requests.get(
+        resp = _http.get(
             f"https://api.themoviedb.org/3/movie/{tmdb_id}",
             params={'api_key': api_key},
             timeout=REQUEST_TIMEOUT,
@@ -1618,7 +1621,7 @@ def _fetch_tmdb_show_data(imdb_id: str, api_key: str) -> Optional[dict]:
         return None
 
     try:
-        resp = requests.get(
+        resp = _http.get(
             f"https://api.themoviedb.org/3/tv/{tmdb_id}",
             params={'api_key': api_key},
             timeout=REQUEST_TIMEOUT,

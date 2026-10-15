@@ -239,7 +239,7 @@ class TestTvdbToImdbWithoutTrakt(unittest.TestCase):
         with mock.patch.object(tvdb_client.DatabaseManager, 'get_imdb_from_tvdb', return_value=None), \
              mock.patch.object(tvdb_client, 'is_available', return_value=False), \
              mock.patch.object(tvdb_client, '_get_tmdb_api_key', return_value='key'), \
-             mock.patch.object(tvdb_client.requests, 'get', return_value=find) as get, \
+             mock.patch.object(tvdb_client._http, 'get', return_value=find) as get, \
              mock.patch.object(tvdb_client, '_cache_tvdb_mapping'), \
              mock.patch('cli_battery.app.direct_api.DirectAPI', direct):
             self.assertEqual(tvdb_client.convert_tvdb_to_imdb('326887'), 'tt0000444')
