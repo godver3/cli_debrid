@@ -7,6 +7,8 @@ from utilities.settings_schema import SETTINGS_SCHEMA
 from utilities.file_lock import FileLock
 import time
 import shutil # Added for copy2
+import pickle
+import threading
 
 # --- Start Dynamic Path Functions ---
 def get_config_dir():
@@ -81,7 +83,7 @@ class Settings:
                 except Exception as e:
                     logging.error(f"Failed to close lock file handle for {self.lock_file_path}: {e}")
 
-def load_config():
+def _read_config_from_disk():
     config_file_path = get_config_file_path()
     lock_file_path = get_lock_file_path()
 
@@ -97,8 +99,7 @@ def load_config():
                         config['cli_mount'] = config.pop('Decypharr')
                         logging.info("Settings migration: renamed 'Decypharr' section to 'cli_mount'")
                         try:
-                            with open(config_file_path, 'w') as _mf:
-                                json.dump(config, _mf, indent=4)
+                            write_config_file(config, indent=4)
                         except Exception as _me:
                             logging.warning(f"Settings migration: could not persist rename: {_me}")
 
@@ -138,6 +139,108 @@ def load_config():
         logging.error(f"load_config: Failed to acquire lock or other error in Settings context for {lock_file_path}: {e_lock}. Returning empty config.")
         return {}
 
+
+# --- Parsed-config cache ---
+# get_setting() has ~1,100 call sites, many on per-item / per-tick paths, and
+# used to take the file lock and json.load config.json on every call. The
+# parsed config is now cached and re-read only when the file's identity changes
+# (inode/size/mtime/ctime), so edits from other processes or by hand are still
+# picked up on the next read. Writes made through this module invalidate it
+# immediately.
+_config_cache_lock = threading.Lock()
+_config_cache = {'path': None, 'sig': None, 'config': None, 'snapshot': None}
+
+
+def _config_signature(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def invalidate_config_cache():
+    with _config_cache_lock:
+        _config_cache['path'] = None
+        _config_cache['sig'] = None
+        _config_cache['config'] = None
+        _config_cache['snapshot'] = None
+
+
+def _copy(value):
+    # Config values are plain JSON data; a pickle round-trip copies them
+    # several times faster than copy.deepcopy.
+    return pickle.loads(pickle.dumps(value, pickle.HIGHEST_PROTOCOL))
+
+
+def _get_cached_entry():
+    path = get_config_file_path()
+    sig = _config_signature(path)
+    with _config_cache_lock:
+        if sig is not None and _config_cache['path'] == path and _config_cache['sig'] == sig:
+            return _config_cache['config'], _config_cache['snapshot']
+
+    config = _read_config_from_disk()
+
+    # Only cache a read that came from an unchanged primary file; a backup
+    # fallback or a file that changed mid-read is re-read next time.
+    if sig is not None and isinstance(config, dict) and config and _config_signature(path) == sig:
+        snapshot = pickle.dumps(config, pickle.HIGHEST_PROTOCOL)
+        with _config_cache_lock:
+            _config_cache['path'] = path
+            _config_cache['sig'] = sig
+            _config_cache['config'] = config
+            _config_cache['snapshot'] = snapshot
+        return config, snapshot
+    return config, None
+
+
+def _get_cached_config():
+    """Return the shared parsed config. Callers must NOT mutate the result."""
+    return _get_cached_entry()[0]
+
+
+def load_config():
+    """Return a private, mutable copy of the current config."""
+    config, snapshot = _get_cached_entry()
+    if snapshot is not None:
+        return pickle.loads(snapshot)
+    return config  # uncached read: already a fresh object
+
+
+def write_config_file(config, indent=2, default=None):
+    """Write config.json atomically (temp file + rename) and drop the cache.
+
+    The caller must hold the config lock. Readers never observe a truncated
+    file. Falls back to an in-place write when the rename is impossible, e.g.
+    when config.json itself is a bind-mounted file.
+    """
+    config_file_path = get_config_file_path()
+    os.makedirs(os.path.dirname(config_file_path), exist_ok=True)
+    tmp_path = f"{config_file_path}.tmp.{os.getpid()}.{threading.get_ident()}"
+    try:
+        with open(tmp_path, 'w') as tmp_file:
+            json.dump(config, tmp_file, indent=indent, default=default)
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+        if os.path.exists(config_file_path):
+            try:
+                shutil.copymode(config_file_path, tmp_path)
+            except OSError:
+                pass
+        try:
+            os.replace(tmp_path, config_file_path)
+        except OSError as e_replace:
+            logging.warning(f"write_config_file: atomic rename failed ({e_replace}); writing in place.")
+            with open(config_file_path, 'w') as config_file:
+                json.dump(config, config_file, indent=indent, default=default)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        invalidate_config_cache()
 
 def load_env_config():
     """Load configuration from environment variable or .env file if it exists."""
@@ -249,10 +352,7 @@ def save_config(config):
 
             # Save the new config
             try:
-                # Create directory if it doesn't exist
-                os.makedirs(os.path.dirname(config_file_path), exist_ok=True)
-                with open(config_file_path, 'w') as config_file:
-                    json.dump(config, config_file, indent=2)
+                write_config_file(config, indent=2)
                 logging.debug(f"save_config: Successfully saved config to {config_file_path}")
                 # A key entered just now must be redacted from the very next
                 # log line, not once the cache TTL happens to lapse.
@@ -288,23 +388,26 @@ def parse_bool(value):
     return bool(value)
 
 def get_setting(section, key=None, default=None):
-    # This function relies on load_config, which is now dynamic
-    config = load_config()
+    # Reads the shared cached config; containers are copied on the way out so
+    # callers can keep mutating what they get back, as they always could.
+    config = _get_cached_config()
     if section == 'Content Sources':
         content_sources = config.get(section, {})
         if not isinstance(content_sources, dict):
             logging.warning(f"get_setting: 'Content Sources' is not a dictionary (type: {type(content_sources)}). Resetting to empty dict.")
             content_sources = {}
-        return content_sources
+        return _copy(content_sources)
 
     if key is None:
         # Return the whole section, default to empty dict if section missing
         section_data = config.get(section, {})
-        return section_data
+        return _copy(section_data)
 
     # Get specific key from section, default to provided default if section or key missing
     section_data = config.get(section, {})
     value = section_data.get(key, default)
+    if isinstance(value, (dict, list)):
+        value = _copy(value)
 
 
     # Handle boolean values (Keep this logic)
