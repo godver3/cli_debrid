@@ -47,6 +47,10 @@ def index():
                          has_admin_permissions=has_admin_permissions,
                          nas_paths=get_nas_paths())
 
+# Keep-alive to the Plex server across the many poster requests of a page
+_plex_image_session = requests.Session()
+
+
 @library_bp.route('/plex_image/<path:plex_path>')
 @user_required
 def plex_image_proxy(plex_path):
@@ -71,15 +75,19 @@ def plex_image_proxy(plex_path):
         full_url = f"{plex_url}{plex_path}?X-Plex-Token={plex_token}&includeAllConcerts=1"
 
         # Fetch image from Plex
-        response = requests.get(full_url, timeout=10, stream=True)
+        response = _plex_image_session.get(full_url, timeout=10)
 
         if response.status_code == 200:
-            # Return the image with appropriate content type
-            # Only cache if web caching is enabled in settings
-            from utilities.settings import load_config
-            config = load_config()
-            enable_caching = config.get('UI Settings', {}).get('enable_caching', False)
-            cache_header = 'public, max-age=86400' if enable_caching else 'no-cache'
+            # Plex thumb paths end in the artwork's update timestamp
+            # (/library/metadata/<id>/thumb/<ts>), so a changed poster gets a new
+            # URL and the browser can keep this one. Unversioned paths keep the
+            # enable_caching behaviour.
+            if plex_path.rstrip('/').rsplit('/', 1)[-1].isdigit():
+                cache_header = 'public, max-age=604800'
+            elif get_setting('UI Settings', 'enable_caching', False):
+                cache_header = 'public, max-age=86400'
+            else:
+                cache_header = 'no-cache'
 
             return Response(
                 response.content,

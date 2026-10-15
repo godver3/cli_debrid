@@ -106,6 +106,40 @@ def get_airing_soon():
     
     return grouped_results
 
+@cache_for_seconds(60)  # The missing-episodes count scans every episode row
+def get_badge_counts():
+    """(movie files, wanted movies, missing episodes) for the home page badges."""
+    from database import get_db_connection
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        # Movie files count (total movie entries in Collected/Upgrading state)
+        cursor.execute("SELECT COUNT(*) FROM media_items WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')")
+        total_movie_files = cursor.fetchone()[0]
+
+        # Wanted movies count
+        cursor.execute("""
+            SELECT COUNT(DISTINCT COALESCE(imdb_id, tmdb_id)) 
+            FROM media_items 
+            WHERE type = 'movie' 
+            AND state = 'Wanted'
+            AND (imdb_id IS NOT NULL OR tmdb_id IS NOT NULL)
+        """)
+        wanted_movies = cursor.fetchone()[0]
+
+        # Missing episodes count (episodes that exist but are not collected)
+        cursor.execute("""
+            SELECT COUNT(DISTINCT imdb_id || '-' || season_number || '-' || episode_number)
+            FROM media_items 
+            WHERE type = 'episode' 
+            AND state NOT IN ('Collected', 'Upgrading')
+            AND imdb_id IN (SELECT DISTINCT imdb_id FROM media_items WHERE type = 'episode' AND state IN ('Collected', 'Upgrading'))
+        """)
+        missing_episodes = cursor.fetchone()[0]
+    finally:
+        conn.close()
+    return total_movie_files, wanted_movies, missing_episodes
+
 @cache_for_seconds(300)  # Cache for 5 minutes since releases don't change frequently
 def get_upcoming_releases():
     from database import get_db_connection
@@ -519,35 +553,9 @@ def root():
     
     # Get additional counts for badges
     try:
-        # Movie files count (total movie entries in Collected/Upgrading state)
-        from database import get_db_connection
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM media_items WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')")
-        stats['total_movie_files'] = cursor.fetchone()[0]
-        
-        # Wanted movies count
-        cursor.execute("""
-            SELECT COUNT(DISTINCT COALESCE(imdb_id, tmdb_id)) 
-            FROM media_items 
-            WHERE type = 'movie' 
-            AND state = 'Wanted'
-            AND (imdb_id IS NOT NULL OR tmdb_id IS NOT NULL)
-        """)
-        stats['wanted_movies'] = cursor.fetchone()[0]
+        (stats['total_movie_files'], stats['wanted_movies'],
+         stats['missing_episodes']) = get_badge_counts()
         logging.info(f"Wanted movies count: {stats['wanted_movies']}")
-        
-        # Missing episodes count (episodes that exist but are not collected)
-        cursor.execute("""
-            SELECT COUNT(DISTINCT imdb_id || '-' || season_number || '-' || episode_number)
-            FROM media_items 
-            WHERE type = 'episode' 
-            AND state NOT IN ('Collected', 'Upgrading')
-            AND imdb_id IN (SELECT DISTINCT imdb_id FROM media_items WHERE type = 'episode' AND state IN ('Collected', 'Upgrading'))
-        """)
-        stats['missing_episodes'] = cursor.fetchone()[0]
-        
-        conn.close()
     except Exception as e:
         logging.error(f"Error getting additional statistics: {str(e)}")
         stats['total_movie_files'] = 0
