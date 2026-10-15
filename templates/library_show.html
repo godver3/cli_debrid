@@ -20,7 +20,7 @@
         var scraperLink = document.createElement('link');
         scraperLink.rel = 'stylesheet';
         if (theme === 'tangerine') {
-            scraperLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}?v=20260118";
+            scraperLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}";
         } else {
             scraperLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}";
         }
@@ -35,7 +35,7 @@
         if (theme === 'tangerine') {
             var showLink = document.createElement('link');
             showLink.rel = 'stylesheet';
-            showLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_library_show.css') }}?v={{ range(10000, 99999) | random }}";
+            showLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_library_show.css') }}";
             document.head.appendChild(showLink);
         }
     })();
@@ -418,9 +418,9 @@
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/deletion_common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v={{ range(10000, 99999) | random }}"></script>
-<script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
-<script src="{{ url_for('static', filename='js/library_show.js') }}?v={{ range(10000, 99999) | random }}"></script>
+<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}"></script>
+<script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
+<script src="{{ url_for('static', filename='js/library_show.js') }}"></script>
 <script src="{{ url_for('static', filename='js/trailer_modal.js') }}"></script>
-<script src="{{ url_for('static', filename='js/fix_match_modal.js') }}?v={{ range(10000, 99999) | random }}"></script>
+<script src="{{ url_for('static', filename='js/fix_match_modal.js') }}"></script>
 {% endblock %}

@@ -77,10 +77,10 @@
     {% if ai_butler_enabled and not is_onboarding %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_ai_butler.css') }}">
     {% endif %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_calendar_view.css') }}?v=18">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_calendar_view.css') }}">
 
     <!-- Load theme switcher early to prevent FOUC -->
-    <script src="{{ url_for('static', filename='js/theme_switcher.js') }}?v=34"></script>
+    <script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
     <script>
         // Mark page as ready to show after theme is applied
         if (document.readyState === 'loading') {
@@ -752,7 +752,7 @@
         });
     </script>
     <!-- Last in <head> so it overrides tangerine_base.css and any page styles -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_mobile_nav.css') }}?v=34">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_mobile_nav.css') }}">
 </head>
 
 <body data-theme="tangerine" class="tangerine-theme" data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}"
@@ -1813,11 +1813,8 @@
         document.body.classList.remove('page-loading');
     });
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <script type="module" src="{{ url_for('static', filename='js/program_controls.js') }}"></script>
-    <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}?v=3"></script>
+    <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/tooltips.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/task_monitor.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/base.js') }}"></script>
