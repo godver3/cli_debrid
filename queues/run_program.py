@@ -131,6 +131,21 @@ def clear_nzb_job_health_cache(job_id: str) -> None:
     ProgramRunner._nzb_folder_wait_counts.pop(bare, None)
 
 
+def _build_scheduler_config():
+    """Executors and job defaults shared by every BackgroundScheduler we build."""
+    queue_workers = max(1, min(3, int(get_setting('Queue', 'queue_pool_workers', 2))))
+    executors = {
+        'default': ThreadPoolExecutor(max_workers=1),  # scheduled/maintenance tasks — sequential
+        'queue': ThreadPoolExecutor(max_workers=queue_workers),
+    }
+    job_defaults = {
+        'coalesce': True,
+        'max_instances': 1,
+        'misfire_grace_time': None,
+    }
+    return queue_workers, executors, job_defaults
+
+
 class ProgramRunner:
     _instance = None
 
@@ -198,32 +213,14 @@ class ProgramRunner:
             from metadata.metadata import _get_local_timezone # Added import
             tz = _get_local_timezone()
             logging.info(f"Initializing APScheduler with timezone: {tz.key}")
-            _queue_workers = max(1, min(3, int(get_setting('Queue', 'queue_pool_workers', 2))))
-            executors = {
-                'default': ThreadPoolExecutor(max_workers=1),  # scheduled/maintenance tasks — sequential
-                'queue': ThreadPoolExecutor(max_workers=_queue_workers),
-            }
-            job_defaults = {
-                'coalesce': True,
-                'max_instances': 1,
-                'misfire_grace_time': None
-            }
+            _queue_workers, executors, job_defaults = _build_scheduler_config()
             self.scheduler = BackgroundScheduler(jobstores=_jobstores, executors=executors, job_defaults=job_defaults, timezone=tz)
             logging.info(f"APScheduler configured with separate thread pools: queue({_queue_workers}) and default(1).")
         except Exception as e:
             logging.error(f"Failed to get local timezone for scheduler, using system default: {e}")
-            _queue_workers = max(1, min(3, int(get_setting('Queue', 'queue_pool_workers', 2))))
-            executors = {
-                'default': ThreadPoolExecutor(max_workers=1),
-                'queue': ThreadPoolExecutor(max_workers=_queue_workers),
-            }
-            job_defaults = {
-                'coalesce': True,
-                'max_instances': 1,
-                'misfire_grace_time': None
-            }
+            _queue_workers, executors, job_defaults = _build_scheduler_config()
             self.scheduler = BackgroundScheduler(jobstores=_jobstores, executors=executors, job_defaults=job_defaults)
-            logging.info("APScheduler configured with separate thread pools: queue(2) and default(1) (system default timezone).")
+            logging.info(f"APScheduler configured with separate thread pools: queue({_queue_workers}) and default(1) (system default timezone).")
 
         # self.scheduler_lock = threading.Lock() # Previous version
         self.scheduler_lock = threading.RLock() # MODIFIED: Ensure RLock for reentrancy
@@ -10636,12 +10633,7 @@ def _setup_scheduler_listeners(runner_instance):
             logging.error(f"[_setup_scheduler_listeners] Failed to get local timezone for scheduler, using UTC fallback: {e_tz}")
             tz = pytz.utc
 
-        _queue_workers = max(1, min(3, int(get_setting('Queue', 'queue_pool_workers', 2))))
-        executors = {
-            'default': ThreadPoolExecutor(max_workers=1),
-            'queue': ThreadPoolExecutor(max_workers=_queue_workers),
-        }
-        job_defaults = {'coalesce': True, 'max_instances': 1}
+        _queue_workers, executors, job_defaults = _build_scheduler_config()
 
         try:
             new_scheduler = BackgroundScheduler(
