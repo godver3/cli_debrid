@@ -1143,7 +1143,7 @@
                     new MutationObserver(syncNotifIndicator).observe(btn, { attributes: true, attributeFilter: ['class'] });
                 });
                 // Fallback poll every 500ms in case observer misses initial set
-                setInterval(syncNotifIndicator, 500);
+                setInterval(function() { if (!document.hidden) syncNotifIndicator(); }, 500);
             }
             // Sync release notes button
             var stRelBtn = document.getElementById('st_releaseNotesButton');

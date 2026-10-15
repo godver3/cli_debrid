@@ -5267,7 +5267,7 @@ async function retryExhaustedRepair(btn) {
 function afStartPolling() {
     afLoad();
     clearInterval(_afTimer);
-    _afTimer = setInterval(afLoad, 10000);
+    _afTimer = setInterval(() => { if (!document.hidden) afLoad(); }, 10000);
 }
 function afStopPolling() {
     clearInterval(_afTimer);

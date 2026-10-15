@@ -718,7 +718,7 @@ function fetchClimountLogs() {
 function startClimountPolling() {
     stopClimountPolling();
     fetchClimountLogs();
-    climountPollTimer = setInterval(fetchClimountLogs, 2000);
+    climountPollTimer = setInterval(() => { if (!document.hidden) fetchClimountLogs(); }, 2000);
 }
 
 function stopClimountPolling() {

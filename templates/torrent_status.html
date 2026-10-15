@@ -148,6 +148,6 @@ document.getElementById('expand-completed').addEventListener('click', function()
 
 // Update status every 5 seconds
 updateTorrentStatus();
-setInterval(updateTorrentStatus, 5000);
+setInterval(() => { if (!document.hidden) updateTorrentStatus(); }, 5000);
 </script>
 {% endblock %}

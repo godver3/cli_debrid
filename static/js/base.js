@@ -919,6 +919,11 @@ document.addEventListener('DOMContentLoaded', function() {
     function initNotificationStream() {
         if (notificationEventSource) {
             notificationEventSource.close();
+            notificationEventSource = null;
+        }
+        // Hidden tabs hold no stream; the visibilitychange handler reopens it
+        if (document.hidden) {
+            return;
         }
 
         try {
@@ -1293,6 +1298,20 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize real-time notification streaming
     initNotificationStream();
+
+    // Close the stream while the tab is hidden; on return, catch up on what
+    // arrived meanwhile and reconnect.
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            if (notificationEventSource) {
+                notificationEventSource.close();
+                notificationEventSource = null;
+            }
+        } else if (!notificationEventSource) {
+            fetchNotifications();
+            initNotificationStream();
+        }
+    });
 
     // Cleanup EventSource on page unload
     window.addEventListener('beforeunload', function() {
