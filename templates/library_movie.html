@@ -3,16 +3,16 @@
 {% block title %}Movie Details - Library{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/library_movie.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/trailer_modal.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_movie.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_trailer_modal.css') }}">
 <script>
     // Dynamically load theme-specific CSS
     (function() {
         function getCurrentTheme() {
-            const savedTheme = localStorage.getItem('theme');
+            const savedTheme = localStorage.getItem('selectedTheme');
             if (savedTheme) return savedTheme;
             const metaTheme = document.querySelector('meta[name="theme"]');
-            return metaTheme ? metaTheme.getAttribute('content') : 'classic';
+            return metaTheme ? metaTheme.getAttribute('content') : 'tangerine';
         }
 
         const theme = getCurrentTheme();
@@ -22,11 +22,11 @@
         if (theme === 'tangerine') {
             scraperLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}?v=20260118";
         } else {
-            scraperLink.href = "{{ url_for('static', filename='css/scraper.css') }}";
+            scraperLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}";
         }
         document.head.appendChild(scraperLink);
 
-        var mobileCssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper-mobile.css' : 'css/scraper-mobile.css';
+        var mobileCssFile = 'css/tangerine/tangerine_scraper-mobile.css';
         var mobileLink = document.createElement('link');
         mobileLink.rel = 'stylesheet';
         mobileLink.href = '{{ url_for("static", filename="") }}' + mobileCssFile + '?v={{ range(10000, 99999) | random }}';

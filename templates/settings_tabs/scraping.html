@@ -1,30 +1,40 @@
-<h3>Scraping Settings</h3>
-<div class="settings-expand-collapse-buttons">
-    <button type="button" class="settings-expand-all">Expand All</button>
-    <button type="button" class="settings-collapse-all">Collapse All</button>
-</div>
+<div class="scraping-settings-page">
+    <h2 class="scraping-settings-title">Version Settings</h2>
+    <p class="scraping-settings-subtitle">Configure scraping profiles and preferences</p>
 
-<div class="version-management-buttons">
-    <button id="import-versions-btn" class="add-version-link">Import</button>
-    <button id="add-version-btn" class="add-version-link">Add New Version</button>
-    <button id="add-default-version-btn" class="add-version-link">Add Default Version</button>
-    <button id="add-separate-versions-btn" class="add-version-link">Add Separate 1080p/4K Versions</button>
-    {% if not is_limited_environment() %}
-    <!--<button id="import-default-versions-btn" class="import-versions-link">Add Alternate Default Versions</button>-->
-    {% endif %}
-</div>
-<input type="file" id="import-versions-file" accept=".json" style="display:none">
+    <div class="info-banner info-banner-blue" style="margin-top: 1rem;">
+        <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        <div class="info-banner-content">
+            <strong>How Scraping Versions Work:</strong> These scraping settings will be used to calculate a total score for each release, and to filter items in or out of the results. Weights are used to emphasize or de-emphasize specific traits. Use the Scraper Tester to verify that your results match what you expect.
+            <ul style="margin-top: 8px; padding-left: 20px;">
+                <li><strong>Filter In</strong> - Include only results with these terms.</li>
+                <li><strong>Filter Out</strong> - Include no results with these terms.</li>
+                <li><strong>Preferred Filter In</strong> - Increase score of results with these terms.</li>
+                <li><strong>Preferred Filter Out</strong> - Reduce score of results with these terms.</li>
+            </ul>
+        </div>
+    </div>
 
-<div class="scraping-info-box">
-    <p><strong>How Scraping Versions Work:</strong></p>
-    <p>These scraping settings will be used to calculate a total score for each release, and to filter items in or out of the results. Weights are used to emphasize or de-emphasize specific traits. Use the Scraper Tester to verify that your results match what you expect.</p>
-    <ul>
-        <li><strong>Filter In</strong> - Include only results with these terms.</li>
-        <li><strong>Filter Out</strong> - Include no results with these terms.</li>
-        <li><strong>Preferred Filter In</strong> - Increase score of results with these terms.</li>
-        <li><strong>Preferred Filter Out</strong> - Reduce score of results with these terms.</li>
-    </ul>
-</div>
+    <div class="content-section">
+        <div class="scraping-settings-header section-header">
+            <h3 class="scraping-settings-settings-title section-title">
+                <span class="title-bar"></span>
+                Versions
+            </h3>
+            <div class="scraping-settings-actions action-buttons settings-expand-collapse-buttons">
+                <button type="button" class="scraping-settings-btn btn-secondary settings-collapse-all"><i class="fa-solid fa-compress"></i> Collapse All</button>
+                <button type="button" class="scraping-settings-btn btn-secondary settings-expand-all"><i class="fa-solid fa-expand"></i> Expand All</button>
+                <button id="import-versions-btn" class="scraping-settings-btn-primary btn-primary add-version-link"><i class="fa-solid fa-file-import"></i> Import</button>
+                <button id="add-version-btn" class="scraping-settings-btn-primary btn-primary add-version-link"><i class="fa-solid fa-plus"></i> Add New Version</button>
+                <button id="add-default-version-btn" class="scraping-settings-btn-primary btn-primary add-version-link"><i class="fa-solid fa-plus"></i> Add Default Version</button>
+                <button id="add-separate-versions-btn" class="scraping-settings-btn-primary btn-primary add-version-link"><i class="fa-solid fa-plus"></i> Add Separate 1080p/4K Versions</button>
+            </div>
+            <input type="file" id="import-versions-file" accept=".json" style="display:none">
+        </div>
+
+        <div class="version-list">
 
 <script>
     // Define handler functions outside
@@ -226,7 +236,6 @@
                 const file = this.files[0];
                 if (!file) return;
                 this.value = '';
-                // Ask about conflict resolution
                 window.showPopup({
                     type: POPUP_TYPES.CONFIRM,
                     title: 'Conflict Resolution',
@@ -702,34 +711,39 @@
 </script>
 
 <script>
+    document.addEventListener('DOMContentLoaded', initializeScrapingFunctionality);
+    document.addEventListener('scrapingContentLoaded', initializeScrapingFunctionality);
+</script>
+
+<script>
+    // Initialize scraper priority toggles
     function initializeScraperPriorityToggles() {
-        // Find all enable_scraper_priorities checkboxes
-        document.querySelectorAll('input[id^="scraping-"][id$="-enable_scraper_priorities"]').forEach(checkbox => {
-            // Get the version from the checkbox ID
-            const version = checkbox.id.replace('scraping-', '').replace('-enable_scraper_priorities', '');
+        // Find all enable scraper priorities checkboxes
+        const toggles = document.querySelectorAll('[id^="scraping-"][id$="-enable_scraper_priorities"]');
+
+        toggles.forEach(toggle => {
+            // Get version from the checkbox ID (e.g., "scraping-1080p-enable_scraper_priorities" -> "1080p")
+            const version = toggle.id.replace('scraping-', '').replace('-enable_scraper_priorities', '');
             const prioritiesSection = document.getElementById(`scraper-priorities-${version}`);
 
-            if (prioritiesSection) {
-                // Set initial state
-                if (checkbox.checked) {
+            if (!prioritiesSection) return;
+
+            // Function to update the disabled state
+            function updateDisabledState() {
+                if (toggle.checked) {
                     prioritiesSection.style.opacity = '1';
                     prioritiesSection.style.pointerEvents = 'auto';
                 } else {
                     prioritiesSection.style.opacity = '0.5';
                     prioritiesSection.style.pointerEvents = 'none';
                 }
-
-                // Add change event listener
-                checkbox.addEventListener('change', function() {
-                    if (this.checked) {
-                        prioritiesSection.style.opacity = '1';
-                        prioritiesSection.style.pointerEvents = 'auto';
-                    } else {
-                        prioritiesSection.style.opacity = '0.5';
-                        prioritiesSection.style.pointerEvents = 'none';
-                    }
-                });
             }
+
+            // Set initial state
+            updateDisabledState();
+
+            // Add event listener for changes
+            toggle.addEventListener('change', updateDisabledState);
         });
     }
 
@@ -738,19 +752,140 @@
 </script>
 
 <script>
-    document.addEventListener('DOMContentLoaded', initializeScrapingFunctionality);
-    document.addEventListener('scrapingContentLoaded', initializeScrapingFunctionality);
+// Reverse Parser Default Version functionality
+document.addEventListener('DOMContentLoaded', function() {
+    const defaultVersionSelect = document.getElementById('default-version');
+
+    function updateDefaultVersionOptions(versions, currentConfiguredDefault) {
+        if (!defaultVersionSelect) return;
+
+        const currentValue = defaultVersionSelect.value || currentConfiguredDefault;
+        defaultVersionSelect.innerHTML = versions.map(v => `<option value="${v}">${v}</option>`).join('');
+
+        if (versions.includes(currentValue)) {
+            defaultVersionSelect.value = currentValue;
+        } else if (versions.length > 0) {
+            defaultVersionSelect.value = versions[0];
+        }
+    }
+
+    // Load existing versions and settings
+    Promise.all([
+        fetch('/settings/get_scraping_versions').then(response => response.json()),
+        fetch('/settings/api/reverse_parser_settings').then(response => response.json())
+    ]).then(([versionsData, reverseParserData]) => {
+        const allVersions = versionsData.versions || [];
+        const configuredDefaultVersion = reverseParserData.default_version || '';
+
+        updateDefaultVersionOptions(allVersions, configuredDefaultVersion);
+
+        if (allVersions.includes(configuredDefaultVersion)) {
+            defaultVersionSelect.value = configuredDefaultVersion;
+        } else if (allVersions.length > 0) {
+            defaultVersionSelect.value = allVersions[0];
+        }
+
+    }).catch(error => {
+        console.error("Error loading initial data for Reverse Parser settings:", error);
+    });
+
+    // Add event listener for saving settings
+    document.addEventListener('saveSettings', function() {
+        if (!defaultVersionSelect) return;
+
+        const defaultVersion = defaultVersionSelect.value;
+
+        const settings = {
+            'Reverse Parser': {
+                default_version: defaultVersion
+            }
+        };
+
+        fetch('/settings/api/reverse_parser_settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(settings),
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log('Reverse Parser settings saved successfully');
+            } else {
+                console.error('Failed to save Reverse Parser settings:', data.error);
+            }
+        })
+        .catch((error) => {
+            console.error('Error saving Reverse Parser settings:', error);
+        });
+    });
+});
+
+document.addEventListener('scrapingContentLoaded', function() {
+    const defaultVersionSelect = document.getElementById('default-version');
+
+    function updateDefaultVersionOptions(versions, currentConfiguredDefault) {
+        if (!defaultVersionSelect) return;
+
+        const currentValue = defaultVersionSelect.value || currentConfiguredDefault;
+        defaultVersionSelect.innerHTML = versions.map(v => `<option value="${v}">${v}</option>`).join('');
+
+        if (versions.includes(currentValue)) {
+            defaultVersionSelect.value = currentValue;
+        } else if (versions.length > 0) {
+            defaultVersionSelect.value = versions[0];
+        }
+    }
+
+    Promise.all([
+        fetch('/settings/get_scraping_versions').then(response => response.json()),
+        fetch('/settings/api/reverse_parser_settings').then(response => response.json())
+    ]).then(([versionsData, reverseParserData]) => {
+        const allVersions = versionsData.versions || [];
+        const configuredDefaultVersion = reverseParserData.default_version || '';
+
+        updateDefaultVersionOptions(allVersions, configuredDefaultVersion);
+
+        if (allVersions.includes(configuredDefaultVersion)) {
+            defaultVersionSelect.value = configuredDefaultVersion;
+        } else if (allVersions.length > 0) {
+            defaultVersionSelect.value = allVersions[0];
+        }
+
+    }).catch(error => {
+        console.error("Error loading initial data for Reverse Parser settings:", error);
+    });
+});
 </script>
 
 {% for version, config in settings.Scraping.versions.items() %}
-<div class="settings-section" data-version-id="{{ version }}">
-    <div class="settings-section-header">
-        <span class="settings-toggle-icon">+</span>
-        <h4>{{ version }}</h4>
-        <button type="button" class="export-version-btn" data-version-id="{{ version }}">Export</button>
-        <button type="button" class="rename-version-btn" data-version-id="{{ version }}">Rename</button>
-        <button type="button" class="duplicate-version-btn" data-version-id="{{ version }}">Duplicate</button>
-        <button type="button" class="delete-version-btn" data-version-id="{{ version }}">Delete</button>
+<div class="settings-section settings-card version-card" data-version-id="{{ version }}">
+    <div class="settings-section-header version-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="version-header-left settings-header-left">
+            <h4>{{ version }}</h4>
+        </div>
+        <div class="version-buttons version-actions">
+            <button type="button" class="export-version-btn btn-secondary" data-version-id="{{ version }}">
+                <i class="fa-solid fa-file-export"></i>
+                <span class="btn-text">Export</span>
+            </button>
+            <button type="button" class="rename-version-btn btn-secondary" data-version-id="{{ version }}">
+                <i class="fa-solid fa-pen"></i>
+                <span class="btn-text">Rename</span>
+            </button>
+            <button type="button" class="duplicate-version-btn btn-secondary" data-version-id="{{ version }}">
+                <i class="fa-solid fa-copy"></i>
+                <span class="btn-text">Duplicate</span>
+            </button>
+            <button type="button" class="delete-version-btn btn-danger" data-version-id="{{ version }}">
+                <i class="fa-solid fa-trash"></i>
+                <span class="btn-text">Delete</span>
+            </button>
+        </div>
     </div>
     <div class="settings-section-content">
         {# Define settings order #}
@@ -1006,11 +1141,11 @@
                 {% for filter, weight in config.preferred_filter_in %}
                 <div class="filter-item">
                     <input type="text" class="filter-term" value="{{ filter }}"
-                           data-section="Scraping"
-                           data-key="versions.{{ version }}.preferred_filter_in.{{ loop.index0 }}.term">
+                            data-section="Scraping"
+                            data-key="versions.{{ version }}.preferred_filter_in.{{ loop.index0 }}.term">
                     <input type="number" class="filter-weight" min="1" value="{{ weight }}"
-                           data-section="Scraping"
-                           data-key="versions.{{ version }}.preferred_filter_in.{{ loop.index0 }}.weight">
+                            data-section="Scraping"
+                            data-key="versions.{{ version }}.preferred_filter_in.{{ loop.index0 }}.weight">
                     <button type="button" class="remove-filter">Remove</button>
                 </div>
                 {% endfor %}
@@ -1020,11 +1155,11 @@
                 {% for filter, weight in config.preferred_filter_out %}
                 <div class="filter-item">
                     <input type="text" class="filter-term" value="{{ filter }}"
-                           data-section="Scraping"
-                           data-key="versions.{{ version }}.preferred_filter_out.{{ loop.index0 }}.term">
+                            data-section="Scraping"
+                            data-key="versions.{{ version }}.preferred_filter_out.{{ loop.index0 }}.term">
                     <input type="number" class="filter-weight" min="1" value="{{ weight }}"
-                           data-section="Scraping"
-                           data-key="versions.{{ version }}.preferred_filter_out.{{ loop.index0 }}.weight">
+                            data-section="Scraping"
+                            data-key="versions.{{ version }}.preferred_filter_out.{{ loop.index0 }}.weight">
                     <button type="button" class="remove-filter">Remove</button>
                 </div>
                 {% endfor %}
@@ -1072,10 +1207,47 @@
     </div>
 </div>
 {% endfor %}
-<div class="settings-section">
+
+<!-- Reverse Parser Default Version Section -->
+<div class="settings-section settings-card default-version-container">
     <div class="settings-section-header">
-        <h4>Other Scraping Settings</h4>
-        <span class="settings-toggle-icon">+</span>
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Reverse Parser</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="info-banner info-banner-blue" style="margin-bottom: 1rem;">
+            <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div class="info-banner-content">
+                <strong>Default Version Assignment:</strong> This is the version that will be assigned when parsing releases if a version cannot be automatically identified from the release name or metadata.
+            </div>
+        </div>
+        <div class="settings-form-group">
+            <label for="default-version" class="settings-title">Default Version:</label>
+            <select id="default-version"
+                    name="Reverse Parser.default_version"
+                    class="settings-input"
+                    data-section="Reverse Parser"
+                    data-key="default_version">
+                <!-- Options will be dynamically populated -->
+            </select>
+        </div>
+    </div>
+</div>
+
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Other Scraping Settings</h4>
+        </div>
     </div>
     <div class="settings-section-content">
         <div class="settings-subsection">
@@ -1162,6 +1334,10 @@
                     {% endif %}
                 {% endif %}
             {% endfor %}
+        </div>
+    </div>
+</div>
+
         </div>
     </div>
 </div>

@@ -66,30 +66,19 @@
             font-display: swap;
         }
     </style>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
-    <!-- <link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}"> -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/rate_limits.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/library_management.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/library_settings_modal.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/discover_settings_modal.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/overlay_settings_modal.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_base.css') }}">
+    <!-- <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_onboarding.css') }}"> -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_rate_limits.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_management.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_settings_modal.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_discover_settings_modal.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_overlay_settings_modal.css') }}">
 
     {% if ai_butler_enabled and not is_onboarding %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/ai_butler.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_ai_butler.css') }}">
     {% endif %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/calendar_view.css') }}?v=18">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_calendar_view.css') }}?v=18">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/calendar_view.css') }}?v=18">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_calendar_view.css') }}?v=18">
 
-    {% if ai_butler_enabled and not is_onboarding %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/ai_butler.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_ai_butler.css') }}">
-    {% endif %}
-
-    <!-- Tangerine nav CSS loaded early to prevent FOUC; theme_switcher.js re-appends it last so it overrides tangerine_base.css -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_mobile_nav.css') }}?v=34">
     <!-- Load theme switcher early to prevent FOUC -->
     <script src="{{ url_for('static', filename='js/theme_switcher.js') }}?v=34"></script>
     <script>
@@ -762,9 +751,11 @@
             /* --- End Support Icons Color Fade Effect --- */
         });
     </script>
+    <!-- Last in <head> so it overrides tangerine_base.css and any page styles -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_mobile_nav.css') }}?v=34">
 </head>
 
-<body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}"
+<body data-theme="tangerine" class="tangerine-theme" data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}"
       data-program-status="{{ get_program_status() }}"
       data-is-onboarding="{{ 'true' if is_onboarding else 'false' }}"
       data-rate-limited="{{ 'true' if is_rate_limited else 'false' }}"

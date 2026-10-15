@@ -7,24 +7,13 @@
 (function() {
     'use strict';
 
-    // Load theme-specific CSS dynamically
+    // Ensure the modal stylesheet is present (base.html normally links it).
     function loadThemeCSS() {
-        const getCurrentTheme = () => localStorage.getItem('theme') || 'default';
-        const theme = getCurrentTheme();
-        const cssFile = theme === 'tangerine' 
-            ? 'css/tangerine/tangerine_discover_settings_modal.css' 
-            : 'css/discover_settings_modal.css';
-        
-        // Check if the link already exists
-        const existingLink = document.querySelector(`link[href*="discover_settings_modal.css"]`);
-        if (!existingLink) {
+        if (!document.querySelector('link[href*="tangerine_discover_settings_modal.css"]')) {
             const link = document.createElement('link');
             link.rel = 'stylesheet';
-            link.href = `/static/${cssFile}`;
+            link.href = '/static/css/tangerine/tangerine_discover_settings_modal.css';
             document.head.appendChild(link);
-        } else {
-            // Update existing link
-            existingLink.href = `/static/${cssFile}`;
         }
     }
 

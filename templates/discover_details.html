@@ -3,13 +3,13 @@
 {% block title %}{{ 'Show' if media_type == 'tv' else 'Movie' }} Details - Discover{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/library_movie.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/trailer_modal.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_movie.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_trailer_modal.css') }}">
 {% if media_type == 'tv' %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/library_show.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_show.css') }}">
 {% endif %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/discover.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_discover.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}">
 <style>
     /* Additional styles for discover details */
     /* .status-badge {

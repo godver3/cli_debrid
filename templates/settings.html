@@ -122,38 +122,38 @@
         <div class="settings-container">
             <div id="settingsForm">
                 <div id="ui-settings" class="settings-tab-content" style="display: none;">
-                    {% include 'settings_tabs/ui_settings_tangerine.html' %}
+                    {% include 'settings_tabs/ui_settings.html' %}
                 </div>
                 <div id="required" class="settings-tab-content active">
-                    {% include 'settings_tabs/required_tangerine.html' %}
+                    {% include 'settings_tabs/required.html' %}
                 </div>
                 <div id="scraping" class="settings-tab-content" style="display: none;">
-                    {% include 'settings_tabs/scraping_tangerine.html' %}
+                    {% include 'settings_tabs/scraping.html' %}
                 </div>
                 <div id="content-sources" class="settings-tab-content" style="display: none;">
-                    {% include 'settings_tabs/content_sources_tangerine.html' %}
+                    {% include 'settings_tabs/content_sources.html' %}
                 </div>
                 <div id="additional" class="settings-tab-content" style="display: none;">
-                    {% include 'settings_tabs/additional_tangerine.html' %}
+                    {% include 'settings_tabs/additional.html' %}
                 </div>
                 {% if environment_mode == 'full' %}
                 <div id="debug" class="settings-tab-content" style="display: none;">
-                    {% include 'settings_tabs/debug_tangerine.html' %}
+                    {% include 'settings_tabs/debug.html' %}
                 </div>
                 {% endif %}
                 <div id="notifications" class="settings-tab-content" style="display: none;">
-                    {% include 'settings_tabs/notifications_tangerine.html' %}
+                    {% include 'settings_tabs/notifications.html' %}
                 </div>
                 {% if environment_mode == 'full' %}
                 <div id="reverse-parser" class="settings-tab-content" style="display: none;">
-                    {% include 'settings_tabs/reverse_parser_tangerine.html' %}
+                    {% include 'settings_tabs/reverse_parser.html' %}
                 </div>
                 <div id="true-debug" class="settings-tab-content" style="display: none;">
-                    {% include 'settings_tabs/true_debug_tangerine.html' %}
+                    {% include 'settings_tabs/true_debug.html' %}
                 </div>
                 {% endif %}
                 <div id="scrapers" class="settings-tab-content" style="display: none;">
-                    {% include 'settings_tabs/scrapers_tangerine.html' %}
+                    {% include 'settings_tabs/scrapers.html' %}
                 </div>
             </div>
 

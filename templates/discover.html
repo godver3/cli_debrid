@@ -8,7 +8,7 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const theme = getCurrentTheme();
-        const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_discover.css' : 'css/discover.css';
+        const cssFile = 'css/tangerine/tangerine_discover.css';
         const link = document.createElement('link');
         link.rel = 'stylesheet';
         link.href = '{{ url_for("static", filename="") }}' + cssFile + '?v={{ range(10000, 99999) | random }}';

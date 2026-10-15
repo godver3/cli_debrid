@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Skip Onboarding{% endblock %}
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_onboarding.css') }}">
 <script>
 (function() {
     var theme = localStorage.getItem('selectedTheme') || document.cookie.replace(/(?:(?:^|.*;\s*)selectedTheme\s*=\s*([^;]*).*$)|^.*$/,'$1') || 'tangerine';

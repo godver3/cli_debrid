@@ -6,7 +6,7 @@
     // Dynamically load the correct CSS based on theme cookie
     (function() {
         const theme = document.cookie.split('; ').find(row => row.startsWith('selectedTheme='))?.split('=')[1] || 'tangerine';
-        const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_recover_symlinks.css' : 'css/recover_symlinks.css';
+        const cssFile = 'css/tangerine/tangerine_recover_symlinks.css';
         const link = document.createElement('link');
         link.rel = 'stylesheet';
         link.href = '{{ url_for("static", filename="") }}' + cssFile;
@@ -17,7 +17,7 @@
 {% block title %}Symlink Library Recovery{% endblock %}
 
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/debug_functions.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_debug_functions.css') }}">
 
 <div class="debug-container symlink-recovery">
     <h2>Symlink Library Recovery</h2>

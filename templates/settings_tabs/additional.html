@@ -1,15 +1,134 @@
-<h3>Additional Settings</h3>
-<div class="settings-expand-collapse-buttons">
-    <button type="button" class="settings-expand-all">Expand All</button>
-    <button type="button" class="settings-collapse-all">Collapse All</button>
-</div>
+<script>
+(function() {
+    // ── Accent color ──────────────────────────────────────────────────────────
+    var accentInput = document.getElementById('smart-poster-accent');
+    var accentLabel = document.getElementById('smart-poster-accent-label');
+    var accentClear = document.getElementById('smart-poster-accent-clear');
+    if (accentInput) {
+        // Init display from current input value
+        var initAccent = accentInput.value;
+        if (initAccent && initAccent !== '#000000') {
+            accentInput.style.opacity = '1';
+            if (accentLabel) accentLabel.textContent = initAccent;
+            if (accentClear) accentClear.style.display = 'inline-block';
+        }
+        accentInput.addEventListener('input', function() {
+            this.style.opacity = '1';
+            if (accentLabel) accentLabel.textContent = this.value;
+            if (accentClear) accentClear.style.display = 'inline-block';
+        });
+    }
+    if (accentClear) {
+        accentClear.addEventListener('click', function() {
+            if (accentInput) { accentInput.value = '#000000'; accentInput.style.opacity = '0.4'; }
+            if (accentLabel) accentLabel.textContent = 'Design default';
+            this.style.display = 'none';
+        });
+    }
+
+    // ── Auto-load collections on page init so checkboxes are always in DOM ──
+    fetch('/settings/api/plex-smart-collections')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.success && d.collections && d.collections.length > 0) {
+                renderSmartCollections(d.collections);
+                document.getElementById('smart-collections-list').style.display = 'block';
+            }
+        }).catch(function() {});
+
+    // ── Load collections button ───────────────────────────────────────────────
+    var loadBtn = document.getElementById('load-smart-collections-btn');
+    if (loadBtn) {
+        loadBtn.addEventListener('click', async function() {
+            this.textContent = 'Loading...';
+            this.disabled = true;
+            try {
+                var resp = await fetch('/settings/api/plex-smart-collections');
+                var data = await resp.json();
+                if (data.success) {
+                    renderCollections(data.collections);
+                    document.getElementById('smart-collections-list').style.display = 'block';
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Error: ' + (data.error || 'Failed to load'), autoClose: 5000 });
+                }
+            } catch(e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e, autoClose: 5000 });
+            } finally {
+                this.textContent = 'Reload Collections';
+                this.disabled = false;
+            }
+        });
+    }
+
+    // ── Run Now button ────────────────────────────────────────────────────────
+    var runBtn = document.getElementById('run-smart-collections-btn');
+    if (runBtn) {
+        runBtn.addEventListener('click', async function() {
+            this.textContent = 'Running...';
+            this.disabled = true;
+            try {
+                var resp = await fetch('/settings/api/plex-smart-collections/run', {method:'POST'});
+                var data = await resp.json();
+                showPopup({ type: data.success ? 'success' : 'error', title: data.success ? 'Success' : 'Error', message: data.success ? 'Task started.' : 'Error: ' + data.error, autoClose: data.success ? 4000 : 5000 });
+            } finally {
+                this.textContent = 'Run Now';
+                this.disabled = false;
+            }
+        });
+    }
+
+
+
+    // ── Render collection list ────────────────────────────────────────────────
+    function renderCollections(collections) {
+        var container = document.getElementById('smart-collections-container');
+        if (!container) return;
+        var sections = {};
+        collections.forEach(function(c) {
+            if (!sections[c.section]) sections[c.section] = [];
+            sections[c.section].push(c);
+        });
+        var html = '';
+        Object.keys(sections).forEach(function(section) {
+            html += '<div style="width:100%;margin-top:8px;margin-bottom:2px;color:#888;font-size:0.75em;text-transform:uppercase;">' + section + '</div>';
+            sections[section].forEach(function(c) {
+                html += '<label style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(255,255,255,0.05);border-radius:6px;cursor:pointer;font-size:0.9em;">' +
+                    '<input type="checkbox" class="smart-coll-cb" data-rk="' + c.ratingKey + '" data-title="' + c.title + '" data-section="' + c.section + '" data-type="' + c.type + '"' + (c.enabled ? ' checked' : '') + '>' +
+                    c.title + '</label>';
+            });
+        });
+        container.innerHTML = html;
+    }
+})();
+</script>
+<div class="additional-settings-page">
+    <h2 class="additional-settings-title">Additional Settings</h2>
+    <p class="additional-settings-subtitle">Configure optional features and customizations</p>
+
+    <div class="content-section">
+        <div class="additional-settings-header section-header">
+            <h3 class="additional-settings-settings-title section-title">
+                <span class="title-bar"></span>
+                Settings
+            </h3>
+            <div class="additional-settings-actions action-buttons settings-expand-collapse-buttons">
+                <button type="button" class="additional-settings-btn btn-secondary settings-collapse-all"><i class="fa-solid fa-compress"></i> Collapse All</button>
+                <button type="button" class="additional-settings-btn btn-secondary settings-expand-all"><i class="fa-solid fa-expand"></i> Expand All</button>
+            </div>
+        </div>
+
+        <div class="settings-list">
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Tags" and section != "Trakt" and section != "Scrob" %}
-    <div class="settings-section">
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Plex Smart Collections" and section != "Plex Movie Box Sets" and section != "Tags" and section != "Trakt" and section != "Scrob" %}
+    <div class="settings-section settings-card">
         <div class="settings-section-header">
-            <h4>{{ section }}</h4>
-            <span class="settings-toggle-icon">+</span>
+            <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            <div class="settings-header-left">
+                <h4>{{ section }}</h4>
+            </div>
         </div>
         <div class="settings-section-content">
             {% for key, value in section_data.items() %}
@@ -210,10 +329,14 @@
         </div>
     </div>
     {% elif section == "Trakt" %}
-    <div class="settings-section">
+    <div class="settings-section settings-card">
         <div class="settings-section-header">
-            <h4>Trakt</h4>
-            <span class="settings-toggle-icon">+</span>
+            <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            <div class="settings-header-left">
+                <h4>Trakt</h4>
+            </div>
         </div>
         <div class="settings-section-content">
             <p class="settings-description">Trakt is an optional integration used for Trakt-based content sources (Watchlist, Lists, Collection) and as a metadata fallback. Please create an application at <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a> if you have not yet done so. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p>
@@ -249,10 +372,14 @@
         </div>
     </div>
     {% elif section == "Scrob" %}
-    <div class="settings-section">
+    <div class="settings-section settings-card">
         <div class="settings-section-header">
-            <h4>Scrob</h4>
-            <span class="settings-toggle-icon">+</span>
+            <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            <div class="settings-header-left">
+                <h4>Scrob</h4>
+            </div>
         </div>
         <div class="settings-section-content">
             <p class="settings-description">Scrob is an optional self-hosted Trakt alternative (<a href="https://github.com/ellite/scrob" target="_blank">ellite/scrob</a>) used for Scrob-based content sources (Lists, Collection, Special Lists). Enter your instance's base URL and an API key from <b>Settings → Connections → API Key</b> in the Scrob UI. This connection is shared by every Scrob content source below — no need to re-enter it per source.</p>
@@ -274,18 +401,25 @@
         </div>
     </div>
     {% elif section == "Queue" %}
-    <div class="settings-section">
-
+    <div class="settings-section settings-card">
         <div class="settings-section-header">
-            <h4>{{ section }}</h4>
-            <span class="settings-toggle-icon">+</span>
+            <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            <div class="settings-header-left">
+                <h4>{{ section }}</h4>
+            </div>
         </div>
-
         <div class="settings-section-content">
             <div class="settings-form-group">
-                <div class="settings-warning-text" style="background: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 10px; border-radius: 4px; margin-bottom: 15px; display: block !important;">
-                    <i class="fas fa-exclamation-triangle" style="margin-right: 6px;"></i>
-                    Sorting is applied first by <strong>Content Source</strong>, then <strong>Type</strong>, then <strong>Release Date</strong>, then finally <strong>Alphabetical Title</strong>. If any are disabled, sorting will be done within enabled categories.
+                <div class="settings-warning-text">
+                   <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                <div class="info-banner-content">
+             Sorting is applied first by <strong>Content Source</strong>, then <strong>Type</strong>, then <strong>Release Date</strong>, then finally <strong>Alphabetical Title</strong>. If any are disabled, sorting will be done within enabled categories.
+        </div>
+                   
                 </div>
             </div>
 
@@ -454,10 +588,14 @@
         </div>
     </div>
     {% elif section == "Library Manager" %}
-    <div class="settings-section">
+    <div class="settings-section settings-card">
         <div class="settings-section-header">
-            <h4>Library Manager</h4>
-            <span class="settings-toggle-icon">+</span>
+            <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            <div class="settings-header-left">
+                <h4>Library Manager</h4>
+            </div>
         </div>
         <div class="settings-section-content">
             <!-- Auto Ghostlist Deleted -->
@@ -490,7 +628,7 @@
             <!-- Clear Cache Button -->
             <div class="settings-form-group">
                 <label class="settings-title">Clear Artwork Cache:</label>
-                <button type="button" id="clear-library-cache-btn" class="settings-button" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                <button type="button" id="clear-library-cache-btn" class="btn btn-danger" style="padding: 8px 16px;">
                     Clear Cache
                 </button>
                 <p class="settings-description">Remove all cached posters and backdrops. Artwork will be re-downloaded from the primary source on next library load.</p>
@@ -501,21 +639,25 @@
 {% endfor %}
 
 <!-- Bazarr Integration Section -->
-<div class="settings-section">
+<div class="settings-section settings-card">
     <div class="settings-section-header">
-        <h4>Bazarr Integration</h4>
-        <span class="settings-toggle-icon">+</span>
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Bazarr Integration</h4>
+        </div>
     </div>
     <div class="settings-section-content">
         {% if settings.get('File Management', {}).get('file_collection_management') not in ('Symlinked/Local', 'Plex') %}
         <!-- Unavailable Warning -->
         <div class="settings-form-group">
-            <div style="background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 4px;">
-                <p style="margin: 0; font-weight: bold; color: #721c24;"><i class="fas fa-exclamation-triangle"></i> Not Available</p>
-                <p style="margin: 10px 0 0 0; color: #721c24;">
+            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 15px; border-radius: 8px;">
+                <p style="margin: 0; font-weight: bold; color: #ef4444;"><i class="fas fa-exclamation-triangle"></i> Not Available</p>
+                <p style="margin: 10px 0 0 0; color: var(--text-primary);">
                     Bazarr Integration requires <strong>Symlinked/Local</strong> file collection management mode.
                 </p>
-                <p style="margin: 5px 0 0 0; color: #856404; font-size: 0.9em;">
+                <p style="margin: 5px 0 0 0; color: var(--text-secondary); font-size: 0.9em;">
                     Your current mode is <strong>{{ settings.get('File Management', {}).get('file_collection_management', 'Plex') }}</strong>.
                     To use Bazarr Integration, change your File Collection Management setting in Required Settings.
                 </p>
@@ -539,16 +681,13 @@
                        value="{{ settings.get('Bazarr Integration', {}).get('api_key', '') }}"
                        class="settings-input" style="flex: 1; min-width: 200px; max-width: 400px;"
                        data-section="Bazarr Integration" data-key="api_key">
-                <button type="button" id="bazarr-generate-key" class="settings-button"
-                        style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap;">
+                <button type="button" id="bazarr-generate-key" class="btn btn-primary" style="padding: 8px 16px; white-space: nowrap;">
                     Generate
                 </button>
-                <button type="button" id="bazarr-copy-key" class="settings-button"
-                        style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap;">
+                <button type="button" id="bazarr-copy-key" class="btn btn-secondary" style="padding: 8px 16px; white-space: nowrap;">
                     Copy
                 </button>
-                <button type="button" id="bazarr-show-key" class="settings-button"
-                        style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap;">
+                <button type="button" id="bazarr-show-key" class="btn btn-secondary" style="padding: 8px 16px; white-space: nowrap;">
                     Show
                 </button>
             </div>
@@ -579,11 +718,11 @@
 
         <!-- Connection Info Box -->
         <div class="settings-form-group">
-            <div style="background: #e7f3ff; border: 1px solid #b3d7ff; padding: 15px; border-radius: 4px; margin-top: 10px;">
-                <p style="margin: 0 0 10px 0; font-weight: bold;"><i class="fas fa-info-circle"></i> Bazarr Configuration</p>
-                <p style="margin: 5px 0; font-family: monospace;">URL: <span id="bazarr-url">http://your-host:5000</span></p>
-                <p style="margin: 5px 0; font-family: monospace;">API Key: <span style="color: #666;">(copy from above)</span></p>
-                <p style="margin: 10px 0 0 0; font-size: 0.9em; color: #666;">
+            <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); padding: 15px; border-radius: 8px; margin-top: 10px;">
+                <p style="margin: 0 0 10px 0; font-weight: bold; color: #3b82f6;"><i class="fas fa-info-circle"></i> Bazarr Configuration</p>
+                <p style="margin: 5px 0; font-family: monospace; color: var(--text-primary);">URL: <span id="bazarr-url">http://your-host:5000</span></p>
+                <p style="margin: 5px 0; font-family: monospace; color: var(--text-secondary);">API Key: (copy from above)</p>
+                <p style="margin: 10px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">
                     In Bazarr, add a new Radarr/Sonarr connection using the URL and API key above.
                     Bazarr will then be able to discover your collected movies and TV shows.
                 </p>
@@ -667,10 +806,14 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 
 <!-- Phalanx DB Settings Section -->
-<div class="settings-section">
+<div class="settings-section settings-card">
     <div class="settings-section-header">
-        <h4>Phalanx DB Settings</h4>
-        <span class="settings-toggle-icon">+</span>
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Phalanx DB Settings</h4>
+        </div>
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
@@ -687,10 +830,14 @@ document.addEventListener('DOMContentLoaded', function() {
 </div>
 
 <!-- Symlink Settings Section -->
-<div class="settings-section">
+<div class="settings-section settings-card">
     <div class="settings-section-header">
-        <h4>Symlink Settings</h4>
-        <span class="settings-toggle-icon">+</span>
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Symlink Settings</h4>
+        </div>
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
@@ -859,6 +1006,22 @@ document.addEventListener('DOMContentLoaded', function() {
             <p class="settings-description">Name of the documentary TV shows folder</p>
         </div>
 
+        <div class="settings-form-group">
+            <label for="additional-anime_renaming_using_anidb" class="settings-title">Use AniDB for Anime Renaming:</label>
+            <input type="checkbox" id="additional-anime_renaming_using_anidb" name="Debug.anime_renaming_using_anidb"
+                   data-section="Debug" data-key="anime_renaming_using_anidb"
+                   {% if settings.get('Debug', {}).get('anime_renaming_using_anidb') %}checked{% endif %}>
+            <p class="settings-description">Use AniDB to rename anime episodes instead of Trakt metadata (symlinking only)</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-use_symlinks_on_windows" class="settings-title">Use Symlinks on Windows:</label>
+            <input type="checkbox" id="additional-use_symlinks_on_windows" name="Debug.use_symlinks_on_windows"
+                   data-section="Debug" data-key="use_symlinks_on_windows"
+                   {% if settings.get('Debug', {}).get('use_symlinks_on_windows') %}checked{% endif %}>
+            <p class="settings-description">Allow the use of symlinks on Windows. WARNING: Creating symlinks on Windows requires administrator privileges or Developer Mode to be enabled.</p>
+        </div>
+
         <div class="settings-form-group example-paths-container" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #444;">
             <h5 class="settings-title" style="margin-bottom: 10px;">Example Symlink Paths (Based on Current Settings):</h5>
             
@@ -895,10 +1058,14 @@ document.addEventListener('DOMContentLoaded', function() {
 </div>
 
 <!-- Subtitle Settings Section -->
-<div class="settings-section">
+<div class="settings-section settings-card">
     <div class="settings-section-header">
-        <h4>Subtitle Settings</h4>
-        <span class="settings-toggle-icon">+</span>
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Subtitle Settings</h4>
+        </div>
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
@@ -964,10 +1131,14 @@ document.addEventListener('DOMContentLoaded', function() {
 </div>
 
 <!-- Custom Post-Processing Settings Section -->
-<div class="settings-section">
+<div class="settings-section settings-card">
     <div class="settings-section-header">
-        <h4>Custom Post-Processing Settings</h4>
-        <span class="settings-toggle-icon">+</span>
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Custom Post-Processing Settings</h4>
+        </div>
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
@@ -999,10 +1170,14 @@ document.addEventListener('DOMContentLoaded', function() {
 </div>
 
 <!-- AI Assistant Section -->
-<div class="settings-section">
+<div class="settings-section settings-card">
     <div class="settings-section-header">
-        <h4>AI Assistant</h4>
-        <span class="settings-toggle-icon">+</span>
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>AI Assistant</h4>
+        </div>
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
@@ -1753,3 +1928,640 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 </script>
+
+
+
+<!-- Plex Smart Collection Posters Section -->
+<div class="settings-section settings-card plex-only-section">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Plex Smart Collection Posters</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+<!-- Plex Smart Collection Posters -->
+<div class="settings-form-group plex-only-section">
+    <p class="settings-description" style="margin-bottom:12px;">Apply a custom poster design to Plex's built-in smart collections (genre, network, language collections, etc). Enable the collections below and configure the shared poster design. The task runs every 24 hours — you can also trigger it manually.</p>
+
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <button type="button" id="load-smart-collections-btn" style="padding:8px 16px;background:var(--accent-color,#e87429);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9em;">Load Collections from Plex</button>
+        <button type="button" id="run-smart-collections-btn" style="padding:8px 16px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#ddd;cursor:pointer;font-size:0.9em;">Run Now</button>
+        <button type="button" id="smartcoll-manage-btn" style="padding:8px 16px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#ddd;cursor:pointer;font-size:0.9em;">Manage Posters</button>
+
+    </div>
+
+    <!-- Smart Collections Manage Posters Modal -->
+    <div id="smartcoll-manage-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9999;align-items:flex-start;justify-content:center;padding-top:60px;box-sizing:border-box;">
+        <div style="background:var(--surface-color,#1e1e1e);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:24px;width:90%;max-width:560px;max-height:80vh;display:flex;flex-direction:column;gap:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+                <h3 style="margin:0;font-size:1rem;font-weight:600;">Smart Collection Posters</h3>
+                <button id="smartcoll-manage-close" style="background:none;border:none;color:var(--text-color,#fff);font-size:1.4rem;cursor:pointer;line-height:1;">&times;</button>
+            </div>
+            <p style="margin:0;font-size:0.82em;color:#aaa;">Force reapply the poster for an individual enabled smart collection immediately.</p>
+            <input id="smartcoll-manage-search" type="text" placeholder="Search collections..." style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.88em;outline:none;">
+            <div id="smartcoll-manage-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;">
+                <span style="color:#aaa;font-size:0.85em;">Loading...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Collection list (loaded dynamically) -->
+    <div id="smart-collections-list" style="display:none;margin-bottom:16px;">
+        <p class="settings-description" style="margin-bottom:8px;">Check collections to apply the shared poster design below:</p>
+        <div id="smart-collections-container" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+    </div>
+
+    <!-- Shared Poster Design (mirrors content source poster section) -->
+    <div id="smart-poster-design-section" style="margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.07);">
+        <label class="settings-title">Poster Design:</label>
+        <p class="settings-description" style="margin-bottom:10px;">Select a custom poster for all enabled smart collections. Leave on "None" to use Plex's default.</p>
+        <div class="plex-collection-poster-picker" data-source-id="__smart__"
+             style="display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scrollbar-width:thin;min-height:380px;">
+            <div class="poster-loading-placeholder" style="color:#888;font-size:0.85em;padding:8px;">Loading designs...</div>
+        </div>
+        <input type="hidden" id="content-sources-__smart__-plex_collection-poster_design" name="Plex Smart Collections.poster_design" data-section="Plex Smart Collections" data-key="poster_design" value="{{ settings.get('Plex Smart Collections', {}).get('poster_design', 0) }}">
+    </div>
+
+    <div class="settings-form-group" style="margin-top:12px;">
+        <label class="settings-title">Poster Accent Color:</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+            {% set _sa = settings.get('Plex Smart Collections', {}).get('poster_accent', '') %}
+            <input type="color" id="smart-poster-accent" name="Plex Smart Collections.poster_accent" data-section="Plex Smart Collections" data-key="poster_accent" value="{{ _sa or '#000000' }}"
+                   style="width:44px;height:36px;border:none;background:none;cursor:pointer;border-radius:6px;{% if not _sa %}opacity:0.4;{% endif %}">
+            <span id="smart-poster-accent-label" style="font-size:0.85em;color:#888;">{{ _sa or 'Design default' }}</span>
+            <button type="button" id="smart-poster-accent-clear"
+                    style="display:{% if _sa %}inline-block{% else %}none{% endif %};font-size:0.75em;padding:3px 8px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:#aaa;cursor:pointer;">
+                Use default
+            </button>
+        </div>
+        <p class="settings-description">Accent color used throughout the poster design. Leave unset to use the layout's default color.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Card Overlay Opacity: <span id="smart-overlay-op-val">60%</span></label>
+        <input type="range" min="0" max="100" step="5" id="smart-overlay-op" name="Plex Smart Collections.poster_overlay_opacity" data-section="Plex Smart Collections" data-key="poster_overlay_opacity" value="{{ settings.get('Plex Smart Collections', {}).get('poster_overlay_opacity', 60) }}"
+               style="width:100%;accent-color:var(--accent-color,#e87429);"
+               oninput="document.getElementById('smart-overlay-op-val').textContent=this.value+'%'">
+        <p class="settings-description">Dark gradient fade at the bottom of each card inside the poster. Higher = darker fade over the card art.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Accent Glow Opacity: <span id="smart-glow-op-val">80%</span></label>
+        <input type="range" min="0" max="100" step="5" id="smart-glow-op" name="Plex Smart Collections.poster_glow_opacity" data-section="Plex Smart Collections" data-key="poster_glow_opacity" value="{{ settings.get('Plex Smart Collections', {}).get('poster_glow_opacity', 80) }}"
+               style="width:100%;accent-color:var(--accent-color,#e87429);"
+               oninput="document.getElementById('smart-glow-op-val').textContent=this.value+'%'">
+        <p class="settings-description">Intensity of the accent color glow around the edges of the poster background.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Accent Glow Radius: <span id="smart-glow-r-val">55</span></label>
+        <input type="range" min="10" max="200" step="5" id="smart-glow-r" name="Plex Smart Collections.poster_glow_radius" data-section="Plex Smart Collections" data-key="poster_glow_radius" value="{{ settings.get('Plex Smart Collections', {}).get('poster_glow_radius', 55) }}"
+               style="width:100%;accent-color:var(--accent-color,#e87429);"
+               oninput="document.getElementById('smart-glow-r-val').textContent=this.value">
+        <p class="settings-description">How far the accent color glow spreads. Default 55. Higher values spread the color across more of the poster.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Eyebrow Text:</label>
+        <input type="text" id="smart-poster-eyebrow" class="settings-input" name="Plex Smart Collections.poster_eyebrow" data-section="Plex Smart Collections" data-key="poster_eyebrow" value="{{ settings.get('Plex Smart Collections', {}).get('poster_eyebrow', '') }}" placeholder="e.g. TOP PICKS">
+        <p class="settings-description">Small text above the collection title on the poster. Leave blank to hide.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Poster Icon:</label>
+        <button type="button" class="plex-collection-icon-picker-btn" data-source-id="__smart__"
+                style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 14px;cursor:pointer;color:#ddd;font-size:0.9em;">
+            <span class="plex-coll-icon-preview" data-source-id="__smart__"
+                  style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;flex-shrink:0;">
+                {% if settings.get('Plex Smart Collections', {}).get('poster_icon') %}
+                <img src="/api/overlays/logos/serve/{{ settings.get('Plex Smart Collections', {}).get('poster_icon') }}"
+                     style="max-width:28px;max-height:28px;object-fit:contain;" alt="">
+                <svg style="margin-left:4px;opacity:0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                {% else %}
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                {% endif %}
+            </span>
+            <span id="smart-icon-label">{% if settings.get('Plex Smart Collections', {}).get('poster_icon') %}{{ settings.get('Plex Smart Collections', {}).get('poster_icon').split('/')[-1] }}{% else %}Choose icon from library{% endif %}</span>
+        </button>
+        <input type="hidden" id="content-sources-__smart__-plex_collection-poster_icon" name="Plex Smart Collections.poster_icon" data-section="Plex Smart Collections" data-key="poster_icon" value="{{ settings.get('Plex Smart Collections', {}).get('poster_icon', '') }}">
+        <p class="settings-description">Icon shown on the poster. Leave blank to use the source default icon.</p>
+    </div>
+</div>
+
+<script>
+(function() {
+    // Init slider display values from saved settings
+    (function() {
+        var ov = document.getElementById('smart-overlay-op');
+        var go = document.getElementById('smart-glow-op');
+        var gr = document.getElementById('smart-glow-r');
+        if (ov) document.getElementById('smart-overlay-op-val').textContent = ov.value + '%';
+        if (go) document.getElementById('smart-glow-op-val').textContent = go.value + '%';
+        if (gr) document.getElementById('smart-glow-r-val').textContent = gr.value;
+    })();
+
+    var ai = document.getElementById('smart-poster-accent');
+    var al = document.getElementById('smart-poster-accent-label');
+    var ac = document.getElementById('smart-poster-accent-clear');
+    if (ai) {
+        if (ai.value && ai.value !== '#000000') {
+            ai.style.opacity = '1';
+            if (al) al.textContent = ai.value;
+            if (ac) ac.style.display = 'inline-block';
+        }
+        ai.addEventListener('input', function() {
+            this.style.opacity = '1';
+            if (al) al.textContent = this.value;
+            if (ac) ac.style.display = 'inline-block';
+        });
+    }
+    if (ac) {
+        ac.addEventListener('click', function() {
+            if (ai) { ai.value = '#000000'; ai.style.opacity = '0.4'; }
+            if (al) al.textContent = 'Design default';
+            this.style.display = 'none';
+        });
+    }
+
+    var lb = document.getElementById('load-smart-collections-btn');
+    if (lb) {
+        lb.addEventListener('click', async function() {
+            this.textContent = 'Loading...'; this.disabled = true;
+            try {
+                var r = await fetch('/settings/api/plex-smart-collections');
+                var d = await r.json();
+                if (d.success) {
+                    renderSmartCollections(d.collections);
+                    document.getElementById('smart-collections-list').style.display = 'block';
+                } else { showPopup({ type: 'error', title: 'Error', message: 'Error: ' + (d.error || 'Failed'), autoClose: 5000 }); }
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e, autoClose: 5000 }); }
+            finally { this.textContent = 'Reload Collections'; this.disabled = false; }
+        });
+    }
+
+    var rb = document.getElementById('run-smart-collections-btn');
+    if (rb) {
+        rb.addEventListener('click', async function() {
+            this.textContent = 'Running...'; this.disabled = true;
+            try {
+                var r = await fetch('/settings/api/plex-smart-collections/run', {method:'POST'});
+                var d = await r.json();
+                showPopup({ type: d.success ? 'success' : 'error', title: d.success ? 'Success' : 'Error', message: d.success ? 'Task started.' : 'Error: ' + d.error, autoClose: d.success ? 4000 : 5000 });
+            } finally { this.textContent = 'Run Now'; this.disabled = false; }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        var ms = document.getElementById('save-settings-button');
+        if (ms) {
+            ms.addEventListener('click', function() {
+                var cols = {};
+                document.querySelectorAll('.smart-coll-cb').forEach(function(cb) {
+                    cols[cb.dataset.rk] = {
+                        enabled: cb.checked,
+                        title: cb.dataset.title,
+                        section: cb.dataset.section,
+                        type: cb.dataset.type
+                    };
+                });
+                if (Object.keys(cols).length > 0) {
+                    fetch('/settings/api/plex-smart-collections', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({collections: cols})
+                    }).catch(function() {});
+                }
+            }, true);
+        }
+    });
+
+    function renderSmartCollections(cols) {
+        var c = document.getElementById('smart-collections-container');
+        if (!c) return;
+        var secs = {};
+        cols.forEach(function(x) {
+            if (!secs[x.section]) secs[x.section] = [];
+            secs[x.section].push(x);
+        });
+        var h = '';
+        Object.keys(secs).forEach(function(s) {
+            h += '<div style="width:100%;margin-top:8px;color:#888;font-size:0.75em;text-transform:uppercase;">' + s + '</div>';
+            secs[s].forEach(function(x) {
+                h += '<label style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(255,255,255,0.05);border-radius:6px;cursor:pointer;font-size:0.9em;">';
+                h += '<input type="checkbox" class="smart-coll-cb"';
+                h += ' data-rk="' + x.ratingKey + '"';
+                h += ' data-title="' + x.title + '"';
+                h += ' data-section="' + x.section + '"';
+                h += ' data-type="' + x.type + '"';
+                if (x.enabled) h += ' checked';
+                h += '>' + x.title + '</label>';
+            });
+        });
+        c.innerHTML = h;
+    }
+})();
+</script>
+    </div>
+</div>
+
+<!-- Plex Movie Box Sets Section -->
+<div class="settings-section settings-card plex-only-section">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Plex Movie Box Sets</h4>
+        </div>
+    </div>
+    <div class="settings-section-content" style="display:none;">
+        <p style="color:#aaa;font-size:0.9em;margin-bottom:15px;">
+            Automatically creates Plex collections for movie box sets using TMDB collection data.
+            Applies TMDB collection posters (or a rendered fallback) and optionally queues missing movies.
+        </p>
+
+        <!-- Enable toggle -->
+        <div class="settings-form-group">
+            <label class="settings-label" for="boxsets-enabled">Enable Plex Movie Box Sets</label>
+            <div class="toggle-switch-wrapper">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="boxsets-enabled"
+                           name="Plex Movie Box Sets.enabled"
+                           data-section="Plex Movie Box Sets" data-key="enabled"
+                           {% if settings.get('Plex Movie Box Sets', {}).get('enabled') %}checked{% endif %}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Dependent controls (shown when enabled) -->
+        <div id="boxsets-dependent-controls" style="{% if not settings.get('Plex Movie Box Sets', {}).get('enabled') %}display:none;{% endif %}">
+
+            <!-- Grab missing movies toggle -->
+            <div class="settings-form-group">
+                <label class="settings-label" for="boxsets-grab-missing">Grab missing movies from box sets</label>
+                <div class="settings-description">Missing movies from box sets will be added to your wanted queue.</div>
+                <div class="toggle-switch-wrapper">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="boxsets-grab-missing"
+                               name="Plex Movie Box Sets.grab_missing"
+                               data-section="Plex Movie Box Sets" data-key="grab_missing"
+                               {% if settings.get('Plex Movie Box Sets', {}).get('grab_missing') %}checked{% endif %}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Version dropdown (shown when grab_missing enabled) -->
+            <div id="boxsets-version-group" class="settings-form-group"
+                 style="{% if not settings.get('Plex Movie Box Sets', {}).get('grab_missing') %}display:none;{% endif %}">
+                <label class="settings-label" for="boxsets-grab-version">Version to use when grabbing missing movies</label>
+                <select id="boxsets-grab-version"
+                        name="Plex Movie Box Sets.grab_version"
+                        data-section="Plex Movie Box Sets" data-key="grab_version"
+                        class="settings-input">
+                    <option value="Default" {% if settings.get('Plex Movie Box Sets', {}).get('grab_version', 'Default') == 'Default' %}selected{% endif %}>Default</option>
+                </select>
+            </div>
+
+            <!-- Collection name pattern -->
+            <div class="settings-form-group">
+                <label class="settings-label" for="boxsets-name-pattern">Collection name pattern</label>
+                <div class="settings-description"><code>{title}</code> is the franchise name (e.g. <em>The Godfather</em>). Examples: <code>{title} Collection</code>, <code>{title} Box Set</code></div>
+                <input type="text" id="boxsets-name-pattern"
+                       name="Plex Movie Box Sets.collection_name_pattern"
+                       data-section="Plex Movie Box Sets" data-key="collection_name_pattern"
+                       class="settings-input"
+                       value="{{ settings.get('Plex Movie Box Sets', {}).get('collection_name_pattern', '{title} Collection') }}"
+                       placeholder="{title} Collection">
+            </div>
+
+            <!-- Minimum movies threshold -->
+            <div class="settings-form-group">
+                <label class="settings-label" for="boxsets-min-movies">Minimum owned movies to create/keep a box set</label>
+                <div class="settings-description">Collections below this threshold will not be created, and existing ones will be automatically removed.</div>
+                <select id="boxsets-min-movies"
+                        name="Plex Movie Box Sets.min_movies"
+                        data-section="Plex Movie Box Sets" data-key="min_movies"
+                        class="settings-select">
+                    <option value="1" {% if settings.get('Plex Movie Box Sets', {}).get('min_movies', 2)|int == 1 %}selected{% endif %}>1</option>
+                    <option value="2" {% if settings.get('Plex Movie Box Sets', {}).get('min_movies', 2)|int == 2 %}selected{% endif %}>2</option>
+                </select>
+            </div>
+
+            <!-- Sort order -->
+            <div class="settings-form-group">
+                <label class="settings-label" for="boxsets-sort-order">Collection sort order</label>
+                <div class="settings-description">How movies are ordered within each box set collection in Plex.</div>
+                <select id="boxsets-sort-order"
+                        name="Plex Movie Box Sets.sort_order"
+                        data-section="Plex Movie Box Sets" data-key="sort_order"
+                        class="settings-select">
+                    {% set _sort = settings.get('Plex Movie Box Sets', {}).get('sort_order', 'release_date_asc') %}
+                    <option value="release_date_asc" {% if _sort == 'release_date_asc' %}selected{% endif %}>Release Date (oldest first)</option>
+                    <option value="title_asc"        {% if _sort == 'title_asc'        %}selected{% endif %}>Title (A → Z)</option>
+                    <option value="custom"           {% if _sort == 'custom'           %}selected{% endif %}>Custom (manual order)</option>
+                </select>
+            </div>
+
+        </div>
+
+        <!-- Status + Run Now -->
+        <div class="settings-form-group" style="margin-top:15px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <button type="button" id="boxsets-run-btn"
+                    class="btn btn-secondary" style="white-space:nowrap;">
+                Run Now
+            </button>
+            <button type="button" id="boxsets-manage-btn"
+                    class="btn btn-secondary" style="white-space:nowrap;">
+                Manage Posters
+            </button>
+            <span id="boxsets-status" style="color:#aaa;font-size:0.85em;"></span>
+        </div>
+
+    </div>
+</div>
+
+<!-- Box Sets Manage Posters Modal -->
+<div id="boxsets-manage-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9999;align-items:flex-start;justify-content:center;padding-top:60px;box-sizing:border-box;">
+    <div style="background:var(--surface-color,#1e1e1e);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:24px;width:90%;max-width:560px;max-height:80vh;display:flex;flex-direction:column;gap:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+            <h3 style="margin:0;font-size:1rem;font-weight:600;">Box Set Posters</h3>
+            <button id="boxsets-manage-close" style="background:none;border:none;color:var(--text-color,#fff);font-size:1.4rem;cursor:pointer;line-height:1;">&times;</button>
+        </div>
+        <p style="margin:0;font-size:0.82em;color:#aaa;">Force a collection to reapply its poster on the next run. This only clears the fingerprint — run the task manually or wait for the scheduled run.</p>
+        <input id="boxsets-manage-search" type="text" placeholder="Search collections..." style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.88em;outline:none;">
+        <div id="boxsets-manage-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;">
+            <span style="color:#aaa;font-size:0.85em;">Loading...</span>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    // Enable/disable dependent controls
+    var enabledCb = document.getElementById('boxsets-enabled');
+    var depControls = document.getElementById('boxsets-dependent-controls');
+    if (enabledCb && depControls) {
+        enabledCb.addEventListener('change', function() {
+            depControls.style.display = this.checked ? '' : 'none';
+        });
+    }
+
+    // Show/hide version dropdown when grab_missing toggled
+    var grabMissingCb = document.getElementById('boxsets-grab-missing');
+    var versionGroup = document.getElementById('boxsets-version-group');
+    if (grabMissingCb && versionGroup) {
+        grabMissingCb.addEventListener('change', function() {
+            versionGroup.style.display = this.checked ? '' : 'none';
+        });
+    }
+
+    // Populate version dropdown from app versions endpoint
+    var versionSelect = document.getElementById('boxsets-grab-version');
+    if (versionSelect) {
+        var savedVersion = '{{ settings.get("Plex Movie Box Sets", {}).get("grab_version", "Default") }}';
+        fetch('/content/versions')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var versions = data.versions || data || [];
+                if (!Array.isArray(versions)) versions = Object.keys(versions);
+                versionSelect.innerHTML = '';
+                versions.forEach(function(v) {
+                    var opt = document.createElement('option');
+                    opt.value = v;
+                    opt.textContent = v;
+                    if (v === savedVersion) opt.selected = true;
+                    versionSelect.appendChild(opt);
+                });
+                if (!versions.includes(savedVersion)) {
+                    var opt = document.createElement('option');
+                    opt.value = savedVersion;
+                    opt.textContent = savedVersion;
+                    opt.selected = true;
+                    versionSelect.insertBefore(opt, versionSelect.firstChild);
+                }
+            })
+            .catch(function() {
+                // Leave Default option if fetch fails
+            });
+    }
+
+    // Fetch and display status
+    function loadBoxSetsStatus() {
+        var statusEl = document.getElementById('boxsets-status');
+        if (!statusEl) return;
+        fetch('/settings/api/plex-boxsets/status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) {
+                    var parts = [];
+                    if (d.last_run) {
+                        var dt = new Date(d.last_run + 'Z');
+                        parts.push('Last run: ' + dt.toLocaleString());
+                    }
+                    if (d.collections_managed > 0) {
+                        parts.push(d.collections_managed + ' collection' + (d.collections_managed !== 1 ? 's' : '') + ' managed');
+                    }
+                    statusEl.textContent = parts.join(' · ') || 'Not yet run';
+                }
+            })
+            .catch(function() {});
+    }
+    loadBoxSetsStatus();
+
+    // Run Now button
+    var runBtn = document.getElementById('boxsets-run-btn');
+    if (runBtn) {
+        runBtn.addEventListener('click', function() {
+            var statusEl = document.getElementById('boxsets-status');
+            runBtn.disabled = true;
+            runBtn.textContent = 'Starting...';
+            fetch('/settings/api/plex-boxsets/run', {method: 'POST'})
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    runBtn.disabled = false;
+                    runBtn.textContent = 'Run Now';
+                    if (statusEl) statusEl.textContent = d.success ? 'Task started — check logs for progress' : ('Error: ' + d.error);
+                })
+                .catch(function(e) {
+                    runBtn.disabled = false;
+                    runBtn.textContent = 'Run Now';
+                    if (statusEl) statusEl.textContent = 'Request failed';
+                });
+        });
+    }
+
+    // Smart Collections — Manage Posters modal
+    (function() {
+        var scBtn    = document.getElementById('smartcoll-manage-btn');
+        var scModal  = document.getElementById('smartcoll-manage-modal');
+        var scClose  = document.getElementById('smartcoll-manage-close');
+        var scList   = document.getElementById('smartcoll-manage-list');
+        var scSearch = document.getElementById('smartcoll-manage-search');
+        var _scColls = [];
+
+        function scRenderRows(filter) {
+            var q = (filter || '').toLowerCase().trim();
+            var filtered = q ? _scColls.filter(function(c) { return c.name.toLowerCase().includes(q); }) : _scColls;
+            scList.innerHTML = '';
+            if (filtered.length === 0) {
+                scList.innerHTML = '<span style="color:#aaa;font-size:0.85em;">' + (q ? 'No collections match.' : 'No enabled collections found. Enable collections and run the task first.') + '</span>';
+                return;
+            }
+            filtered.forEach(function(c) {
+                var row = document.createElement('div');
+                row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;';
+                var name = document.createElement('span');
+                name.textContent = c.name;
+                name.style.cssText = 'font-size:0.88em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                var btn = document.createElement('button');
+                btn.textContent = 'Force reapply';
+                btn.className = 'btn btn-secondary';
+                btn.style.cssText = 'font-size:0.78em;padding:4px 10px;white-space:nowrap;flex-shrink:0;';
+                btn.addEventListener('click', function() {
+                    btn.disabled = true;
+                    btn.textContent = 'Applying...';
+                    fetch('/settings/api/plex-smart-collections/reset-collection', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({collection_id: c.id})
+                    })
+                    .then(function(r) { return r.json(); })
+                    .then(function(res) {
+                        if (res.success) {
+                            btn.textContent = 'Applied ✓';
+                            btn.style.color = '#4caf50';
+                        } else {
+                            btn.disabled = false;
+                            btn.textContent = 'Force reapply';
+                            btn.style.color = '';
+                            showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (res.message || 'Unknown error'), autoClose: 5000 });
+                        }
+                    })
+                    .catch(function() {
+                        btn.disabled = false;
+                        btn.textContent = 'Force reapply';
+                        btn.style.color = '';
+                        showPopup({ type: 'error', title: 'Error', message: 'Request failed — check logs', autoClose: 5000 });
+                    });
+                });
+                row.appendChild(name);
+                row.appendChild(btn);
+                scList.appendChild(row);
+            });
+        }
+
+        function scOpenModal() {
+            scModal.style.display = 'flex';
+            if (scSearch) scSearch.value = '';
+            scList.innerHTML = '<span style="color:#aaa;font-size:0.85em;">Loading...</span>';
+            fetch('/settings/api/plex-smart-collections/status')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    _scColls = (d.success && d.collections) ? d.collections : [];
+                    scRenderRows('');
+                    if (scSearch) scSearch.focus();
+                })
+                .catch(function() {
+                    scList.innerHTML = '<span style="color:#f44336;font-size:0.85em;">Failed to load collections.</span>';
+                });
+        }
+
+        if (scSearch) scSearch.addEventListener('input', function() { scRenderRows(this.value); });
+        if (scBtn)    scBtn.addEventListener('click', scOpenModal);
+        if (scClose)  scClose.addEventListener('click', function() { scModal.style.display = 'none'; });
+        if (scModal)  scModal.addEventListener('click', function(e) { if (e.target === scModal) scModal.style.display = 'none'; });
+    })();
+
+    // Manage Posters modal
+    var manageBtn = document.getElementById('boxsets-manage-btn');
+    var manageModal = document.getElementById('boxsets-manage-modal');
+    var manageClose = document.getElementById('boxsets-manage-close');
+    var manageList = document.getElementById('boxsets-manage-list');
+    var manageSearch = document.getElementById('boxsets-manage-search');
+    var _allCollections = [];
+
+    function renderCollectionRows(filter) {
+        var q = (filter || '').toLowerCase().trim();
+        var filtered = q ? _allCollections.filter(function(c) { return c.name.toLowerCase().includes(q); }) : _allCollections;
+        manageList.innerHTML = '';
+        if (filtered.length === 0) {
+            manageList.innerHTML = '<span style="color:#aaa;font-size:0.85em;">' + (q ? 'No collections match.' : 'No collections found. Run the task first.') + '</span>';
+            return;
+        }
+        filtered.forEach(function(c) {
+            var row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;';
+            var name = document.createElement('span');
+            name.textContent = c.name;
+            name.style.cssText = 'font-size:0.88em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+            var btn = document.createElement('button');
+            btn.textContent = 'Force reapply';
+            btn.className = 'btn btn-secondary';
+            btn.style.cssText = 'font-size:0.78em;padding:4px 10px;white-space:nowrap;flex-shrink:0;';
+            btn.addEventListener('click', function() {
+                btn.disabled = true;
+                btn.textContent = 'Applying...';
+                fetch('/settings/api/plex-boxsets/reset-collection', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({collection_id: c.id})
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    if (res.success) {
+                        btn.textContent = 'Applied ✓';
+                        btn.style.color = '#4caf50';
+                    } else {
+                        btn.disabled = false;
+                        btn.textContent = 'Force reapply';
+                        btn.style.color = '';
+                        btn.title = res.message || 'Unknown error';
+                        showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (res.message || 'Unknown error'), autoClose: 5000 });
+                    }
+                })
+                .catch(function() {
+                    btn.disabled = false;
+                    btn.textContent = 'Force reapply';
+                    btn.style.color = '';
+                    showPopup({ type: 'error', title: 'Error', message: 'Request failed — check logs', autoClose: 5000 });
+                });
+            });
+            row.appendChild(name);
+            row.appendChild(btn);
+            manageList.appendChild(row);
+        });
+    }
+
+    function openManageModal() {
+        manageModal.style.display = 'flex';
+        if (manageSearch) manageSearch.value = '';
+        manageList.innerHTML = '<span style="color:#aaa;font-size:0.85em;">Loading...</span>';
+        fetch('/settings/api/plex-boxsets/status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                _allCollections = (d.success && d.collections) ? d.collections : [];
+                renderCollectionRows('');
+                if (manageSearch) manageSearch.focus();
+            })
+            .catch(function() {
+                manageList.innerHTML = '<span style="color:#f44336;font-size:0.85em;">Failed to load collections.</span>';
+            });
+    }
+
+    if (manageSearch) {
+        manageSearch.addEventListener('input', function() { renderCollectionRows(this.value); });
+    }
+    if (manageBtn) manageBtn.addEventListener('click', openManageModal);
+    if (manageClose) manageClose.addEventListener('click', function() { manageModal.style.display = 'none'; });
+    if (manageModal) manageModal.addEventListener('click', function(e) { if (e.target === manageModal) manageModal.style.display = 'none'; });
+})();
+</script>
+
+        </div>
+    </div>
+</div>

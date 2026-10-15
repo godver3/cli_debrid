@@ -1021,7 +1021,7 @@ class TestModalOverlayContract(unittest.TestCase):
 
     def test_main_is_still_a_stacking_context(self):
         """If this ever stops being true the reparenting comment is stale."""
-        base_css = self._read('static', 'css', 'base.css')
+        base_css = self._read('static', 'css', 'tangerine', 'tangerine_base.css')
         main_rule = base_css.split('\nmain {', 1)[1].split('}', 1)[0]
         self.assertIn('position: relative', main_rule)
         self.assertIn('z-index: 1', main_rule)

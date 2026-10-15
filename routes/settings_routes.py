@@ -867,13 +867,9 @@ def content_sources_content():
                     except Exception:
                         pc['libraries'] = []
 
-    # Determine which template to use based on theme (from cookie or default to tangerine)
-    theme = request.cookies.get('selectedTheme', 'tangerine')
-    template_name = 'settings_tabs/content_sources_tangerine.html' if theme == 'tangerine' else 'settings_tabs/content_sources.html'
+    template_name = 'settings_tabs/content_sources.html'
 
     # Debug logging
-    current_app.logger.info(f"Content Sources route - All cookies: {dict(request.cookies)}")
-    current_app.logger.info(f"Content Sources route - Theme cookie: {theme}, Template: {template_name}")
 
     return render_template(template_name,
                           settings=config,
@@ -1077,12 +1073,9 @@ def scrapers_content():
         scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())
         scraper_settings = {scraper: list(SETTINGS_SCHEMA["Scrapers"]["schema"][scraper].keys()) for scraper in SETTINGS_SCHEMA["Scrapers"]["schema"]}
 
-        # Determine which template to use based on theme (from cookie or default to tangerine)
-        theme = request.cookies.get('selectedTheme', 'tangerine')
-        template_name = 'settings_tabs/scrapers_tangerine.html' if theme == 'tangerine' else 'settings_tabs/scrapers.html'
+        template_name = 'settings_tabs/scrapers.html'
 
         # Debug logging
-        current_app.logger.info(f"Scrapers route - Theme cookie: {theme}, Template: {template_name}")
 
         return render_template(template_name, settings=settings, scraper_types=scraper_types, scraper_settings=scraper_settings)
     except Exception as e:
@@ -1093,11 +1086,8 @@ def get_scrapers():
     config = load_config()
     scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())
 
-    # Determine which template to use based on theme (from cookie or default to tangerine)
-    theme = request.cookies.get('selectedTheme', 'tangerine')
-    template_name = 'settings_tabs/scrapers_tangerine.html' if theme == 'tangerine' else 'settings_tabs/scrapers.html'
+    template_name = 'settings_tabs/scrapers.html'
 
-    current_app.logger.info(f"Scrapers GET route - Theme cookie: {theme}, Template: {template_name}")
 
     return render_template(template_name, settings=config, scraper_types=scraper_types)
 
@@ -1353,13 +1343,12 @@ def notifications_content():
             key=lambda x: (x[1]['type'], int(x[0].split('_')[-1]))
         )
 
-        # Determine which template to use based on theme
-        theme = request.cookies.get('selectedTheme', 'tangerine')
-        template_name = 'settings_tabs/notifications_tangerine.html' if theme == 'tangerine' else 'settings_tabs/notifications.html'
+        template_name = 'settings_tabs/notifications.html'
 
         html_content = render_template(
             template_name,
             notification_settings=dict(sorted_notifications),
+            settings=config,
             settings_schema=SETTINGS_SCHEMA
         )
         
@@ -1496,13 +1485,9 @@ def index():
         # Get environment mode from environment variable
         environment_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
 
-        # Determine which template to use based on theme (from cookie or default to tangerine)
-        theme = request.cookies.get('selectedTheme', 'tangerine')
-        template_name = 'settings_tangerine.html' if theme == 'tangerine' else 'settings_base.html'
+        template_name = 'settings.html'
 
         # Debug logging
-        current_app.logger.info(f"Settings route - All cookies: {dict(request.cookies)}")
-        current_app.logger.info(f"Settings route - Theme cookie: {theme}, Template: {template_name}")
 
         # Create response with template
         response = current_app.make_response(render_template(template_name,
@@ -2683,9 +2668,7 @@ def scraping_content():
     if _backfill_changed:
         save_config(config)
 
-    # Determine which template to use based on theme
-    theme = request.cookies.get('selectedTheme', 'tangerine')
-    template_name = 'settings_tabs/scraping_tangerine.html' if theme == 'tangerine' else 'settings_tabs/scraping.html'
+    template_name = 'settings_tabs/scraping.html'
 
     return render_template(template_name,
                            settings=config,
