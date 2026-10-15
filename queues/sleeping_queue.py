@@ -29,14 +29,14 @@ class SleepingQueue:
         self.sleeping_queue_times = {}
 
     def update(self):
-        from database import get_all_media_items, get_media_item_by_id, get_wake_count, increment_wake_count
+        from database import get_all_media_items
         self.items = [dict(row) for row in get_all_media_items(state="Sleeping")]
-        # Initialize sleeping times for new items and fetch wake count from DB
+        # Initialize sleeping times for new items. The rows already carry
+        # wake_count, so no per-item query (this runs every 30 s).
         for item in self.items:
             if item['id'] not in self.sleeping_queue_times:
                 self.sleeping_queue_times[item['id']] = datetime.now()
-            # Get wake_count from the database, default to 0 if not present (should exist now)
-            item['wake_count'] = get_wake_count(item['id']) 
+            item['wake_count'] = item.get('wake_count') or 0
 
     def get_contents(self):
         return self.items
@@ -164,8 +164,9 @@ class SleepingQueue:
 
     def clean_up_sleeping_data(self):
         # Remove sleeping times for items no longer in the queue
+        current_ids = {item['id'] for item in self.items}
         for item_id in list(self.sleeping_queue_times.keys()):
-            if item_id not in [item['id'] for item in self.items]:
+            if item_id not in current_ids:
                 del self.sleeping_queue_times[item_id]
         
         # No need to manage wake counts here anymore, it's in the DB
