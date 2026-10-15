@@ -176,13 +176,43 @@ def initialize_notifications_table(conn: sqlite3.Connection) -> bool:
     # No finally block to close conn, as it's passed in and managed by the caller.
 
 # --- Database Connection --- Now defined AFTER initialize_notifications_table ---
-def get_db_connection(db_path=None):
-    if db_path is None:
-        # Get db_content directory from environment variable with fallback
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        db_path = os.path.join(db_content_dir, 'media_items.db')
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+#
+# Opening a connection is cheap, but the first statement on it makes SQLite
+# parse the whole schema (~145 tables/indexes/triggers), which cost ~1.2 ms per
+# get_db_connection() call against ~40 us for a typical primary-key query.
+# Connections are therefore pooled per thread and per database file:
+#   * close() hands the connection back instead of closing it. Any open
+#     transaction is rolled back first -- exactly what a real close() did -- and
+#     per-caller state (row_factory, text_factory, query_only, foreign_keys) is
+#     reset.
+#   * Nested get_db_connection() calls on one thread still get separate
+#     connections, so callers never share a transaction.
+#   * A pooled connection is discarded if the database file was replaced
+#     (inode changed), e.g. after a corrupted DB was removed or a backup
+#     restored.
+#   * A closed handle raises like a closed sqlite3 connection.
+# Set CLI_DEBRID_DB_POOL=0 to fall back to one fresh connection per call.
+_POOL_ENABLED = os.environ.get('CLI_DEBRID_DB_POOL', '1') != '0'
+_POOL_MAX_IDLE_PER_THREAD = 4
+_pool_tls = threading.local()
 
+
+def _db_file_identity(db_path):
+    try:
+        st = os.stat(db_path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def _idle_connections(key):
+    pools = getattr(_pool_tls, 'pools', None)
+    if pools is None:
+        pools = _pool_tls.pools = {}
+    return pools.setdefault(key, [])
+
+
+def _open_raw_connection(db_path):
     # Increased timeout to 30 seconds for better concurrent access handling
     conn = sqlite3.connect(db_path, timeout=30)
 
@@ -205,16 +235,99 @@ def get_db_connection(db_path=None):
     conn.execute('PRAGMA synchronous = NORMAL')
 
     conn.row_factory = sqlite3.Row
-    
-    # REMOVED: Initialization moved to schema_management.py
-    # if is_new_db:
-    #     logging.info(f"New database created at {db_path}. Ensure schema is initialized/migrated.")
-    #     # Initialize other tables if needed here via schema management
-    # else:
-    #     # Ensure notifications table exists - handled by migration now
-    #     pass
-
     return conn
+
+
+class PooledConnection:
+    """sqlite3.Connection stand-in whose close() returns it to the pool."""
+
+    __slots__ = ('_conn', '_key', '_identity', '_owner', '_closed')
+
+    def __init__(self, conn, key, identity):
+        object.__setattr__(self, '_conn', conn)
+        object.__setattr__(self, '_key', key)
+        object.__setattr__(self, '_identity', identity)
+        object.__setattr__(self, '_owner', threading.get_ident())
+        object.__setattr__(self, '_closed', False)
+
+    def _raw(self):
+        if self._closed:
+            raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+        return self._conn
+
+    def __getattr__(self, name):
+        return getattr(self._raw(), name)
+
+    def __setattr__(self, name, value):
+        setattr(self._raw(), name, value)
+
+    def __enter__(self):
+        self._raw().__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return self._raw().__exit__(exc_type, exc_value, traceback)
+
+    def close(self):
+        if self._closed:
+            return
+        object.__setattr__(self, '_closed', True)
+        conn = self._conn
+        if threading.get_ident() != self._owner:
+            # sqlite3 objects are bound to their creating thread; just let go.
+            return
+        try:
+            if conn.in_transaction:
+                conn.rollback()
+            conn.row_factory = sqlite3.Row
+            conn.text_factory = str
+            conn.execute('PRAGMA query_only = 0')
+            conn.execute('PRAGMA foreign_keys = 0')
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            return
+        idle = _idle_connections(self._key)
+        if (self._identity is not None
+                and len(idle) < _POOL_MAX_IDLE_PER_THREAD
+                and _db_file_identity(self._key) == self._identity):
+            idle.append((conn, self._identity))
+        else:
+            conn.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
+def get_db_connection(db_path=None):
+    if db_path is None:
+        # Get db_content directory from environment variable with fallback
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        db_path = os.path.join(db_content_dir, 'media_items.db')
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+
+    if not _POOL_ENABLED:
+        return _open_raw_connection(db_path)
+
+    key = os.path.abspath(db_path)
+    identity = _db_file_identity(key)
+    idle = _idle_connections(key)
+    while idle:
+        conn, conn_identity = idle.pop()
+        if identity is not None and conn_identity == identity:
+            return PooledConnection(conn, key, conn_identity)
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    conn = _open_raw_connection(db_path)
+    return PooledConnection(conn, key, _db_file_identity(key))
 
 # --- Media Item Specific Functions (Example) ---
 def get_existing_airtime(conn, imdb_id):
