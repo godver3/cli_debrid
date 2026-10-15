@@ -6276,6 +6276,29 @@ class ProgramRunner:
             logging.debug("Skipping Plex file check as both relevant settings are disabled.")
             return
 
+        # This runs every minute. With nothing in Checking and no candidates for
+        # the stale-location repair below, skip the Plex connection round trips.
+        try:
+            _work_conn = get_db_connection()
+            try:
+                _has_work = _work_conn.execute(
+                    'SELECT 1 FROM media_items WHERE state = "Checking" '
+                    'AND (ghostlisted IS NULL OR ghostlisted = 0) LIMIT 1'
+                ).fetchone() or _work_conn.execute(
+                    '''SELECT 1 FROM media_items
+                       WHERE state = "Collected"
+                         AND upgrading_from IS NOT NULL AND upgrading_from != ""
+                         AND filled_by_file IS NOT NULL AND filled_by_file != ""
+                       LIMIT 1'''
+                ).fetchone()
+            finally:
+                _work_conn.close()
+            if not _has_work:
+                logging.debug("Plex file check: no Checking items or stale-location candidates; skipping.")
+                return
+        except Exception as e_work:
+            logging.debug(f"Plex file check: work pre-check failed ({e_work}); continuing.")
+
         # Use centralized Plex connection setup if possible or ensure proper error handling
         plex = None
         try:

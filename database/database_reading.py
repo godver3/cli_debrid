@@ -158,6 +158,22 @@ def stream_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=No
         if conn:
             conn.close()
 
+def get_media_items_by_torrent_id(torrent_id, columns: Optional[List[str]] = None) -> List[Dict]:
+    """All media items (any state) filled by one torrent / NZB job, via the
+    filled_by_torrent_id index."""
+    if not torrent_id:
+        return []
+    conn = get_db_connection()
+    try:
+        col_str = ', '.join(columns) if columns else '*'
+        cursor = conn.execute(
+            f'SELECT {col_str} FROM media_items WHERE filled_by_torrent_id = ?',
+            (str(torrent_id),),
+        )
+        return [dict(row) for row in cursor]
+    finally:
+        conn.close()
+
 def get_media_item_presence(imdb_id=None, tmdb_id=None):
     conn = get_db_connection()
     try:

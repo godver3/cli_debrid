@@ -1423,11 +1423,10 @@ class CheckingQueue:
                                 # move to Collected one-by-one, so current_items_for_torrent
                                 # only has the episode currently in Checking.
                                 try:
-                                    from database import get_all_media_items as _gami2
+                                    from database import get_media_items_by_torrent_id as _by_tid2
                                     _all_sibs2 = [
-                                        dict(i) for i in _gami2()
-                                        if i.get('filled_by_torrent_id') == torrent_id
-                                        and i.get('filled_by_file')
+                                        i for i in _by_tid2(torrent_id, columns=['id', 'filled_by_file'])
+                                        if i.get('filled_by_file')
                                     ]
                                 except Exception:
                                     _all_sibs2 = current_items_for_torrent
@@ -1614,11 +1613,10 @@ class CheckingQueue:
                             _sample = current_items_for_torrent[0] if current_items_for_torrent else {}
                             _tid_all = str(_sample.get('filled_by_torrent_id') or '')
                             try:
-                                from database import get_all_media_items as _gami
+                                from database import get_media_items_by_torrent_id as _by_tid
                                 _all_sibs = [
-                                    dict(i) for i in _gami()
-                                    if i.get('filled_by_torrent_id') == _tid_all
-                                    and i.get('filled_by_file')
+                                    i for i in _by_tid(_tid_all, columns=['id', 'filled_by_file'])
+                                    if i.get('filled_by_file')
                                 ] if _tid_all else current_items_for_torrent
                             except Exception:
                                 _all_sibs = current_items_for_torrent

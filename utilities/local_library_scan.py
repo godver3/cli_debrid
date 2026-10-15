@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, Tuple
 import os
 import sys  # Import sys module
 from utilities.settings import get_setting
@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 from datetime import datetime
 import time
+import threading
 from utilities.anidb_functions import format_filename_with_anidb
 from database.database_writing import update_media_item_state, update_media_item
 from utilities.post_processing import handle_state_change
@@ -1464,6 +1465,31 @@ def _folder_match_key(name: str) -> str:
     return ''.join(ch for ch in (name or '').casefold() if ch.isalnum())
 
 
+# Listing the mount root (often 10k+ entries over a FUSE mount) for every
+# missing file on every Checking tick was the expensive part of the folder-
+# name fallback. Each root's listing is indexed by match key and reused for
+# a few seconds, shorter than the Checking interval, so every tick still
+# sees a fresh listing but all items in one tick share it.
+_ROOT_INDEX_TTL = 20.0
+_root_index_lock = threading.Lock()
+_root_index_cache: Dict[str, Tuple[float, Dict[str, List[str]]]] = {}
+
+
+def _root_folder_index(root: str) -> Dict[str, List[str]]:
+    """Map _folder_match_key -> real entry names for one directory. Raises OSError."""
+    now = time.monotonic()
+    with _root_index_lock:
+        cached = _root_index_cache.get(root)
+        if cached and now - cached[0] < _ROOT_INDEX_TTL:
+            return cached[1]
+    index: Dict[str, List[str]] = {}
+    for entry in os.listdir(root):
+        index.setdefault(_folder_match_key(entry), []).append(entry)
+    with _root_index_lock:
+        _root_index_cache[root] = (now, index)
+    return index
+
+
 def _find_file_in_folder_tree(base_folder: str, filename: str, max_depth: int = 6) -> Optional[str]:
     """Search base_folder and its subdirectories (bounded depth) for an exact
     filename match. Some releases (especially large multi-series/'saga' packs)
@@ -1675,12 +1701,13 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             if not found_file and candidate_names:
                 wanted_keys = {_folder_match_key(n) for n in candidate_names} - {''}
                 try:
-                    root_entries = os.listdir(original_path) if wanted_keys else []
+                    root_index = _root_folder_index(original_path) if wanted_keys else {}
                 except OSError as list_err:
                     logging.warning(f"Could not list '{original_path}' for folder-name matching: {list_err}")
-                    root_entries = []
+                    root_index = {}
+                root_entries = [name for key in wanted_keys for name in root_index.get(key, ())]
                 for folder_name in root_entries:
-                    if folder_name in candidate_names or _folder_match_key(folder_name) not in wanted_keys:
+                    if folder_name in candidate_names:
                         continue
                     candidate_folder = os.path.join(original_path, folder_name)
                     if not os.path.isdir(candidate_folder):
