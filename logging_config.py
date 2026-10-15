@@ -298,9 +298,11 @@ def setup_logging():
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     
-    # Configure root logger
+    # Configure root logger. Its level is set to the configured level below,
+    # once the handlers exist: a DEBUG root built a LogRecord and ran every
+    # filter for each logging.debug() call only for the handlers to drop it.
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)  # Set to DEBUG to see all debug messages
+    root_logger.setLevel(logging.DEBUG)
     
     # Clear any existing handlers
     root_logger.handlers.clear()
@@ -312,6 +314,9 @@ def setup_logging():
     setup_queue_logging(log_dir)
     setup_performance_logging(log_dir)
     setup_item_tracker_logging(log_dir)
+
+    handler_levels = [h.level for h in root_logger.handlers if h.level > logging.NOTSET]
+    root_logger.setLevel(min(handler_levels) if handler_levels else logging.DEBUG)
     
     # Start performance monitoring after logging is set up
     start_performance_monitoring()
