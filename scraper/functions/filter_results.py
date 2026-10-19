@@ -762,8 +762,11 @@ def filter_results(
                 # Show simple similarity calculations if they were computed
                 try:
                     logging.info(f"  Simple similarities - result: {simple_sim_result:.3f}, parsed: {simple_sim_parsed:.3f}, combined: {simple_sim:.3f}")
-                except NameError:
-                    logging.info(f"  Simple similarities - not computed (similarity was high enough)")
+                except (NameError, TypeError):
+                    # NameError: not computed. TypeError: computed but None (no parsed
+                    # title) -- this debug line used to drop the whole result.
+                    logging.info(f"  Simple similarities - result: {simple_sim_result if 'simple_sim_result' in locals() else 'n/a'}, "
+                                 f"parsed: {simple_sim_parsed if 'simple_sim_parsed' in locals() else 'n/a'}")
                 logging.info(f"  Alias similarities: {alias_similarities}")
                 logging.info(f"  Best alias sim: {best_alias_sim:.3f}")
                 logging.info(f"  Translated title sim: {translated_title_sim:.3f}")
