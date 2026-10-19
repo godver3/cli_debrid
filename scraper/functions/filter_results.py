@@ -788,7 +788,10 @@ def filter_results(
                 dragon_ball_series = [
                     ('daima', ['dragon ball daima', 'dragonball daima', 'dbdaima', 'ドラゴンボールdaima', 'dragon ball daima 2024', 'dragonball daima 2024']),
                     ('super', ['dragon ball super', 'dragonball super', 'dbs', 'ドラゴンボールsuper', 'dragon ball super 2015', 'dragonball super 2015']),
-                    ('kai', ['dragon ball kai', 'dragonball kai', 'dbkai', 'ドラゴンボールkai', 'dragon ball kai 2009', 'dragonball kai 2009']),
+                    # "Dragon Ball Z Kai" is the usual English release name; it must match
+                    # here, before the 'z' identifiers below claim it.
+                    ('kai', ['dragon ball kai', 'dragonball kai', 'dbkai', 'ドラゴンボールkai', 'dragon ball kai 2009', 'dragonball kai 2009',
+                             'dragon ball z kai', 'dragonball z kai', 'dbz kai']),
                     ('gt', ['dragon ball gt', 'dragonball gt', 'dbgt', 'ドラゴンボールgt', 'dragon ball gt 1996', 'dragonball gt 1996']),
                     ('z', ['dragon ball z', 'dragonball z', 'dbz', 'ドラゴンボールz', 'ドラゴンボールz', 'dragon ball z 1989', 'dragonball z 1989']),
                     ('original', ['dragon ball', 'dragonball', 'ドラゴンボール', 'dragon ball 1986', 'dragonball 1986'])
