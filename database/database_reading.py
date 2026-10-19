@@ -320,15 +320,15 @@ def get_all_season_episode_counts(tmdb_id):
         
         deduplicated_episodes = all_episodes
 
-        # Count episodes per season from deduplicated list
-        season_counts = {}
+        # Count distinct episode numbers per season. Rows are per version, so
+        # counting rows inflated a season for every extra or fallback version
+        # (e.g. 104 rows for 98 episodes), which shifted every absolute
+        # episode number computed for later seasons.
+        season_episodes = {}
         for episode in deduplicated_episodes:
-            season = episode['season_number']
-            if season not in season_counts:
-                season_counts[season] = 0
-            season_counts[season] += 1
-        
-        return season_counts
+            season_episodes.setdefault(episode['season_number'], set()).add(episode['episode_number'])
+
+        return {season: len(episodes) for season, episodes in season_episodes.items()}
     except Exception as e:
         logging.error(f"Error retrieving season episode counts (TMDB ID: {tmdb_id}): {str(e)}")
         return {}
