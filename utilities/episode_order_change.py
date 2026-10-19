@@ -75,6 +75,12 @@ def preview_order_change(imdb_id: str, new_order: Optional[str]) -> Dict[str, An
     # Trakt's numbering follows TMDB's default order, which TMDB groups refer to
     current_is_tmdb_default = current_order == 'default' and not tvdb_client.is_available()
     plan = plan_remap(current, target, current_is_tmdb_default=current_is_tmdb_default)
+    if new_order.startswith('tmdb_group:') and tvdb_client.is_available() and plan['unmatched_target']:
+        # TVDB numbering vs a TMDB group: TMDB knows each episode's TVDB ID, so
+        # look those up for whatever air date/title couldn't place, and re-plan
+        added = _add_group_tvdb_ids(imdb_id, target, plan['unmatched_target'])
+        if added:
+            plan = plan_remap(current, target, current_is_tmdb_default=current_is_tmdb_default)
     absent = set(plan['absent'])
 
     moves, removes, unmappable, unchanged = [], [], [], 0
@@ -120,6 +126,22 @@ def preview_order_change(imdb_id: str, new_order: Optional[str]) -> Dict[str, An
             'Plex has no matching episode ordering for this order; set the show\'s ordering in Plex '
             'by hand if its episode numbers don\'t line up.',
     }
+
+
+def _add_group_tvdb_ids(imdb_id: str, target: Dict[Any, Any], positions) -> int:
+    try:
+        from cli_battery.app.direct_api import DirectAPI
+        from cli_battery.app.tmdb_episode_groups import add_tvdb_ids
+        metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+        tmdb_id = ((metadata or {}).get('ids') or {}).get('tmdb')
+        if not tmdb_id:
+            return 0
+        added = add_tvdb_ids(tmdb_id, target, positions)
+        logging.info(f"[EpisodeOrder] {imdb_id}: added TVDB IDs to {added} of {len(positions)} unplaced group episodes")
+        return added
+    except Exception as e:
+        logging.warning(f"[EpisodeOrder] TVDB ID lookup for {imdb_id}'s episode group failed: {e}")
+        return 0
 
 
 def _add_stored_ids(imdb_id: str, current: Dict[Any, Any], current_order: str) -> None:

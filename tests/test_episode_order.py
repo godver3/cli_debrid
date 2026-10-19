@@ -124,6 +124,25 @@ class TmdbEpisodeGroupTests(unittest.TestCase):
         self.assertEqual(groups.seasons_from_episode_group(data)[1]['episodes'][99]['absolute'], 99)
 
 
+class GroupTvdbIdLookupTests(unittest.TestCase):
+    def test_only_requested_missing_positions_are_looked_up(self):
+        groups = _load_groups()
+        seasons = {1: {'episodes': {1: _ep('A', src=(1, 1)), 2: _ep('B', src=(1, 2)), 3: _ep('C', tvdb='9', src=(1, 3))}}}
+        calls = []
+
+        def fake_get(path):
+            calls.append(path)
+            return {'tvdb_id': 501} if path.endswith('/episode/1/external_ids') else None
+        groups._get = fake_get
+        added = groups.add_tvdb_ids(40424, seasons, [(1, 1), (1, 2), (1, 3), (9, 9)])
+        self.assertEqual(added, 1)
+        self.assertEqual(seasons[1]['episodes'][1]['tvdb_id'], '501')
+        self.assertNotIn('tvdb_id', {k: v for k, v in seasons[1]['episodes'][2].items() if v})
+        # (1, 3) already had an ID and (9, 9) doesn't exist: two requests only
+        self.assertEqual(sorted(calls), ['/tv/40424/season/1/episode/1/external_ids',
+                                         '/tv/40424/season/1/episode/2/external_ids'])
+
+
 def _load_groups():
     # cli_battery's logger is all the module needs from its package
     fake_logger = mock.MagicMock()
