@@ -996,6 +996,16 @@ class ScrapingQueue:
                             check_pack_wantedness=check_pack_wantedness_for_initial_scrape
                         )
 
+                    # The scrape takes a while; a sibling's season pack may have moved
+                    # this item to Checking meanwhile. Every branch below moves the
+                    # item somewhere (Adding, Sleeping, Wanted, Blacklisted) and would
+                    # overwrite that.
+                    _live_after = get_media_item_by_id(item_id_being_processed)
+                    if _live_after is not None and _live_after.get('state') != 'Scraping':
+                        logging.info(f"{item_identifier} left Scraping while being scraped (now {_live_after.get('state')}) — not moving it")
+                        self.remove_item(item_to_process)
+                        return True
+
                     # Ensure both results and filtered_out_results are lists
                     results = results if results is not None else []
                     filtered_out_results = filtered_out_results if filtered_out_results is not None else []

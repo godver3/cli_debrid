@@ -276,6 +276,20 @@ class TestNzbBatchDebridPackProbe(unittest.TestCase):
         self.assertEqual([ep for ep, _ in adds], [1])
         self.assertEqual(calls.count(False), 2, 'E01 and E02 scraped; the rest skipped')
 
+    def test_single_item_moved_on_during_scrape_is_not_moved(self):
+        # Normal (season-pack) path: a sibling's pack moves E01 to Checking
+        # while E01's own scrape is still running.
+        def to_checking(item):
+            if item['episode_number'] == 1:
+                c = self._conn()
+                c.execute("UPDATE media_items SET state='Checking' WHERE id=1")
+                c.commit()
+                c.close()
+
+        calls, adds = self._run([DEBRID_PACK, _single_nzb(1)], disable=False, on_scrape=to_checking)
+        self.assertEqual(calls, [True])
+        self.assertEqual(adds, [])
+
 
 if __name__ == '__main__':
     unittest.main()
