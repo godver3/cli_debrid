@@ -2766,11 +2766,13 @@ def _find_source_file_in_base(item: Dict[str, Any], base_search_path: str, filen
 
 def resync_symlinks_with_new_settings(
     old_original_files_path_setting: Optional[str] = None,
-    new_original_files_path_setting: Optional[str] = None
+    new_original_files_path_setting: Optional[str] = None,
+    item_ids: Optional[List[int]] = None
 ):
     """
     Resynchronizes all existing symlinks based on the current application settings.
     Attempts to locate source files and align DB with current settings if possible.
+    item_ids limits it to those items (e.g. a show whose episodes were renumbered).
     """
     logging.info("Starting symlink resynchronization process.")
 
@@ -2791,6 +2793,9 @@ def resync_symlinks_with_new_settings(
                 unique_items.append(item)
                 seen_ids.add(item['id'])
         collected_items = unique_items
+        if item_ids is not None:
+            wanted_ids = set(item_ids)
+            collected_items = [item for item in collected_items if item['id'] in wanted_ids]
 
     except Exception as e:
         logging.error(f"Failed to retrieve media items for symlink resync: {e}", exc_info=True)

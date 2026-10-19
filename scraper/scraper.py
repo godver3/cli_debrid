@@ -25,6 +25,7 @@ from scraper.functions.anime_utils import (
     resolve_absolute_episode, is_latin_script,
 )
 from scraper.functions.movie_episodes import movie_episode_info, movie_search_title
+from cli_battery.app.episode_order import show_episode_order
 from cli_battery.app.direct_api import DirectAPI
 import json
 import threading
@@ -237,6 +238,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     # Store airs data if available
                     airs_data = show_metadata.get('airs')
                     xem_mapping_list = show_metadata.get('xem_mapping')
+                    if xem_mapping_list and show_episode_order(imdb_id):
+                        # XEM maps TVDB aired-order numbers; the show uses another order
+                        logging.info(f"Ignoring XEM mapping for {title}: the show uses episode order {show_episode_order(imdb_id)}")
+                        xem_mapping_list = None
                     trakt_seasons_data = show_metadata.get('seasons') # Get Trakt season structure
 
                     # --- Extract Target Air Date ---

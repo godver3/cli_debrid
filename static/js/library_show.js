@@ -1967,7 +1967,12 @@ function handleFixMatch() {
 
 function handleShowOptions() {
     if (!showData || !showData.imdb_id) return;
-    window.openShowOptionsModal({imdbId: showData.imdb_id, title: showData.title});
+    window.openShowOptionsModal({
+        imdbId: showData.imdb_id,
+        title: showData.title,
+        // Seasons and episode numbers changed; show them as they are now
+        onOrderApplied: function() { if (typeof loadShowData === 'function') loadShowData(); }
+    });
 }
 
 async function handleDownsubShow() {

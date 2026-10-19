@@ -31,6 +31,7 @@ from . import tvdb_client
 from . import trakt_auth
 from .staleness import is_stale, is_older_than, should_recheck_null_airdate, is_tmdb_mapping_stale
 from .xem_utils import fetch_xem_mapping
+from .episode_order import seasons_in_show_order
 
 # Special-case: Lego Masters US season renumbering
 LEGO_MASTERS_US_IMDB_ID = "tt9615014"
@@ -367,6 +368,7 @@ def _fetch_and_persist_show(imdb_id: str, session: SqlAlchemySession) -> Optiona
         logger.debug(f"TMDB alias enrichment failed for {imdb_id}: {_e}")
 
     show_data.setdefault('type', 'show')
+    show_data['seasons'] = seasons_in_show_order(imdb_id, show_data.get('seasons'))
     _ensure_plex_guids_in_data(imdb_id, show_data, 'show')
     _persist_item(imdb_id, dict(show_data), session)
     return show_data
@@ -1024,6 +1026,7 @@ class DirectAPI:
 
                 # Fetch from metadata provider (may open nested sessions)
                 seasons_data, source = _get_metadata_client().get_show_seasons_and_episodes(imdb_id, include_specials=True)
+                seasons_data = seasons_in_show_order(imdb_id, seasons_data)
                 if seasons_data and item_id is not None:
                     _upsert_seasons_and_episodes(item_id, seasons_data, session)
                     session.query(Item).filter_by(id=item_id).update(

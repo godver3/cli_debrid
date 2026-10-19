@@ -1119,12 +1119,16 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
 
 def _fetch_episodes_paginated(tvdb_id: int, airs_time: str | None = None,
                               airs_timezone: str | None = None, imdb_id: str = None,
-                              tmdb_id: int = None) -> Optional[dict]:
-    """Fetch episodes via the paginated /episodes/default endpoint."""
+                              tmdb_id: int = None, season_type: str = 'default') -> Optional[dict]:
+    """Fetch episodes via the paginated /episodes/<season_type> endpoint.
+
+    season_type is a TVDB season type ('default', 'official', 'dvd',
+    'absolute', 'alternate', ...); episodes come back numbered in that order.
+    """
     all_episodes: list = []
     page = 0
     while True:
-        url = f"{TVDB_BASE_URL}/series/{tvdb_id}/episodes/default/eng?page={page}"
+        url = f"{TVDB_BASE_URL}/series/{tvdb_id}/episodes/{season_type}/eng?page={page}"
         resp = _make_request(url)
         if not resp or resp.status_code != 200:
             break
@@ -1146,9 +1150,10 @@ def _fetch_episodes_paginated(tvdb_id: int, airs_time: str | None = None,
     if not all_episodes:
         return None
 
-    # Batch-fetch episode air dates from TMDB/Trakt if no timezone available
+    # Batch-fetch episode air dates from TMDB/Trakt if no timezone available.
+    # They're keyed by aired-order season/episode, so other orders skip them.
     cached_air_dates = {}
-    if not airs_timezone and imdb_id:
+    if not airs_timezone and imdb_id and season_type in ('default', 'official'):
         cached_air_dates = _batch_fetch_episode_air_dates(imdb_id, tmdb_id)
 
     # Group into seasons
@@ -1185,6 +1190,38 @@ def _fetch_episodes_paginated(tvdb_id: int, airs_time: str | None = None,
         }
 
     return processed if processed else None
+
+
+def get_season_types(imdb_id: str) -> list:
+    """The episode orders TVDB has for a series: [{'type': 'dvd', 'name': 'DVD Order'}, ...]."""
+    tvdb_id = _resolve_tvdb_id(imdb_id, media_type='show')
+    if not tvdb_id:
+        return []
+    resp = _make_request(f"{TVDB_BASE_URL}/series/{tvdb_id}/extended?short=true")
+    if not resp or resp.status_code != 200:
+        return []
+    season_types = resp.json().get('data', {}).get('seasonTypes') or []
+    return [{'type': t.get('type'), 'name': t.get('name') or t.get('type')}
+            for t in season_types if isinstance(t, dict) and t.get('type')]
+
+
+def get_seasons_for_season_type(imdb_id: str, season_type: str) -> Optional[dict]:
+    """Seasons/episodes in one TVDB season type, in the same shape as
+    get_show_seasons_and_episodes (specials included). None if unavailable."""
+    tvdb_id = _resolve_tvdb_id(imdb_id, media_type='show')
+    if not tvdb_id:
+        return None
+    resp = _make_request(f"{TVDB_BASE_URL}/series/{tvdb_id}/extended?short=true")
+    if not resp or resp.status_code != 200:
+        return None
+    raw = resp.json().get('data', {})
+    airs_time = raw.get('airsTime')
+    network = raw.get('originalNetwork')
+    airs_timezone = network.get('timezone') if isinstance(network, dict) else None
+    if not airs_timezone and airs_time and isinstance(network, dict):
+        airs_timezone = _infer_timezone_from_network(network.get('name'), network.get('country'))
+    tmdb_id = next((r.get('id') for r in raw.get('remoteIds', []) or [] if r.get('sourceName') == 'TheMovieDB.com'), None)
+    return _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone, imdb_id, tmdb_id, season_type=season_type)
 
 
 def get_show_aliases(imdb_id: str) -> Optional[dict]:

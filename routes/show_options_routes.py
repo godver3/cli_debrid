@@ -74,3 +74,58 @@ def set_series_type(imdb_id):
     is_anime = choice == 'anime' if choice != 'auto' else bool(_auto_is_anime(imdb_id, metadata))
     changed = apply_series_type_to_episodes(imdb_id, is_anime)
     return jsonify({'success': True, 'series_type': choice, 'is_anime': is_anime, 'episodes_updated': changed})
+
+
+@show_options_bp.route('/<imdb_id>/episode_orders', methods=['GET'])
+@user_required
+def list_orders(imdb_id):
+    """The episode orders this show can use (TVDB season types, TMDB episode groups)."""
+    from cli_battery.app.episode_order import list_episode_orders, show_episode_order
+    try:
+        metadata = _show_metadata(imdb_id)
+        tmdb_id = (metadata.get('ids') or {}).get('tmdb')
+        orders = list_episode_orders(imdb_id, tmdb_id)
+    except Exception as e:
+        logging.error(f"[ShowOptions] Listing episode orders for {imdb_id} failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Could not list episode orders'}), 500
+    return jsonify({'success': True, 'current': show_episode_order(imdb_id) or 'default', 'orders': orders})
+
+
+def _order_from_request():
+    data = request.get_json(silent=True) or {}
+    order = (data.get('order') or '').strip()
+    if not order or not (order == 'default' or order.startswith('tvdb:') or order.startswith('tmdb_group:')):
+        return None, data
+    return order, data
+
+
+@show_options_bp.route('/<imdb_id>/episode_order/preview', methods=['POST'])
+@admin_required
+def preview_episode_order(imdb_id):
+    """What switching to `order` would do to the show's library rows. Changes nothing."""
+    from utilities.episode_order_change import preview_order_change
+    order, _ = _order_from_request()
+    if not order:
+        return jsonify({'success': False, 'error': 'An episode order is required'}), 400
+    try:
+        return jsonify(preview_order_change(imdb_id, order))
+    except Exception as e:
+        logging.error(f"[ShowOptions] Episode order preview for {imdb_id} failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@show_options_bp.route('/<imdb_id>/episode_order/apply', methods=['POST'])
+@admin_required
+def apply_episode_order(imdb_id):
+    """Switch the show to `order`: move its rows, rebuild its metadata, rename
+    symlinks and (optionally) set Plex's ordering."""
+    from utilities.episode_order_change import apply_order_change
+    order, data = _order_from_request()
+    if not order:
+        return jsonify({'success': False, 'error': 'An episode order is required'}), 400
+    try:
+        result = apply_order_change(imdb_id, order, sync_plex=bool(data.get('sync_plex', True)))
+    except Exception as e:
+        logging.error(f"[ShowOptions] Applying episode order for {imdb_id} failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+    return jsonify(result), (200 if result.get('success') else 409)
