@@ -248,6 +248,15 @@ class ScrapingQueue:
             item_identifier = queue_manager.generate_identifier(item_to_process)
             processed_successfully_or_moved = False # Flag to track if item was moved/handled
 
+            # self.items is only synced with the DB once per tick, and Adding runs
+            # concurrently: a season pack added for a sibling moves the rest of the
+            # season to Checking mid-tick. Don't re-scrape an item that has moved on.
+            _live_item = get_media_item_by_id(item_id_being_processed)
+            if _live_item is not None and _live_item.get('state') != 'Scraping':
+                logging.info(f"Skipping {item_identifier}: state is now {_live_item.get('state')}, no longer Scraping")
+                self.remove_item(item_to_process)
+                return True
+
             if str(item_id_being_processed) == DEBUG_ITEM_ID:
                 # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Now being processed at the start of ScrapingQueue.process(). Force_priority: {item_to_process.get('force_priority', False)}")
                 pass
@@ -684,16 +693,21 @@ class ScrapingQueue:
                             _curr_season = item_to_process.get('season_number')
                             _curr_version = item_to_process.get('version', '')
                             # Find all Scraping items for same show+season+version
-                            # Exclude items already Collected/Upgrading in DB (stale Scraping items)
+                            # Exclude items already Collected/Upgrading in DB (stale Scraping items),
+                            # and in-memory items whose DB state has moved on (e.g. to Checking via
+                            # a sibling's season pack) since the last update().
                             from database.database_reading import get_all_media_items as _get_items
+                            _show_rows = _get_items(imdb_id=_curr_imdb) or []
                             _already_collected = {
                                 (r['imdb_id'], r['season_number'], r['episode_number'])
-                                for r in (_get_items(imdb_id=_curr_imdb) or [])
+                                for r in _show_rows
                                 if r.get('state') in ('Collected', 'Upgrading')
                             }
+                            _still_scraping = {r['id'] for r in _show_rows if r.get('state') == 'Scraping'}
                             _batch_candidates = [
                                 it for it in self.items
                                 if (it.get('type') == 'episode' and
+                                    it.get('id') in _still_scraping and
                                     it.get('imdb_id') == _curr_imdb and
                                     it.get('season_number') == _curr_season and
                                     it.get('version', '') == _curr_version and

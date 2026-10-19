@@ -98,7 +98,7 @@ class TestNzbBatchDebridPackProbe(unittest.TestCase):
         finally:
             c.close()
 
-    def _setup_db(self, collected=(), fallback_ids=()):
+    def _setup_db(self, collected=(), fallback_ids=(), moved_on=()):
         c = self._conn()
         c.execute(
             """CREATE TABLE media_items (id INTEGER PRIMARY KEY, imdb_id TEXT, tmdb_id TEXT, title TEXT,
@@ -114,16 +114,21 @@ class TestNzbBatchDebridPackProbe(unittest.TestCase):
                 "season_number, episode_number, release_date, fall_back_to_single_scraper) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ep, IMDB, '4607', 'Lost', 2004, 'episode',
-                 'Collected' if ep in collected else 'Scraping', '1080p', SEASON, ep,
+                 'Collected' if ep in collected else 'Checking' if ep in moved_on else 'Scraping',
+                 '1080p', SEASON, ep,
                  '2005-09-21', 1 if ep in fallback_ids else 0),
             )
         c.commit()
         c.close()
 
     # --- driver ----------------------------------------------------------
-    def _run(self, multi_results, disable=True, collected=(), fallback_ids=(), debrid='usable'):
-        """debrid: 'usable', 'down' (provider configured but unavailable) or 'none' (usenet-only)."""
-        self._setup_db(collected, fallback_ids)
+    def _run(self, multi_results, disable=True, collected=(), fallback_ids=(), debrid='usable', moved_on=()):
+        """debrid: 'usable', 'down' (provider configured but unavailable) or 'none' (usenet-only).
+
+        moved_on: episodes whose DB state is already Checking but which are still in
+        the in-memory queue, as after a sibling's season pack was added mid-tick.
+        """
+        self._setup_db(collected, fallback_ids, moved_on)
         q = sq.ScrapingQueue.__new__(sq.ScrapingQueue)
         q.items = [self._by_id(ep) for ep in range(1, N_EPS + 1) if ep not in collected]
         q._item_ids = {it['id'] for it in q.items}
@@ -241,6 +246,19 @@ class TestNzbBatchDebridPackProbe(unittest.TestCase):
         calls, adds = self._run([DEBRID_PACK], debrid='down')
         self.assertNotIn(True, calls)
         self.assertEqual(len(adds), N_EPS)
+
+    # --- in-memory queue is stale: siblings already moved on in the DB ------
+    def test_item_moved_on_is_not_rescraped(self):
+        # A season pack added for E01 moved the whole season to Checking, but
+        # the queue's list is only synced once per tick.
+        calls, adds = self._run([DEBRID_PACK], moved_on=range(1, N_EPS + 1))
+        self.assertEqual(calls, [])
+        self.assertEqual(adds, [])
+
+    def test_batch_ignores_siblings_moved_on(self):
+        calls, adds = self._run([DEBRID_PACK], moved_on=(5,))
+        self.assertNotIn(True, calls)
+        self.assertEqual(sorted(ep for ep, _ in adds), [ep for ep in range(1, N_EPS + 1) if ep != 5])
 
 
 if __name__ == '__main__':
