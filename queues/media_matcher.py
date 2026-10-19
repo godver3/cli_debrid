@@ -91,6 +91,11 @@ class MediaMatcher:
 
             seasons = parsed_info.get('seasons') or []
             episodes = parsed_info.get('episodes') or []
+            if not episodes and parsed_info.get('fallback_episode_delimited'):
+                # Only the strict delimited fallback is indexed: the older
+                # first-number fallback also yields numbers for obfuscated
+                # hash names, and indexing those would invite false matches.
+                episodes = [parsed_info['fallback_episode']]
 
             if parsed_info.get('date') and not seasons and not episodes:
                 date_only_files.append(parsed_file_info)
@@ -177,6 +182,11 @@ class MediaMatcher:
              fallback_episode = self._extract_episode_from_filename(file_basename) # Use basename for fallback
              if fallback_episode is not None:
                   parsed_info['fallback_episode'] = fallback_episode
+             elif not parsed_info.get('is_anime_special_content'):
+                  delimited_episode = self._extract_delimited_episode(file_basename)
+                  if delimited_episode is not None:
+                       parsed_info['fallback_episode'] = delimited_episode
+                       parsed_info['fallback_episode_delimited'] = True
         
         # Additional check for anime openings/endings that might have been parsed as episodes
         # Look for patterns like NCOP1, NCED2, OP1, ED1, etc.
@@ -971,6 +981,34 @@ class MediaMatcher:
                 except ValueError:
                     continue
 
+        return None
+
+    def _extract_delimited_episode(self, filename: str) -> Optional[int]:
+        """Absolute episode number standing on its own between delimiters.
+
+        Only used when _extract_episode_from_filename finds nothing. That
+        method looks at the first number only, so a year in front of an
+        absolute episode ("Dragon.Ball.Kai.2009.001.1080p...") hid the episode.
+        Takes the first delimited number that isn't a year, a
+        resolution/codec/season token or an audio channel count.
+        """
+        name = os.path.splitext(os.path.basename(filename))[0].lower()
+        for match in re.finditer(r'(?<!\d)(\d{1,4})(?!\d)', name):
+            episode_num = int(match.group(1))
+            if not 0 < episode_num < 2000:
+                continue
+            start, end = match.span(1)
+            before = name[start - 1] if start > 0 else ''
+            after = name[end] if end < len(name) else ''
+            after2 = name[end + 1] if end + 1 < len(name) else ''
+            if before.isalpha() or (after.isalpha() and after != 'v'):
+                continue  # glued to a word: x264, 1080p, S01, DDP5, hash names; "001v2" allowed
+            if len(match.group(1)) == 4 and 1900 <= episode_num <= 2099:
+                continue  # year
+            before2 = name[start - 2] if start > 1 else ''
+            if len(match.group(1)) == 1 and ((after == '.' and after2.isdigit()) or (before == '.' and before2.isdigit())):
+                continue  # audio channels: 5.1, 2.0
+            return episode_num
         return None
 
     def match_movie(self, parsed: Dict[str, Any], item: Dict[str, Any], filename: str) -> bool:
