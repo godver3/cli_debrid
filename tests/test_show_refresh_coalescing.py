@@ -91,3 +91,86 @@ def test_xem_store_survives_row_deleted_underneath(stale_show):
         item = session.query(Item).filter_by(imdb_id=IMDB_ID).first()
         rows = session.query(Metadata).filter_by(item_id=item.id, key="xem_mapping").all()
         assert [json.loads(r.value) for r in rows] == [{"x": 1}]
+
+
+def test_refreshes_from_other_callers_never_overlap(stale_show, monkeypatch):
+    """The background refresh worker, alias/bulk lookups and forced refreshes
+    call _refresh_show directly; they must not rewrite one show's rows at the
+    same time as each other or as get_show_metadata."""
+    active = []
+    overlaps = []
+    calls = []
+
+    def fake_fetch_and_persist(imdb_id, session):
+        active.append(imdb_id)
+        if len(active) > 1:
+            overlaps.append(list(active))
+        calls.append(imdb_id)
+        time.sleep(0.1)
+        active.remove(imdb_id)
+        return {"ids": {"tvdb": 1}}
+
+    monkeypatch.setattr(direct_api, "_fetch_and_persist_show", fake_fetch_and_persist)
+
+    def direct_refresh():
+        with managed_session() as session:
+            direct_api._refresh_show(IMDB_ID, session)
+
+    threads = [threading.Thread(target=direct_refresh) for _ in range(3)]
+    threads.append(threading.Thread(target=lambda: direct_api.DirectAPI.get_show_metadata(IMDB_ID)))
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not any(t.is_alive() for t in threads)
+    assert overlaps == []
+    assert len(calls) >= 3
+
+
+def test_refresh_is_reentrant_for_lock_holder(stale_show, monkeypatch):
+    """get_show_metadata holds the show lock when it calls _refresh_show."""
+    monkeypatch.setattr(direct_api, "_fetch_and_persist_show", lambda imdb_id, session: {"ok": True})
+    done = []
+
+    def holder():
+        with direct_api._show_refresh_lock(IMDB_ID), managed_session() as session:
+            done.append(direct_api._refresh_show(IMDB_ID, session))
+
+    t = threading.Thread(target=holder)
+    t.start()
+    t.join(timeout=5)
+    assert not t.is_alive()
+    assert done == [{"ok": True}]
+
+
+def test_waiting_caller_drops_stale_session_state(stale_show, monkeypatch):
+    """A caller that loaded the show, then waited out another refresh, must
+    not persist from objects that refresh deleted and rewrote."""
+    from sqlalchemy import inspect as sa_inspect
+
+    seen_expired = []
+
+    def fake_fetch_and_persist(imdb_id, session):
+        seen_expired.extend(sa_inspect(obj).expired for obj in session.identity_map.values())
+        return {"ok": True}
+
+    monkeypatch.setattr(direct_api, "_fetch_and_persist_show", fake_fetch_and_persist)
+
+    lock = direct_api._show_refresh_lock(IMDB_ID)
+    lock.acquire()
+    result = []
+
+    def waiter():
+        with managed_session() as session:
+            loaded = session.query(Item).filter_by(imdb_id=IMDB_ID).first()  # noqa: F841 (kept alive in the identity map)
+            result.append(direct_api._refresh_show(IMDB_ID, session))
+
+    t = threading.Thread(target=waiter)
+    t.start()
+    time.sleep(0.2)
+    lock.release()
+    t.join(timeout=5)
+
+    assert result == [{"ok": True}]
+    assert seen_expired and all(seen_expired)

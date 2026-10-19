@@ -39,10 +39,12 @@ _refresh_worker_started = False
 _plex_guid_backfilled: set = set()  # tracks shows already backfilled this session
 _plex_guid_backfilled_lock = __import__('threading').Lock()
 
-# One lock per show so concurrent cache misses (e.g. the parallel episode
-# refresh pass hitting several episodes of one stale show) coalesce into a
-# single provider fetch instead of racing to delete/rewrite the same metadata
-# rows.
+# One lock per show. _refresh_show deletes and rewrites a show's metadata
+# rows, so two refreshes of one show (the background refresh worker, alias or
+# bulk lookups, a forced refresh, concurrent cache misses) must not overlap.
+# get_show_metadata also holds it across its cache re-check so concurrent
+# misses coalesce into one provider fetch; it's re-entrant because that path
+# then calls _refresh_show.
 _show_refresh_locks: Dict[str, Any] = {}
 _show_refresh_locks_guard = __import__('threading').Lock()
 
@@ -51,7 +53,7 @@ def _show_refresh_lock(imdb_id: str):
     with _show_refresh_locks_guard:
         lock = _show_refresh_locks.get(imdb_id)
         if lock is None:
-            lock = _show_refresh_locks[imdb_id] = __import__('threading').Lock()
+            lock = _show_refresh_locks[imdb_id] = __import__('threading').RLock()
         return lock
 
 
@@ -325,7 +327,23 @@ def _ensure_plex_guids_in_data(imdb_id: str, data: dict, media_type: str) -> Non
 
 
 def _refresh_show(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
-    """Fetch full show data from metadata provider, persist to DB, return show dict."""
+    """Fetch full show data from metadata provider, persist to DB, return show dict.
+
+    Serialized per show with _show_refresh_lock.
+    """
+    lock = _show_refresh_lock(imdb_id)
+    if not lock.acquire(blocking=False):
+        lock.acquire()
+        # Another thread refreshed this show while we waited, so rows this
+        # session loaded beforehand may have been deleted and rewritten.
+        session.expire_all()
+    try:
+        return _fetch_and_persist_show(imdb_id, session)
+    finally:
+        lock.release()
+
+
+def _fetch_and_persist_show(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
     client = _get_metadata_client()
     show_data = client.get_show_data(imdb_id)
     if not show_data and client is not trakt_client:
