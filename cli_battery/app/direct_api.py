@@ -39,6 +39,21 @@ _refresh_worker_started = False
 _plex_guid_backfilled: set = set()  # tracks shows already backfilled this session
 _plex_guid_backfilled_lock = __import__('threading').Lock()
 
+# One lock per show so concurrent cache misses (e.g. the parallel episode
+# refresh pass hitting several episodes of one stale show) coalesce into a
+# single provider fetch instead of racing to delete/rewrite the same metadata
+# rows.
+_show_refresh_locks: Dict[str, Any] = {}
+_show_refresh_locks_guard = __import__('threading').Lock()
+
+
+def _show_refresh_lock(imdb_id: str):
+    with _show_refresh_locks_guard:
+        lock = _show_refresh_locks.get(imdb_id)
+        if lock is None:
+            lock = _show_refresh_locks[imdb_id] = __import__('threading').Lock()
+        return lock
+
 
 def _apply_lego_masters_us_season_fix(seasons_data: Dict[str, Any]) -> Dict[str, Any]:
     if not seasons_data or not isinstance(seasons_data, dict):
@@ -623,11 +638,12 @@ def _fetch_and_store_xem(item: Item, session: SqlAlchemySession, metadata_dict: 
         xem_value = xem_data if xem_data else {}
         metadata_dict['xem_mapping'] = xem_value
         now = datetime.now(_get_local_tz())
-        existing = session.query(Metadata).filter_by(item_id=item.id, key='xem_mapping').first()
-        if existing:
-            existing.value = json.dumps(xem_value)
-            existing.last_updated = now
-        else:
+        # Bulk UPDATE rather than mutating a loaded row: a concurrent
+        # _refresh_show can delete the row between load and flush, which made
+        # the ORM raise StaleDataError and fail the whole lookup.
+        updated = session.query(Metadata).filter_by(item_id=item.id, key='xem_mapping').update(
+            {'value': json.dumps(xem_value), 'last_updated': now}, synchronize_session=False)
+        if not updated:
             session.add(Metadata(
                 item_id=item.id, key='xem_mapping',
                 value=json.dumps(xem_value), provider='xem', last_updated=now,
@@ -882,20 +898,37 @@ class DirectAPI:
             logger.warning(f"DirectAPI.get_show_metadata called with invalid imdb_id: {repr(imdb_id)}")
             return None, None
 
+        def _load(session):
+            return session.query(Item).options(
+                selectinload(Item.item_metadata),
+                selectinload(Item.seasons).selectinload(Season.episodes),
+            ).filter_by(imdb_id=imdb_id).first()
+
+        def _cached(item, session):
+            if not item or is_stale(item.type or 'show', item.media_status, item.last_trakt_fetch, force=force_refresh):
+                return None
+            md = _build_show_metadata_dict(item)
+            _fetch_and_store_xem(item, session, md)
+            if imdb_id == LEGO_MASTERS_US_IMDB_ID and 'seasons' in md:
+                md['seasons'] = _apply_lego_masters_us_season_fix(md['seasons'])
+            return md
+
         try:
             with managed_session() as session:
-                item = session.query(Item).options(
-                    selectinload(Item.item_metadata),
-                    selectinload(Item.seasons).selectinload(Season.episodes),
-                ).filter_by(imdb_id=imdb_id).first()
-
-                if item and not is_stale(item.type or 'show', item.media_status, item.last_trakt_fetch, force=force_refresh):
+                item = _load(session)
+                md = _cached(item, session)
+                if md is not None:
                     logging.debug(f"get_show_metadata {imdb_id}: cache HIT")
-                    md = _build_show_metadata_dict(item)
-                    _fetch_and_store_xem(item, session, md)
-                    if imdb_id == LEGO_MASTERS_US_IMDB_ID and 'seasons' in md:
-                        md['seasons'] = _apply_lego_masters_us_season_fix(md['seasons'])
                     return md, 'battery'
+
+            with _show_refresh_lock(imdb_id), managed_session() as session:
+                # Another thread may have refreshed this show while we waited.
+                item = _load(session)
+                if not force_refresh:
+                    md = _cached(item, session)
+                    if md is not None:
+                        logging.debug(f"get_show_metadata {imdb_id}: cache HIT after waiting on refresh")
+                        return md, 'battery'
 
                 # Stale or missing — refresh, unless Trakt is in cooldown
                 logging.debug(f"get_show_metadata {imdb_id}: cache MISS (stale={item is not None})")
