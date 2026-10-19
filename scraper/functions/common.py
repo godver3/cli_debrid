@@ -53,14 +53,16 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
     is_ptt_complete = parsed_info.get('complete', False)
 
 
-    # Use PTT's built-in 'complete' field - it already handles this correctly
-    if is_ptt_complete:
-        result['season_pack'] = 'Complete'
-        return result
-
     # Get season and episode info from parsed info
     season_info = parsed_info.get('seasons', [])
     episode_info = parsed_info.get('episodes', [])
+
+    # PTT sets 'complete' for any "Complete" in the name. Only a name without
+    # season numbers is the whole series: "S13 COMPLETE" or "Season 3
+    # Complete" is a season pack and falls through to the season logic.
+    if is_ptt_complete and not season_info:
+        result['season_pack'] = 'Complete'
+        return result
     
     # Handle season information
     if season_info:

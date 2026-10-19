@@ -1147,8 +1147,13 @@ def filter_results(
                 season_episode_info = parsed_info.get('season_episode_info', {})
                 #logging.debug(f"Season episode info: {season_episode_info}")
                 
-                # Check if title contains "complete" - consider it as having all episodes
-                if 'complete' in original_title.lower():
+                # "Complete" with no season in the name is a complete-series pack.
+                # A named season ("S01 Complete", "Season 3 Complete") stays that
+                # season's pack, and "Incomplete" isn't a match.
+                # (PTT's own seasons: season_episode_info assumes season 1 for an
+                # absolute range like "001-167 Complete".)
+                if (re.search(r'\bcomplete\b', original_title, re.IGNORECASE)
+                        and not parsed_info.get('seasons')):
                     #logging.debug("Complete series pack detected")
                     season_episode_info['season_pack'] = 'Complete'
                     if season_episode_counts: # Check if the dictionary is not empty
