@@ -414,7 +414,7 @@ SETTINGS_SCHEMA = {
         "tab": "Required Settings",
         "api_key": {
             "type": "string",
-            "description": "TVDB v4 API key - when set, uses TVDB instead of Trakt for metadata lookups. A TMDB API key is also required for full release date support (digital/physical). Get a key at <a href='https://thetvdb.com/api-information' target='_blank'>thetvdb.com/api-information</a>",
+            "description": "TVDB v4 API key - when set, uses TVDB instead of Trakt for metadata lookups. A TMDB API key is also required for full release date support (digital/physical). It also unlocks TVDB's other episode orders (DVD, absolute, ...), which a show can be switched to from Show options on its library page. Get a key at <a href='https://thetvdb.com/api-information' target='_blank'>thetvdb.com/api-information</a>",
             "default": "",
             "sensitive": True
         }
@@ -789,7 +789,7 @@ SETTINGS_SCHEMA = {
                 },
                 "anime_filter_mode": {
                     "type": "string",
-                    "description": "Filter for anime content: 'None' (no filter), 'Anime Only', 'Non-Anime Only'.",
+                    "description": "Filter for anime content: 'None' (no filter), 'Anime Only', 'Non-Anime Only'. A show counts as anime when its metadata says so (or it is Japanese animation); Show options on the show's library page can force it either way.",
                     "default": "None",
                     "choices": ["None", "Anime Only", "Non-Anime Only"]
                 },

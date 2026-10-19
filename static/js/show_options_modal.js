@@ -186,8 +186,8 @@
         const summary = el('p');
         summary.textContent = data.moves.length + ' entries move, ' + data.unchanged + ' keep their numbers, ' +
             data.removes.length + ' wanted entries are dropped (not in the new order), ' +
-            data.new_episodes + ' episodes of the new order are new to the library' +
-            (data.new_episodes ? ' (use "Get Missing" afterwards)' : '') + '.';
+            data.new_episodes + ' episodes exist only in the new order' +
+            (data.new_episodes ? ' (use "Get Missing" afterwards to request them)' : '') + '.';
         previewEl.appendChild(summary);
 
         if (data.moves.length) {
