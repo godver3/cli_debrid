@@ -51,28 +51,90 @@ class ExtractEpisodeTests(unittest.TestCase):
             self.assertIsNone(self.m._extract_delimited_episode(name), name)
 
 
-class SomPackMatchTests(unittest.TestCase):
-    FILES = (['/Extras/Box Art/Box 1 Scans/DISC1.png', '/Extras/Nicktoons Promo.mkv',
-              '/Extras/Dragon Ball Kai NCOP 1 - Dragon Soul.mkv',
-              '/Extras/Dragon Ball Kai NCED 1 - Yeah! Break! Care! Break!.mkv']
-             + ['/' + SOM.format(n) for n in range(1, 99)])
+class _PackMatchMixin:
+    FILES = ()
+    TITLE = 'Dragon Ball Kai'
 
-    def _match(self, episode):
+    def _match(self, episode, files=None):
         m = mm.MediaMatcher()
         patcher = mock.patch.object(mm, 'parse_title', _real_parse_title())
         patcher.start()
         self.addCleanup(patcher.stop)
-        parsed = [p for p in (m._parse_file_info({'path': f, 'bytes': 1}) for f in self.FILES) if p]
-        item = {'type': 'episode', 'title': 'Dragon Ball Kai', 'season_number': 1,
+        files = self.FILES if files is None else files
+        parsed = [p for p in (m._parse_file_info({'path': f, 'bytes': 1}) for f in files) if p]
+        item = {'type': 'episode', 'title': self.TITLE, 'season_number': 1,
                 'episode_number': episode, 'genres': '["anime"]', 'tmdb_id': '61709'}
         with mock.patch('utilities.settings.get_setting', return_value='Symlinked/Local'):
             return m.find_best_match_from_parsed(parsed, item)
+
+
+class SomPackMatchTests(_PackMatchMixin, unittest.TestCase):
+    FILES = (['/Extras/Box Art/Box 1 Scans/DISC1.png', '/Extras/Nicktoons Promo.mkv',
+              '/Extras/Dragon Ball Kai NCOP 1 - Dragon Soul.mkv',
+              '/Extras/Dragon Ball Kai NCED 1 - Yeah! Break! Care! Break!.mkv']
+             + ['/' + SOM.format(n) for n in range(1, 99)])
 
     def test_matches_episode_file(self):
         for ep in (1, 50, 98):
             result = self._match(ep)
             self.assertIsNotNone(result, ep)
             self.assertIn('.{:03d}.'.format(ep), result[0])
+
+    def test_stray_numbered_file_does_not_win(self):
+        files = ['/Dragon.Ball.Kai.Movie.1.WEB.mkv'] + list(self.FILES)
+        result = self._match(1, files)
+        self.assertIsNotNone(result)
+        self.assertIn('.001.', result[0])
+
+    def test_single_file_release(self):
+        result = self._match(5, ['/' + SOM.format(5)])
+        self.assertIsNotNone(result)
+        self.assertIn('.005.', result[0])
+
+
+class StrayNumberedFileTests(_PackMatchMixin, unittest.TestCase):
+    """A pack whose episodes PTT reads, missing one episode, plus a stray
+    numbered non-episode file. The stray file must not fill the gap."""
+    TITLE = 'Frieren'
+    FILES = (['/Frieren.S01E{:02d}.1080p.WEB.x264.mkv'.format(n) for n in range(1, 11) if n != 2]
+             + ['/Frieren.2023.Movie.2.WEB.mkv'])
+
+    def test_missing_episode_not_filled_by_stray_file(self):
+        self.assertIsNone(self._match(2))
+
+    def test_present_episode_still_matches(self):
+        result = self._match(3)
+        self.assertIsNotNone(result)
+        self.assertIn('S01E03', result[0])
+
+
+class IndexablePrefixTests(unittest.TestCase):
+    @staticmethod
+    def _pf(prefix=None, episodes=None, special=False):
+        info = {'is_anime_special_content': special}
+        if episodes:
+            info['episodes'] = episodes
+        if prefix is not None:
+            info.update(fallback_episode=1, fallback_episode_prefix=prefix, fallback_episode_delimited=True)
+        return {'parsed_info': info}
+
+    def test_main_run_kept_small_groups_dropped(self):
+        files = [self._pf('show 2009') for _ in range(20)] + [self._pf('show movie')] * 2
+        self.assertEqual(mm.MediaMatcher._indexable_delimited_prefixes(files), {'show 2009'})
+
+    def test_stray_next_to_ptt_episodes_dropped(self):
+        files = [self._pf(episodes=[n]) for n in range(1, 11)] + [self._pf('show part')] * 2
+        self.assertEqual(mm.MediaMatcher._indexable_delimited_prefixes(files), set())
+
+    def test_two_comparable_runs_kept(self):
+        files = [self._pf('show s1 2009')] * 98 + [self._pf('show s2 2014')] * 61
+        self.assertEqual(mm.MediaMatcher._indexable_delimited_prefixes(files),
+                         {'show s1 2009', 'show s2 2014'})
+
+    def test_lone_file_only_when_only_video(self):
+        self.assertEqual(mm.MediaMatcher._indexable_delimited_prefixes([self._pf('show 2009')]), {'show 2009'})
+        files = [self._pf('show 2009'), self._pf(special=True), self._pf(episodes=[1])]
+        self.assertEqual(mm.MediaMatcher._indexable_delimited_prefixes(files), set())
 
 
 if __name__ == '__main__':

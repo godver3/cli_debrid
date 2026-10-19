@@ -74,6 +74,7 @@ class MediaMatcher:
             'race': [],
         }
         date_only_files = []  # Files parsed only as date (no seasons/episodes)
+        delimited_prefixes = self._indexable_delimited_prefixes(parsed_files)
 
         for parsed_file_info in parsed_files:
             parsed_info = parsed_file_info.get('parsed_info', {})
@@ -91,7 +92,8 @@ class MediaMatcher:
 
             seasons = parsed_info.get('seasons') or []
             episodes = parsed_info.get('episodes') or []
-            if not episodes and parsed_info.get('fallback_episode_delimited'):
+            if (not episodes and parsed_info.get('fallback_episode_delimited')
+                    and parsed_info.get('fallback_episode_prefix') in delimited_prefixes):
                 # Only the strict delimited fallback is indexed: the older
                 # first-number fallback also yields numbers for obfuscated
                 # hash names, and indexing those would invite false matches.
@@ -121,6 +123,39 @@ class MediaMatcher:
             'by_episode_only': by_episode_only,
             'f1_candidates': f1_candidates,
             'date_only_files': date_only_files,
+        }
+
+    @staticmethod
+    def _indexable_delimited_prefixes(parsed_files: List[Dict[str, Any]]) -> set:
+        """Name prefixes whose delimited-fallback episode numbers may be indexed.
+
+        A pack named like "Show.2009.001..." is one run of files sharing the
+        text before the number. A stray numbered file next to the real
+        episodes ("Show.Movie.1.mkv", "Behind.the.Scenes.Part.2.mkv") forms a
+        tiny group of its own; indexing it would let it fill an episode the
+        pack doesn't contain. A group is indexed only if it holds at least two
+        files and at least half as many as the pack's main episode run (its
+        largest group, or the files PTT already numbered). A lone file is
+        accepted when it is the only video in the torrent.
+        """
+        groups = defaultdict(int)
+        ptt_numbered = 0
+        videos = 0
+        for parsed_file_info in parsed_files:
+            parsed_info = parsed_file_info.get('parsed_info', {})
+            if parsed_info.get('is_anime_special_content', False):
+                continue
+            videos += 1
+            if parsed_info.get('episodes'):
+                ptt_numbered += 1
+            elif parsed_info.get('fallback_episode_delimited'):
+                groups[parsed_info.get('fallback_episode_prefix')] += 1
+        if not groups:
+            return set()
+        main_run = max(max(groups.values()), ptt_numbered)
+        return {
+            prefix for prefix, count in groups.items()
+            if (count >= 2 and count * 2 >= main_run) or (count == 1 and videos == 1)
         }
 
     def _parse_file_info(self, file_dict: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -183,9 +218,9 @@ class MediaMatcher:
              if fallback_episode is not None:
                   parsed_info['fallback_episode'] = fallback_episode
              elif not parsed_info.get('is_anime_special_content'):
-                  delimited_episode = self._extract_delimited_episode(file_basename)
-                  if delimited_episode is not None:
-                       parsed_info['fallback_episode'] = delimited_episode
+                  delimited = self._delimited_episode_match(file_basename)
+                  if delimited is not None:
+                       parsed_info['fallback_episode'], parsed_info['fallback_episode_prefix'] = delimited
                        parsed_info['fallback_episode_delimited'] = True
         
         # Additional check for anime openings/endings that might have been parsed as episodes
@@ -992,6 +1027,11 @@ class MediaMatcher:
         Takes the first delimited number that isn't a year, a
         resolution/codec/season token or an audio channel count.
         """
+        match = self._delimited_episode_match(filename)
+        return match[0] if match else None
+
+    def _delimited_episode_match(self, filename: str) -> Optional[Tuple[int, str]]:
+        """(episode, normalized name prefix before it) for _extract_delimited_episode."""
         name = os.path.splitext(os.path.basename(filename))[0].lower()
         for match in re.finditer(r'(?<!\d)(\d{1,4})(?!\d)', name):
             episode_num = int(match.group(1))
@@ -1008,7 +1048,7 @@ class MediaMatcher:
             before2 = name[start - 2] if start > 1 else ''
             if len(match.group(1)) == 1 and ((after == '.' and after2.isdigit()) or (before == '.' and before2.isdigit())):
                 continue  # audio channels: 5.1, 2.0
-            return episode_num
+            return episode_num, re.sub(r'[^a-z0-9]+', ' ', name[:start]).strip()
         return None
 
     def match_movie(self, parsed: Dict[str, Any], item: Dict[str, Any], filename: str) -> bool:
