@@ -62,6 +62,23 @@ class AbsoluteFromCountsTests(_AnimeUtilsTest):
         self.assertEqual(self.au.season_counts_from_show_seasons(seasons), {0: 4, 1: 10})
 
 
+class LatinScriptAliasTests(_AnimeUtilsTest):
+    """Japan-sourced aliases used as search titles: romaji kept, kana/kanji dropped.
+
+    The old check (ASCII letters, spaces, hyphens only) dropped romaji with
+    digits or punctuation, e.g. "Mob Psycho 100".
+    """
+
+    def test_romaji_with_digits_and_punctuation(self):
+        for alias in ('Mob Psycho 100', 'Kimetsu no Yaiba: Yuukaku-hen', "JoJo's Kimyou na Bouken",
+                      'Shingeki no Kyojin', 'Yūkaku-hen'):
+            self.assertTrue(self.au.is_latin_script(alias), alias)
+
+    def test_native_script_rejected(self):
+        for alias in ('進撃の巨人', 'モブサイコ100', 'Shingeki no 巨人', '100', ''):
+            self.assertFalse(self.au.is_latin_script(alias), alias)
+
+
 class ResolveAbsoluteEpisodeTests(_AnimeUtilsTest):
     """The absolute used to build anime search formats, including season packs."""
 

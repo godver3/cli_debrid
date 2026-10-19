@@ -4,6 +4,7 @@ Utilities for handling anime-specific numbering and format detection.
 import logging
 import threading
 import time
+import unicodedata
 from typing import Dict, Any, Optional, Tuple
 # from utilities.anidb_functions import get_anidb_metadata_for_item  # Disabled for now
 
@@ -20,6 +21,20 @@ ABSOLUTE_NUMBERED_ANIME = {
     'dragon ball super',
     'pokemon'
 }
+
+def is_latin_script(text: str) -> bool:
+    """True if every letter in text is a Latin letter (accents and macrons
+    included) and it has at least one. Digits, spaces and punctuation are fine:
+    romaji titles like "Mob Psycho 100" or "Kimetsu no Yaiba: Yuukaku-hen"
+    qualify, kana and kanji don't."""
+    has_letter = False
+    for ch in text or '':
+        if ch.isalpha():
+            has_letter = True
+            if not unicodedata.name(ch, '').startswith('LATIN'):
+                return False
+    return has_letter
+
 
 def stored_absolute_episode(imdb_id: str, season: int, episode: int) -> Optional[int]:
     """The provider's absolute number for S/E (TVDB absoluteNumber or Trakt

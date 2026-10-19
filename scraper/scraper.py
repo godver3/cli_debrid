@@ -22,7 +22,7 @@ from pathlib import Path
 from scraper.functions import *
 from scraper.functions.anime_utils import (
     convert_anime_episode_format_smart, detect_absolute_numbering, stored_absolute_episode,
-    resolve_absolute_episode,
+    resolve_absolute_episode, is_latin_script,
 )
 from cli_battery.app.direct_api import DirectAPI
 import json
@@ -1081,7 +1081,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                             for alias in alias_list:
                                 # Only the Latin-script form of a Japan-sourced alias is a
                                 # useful search query — the native kanji/kana form isn't.
-                                if alias and re.match(r'^[a-zA-Z\s\-]+$', alias) and alias.lower() not in tried_titles_lower:
+                                if alias and is_latin_script(alias) and alias.lower() not in tried_titles_lower:
                                     # Skip if it's just the English title again
                                     if alias.lower() != title.lower():
                                         logging.info(f"Adding Japanese romanized alias for anime: {alias}")
