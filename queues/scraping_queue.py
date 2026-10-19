@@ -850,9 +850,21 @@ class ScrapingQueue:
                                     # queue order; it no longer gets the richer normal-path handling
                                     # (not-wanted filtering, delayed-scrape-by-score) in this batched
                                     # case, same as its siblings already didn't.
+                                    def _bep_moved_on(_b):
+                                        # Adding fans a season pack out to siblings one by one
+                                        # while this loop runs; skip any that have left Scraping.
+                                        _live = get_media_item_by_id(_b['id'])
+                                        if _live is not None and _live.get('state') != 'Scraping':
+                                            _batch_ids_to_remove.add(_b['id'])
+                                            return True
+                                        return False
+
                                     for _bep in _batch:
                                         try:
                                             _bep_id = f"{_bep.get('title')} S{_curr_season:02d}E{_bep.get('episode_number', 0):02d}"
+                                            if _bep_moved_on(_bep):
+                                                logging.info(f'[NZBBatch] {_bep_id} is no longer Scraping — skipping')
+                                                continue
                                             _bep_results, _ = self.scrape_with_fallback(
                                                 _bep, False, queue_manager,
                                                 check_pack_wantedness=False
@@ -932,6 +944,10 @@ class ScrapingQueue:
                                                                      f'(Adding/Checking, same imdb/season/episode/version) — sending back to Wanted to avoid duplicate NZB')
                                                     queue_manager.move_to_wanted(_bep, "Scraping")
                                                     _batch_ids_to_remove.add(_bep['id'])
+                                                    continue
+
+                                                if _bep_moved_on(_bep):
+                                                    logging.info(f'[NZBBatch] {_bep_id} left Scraping while being scraped — not moving to Adding')
                                                     continue
 
                                                 queue_manager.move_to_adding(
