@@ -4,7 +4,7 @@ Jellyfin/Emby API Client
 Handles interactions with Jellyfin or Emby Media Server API for overlay operations.
 Implements the same interface as PlexClient so OverlayManager can swap clients cleanly.
 
-Auth: X-Emby-Token header (works for both Jellyfin and Emby).
+Auth: Authorization: MediaBrowser header plus X-Emby-Token (see utilities.jellyfin_auth).
 Settings: Debug.emby_jellyfin_url / Debug.emby_jellyfin_token
 """
 
@@ -15,6 +15,7 @@ from typing import Dict, Any, Optional, List
 
 import requests
 from PIL import Image
+from utilities.jellyfin_auth import jellyfin_auth_headers
 
 
 class JellyfinClient:
@@ -36,7 +37,7 @@ class JellyfinClient:
 
         Args:
             base_url: Server base URL (e.g. "http://jellyfin:8096")
-            token:    API key / token (X-Emby-Token)
+            token:    API key / token
             timeout:  Default request timeout in seconds
         """
         self.base_url = base_url.rstrip('/')
@@ -45,7 +46,7 @@ class JellyfinClient:
         self.logger = logging.getLogger(__name__)
         self.session = requests.Session()
         self.session.headers.update({
-            'X-Emby-Token': self.token,
+            **jellyfin_auth_headers(self.token),
             'Accept': 'application/json',
         })
         self._user_id: Optional[str] = None  # cached on first use

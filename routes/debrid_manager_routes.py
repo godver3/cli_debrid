@@ -11,6 +11,7 @@ from flask import Blueprint, render_template, jsonify, request
 from debrid import get_debrid_provider, get_provider_display_name, get_debrid_providers
 from database.torrent_tracking import get_recent_additions
 from .models import admin_required
+from utilities.jellyfin_auth import jellyfin_auth_headers
 
 debrid_manager_bp = Blueprint('debrid_manager', __name__)
 
@@ -963,7 +964,7 @@ def api_plex_force_scan():
             if not jf_url or not jf_token:
                 return jsonify({'success': False, 'error': 'Jellyfin URL or token not configured in Settings → Debug (emby_jellyfin_url / emby_jellyfin_token)'})
             import requests as _rq
-            headers = {'X-Emby-Token': jf_token, 'Content-Type': 'application/json'}
+            headers = {**jellyfin_auth_headers(jf_token), 'Content-Type': 'application/json'}
             # Notify Jellyfin of updated paths, then trigger a full library refresh
             errors = []
             for path in paths:
@@ -2635,7 +2636,7 @@ def api_reconcile():
             _jf_url   = get_setting('Debug', 'emby_jellyfin_url', default='').rstrip('/')
             _jf_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()
             if _jf_url and _jf_token:
-                _jf_headers = {'X-Emby-Token': _jf_token, 'Accept': 'application/json'}
+                _jf_headers = {**jellyfin_auth_headers(_jf_token), 'Accept': 'application/json'}
                 try:
                     # Fetch all Movie + Episode items with Path field, paginated
                     _jf_start = 0

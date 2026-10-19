@@ -29,6 +29,7 @@ import pytz
 from datetime import datetime, timedelta
 import json
 from content_checkers.trakt import is_refresh_token_expired
+from utilities.jellyfin_auth import jellyfin_auth_headers
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -360,7 +361,7 @@ def check_service_connectivity():
                 system_info_url = f"{jellyfin_url}System/Info"
                 
                 headers = {
-                    'X-Emby-Token': jellyfin_token,
+                    **jellyfin_auth_headers(jellyfin_token),
                     'Accept': 'application/json'
                 }
                 

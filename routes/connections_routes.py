@@ -58,6 +58,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 from .models import user_required # Added import
+from utilities.jellyfin_auth import jellyfin_auth_headers
 
 # Settings cache to avoid repeated config loading
 _settings_cache = {}
@@ -276,7 +277,7 @@ def check_jellyfin_connection():
         system_info_url = f"{jellyfin_url}System/Info"
         
         headers = {
-            'X-Emby-Token': jellyfin_token,
+            **jellyfin_auth_headers(jellyfin_token),
             'Accept': 'application/json'
         }
         
