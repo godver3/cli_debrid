@@ -1741,7 +1741,8 @@ def refresh_release_dates(force_bypass_cache: bool = False):
                     physical_release_date=new_physical_release_date if media_type == 'movie' else None,
                     theatrical_release_date=new_theatrical_release_date if media_type == 'movie' else None,
                     no_early_release=item_dict.get('no_early_release', False),
-                    runtime=new_runtime
+                    runtime=new_runtime,
+                    expected_state=item_dict['state']
                 )
                 log_msg = f"Updated DB for ID {db_item_id}: State={new_state}, ReleaseDate={new_release_date}"
                 if media_type == 'movie': 
