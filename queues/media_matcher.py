@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Tuple, Optional
 from collections import defaultdict
 from fuzzywuzzy import fuzz
 from PTT import parse_title
-from scraper.functions.anime_utils import detect_absolute_numbering
+from scraper.functions.anime_utils import detect_absolute_numbering, absolute_episode_for
 
 class MediaMatcher:
     """Handles media content matching and validation"""
@@ -36,6 +36,19 @@ class MediaMatcher:
             logging.debug(f"Could not fetch season episode counts for tmdb_id={tmdb_id}: {e}")
             return None
 
+    def _absolute_for(self, item: Dict[str, Any], season: Optional[int], episode: Optional[int],
+                      metadata_numbering: bool = True) -> Optional[int]:
+        """Absolute episode for S/E of this item's show (see anime_utils.absolute_episode_for).
+
+        metadata_numbering=False for XEM/scene-mapped S/E: only the arithmetic
+        over season counts applies then.
+        """
+        if season is None or episode is None:
+            return None
+        return absolute_episode_for(season, episode,
+                                    self._get_season_episode_counts_cached(item.get('tmdb_id')),
+                                    imdb_id=item.get('imdb_id') if metadata_numbering else None)
+
     def _compute_absolute_episode_for_item(self, item: Dict[str, Any]) -> Optional[int]:
         """Compute the absolute episode number for an item using cached counts or detect_absolute_numbering."""
         try:
@@ -50,16 +63,9 @@ class MediaMatcher:
             if uses_absolute and detected_absolute:
                 return detected_absolute
 
-            season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
-            if not season_episode_counts:
-                return None
-
-            target_absolute_episode = 0
-            sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < target_season])
-            for s_num in sorted_seasons:
-                target_absolute_episode += season_episode_counts.get(s_num, 0)
-            target_absolute_episode += target_episode
-            return target_absolute_episode
+            # Callers pass a clone carrying XEM-mapped S/E when a mapping applies
+            return self._absolute_for(item, target_season, target_episode,
+                                      metadata_numbering=not item.get('_xem_mapped'))
         except Exception as e:
             logging.debug(f"Could not compute absolute episode for item: {e}")
             return None
@@ -373,20 +379,11 @@ class MediaMatcher:
                 # Check if we have absolute episode evidence
                 has_absolute_episode = False
                 try:
-                    tmdb_id = item.get('tmdb_id')
-                    if tmdb_id:
-                        season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
-                        if season_episode_counts:
-                            # Calculate target absolute episode number
-                            abs_target = 0
-                            sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < target_season])
-                            for s_num in sorted_seasons:
-                                abs_target += season_episode_counts.get(s_num, 0)
-                            abs_target += target_episode
-                            
-                            # Check if absolute episode appears in the original filename
-                            if filename_for_check and re.search(rf'\b{abs_target}\b', filename_for_check):
-                                has_absolute_episode = True
+                    abs_target = self._absolute_for(item, target_season, target_episode,
+                                                    metadata_numbering=not using_xem)
+                    # Check if absolute episode appears in the original filename
+                    if abs_target is not None and filename_for_check and re.search(rf'\b{abs_target}\b', filename_for_check):
+                        has_absolute_episode = True
                 except Exception as e:
                     logging.debug(f"Could not calculate absolute episode for anime matching: {e}")
                 
@@ -421,21 +418,12 @@ class MediaMatcher:
                     has_absolute_episode = False
                     # Calculate absolute episode number on the fly (similar to filter_results.py)
                     try:
-                        tmdb_id = item.get('tmdb_id')
-                        if tmdb_id:
-                            season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
-                            if season_episode_counts:
-                                # Calculate target absolute episode number
-                                abs_target = 0
-                                sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < target_season])
-                                for s_num in sorted_seasons:
-                                    abs_target += season_episode_counts.get(s_num, 0)
-                                abs_target += target_episode
-                                
-                                # Check if absolute episode appears in the original filename
-                                filename_for_abs_check = ptt_result.get('original_filename', '')
-                                if filename_for_abs_check and re.search(rf'\b{abs_target}\b', filename_for_abs_check):
-                                    has_absolute_episode = True
+                        abs_target = self._absolute_for(item, target_season, target_episode,
+                                                        metadata_numbering=not using_xem)
+                        # Check if absolute episode appears in the original filename
+                        filename_for_abs_check = ptt_result.get('original_filename', '')
+                        if abs_target is not None and filename_for_abs_check and re.search(rf'\b{abs_target}\b', filename_for_abs_check):
+                            has_absolute_episode = True
                     except Exception as e:
                         logging.debug(f"Could not calculate absolute episode for anime matching: {e}")
                     
@@ -497,18 +485,13 @@ class MediaMatcher:
                             target_absolute_episode = detected_absolute
                         else:
                             # Traditional calculation for non-absolute numbered anime
-                            season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
-                            
-                            # Calculate target absolute episode number using the same logic as convert_anime_episode_format
-                            # Use XEM-mapped S/E if available, otherwise use original item S/E
-                            # base_season and base_episode already initialized above
-                            
-                            target_absolute_episode = 0
-                            # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata
-                            sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < base_season])
-                            for s_num in sorted_seasons:
-                                target_absolute_episode += season_episode_counts.get(s_num, 0)
-                            target_absolute_episode += base_episode
+                            # (base_season/base_episode are XEM-mapped when using_xem)
+                            target_absolute_episode = self._absolute_for(item, base_season, base_episode,
+                                                                         metadata_numbering=not using_xem)
+                        if target_absolute_episode is None:
+                            # No counts or stored absolute: nothing to match against
+                            # (the enclosing try logs and skips this check)
+                            raise ValueError(f"no absolute episode for S{base_season}E{base_episode}")
                         
                         # Check if torrent uses absolute episode numbering (common patterns: S01E1134, E1134, 1134)
                         torrent_seasons = ptt_result.get('seasons', [])
@@ -659,19 +642,14 @@ class MediaMatcher:
                                     target_absolute_episode = detected_absolute
                                 else:
                                     # Traditional calculation for non-absolute numbered anime
-                                    season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
-                                    
-                                    # Calculate target absolute episode number using the same logic as convert_anime_episode_format
-                                    # Use XEM-mapped S/E if available, otherwise use original item S/E
                                     base_season = target_season  # This is already XEM-mapped if using_xem=True
                                     base_episode = target_episode  # This is already XEM-mapped if using_xem=True
-                                    
-                                    target_absolute_episode = 0
-                                    # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata
-                                    sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < base_season])
-                                    for s_num in sorted_seasons:
-                                        target_absolute_episode += season_episode_counts.get(s_num, 0)
-                                    target_absolute_episode += base_episode
+                                    target_absolute_episode = self._absolute_for(item, base_season, base_episode,
+                                                                                 metadata_numbering=not using_xem)
+                                if target_absolute_episode is None:
+                                    # No counts or stored absolute: nothing to match against
+                                    # (the enclosing try logs and skips this check)
+                                    raise ValueError(f"no absolute episode for S{base_season}E{base_episode}")
                                 
                                 # Check if torrent uses absolute episode numbering
                                 torrent_seasons = ptt_result.get('seasons', [])
@@ -1353,6 +1331,7 @@ class MediaMatcher:
                         if target_episode is not None:
                             item_clone_for_abs['episode'] = target_episode
                             item_clone_for_abs['episode_number'] = target_episode
+                        item_clone_for_abs['_xem_mapped'] = candidate_xem_mapping is not None
                         abs_ep = self._compute_absolute_episode_for_item(item_clone_for_abs)
                         if abs_ep is not None:
                             for pf in by_episode_only.get(abs_ep, []):

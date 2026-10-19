@@ -2,7 +2,8 @@
 Utilities for handling anime-specific numbering and format detection.
 """
 import logging
-import re
+import threading
+import time
 from typing import Dict, Any, Optional, Tuple
 # from utilities.anidb_functions import get_anidb_metadata_for_item  # Disabled for now
 
@@ -19,6 +20,159 @@ ABSOLUTE_NUMBERED_ANIME = {
     'dragon ball super',
     'pokemon'
 }
+
+def stored_absolute_episode(imdb_id: str, season: int, episode: int) -> Optional[int]:
+    """The provider's absolute number for S/E (TVDB absoluteNumber or Trakt
+    number_abs), as stored by cli_battery. None if unknown."""
+    try:
+        from cli_battery.app.database import Session, Item, Season, Episode
+
+        with Session() as session:
+            item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+            if not item:
+                logging.debug(f"Item not found in database for IMDB ID: {imdb_id}")
+                return None
+            season_obj = session.query(Season).filter_by(item_id=item.id, season_number=season).first()
+            if not season_obj:
+                logging.debug(f"Season {season} not found for item {imdb_id}")
+                return None
+            episode_obj = session.query(Episode).filter_by(season_id=season_obj.id, episode_number=episode).first()
+            if not episode_obj:
+                logging.debug(f"Episode S{season}E{episode} not found for item {imdb_id}")
+                return None
+            if episode_obj.absolute_episode is not None:
+                logging.info(f"Found absolute episode number {episode_obj.absolute_episode} for S{season}E{episode} in database")
+                return episode_obj.absolute_episode
+            logging.debug(f"Episode S{season}E{episode} exists but has no absolute episode number")
+            return None
+    except Exception as e:
+        logging.warning(f"Error getting absolute episode from database: {e}")
+        return None
+
+
+def season_counts_from_show_seasons(show_seasons: Optional[Dict[Any, Any]]) -> Dict[int, int]:
+    """{season: episode_count} from a cli_battery show metadata 'seasons' dict."""
+    counts: Dict[int, int] = {}
+    for s_num, s_data in (show_seasons or {}).items():
+        if isinstance(s_num, int) and isinstance(s_data, dict):
+            counts[s_num] = s_data.get('episode_count') or 0
+    return counts
+
+
+def absolute_from_counts(season: Optional[int], episode: Optional[int],
+                         season_episode_counts: Optional[Dict[Any, int]]) -> Optional[int]:
+    """Absolute episode number by arithmetic: the episodes of every regular
+    season before `season`, plus `episode`.
+
+    Season 0 (specials) is never counted: release groups' absolute numbering
+    doesn't include specials, and cli_battery stores them, so counting them
+    shifted every later season by the number of specials.
+    """
+    if season is None or episode is None or not season_episode_counts:
+        return None
+    before = sum(count or 0 for s_num, count in season_episode_counts.items()
+                 if isinstance(s_num, int) and 0 < s_num < season)
+    return before + episode
+
+
+# Per-result scrape filtering asks for the same few episodes many times.
+_STORED_ABSOLUTE_TTL = 300
+_stored_absolute_cache: Dict[Tuple[str, int, int], Tuple[float, Optional[int]]] = {}
+_stored_absolute_lock = threading.Lock()
+
+
+def cached_stored_absolute_episode(imdb_id: str, season: int, episode: int) -> Optional[int]:
+    """stored_absolute_episode, remembered for a few minutes."""
+    key = (imdb_id, season, episode)
+    now = time.monotonic()
+    with _stored_absolute_lock:
+        hit = _stored_absolute_cache.get(key)
+        if hit and now - hit[0] < _STORED_ABSOLUTE_TTL:
+            return hit[1]
+    value = stored_absolute_episode(imdb_id, season, episode)
+    with _stored_absolute_lock:
+        if len(_stored_absolute_cache) > 5000:
+            _stored_absolute_cache.clear()
+        _stored_absolute_cache[key] = (now, value)
+    return value
+
+
+def absolute_episode_for(season: Optional[int], episode: Optional[int],
+                         season_episode_counts: Optional[Dict[Any, int]],
+                         imdb_id: Optional[str] = None) -> Optional[int]:
+    """Absolute episode number for S/E.
+
+    Pass imdb_id only when season/episode are the show's own (metadata)
+    numbering: the provider's stored absolute is then preferred. For
+    XEM/scene-mapped numbers leave it out, since the stored value is keyed
+    by the metadata numbering and would belong to a different episode.
+    """
+    if imdb_id and season is not None and episode is not None:
+        stored = cached_stored_absolute_episode(imdb_id, season, episode)
+        if stored is not None:
+            return stored
+    return absolute_from_counts(season, episode, season_episode_counts)
+
+
+def xem_absolute(xem_mapping: Optional[list], season: int, episode: int) -> Optional[int]:
+    """TVDB (or, failing that, scene) absolute for S/E from an XEM mapping."""
+    for mapping_entry in xem_mapping or []:
+        tvdb_info = mapping_entry.get('tvdb', {})
+        scene_info = mapping_entry.get('scene', {})
+        if tvdb_info.get('season') == season and tvdb_info.get('episode') == episode:
+            if tvdb_info.get('absolute'):
+                logging.info(f"Found XEM tvdb absolute: {tvdb_info.get('absolute')} for S{season}E{episode}")
+                return tvdb_info.get('absolute')
+            if scene_info and scene_info.get('absolute'):
+                logging.info(f"Found XEM scene absolute (fallback): {scene_info.get('absolute')} for S{season}E{episode}")
+                return scene_info.get('absolute')
+            return None
+    return None
+
+
+def _show_season_counts(imdb_id: str) -> Dict[int, int]:
+    """{season: episode_count} for the whole show from cli_battery."""
+    from cli_battery.app.direct_api import DirectAPI
+    show_metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+    if show_metadata and isinstance(show_metadata, dict):
+        return season_counts_from_show_seasons(show_metadata.get('seasons'))
+    return {}
+
+
+def resolve_absolute_episode(season: int, episode: int, season_episode_counts: Optional[Dict[Any, int]],
+                             xem_mapping: Optional[list] = None, imdb_id: Optional[str] = None) -> int:
+    """Absolute episode for the show's own S/E, for building search formats.
+
+    Order: the provider's stored absolute, then XEM, then arithmetic over
+    earlier seasons (specials excluded). For season 2+ the arithmetic uses the
+    show's full season list from cli_battery, since season_episode_counts only
+    covers episodes that are in the library. Never returns None: with no data
+    at all the episode number itself is used, as before.
+    """
+    absolute = stored_absolute_episode(imdb_id, season, episode) if imdb_id else None
+    if absolute is not None:
+        logging.info(f"Using absolute episode number {absolute} from database for S{season}E{episode}")
+        return absolute
+    if xem_mapping:
+        absolute = xem_absolute(xem_mapping, season, episode)
+        if absolute is not None:
+            return absolute
+    logging.info("No stored or XEM absolute, using arithmetic calculation")
+    if season > 1 and imdb_id:
+        try:
+            absolute = absolute_from_counts(season, episode, _show_season_counts(imdb_id))
+            if absolute is not None:
+                logging.info(f"DirectAPI calculated absolute episode number: {absolute}")
+                return absolute
+            logging.warning(f"DirectAPI returned no season data for {imdb_id}, falling back to arithmetic")
+        except Exception as api_err:
+            logging.warning(f"Failed to get season counts from DirectAPI for season {season}: {api_err}")
+    absolute = absolute_from_counts(season, episode, season_episode_counts)
+    if absolute is None:
+        absolute = episode
+    logging.info(f"Arithmetic calculated absolute episode number: {absolute}")
+    return absolute
+
 
 def detect_absolute_numbering(title: str, season: int, episode: int, tmdb_id: Optional[str] = None) -> Tuple[bool, Optional[int]]:
     """

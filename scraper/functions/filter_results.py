@@ -9,6 +9,7 @@ from scraper.functions.file_processing import compare_resolutions, parse_size, c
 from scraper.functions.other_functions import smart_search
 from scraper.functions.adult_terms import adult_terms
 from scraper.functions.common import *
+from scraper.functions.anime_utils import absolute_from_counts
 from datetime import datetime, timezone
 # --- Import DirectAPI if type hinting is desired, ensure it's available in the execution path ---
 # from cli_battery.app.direct_api import DirectAPI # Or adjust path as needed
@@ -1531,12 +1532,10 @@ def filter_results(
                                     f"{original_abs} for '{original_title}'")
                             else:
                                 # Convert mapped S/E back to the show's absolute number
-                                abs_target = 0
-                                if season_episode_counts:
-                                    for s_num in sorted(k for k in season_episode_counts
-                                                        if isinstance(k, int) and k < season):
-                                        abs_target += season_episode_counts.get(s_num, 0)
-                                abs_target += episode           # <- mapped episode (e.g. 4) gives 16
+                                # (e.g. mapped episode 4 gives 16); specials aren't counted
+                                abs_target = absolute_from_counts(season, episode, season_episode_counts)
+                                if abs_target is None:
+                                    abs_target = episode
                                 # Accept if torrent explicitly carries that absolute number
                                 if (abs_target in result_episodes or
                                     # re.search(rf'\b{abs_target}\b', original_title)):  # COMMENTED OUT: This regex causes false positives like matching numbers in episode counts

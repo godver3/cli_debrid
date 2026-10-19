@@ -8,6 +8,7 @@ import re
 
 from utilities.settings import get_setting
 from scraper.scraper import scrape
+from scraper.functions.anime_utils import absolute_episode_for
 from database.core import retry_on_db_lock
 from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted, is_nzb_guid_not_wanted, get_base_filename
 from cli_battery.app.direct_api import DirectAPI
@@ -1491,12 +1492,11 @@ class ScrapingQueue:
                             base_season = target_season  # This is already XEM-mapped if scene_mapping exists
                             base_episode = target_episode  # This is already XEM-mapped if scene_mapping exists
 
-                            target_absolute_episode = 0
-                            # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata
-                            sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < base_season])
-                            for s_num in sorted_seasons:
-                                target_absolute_episode += season_episode_counts.get(s_num, 0)
-                            target_absolute_episode += base_episode
+                            target_absolute_episode = absolute_episode_for(
+                                base_season, base_episode, season_episode_counts,
+                                imdb_id=None if scene_mapping else item.get('imdb_id'))
+                            if target_absolute_episode is None:
+                                raise ValueError(f"no absolute episode for S{base_season}E{base_episode}")
 
                             # Check if torrent uses absolute episode numbering
                             torrent_seasons = parsed_seasons
@@ -1738,12 +1738,11 @@ class ScrapingQueue:
                                 base_season = target_season  # This is already XEM-mapped if scene_mapping exists
                                 base_episode = target_episode  # This is already XEM-mapped if scene_mapping exists
 
-                                target_absolute_episode = 0
-                                # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata
-                                sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < base_season])
-                                for s_num in sorted_seasons:
-                                    target_absolute_episode += season_episode_counts.get(s_num, 0)
-                                target_absolute_episode += base_episode
+                                target_absolute_episode = absolute_episode_for(
+                                    base_season, base_episode, season_episode_counts,
+                                    imdb_id=None if scene_mapping else item.get('imdb_id'))
+                                if target_absolute_episode is None:
+                                    raise ValueError(f"no absolute episode for S{base_season}E{base_episode}")
 
                                 # Check if torrent uses absolute episode numbering
                                 torrent_seasons = parsed_seasons

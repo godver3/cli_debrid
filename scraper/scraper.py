@@ -20,7 +20,10 @@ import sys
 from PTT import parse_title
 from pathlib import Path
 from scraper.functions import *
-from scraper.functions.anime_utils import convert_anime_episode_format_smart, detect_absolute_numbering
+from scraper.functions.anime_utils import (
+    convert_anime_episode_format_smart, detect_absolute_numbering, stored_absolute_episode,
+    resolve_absolute_episode,
+)
 from cli_battery.app.direct_api import DirectAPI
 import json
 import threading
@@ -54,222 +57,43 @@ def normalize_episode_format_for_dedup(episode_format: str) -> str:
     
     return normalized
 
-def get_absolute_episode_from_database(imdb_id: str, season: int, episode: int) -> Optional[int]:
-    """Get the absolute episode number from the database if available."""
-    try:
-        from cli_battery.app.database import Session, Item, Season, Episode
-        
-        with Session() as session:
-            # Find the item by IMDB ID
-            item = session.query(Item).filter_by(imdb_id=imdb_id).first()
-            if not item:
-                logging.debug(f"Item not found in database for IMDB ID: {imdb_id}")
-                return None
-            
-            # Find the season
-            season_obj = session.query(Season).filter_by(item_id=item.id, season_number=season).first()
-            if not season_obj:
-                logging.debug(f"Season {season} not found for item {imdb_id}")
-                return None
-            
-            # Find the episode
-            episode_obj = session.query(Episode).filter_by(season_id=season_obj.id, episode_number=episode).first()
-            if not episode_obj:
-                logging.debug(f"Episode S{season}E{episode} not found for item {imdb_id}")
-                return None
-            
-            # Check if absolute episode number exists
-            if episode_obj.absolute_episode is not None:
-                logging.info(f"Found absolute episode number {episode_obj.absolute_episode} for S{season}E{episode} in database")
-                return episode_obj.absolute_episode
-            else:
-                logging.debug(f"Episode S{season}E{episode} exists but has no absolute episode number")
-                return None
-                
-    except Exception as e:
-        logging.warning(f"Error getting absolute episode from database: {e}")
-        return None
+# Kept under its old name for callers outside this module.
+get_absolute_episode_from_database = stored_absolute_episode
+
 
 def convert_anime_episode_format(season: int, episode: int, season_episode_counts: Dict[int, int], xem_mapping: Optional[List[Dict]] = None, tmdb_id: Optional[str] = None, imdb_id: Optional[str] = None, multi: bool = False) -> Dict[str, str]:
     """Convert anime episode numbers into different formats using XEM mapping when available.
-    
+
     For single episodes (multi=False), returns:
     - regular: S04E01
-    - absolute: 60 (no leading zeros)  
+    - absolute: 60 (no leading zeros)
     - combined: S04E60
-    
+
     For season packs (multi=True), returns:
     - season: S02
     - absolute: 25 (no leading zeros)
+
+    The absolute number comes from the provider's stored absolute, then XEM,
+    then arithmetic over earlier seasons (specials excluded).
     """
     logging.info(f"Converting anime episode format - Season: {season}, Episode: {episode}, Multi: {multi}, Counts: {season_episode_counts}")
 
-    # For season packs, we want season-only formats
-    if multi:
-        # Calculate absolute episode number for the season (same logic as episode formats)
-        absolute_episode = None
-        
-        if xem_mapping:
-            logging.info(f"Checking XEM mapping for S{season}E{episode} (season pack)")
-            for mapping_entry in xem_mapping:
-                tvdb_info = mapping_entry.get('tvdb', {})
-                scene_info = mapping_entry.get('scene', {})
-                
-                # Check if this mapping matches our season/episode
-                if (tvdb_info.get('season') == season and 
-                    tvdb_info.get('episode') == episode):
-                    # Use TVDB absolute as the primary source
-                    if tvdb_info.get('absolute'):
-                        absolute_episode = tvdb_info.get('absolute')
-                        logging.info(f"Found XEM tvdb absolute: {absolute_episode} for S{season}E{episode} (season pack)")
-                    elif scene_info and scene_info.get('absolute'):
-                        absolute_episode = scene_info.get('absolute')
-                        logging.info(f"Found XEM scene absolute (fallback): {absolute_episode} for S{season}E{episode} (season pack)")
-                    break
-        
-        # Fallback to arithmetic calculation if no XEM mapping found
-        if absolute_episode is None:
-            logging.info("No XEM mapping found, using arithmetic calculation for season pack")
-            
-            # For season 2+, try DirectAPI first to get accurate counts
-            if season > 1 and imdb_id:
-                try:
-                    from cli_battery.app.direct_api import DirectAPI
-                    direct_api_instance = DirectAPI()
-                    show_metadata, _ = direct_api_instance.get_show_metadata(imdb_id)
-                    
-                    if show_metadata and isinstance(show_metadata, dict) and 'seasons' in show_metadata:
-                        show_seasons = show_metadata['seasons']
-                        logging.info(f"Using DirectAPI for season {season} episode calculation (season pack)")
-                        api_absolute_episode = 0
-                        
-                        # Sort seasons and sum episodes up to our target season
-                        sorted_api_seasons = sorted([s for s in show_seasons.keys() if isinstance(s, int) and s < season])
-                        
-                        for s_num in sorted_api_seasons:
-                            s_data = show_seasons.get(s_num, {})
-                            if isinstance(s_data, dict):
-                                ep_count = s_data.get('episode_count', 0)
-                                api_absolute_episode += ep_count
-                        
-                        # Add current episode
-                        api_absolute_episode += episode
-                        logging.info(f"DirectAPI calculated absolute episode number for season pack: {api_absolute_episode}")
-                        absolute_episode = api_absolute_episode
-                        
-                except Exception as api_err:
-                    logging.warning(f"Failed to get season counts from DirectAPI for season {season}: {api_err}")
-                    logging.info("Falling back to arithmetic calculation for season pack")
-            
-            # Use arithmetic calculation for season 1 or if DirectAPI failed
-            if absolute_episode is None:
-                absolute_episode = 0
-                sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < season])
-                for s_num in sorted_seasons:
-                    absolute_episode += season_episode_counts.get(s_num, 0)
-                absolute_episode += episode
-                logging.info(f"Arithmetic calculated absolute episode number for season pack: {absolute_episode}")
+    absolute_episode = resolve_absolute_episode(season, episode, season_episode_counts,
+                                                xem_mapping=xem_mapping, imdb_id=imdb_id)
 
-        # Build season pack formats
+    if multi:
         formats = {
             'season': f"S{season:02d}",
             'absolute': str(absolute_episode)  # No leading zeros
         }
-        
         logging.info(f"Generated season pack formats: {formats}")
         return formats
 
-    # Original logic for single episodes
-    # Try to get absolute episode from database first (most accurate for One Piece)
-    absolute_episode = None
-    if imdb_id:
-        absolute_episode = get_absolute_episode_from_database(imdb_id, season, episode)
-        if absolute_episode is not None:
-            logging.info(f"Using absolute episode number {absolute_episode} from database for S{season}E{episode}")
-    
-    # If not in database, try XEM mapping as fallback
-    if absolute_episode is None and xem_mapping:
-        logging.info(f"Checking XEM mapping for S{season}E{episode}")
-        for mapping_entry in xem_mapping:
-            tvdb_info = mapping_entry.get('tvdb', {})
-            scene_info = mapping_entry.get('scene', {})
-            
-            # Check if this mapping matches our season/episode
-            if (tvdb_info.get('season') == season and 
-                tvdb_info.get('episode') == episode):
-                # Use TVDB absolute as the primary source (this is what we want for anime)
-                if tvdb_info.get('absolute'):
-                    absolute_episode = tvdb_info.get('absolute')
-                    logging.info(f"Found XEM tvdb absolute: {absolute_episode} for S{season}E{episode}")
-                elif scene_info and scene_info.get('absolute'):
-                    absolute_episode = scene_info.get('absolute')
-                    logging.info(f"Found XEM scene absolute (fallback): {absolute_episode} for S{season}E{episode}")
-                break
-    
-    # Fallback to arithmetic calculation if no XEM mapping found
-    if absolute_episode is None:
-        logging.info("No XEM mapping found, using arithmetic calculation")
-        
-        # For season 2+, try DirectAPI first to get accurate counts
-        if season > 1 and imdb_id:
-            try:
-                from cli_battery.app.direct_api import DirectAPI
-                direct_api_instance = DirectAPI()
-                show_metadata, _ = direct_api_instance.get_show_metadata(imdb_id)
-                
-                # Add detailed logging to see what DirectAPI returns
-                logging.info(f"DirectAPI.get_show_metadata returned: type={type(show_metadata)}, has_seasons={'seasons' in show_metadata if show_metadata else False}")
-                
-                if show_metadata and isinstance(show_metadata, dict) and 'seasons' in show_metadata:
-                    show_seasons = show_metadata['seasons']
-                    logging.info(f"Using DirectAPI for season {season} episode calculation")
-                    logging.info(f"DirectAPI seasons data: {show_seasons}")
-                    api_absolute_episode = 0
-                    
-                    # Sort seasons and sum episodes up to our target season
-                    sorted_api_seasons = sorted([s for s in show_seasons.keys() if isinstance(s, int) and s < season])
-                    logging.info(f"Sorted API seasons for calculation: {sorted_api_seasons}")
-                    
-                    for s_num in sorted_api_seasons:
-                        s_data = show_seasons.get(s_num, {})
-                        logging.info(f"Season {s_num} data: {s_data}")
-                        if isinstance(s_data, dict):
-                            ep_count = s_data.get('episode_count', 0)
-                            api_absolute_episode += ep_count
-                            logging.info(f"API season {s_num}: {ep_count} episodes, running total: {api_absolute_episode}")
-                        else:
-                            logging.warning(f"Season {s_num} data is not a dict: {type(s_data)}")
-                    
-                    # Add current episode
-                    api_absolute_episode += episode
-                    logging.info(f"DirectAPI calculated absolute episode number: {api_absolute_episode}")
-                    absolute_episode = api_absolute_episode
-                else:
-                    logging.warning(f"DirectAPI returned invalid data for season {season}, falling back to arithmetic")
-                    logging.warning(f"show_metadata type: {type(show_metadata)}, has_seasons: {'seasons' in show_metadata if show_metadata else False}")
-                    # Fall through to arithmetic calculation
-                    
-            except Exception as api_err:
-                logging.warning(f"Failed to get season counts from DirectAPI for season {season}: {api_err}")
-                logging.info("Falling back to arithmetic calculation")
-                # Fall through to arithmetic calculation
-        
-        # Use arithmetic calculation for season 1 or if DirectAPI failed
-        if absolute_episode is None:
-            absolute_episode = 0
-            sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < season])
-            for s_num in sorted_seasons:
-                absolute_episode += season_episode_counts.get(s_num, 0)
-            absolute_episode += episode
-            logging.info(f"Arithmetic calculated absolute episode number: {absolute_episode}")
-
-    # Build the three essential formats for single episodes
     formats = {
         'regular': f"S{season:02d}E{episode:02d}",
         'absolute': str(absolute_episode),  # No leading zeros
         'combined': f"S{season:02d}E{absolute_episode}"
     }
-    
     logging.info(f"Generated single episode formats: {formats}")
     return formats
 
