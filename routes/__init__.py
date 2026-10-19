@@ -29,6 +29,7 @@ from .content_requestor_routes import content_requestor_bp
 from .base_routes import base_bp  # Add this import
 from .library_management_routes import library_management
 from .library_routes import library_bp
+from .show_options_routes import show_options_bp
 from .cors_testing_routes import cors_testing_bp
 from .magnet_routes import magnet_bp
 from .performance_routes import performance_bp
@@ -160,6 +161,7 @@ def register_blueprints(app):
         (root_bp, '/'),
         (library_management, '/library_management'),
         (library_bp, '/library'),
+        (show_options_bp, '/library/show_options'),
         (cors_testing_bp, '/cors_testing'),
         (magnet_bp, '/magnet'),
         (performance_bp, '/performance'),

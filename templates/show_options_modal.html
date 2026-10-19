@@ -1,0 +1,76 @@
+<!--
+  Show Options modal - per-show series type (anime or not) and episode order.
+  Included by library_show.html; driven by show_options_modal.js.
+
+  Styles are inline for the same reason as fix_match_modal.html: the modal must
+  overlay the page even if a stylesheet fails to load.
+-->
+<style>
+.show-options-modal {
+    position: fixed; inset: 0; z-index: 10000;
+    display: flex; align-items: center; justify-content: center;
+}
+.show-options-overlay {
+    position: absolute; inset: 0;
+    background-color: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px);
+}
+.show-options-content {
+    position: relative; display: flex; flex-direction: column;
+    width: 90%; max-width: 620px; max-height: 90vh; overflow: hidden;
+    background-color: var(--panel-bg, #1e1e1e); border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+.show-options-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 24px; border-bottom: 1px solid var(--border-color, #333);
+}
+.show-options-header h2 { margin: 0; font-size: 1.4rem; font-weight: 600; color: var(--text-color, #fff); }
+.show-options-close {
+    background: none; border: none; font-size: 2rem; line-height: 1; cursor: pointer;
+    color: var(--text-color-secondary, #999); width: 32px; height: 32px; border-radius: 6px;
+}
+.show-options-close:hover { background-color: var(--hover-bg, rgba(255, 255, 255, 0.1)); color: var(--text-color, #fff); }
+.show-options-body { padding: 24px; overflow-y: auto; flex: 1; }
+.show-options-section { margin-bottom: 24px; }
+.show-options-label {
+    display: block; margin-bottom: 8px; font-size: 0.8rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-color-secondary, #999);
+}
+.show-options-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.show-options-choice {
+    padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 0.9rem;
+    background-color: var(--input-bg, #2a2a2a); border: 1px solid var(--border-color, #444);
+    color: var(--text-color, #ddd);
+}
+.show-options-choice.selected { border-color: var(--primary-color, #4a9eff); color: var(--text-color, #fff); }
+.show-options-choice:disabled { opacity: 0.5; cursor: default; }
+.show-options-hint, .show-options-status { margin: 8px 0 0; font-size: 0.85rem; color: var(--text-color-secondary, #999); }
+.show-options-error { margin: 8px 0 0; font-size: 0.85rem; color: #ff6b6b; }
+</style>
+
+<div id="showOptionsModal" class="show-options-modal" style="display: none;">
+    <div class="show-options-overlay"></div>
+    <div class="show-options-content" role="dialog" aria-modal="true" aria-labelledby="showOptionsTitle">
+        <div class="show-options-header">
+            <h2 id="showOptionsTitle">Show options</h2>
+            <button class="show-options-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="show-options-body">
+            <div class="show-options-section">
+                <label class="show-options-label">Series type</label>
+                <div class="show-options-choices" id="showOptionsSeriesType">
+                    <button type="button" class="show-options-choice" data-value="auto">Automatic</button>
+                    <button type="button" class="show-options-choice" data-value="anime">Anime</button>
+                    <button type="button" class="show-options-choice" data-value="standard">Not anime</button>
+                </div>
+                <p class="show-options-hint" id="showOptionsSeriesTypeHint"></p>
+                <p class="show-options-hint">
+                    Anime shows get absolute-number and romaji searches, SeaDex priority, the anime
+                    filter modes and the anime library folders.
+                </p>
+            </div>
+            <p id="showOptionsStatus" class="show-options-status" style="display: none;"></p>
+            <p id="showOptionsError" class="show-options-error" style="display: none;"></p>
+        </div>
+    </div>
+</div>

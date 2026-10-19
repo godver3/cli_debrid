@@ -263,8 +263,14 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
 
         logging.debug(f"Genres: {processed_metadata['genres']}")
         logging.debug("Checking for anime genre")
-        is_anime = 'anime' in [genre.lower() for genre in processed_metadata['genres']]
-        processed_metadata['genres'] = ['anime'] if is_anime else processed_metadata['genres']
+        from utilities.anime_detection import is_anime as _is_anime
+        is_anime = _is_anime(processed_metadata['genres'], imdb_id=processed_metadata.get('imdb_id') or imdb_id,
+                             tmdb_id=processed_metadata.get('tmdb_id') or tmdb_id, media_type=media_type)
+        if is_anime:
+            processed_metadata['genres'] = ['anime']
+        else:
+            # A show set to "standard" on its page drops a provider's anime tag
+            processed_metadata['genres'] = [g for g in processed_metadata['genres'] if str(g).lower() != 'anime']
         logging.debug(f"Processed metadata: {processed_metadata}")
 
         if media_type == 'movie':

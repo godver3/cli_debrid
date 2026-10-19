@@ -41,6 +41,8 @@ def migrate_schema():
 
         from .match_overrides import ensure_match_override_table
         ensure_match_override_table(conn)
+        from .show_overrides import ensure_show_overrides_table
+        ensure_show_overrides_table(conn)
         
         # Check if statistics_summary table exists and has id column
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
@@ -1036,6 +1038,8 @@ def create_tables():
 
         from .match_overrides import ensure_match_override_table
         ensure_match_override_table(conn)
+        from .show_overrides import ensure_show_overrides_table
+        ensure_show_overrides_table(conn)
 
         # Add new table for tracking requested seasons
         cursor.execute('''

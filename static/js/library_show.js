@@ -47,6 +47,7 @@ function attachEventListeners() {
     const btnSettings = document.getElementById('btn-settings');
     const btnDownsubShow = document.getElementById('btn-downsub-show');
     const btnFixMatch = document.getElementById('btn-fix-match');
+    const btnShowOptions = document.getElementById('btn-show-options');
 
     if (btnGetMissing) {
         btnGetMissing.addEventListener('click', handleGetMissing);
@@ -68,6 +69,9 @@ function attachEventListeners() {
         btnDownsubShow.addEventListener('click', handleDownsubShow);
     }
 
+    if (btnShowOptions) {
+        btnShowOptions.addEventListener('click', handleShowOptions);
+    }
     if (btnFixMatch) {
         btnFixMatch.addEventListener('click', handleFixMatch);
     }
@@ -1959,6 +1963,11 @@ function handleFixMatch() {
             window.location.href = '/library/show/' + (result.imdb_id || result.tmdb_id);
         }
     });
+}
+
+function handleShowOptions() {
+    if (!showData || !showData.imdb_id) return;
+    window.openShowOptionsModal({imdbId: showData.imdb_id, title: showData.title});
 }
 
 async function handleDownsubShow() {
