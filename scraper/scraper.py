@@ -1131,6 +1131,20 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             except Exception as e:
                 logging.warning(f"Failed to get original title from metadata for {imdb_id}: {e}")
 
+            # Later seasons are often released under their own romaji name
+            # ("Shingeki no Kyojin Season 3 Part 2"); AniList has one per season/cour.
+            if content_type.lower() != 'movie' and original_season and original_season > 1:
+                try:
+                    from scraper.seadex import anilist_entries_for_season
+                    for _, season_romaji in anilist_entries_for_season(imdb_id, original_season):
+                        if (season_romaji and is_latin_script(season_romaji)
+                                and season_romaji.lower() not in tried_titles_lower):
+                            logging.info(f"Adding AniList season title for anime: {season_romaji}")
+                            titles_to_try.append(('anilist_season_romaji', season_romaji))
+                            tried_titles_lower.add(season_romaji.lower())
+                except Exception as e:
+                    logging.debug(f"AniList season title lookup failed for {imdb_id} S{original_season}: {e}")
+
         # 4. Add preferred alias
         if not aliases_disabled and preferred_alias and preferred_alias.lower() not in tried_titles_lower:
             logging.info(f"Adding preferred alias: {preferred_alias}")
@@ -1341,7 +1355,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             try:
                 from scraper.seadex import get_seadex_hashes
                 from debrid.common.utils import extract_hash_from_magnet
-                seadex_hashes = get_seadex_hashes(imdb_id)
+                seadex_hashes = get_seadex_hashes(
+                    imdb_id, original_season if content_type.lower() != 'movie' else None)
                 if seadex_hashes:
                     boosted, rest = [], []
                     for result in deduplicated_results:
