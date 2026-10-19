@@ -9,6 +9,7 @@ import time
 import random
 import uuid
 import threading
+import weakref
 from datetime import datetime
 
 # --- Constants ---
@@ -249,7 +250,7 @@ def _open_raw_connection(db_path):
 class PooledConnection:
     """sqlite3.Connection stand-in whose close() returns it to the pool."""
 
-    __slots__ = ('_conn', '_key', '_identity', '_owner', '_closed')
+    __slots__ = ('_conn', '_key', '_identity', '_owner', '_closed', '_cursors')
 
     def __init__(self, conn, key, identity):
         object.__setattr__(self, '_conn', conn)
@@ -257,11 +258,35 @@ class PooledConnection:
         object.__setattr__(self, '_identity', identity)
         object.__setattr__(self, '_owner', threading.get_ident())
         object.__setattr__(self, '_closed', False)
+        object.__setattr__(self, '_cursors', [])
 
     def _raw(self):
         if self._closed:
             raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
         return self._conn
+
+    # Cursors are tracked so close() can close them. A partly-read SELECT keeps
+    # its statement active, which pins the connection's WAL read snapshot
+    # without setting in_transaction; on a pooled connection the next caller
+    # would then read stale data.
+    def _track(self, cursor):
+        cursors = self._cursors
+        if len(cursors) >= 64:
+            cursors[:] = [ref for ref in cursors if ref() is not None]
+        cursors.append(weakref.ref(cursor))
+        return cursor
+
+    def cursor(self, *args, **kwargs):
+        return self._track(self._raw().cursor(*args, **kwargs))
+
+    def execute(self, *args, **kwargs):
+        return self._track(self._raw().execute(*args, **kwargs))
+
+    def executemany(self, *args, **kwargs):
+        return self._track(self._raw().executemany(*args, **kwargs))
+
+    def executescript(self, *args, **kwargs):
+        return self._track(self._raw().executescript(*args, **kwargs))
 
     def __getattr__(self, name):
         return getattr(self._raw(), name)
@@ -285,6 +310,11 @@ class PooledConnection:
             # sqlite3 objects are bound to their creating thread; just let go.
             return
         try:
+            for ref in self._cursors:
+                cursor = ref()
+                if cursor is not None:
+                    cursor.close()
+            self._cursors.clear()
             if conn.in_transaction:
                 conn.rollback()
             conn.row_factory = sqlite3.Row

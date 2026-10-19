@@ -39,6 +39,29 @@ class ConnectionPoolTests(unittest.TestCase):
         self.assertIs(self._raw(b), raw)
         b.close()
 
+    def test_partly_read_cursor_does_not_pin_snapshot_for_next_caller(self):
+        conn = self.core.get_db_connection(self.db)
+        conn.executemany("INSERT INTO t (v) VALUES (?)", [("a",), ("b",), ("c",)])
+        conn.commit()
+        conn.close()
+
+        a = self.core.get_db_connection(self.db)
+        cursor = a.execute("SELECT v FROM t")
+        cursor.fetchone()  # statement left active, cursor still referenced
+        a.close()
+
+        writer = sqlite3.connect(self.db)
+        writer.execute("UPDATE t SET v = 'changed' WHERE id = 1")
+        writer.commit()
+        writer.close()
+
+        b = self.core.get_db_connection(self.db)
+        self.assertIs(self._raw(b), self._raw(a))
+        self.assertEqual(b.execute("SELECT v FROM t WHERE id = 1").fetchone()[0], "changed")
+        b.close()
+        with self.assertRaises(sqlite3.ProgrammingError):
+            cursor.fetchone()
+
     def test_nested_checkouts_get_separate_connections(self):
         outer = self.core.get_db_connection(self.db)
         outer.execute("BEGIN")
