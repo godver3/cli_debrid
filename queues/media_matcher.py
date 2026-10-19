@@ -11,6 +11,7 @@ from collections import defaultdict
 from fuzzywuzzy import fuzz
 from PTT import parse_title
 from scraper.functions.anime_utils import detect_absolute_numbering, absolute_episode_for
+from scraper.functions.movie_episodes import movie_episode_info, movie_search_title
 
 class MediaMatcher:
     """Handles media content matching and validation"""
@@ -163,6 +164,54 @@ class MediaMatcher:
             prefix for prefix, count in groups.items()
             if (count >= 2 and count * 2 >= main_run) or (count == 1 and videos == 1)
         }
+
+    def _match_movie_episode(self, parsed_files: List[Dict[str, Any]], item: Dict[str, Any],
+                             allow_largest: bool = True) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """File for an episode that is really a movie (scraper.functions.movie_episodes).
+
+        Its release is named like a movie, without S/E. None (so normal episode
+        matching runs) when the item isn't a movie episode, or when some file
+        does carry its S/E, e.g. a complete-series pack naming it S03E01.
+
+        A lone video is the movie. Otherwise the file whose name best matches
+        "<show> <episode title>"; failing that the largest video, but only when
+        allow_largest and no file carries any episode number (so not inside an
+        episode pack, where the largest file is just an episode).
+        """
+        season = item.get('season') or item.get('season_number')
+        episode = item.get('episode') or item.get('episode_number')
+        info = movie_episode_info(item.get('imdb_id'), season, episode)
+        if not info:
+            return None
+        videos = [pf for pf in parsed_files
+                  if not pf.get('parsed_info', {}).get('is_anime_special_content', False)]
+        if not videos:
+            return None
+        for pf in videos:
+            parsed = pf.get('parsed_info', {})
+            if episode in (parsed.get('episodes') or []) and (
+                    season in (parsed.get('seasons') or []) or not parsed.get('seasons')):
+                return None
+
+        movie_title = movie_search_title(item.get('series_title') or item.get('title'), info.get('title'))
+        if len(videos) == 1 and allow_largest:
+            chosen = videos[0]
+        else:
+            def title_score(pf):
+                name = os.path.splitext(os.path.basename(pf['path']))[0]
+                return fuzz.token_set_ratio(movie_title.lower(), re.sub(r'[._]+', ' ', name).lower())
+            best = max(videos, key=title_score)
+            if title_score(best) >= 80:
+                chosen = best
+            elif allow_largest and not any(
+                    pf.get('parsed_info', {}).get('episodes') or pf.get('parsed_info', {}).get('fallback_episode') is not None
+                    for pf in videos):
+                chosen = max(videos, key=lambda pf: pf.get('bytes', 0))
+            else:
+                logging.info(f"Movie episode '{movie_title}': no file title-matched in an episode pack; not matching")
+                return None
+        logging.info(f"Matched movie episode S{season}E{episode} '{movie_title}' -> {chosen['path']}")
+        return (os.path.basename(chosen['path']), item)
 
     def _parse_file_info(self, file_dict: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -799,6 +848,10 @@ class MediaMatcher:
 
         # --- TV Episode Logic ---
         elif item_type == 'episode':
+            movie_match = self._match_movie_episode(parsed_files, item)
+            if movie_match is not None:
+                return movie_match
+
             # Build indexes once for faster candidate selection
             indexes = self._build_parsed_file_indexes(parsed_files)
             by_season_episode = indexes['by_season_episode']
@@ -1364,9 +1417,12 @@ class MediaMatcher:
                     found_match_for_this_item = True
                     break # Move to the next candidate item once a match is found for this one
 
-            # Optional: Debug log for non-matches
-            # if not found_match_for_this_item:
-            #     logging.debug(f"No file match found for candidate item ID {item_id}")
+            if not found_match_for_this_item:
+                # A movie episode inside the pack is named like a movie, without S/E
+                movie_match = self._match_movie_episode(parsed_torrent_files, item, allow_largest=False)
+                if movie_match is not None:
+                    related_matches.append((item, movie_match[0]))
+                    processed_item_ids.add(item_id)
 
         logging.debug(f"Found {len(related_matches)} related items matching files in total.")
         return related_matches

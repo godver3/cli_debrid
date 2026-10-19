@@ -24,6 +24,7 @@ from scraper.functions.anime_utils import (
     convert_anime_episode_format_smart, detect_absolute_numbering, stored_absolute_episode,
     resolve_absolute_episode, is_latin_script,
 )
+from scraper.functions.movie_episodes import movie_episode_info, movie_search_title
 from cli_battery.app.direct_api import DirectAPI
 import json
 import threading
@@ -56,6 +57,16 @@ def normalize_episode_format_for_dedup(episode_format: str) -> str:
     normalized = normalized.lstrip('0')
     
     return normalized
+
+def _predates_show(result: Dict[str, Any], show_year: Optional[int]) -> bool:
+    """True if every year in the release name is before the show's first year."""
+    if not show_year:
+        return False
+    parsed_year = (result.get('parsed_info') or {}).get('year')
+    years = parsed_year if isinstance(parsed_year, list) else [parsed_year]
+    years = [int(y) for y in years if str(y).isdigit()]
+    return bool(years) and all(y < show_year - 1 for y in years)
+
 
 # Kept under its old name for callers outside this module.
 get_absolute_episode_from_database = stored_absolute_episode
@@ -128,6 +139,16 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
     # Store original season/episode and initialize scene numbers
     original_season = season
     original_episode = episode 
+
+    # A "season" that is really a movie (Initial D S03E01 "Third Stage") is
+    # searched and filtered like a movie; see scraper/functions/movie_episodes.py.
+    movie_episode = None
+    if content_type.lower() == 'episode' and season:
+        movie_episode = movie_episode_info(imdb_id, season, None if multi else episode)
+        if movie_episode:
+            logging.info(f"S{season}E{movie_episode['episode_number']} of '{title}' is a movie "
+                         f"('{movie_episode.get('title')}', {movie_episode.get('runtime')} min, "
+                         f"{movie_episode.get('year')}); searching for it as a movie.")
     scene_season = None
     scene_episode = None
     
@@ -834,7 +855,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             scene_episode_map: Optional[int] = None,
             check_pack_wantedness: bool = False,
             original_episode: Optional[int] = None,
-            original_season: Optional[int] = None
+            original_season: Optional[int] = None,
+            movie_episode: Optional[Dict[str, Any]] = None
         ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], Dict[str, float]]:
             start_time = time.time()
             task_timings = {}
@@ -860,8 +882,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 'media_type': 'movie' if content_type.lower() == 'movie' else 'episode',
                 'tmdb_id': tmdb_id
             }
-            enhanced_media_items = get_media_info_for_bitrate([media_item])
-            if enhanced_media_items:
+            enhanced_media_items = None if movie_episode else get_media_info_for_bitrate([media_item])
+            if movie_episode:
+                episode_count = 1
+                runtime = movie_episode.get('runtime') or 100
+            elif enhanced_media_items:
                 episode_count = enhanced_media_items[0]['episode_count']
                 runtime = enhanced_media_items[0]['runtime']
             else:
@@ -872,7 +897,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             # Pre-calculate episode counts for TV shows
             task_start = time.time()
             season_episode_counts = {}
-            if content_type.lower() == 'episode':
+            if content_type.lower() == 'episode' and not movie_episode:
                 season_episode_counts = get_all_season_episode_counts(tmdb_id)
                 logging.debug(f"Fetched season_episode_counts for tmdb_id '{tmdb_id}': {season_episode_counts}") # Keep this one for now
             task_timings['episode_counts'] = time.time() - task_start
@@ -887,20 +912,35 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             scraper_manager = ScraperManager(load_config())
             # Determine if the current search is using the translated title
             is_translated = bool(translated_title and search_title == translated_title)
-            all_results = scraper_manager.scrape_all(
-                imdb_id=imdb_id_for_fallback,
-                title=search_title,
-                year=year,
-                content_type=content_type,
-                season=season,
-                episode=episode,
-                multi=multi,
-                genres=genres,
-                episode_formats=episode_formats,
-                tmdb_id=tmdb_id,
-                is_translated_search=is_translated, # Pass the flag here
-                is_anime=is_anime # Pass the is_anime flag
-            )
+            if movie_episode:
+                # Movie mode, without the show's IDs (an ID-based scraper would
+                # look the show up as if it were a film) and without a year: the
+                # episode's air date is often not the film's year (Initial D
+                # Third Stage aired on TV in 2004, the film is from 2001).
+                all_results = scraper_manager.scrape_all(
+                    imdb_id=None,
+                    title=search_title,
+                    year=None,
+                    content_type='movie',
+                    genres=genres,
+                    tmdb_id=None,
+                    is_anime=is_anime
+                )
+            else:
+                all_results = scraper_manager.scrape_all(
+                    imdb_id=imdb_id_for_fallback,
+                    title=search_title,
+                    year=year,
+                    content_type=content_type,
+                    season=season,
+                    episode=episode,
+                    multi=multi,
+                    genres=genres,
+                    episode_formats=episode_formats,
+                    tmdb_id=tmdb_id,
+                    is_translated_search=is_translated, # Pass the flag here
+                    is_anime=is_anime # Pass the is_anime flag
+                )
             task_timings['scraping'] = time.time() - task_start
             logging.debug(f"[_do_scrape] scraper_manager.scrape_all for '{search_title}' returned: {len(all_results)} raw items.")
 
@@ -989,7 +1029,9 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
             # If use_alternative_titles is enabled, include title aliases for the version's language code.
             effective_matching_aliases = list(matching_aliases)
-            if version_settings.get('use_alternative_titles', False) and imdb_id_for_fallback:
+            if movie_episode:
+                effective_matching_aliases = [search_title]
+            elif version_settings.get('use_alternative_titles', False) and imdb_id_for_fallback:
                 try:
                     if content_type.lower() == 'movie':
                         full_aliases, _ = direct_api_instance.get_movie_aliases(imdb_id_for_fallback)
@@ -1008,21 +1050,40 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 except Exception as _alt_err:
                     logging.warning(f"Failed to fetch alternative title aliases for {imdb_id_for_fallback}: {_alt_err}")
 
-            # --- Pass imdb_id_for_fallback and direct_api_instance ---
-            filtered_results, pre_size_filtered_results = filter_results(
-                normalized_results, tmdb_id, original_media_title, year, content_type,
-                season, episode, multi, version_settings, runtime, episode_count,
-                season_episode_counts, genres, effective_matching_aliases,
-                imdb_id=imdb_id_for_fallback,
-                direct_api=direct_api_instance,
-                preferred_language=preferred_language,
-                translated_title=translated_title,
-                target_air_date=target_air_date,
-                check_pack_wantedness=check_pack_wantedness,
-                current_scrape_target_version=version,
-                original_episode=original_episode,
-                original_season=original_season  # Pass original TVDB season so filter accepts both scene and TVDB-numbered torrents
-            )
+            if movie_episode:
+                # Filtered as the movie: its title and runtime, no season or episode,
+                # no year (see above), and no show IDs (alias/metadata lookups by
+                # the show's ID would treat the show as a film).
+                filtered_results, pre_size_filtered_results = filter_results(
+                    normalized_results, None, search_title, None, 'movie',
+                    None, None, False, version_settings, runtime, 1,
+                    {}, genres, effective_matching_aliases,
+                    imdb_id=None,
+                    direct_api=None,
+                    preferred_language=preferred_language,
+                    current_scrape_target_version=version,
+                )
+                # Like specials: a release dated before the show began is some
+                # other same-titled film.
+                filtered_results = [r for r in filtered_results if not _predates_show(r, year)]
+                for result in filtered_results:
+                    result['movie_episode'] = True
+            else:
+                # --- Pass imdb_id_for_fallback and direct_api_instance ---
+                filtered_results, pre_size_filtered_results = filter_results(
+                    normalized_results, tmdb_id, original_media_title, year, content_type,
+                    season, episode, multi, version_settings, runtime, episode_count,
+                    season_episode_counts, genres, effective_matching_aliases,
+                    imdb_id=imdb_id_for_fallback,
+                    direct_api=direct_api_instance,
+                    preferred_language=preferred_language,
+                    translated_title=translated_title,
+                    target_air_date=target_air_date,
+                    check_pack_wantedness=check_pack_wantedness,
+                    current_scrape_target_version=version,
+                    original_episode=original_episode,
+                    original_season=original_season  # Pass original TVDB season so filter accepts both scene and TVDB-numbered torrents
+                )
             filtered_out_results = [result for result in normalized_results if result not in filtered_results]
             task_timings['filtering'] = time.time() - task_start
 
@@ -1031,7 +1092,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             logging.debug(f"[_do_scrape] For '{search_title}', comprehensive_filtered_out_list length: {len(comprehensive_filtered_out_list)}")
 
             # --- Attach scene mapping info to results --- 
-            if scene_season_map is not None and scene_episode_map is not None:
+            if scene_season_map is not None and scene_episode_map is not None and not movie_episode:
                 logging.debug(f"Attaching scene mapping S{scene_season_map}E{scene_episode_map} to {len(filtered_results)} results.")
                 for result in filtered_results:
                     result['xem_scene_mapping'] = {'season': scene_season_map, 'episode': scene_episode_map}
@@ -1159,6 +1220,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     titles_to_try.append(('country_alias', alias))
                     tried_titles_lower.add(alias.lower())
 
+        if movie_episode:
+            # The movie is released under the show's name plus its own title
+            titles_to_try = [('movie_episode', movie_search_title(title, movie_episode.get('title')))]
+
         # Execute scraping based on the determined titles with threading
         logging.info(f"Will search with {len(titles_to_try)} titles: {[source for source, _ in titles_to_try]}")
 
@@ -1192,7 +1257,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     episode=episode, # Use potentially XEM-modified episode
                     multi=multi,
                     genres=genres,
-                    episode_formats=episode_formats,
+                    episode_formats=None if movie_episode else episode_formats,
                     is_anime=is_anime,
                     imdb_id_for_fallback=imdb_id,
                     direct_api_instance=direct_api,
@@ -1206,7 +1271,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     scene_episode_map=scene_episode, # This is the XEM-mapped episode (or None)
                     check_pack_wantedness=check_pack_wantedness,
                     original_episode=original_episode,
-                    original_season=original_season  # Pass original TVDB season before any XEM remapping
+                    original_season=original_season,  # Pass original TVDB season before any XEM remapping
+                    movie_episode=movie_episode
                 )
                 logging.debug(f"[scrape_main] _do_scrape for '{search_title}' returned: passed={len(filtered_results)}, filtered_out={len(filtered_out_results if filtered_out_results else [])}")
                 
@@ -1300,6 +1366,17 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             if is_anime and 'is_anime' not in x:
                 x['is_anime'] = is_anime
             # Pass preferred_language and translated_title to rank_result_key (Modification needed in rank_results function signature)
+            if movie_episode:
+                # Ranked as the movie it is: an episode ranking penalises every
+                # release without a season/episode number.
+                return rank_result_key(
+                    x, deduplicated_results, movie_search_title(title, movie_episode.get('title')),
+                    None, None, None, False,  # no year: the air date isn't the film's year
+                    'movie', version_settings,
+                    preferred_language=preferred_language,
+                    translated_title=translated_title,
+                    original_language=original_language,
+                )
             return rank_result_key(
                 x, deduplicated_results, title, year, scene_season if xem_applied else original_season, scene_episode if xem_applied else original_episode, multi, # Pass original title to ranker
                 content_type, version_settings,

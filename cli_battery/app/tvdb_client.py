@@ -1057,7 +1057,9 @@ def _extract_seasons_from_extended(raw: dict, imdb_id: str = None) -> Optional[d
                     imdb_id=imdb_id, season=season_number, episode=ep_num
                 ),
                 'imdb_id': None,  # TVDB doesn't provide per-episode IMDb IDs
+                'tvdb_id': str(ep['id']) if ep.get('id') else None,
                 'absolute': ep.get('absoluteNumber'),
+                'is_movie': bool(ep.get('isMovie')),
             }
 
         processed[season_number] = {
@@ -1173,7 +1175,9 @@ def _fetch_episodes_paginated(tvdb_id: int, airs_time: str | None = None,
                     cached_air_dates=cached_air_dates
                 ),
                 'imdb_id': None,
+                'tvdb_id': str(ep['id']) if ep.get('id') else None,
                 'absolute': ep.get('absoluteNumber'),
+                'is_movie': bool(ep.get('isMovie')),
             }
         processed[sn] = {
             'episode_count': len(ep_dict),

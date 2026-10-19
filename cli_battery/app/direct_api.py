@@ -126,6 +126,7 @@ def _format_seasons_from_orm(seasons) -> dict:
                     'tmdb_id': ep.tmdb_id,
                     'tvdb_id': ep.tvdb_id,
                     'absolute': ep.absolute_episode,
+                    'is_movie': ep.is_movie,
                     'plex_guid': ep.plex_guid,
                 } for ep in season.episodes
             },
@@ -589,6 +590,7 @@ def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlA
             'tmdb_id': ep_data.get('tmdb_id') or (str(_ep_ids['tmdb']) if _ep_ids.get('tmdb') else None),
             'tvdb_id': ep_data.get('tvdb_id') or (str(_ep_ids['tvdb']) if _ep_ids.get('tvdb') else None),
             'absolute_episode': ep_data.get('absolute'),
+            'is_movie': ep_data.get('is_movie'),
             'plex_guid': ep_data.get('plex_guid'),
         })
 
@@ -610,6 +612,7 @@ def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlA
                     tmdb_id=func.coalesce(stmt.excluded.tmdb_id, Episode.tmdb_id),
                     tvdb_id=func.coalesce(stmt.excluded.tvdb_id, Episode.tvdb_id),
                     absolute_episode=stmt.excluded.absolute_episode,
+                    is_movie=func.coalesce(stmt.excluded.is_movie, Episode.is_movie),
                     plex_guid=func.coalesce(stmt.excluded.plex_guid, Episode.plex_guid),
                 ),
             )

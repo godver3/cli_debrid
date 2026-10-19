@@ -1411,6 +1411,11 @@ class ScrapingQueue:
             # Filter results based on scene mapping if available, otherwise original item S/E
             filtered_results_using_mapping = []
             for r in results:
+                if r.get('movie_episode'):
+                    # A movie standing in for this episode (scraper.movie_episodes):
+                    # its release has no S/E to check, the scrape filtered it as the movie.
+                    filtered_results_using_mapping.append(r)
+                    continue
                 parsed_info = r.get('parsed_info', {})
                 season_episode_info = parsed_info.get('season_episode_info', {})
                 parsed_seasons = season_episode_info.get('seasons', [])
@@ -1639,11 +1644,15 @@ class ScrapingQueue:
         if season is not None and episode is not None:
             date_based_results = []
             regular_results = []
+            movie_episode_results = []
             logging.debug(f"Processing {len(individual_results)} individual results for S/E matching for {item_identifier} (Item S{season}E{episode}).")
             # Separate date-based and regular results
             for result_idx, result in enumerate(individual_results):
                 logging.debug(f"  S/E Pre-sort check for individual result #{result_idx + 1} '{result.get('original_title', 'N/A')}': Parsed PTT: {result.get('parsed_info')}")
-                if result.get('parsed_info', {}).get('date'):
+                if result.get('movie_episode'):
+                    # Filtered as the movie it is; no S/E to check (scraper.movie_episodes)
+                    movie_episode_results.append(result)
+                elif result.get('parsed_info', {}).get('date'):
                     result['is_date_based'] = True # Mark it
                     date_based_results.append(result)
                     logging.debug(f"    '{result.get('original_title')}' marked as date_based.")
@@ -1819,7 +1828,7 @@ class ScrapingQueue:
 
             logging.debug(f"  Finished S/E checks. Date-based: {len(date_based_results)}, Filtered Regular: {len(filtered_regular_results)} for {item_identifier}.")
             # Combine date-based and filtered regular results
-            individual_results = date_based_results + filtered_regular_results
+            individual_results = movie_episode_results + date_based_results + filtered_regular_results
             if individual_results:
                  logging.info(f"  After all S/E filtering, {len(individual_results)} individual results remain for {item_identifier}.")
                  logging.debug(f"    Final individual titles: {[r.get('original_title', 'N/A') for r in individual_results]}")

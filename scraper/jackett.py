@@ -80,7 +80,7 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
         search_queries = [params]
         logging.info(f"UFC event detected. Using search term: {params}")
     elif content_type.lower() == 'movie':
-        params = f"{title} {year}"
+        params = f"{title} {year or ''}".strip()
         search_queries = [params]
     else:
         params = f"{title}"
@@ -266,7 +266,7 @@ def construct_url(settings: Dict[str, Any], title: str, year: int, content_type:
 
     # Build the search query
     if content_type == 'movie':
-        params = f"{title} {year}"
+        params = f"{title} {year or ''}".strip()
     else:
         params = f"{title}"
         if season is not None:

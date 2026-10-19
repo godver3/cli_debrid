@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, LargeBinary, Text
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, LargeBinary, Text, Boolean
 from sqlalchemy.orm import sessionmaker, scoped_session, relationship
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime, timezone
@@ -236,6 +236,9 @@ def run_migrations(eng):
                 if 'tvdb_id' not in columns:
                     logger.info("Adding tvdb_id column to episodes table...")
                     conn.execute(text("ALTER TABLE episodes ADD COLUMN tvdb_id STRING"))
+                if 'is_movie' not in columns:
+                    logger.info("Adding is_movie column to episodes table...")
+                    conn.execute(text("ALTER TABLE episodes ADD COLUMN is_movie BOOLEAN"))
 
             # --- seasons: add plex_guid, tmdb_id, tvdb_id ---
             if 'seasons' in inspector.get_table_names():
@@ -341,6 +344,7 @@ class Episode(Base):
     tmdb_id = Column(String, nullable=True)
     tvdb_id = Column(String, nullable=True)
     absolute_episode = Column(Integer, nullable=True)
+    is_movie = Column(Boolean, nullable=True)  # TVDB isMovie
     null_airdate_checked_at = Column(DateTime, nullable=True)
     plex_guid = Column(String, nullable=True)
     season = relationship("Season", back_populates="episodes")
