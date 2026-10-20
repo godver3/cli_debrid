@@ -2447,6 +2447,23 @@ class ProgramRunner:
     def task_purge_not_wanted_magnets_file(self):
         purge_not_wanted_magnets_file()
 
+    # Manual-only (Debug -> Run task manually); never scheduled.
+    def task_purge_not_wanted_urls_file(self):
+        from database.not_wanted_magnets import purge_not_wanted_urls_file
+        purge_not_wanted_urls_file()
+
+    def task_purge_not_wanted_nzbs_files(self):
+        from database.not_wanted_magnets import purge_not_wanted_nzbs_files
+        purge_not_wanted_nzbs_files()
+
+    def task_purge_all_not_wanted_files(self):
+        from database.not_wanted_magnets import purge_all_not_wanted_files
+        purge_all_not_wanted_files()
+
+    def task_reset_trakt_auth(self):
+        from utilities.trakt_auth_cleanup import reset_trakt_auth
+        reset_trakt_auth()
+
     # def task_generate_airtime_report(self):
     #     generate_airtime_report()
 

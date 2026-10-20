@@ -303,10 +303,36 @@ def load_not_wanted_urls():
 def save_not_wanted_urls(not_wanted_set):
     _write_pickled_set(NOT_WANTED_URLS_FILE, not_wanted_set)
 
+def _purge_store(path, label):
+    """Empty one not-wanted store. Returns how many entries it held."""
+    with _store_lock:
+        count = len(_cached_set(path, create_if_missing=True)[0])
+        _write_pickled_set(path, set())
+    logging.info(f"Purged {count} not wanted {label} ({os.path.basename(path)})")
+    return count
+
+
 def purge_not_wanted_magnets_file():
-    # Purge the contents of the file by overwriting it with an empty set
-    _write_pickled_set(NOT_WANTED_MAGNETS_FILE, set())
-    print("The 'not_wanted_magnets.pkl' file has been purged.")
+    return _purge_store(NOT_WANTED_MAGNETS_FILE, 'magnets')
+
+
+def purge_not_wanted_urls_file():
+    return _purge_store(NOT_WANTED_URLS_FILE, 'URLs')
+
+
+def purge_not_wanted_nzbs_files():
+    """NZBs are blocked by two stores: their article segment IDs and their indexer GUIDs."""
+    return (_purge_store(NOT_WANTED_NZB_SEGMENTS_FILE, 'NZB segments')
+            + _purge_store(NOT_WANTED_NZB_GUIDS_FILE, 'NZB GUIDs'))
+
+
+def purge_all_not_wanted_files():
+    """Empty every not-wanted store: magnets, URLs and NZBs. Returns {store: entries removed}."""
+    return {
+        'magnets': purge_not_wanted_magnets_file(),
+        'urls': purge_not_wanted_urls_file(),
+        'nzbs': purge_not_wanted_nzbs_files(),
+    }
 
 def validate_not_wanted_entries():
     """Validate the not wanted magnets and URLs files on boot."""
