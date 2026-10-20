@@ -37,7 +37,10 @@ NOT_WANTED_NZB_GUIDS_FILE = os.path.join(DB_CONTENT_DIR, 'not_wanted_nzb_guids.p
 # stored entry. Anything that rewrites or deletes a file changes its signature
 # and forces a reload.
 _store_lock = threading.RLock()
-_store_cache = {}  # path -> (signature, frozenset of raw entries, frozenset of keys)
+# (path, normalize function) -> (signature, frozenset of raw entries, frozenset of keys).
+# Keyed by the normalizer too: a raw-entry read must not satisfy a later
+# normalized lookup (a URL list's keys are basenames, not the stored URLs).
+_store_cache = {}
 
 
 def _file_signature(path):
@@ -51,7 +54,8 @@ def _file_signature(path):
 def _write_pickled_set(path, values):
     with _store_lock:
         atomic_write_bytes(path, pickle.dumps(set(values)))
-        _store_cache.pop(path, None)
+        for key in [k for k in _store_cache if k[0] == path]:
+            del _store_cache[key]
 
 
 def _read_pickled_set(path, create_if_missing):
@@ -71,7 +75,7 @@ def _cached_set(path, normalize=None, create_if_missing=False):
     """Return (raw entries, lookup keys) for a pickled set, reloading only on change."""
     with _store_lock:
         sig = _file_signature(path)
-        entry = _store_cache.get(path)
+        entry = _store_cache.get((path, normalize))
         if entry is not None and sig is not None and entry[0] == sig:
             return entry[1], entry[2]
         raw = frozenset(_read_pickled_set(path, create_if_missing))
@@ -82,7 +86,7 @@ def _cached_set(path, normalize=None, create_if_missing=False):
         # Cache under the signature taken before the read: if the file changed
         # mid-read, the next call sees a newer signature and reloads.
         if sig is not None:
-            _store_cache[path] = (sig, raw, keys)
+            _store_cache[(path, normalize)] = (sig, raw, keys)
         return raw, keys
 
 

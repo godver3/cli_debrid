@@ -75,6 +75,27 @@ class NotWantedCacheTest(unittest.TestCase):
         nw.add_to_not_wanted_nzb_segment("<ABC@x>")
         self.assertTrue(nw.is_nzb_segment_not_wanted(xml))
 
+    def test_raw_load_does_not_poison_normalized_url_check(self):
+        # The Debug page lists the raw URLs; the scrape check compares basenames
+        url = "https://indexer.example/getnzb/abc123.nzb?apikey=x"
+        nw.add_to_not_wanted_urls(url)
+        nw.load_not_wanted_urls()
+        self.assertTrue(nw.is_url_not_wanted(url))
+        nw.get_not_wanted_urls()
+        self.assertTrue(nw.is_url_not_wanted(url))
+
+    def test_raw_load_does_not_poison_normalized_magnet_check(self):
+        # Upgrade hub loads the raw list; a full stored magnet must still match by hash
+        nw.add_to_not_wanted(MAGNET)
+        nw.load_not_wanted_magnets()
+        self.assertTrue(nw.is_magnet_not_wanted(f"magnet:?xt=urn:btih:{HEX.upper()}"))
+
+    def test_normalized_check_does_not_change_raw_load(self):
+        url = "https://indexer.example/getnzb/abc123.nzb?apikey=x"
+        nw.add_to_not_wanted_urls(url)
+        nw.is_url_not_wanted(url)
+        self.assertEqual(nw.load_not_wanted_urls(), {url})
+
     def test_concurrent_adds_lose_nothing(self):
         hashes = [f"{i:040x}" for i in range(40)]
         threads = [threading.Thread(target=nw.add_to_not_wanted, args=(h,)) for h in hashes]
