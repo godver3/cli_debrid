@@ -116,7 +116,7 @@ class TestTmdbSearchFallback(unittest.TestCase):
         self.assertEqual(results[0]['year'], 1994)
         self.assertEqual(results[0]['id'], '278')
         self.assertEqual(results[0]['media_type'], 'movie')
-        self.assertEqual(results[0]['posterPath'], '/poster.jpg')
+        self.assertEqual(results[0]['posterPath'], 'https://image.tmdb.org/t/p/w500/poster.jpg')
         self.assertEqual(results[0]['backdropPath'], '/bg.jpg')
 
     def test_search_trakt_returns_empty_with_neither_provider_configured(self):
