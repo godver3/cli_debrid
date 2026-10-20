@@ -678,13 +678,18 @@
         
         if (data.program_status === "Running") {
             console.log('[PERF] Program status: Running');
-            
-            if (initializationStatus) {
-                initializationStatus.style.display = 'none';
-            }
-            const progressContainer = document.getElementById('progress-container');
-            if (progressContainer) {
-                progressContainer.style.display = 'none';
+
+            if (data.initialization_status) {
+                // Startup sync still running in the background: banner above the queues
+                updateInitializationStatus(data.initialization_status);
+            } else {
+                if (initializationStatus) {
+                    initializationStatus.style.display = 'none';
+                }
+                const progressContainer = document.getElementById('progress-container');
+                if (progressContainer) {
+                    progressContainer.style.display = 'none';
+                }
             }
             queueContents.style.display = 'flex';
             

@@ -124,6 +124,17 @@ def clear_nzb_job_health_cache(job_id: str) -> None:
     ProgramRunner._nzb_folder_wait_counts.pop(bare, None)
 
 
+# Set while the startup sync (queues/initialization.py) runs in its background
+# thread. Module-level rather than on ProgramRunner: reinitialize() re-runs
+# __init__, which must not forget a sync that is still going.
+_initial_sync_active = threading.Event()
+_initial_sync_guard = threading.Lock()
+
+
+def is_initial_sync_running():
+    return _initial_sync_active.is_set()
+
+
 def _build_scheduler_config():
     """Executors and job defaults shared by every BackgroundScheduler we build."""
     queue_workers = max(1, min(3, int(get_setting('Queue', 'queue_pool_workers', 2))))
@@ -2545,14 +2556,15 @@ class ProgramRunner:
             is_restart (bool): If True, skip initialization as this is a mid-run restart.
                               This prevents unnecessary processing and potential data loss
                               when the program is restarted after settings changes.
+
+        Runs in the background (see _start_initial_sync): the scheduler is already
+        processing the queues, so the program reports Running throughout.
         """
-        self._initializing = True 
         logging.info("Running initialization...")
-        
+
         # Skip initialization if this is a restart (mid-run) or if explicitly disabled
         if is_restart:
             logging.info("Skipping initialization as this is a restart (mid-run)")
-            self._initializing = False
             return
             
         skip_initial_plex_update = get_setting('Debug', 'skip_initial_plex_update', False)
@@ -2586,8 +2598,34 @@ class ProgramRunner:
                 
         except Exception as e:
             logging.error(f"Failed to update config file with runtime enabled states after initialization: {e}")
-        
-        self._initializing = False
+
+    def _start_initial_sync(self, is_restart=False):
+        """Run run_initialization in a background thread.
+
+        It used to run inline in run(), holding the program at "Starting" (the
+        Queues page hidden, Stop refused) for the minutes it takes to pull every
+        content source and refresh release dates, although the scheduler was
+        already processing the queues. A sync still going from an earlier start
+        isn't started twice.
+        """
+        with _initial_sync_guard:
+            if _initial_sync_active.is_set():
+                logging.info("Initial sync from an earlier start is still running; not starting another.")
+                return
+            _initial_sync_active.set()
+
+        def _sync():
+            try:
+                self.run_initialization(is_restart=is_restart)
+            except Exception as e:
+                logging.error(f"Initial sync failed: {e}", exc_info=True)
+            finally:
+                _initial_sync_active.clear()
+
+        threading.Thread(target=_sync, name='initial-sync', daemon=True).start()
+
+    def is_initial_sync_running(self):
+        return is_initial_sync_running()
 
     def start(self, is_restart=False):
         if self._running and self.scheduler and self.scheduler.running:
@@ -2722,8 +2760,8 @@ class ProgramRunner:
             logging.warning("Attempted to start program, but it's already running.")
             return
         
-        # Mark as running. The dedicated initialization routine below will toggle the
-        # _initializing flag as needed.
+        # Mark as running. The startup sync below runs in its own thread, so the
+        # program reports Running while it works.
         self._running = True
 
         try:
@@ -2731,7 +2769,7 @@ class ProgramRunner:
             self._running = True  # Make sure running flag is set
 
             # Pass the is_restart parameter to run_initialization
-            self.run_initialization(is_restart=getattr(self, '_is_restart', False))
+            self._start_initial_sync(is_restart=getattr(self, '_is_restart', False))
 
             # Simplified run loop with CPU monitoring
             # The main loop now just keeps the script alive while the scheduler runs.
