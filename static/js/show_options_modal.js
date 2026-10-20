@@ -126,7 +126,8 @@
             const data = await postJson('/series_type', {series_type: value});
             if (!data.success) throw new Error(data.error || 'Could not save');
             busy = false;
-            await load('Saved. ' + data.episodes_updated + ' episode entries updated.');
+            await load('Saved. ' + data.episodes_updated + ' episode entries updated.'
+                       + (data.symlink_note ? ' ' + data.symlink_note + '.' : ''));
         } catch (e) {
             busy = false;
             setMessage(statusEl, '');

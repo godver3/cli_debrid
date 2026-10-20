@@ -73,7 +73,38 @@ def set_series_type(imdb_id):
 
     is_anime = choice == 'anime' if choice != 'auto' else bool(_auto_is_anime(imdb_id, metadata))
     changed = apply_series_type_to_episodes(imdb_id, is_anime)
-    return jsonify({'success': True, 'series_type': choice, 'is_anime': is_anime, 'episodes_updated': changed})
+    symlink_note = _move_symlinks_for_series_type(imdb_id) if changed else None
+    return jsonify({'success': True, 'series_type': choice, 'is_anime': is_anime, 'episodes_updated': changed,
+                    'symlink_note': symlink_note})
+
+
+def _move_symlinks_for_series_type(imdb_id):
+    """With separate anime folders, re-file the show's collected episodes so the
+    whole show follows its new series type instead of only episodes added later."""
+    from utilities.settings import get_setting
+    if (get_setting('File Management', 'file_collection_management') != 'Symlinked/Local'
+            or not get_setting('Debug', 'enable_separate_anime_folders', False)):
+        return None
+    from database.core import get_db_connection
+    conn = get_db_connection()
+    try:
+        item_ids = [r['id'] for r in conn.execute(
+            "SELECT id FROM media_items WHERE imdb_id = ? AND type = 'episode' "
+            "AND state IN ('Collected', 'Upgrading')", (imdb_id,))]
+    finally:
+        conn.close()
+    if not item_ids:
+        return None
+    from utilities.local_library_scan import resync_symlinks_with_new_settings
+    try:
+        result = resync_symlinks_with_new_settings(item_ids=item_ids)
+    except Exception as e:
+        logging.error(f"[ShowOptions] Moving symlinks for {imdb_id} failed: {e}", exc_info=True)
+        return f"Could not move the show's symlinks: {e}"
+    if not isinstance(result, dict):
+        return None
+    return (f"Symlinks: {result.get('symlinks_updated_count', 0)} moved, "
+            f"{result.get('symlinks_created_count', 0)} created, {result.get('error_count', 0)} errors")
 
 
 @show_options_bp.route('/<imdb_id>/episode_orders', methods=['GET'])

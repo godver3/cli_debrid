@@ -84,8 +84,9 @@ class AnimeDetectionTests(unittest.TestCase):
         self.ad, patcher = _real('utilities.anime_detection')
         self.addCleanup(patcher.stop)
 
-    def _detect(self, genres, override=None, language=None, **kw):
+    def _detect(self, genres, override=None, language=None, library=None, **kw):
         with mock.patch.object(self.ad, 'series_type_override', return_value=override), \
+                mock.patch.object(self.ad, 'library_has_anime_rows', return_value=library), \
                 mock.patch.object(self.ad, 'original_language', return_value=language) as lang:
             return self.ad.is_anime(genres, imdb_id='tt1', tmdb_id=7, **kw), lang
 
@@ -111,6 +112,54 @@ class AnimeDetectionTests(unittest.TestCase):
     def test_override_ignored_when_asked_or_for_movies(self):
         self.assertTrue(self._detect(['anime'], override='standard', use_override=False)[0])
         self.assertTrue(self._detect(['anime'], override='standard', media_type='movie')[0])
+
+    def test_japanese_animation_already_filed_as_standard_stays_standard(self):
+        # Its next episode must not land in the anime folders while the rest stay put
+        self.assertFalse(self._detect(['Animation'], language='ja', library=False)[0])
+        self.assertFalse(self._detect(['Animation'], language='ja', library=False, media_type='movie')[0])
+
+    def test_japanese_animation_already_filed_as_anime_or_new(self):
+        self.assertTrue(self._detect(['Animation'], language='ja', library=True)[0])
+        self.assertTrue(self._detect(['Animation'], language='ja', library=None)[0])
+
+    def test_provider_anime_tag_and_override_ignore_library(self):
+        self.assertTrue(self._detect(['anime'], library=False)[0])
+        self.assertTrue(self._detect(['Animation'], override='anime', library=False)[0])
+
+
+class LibraryRowsTests(unittest.TestCase):
+    def setUp(self):
+        self.ad, patcher = _real('utilities.anime_detection')
+        self.addCleanup(patcher.stop)
+        fd, self.db_path = tempfile.mkstemp(suffix='.db')
+        os.close(fd)
+        self.addCleanup(os.remove, self.db_path)
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('CREATE TABLE media_items (id INTEGER PRIMARY KEY, imdb_id TEXT, tmdb_id TEXT, type TEXT, genres TEXT)')
+        conn.executemany('INSERT INTO media_items (imdb_id, tmdb_id, type, genres) VALUES (?, ?, ?, ?)', [
+            ('tt1', '1', 'episode', json.dumps(['Animation', 'Comedy'])),
+            ('tt2', '2', 'episode', json.dumps(['anime'])),
+            ('tt3', '3', 'movie', 'Animation,Fantasy'),
+        ])
+        conn.commit()
+        conn.close()
+        import database.core
+
+        def _connect():
+            c = sqlite3.connect(self.db_path)
+            c.row_factory = sqlite3.Row
+            return c
+        p = mock.patch.object(database.core, 'get_db_connection', _connect)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_states(self):
+        self.assertIs(self.ad.library_has_anime_rows('tt1', 1), False)
+        self.assertIs(self.ad.library_has_anime_rows('tt2', 2), True)
+        self.assertIs(self.ad.library_has_anime_rows(None, 2), True)
+        self.assertIs(self.ad.library_has_anime_rows('tt3', 3, is_show=False), False)
+        self.assertIsNone(self.ad.library_has_anime_rows('tt3', 3, is_show=True))
+        self.assertIsNone(self.ad.library_has_anime_rows('tt9', 9))
 
 
 if __name__ == '__main__':
