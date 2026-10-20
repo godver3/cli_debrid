@@ -124,7 +124,8 @@ def apply_episode_order(imdb_id):
     if not order:
         return jsonify({'success': False, 'error': 'An episode order is required'}), 400
     try:
-        result = apply_order_change(imdb_id, order, sync_plex=bool(data.get('sync_plex', True)))
+        result = apply_order_change(imdb_id, order, sync_plex=bool(data.get('sync_plex', True)),
+                                    add_missing=bool(data.get('add_missing', False)))
     except Exception as e:
         logging.error(f"[ShowOptions] Applying episode order for {imdb_id} failed: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500

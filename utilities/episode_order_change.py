@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from database.core import get_db_connection
+from utilities.missing_episodes import queue_missing_episodes
 from utilities.settings import get_setting
 
 # Rows in these states without a file are only a request for an episode:
@@ -125,6 +126,7 @@ def preview_order_change(imdb_id: str, new_order: Optional[str]) -> Dict[str, An
 
     conflicts = [{'version': key[0], 'season': key[1], 'episode': key[2], 'row_ids': ids}
                  for key, ids in final_positions.items() if len(ids) > 1]
+    missing = _missing_after_change(target, {(key[1], key[2]) for key in final_positions})
     plex_ordering = _plex_ordering_for(new_order)
     return {
         'success': True,
@@ -137,12 +139,35 @@ def preview_order_change(imdb_id: str, new_order: Optional[str]) -> Dict[str, An
         'unchanged': unchanged,
         'conflicts': conflicts,
         'new_episodes': len(plan['unmatched_target']),
+        'missing_episodes': len(missing),
+        'missing': missing[:MISSING_LISTED],
+        'missing_positions': [[m['season'], m['episode']] for m in missing],
         'joined_by': plan['joined_by'],
         'plex_ordering': plex_ordering,
         'plex_note': None if plex_ordering else
             'Plex has no matching episode ordering for this order; set the show\'s ordering in Plex '
             'by hand if its episode numbers don\'t line up.',
     }
+
+
+MISSING_LISTED = 50
+
+
+def _missing_after_change(target: Dict[Any, Any], occupied) -> List[Dict[str, Any]]:
+    """Regular-season episodes of the new order no library entry will be on
+    (Dragon Ball Kai aired -> DVD: the episodes only the DVD order has, plus
+    any the library never had). Specials aren't counted."""
+    missing = []
+    for s_num, s_data in (target or {}).items():
+        if not isinstance(s_num, int) or s_num <= 0 or not isinstance(s_data, dict):
+            continue
+        for e_num, ep in (s_data.get('episodes') or {}).items():
+            if not isinstance(e_num, int) or (s_num, e_num) in occupied:
+                continue
+            ep = ep if isinstance(ep, dict) else {}
+            missing.append({'season': s_num, 'episode': e_num, 'title': ep.get('title') or '',
+                            'aired': (ep.get('first_aired') or '')[:10] or None})
+    return sorted(missing, key=lambda m: (m['season'], m['episode']))
 
 
 def _add_group_tvdb_ids(imdb_id: str, target: Dict[Any, Any], positions) -> int:
@@ -279,7 +304,8 @@ def sync_plex_ordering(imdb_id: str, candidates: List[str], rating_keys: List[st
         return f'Could not set the ordering in Plex: {e}'
 
 
-def apply_order_change(imdb_id: str, new_order: Optional[str], sync_plex: bool = True) -> Dict[str, Any]:
+def apply_order_change(imdb_id: str, new_order: Optional[str], sync_plex: bool = True,
+                       add_missing: bool = False) -> Dict[str, Any]:
     from cli_battery.app.direct_api import DirectAPI
     from database.show_overrides import set_show_override
 
@@ -306,6 +332,15 @@ def apply_order_change(imdb_id: str, new_order: Optional[str], sync_plex: bool =
                         f"{result.get('symlinks_created_count', 0)} created, "
                         f"{result.get('error_count', 0)} errors") if isinstance(result, dict) else None
 
+    # After the metadata rebuild, so the episodes are read in the new order
+    missing_added = None
+    if add_missing and preview['missing_episodes']:
+        try:
+            missing_added = queue_missing_episodes(imdb_id, 'Episode-Order', preview['missing_positions'])
+        except Exception as e:
+            logging.error(f"[EpisodeOrder] Queueing missing episodes for {imdb_id} failed: {e}", exc_info=True)
+            missing_added = None
+
     plex_note = preview['plex_note']
     if sync_plex and preview['plex_ordering']:
         rating_keys = [str(r['ms_item_id']) for r in _show_rows(imdb_id) if r.get('ms_item_id')]
@@ -315,4 +350,5 @@ def apply_order_change(imdb_id: str, new_order: Optional[str], sync_plex: bool =
                  f"{len(preview['moves'])} moved, {len(preview['removes'])} removed, "
                  f"{len(preview['unmappable'])} left unmapped")
     return dict(preview, success=True, applied=True, metadata_refreshed=refreshed,
-                symlink_note=symlink_note, plex_note=plex_note)
+                symlink_note=symlink_note, plex_note=plex_note,
+                missing_added=missing_added, missing_requested=bool(add_missing and preview['missing_episodes']))

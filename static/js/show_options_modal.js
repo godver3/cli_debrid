@@ -15,6 +15,7 @@
 
     let modal, statusEl, errorEl, seriesTypeEl, seriesTypeHintEl;
     let orderSelect, previewBtn, previewEl, applyBtn, plexLabel, plexCheckbox;
+    let missingLabel, missingCheckbox, missingText;
     let context = null;
     let busy = false;
     let currentOrder = 'default';
@@ -40,6 +41,9 @@
         applyBtn = document.getElementById('showOptionsApplyBtn');
         plexLabel = document.getElementById('showOptionsPlexLabel');
         plexCheckbox = document.getElementById('showOptionsSyncPlex');
+        missingLabel = document.getElementById('showOptionsMissingLabel');
+        missingCheckbox = document.getElementById('showOptionsAddMissing');
+        missingText = document.getElementById('showOptionsMissingText');
 
         modal.querySelector('.show-options-overlay').addEventListener('click', close);
         modal.querySelector('.show-options-close').addEventListener('click', close);
@@ -167,6 +171,8 @@
         applyBtn.style.display = 'none';
         applyBtn.disabled = true;
         plexLabel.style.display = 'none';
+        missingLabel.style.display = 'none';
+        missingCheckbox.checked = false;
         previewBtn.disabled = orderSelect.disabled || orderSelect.value === currentOrder;
     }
 
@@ -186,8 +192,7 @@
         const summary = el('p');
         summary.textContent = data.moves.length + ' entries move, ' + data.unchanged + ' keep their numbers, ' +
             data.removes.length + ' wanted entries are dropped (not in the new order), ' +
-            data.new_episodes + ' episodes exist only in the new order' +
-            (data.new_episodes ? ' (use "Get Missing" afterwards to request them)' : '') + '.';
+            data.new_episodes + ' episodes exist only in the new order.';
         previewEl.appendChild(summary);
 
         if (data.moves.length) {
@@ -210,11 +215,21 @@
             list('Would collide (nothing will be changed until this is resolved):', data.conflicts,
                  function (c) { return se([c.season, c.episode]) + ' [' + (c.version || '') + ']: ' + c.row_ids.length + ' entries'; },
                  'show-options-warning'),
+            list(data.missing_episodes + ' episode' + (data.missing_episodes === 1 ? '' : 's') +
+                 ' of the new order won\'t be in your library:', data.missing,
+                 function (m) { return se([m.season, m.episode]) + ' ' + (m.title || '') + (m.aired ? ' (' + m.aired + ')' : ''); },
+                 'show-options-warning'),
         ].forEach(function (node) { if (node) previewEl.appendChild(node); });
+        if (data.missing_episodes > (data.missing || []).length) {
+            previewEl.lastChild.querySelector('ul').appendChild(el('li', '…and ' + (data.missing_episodes - data.missing.length) + ' more'));
+        }
         if (data.plex_note) previewEl.appendChild(el('p', data.plex_note, 'show-options-warning'));
         previewEl.style.display = '';
 
         plexLabel.style.display = data.plex_ordering ? '' : 'none';
+        missingLabel.style.display = data.missing_episodes ? '' : 'none';
+        missingText.textContent = 'Add the ' + data.missing_episodes + ' missing episode' +
+            (data.missing_episodes === 1 ? '' : 's') + ' to Wanted';
         applyBtn.style.display = '';
         applyBtn.disabled = !!(data.conflicts && data.conflicts.length);
     }
@@ -245,10 +260,16 @@
         setMessage(errorEl, '');
         setMessage(statusEl, 'Applying… moving entries and rebuilding the show\'s metadata');
         try {
-            const data = await postJson('/episode_order/apply', {order: previewedOrder, sync_plex: plexCheckbox.checked});
+            const data = await postJson('/episode_order/apply', {order: previewedOrder, sync_plex: plexCheckbox.checked,
+                                                              add_missing: missingCheckbox.checked});
             if (!data.success) throw new Error(data.error || 'Applying the order failed');
             const notes = [data.moves.length + ' entries moved, ' + data.removes.length + ' dropped.'];
             if (data.symlink_note) notes.push(data.symlink_note + '.');
+            if (data.missing_requested) {
+                notes.push(data.missing_added === null || data.missing_added === undefined
+                    ? 'Adding the missing episodes failed; use Refresh Metadata on the show page to add them.'
+                    : data.missing_added + ' missing episode' + (data.missing_added === 1 ? '' : 's') + ' added to Wanted.');
+            }
             if (data.plex_note) notes.push(data.plex_note + '.');
             await loadOrders();
             setMessage(statusEl, 'Episode order changed. ' + notes.join(' '));

@@ -235,6 +235,42 @@ class PreviewOrderChangeTests(unittest.TestCase):
         # Row 5 stays at S02E01 [2160p] while row 3 moves to S02E01 [2160p]
         self.assertEqual(p['conflicts'], [{'version': '2160p', 'season': 2, 'episode': 1, 'row_ids': [3, 5]}])
         self.assertEqual(p['plex_ordering'], ['tvdbDvd', 'dvd'])
+        # DVD S01E02 "B" has no library entry before or after the change
+        self.assertEqual(p['missing_episodes'], 1)
+        self.assertEqual([(m['season'], m['episode'], m['title']) for m in p['missing']], [(1, 2, 'B')])
+
+    def test_missing_skips_specials_and_occupied(self):
+        target = {0: {'episodes': {1: _ep('Special')}},
+                  1: {'episodes': {1: _ep('A', aired='2009-04-05T00:00:00Z'), 2: _ep('B')}},
+                  2: {'episodes': {1: _ep('C')}}}
+        missing = self.oc._missing_after_change(target, {(1, 1)})
+        self.assertEqual([(m['season'], m['episode']) for m in missing], [(1, 2), (2, 1)])
+        self.assertEqual(self.oc._missing_after_change(target, {(1, 1), (1, 2), (2, 1)}), [])
+
+    def _apply(self, add_missing, missing_episodes=3):
+        preview = {'success': True, 'conflicts': [], 'new_order': 'tvdb:dvd', 'current_order': 'default',
+                   'moves': [], 'removes': [], 'unmappable': [], 'missing_episodes': missing_episodes,
+                   'missing_positions': [[1, 101], [1, 102], [1, 165]][:missing_episodes],
+                   'plex_ordering': None, 'plex_note': None}
+        with mock.patch.object(self.oc, 'preview_order_change', return_value=preview), \
+                mock.patch.object(self.oc, '_apply_rows'), \
+                mock.patch.object(self.oc, '_reset_battery_seasons'), \
+                mock.patch('database.show_overrides.set_show_override'), \
+                mock.patch('cli_battery.app.direct_api.DirectAPI.force_refresh_metadata', return_value=({}, None)), \
+                mock.patch.object(self.oc, 'queue_missing_episodes', return_value=3) as queue:
+            return self.oc.apply_order_change('tt1409055', 'tvdb:dvd', sync_plex=False, add_missing=add_missing), queue
+
+    def test_apply_adds_missing_only_when_asked(self):
+        result, queue = self._apply(add_missing=True)
+        queue.assert_called_once_with('tt1409055', 'Episode-Order', [[1, 101], [1, 102], [1, 165]])
+        self.assertEqual((result['missing_added'], result['missing_requested']), (3, True))
+        result, queue = self._apply(add_missing=False)
+        queue.assert_not_called()
+        self.assertFalse(result['missing_requested'])
+        result, queue = self._apply(add_missing=True, missing_episodes=0)
+        queue.assert_not_called()
+
+
 
     def test_same_order_rejected(self):
         self.assertFalse(self._preview([], order='tvdb:dvd', current='tvdb:dvd')['success'])
@@ -285,6 +321,53 @@ class PreviewOrderChangeTests(unittest.TestCase):
             note = self.oc.sync_plex_ordering('tt1409055', ['tvdbAbsolute'], ['112237'])
         self.assertTrue(note.startswith('Could not set the ordering in Plex'))
         show.refresh.assert_not_called()
+
+
+class QueueMissingEpisodesTests(unittest.TestCase):
+    """utilities/missing_episodes.py: what "add missing to Wanted" queues."""
+
+    def setUp(self):
+        import sqlite3
+        self.me = _load('missing_episodes_under_test', 'utilities/missing_episodes.py')
+        conn = sqlite3.connect(':memory:')
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE media_items (imdb_id, tmdb_id, title, type, version)")
+        # Dragon Ball Kai: 159 entries in 1080p, 3 in "720 and below", 2 mid-upgrade
+        rows = [('1080p',)] * 157 + [('1080p*',)] * 2 + [('720 and below',)] * 3
+        conn.executemany("INSERT INTO media_items VALUES ('tt1409055', '61709', 'Dragon Ball Z Kai', 'episode', ?)", rows)
+        self.db = mock.Mock(execute=conn.execute)
+        patcher = mock.patch.object(self.me, 'get_db_connection', return_value=self.db)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_main_versions_only(self):
+        self.assertEqual(self.me.show_versions('tt1409055'), ('61709', 'Dragon Ball Z Kai', {'1080p': True}))
+
+    def test_only_the_listed_positions_are_added(self):
+        episodes = [{'season_number': 1, 'episode_number': 101}, {'season_number': 1, 'episode_number': 5},
+                    {'season_number': 1, 'episode_number': 165}]
+        with mock.patch('metadata.metadata.process_metadata', return_value={'episodes': episodes}) as process, \
+                mock.patch('database.wanted_items.add_wanted_items', return_value=2) as add:
+            self.assertEqual(self.me.queue_missing_episodes('tt1409055', 'Episode-Order', [(1, 101), (1, 165)]), 2)
+        item = process.call_args[0][0][0]
+        self.assertEqual((item['imdb_id'], item['tmdb_id'], item['versions']), ('tt1409055', '61709', {'1080p': True}))
+        queued, versions = add.call_args[0]
+        self.assertEqual([(e['season_number'], e['episode_number']) for e in queued], [(1, 101), (1, 165)])
+        self.assertEqual(versions, {'1080p': True})
+        self.assertEqual(queued[0]['content_source_detail'], 'Episode-Order')
+
+    def test_refresh_adds_everything_missing(self):
+        episodes = [{'season_number': 1, 'episode_number': 5}]
+        with mock.patch('metadata.metadata.process_metadata', return_value={'episodes': episodes}), \
+                mock.patch('database.wanted_items.add_wanted_items', return_value=1) as add:
+            self.assertEqual(self.me.queue_missing_episodes('tt1409055', 'Metadata-Refresh'), 1)
+        self.assertEqual(len(add.call_args[0][0]), 1)
+
+    def test_show_without_entries_adds_nothing(self):
+        self.db.execute = mock.Mock(return_value=mock.Mock(fetchall=mock.Mock(return_value=[])))
+        with mock.patch('metadata.metadata.process_metadata') as process:
+            self.assertEqual(self.me.queue_missing_episodes('tt0000000', 'Metadata-Refresh'), 0)
+        process.assert_not_called()
 
 
 if __name__ == '__main__':
