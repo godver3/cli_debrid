@@ -212,15 +212,19 @@ def _make_request(url: str, max_retries: int = 4, initial_delay: float = 5) -> O
 
 
 def _resolve_tvdb_id(imdb_id: str, media_type: str = None) -> Optional[int]:
-    """IMDb → TVDB ID, cached in TVDBToIMDBMapping table."""
+    """IMDb → TVDB ID, cached in TVDBToIMDBMapping table.
+
+    None for an IMDb ID that TVDB files as a season of another series; see
+    resolve_season_slice.
+    """
     # Check cache first
     with managed_session() as session:
-        query = session.query(TVDBToIMDBMapping).filter_by(imdb_id=imdb_id)
-        if media_type:
-            query = query.filter_by(media_type=media_type)
-        mapping = query.first()
-        if mapping:
-            return int(mapping.tvdb_id)
+        rows = session.query(TVDBToIMDBMapping).filter_by(imdb_id=imdb_id).all()
+        if any(row.media_type == SEASON_MAPPING_TYPE for row in rows):
+            return None
+        for mapping in rows:
+            if not media_type or mapping.media_type == media_type:
+                return int(mapping.tvdb_id)
 
     # Fetch from TVDB
     url = f"{TVDB_BASE_URL}/search/remoteid/{imdb_id}"
@@ -261,6 +265,12 @@ def _resolve_tvdb_id(imdb_id: str, media_type: str = None) -> Optional[int]:
                 _cache_tvdb_mapping(str(tvdb_id), imdb_id, detected_type)
                 return int(tvdb_id)
 
+    if media_type in (None, 'show'):
+        season_slice = _season_from_remoteid_results(data)
+        if season_slice:
+            _remember_season_slice(imdb_id, *season_slice)
+            return None
+
     # Last resort: take the first result with any ID (only when no type filter)
     if not media_type:
         for item in data:
@@ -294,6 +304,295 @@ def _imdb_from_remote_ids(raw: dict) -> Optional[str]:
             if value.startswith('tt'):
                 return value
     return None
+
+
+# ── Shows TVDB keeps as seasons of one series ────────────────────────────────
+# TVDB sometimes files separate shows as one series: Netflix's "The Haunting"
+# (345246) is S1 "The Haunting of Hill House" + S2 "The Haunting of Bly Manor",
+# while IMDb, TMDB and Plex list them as two shows of one season each. An IMDb
+# lookup then lands on a season (Bly Manor -> {"season": {seriesId, number: 2}})
+# or on the whole series (Hill House). Either way the show is cut down to its
+# own season, numbered as season 1 like the other sources and the releases.
+#
+# A season slice is cached in TVDBToIMDBMapping as tvdb_id "<series>:<season>"
+# with media_type 'season', so it never replaces the series' own mapping row.
+
+SEASON_MAPPING_TYPE = 'season'
+_NARROWED_TTL = 24 * 3600
+
+_season_slices: Dict[str, Tuple[int, int]] = {}
+_narrowed_seasons: Dict[str, Tuple[float, Optional[int]]] = {}
+
+
+def _season_from_remoteid_results(data: list) -> Optional[Tuple[int, int]]:
+    """(series ID, season number) from a /search/remoteid answer that is an
+    aired-order season, else None."""
+    for item in data or []:
+        season = item.get('season') if isinstance(item, dict) else None
+        if not isinstance(season, dict) or not season.get('seriesId') or season.get('number') is None:
+            continue
+        season_type = season.get('type')
+        if isinstance(season_type, dict) and season_type.get('type') not in (None, 'official', 'default'):
+            continue
+        try:
+            series_id, number = int(season['seriesId']), int(season['number'])
+        except (TypeError, ValueError):
+            continue
+        if number >= 1:
+            return series_id, number
+    return None
+
+
+def _remember_season_slice(imdb_id: str, series_id: int, season_number: int):
+    _season_slices[imdb_id] = (series_id, season_number)
+    logger.info(f"TVDB: {imdb_id} is season {season_number} of TVDB series {series_id}")
+    _cache_tvdb_mapping(f"{series_id}:{season_number}", imdb_id, SEASON_MAPPING_TYPE)
+
+
+def resolve_season_slice(imdb_id: str) -> Optional[Tuple[int, int]]:
+    """(series ID, season number) when TVDB files this IMDb ID as one season
+    of a series, else None."""
+    if not imdb_id:
+        return None
+    if imdb_id in _season_slices:
+        return _season_slices[imdb_id]
+    try:
+        with managed_session() as session:
+            row = session.query(TVDBToIMDBMapping).filter_by(
+                imdb_id=imdb_id, media_type=SEASON_MAPPING_TYPE).first()
+            cached = row.tvdb_id if row else None
+    except Exception as e:
+        logger.debug(f"Could not read TVDB season mapping for {imdb_id}: {e}")
+        cached = None
+    if cached:
+        series_id, _, season_number = cached.partition(':')
+        try:
+            _season_slices[imdb_id] = (int(series_id), int(season_number))
+            return _season_slices[imdb_id]
+        except ValueError:
+            return None
+    if _resolve_tvdb_id(imdb_id, media_type='show'):
+        return None
+    return _season_slices.get(imdb_id)
+
+
+def _normalize_title(text: Optional[str]) -> str:
+    return ''.join(ch for ch in (text or '').lower() if ch.isalnum())
+
+
+def _aired_order_seasons(raw: dict) -> Dict[int, dict]:
+    """Regular (non-special) aired-order seasons of a TVDB series response."""
+    seasons = {}
+    for season in raw.get('seasons') or []:
+        if not isinstance(season, dict) or season.get('number') is None:
+            continue
+        season_type = season.get('type')
+        if isinstance(season_type, dict) and season_type.get('id') not in (None, 1):
+            continue
+        try:
+            number = int(season['number'])
+        except (TypeError, ValueError):
+            continue
+        if number >= 1:
+            seasons.setdefault(number, season)
+    return seasons
+
+
+def _season_year(raw: dict, season_number: int) -> Optional[int]:
+    """The season's own year, else the year its first episode aired."""
+    season = _aired_order_seasons(raw).get(season_number) or {}
+    try:
+        if season.get('year'):
+            return int(str(season['year'])[:4])
+    except ValueError:
+        pass
+    years = []
+    for ep in raw.get('episodes') or []:
+        if not isinstance(ep, dict) or ep.get('seasonNumber') != season_number:
+            continue
+        aired = str(ep.get('aired') or '')
+        if aired[:4].isdigit():
+            years.append(int(aired[:4]))
+    return min(years) if years else None
+
+
+def _airs_info(raw: dict) -> Tuple[Optional[str], Optional[str]]:
+    """(airs time, IANA timezone) for building episode air datetimes."""
+    airs_time = raw.get('airsTime')
+    network = raw.get('originalNetwork')
+    airs_timezone = network.get('timezone') if isinstance(network, dict) else None
+    if not airs_timezone and airs_time and isinstance(network, dict):
+        airs_timezone = _infer_timezone_from_network(network.get('name'), network.get('country'))
+    return airs_time, airs_timezone
+
+
+def _tmdb_show_details(tmdb_id, api_key: str) -> Optional[dict]:
+    try:
+        resp = _http.get(f"https://api.themoviedb.org/3/tv/{tmdb_id}",
+                         params={'api_key': api_key, 'append_to_response': 'external_ids'},
+                         timeout=REQUEST_TIMEOUT)
+        return resp.json() if resp.status_code == 200 else None
+    except Exception as e:
+        logger.debug(f"TMDB show details failed for {tmdb_id}: {e}")
+        return None
+
+
+def _season_belongs_to_other_show(series_id: int, season_number: int, name: str,
+                                  year: Optional[int], api_key: str, imdb_id: str) -> bool:
+    """True when TVDB itself files another IMDb title as this season: the
+    season's name is a TMDB show whose IMDb ID TVDB answers with this very
+    season. Nothing short of that counts."""
+    other_tmdb = _search_tmdb_by_title(name, year, api_key, media_type='show')
+    if not other_tmdb:
+        return False
+    other_imdb = ((_tmdb_show_details(other_tmdb, api_key) or {}).get('external_ids') or {}).get('imdb_id')
+    if not other_imdb or other_imdb == imdb_id:
+        return False
+    return resolve_season_slice(other_imdb) == (series_id, season_number)
+
+
+def narrowed_season(imdb_id: str, tvdb_id: int, raw: Optional[dict] = None) -> Optional[int]:
+    """The one season of TVDB series `tvdb_id` that is the show `imdb_id`,
+    when the series also holds other shows (see the note above), else None.
+
+    Only acts on proof: TMDB has the show as a single season named like one of
+    TVDB's seasons, and every other season is another IMDb title by TVDB's own
+    lookup. A season TVDB just has ahead of TMDB never qualifies.
+    """
+    hit = _narrowed_seasons.get(imdb_id)
+    if hit and time.monotonic() - hit[0] < _NARROWED_TTL:
+        return hit[1]
+    result = None
+    try:
+        result = _find_narrowed_season(imdb_id, tvdb_id, raw)
+    except Exception as e:
+        logger.debug(f"TVDB: narrowing check failed for {imdb_id}: {e}")
+    _narrowed_seasons[imdb_id] = (time.monotonic(), result)
+    return result
+
+
+def _series_extended(tvdb_id: int, query: str) -> dict:
+    resp = _make_request(f"{TVDB_BASE_URL}/series/{tvdb_id}/extended?{query}")
+    return resp.json().get('data', {}) if resp is not None and resp.status_code == 200 else {}
+
+
+def _find_narrowed_season(imdb_id: str, tvdb_id: int, raw: Optional[dict]) -> Optional[int]:
+    if not raw or 'seasons' not in raw:
+        raw = _series_extended(tvdb_id, 'short=true')
+    seasons = _aired_order_seasons(raw)
+    named = {n: s.get('name') for n, s in seasons.items() if s.get('name')}
+    if len(seasons) < 2 or len(named) < 2:
+        return None
+    api_key = _get_tmdb_api_key()
+    if not api_key:
+        return None
+    tmdb_id = _extract_tmdb_id_from_remote_ids(raw) or _resolve_tmdb_id_from_imdb(imdb_id, api_key, media_type='show')
+    details = _tmdb_show_details(tmdb_id, api_key) if tmdb_id else None
+    if not details:
+        return None
+    tmdb_regular = [s for s in details.get('seasons') or [] if (s.get('season_number') or 0) >= 1]
+    if len(tmdb_regular) != 1:
+        return None
+    keep = [n for n, name in named.items() if _normalize_title(name) == _normalize_title(details.get('name'))]
+    if len(keep) != 1:
+        return None
+    keep = keep[0]
+    if not raw.get('episodes'):
+        raw = _series_extended(tvdb_id, 'meta=episodes&short=true')  # for season years
+    for number in seasons:
+        if number == keep:
+            continue
+        name = named.get(number)
+        if not name or not _season_belongs_to_other_show(
+                tvdb_id, number, name, _season_year(raw, number), api_key, imdb_id):
+            return None
+    logger.info(f"TVDB: series {tvdb_id} holds other shows besides {imdb_id}; "
+                f"keeping only its season {keep} ({named[keep]!r})")
+    return keep
+
+
+def _single_season(seasons: Optional[dict], season_number: int) -> Optional[dict]:
+    """`seasons` cut down to `season_number`, renumbered as season 1, with
+    absolute numbers matching (TVDB's run across the whole series)."""
+    season = (seasons or {}).get(season_number) or (seasons or {}).get(str(season_number))
+    if not season or not season.get('episodes'):
+        return None
+    episodes = {}
+    for number, ep in season['episodes'].items():
+        episodes[number] = dict(ep, absolute=int(number))
+    dropped = sorted(int(n) for n in (seasons or {}) if int(n) not in (0, season_number))
+    if dropped:
+        renumbered = f"; season {season_number} becomes season 1" if season_number != 1 else ""
+        logger.info(f"TVDB: dropping seasons {dropped} (other shows) and specials{renumbered}")
+    return {1: dict(season, episode_count=len(episodes), episodes=episodes)}
+
+
+def _scope_show_to_season(show_data: dict, raw: dict, season_number: int, imdb_id: str,
+                          keep_series_id: bool):
+    """Turn a whole-series show dict into the one show that is `season_number`."""
+    season = _aired_order_seasons(raw).get(season_number) or {}
+    if season.get('name'):
+        show_data['title'] = season['name']
+    show_data['year'] = _season_year(raw, season_number) or show_data.get('year')
+    ids = show_data.setdefault('ids', {})
+    if not keep_series_id:
+        # The series ID belongs to the series' own IMDb title; Plex lists this
+        # show without one, and XEM / episode orders must not use it.
+        ids['tvdb'] = None
+        ids['slug'] = ''
+    # Series-wide translations name the other shows too; TMDB's alternative
+    # titles for this show are merged in by direct_api.
+    show_data.pop('aliases', None)
+    if any(n > season_number for n in _aired_order_seasons(raw)):
+        show_data['status'] = 'ended'
+    api_key = _get_tmdb_api_key()
+    if api_key:
+        tmdb_id = _resolve_tmdb_id_from_imdb(imdb_id, api_key, media_type='show')
+        details = _tmdb_show_details(tmdb_id, api_key) if tmdb_id else None
+        if details:
+            ids['tmdb'] = tmdb_id
+            if details.get('overview'):
+                show_data['overview'] = details['overview']
+        elif not keep_series_id:
+            ids.pop('tmdb', None)
+
+
+def _get_season_slice_show_data(imdb_id: str, series_id: int, season_number: int) -> Optional[dict]:
+    """Show data for an IMDb title TVDB files as one season of a series."""
+    resp = _make_request(f"{TVDB_BASE_URL}/series/{series_id}/extended?meta=translations,episodes")
+    raw = resp.json().get('data', {}) if resp is not None and resp.status_code == 200 else {}
+    if not raw or season_number not in _aired_order_seasons(raw):
+        return None
+    airs_time, airs_timezone = _airs_info(raw)
+    # No imdb_id: the air-date fallbacks look up this IMDb title's own
+    # season numbers, which aren't the series' ones.
+    seasons = _fetch_episodes_paginated(series_id, airs_time, airs_timezone) \
+        or _extract_seasons_from_extended(raw)
+    seasons = _single_season(seasons, season_number)
+    if not seasons:
+        return None
+    show_data = _build_show_dict(raw, imdb_id, series_id)
+    _scope_show_to_season(show_data, raw, season_number, imdb_id, keep_series_id=False)
+    show_data['seasons'] = seasons
+    logger.info(f"TVDB: built {imdb_id} from season {season_number} of series {series_id} "
+                f"as {show_data.get('title')!r} ({show_data.get('year')})")
+    return show_data
+
+
+def _season_slice_seasons(imdb_id: str) -> Optional[dict]:
+    """get_show_seasons_and_episodes for a season slice."""
+    season_slice = resolve_season_slice(imdb_id)
+    if not season_slice:
+        return None
+    series_id, season_number = season_slice
+    resp = _make_request(f"{TVDB_BASE_URL}/series/{series_id}/extended?meta=episodes")
+    raw = resp.json().get('data', {}) if resp is not None and resp.status_code == 200 else {}
+    if not raw:
+        return None
+    airs_time, airs_timezone = _airs_info(raw)
+    seasons = _fetch_episodes_paginated(series_id, airs_time, airs_timezone) \
+        or _extract_seasons_from_extended(raw)
+    return _single_season(seasons, season_number)
 
 
 def convert_tvdb_to_imdb(tvdb_id: str, media_type: str = 'show') -> Optional[str]:
@@ -367,9 +666,15 @@ def get_season_poster_url(imdb_id: str, season_number: int) -> Optional[str]:
         return None
     try:
         tvdb_series_id = _resolve_tvdb_id(imdb_id, 'show')
+        scoped = False
         if not tvdb_series_id:
-            logger.debug(f"[TVDB] Could not resolve series ID for {imdb_id}")
-            return None
+            # A show TVDB files as one season of a series: its season 1.
+            season_slice = resolve_season_slice(imdb_id)
+            if not season_slice or season_number != 1:
+                logger.debug(f"[TVDB] Could not resolve series ID for {imdb_id}")
+                return None
+            tvdb_series_id, season_number = season_slice
+            scoped = True
 
         # Get season list to find the TVDB season ID for the target season
         # Use Aired Order (type.id=1) to match standard season numbering
@@ -377,7 +682,13 @@ def get_season_poster_url(imdb_id: str, season_number: int) -> Optional[str]:
         if not series_resp or series_resp.status_code != 200:
             return None
 
-        seasons = series_resp.json().get('data', {}).get('seasons', [])
+        series_raw = series_resp.json().get('data', {})
+        keep = None if scoped else narrowed_season(imdb_id, tvdb_series_id, series_raw)
+        if keep:
+            if season_number != 1:
+                return None
+            season_number = keep
+        seasons = series_raw.get('seasons', [])
         tvdb_season_id = None
         for s in seasons:
             if s.get('number') == season_number and s.get('type', {}).get('id') == 1:
@@ -683,6 +994,11 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
     """Get full show metadata + aliases + seasons/episodes."""
     tvdb_id = _resolve_tvdb_id(imdb_id, media_type='show')
     if not tvdb_id:
+        season_slice = resolve_season_slice(imdb_id)
+        if season_slice:
+            show_data = _get_season_slice_show_data(imdb_id, *season_slice)
+            if show_data:
+                return show_data
         # TVDB hasn't linked this IMDb ID yet — try resolving via TMDB ID
         tmdb_api_key = _get_tmdb_api_key()
         if tmdb_api_key:
@@ -778,6 +1094,11 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
     if not seasons:
         # Fallback to extended response (may have non-English titles)
         seasons = _extract_seasons_from_extended(raw, imdb_id)
+    keep = narrowed_season(imdb_id, tvdb_id, raw)
+    scoped = _single_season(seasons, keep) if keep else None
+    if scoped:
+        seasons = scoped
+        _scope_show_to_season(show_data, raw, keep, imdb_id, keep_series_id=True)
     show_data['seasons'] = seasons
 
     # TVDB marks many canceled shows as 'Ended' — cross-check with Trakt
@@ -1074,9 +1395,25 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
     """Fetch seasons and episodes for a show."""
     tvdb_id = _resolve_tvdb_id(imdb_id, media_type='show')
     if not tvdb_id:
+        seasons = _season_slice_seasons(imdb_id)
+        if seasons:
+            return seasons, 'tvdb'
         logger.warning(f"TVDB: could not resolve IMDb {imdb_id} to TVDB ID for episodes, trying Trakt fallback")
         from . import trakt_client
-        return trakt_client.get_show_seasons_and_episodes(imdb_id, include_specials=include_specials)
+        result = trakt_client.get_show_seasons_and_episodes(imdb_id, include_specials=include_specials)
+        if result and result[0]:
+            return result
+        tmdb_api_key = _get_tmdb_api_key()
+        tmdb_id = _resolve_tmdb_id_from_imdb(imdb_id, tmdb_api_key, media_type='show') if tmdb_api_key else None
+        if not tmdb_id:
+            return result
+        details = _tmdb_show_details(tmdb_id, tmdb_api_key) or {}
+        numbers = [s['season_number'] for s in details.get('seasons') or []
+                   if s.get('season_number') is not None and (include_specials or s['season_number'] >= 1)]
+        episodes = _fetch_tmdb_season_episodes(tmdb_id, numbers, tmdb_api_key)
+        if not episodes:
+            return result
+        return {n: {'episode_count': len(eps), 'episodes': eps} for n, eps in episodes.items()}, 'tmdb'
 
     # Try extended endpoint first
     url = f"{TVDB_BASE_URL}/series/{tvdb_id}/extended?meta=episodes"
@@ -1110,6 +1447,11 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
     if not seasons:
         # Fallback to extended response (may have non-English titles)
         seasons = _extract_seasons_from_extended(raw, imdb_id)
+
+    keep = narrowed_season(imdb_id, tvdb_id, raw)
+    scoped = _single_season(seasons, keep) if keep else None
+    if scoped:
+        return scoped, 'tvdb'
 
     if seasons and not include_specials:
         seasons.pop(0, None)
@@ -1200,7 +1542,11 @@ def get_season_types(imdb_id: str) -> list:
     resp = _make_request(f"{TVDB_BASE_URL}/series/{tvdb_id}/extended?short=true")
     if not resp or resp.status_code != 200:
         return []
-    season_types = resp.json().get('data', {}).get('seasonTypes') or []
+    raw = resp.json().get('data', {})
+    if narrowed_season(imdb_id, tvdb_id, raw):
+        # A series cut down to one show: its other orders span the other shows.
+        return []
+    season_types = raw.get('seasonTypes') or []
     return [{'type': t.get('type'), 'name': t.get('name') or t.get('type')}
             for t in season_types if isinstance(t, dict) and t.get('type')]
 
@@ -1215,6 +1561,8 @@ def get_seasons_for_season_type(imdb_id: str, season_type: str) -> Optional[dict
     if not resp or resp.status_code != 200:
         return None
     raw = resp.json().get('data', {})
+    if narrowed_season(imdb_id, tvdb_id, raw):
+        return None
     airs_time = raw.get('airsTime')
     network = raw.get('originalNetwork')
     airs_timezone = network.get('timezone') if isinstance(network, dict) else None
@@ -1700,6 +2048,10 @@ def _fetch_tmdb_show_data(imdb_id: str, api_key: str) -> Optional[dict]:
                     'episode_count': s.get('episode_count', 0),
                     'episodes': {},
                 }
+        episodes = _fetch_tmdb_season_episodes(tmdb_id, [s['number'] for s in seasons.values()], api_key)
+        for sn, season_episodes in episodes.items():
+            seasons[str(sn)]['episodes'] = season_episodes
+            seasons[str(sn)]['episode_count'] = len(season_episodes)
 
         data = {
             'title': raw.get('name', ''),
@@ -1713,11 +2065,58 @@ def _fetch_tmdb_show_data(imdb_id: str, api_key: str) -> Optional[dict]:
             'seasons': seasons,
         }
 
-        logger.info(f"TMDB fallback: got show metadata for {imdb_id} (tmdb_id={tmdb_id})")
+        logger.info(f"TMDB fallback: got show metadata for {imdb_id} (tmdb_id={tmdb_id}, "
+                    f"{sum(len(s['episodes']) for s in seasons.values())} episodes)")
         return data
     except Exception as e:
         logger.debug(f"TMDB show data error for {imdb_id}: {e}")
         return None
+
+
+_TMDB_APPEND_LIMIT = 20  # append_to_response takes at most 20 items
+
+
+def _fetch_tmdb_season_episodes(tmdb_id, season_numbers: List[int], api_key: str) -> Dict[int, dict]:
+    """{season: {episode: episode dict}} from TMDB, in the shape the TVDB
+    paths build. Seasons that fail to load are left out."""
+    result: Dict[int, dict] = {}
+    numbers = sorted({int(n) for n in season_numbers})
+    for start in range(0, len(numbers), _TMDB_APPEND_LIMIT):
+        chunk = numbers[start:start + _TMDB_APPEND_LIMIT]
+        try:
+            resp = _http.get(
+                f"https://api.themoviedb.org/3/tv/{tmdb_id}",
+                params={'api_key': api_key,
+                        'append_to_response': ','.join(f"season/{n}" for n in chunk)},
+                timeout=REQUEST_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"TMDB episodes for {tmdb_id} seasons {chunk}: HTTP {resp.status_code}")
+                continue
+            raw = resp.json()
+        except Exception as e:
+            logger.warning(f"TMDB episodes for {tmdb_id} seasons {chunk} failed: {e}")
+            continue
+        for number in chunk:
+            episodes = {}
+            for ep in (raw.get(f"season/{number}") or {}).get('episodes') or []:
+                ep_num = ep.get('episode_number')
+                if ep_num is None:
+                    continue
+                episodes[ep_num] = {
+                    'title': ep.get('name', ''),
+                    'overview': ep.get('overview', ''),
+                    'runtime': ep.get('runtime') or 0,
+                    'first_aired': _format_air_date(ep.get('air_date')),
+                    'imdb_id': None,
+                    'tmdb_id': str(ep['id']) if ep.get('id') else None,
+                    'tvdb_id': None,
+                    'absolute': None,
+                    'is_movie': False,
+                }
+            if episodes:
+                result[number] = episodes
+    return result
 
 
 def get_movie_release_dates(imdb_id: str) -> Optional[dict]:
@@ -1831,6 +2230,14 @@ def get_updated_shows(since_iso: str) -> List[dict]:
                 'imdb_id': m.imdb_id,
                 'updated_at': timestamps.get(m.tvdb_id, since_iso),
             })
+        # Shows TVDB files as one season of a series update with that series
+        for m in session.query(TVDBToIMDBMapping).filter_by(media_type=SEASON_MAPPING_TYPE).all():
+            series_id = (m.tvdb_id or '').partition(':')[0]
+            if series_id in tvdb_ids:
+                results.append({
+                    'imdb_id': m.imdb_id,
+                    'updated_at': timestamps.get(series_id, since_iso),
+                })
 
     logger.info(f"TVDB: fetched {len(data)} series updates, {len(results)} matched our cache")
     return results
