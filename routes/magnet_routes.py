@@ -1071,6 +1071,12 @@ def prepare_manual_assignment():
                     f_info['parsed'], f_info['original'].get('filename'), metadata.get('seasons'))
             if any(f_info['explicit_absolute'] for f_info in parsed_video_files):
                 show_absolute_numbers = absolute_numbers(metadata.get('seasons'))
+        # Show in another episode order: "S15E01" files are aired S15E01, which may
+        # be another episode than the show's S15E01 (Phase 1b places them by ID)
+        aired_order_map = None
+        if alt_seasons_data:
+            from scraper.functions.episode_order_mapping import OrderMapping
+            aired_order_map = OrderMapping(metadata.get('seasons'), alt_seasons_data)
 
         # --- Phase 1: S/E Matching and Movie Matching ---
         logging.info("Phase 1: Attempting S/E and Movie matching...")
@@ -1138,6 +1144,11 @@ def prepare_manual_assignment():
                 for file_info in [f for f in parsed_video_files if not f['used']]:
                     if explicit_absolute_conflicts(item_absolute_numbers, file_info.get('explicit_absolute')):
                         continue
+                    if aired_order_map is not None and not file_info.get('explicit_absolute'):
+                        aired = aired_order_map.aired_positions(file_info['parsed'].get('seasons') or [],
+                                                                file_info['parsed'].get('episodes') or [])
+                        if aired and aired_order_map.aired_of(item_season, item_episode) not in aired:
+                            continue
                     parsed = file_info['parsed']
                     match = False
                     parsed_seasons = parsed.get('seasons', [])

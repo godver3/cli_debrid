@@ -84,6 +84,9 @@ def set_show_override(imdb_id: str, tmdb_id: Optional[str] = None,
             "INSERT OR REPLACE INTO show_overrides (imdb_id, tmdb_id, series_type, episode_order, updated_at) "
             "VALUES (:imdb_id, :tmdb_id, :series_type, :episode_order, :updated_at)", row)
         conn.commit()
+        if episode_order is not _UNSET:
+            from scraper.functions.episode_order_mapping import clear_order_mapping_cache
+            clear_order_mapping_cache(imdb_id)
         logging.info(f"[ShowOverride] {imdb_id}: series_type={row['series_type']!r}, "
                      f"episode_order={row['episode_order']!r}")
         return True

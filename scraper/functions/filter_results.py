@@ -202,6 +202,7 @@ def filter_results(
     # --- Cache for API fallback results within this filter_results call ---
     _fetched_detailed_seasons_data_cache = None
     _absolute_season_counts = None  # full season counts, loaded on the first absolute-numbered batch
+    _order_map = False  # aired numbering -> the show's episode order; loaded on the first season pack
     
     for result in results:
         try:
@@ -1191,13 +1192,45 @@ def filter_results(
                         episodes = season_episode_info['episodes']
                         logging.info(f"Absolute episodes {explicit_abs[0]}-{explicit_abs[-1]} in '{original_title}' "
                                      f"hold season(s) {covered}")
+                    elif (parsed_info.get('seasons') and season is not None
+                          and season_episode_info.get('season_pack') != 'Complete'):
+                        # Show set to another episode order: the name's seasons are aired ones
+                        if _order_map is False:
+                            from scraper.functions.episode_order_mapping import order_mapping
+                            _order_map = order_mapping(imdb_id)
+                        named = [s for s in parsed_info.get('seasons') if isinstance(s, int)]
+                        named_eps = [e for e in (parsed_info.get('episodes') or []) if isinstance(e, int)]
+                        # No aired episode by those numbers ("S13 Ep. 230-265"): left to the absolute checks below
+                        aired_positions = _order_map.aired_positions(named, named_eps) if _order_map else set()
+                        if aired_positions:
+                            held = _order_map.order_seasons_held(aired_positions)
+                            if season not in held:
+                                result['filter_reason'] = (f"Aired season(s) {named} don't hold all of season {season} "
+                                                           f"in the show's episode order")
+                                logging.info(f"Rejected: aired season(s) {named} hold {held or 'no whole season'} of the "
+                                             f"show's order, not season {season}, for '{original_title}' "
+                                             f"(Size: {result['size']:.2f}GB)")
+                                continue
+                            season_episode_info = dict(
+                                season_episode_info,
+                                season_pack=','.join(str(s) for s in held),
+                                seasons=held,
+                                episodes=list(range(1, _order_map.order_counts[season] + 1)),
+                                absolute_batch=True,
+                                batch_episode_count=len(aired_positions),
+                            )
+                            result['parsed_info']['season_episode_info'] = season_episode_info
+                            episodes = season_episode_info['episodes']
+                            logging.info(f"Aired season(s) {named} in '{original_title}' hold season(s) {held} "
+                                         f"of the show's episode order")
 
                     # An anime batch numbered by absolute episode was rejected for any later
                     # season: with no season in the name ("[Erai-raws] Bleach - 001 ~ 366
                     # [BATCH]") it was read as season 1, and with one ("Bleach S13 Ep.
                     # 230-265") it lacked episode 1. Count the seasons it really holds.
                     named_seasons = parsed_info.get('seasons') or []
-                    if (not explicit_abs and is_anime and season and season > 1 and len(episodes) > 1
+                    if (not explicit_abs and not season_episode_info.get('absolute_batch')
+                            and is_anime and season and season > 1 and len(episodes) > 1
                             and named_seasons in ([], [season])
                             and season_episode_info.get('season_pack') != 'Complete'):
                         if _absolute_season_counts is None:

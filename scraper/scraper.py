@@ -753,6 +753,26 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 season = original_season
                 episode = original_episode
 
+        # A show set to another episode order (DVD, absolute, a TMDB group):
+        # releases use TVDB's aired numbering, so the episode is searched and
+        # filtered by its aired S/E. Its absolute number stays the show's, and
+        # names in the order's own numbering aren't accepted as a fallback
+        # (aired "S15E01" is another episode than DVD S15E01).
+        order_aired = None
+        if (content_type.lower() == 'episode' and not multi and not movie_episode
+                and original_season is not None and original_episode is not None):
+            from scraper.functions.episode_order_mapping import order_mapping
+            _order_map = order_mapping(imdb_id)
+            order_aired = _order_map.aired_of(original_season, original_episode) if _order_map else None
+            if order_aired:
+                season, episode = order_aired
+                if episode_formats and episode_formats.get('absolute'):
+                    abs_text = episode_formats['absolute']
+                    episode_formats = {'regular': f"S{season:02d}E{episode:02d}", 'absolute': abs_text,
+                                       'combined': f"S{season:02d}E{abs_text}"}
+                logging.info(f"Episode order: S{original_season}E{original_episode} of '{title}' is aired "
+                             f"S{season}E{episode}; searching by the aired numbering")
+
         # Initialize results lists
         all_filtered_results = []
         all_filtered_out_results = []
@@ -1248,8 +1268,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     scene_season_map=scene_season, # This is the XEM-mapped season (or None)
                     scene_episode_map=scene_episode, # This is the XEM-mapped episode (or None)
                     check_pack_wantedness=check_pack_wantedness,
-                    original_episode=original_episode,
-                    original_season=original_season,  # Pass original TVDB season before any XEM remapping
+                    original_episode=None if order_aired else original_episode,
+                    original_season=None if order_aired else original_season,  # Pass original TVDB season before any XEM remapping
                     movie_episode=movie_episode
                 )
                 logging.debug(f"[scrape_main] _do_scrape for '{search_title}' returned: passed={len(filtered_results)}, filtered_out={len(filtered_out_results if filtered_out_results else [])}")
@@ -1356,7 +1376,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     original_language=original_language,
                 )
             return rank_result_key(
-                x, deduplicated_results, title, year, scene_season if xem_applied else original_season, scene_episode if xem_applied else original_episode, multi, # Pass original title to ranker
+                x, deduplicated_results, title, year, scene_season if xem_applied else (season if order_aired else original_season), scene_episode if xem_applied else (episode if order_aired else original_episode), multi, # Pass original title to ranker
                 content_type, version_settings,
                 preferred_language=preferred_language, # Pass new arg
                 translated_title=translated_title,     # Pass new arg

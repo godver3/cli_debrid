@@ -96,6 +96,42 @@ class MediaMatcher:
             return pf, set()
         return None, {id(pf) for pfs in by_abs.values() for pf in pfs}
 
+    @staticmethod
+    def _aired_order_match(parsed_files: List[Dict[str, Any]], item: Dict[str, Any]):
+        """For a show set to another episode order, place files named in aired numbering.
+
+        Releases use TVDB's aired S/E: One Piece DVD S15E01 is aired S13E41,
+        and a file named "S15E01" is aired S15E01, another episode. Returns
+        (the file for this item or None, ids of files whose aired S/E is
+        another episode). Files without a season, or with numbers aired
+        numbering doesn't have ("S01E422"), are left to the usual matching.
+        """
+        from scraper.functions.episode_order_mapping import order_mapping
+        mapping = order_mapping(item.get('imdb_id'))
+        if mapping is None:
+            return None, set()
+        season = item.get('season') or item.get('season_number')
+        episode = item.get('episode') or item.get('episode_number')
+        aired = mapping.aired_of(season, episode)
+        if aired is None:
+            return None, set()
+        hit, others = None, set()
+        for pf in parsed_files:
+            info = pf.get('parsed_info', {})
+            if info.get('is_anime_special_content') or info.get('explicit_absolute'):
+                continue
+            positions = mapping.aired_positions(info.get('seasons') or [], info.get('episodes') or [])
+            if not positions or not info.get('episodes'):
+                continue
+            if aired in positions:
+                hit = hit or pf
+            else:
+                others.add(id(pf))
+        if hit is not None:
+            logging.info(f"Episode order match for item '{item.get('title')}' S{season}E{episode} "
+                         f"(aired S{aired[0]}E{aired[1]}) -> File: {hit['path']}")
+        return hit, others
+
     def _build_parsed_file_indexes(self, parsed_files: List[Dict[str, Any]]):
         """Build fast lookups for parsed files to avoid scanning all files for every item."""
         by_season_episode = defaultdict(list)  # key: (season or None, episode) -> [parsed_file_info]
@@ -968,9 +1004,12 @@ class MediaMatcher:
             abs_file, other_abs_files = self._explicit_absolute_match(indexes, item) if is_anime else (None, set())
             if abs_file is not None:
                 return (os.path.basename(abs_file['path']), item)
+            order_file, other_order_files = self._aired_order_match(parsed_files, item)
+            if order_file is not None:
+                return (os.path.basename(order_file['path']), item)
 
             candidate_files: List[Dict[str, Any]] = []
-            seen_ids = set(other_abs_files)  # their absolute number says another episode
+            seen_ids = set(other_abs_files) | other_order_files  # their numbers say another episode
             if target_episode is not None:
                 # Index hits: (season, episode)
                 for pf in by_season_episode.get((target_season, target_episode), []):
@@ -1300,10 +1339,13 @@ class MediaMatcher:
         by_episode_only = indexes['by_episode_only']
         f1_candidates = indexes['f1_candidates']
 
-        # Files named "S13E01 (0422)" carry the releaser's season, not the show's
-        if pack_season is not None and restrict_to_pack_season and indexes['by_explicit_absolute']:
-            logging.info(f"Pack files state absolute numbers; not restricting related items to season {pack_season}")
-            pack_season = None
+        # Files named "S13E01 (0422)" carry the releaser's season, and a show set to
+        # another episode order numbers seasons differently from the pack's aired ones
+        if pack_season is not None and restrict_to_pack_season:
+            from scraper.functions.episode_order_mapping import order_mapping
+            if indexes['by_explicit_absolute'] or order_mapping(original_item.get('imdb_id')):
+                logging.info(f"Pack numbering isn't the show's; not restricting related items to season {pack_season}")
+                pack_season = None
 
         # Apply season restriction if we have a pack season and the setting is enabled
         if pack_season is not None and restrict_to_pack_season:
@@ -1396,7 +1438,13 @@ class MediaMatcher:
                     related_matches.append((item, os.path.basename(abs_file['path'])))
                     processed_item_ids.add(item_id)
                     continue
-                seen_ids |= other_abs_files  # their absolute number says another episode
+                order_file, other_order_files = self._aired_order_match(parsed_torrent_files, item)
+                if order_file is not None:
+                    logging.info(f"Found related item ID {item_id} (State: {item.get('state', 'Unknown')}) matching file '{order_file['path']}' by aired numbering")
+                    related_matches.append((item, os.path.basename(order_file['path'])))
+                    processed_item_ids.add(item_id)
+                    continue
+                seen_ids |= other_abs_files | other_order_files  # their numbers say another episode
 
                 # Determine target season/episode (respect per-candidate XEM mapping if any)
                 target_season = item.get('season') or item.get('season_number')
