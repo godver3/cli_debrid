@@ -67,6 +67,23 @@ class FilterCompletePackScopeTests(unittest.TestCase):
         self.assertEqual(len(kept), 1)
         self.assertEqual(kept[0]['num_episodes_in_pack_calculated'], 10)
 
+    def test_named_multi_season_complete_pack_kept(self):
+        # "S01-S03 COMPLETE": a complete pack that names its seasons, sized by them
+        kept = self._run('Test.Show.S01-S03.COMPLETE.1080p.WEB.x264', [1, 2, 3], 60.0)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]['num_episodes_in_pack_calculated'], 34)
+
+    def test_named_multi_season_complete_pack_sized_by_its_seasons(self):
+        kept = self._run('Test.Show.Season.1-2.Complete.1080p.WEB.x264', [1, 2], 40.0)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]['num_episodes_in_pack_calculated'], 22)
+
+    def test_multi_season_pack_without_complete_still_rejected(self):
+        self.assertEqual(self._run('Test.Show.S01-S03.1080p.WEB.x264', [1, 2, 3], 60.0), [])
+
+    def test_incomplete_multi_season_pack_still_rejected(self):
+        self.assertEqual(self._run('Test.Show.S01-S03.INCOMPLETE.1080p.WEB.x264', [1, 2, 3], 60.0), [])
+
     def test_complete_series_counts_every_season(self):
         kept = self._run('Test.Show.COMPLETE.SERIES.1080p.WEB.x264', [], 60.0)
         self.assertEqual(len(kept), 1)

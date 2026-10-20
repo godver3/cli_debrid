@@ -1332,8 +1332,12 @@ def filter_results(
                         # A pack containing seasons [1,2,3,4,5] is not a valid match for a season 1
                         # request — downloading 4 extra seasons is wrong regardless of cache status.
                         # An absolute-numbered batch is let through like a "Complete" pack: for
-                        # long anime it's often the only pack that holds the season.
-                        if len(result_seasons) > 1 and not season_episode_info.get('absolute_batch'):
+                        # long anime it's often the only pack that holds the season. So is a
+                        # complete pack that names its seasons ("S01-S05 COMPLETE", "Season
+                        # 1-10 Complete"); it's sized by those seasons' episodes below.
+                        named_complete_pack = bool(re.search(r'\bcomplete\b', original_title, re.IGNORECASE))
+                        if (len(result_seasons) > 1 and not season_episode_info.get('absolute_batch')
+                                and not named_complete_pack):
                             result['filter_reason'] = f"Multi-season pack {result_seasons} when searching for single season {season}"
                             logging.info(f"Rejected: Multi-season pack {result_seasons} for single season {season} request: '{original_title}' (Size: {result['size']:.2f}GB)")
                             continue
