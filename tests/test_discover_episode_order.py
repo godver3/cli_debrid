@@ -126,6 +126,32 @@ class DiscoverEpisodeOrderTests(unittest.TestCase):
         self.assertNotIn('episode_counts', data)
 
 
+class EpisodeOrderPlexSupportTests(unittest.TestCase):
+    """The order list says which orders Plex can follow, so the pickers can warn."""
+
+    def test_tmdb_groups_flagged_as_unsupported(self):
+        self.addCleanup(_fresh_app_modules().stop)
+        from flask import Flask
+        import routes.magnet_routes as mr
+        import routes.models as models
+        app = Flask(__name__)
+        app.register_blueprint(mr.magnet_bp, url_prefix='/magnet')
+        orders = [{'id': 'default', 'name': 'Default (TVDB aired order)'},
+                  {'id': 'tvdb:dvd', 'name': 'DVD Order (TVDB)'},
+                  {'id': 'tvdb:absolute', 'name': 'Absolute Order (TVDB)'},
+                  {'id': 'tmdb_group:5cab8f8e0e0a260f3cca2b07', 'name': 'Seasons (USA) — DVD (TMDB)'}]
+        with mock.patch.object(models, 'is_user_system_enabled', return_value=False), \
+                mock.patch('metadata.metadata.get_imdb_id_if_missing', return_value='tt1409055'), \
+                mock.patch('cli_battery.app.episode_order.list_episode_orders', return_value=orders), \
+                mock.patch('cli_battery.app.tvdb_client.is_available', return_value=True), \
+                mock.patch.object(mr, '_saved_episode_order', return_value='default'), \
+                mock.patch.object(mr, '_library_episode_rows', return_value=0):
+            data = app.test_client().get('/magnet/episode_orders?tmdb_id=61709').get_json()
+        self.assertEqual({o['id']: o['plex_supported'] for o in data['orders']}, {
+            'default': True, 'tvdb:dvd': True, 'tvdb:absolute': True,
+            'tmdb_group:5cab8f8e0e0a260f3cca2b07': False})
+
+
 class DiscoverShowsSavedOrderTests(unittest.TestCase):
     """A show set to DVD order on its page is shown in that order on Discover."""
 

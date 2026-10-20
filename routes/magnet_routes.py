@@ -315,15 +315,20 @@ def episode_orders():
     try:
         from metadata.metadata import get_imdb_id_if_missing
         from cli_battery.app.episode_order import list_episode_orders
+        from utilities.episode_order_change import _plex_ordering_for
         imdb_id = get_imdb_id_if_missing({'tmdb_id': int(tmdb_id), 'media_type': 'show'})
         if not imdb_id:
             return jsonify({'success': False, 'error': 'No IMDb ID for this show'}), 404
+        orders = list_episode_orders(imdb_id, tmdb_id)
+        for order in orders:
+            # Plex can follow TVDB's aired/DVD/absolute orders, not TMDB episode groups
+            order['plex_supported'] = _plex_ordering_for(order['id']) is not None
         return jsonify({
             'success': True,
             'imdb_id': imdb_id,
             'current': _saved_episode_order(imdb_id),
             'library_episodes': _library_episode_rows(imdb_id),
-            'orders': list_episode_orders(imdb_id, tmdb_id),
+            'orders': orders,
         })
     except Exception as e:
         logging.error(f"Listing episode orders for TMDB {tmdb_id} failed: {e}", exc_info=True)

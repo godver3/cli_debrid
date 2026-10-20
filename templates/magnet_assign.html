@@ -496,6 +496,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const orderHint = tvShowSelection.querySelector('.episode-order-hint');
         const orderInput = form.querySelector('.episode-order-input');
         let ordersLoaded = false;
+        const orderHintText = orderHint.textContent;
+        const orderPlexSupported = {};
 
         async function loadEpisodeOrders() {
             if (ordersLoaded) return;
@@ -510,6 +512,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 loading.remove();
                 if (!data.success) throw new Error(data.error || 'Could not list episode orders');
                 (data.orders || []).forEach(order => {
+                    orderPlexSupported[order.id] = order.plex_supported;
                     const option = document.createElement('option');
                     option.value = order.id;
                     option.textContent = order.id === data.current ? `${order.name} — current` : order.name;
@@ -531,6 +534,11 @@ document.addEventListener('DOMContentLoaded', function() {
         orderSelect.addEventListener('mousedown', loadEpisodeOrders);
         orderSelect.addEventListener('change', function() {
             orderInput.value = this.value;
+            // Same warning as Show options in the library
+            orderHint.textContent = orderPlexSupported[this.value] === false
+                ? "Plex has no matching episode ordering for this order. Once the show is in Plex, set its ordering there by hand if its episode numbers don't line up."
+                : orderHintText;
+            orderHint.style.color = orderPlexSupported[this.value] === false ? '#f0a14a' : '';
             hideMagnetFields();
             loadSeasonData(this.value).then(() => updateSelectionFields(selectionType.value));
         });

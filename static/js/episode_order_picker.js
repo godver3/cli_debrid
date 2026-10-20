@@ -25,10 +25,19 @@
         const hint = el('div', 'episode-order-hint');
         hint.style.cssText = 'font-size:11px;opacity:0.65;margin-top:6px;line-height:1.4;';
         hint.textContent = 'How the show is numbered when searched, matched and named — e.g. DVD order. Seasons above follow it.';
-        wrap.append(divider, label, select, hint);
+        // Same warning as Show options in the library
+        const plexWarning = el('div', 'episode-order-plex-warning');
+        plexWarning.style.cssText = 'display:none;font-size:11px;color:#f0a14a;margin-top:6px;line-height:1.4;';
+        plexWarning.textContent = "Plex has no matching episode ordering for this order. Once the show is in Plex, " +
+            "set its ordering there by hand if its episode numbers don't line up.";
+        wrap.append(divider, label, select, hint, plexWarning);
         container.appendChild(wrap);
 
         let current = 'default';
+        const plexSupported = {};
+        const updatePlexWarning = () => {
+            plexWarning.style.display = plexSupported[select.value] === false ? '' : 'none';
+        };
 
         (async () => {
             try {
@@ -41,6 +50,7 @@
                 if (!data.success || !data.orders || data.orders.length < 2) return;
                 current = data.current || 'default';
                 data.orders.forEach(order => {
+                    plexSupported[order.id] = order.plex_supported;
                     const option = el('option', null, order.id === current ? `${order.name} — current` : order.name);
                     option.value = order.id;
                     if (order.id === current) option.selected = true;
@@ -51,12 +61,16 @@
                     hint.textContent = `Already in your library (${data.library_episodes} episodes) in this order. Change it from the show page (Show options).`;
                 }
                 wrap.style.display = '';
+                updatePlexWarning();
             } catch (error) {
                 console.error('Error loading episode orders:', error);
             }
         })();
 
-        select.addEventListener('change', () => onChange && onChange(select.value));
+        select.addEventListener('change', () => {
+            updatePlexWarning();
+            if (onChange) onChange(select.value);
+        });
 
         return {
             value() {
