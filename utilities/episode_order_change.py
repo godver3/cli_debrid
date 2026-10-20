@@ -25,10 +25,15 @@ from utilities.settings import get_setting
 # Rows in these states without a file are only a request for an episode:
 # safe to drop when the episode is known not to exist in the new order.
 REMOVABLE_STATES = ('Wanted', 'Unreleased', 'Sleeping', 'Blacklisted', 'Scraping')
-# Plex's per-show ordering values for orders it can express
+# Plex's per-show ordering for orders it can express. The value names depend
+# on the Plex agent (current: tvdbAiring/tvdbDvd/tvdbAbsolute/tmdbAiring,
+# legacy: aired/dvd/absolute); the show's own preference list says which.
 PLEX_SHOW_ORDERING = {
-    'tvdb:official': 'aired', 'tvdb:dvd': 'dvd', 'tvdb:absolute': 'absolute',
+    'tvdb:official': ['tvdbAiring', 'aired'],
+    'tvdb:dvd': ['tvdbDvd', 'dvd'],
+    'tvdb:absolute': ['tvdbAbsolute', 'absolute'],
 }
+TMDB_DEFAULT_ORDERING = ['tmdbAiring']
 
 
 def _show_rows(imdb_id: str) -> List[Dict[str, Any]]:
@@ -47,11 +52,21 @@ def _effective(order: Optional[str]) -> str:
     return DEFAULT if is_default_order(order) else order
 
 
-def _plex_ordering_for(order: str) -> Optional[str]:
+def _plex_ordering_for(order: str) -> Optional[List[str]]:
+    """Candidate Plex showOrdering values for an order, or None if Plex has none."""
     from cli_battery.app import tvdb_client
     if order == 'default':
-        return 'aired' if tvdb_client.is_available() else 'tmdbAiring'
+        return PLEX_SHOW_ORDERING['tvdb:official'] if tvdb_client.is_available() else TMDB_DEFAULT_ORDERING
     return PLEX_SHOW_ORDERING.get(order)
+
+
+def plex_ordering_value(show, candidates: List[str]) -> Optional[str]:
+    """The first candidate this show's Plex agent accepts (None if none does)."""
+    for pref in show.preferences():
+        if pref.id == 'showOrdering':
+            allowed = pref.enumValues or {}
+            return next((c for c in candidates if c in allowed), None)
+    return candidates[0] if candidates else None
 
 
 def preview_order_change(imdb_id: str, new_order: Optional[str]) -> Dict[str, Any]:
@@ -216,7 +231,7 @@ def _plex_server():
     return plexapi.server.PlexServer(url.rstrip('/'), token, timeout=30)
 
 
-def sync_plex_ordering(imdb_id: str, ordering: str, rating_keys: List[str]) -> str:
+def sync_plex_ordering(imdb_id: str, candidates: List[str], rating_keys: List[str]) -> str:
     """Set the show's episode ordering in Plex and refresh it. Returns a note."""
     try:
         plex = _plex_server()
@@ -242,6 +257,9 @@ def sync_plex_ordering(imdb_id: str, ordering: str, rating_keys: List[str]) -> s
                     continue
         if show is None:
             return 'Show not found in Plex; set its episode ordering there by hand'
+        ordering = plex_ordering_value(show, candidates)
+        if not ordering:
+            return f"Plex doesn't offer this ordering for '{show.title}' ({', '.join(candidates)}); set it there by hand"
         show.editAdvanced(showOrdering=ordering)
         show.refresh()
         logging.info(f"[EpisodeOrder] Plex '{show.title}' episode ordering set to {ordering}")

@@ -234,7 +234,7 @@ class PreviewOrderChangeTests(unittest.TestCase):
         self.assertEqual([u['id'] for u in p['unmappable']], [5])
         # Row 5 stays at S02E01 [2160p] while row 3 moves to S02E01 [2160p]
         self.assertEqual(p['conflicts'], [{'version': '2160p', 'season': 2, 'episode': 1, 'row_ids': [3, 5]}])
-        self.assertEqual(p['plex_ordering'], 'dvd')
+        self.assertEqual(p['plex_ordering'], ['tvdbDvd', 'dvd'])
 
     def test_same_order_rejected(self):
         self.assertFalse(self._preview([], order='tvdb:dvd', current='tvdb:dvd')['success'])
@@ -242,7 +242,17 @@ class PreviewOrderChangeTests(unittest.TestCase):
 
     def test_order_without_plex_equivalent(self):
         self.assertIsNone(self.oc._plex_ordering_for('tmdb_group:abc'))
-        self.assertEqual(self.oc._plex_ordering_for('tvdb:absolute'), 'absolute')
+        self.assertEqual(self.oc._plex_ordering_for('tvdb:absolute'), ['tvdbAbsolute', 'absolute'])
+
+    def test_plex_value_follows_the_agent(self):
+        def show(enum):
+            pref = mock.Mock(id='showOrdering', enumValues=enum)
+            return mock.Mock(preferences=mock.Mock(return_value=[pref]))
+        current = show({'': 'Library default', 'tvdbAiring': 'a', 'tvdbDvd': 'b', 'tvdbAbsolute': 'c', 'tmdbAiring': 'd'})
+        legacy = show({'': 'Library default', 'aired': 'a', 'dvd': 'b', 'absolute': 'c'})
+        self.assertEqual(self.oc.plex_ordering_value(current, ['tvdbDvd', 'dvd']), 'tvdbDvd')
+        self.assertEqual(self.oc.plex_ordering_value(legacy, ['tvdbDvd', 'dvd']), 'dvd')
+        self.assertIsNone(self.oc.plex_ordering_value(legacy, ['tmdbAiring']))
 
 
 if __name__ == '__main__':
