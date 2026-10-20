@@ -568,6 +568,7 @@ class MediaMatcher:
                         # Pattern 4: Check for padded absolute episode formats (E001, E0001, etc.)
                         else:
                             # Determine padding for absolute number (same logic as convert_anime_episode_format)
+                            season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
                             total_show_episodes = sum(season_episode_counts.values()) if season_episode_counts else 0
                             padding = 4 if total_show_episodes > 999 else 3
                             
@@ -726,6 +727,7 @@ class MediaMatcher:
                                 # Pattern 4: Check for padded absolute episode formats (E001, E0001, etc.)
                                 else:
                                     # Determine padding for absolute number (same logic as convert_anime_episode_format)
+                                    season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
                                     total_show_episodes = sum(season_episode_counts.values()) if season_episode_counts else 0
                                     padding = 4 if total_show_episodes > 999 else 3
                                     

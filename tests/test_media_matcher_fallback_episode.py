@@ -139,3 +139,22 @@ class IndexablePrefixTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PaddedAbsoluteMatchTests(unittest.TestCase):
+    """Anime S02E01 matched by a padded absolute number ("E099") in a file name.
+
+    This path ("Pattern 4" in _check_match) once referenced an unassigned
+    variable; the NameError was swallowed by the surrounding try, so padded
+    absolute names silently never matched.
+    """
+
+    def test_padded_absolute_in_filename(self):
+        m = mm.MediaMatcher()
+        parsed_file = {'path': '/Show E099 [1080p].mkv',
+                       'parsed_info': {'seasons': [], 'episodes': [], 'original_filename': 'Show E099 [1080p].mkv',
+                                       'is_anime_special_content': False}}
+        item = {'type': 'episode', 'title': 'Show', 'season_number': 2, 'episode_number': 1,
+                'genres': ['anime'], 'tmdb_id': '1'}
+        with mock.patch.object(m, '_get_season_episode_counts_cached', return_value={1: 98, 2: 61}):
+            self.assertTrue(m._check_match(parsed_file, item, use_relaxed_matching=True))
