@@ -16,7 +16,7 @@ import logging
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from scraper.functions.anime_utils import absolute_from_counts
+from scraper.functions.anime_utils import absolute_from_counts, explicit_absolute_numbers
 
 
 def absolute_numbers(seasons: Optional[Dict[Any, Any]]) -> Dict[Tuple[int, int], List[int]]:
@@ -58,6 +58,27 @@ def absolute_numbers(seasons: Optional[Dict[Any, Any]]) -> Dict[Tuple[int, int],
             if numbers:
                 result[(s_num, e_num)] = list(dict.fromkeys(numbers))
     return result
+
+
+def file_explicit_absolute(parsed: Dict[str, Any], filename: Optional[str],
+                           seasons: Optional[Dict[Any, Any]] = None) -> List[int]:
+    """Absolute numbers a file states next to its own season ("S13E01 (0422)").
+
+    seasons is the show's season data, so a number inside the named season
+    counts that season (see explicit_absolute_numbers)."""
+    counts = {}
+    for s_num, s_data in (seasons or {}).items():
+        try:
+            counts[int(s_num)] = len((s_data or {}).get('episodes') or {}) if isinstance(s_data, dict) else 0
+        except (TypeError, ValueError):
+            continue
+    return explicit_absolute_numbers(filename or '', _ints(parsed.get('seasons')), _ints(parsed.get('episodes')),
+                                     counts or None)
+
+
+def explicit_absolute_conflicts(item_numbers: Optional[List[int]], file_numbers: List[int]) -> bool:
+    """True when a file's stated absolute number is another episode's."""
+    return bool(item_numbers and file_numbers and not set(item_numbers) & set(file_numbers))
 
 
 def _ints(values: Iterable[Any]) -> List[int]:
@@ -116,11 +137,17 @@ class _ShowNumbering:
             logging.info(f"[Absolute] Absolute {sorted(set(numbers))} could be any of {sorted(positions)}; not guessing")
         return None
 
-    def file_positions(self, parsed: Dict[str, Any]) -> Set[Tuple[int, int]]:
-        """The show's (season, episode) a parsed file name stands for."""
+    def file_positions(self, parsed: Dict[str, Any], explicit_absolute: Optional[List[int]] = None) -> Set[Tuple[int, int]]:
+        """The show's (season, episode) a parsed file name stands for.
+
+        explicit_absolute: absolute numbers the name states next to its own
+        season ("S13E01 (0422)"); they decide over the name's S/E."""
         seasons = _ints(parsed.get('seasons'))
         episodes = _ints(parsed.get('episodes'))
         positions: Set[Tuple[int, int]] = set()
+        if explicit_absolute:
+            pos = self._by_number(explicit_absolute)
+            return {pos} if pos else positions
         if not episodes:
             return positions
         if not seasons:
@@ -178,7 +205,9 @@ def match_absolute_files(target_items: List[Dict[str, Any]],
     for f in parsed_files:
         if f.get('used'):
             continue
-        positions = numbering.file_positions(f.get('parsed') or {}) & set(items_by_pos)
+        explicit = file_explicit_absolute(f.get('parsed') or {}, (f.get('original') or {}).get('filename'),
+                                          show_seasons)
+        positions = numbering.file_positions(f.get('parsed') or {}, explicit) & set(items_by_pos)
         if len(positions) == 1:  # multi-episode files are left to the user
             files_by_pos[next(iter(positions))].append(f)
 

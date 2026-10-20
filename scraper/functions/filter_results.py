@@ -9,7 +9,8 @@ from scraper.functions.file_processing import compare_resolutions, parse_size, c
 from scraper.functions.other_functions import smart_search
 from scraper.functions.adult_terms import adult_terms
 from scraper.functions.common import *
-from scraper.functions.anime_utils import absolute_from_counts, full_season_counts, seasons_in_absolute_batch
+from scraper.functions.anime_utils import (absolute_from_counts, explicit_absolute_numbers,
+                                        full_season_counts, seasons_in_absolute_batch)
 from datetime import datetime, timezone
 # --- Import DirectAPI if type hinting is desired, ensure it's available in the execution path ---
 # from cli_battery.app.direct_api import DirectAPI # Or adjust path as needed
@@ -1150,17 +1151,53 @@ def filter_results(
                         # logging.debug("Complete pack detected but season_episode_counts is empty. Setting seasons/episodes to empty.")
                     result['parsed_info']['season_episode_info'] = season_episode_info
                 
+                # Absolute numbers the title states next to its own season ("Season 13
+                # [422-458]", "S13E01 (0422)"). The releaser's season may match none of
+                # the show's orders; the absolute numbers decide instead.
+                explicit_abs = []
+                if is_anime and season is not None:
+                    explicit_abs = explicit_absolute_numbers(
+                        original_title, parsed_info.get('seasons'), parsed_info.get('episodes'))
+                    if explicit_abs:
+                        if _absolute_season_counts is None:
+                            _absolute_season_counts = full_season_counts(imdb_id, season_episode_counts)
+                        explicit_abs = explicit_absolute_numbers(
+                            original_title, parsed_info.get('seasons'), parsed_info.get('episodes'),
+                            _absolute_season_counts)
+
                 if multi:
                     #logging.debug(f"Multi-episode mode: season={season}, season_pack={season_episode_info.get('season_pack')}, seasons={season_episode_info.get('seasons')}")
 
                     episodes = season_episode_info.get('episodes', [])
+
+                    if len(explicit_abs) > 1:
+                        covered = seasons_in_absolute_batch(explicit_abs, _absolute_season_counts, imdb_id)
+                        if season not in covered:
+                            result['filter_reason'] = (f"Absolute episodes {explicit_abs[0]}-{explicit_abs[-1]} "
+                                                       f"don't hold all of season {season}")
+                            logging.info(f"Rejected: absolute episodes {explicit_abs[0]}-{explicit_abs[-1]} don't hold "
+                                         f"all of season {season} (they hold {covered or 'no whole season'}) "
+                                         f"for '{original_title}' (Size: {result['size']:.2f}GB)")
+                            continue
+                        season_episode_info = dict(
+                            season_episode_info,
+                            season_pack=','.join(str(s) for s in covered),
+                            seasons=covered,
+                            episodes=list(range(1, _absolute_season_counts[season] + 1)),
+                            absolute_batch=True,
+                            batch_episode_count=len(explicit_abs),
+                        )
+                        result['parsed_info']['season_episode_info'] = season_episode_info
+                        episodes = season_episode_info['episodes']
+                        logging.info(f"Absolute episodes {explicit_abs[0]}-{explicit_abs[-1]} in '{original_title}' "
+                                     f"hold season(s) {covered}")
 
                     # An anime batch numbered by absolute episode was rejected for any later
                     # season: with no season in the name ("[Erai-raws] Bleach - 001 ~ 366
                     # [BATCH]") it was read as season 1, and with one ("Bleach S13 Ep.
                     # 230-265") it lacked episode 1. Count the seasons it really holds.
                     named_seasons = parsed_info.get('seasons') or []
-                    if (is_anime and season and season > 1 and len(episodes) > 1
+                    if (not explicit_abs and is_anime and season and season > 1 and len(episodes) > 1
                             and named_seasons in ([], [season])
                             and season_episode_info.get('season_pack') != 'Complete'):
                         if _absolute_season_counts is None:
@@ -1292,6 +1329,18 @@ def filter_results(
                                 continue
 
                     #logging.debug("✓ Passed multi-episode checks")
+                elif explicit_abs and result.get('target_abs_episode'):
+                    # Single episode by its absolute number, whatever season the title names
+                    target_abs = result['target_abs_episode']
+                    if target_abs not in explicit_abs:
+                        shown = (f"{explicit_abs[0]}-{explicit_abs[-1]}" if len(explicit_abs) > 1
+                                 else str(explicit_abs[0]))
+                        result['filter_reason'] = f"Absolute episode mismatch: needed {target_abs}, title has {shown}"
+                        logging.info(f"Rejected: absolute episode {target_abs} not in {shown} for "
+                                     f"'{original_title}' (Size: {result['size']:.2f}GB)")
+                        continue
+                    logging.info(f"Absolute episode {target_abs} matched in '{original_title}' "
+                                 f"(S{season}E{episode} in the show's order)")
                 else: # Single episode mode
                     #logging.debug(f"Single episode mode: S{season}E{episode}")
                     

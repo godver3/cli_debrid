@@ -260,6 +260,65 @@ def seasons_in_absolute_batch(episodes, season_counts: Dict[int, int], imdb_id: 
     return covered
 
 
+# A bracketed number or range next to a season: "S13E01 (0422)", "Season 13 [422-458]"
+_EXPLICIT_ABS_RANGE = re.compile(r'[(\[]\s*(\d{2,4})\s*(?:-|~|to)\s*(\d{2,4})\s*[)\]]', re.IGNORECASE)
+_EXPLICIT_ABS_SINGLE = re.compile(r'[(\[]\s*(\d{2,4})\s*[)\]]')
+_NAMED_SEASON = re.compile(r'(?<![a-z0-9])(?:s\d{1,2}(?![0-9])|season\s*\d{1,2}(?![0-9]))', re.IGNORECASE)
+_RESOLUTIONS = {360, 480, 540, 576, 720, 1080, 1440, 2160, 4320}
+
+
+def _plausible_absolute(text: str) -> bool:
+    n = int(text)
+    if n in _RESOLUTIONS:
+        return False
+    # A year, unless zero-padded ("(0422)")
+    return not (len(text) == 4 and not text.startswith('0') and 1950 <= n <= 2099)
+
+
+def explicit_absolute_numbers(name: str, seasons=None, episodes=None,
+                              season_counts: Optional[Dict[int, int]] = None) -> List[int]:
+    """Absolute episode numbers a release name states next to its own season.
+
+    Some releases carry both numberings: "One Piece S13E01 (0422)" or a pack
+    "One Piece Season 13 - Impel Down [422-458]". The season there is the
+    releaser's own split, which often matches none of the show's orders, while
+    the absolute number means the same episode in every order. Names with no
+    season are left alone: their number already is the absolute one.
+
+    Not taken as absolute: a number no larger than the name's own episode
+    ("S02E05 (05)"), a range starting at 1 ("S02 [01-12]" counts the season),
+    years and resolutions. With season_counts (the show's {season: episodes}),
+    numbers that fit inside the named season ("S03 Part 2 [13-22]" for a
+    22-episode season 3) count that season, not the show.
+    """
+    if not name or not _NAMED_SEASON.search(name):
+        return []
+    seasons = [s for s in (seasons or []) if isinstance(s, int)]
+    if not seasons or max(seasons) < 1:
+        return []
+    episodes = [e for e in (episodes or []) if isinstance(e, int)]
+    season_size = max((season_counts or {}).get(s, 0) or 0 for s in seasons)
+
+    def beyond_season(numbers: List[int]) -> bool:
+        return not season_counts or max(numbers) > season_size
+
+    for match in _EXPLICIT_ABS_RANGE.finditer(name):
+        lo_text, hi_text = match.groups()
+        if not (_plausible_absolute(lo_text) and _plausible_absolute(hi_text)):
+            continue
+        lo, hi = int(lo_text), int(hi_text)
+        if 1 < lo < hi and hi - lo < 2000 and beyond_season([hi]):
+            return list(range(lo, hi + 1))
+    # A single number only counts next to an episode it is larger than
+    if len(episodes) != 1:
+        return []
+    for match in _EXPLICIT_ABS_SINGLE.finditer(name):
+        text = match.group(1)
+        if _plausible_absolute(text) and int(text) > episodes[0] and beyond_season([int(text)]):
+            return [int(text)]
+    return []
+
+
 def detect_absolute_numbering(title: str, season: int, episode: int, tmdb_id: Optional[str] = None) -> Tuple[bool, Optional[int]]:
     """
     Detect if an anime uses absolute episode numbering.

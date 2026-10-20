@@ -1060,6 +1060,18 @@ def prepare_manual_assignment():
 
         assignment_count = 0
 
+        # Absolute numbers files state next to their own season ("S13E01 (0422)")
+        # outrank the S/E: a file naming another episode's absolute isn't this one
+        from utilities.manual_assign_episodes import (absolute_numbers, explicit_absolute_conflicts,
+                                                      file_explicit_absolute)
+        show_absolute_numbers = {}
+        if media_type in ['tv', 'show']:
+            for f_info in parsed_video_files:
+                f_info['explicit_absolute'] = file_explicit_absolute(
+                    f_info['parsed'], f_info['original'].get('filename'), metadata.get('seasons'))
+            if any(f_info['explicit_absolute'] for f_info in parsed_video_files):
+                show_absolute_numbers = absolute_numbers(metadata.get('seasons'))
+
         # --- Phase 1: S/E Matching and Movie Matching ---
         logging.info("Phase 1: Attempting S/E and Movie matching...")
         _media_matcher = MediaMatcher()
@@ -1122,7 +1134,10 @@ def prepare_manual_assignment():
                     continue
 
                 # Iterate through UNUSED parsed files
+                item_absolute_numbers = show_absolute_numbers.get((item_season, item_episode))
                 for file_info in [f for f in parsed_video_files if not f['used']]:
+                    if explicit_absolute_conflicts(item_absolute_numbers, file_info.get('explicit_absolute')):
+                        continue
                     parsed = file_info['parsed']
                     match = False
                     parsed_seasons = parsed.get('seasons', [])
