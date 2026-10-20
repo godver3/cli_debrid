@@ -72,6 +72,18 @@ def extract_year_from_title(title: str) -> Optional[int]:
     
     return None
 
+
+def tv_release_year_matches(release_year: int, show_year: Optional[int], season_year: int) -> bool:
+    """Whether a year in a TV release name fits the season being searched.
+
+    Either the show's premiere year, as Sonarr-style names carry it ("JUJUTSU
+    KAISEN (2020) S03E04" for a season that aired in 2026), however late the
+    season aired; or within a year of the season's own air year. A remake or
+    revival has a different premiere year, so it still fails both.
+    """
+    return release_year == show_year or abs(release_year - season_year) <= 1
+
+
 def filter_results(
     results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str,
     season: int, episode: int, multi: bool, version_settings: Dict[str, Any],
@@ -1061,25 +1073,9 @@ def filter_results(
                             try:
                                 # For TV shows, be more lenient with year matching
                                 # Check if any year in the list matches with appropriate tolerance
-                                year_matches = []
-                                for py in parsed_year:
-                                    if str(py).isdigit():
-                                        py_int = int(py)
-                                        year_difference = abs(py_int - target_year)
-                                        
-                                        # If the torrent year matches the original show year exactly, be more lenient
-                                        if py_int == year and target_year != year:
-                                            # Torrent uses original show year, but we have a different season year
-                                            # Allow if the season year is within a reasonable range (e.g., ±5 years)
-                                            max_year_difference = 5  # More lenient for TV shows
-                                            if year_difference <= max_year_difference:
-                                                year_matches.append(py_int)
-                                                logging.info(f"Accepting torrent with original show year ({py_int}) for season {season} (air date: {target_year}) - within {max_year_difference} year tolerance for '{original_title}'")
-                                        else:
-                                            # Standard ±1 year tolerance for other cases
-                                            if year_difference <= 1:
-                                                year_matches.append(py_int)
-                                
+                                year_matches = [int(py) for py in parsed_year
+                                                if str(py).isdigit() and tv_release_year_matches(int(py), year, target_year)]
+
                                 if not year_matches:
                                     result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
                                     logging.info(f"Rejected: TV year list {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
@@ -1107,23 +1103,10 @@ def filter_results(
                                 logging.info(f"  - parsed_year_int == year: {parsed_year_int == year}")
                                 logging.info(f"  - target_year != year: {target_year != year}")
                             
-                            # If the torrent year matches the original show year exactly, be more lenient
-                            if parsed_year_int == year and target_year != year:
-                                # Torrent uses original show year, but we have a different season year
-                                # Allow if the season year is within a reasonable range (e.g., ±5 years)
-                                max_year_difference = 5  # More lenient for TV shows
-                                if year_difference <= max_year_difference:
-                                    logging.info(f"Accepting torrent with original show year ({parsed_year_int}) for season {season} (air date: {target_year}) - within {max_year_difference} year tolerance for '{original_title}'")
-                                else:
-                                    result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year}) - torrent uses original show year but season air date is too far"
-                                    logging.info(f"Rejected: TV year {parsed_year} (original show year) too far from season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                                    continue
-                            else:
-                                # Standard ±1 year tolerance for other cases
-                                if year_difference > 1:
-                                    result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
-                                    logging.info(f"Rejected: TV year {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                                    continue
+                            if not tv_release_year_matches(parsed_year_int, year, target_year):
+                                result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
+                                logging.info(f"Rejected: TV year {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
+                                continue
                         else:
                             # Handle cases where parsed_year is not a list or a valid int/str digit
                             logging.warning(f"Skipping year check due to invalid year format for '{original_title}': {parsed_year}")
