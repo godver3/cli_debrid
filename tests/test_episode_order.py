@@ -254,6 +254,38 @@ class PreviewOrderChangeTests(unittest.TestCase):
         self.assertEqual(self.oc.plex_ordering_value(legacy, ['tvdbDvd', 'dvd']), 'dvd')
         self.assertIsNone(self.oc.plex_ordering_value(legacy, ['tmdbAiring']))
 
+    def _sync(self, refresh_error=None):
+        pref = mock.Mock(id='showOrdering', enumValues={'': 'Library default', 'tvdbAbsolute': 'c'})
+        show = mock.Mock(type='show', title='Dragon Ball Kai', preferences=mock.Mock(return_value=[pref]))
+        show.refresh.side_effect = refresh_error
+        plex = mock.Mock(fetchItem=mock.Mock(return_value=show))
+        with mock.patch.object(self.oc, '_plex_server', return_value=plex):
+            note = self.oc.sync_plex_ordering('tt1409055', ['tvdbAbsolute', 'absolute'], ['112237'])
+        return show, note
+
+    def test_plex_ordering_set_and_refreshed(self):
+        show, note = self._sync()
+        show.editAdvanced.assert_called_once_with(showOrdering='tvdbAbsolute')
+        self.assertIn('and the show refreshed', note)
+
+    def test_slow_plex_refresh_is_not_a_failure(self):
+        # Plex held the refresh open past the 30s read timeout (Dragon Ball Kai)
+        import requests
+        show, note = self._sync(requests.exceptions.ReadTimeout('Read timed out. (read timeout=30)'))
+        show.editAdvanced.assert_called_once_with(showOrdering='tvdbAbsolute')
+        self.assertIn("ordering set to 'tvdbAbsolute'", note)
+        self.assertIn('still refreshing', note)
+        self.assertNotIn('Could not', note)
+
+    def test_failed_ordering_change_still_reported(self):
+        pref = mock.Mock(id='showOrdering', enumValues={'tvdbAbsolute': 'c'})
+        show = mock.Mock(type='show', title='Dragon Ball Kai', preferences=mock.Mock(return_value=[pref]))
+        show.editAdvanced.side_effect = RuntimeError('401 Unauthorized')
+        with mock.patch.object(self.oc, '_plex_server', return_value=mock.Mock(fetchItem=mock.Mock(return_value=show))):
+            note = self.oc.sync_plex_ordering('tt1409055', ['tvdbAbsolute'], ['112237'])
+        self.assertTrue(note.startswith('Could not set the ordering in Plex'))
+        show.refresh.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

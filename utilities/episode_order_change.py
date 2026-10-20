@@ -19,6 +19,8 @@ import logging
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
+import requests
+
 from database.core import get_db_connection
 from utilities.settings import get_setting
 
@@ -261,8 +263,16 @@ def sync_plex_ordering(imdb_id: str, candidates: List[str], rating_keys: List[st
         if not ordering:
             return f"Plex doesn't offer this ordering for '{show.title}' ({', '.join(candidates)}); set it there by hand"
         show.editAdvanced(showOrdering=ordering)
-        show.refresh()
         logging.info(f"[EpisodeOrder] Plex '{show.title}' episode ordering set to {ordering}")
+        # Plex can hold the refresh request open while it re-reads every episode
+        # in the new order (Dragon Ball Kai: over 30s). The ordering is already
+        # saved and the refresh carries on in Plex, so a slow reply isn't a failure.
+        try:
+            show.refresh()
+        except requests.exceptions.Timeout:
+            logging.info(f"[EpisodeOrder] Plex is still refreshing '{show.title}' after the ordering change")
+            return (f"Plex episode ordering set to '{ordering}'; Plex is still refreshing the show "
+                    "and will show the new order within a few minutes")
         return f"Plex episode ordering set to '{ordering}' and the show refreshed"
     except Exception as e:
         logging.error(f"[EpisodeOrder] Setting Plex ordering for {imdb_id} failed: {e}", exc_info=True)
