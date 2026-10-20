@@ -492,9 +492,53 @@ document.addEventListener('DOMContentLoaded', function() {
         const prefillSeasons = (prefillDataElement?.dataset?.prefillSeasons || '').trim();
         const prefillEpisode = (prefillDataElement?.dataset?.prefillEpisode || '').trim();
 
-        async function loadSeasonData() {
+        const orderSelect = tvShowSelection.querySelector('.episode-order-select');
+        const orderHint = tvShowSelection.querySelector('.episode-order-hint');
+        const orderInput = form.querySelector('.episode-order-input');
+        let ordersLoaded = false;
+
+        async function loadEpisodeOrders() {
+            if (ordersLoaded) return;
+            ordersLoaded = true;
+            const loading = document.createElement('option');
+            loading.disabled = true;
+            loading.textContent = 'Loading orders…';
+            orderSelect.appendChild(loading);
             try {
-                const response = await fetch(`{{ url_for('magnet.get_season_data') }}?tmdb_id=${tmdbId}&allow_specials=true`);
+                const response = await fetch(`{{ url_for('magnet.episode_orders') }}?tmdb_id=${tmdbId}`);
+                const data = await response.json();
+                loading.remove();
+                if (!data.success) throw new Error(data.error || 'Could not list episode orders');
+                (data.orders || []).forEach(order => {
+                    const option = document.createElement('option');
+                    option.value = order.id;
+                    option.textContent = order.id === data.current ? `${order.name} — current` : order.name;
+                    orderSelect.appendChild(option);
+                });
+                if (data.library_episodes > 0) {
+                    orderSelect.disabled = true;
+                    orderHint.textContent = `Already in your library (${data.library_episodes} episodes): change its order from the show page.`;
+                }
+            } catch (error) {
+                loading.remove();
+                ordersLoaded = false;
+                console.error('Error loading episode orders:', error);
+                showErrorToast('Failed to load episode orders');
+            }
+        }
+
+        orderSelect.addEventListener('focus', loadEpisodeOrders);
+        orderSelect.addEventListener('mousedown', loadEpisodeOrders);
+        orderSelect.addEventListener('change', function() {
+            orderInput.value = this.value;
+            hideMagnetFields();
+            loadSeasonData(this.value).then(() => updateSelectionFields(selectionType.value));
+        });
+
+        async function loadSeasonData(order = '') {
+            try {
+                const orderParam = order ? `&order=${encodeURIComponent(order)}` : '';
+                const response = await fetch(`{{ url_for('magnet.get_season_data') }}?tmdb_id=${tmdbId}&allow_specials=true${orderParam}`);
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 const data = await response.json();
 
@@ -960,6 +1004,12 @@ function showErrorToast(msg) { maShowToast(msg, 'red'); }
         <div class="ma-divider"></div>
         <div class="ma-show-cols">
           <div class="ma-tv-show-selection ma-tv-section" data-tmdb-id="{{ result.id }}">
+            <div class="ma-section-label">Episode Order</div>
+            <select class="ma-select episode-order-select">
+              <option value="">Show's current order</option>
+            </select>
+            <div class="ma-hint episode-order-hint">For anime packs numbered differently (e.g. absolute). Saved on the show when you assign.</div>
+
             <div class="ma-section-label">Selection Type</div>
             <select class="ma-select selection-type">
               <option value="all">Full Series</option>
@@ -1005,6 +1055,7 @@ function showErrorToast(msg) { maShowToast(msg, 'red'); }
             <input type="hidden" name="selected_seasons" class="selected-seasons-input">
             <input type="hidden" name="season" class="season-input">
             <input type="hidden" name="episode" class="episode-input">
+            <input type="hidden" name="episode_order" class="episode-order-input">
 
             {# Magnet / file section #}
             <div class="ma-magnet-wrap ma-show-magnet-col" style="display:flex;flex-direction:column;gap:8px">

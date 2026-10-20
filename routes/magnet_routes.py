@@ -228,6 +228,108 @@ def get_versions():
     # Return list of version keys
     return jsonify(list(version_terms.keys()))
 
+def _requested_episode_order(raw):
+    """A valid episode order id from the form, or None."""
+    raw = (raw or '').strip()
+    if raw == 'default' or raw.startswith('tvdb:') or raw.startswith('tmdb_group:'):
+        return raw
+    return None
+
+
+def _saved_episode_order(imdb_id):
+    from cli_battery.app.episode_order import show_episode_order
+    return show_episode_order(imdb_id) or 'default'
+
+
+def _library_episode_rows(imdb_id):
+    from database import get_db_connection
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM media_items WHERE imdb_id = ? AND type = 'episode'",
+                           (imdb_id,)).fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
+
+def _order_change_blocked(imdb_id, requested_order):
+    """Why `requested_order` can't be set from here, or None.
+
+    A show already in the library has to switch order from its show page,
+    which moves and renames the existing episodes; here it can only be set
+    before anything is added.
+    """
+    if not requested_order or requested_order == _saved_episode_order(imdb_id):
+        return None
+    rows = _library_episode_rows(imdb_id)
+    if rows:
+        return (f'This show already has {rows} episode(s) in the library in another episode order. '
+                f'Change its order from the show page (Show options) first, then assign.')
+    return None
+
+
+def _seasons_for_order(imdb_id, order):
+    """Seasons/episodes (specials included) in `order`; None if unavailable."""
+    from cli_battery.app.episode_order import fetch_seasons_for_order
+    try:
+        return fetch_seasons_for_order(imdb_id, order)
+    except Exception as e:
+        logging.error(f"Fetching episode order {order} for {imdb_id} failed: {e}", exc_info=True)
+        return None
+
+
+def _save_episode_order(imdb_id, tmdb_id, order):
+    """Set the order on a show that has no library episodes yet."""
+    from database.show_overrides import set_show_override
+    from utilities.episode_order_change import _reset_battery_seasons
+    set_show_override(imdb_id, tmdb_id=tmdb_id, episode_order=None if order == 'default' else order)
+    _reset_battery_seasons(imdb_id)
+    _season_cache.clear()  # season counts cached in the old order
+    logging.info(f"Manual assign: episode order for {imdb_id} set to {order}")
+
+
+def _sync_plex_order_for_new_show(imdb_id, order):
+    """Set Plex's ordering for a show whose order was just picked here. The
+    show is usually not in Plex yet, so this mostly returns a reminder."""
+    try:
+        from utilities.episode_order_change import _plex_ordering_for, sync_plex_ordering
+        candidates = _plex_ordering_for(order)
+        if not candidates:
+            return "Plex has no matching episode ordering; set the show's ordering in Plex by hand."
+        note = sync_plex_ordering(imdb_id, candidates, [])
+        if note.startswith('Show not found in Plex'):
+            return "Once the show appears in Plex, set its episode ordering there to match."
+        return note
+    except Exception as e:
+        logging.warning(f"Plex ordering for {imdb_id} after manual assign failed: {e}")
+        return None
+
+
+@magnet_bp.route('/episode_orders')
+@admin_required
+def episode_orders():
+    """The episode orders a show can use, for the assign page's picker."""
+    tmdb_id = request.args.get('tmdb_id')
+    if not tmdb_id:
+        return jsonify({'success': False, 'error': 'tmdb_id is required'}), 400
+    try:
+        from metadata.metadata import get_imdb_id_if_missing
+        from cli_battery.app.episode_order import list_episode_orders
+        imdb_id = get_imdb_id_if_missing({'tmdb_id': int(tmdb_id), 'media_type': 'show'})
+        if not imdb_id:
+            return jsonify({'success': False, 'error': 'No IMDb ID for this show'}), 404
+        return jsonify({
+            'success': True,
+            'imdb_id': imdb_id,
+            'current': _saved_episode_order(imdb_id),
+            'library_episodes': _library_episode_rows(imdb_id),
+            'orders': list_episode_orders(imdb_id, tmdb_id),
+        })
+    except Exception as e:
+        logging.error(f"Listing episode orders for TMDB {tmdb_id} failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Could not list episode orders'}), 500
+
+
 @magnet_bp.route('/get_season_data')
 def get_season_data():
     """
@@ -237,12 +339,13 @@ def get_season_data():
     tmdb_id = request.args.get('tmdb_id')
     allow_specials_str = request.args.get('allow_specials', 'true').lower()
     allow_specials = allow_specials_str == 'true'
+    order = _requested_episode_order(request.args.get('order'))
 
     if not tmdb_id:
         return jsonify({'error': 'tmdb_id is required'}), 400
 
     # PHASE 1.1: Check cache first
-    cache_key = f"season_data:{tmdb_id}:{allow_specials}"
+    cache_key = f"season_data:{tmdb_id}:{allow_specials}:{order or ''}"
     cached_data = _season_cache.get_by_key(cache_key)
     if cached_data is not None:
         logging.info(f"Season data cache HIT for TMDB ID {tmdb_id} (allow_specials={allow_specials})")
@@ -261,12 +364,26 @@ def get_season_data():
             logging.info(f"Generated dummy IMDb ID: {dummy_imdb_id} for TMDB ID {tmdb_id}")
             imdb_id = dummy_imdb_id
 
+        # An order picked on the page that isn't the show's saved one: list
+        # the seasons as that order numbers them.
+        if order and order != _saved_episode_order(imdb_id):
+            ordered = _seasons_for_order(imdb_id, order)
+            if not ordered:
+                return jsonify({"error": f"Could not fetch the episode list for order {order}"}), 404
+            formatted_seasons = {str(sn): len((sd or {}).get('episodes') or {}) for sn, sd in sorted(ordered.items())
+                                 if allow_specials or sn != 0}
+            _season_cache.set_by_key(cache_key, formatted_seasons)
+            return jsonify(formatted_seasons)
+
         # Now we should have an IMDb ID. Let's try to fetch season data.
         try:
             # First, try to get seasons from the battery, which is faster.
+            # Not just 'battery': a show the battery hasn't stored yet comes back
+            # from its metadata client ('tvdb'/'trakt'), which is just as good and
+            # the Trakt-only fallback below fails without Trakt auth.
             seasons_data, source = DirectAPI.get_show_seasons(imdb_id)
-            if seasons_data and source == 'battery':
-                logging.info(f"Successfully fetched season data from battery for IMDb ID: {imdb_id}")
+            if seasons_data:
+                logging.info(f"Successfully fetched season data from {source} for IMDb ID: {imdb_id}")
                 # Convert battery format to expected object format for frontend
                 formatted_seasons = {}
                 for season_num, season_data in seasons_data.items():
@@ -514,6 +631,7 @@ def prepare_manual_assignment():
     selected_seasons = request.form.get('selected_seasons', '').split(',') if request.form.get('selected_seasons') else []
     season = request.form.get('season')
     episode = request.form.get('episode')
+    requested_order = _requested_episode_order(request.form.get('episode_order')) if media_type in ['tv', 'show'] else None
     
     # Check for torrent file upload
     torrent_file = request.files.get('torrent_file')
@@ -539,6 +657,16 @@ def prepare_manual_assignment():
     if is_nzb_url or is_nzb_file:
         from routes.scraper_routes import _add_nzb_to_usenet
         from usenet import get_usenet_client, reset_usenet_client, get_usenet_provider_display_name
+        if requested_order and tmdb_id:
+            # The season/episode were picked in this order's numbering: save it
+            # on the show first (there's no file-matching step for NZBs).
+            from metadata.metadata import get_imdb_id_if_missing
+            order_imdb_id = get_imdb_id_if_missing({'tmdb_id': int(tmdb_id), 'media_type': 'show'})
+            if order_imdb_id and requested_order != _saved_episode_order(order_imdb_id):
+                blocked = _order_change_blocked(order_imdb_id, requested_order)
+                if blocked:
+                    return jsonify({'success': False, 'error': blocked}), 409
+                _save_episode_order(order_imdb_id, tmdb_id, requested_order)
         try:
             season_num = int(season) if season and season.lower() != 'null' else None
         except (ValueError, TypeError):
@@ -772,6 +900,8 @@ def prepare_manual_assignment():
                 logging.info(f"Created minimal metadata with dummy IMDb ID {dummy_imdb_id} for TMDB ID {tmdb_id} (fallback)")
         
         # Fetch TV show season data if needed
+        alt_seasons_data = None
+        episode_order = None
         if media_type in ['tv', 'show']:
             # Which season numbers this request actually needs covered, so the
             # fallback can trigger not just when Trakt returns nothing at all, but
@@ -792,14 +922,28 @@ def prepare_manual_assignment():
                 return needed_seasons.issubset({int(k) for k in data.keys()})
 
             seasons_data, source = None, None
-            try:
-                seasons_data, source = trakt_client.get_show_seasons_and_episodes(metadata.get('imdb_id'), include_specials=True)
-                logging.debug(f"Fetched seasons data (incl specials) from {source} for {metadata.get('imdb_id')} in prepare_manual_assignment")
-            except Exception as e:
-                # Log but don't necessarily fail, maybe proceed without detailed episode titles
-                logging.error(f"Error fetching season data from Trakt (non-critical): {str(e)}")
+            show_imdb_id = metadata.get('imdb_id')
+            blocked = _order_change_blocked(show_imdb_id, requested_order)
+            if blocked:
+                return jsonify({'success': False, 'error': blocked}), 409
+            episode_order = requested_order or _saved_episode_order(show_imdb_id)
+            if episode_order != 'default':
+                # Number the items the way the chosen order does; the default
+                # order is kept to read packs that use aired numbering.
+                seasons_data = _seasons_for_order(show_imdb_id, episode_order)
+                if not seasons_data:
+                    return jsonify({'success': False, 'error': f'Could not fetch the episode list for episode order {episode_order}.'}), 503
+                alt_seasons_data = _seasons_for_order(show_imdb_id, 'default')
+                source = episode_order
+            else:
+                try:
+                    seasons_data, source = trakt_client.get_show_seasons_and_episodes(show_imdb_id, include_specials=True)
+                    logging.debug(f"Fetched seasons data (incl specials) from {source} for {show_imdb_id} in prepare_manual_assignment")
+                except Exception as e:
+                    # Log but don't necessarily fail, maybe proceed without detailed episode titles
+                    logging.error(f"Error fetching season data from Trakt (non-critical): {str(e)}")
 
-            if not _covers_needed_seasons(seasons_data):
+            if episode_order == 'default' and not _covers_needed_seasons(seasons_data):
                 # Trakt unset/unauthorized/rate-limited, or simply missing the
                 # requested season: fall back to TVDB (or Trakt again via the same
                 # client) through the shared metadata provider used elsewhere in the
@@ -1014,6 +1158,14 @@ def prepare_manual_assignment():
 
         logging.info(f"Phase 1 Complete. Assigned {assignment_count} items based on S/E or Movie logic.")
 
+        # --- Phase 1b: absolute episode numbers (anime packs) ---
+        if media_type in ['tv', 'show']:
+            from utilities.manual_assign_episodes import match_absolute_files
+            absolute_count = match_absolute_files(target_items, parsed_video_files,
+                                                  metadata.get('seasons'), alt_seasons_data)
+            assignment_count += absolute_count
+            logging.info(f"Phase 1b Complete. Assigned {absolute_count} items by absolute episode number.")
+
         # --- Phase 2: Title Matching Fallback (File-Centric) ---
         logging.info("Phase 2: Attempting Title matching for remaining items...")
         phase2_assignment_count = 0
@@ -1113,7 +1265,10 @@ def prepare_manual_assignment():
                 'torrent_filename': torrent_filename,
                 'torrent_id': torrent_id,
                 'version': version,
-                'is_torrent_file': torrent_file is not None
+                'is_torrent_file': torrent_file is not None,
+                # Saved on the show when the assignment is confirmed
+                'episode_order': requested_order if requested_order and episode_order
+                                 and requested_order != _saved_episode_order(metadata.get('imdb_id')) else '',
             }
         return jsonify({'success': True, 'redirect_url': url_for('magnet.show_manual_assignment', token=token)})
 
@@ -1154,9 +1309,29 @@ def confirm_manual_assignment():
         initial_torrent_id = assignments.pop('torrent_id', [None])[0]
         version = assignments.pop('version', [None])[0]
         is_torrent_file = assignments.pop('is_torrent_file', [False])[0]
+        requested_order = _requested_episode_order(assignments.pop('episode_order', [''])[0])
 
         if not all([torrent_filename, initial_torrent_id, version]):
              return jsonify({'success': False, 'error': 'Missing essential torrent information in submission.'}), 400
+
+        # An episode order picked on the assign page: save it on the show before
+        # any episode is added, so the items, the battery's seasons and later
+        # scrapes all use it. Only allowed while the show has no episodes yet.
+        order_imdb_id = None
+        order_plex_note = None
+        if requested_order:
+            order_tmdb_id = next((k.split('_')[1] for k in assignments if k.startswith('ep_') and len(k.split('_')) >= 3), None)
+            if order_tmdb_id:
+                from metadata.metadata import get_imdb_id_if_missing
+                order_imdb_id = get_imdb_id_if_missing({'tmdb_id': int(order_tmdb_id), 'media_type': 'show'})
+            if order_imdb_id:
+                blocked = _order_change_blocked(order_imdb_id, requested_order)
+                if blocked:
+                    return jsonify({'success': False, 'error': blocked}), 409
+                if requested_order != _saved_episode_order(order_imdb_id):
+                    _save_episode_order(order_imdb_id, order_tmdb_id, requested_order)
+                else:
+                    order_imdb_id = None
 
         # Extract torrent hash
         torrent_hash = None
@@ -1265,6 +1440,7 @@ def confirm_manual_assignment():
         added_items_count = 0
         failed_items_count = 0
         processed_items_info = [] # To store info for notifications
+        _ordered_seasons_cache = {}  # imdb_id -> seasons in the show's episode order
         successfully_added_items = [] # Store IDs of added items
         representative_tracking_item_data = None # Store data for tracking update
 
@@ -1374,6 +1550,18 @@ def confirm_manual_assignment():
                          logging.error(f"Error converting parsed season/episode to int from '{se_part}' in key '{item_key}'", exc_info=True)
                          failed_items_count += 1
                          continue
+
+                    # A non-default episode order: titles and air dates come
+                    # from that order's episode list, never Trakt's numbering.
+                    show_order = _saved_episode_order(metadata.get('imdb_id'))
+                    if show_order != 'default':
+                        ordered = _ordered_seasons_cache.get(metadata.get('imdb_id'))
+                        if ordered is None:
+                            ordered = _seasons_for_order(metadata.get('imdb_id'), show_order) or {}
+                            _ordered_seasons_cache[metadata.get('imdb_id')] = ordered
+                        if ordered:
+                            metadata['seasons'] = {sn: {'episodes': si.get('episodes', {}), 'episode_count': len(si.get('episodes', {}))}
+                                                   for sn, si in ordered.items()}
 
                     # Re-fetch season data if necessary — also re-fetch (rather than
                     # trust an existing but incomplete 'seasons' dict) when the
@@ -1504,10 +1692,17 @@ def confirm_manual_assignment():
             except Exception as notify_error:
                 logging.error(f"Failed to send notifications after manual assignment: {notify_error}")
 
+        if order_imdb_id and added_items_count > 0:
+            order_plex_note = _sync_plex_order_for_new_show(order_imdb_id, requested_order)
+
         if added_items_count > 0:
             message = f'Successfully assigned {added_items_count} item(s).' 
             if failed_items_count > 0:
                  message += f' Failed to assign {failed_items_count} item(s).' 
+            if order_imdb_id:
+                message += ' Episode order saved on the show.'
+                if order_plex_note:
+                    message += f' {order_plex_note}'
             return jsonify({'success': True, 'message': message, 'added_count': added_items_count, 'failed_count': failed_items_count})
         elif failed_items_count > 0:
             return jsonify({'success': False, 'error': f'Failed to assign {failed_items_count} item(s). Check logs.', 'added_count': 0, 'failed_count': failed_items_count}), 500
