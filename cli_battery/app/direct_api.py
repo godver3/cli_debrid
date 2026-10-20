@@ -368,9 +368,22 @@ def _fetch_and_persist_show(imdb_id: str, session: SqlAlchemySession) -> Optiona
         logger.debug(f"TMDB alias enrichment failed for {imdb_id}: {_e}")
 
     show_data.setdefault('type', 'show')
-    show_data['seasons'] = seasons_in_show_order(imdb_id, show_data.get('seasons'))
+    default_seasons = show_data.get('seasons')
+    show_data['seasons'] = seasons_in_show_order(imdb_id, default_seasons)
+    # The show's chosen episode order couldn't be fetched: store no seasons
+    order_unavailable = bool(default_seasons) and show_data['seasons'] is None
+    previous_fetch = (session.query(Item.last_trakt_fetch).filter_by(imdb_id=imdb_id).scalar()
+                      if order_unavailable else None)
     _ensure_plex_guids_in_data(imdb_id, show_data, 'show')
     _persist_item(imdb_id, dict(show_data), session)
+    if order_unavailable:
+        # Leave the show as stale as it was, so the next read retries the order,
+        # and hand back the seasons already stored (empty for a new show).
+        session.query(Item).filter_by(imdb_id=imdb_id).update({'last_trakt_fetch': previous_fetch})
+        item = session.query(Item).options(
+            selectinload(Item.seasons).selectinload(Season.episodes),
+        ).filter_by(imdb_id=imdb_id).first()
+        show_data['seasons'] = _format_seasons_from_orm(item.seasons) if item else {}
     return show_data
 
 

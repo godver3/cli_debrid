@@ -176,10 +176,16 @@ class SeasonsInShowOrderTests(unittest.TestCase):
             self.assertEqual(self.eo.seasons_in_show_order('tt1', {1: 'default'}), {1: 'dvd'})
             fetch.assert_called_once_with('tt1', 'tvdb:dvd')
 
-    def test_fetch_failure_keeps_default(self):
+    def test_fetch_failure_stores_nothing(self):
+        # Default seasons would write aired numbering over the show's chosen order
         with mock.patch.object(self.eo, 'show_episode_order', return_value='tmdb_group:x'), \
                 mock.patch.object(self.eo, 'fetch_seasons_for_order', side_effect=RuntimeError('down')):
-            self.assertEqual(self.eo.seasons_in_show_order('tt1', {1: 'default'}), {1: 'default'})
+            self.assertIsNone(self.eo.seasons_in_show_order('tt1', {1: 'default'}))
+
+    def test_empty_order_stores_nothing(self):
+        with mock.patch.object(self.eo, 'show_episode_order', return_value='tvdb:dvd'), \
+                mock.patch.object(self.eo, 'fetch_seasons_for_order', return_value=None):
+            self.assertIsNone(self.eo.seasons_in_show_order('tt1', {1: 'default'}))
 
     def test_default_aliases(self):
         for order in (None, '', 'default', 'tvdb:official', 'tvdb:default'):

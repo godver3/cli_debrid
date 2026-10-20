@@ -59,7 +59,12 @@ def fetch_seasons_for_order(imdb_id: str, order: Optional[str]) -> Optional[dict
 
 def seasons_in_show_order(imdb_id: str, seasons: Optional[dict]) -> Optional[dict]:
     """`seasons` (fetched in the default order) replaced by the show's chosen
-    order, if it has one. On any failure the default seasons are kept."""
+    order, if it has one.
+
+    None when the chosen order can't be fetched: callers then store nothing
+    and keep the seasons they already have. Storing the default seasons would
+    write aired numbering over a show kept in DVD/absolute/group numbering.
+    """
     order = show_episode_order(imdb_id)
     if not order:
         return seasons
@@ -69,8 +74,8 @@ def seasons_in_show_order(imdb_id: str, seasons: Optional[dict]) -> Optional[dic
         logger.error(f"Fetching episode order {order} for {imdb_id} failed: {e}", exc_info=True)
         ordered = None
     if not ordered:
-        logger.warning(f"Episode order {order} unavailable for {imdb_id}; keeping the default order this time")
-        return seasons
+        logger.warning(f"Episode order {order} unavailable for {imdb_id}; keeping the stored seasons this time")
+        return None
     logger.info(f"Using episode order {order} for {imdb_id} ({len(ordered)} seasons)")
     return ordered
 
