@@ -9307,9 +9307,13 @@ function showScrapeVersionModal(content) {
     modal.style.display = 'flex';
 }
 
+// Episode Order picker of the open request dialog (TV only)
+let versionModalOrderPicker = null;
+
 // Show version selection modal for requests
 function showVersionModal(content) {
     selectedContent = content;
+    versionModalOrderPicker = null;
     const modal = document.getElementById('versionModal');
     const versionCheckboxes = document.getElementById('versionCheckboxes');
 
@@ -9350,13 +9354,14 @@ function showVersionModal(content) {
         seasonSelectionContainer.style.display = 'none';
         versionCheckboxes.appendChild(seasonSelectionContainer);
 
+        let pickedOrder = null;
         const toggleTypeRow = (selectedRow) => {
             [wholeRow, seasonsRow].forEach(r => r.classList.remove('selected'));
             selectedRow.classList.add('selected');
             if (selectedRow === seasonsRow) {
                 seasonSelectionContainer.style.display = 'block';
                 if (!seasonSelectionContainer.dataset.loaded) {
-                    fetchShowSeasons(content.id);
+                    fetchShowSeasons(content.id, pickedOrder);
                 }
             } else {
                 seasonSelectionContainer.style.display = 'none';
@@ -9364,6 +9369,15 @@ function showVersionModal(content) {
         };
         wholeRow.addEventListener('click', () => toggleTypeRow(wholeRow));
         seasonsRow.addEventListener('click', () => toggleTypeRow(seasonsRow));
+
+        // Seasons are numbered in the picked order (Dragon Ball Kai: 2 aired seasons, more on DVD)
+        versionModalOrderPicker = window.EpisodeOrderPicker
+            ? window.EpisodeOrderPicker.mount(versionCheckboxes, content.id, (order) => {
+                pickedOrder = order;
+                delete seasonSelectionContainer.dataset.loaded;
+                if (seasonSelectionContainer.style.display !== 'none') fetchShowSeasons(content.id, order);
+            })
+            : null;
 
         const divider = document.createElement('div');
         divider.className = 'vm-divider';
@@ -9487,22 +9501,25 @@ function showVersionModal(content) {
 }
 
 // Function to fetch show seasons from the server
-async function fetchShowSeasons(tmdbId) {
+async function fetchShowSeasons(tmdbId, order = null) {
     const seasonContainer = document.getElementById('season-selection-container');
     seasonContainer.innerHTML = '<p style="padding:8px;opacity:0.6;">Loading seasons...</p>';
     try {
-        const response = await fetch(`/content/show_seasons?tmdb_id=${tmdbId}`, { method: 'GET' });
+        const orderParam = order ? `&order=${encodeURIComponent(order)}` : '';
+        const response = await fetch(`/content/show_seasons?tmdb_id=${tmdbId}${orderParam}`, { method: 'GET' });
         const data = await response.json();
 
         if (data.success && data.seasons && data.seasons.length > 0) {
             seasonContainer.innerHTML = '';
             seasonContainer.dataset.loaded = '1';
             const seasons = data.seasons.sort((a, b) => a - b);
+            const counts = data.episode_counts || {};
             seasons.forEach(season => {
                 const row = document.createElement('div');
                 row.className = 'option-row';
                 row.dataset.value = season;
-                row.innerHTML = `<div class="custom-cb"></div><span class="option-label">Season ${season}</span>`;
+                const count = counts[season] ? ` (${counts[season]} episodes)` : '';
+                row.innerHTML = `<div class="custom-cb"></div><span class="option-label">Season ${season}${count}</span>`;
                 row.addEventListener('click', () => row.classList.toggle('checked'));
                 seasonContainer.appendChild(row);
             });
@@ -9572,7 +9589,12 @@ async function handleVersionConfirm() {
             }
 
             selectedContent.seasons = selectedSeasons;
+        } else {
+            delete selectedContent.seasons;
         }
+        const pickedOrder = versionModalOrderPicker ? versionModalOrderPicker.value() : null;
+        if (pickedOrder) selectedContent.episode_order = pickedOrder;
+        else delete selectedContent.episode_order;
     }
 
     // Read folder selection if dropdown is present (symlink mode)
@@ -9604,6 +9626,9 @@ async function requestContent(content, selectedVersions, selectedFolder = null, 
         // Add seasons if specified for TV shows
         if (content.mediaType === 'tv' && content.seasons) {
             requestData.seasons = content.seasons;
+        }
+        if (content.mediaType === 'tv' && content.episode_order) {
+            requestData.episode_order = content.episode_order;
         }
 
         // Add folder selection if provided (symlink mode)
