@@ -1412,6 +1412,24 @@ def refresh_release_dates(force_bypass_cache: bool = False):
     progress_lock = threading.Lock()
     completed_count = 0
 
+    # Each show is read from cli_battery once per run, not twice per episode
+    # (release date + airtime): every read builds the whole show, and a long
+    # show with dozens of unreleased episodes made this refresh most of startup.
+    # The first worker to ask for a show loads it (or refreshes it, once, on a
+    # forced run) while the others wait for that result. Only read from here.
+    show_metadata_by_imdb = {}
+    show_metadata_locks = {}
+    show_metadata_guard = threading.Lock()
+
+    def _show_metadata_once(imdb_id):
+        with show_metadata_guard:
+            lock = show_metadata_locks.setdefault(imdb_id, threading.Lock())
+        with lock:
+            if imdb_id not in show_metadata_by_imdb:
+                show_metadata_by_imdb[imdb_id] = DirectAPI.get_show_metadata(
+                    imdb_id, force_refresh=force_bypass_cache)
+            return show_metadata_by_imdb[imdb_id]
+
     def _process_one_refresh_item(index, item):
         nonlocal cache_hits, cache_misses, completed_count
         try:
@@ -1649,10 +1667,10 @@ def refresh_release_dates(force_bypass_cache: bool = False):
                         "Forcing release-date cache bypass for %s S%sE%s (%s)",
                         title, season_number, episode_number, imdb_id,
                     )
-                metadata, source = DirectAPI.get_show_metadata(imdb_id, force_refresh=force_bypass_cache)
+                metadata, source = _show_metadata_once(imdb_id)
                 logging.info(f"Processing metadata for {title} S{season_number}E{episode_number}")
 
-                new_airtime = get_episode_airtime(imdb_id, season_number, episode_number)
+                new_airtime = get_episode_airtime(imdb_id, season_number, episode_number, metadata=metadata)
                 # logging.info(f"New airtime from metadata: {new_airtime}")
                 new_runtime = _refreshed_episode_runtime(metadata, season_number, episode_number)
 
@@ -1945,12 +1963,21 @@ def get_media_country_code(imdb_id: str, media_type: str) -> Optional[str]:
         logging.error(f"Error retrieving country code for {imdb_id}: {str(e)}")
         return None
 
-def get_episode_airtime(imdb_id: str, season_number: Optional[int] = None, episode_number: Optional[int] = None) -> Optional[str]:
-    """Return the episode's airtime converted to the user's local time, preferring first_aired over airs.time."""
+_NOT_LOADED = object()
+
+
+def get_episode_airtime(imdb_id: str, season_number: Optional[int] = None, episode_number: Optional[int] = None,
+                        metadata: Any = _NOT_LOADED) -> Optional[str]:
+    """Return the episode's airtime converted to the user's local time, preferring first_aired over airs.time.
+
+    metadata: the show's metadata when the caller already loaded it (None means
+    the lookup found nothing); fetched here when not passed.
+    """
     DEFAULT_AIRTIME = "19:00"
 
     try:
-        metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+        if metadata is _NOT_LOADED:
+            metadata, _ = DirectAPI.get_show_metadata(imdb_id)
         if not metadata or not isinstance(metadata, dict):
             logging.warning(f"Could not retrieve valid metadata for show {imdb_id}")
             return DEFAULT_AIRTIME
