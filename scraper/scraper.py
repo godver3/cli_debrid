@@ -22,7 +22,7 @@ from pathlib import Path
 from scraper.functions import *
 from scraper.functions.anime_utils import (
     convert_anime_episode_format_smart, detect_absolute_numbering, stored_absolute_episode,
-    resolve_absolute_episode, is_latin_script,
+    resolve_absolute_episode, is_latin_script, pick_romanized_alias,
 )
 from scraper.functions.movie_episodes import movie_episode_info, movie_search_title
 from cli_battery.app.episode_order import show_episode_order
@@ -1109,7 +1109,6 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 if metadata:
                     # First, check aliases for a properly formatted romanized title
                     aliases = metadata.get('aliases', {})
-                    romanized_found = False
                     
                     # Look for a romanized title specifically among Japan-sourced aliases.
                     # Previously this scanned every country's aliases and guessed "is this
@@ -1122,21 +1121,14 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     # dict is already keyed by the country/language it actually came from —
                     # use that directly instead of guessing from the text.
                     for country_code, alias_list in aliases.items():
-                        if country_code.lower() != 'jp':
+                        if country_code.lower() != 'jp' or not isinstance(alias_list, list):
                             continue
-                        if isinstance(alias_list, list):
-                            for alias in alias_list:
-                                # Only the Latin-script form of a Japan-sourced alias is a
-                                # useful search query — the native kanji/kana form isn't.
-                                if alias and is_latin_script(alias) and alias.lower() not in tried_titles_lower:
-                                    # Skip if it's just the English title again
-                                    if alias.lower() != title.lower():
-                                        logging.info(f"Adding Japanese romanized alias for anime: {alias}")
-                                        titles_to_try.append(('romanized_alias', alias))
-                                        tried_titles_lower.add(alias.lower())
-                                        romanized_found = True
-                                        break
-                        if romanized_found:
+                        # Latin-script, non-arc, ASCII spelling first (see pick_romanized_alias)
+                        alias = pick_romanized_alias(alias_list, title, tried_titles_lower)
+                        if alias:
+                            logging.info(f"Adding Japanese romanized alias for anime: {alias}")
+                            titles_to_try.append(('romanized_alias', alias))
+                            tried_titles_lower.add(alias.lower())
                             break
                     
                     # Always try to add original language title from metadata for anime (regardless of romanized alias found)

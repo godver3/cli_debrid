@@ -9,7 +9,7 @@ from scraper.functions.file_processing import compare_resolutions, parse_size, c
 from scraper.functions.other_functions import smart_search
 from scraper.functions.adult_terms import adult_terms
 from scraper.functions.common import *
-from scraper.functions.anime_utils import absolute_from_counts
+from scraper.functions.anime_utils import absolute_from_counts, full_season_counts, seasons_in_absolute_batch
 from datetime import datetime, timezone
 # --- Import DirectAPI if type hinting is desired, ensure it's available in the execution path ---
 # from cli_battery.app.direct_api import DirectAPI # Or adjust path as needed
@@ -188,6 +188,7 @@ def filter_results(
     
     # --- Cache for API fallback results within this filter_results call ---
     _fetched_detailed_seasons_data_cache = None
+    _absolute_season_counts = None  # full season counts, loaded on the first absolute-numbered batch
     
     for result in results:
         try:
@@ -1170,6 +1171,33 @@ def filter_results(
                     #logging.debug(f"Multi-episode mode: season={season}, season_pack={season_episode_info.get('season_pack')}, seasons={season_episode_info.get('seasons')}")
 
                     episodes = season_episode_info.get('episodes', [])
+
+                    # An anime batch numbered by absolute episode was rejected for any later
+                    # season: with no season in the name ("[Erai-raws] Bleach - 001 ~ 366
+                    # [BATCH]") it was read as season 1, and with one ("Bleach S13 Ep.
+                    # 230-265") it lacked episode 1. Count the seasons it really holds.
+                    named_seasons = parsed_info.get('seasons') or []
+                    if (is_anime and season and season > 1 and len(episodes) > 1
+                            and named_seasons in ([], [season])
+                            and season_episode_info.get('season_pack') != 'Complete'):
+                        if _absolute_season_counts is None:
+                            _absolute_season_counts = full_season_counts(imdb_id, season_episode_counts)
+                        covered = []
+                        if not named_seasons or max(episodes) > _absolute_season_counts.get(season, max(episodes)):
+                            covered = seasons_in_absolute_batch(episodes, _absolute_season_counts, imdb_id)
+                        if season in covered:
+                            season_episode_info = dict(
+                                season_episode_info,
+                                season_pack=','.join(str(s) for s in covered),
+                                seasons=covered,
+                                episodes=list(range(1, _absolute_season_counts[season] + 1)),
+                                absolute_batch=True,
+                                batch_episode_count=len(set(episodes)),
+                            )
+                            result['parsed_info']['season_episode_info'] = season_episode_info
+                            episodes = season_episode_info['episodes']
+                            logging.info(f"Absolute-numbered batch '{original_title}' holds season(s) {covered}")
+
                     if len(episodes) == 1:
                         result['filter_reason'] = "Single episode result when searching for multi"
                         logging.info(f"Rejected: Single episode in multi mode for '{original_title}' (Size: {result['size']:.2f}GB)")
@@ -1250,7 +1278,9 @@ def filter_results(
                         # Reject multi-season packs when searching for a single season in multi mode.
                         # A pack containing seasons [1,2,3,4,5] is not a valid match for a season 1
                         # request — downloading 4 extra seasons is wrong regardless of cache status.
-                        if len(result_seasons) > 1:
+                        # An absolute-numbered batch is let through like a "Complete" pack: for
+                        # long anime it's often the only pack that holds the season.
+                        if len(result_seasons) > 1 and not season_episode_info.get('absolute_batch'):
                             result['filter_reason'] = f"Multi-season pack {result_seasons} when searching for single season {season}"
                             logging.info(f"Rejected: Multi-season pack {result_seasons} for single season {season} request: '{original_title}' (Size: {result['size']:.2f}GB)")
                             continue
@@ -1729,7 +1759,10 @@ def filter_results(
                     # But we still want to calculate the true num_episodes_in_pack for bitrate
                     
                     # Calculate true number of episodes in the pack for bitrate calculation
-                    if season_pack_type_from_parse == 'Complete':
+                    if season_episode_info.get('absolute_batch'):
+                        # "221-302" holds 82 episodes, not just the 36 of the season it covers
+                        num_episodes_in_pack = season_episode_info['batch_episode_count']
+                    elif season_pack_type_from_parse == 'Complete':
                         num_episodes_in_pack = total_episodes
                         if num_episodes_in_pack == 0 and imdb_id and direct_api:
                             # API fallback logic for 'Complete' packs (as previously implemented)

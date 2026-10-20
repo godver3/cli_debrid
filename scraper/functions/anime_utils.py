@@ -2,10 +2,11 @@
 Utilities for handling anime-specific numbering and format detection.
 """
 import logging
+import re
 import threading
 import time
 import unicodedata
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 # from utilities.anidb_functions import get_anidb_metadata_for_item  # Disabled for now
 
 # Known anime that use absolute episode numbering
@@ -34,6 +35,48 @@ def is_latin_script(text: str) -> bool:
             if not unicodedata.name(ch, '').startswith('LATIN'):
                 return False
     return has_letter
+
+
+def _alias_key(text: str) -> str:
+    """Lowercase words of an alias, punctuation dropped ("Bleach: Sennen
+    Kessen-hen" -> "bleach sennen kessen hen")."""
+    return ' '.join(re.sub(r'[\W_]+', ' ', (text or '').lower()).split())
+
+
+def pick_romanized_alias(aliases: List[str], title: str, skip: Optional[set] = None) -> Optional[str]:
+    """The Japan-sourced alias worth searching as the show's romaji name, or None.
+
+    - Kana/kanji forms are skipped (is_latin_script), as is the title itself.
+    - Arc and sequel names are skipped: an alias that is another alias (or the
+      title) plus more words ("Bleach: Sennen Kessen-hen", "Shingeki no Kyojin
+      The Final Season"), and any alias ending in such an arc name
+      ("Burīchi: Sennen Kessen-hen"). Searching an arc name for the whole show
+      finds the wrong episodes; later seasons get their own name from AniList.
+    - Plain ASCII spellings come first: release groups write "Sousou no
+      Frieren", not "Sōsō no Furīren", which the provider may list first.
+    """
+    skip = {s.lower() for s in (skip or ())}
+    latin = [a for a in aliases or [] if isinstance(a, str) and a.strip() and is_latin_script(a)]
+    bases = {_alias_key(title)} | {_alias_key(a) for a in latin}
+    bases.discard('')
+    arc_tails = set()
+    for a in latin:
+        key = _alias_key(a)
+        for base in bases:
+            if base != key and key.startswith(base + ' '):
+                arc_tails.add(key[len(base) + 1:])
+
+    def is_arc_name(alias: str) -> bool:
+        key = _alias_key(alias)
+        return any(key == tail or key.endswith(' ' + tail) for tail in arc_tails) or any(
+            base != key and key.startswith(base + ' ') for base in bases)
+
+    candidates = [a for a in latin
+                  if a.lower() not in skip and a.lower() != (title or '').lower() and not is_arc_name(a)]
+    for alias in candidates:
+        if alias.isascii():
+            return alias
+    return candidates[0] if candidates else None
 
 
 def stored_absolute_episode(imdb_id: str, season: int, episode: int) -> Optional[int]:
@@ -187,6 +230,34 @@ def resolve_absolute_episode(season: int, episode: int, season_episode_counts: O
         absolute = episode
     logging.info(f"Arithmetic calculated absolute episode number: {absolute}")
     return absolute
+
+
+def full_season_counts(imdb_id: Optional[str], season_episode_counts: Optional[Dict[Any, int]]) -> Dict[int, int]:
+    """{season: episode_count} for every regular season of the show.
+    season_episode_counts may only cover the library; cli_battery's season list
+    is preferred when there's an imdb_id."""
+    counts: Dict[int, int] = {}
+    if imdb_id:
+        try:
+            counts = _show_season_counts(imdb_id)
+        except Exception as e:
+            logging.debug(f"Could not load season counts for {imdb_id}: {e}")
+    if not counts:
+        counts = {s: c for s, c in (season_episode_counts or {}).items() if isinstance(s, int)}
+    return {s: c for s, c in counts.items() if s > 0 and c}
+
+
+def seasons_in_absolute_batch(episodes, season_counts: Dict[int, int], imdb_id: Optional[str] = None) -> List[int]:
+    """Regular seasons all of whose episodes are in a batch numbered by absolute
+    episode ("[Erai-raws] Bleach - 001 ~ 366 [BATCH]" -> seasons 1-16)."""
+    numbers = set(episodes or [])
+    covered = []
+    for s_num in sorted(season_counts):
+        first = absolute_episode_for(s_num, 1, season_counts, imdb_id)
+        last = absolute_episode_for(s_num, season_counts[s_num], season_counts, imdb_id)
+        if first and last and last >= first and all(n in numbers for n in range(first, last + 1)):
+            covered.append(s_num)
+    return covered
 
 
 def detect_absolute_numbering(title: str, season: int, episode: int, tmdb_id: Optional[str] = None) -> Tuple[bool, Optional[int]]:
