@@ -133,6 +133,7 @@ class TestNzbBatchDebridPackProbe(unittest.TestCase):
         q = sq.ScrapingQueue.__new__(sq.ScrapingQueue)
         q.items = [self._by_id(ep) for ep in range(1, N_EPS + 1) if ep not in collected]
         q._item_ids = {it['id'] for it in q.items}
+        q._deferred_until = {}
         scrape_calls = []
 
         def fake_scrape(_self, item, is_multi_pack, _qm, skip_filter=False, check_pack_wantedness=False):

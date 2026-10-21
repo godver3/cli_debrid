@@ -264,15 +264,26 @@ def seasons_in_absolute_batch(episodes, season_counts: Dict[int, int], imdb_id: 
 _EXPLICIT_ABS_RANGE = re.compile(r'[(\[]\s*(\d{2,4})\s*(?:-|~|to)\s*(\d{2,4})\s*[)\]]', re.IGNORECASE)
 _EXPLICIT_ABS_SINGLE = re.compile(r'[(\[]\s*(\d{2,4})\s*[)\]]')
 _NAMED_SEASON = re.compile(r'(?<![a-z0-9])(?:s\d{1,2}(?![0-9])|season\s*\d{1,2}(?![0-9]))', re.IGNORECASE)
-# Bare "(360)" / "(1080)" next to SxxExx is an absolute episode (Gintama 360,
-# One Piece 1080). Quality tags are "360p" / "(1080p)", which _EXPLICIT_ABS_*
-# already leave alone because of the trailing p.
+# Bare "(360)" / "(1080)" next to SxxExx can be an absolute episode (Gintama
+# 360, One Piece 1080) or a resolution ("S01E05 [1080]"). It only counts as
+# absolute when the show is known to have that many episodes.
+_RESOLUTIONS = {360, 480, 540, 576, 720, 1080, 1440, 2160, 4320}
 _YEAR_LIKE = re.compile(r'^(?:19|20)\d{2}$')
 
 
-def _plausible_absolute(text: str) -> bool:
+def _plausible_absolute(text: str, show_size: int = 0) -> bool:
+    n = int(text)
+    if n in _RESOLUTIONS and n > show_size:
+        return False
     # A year, unless zero-padded ("(0422)")
     return not (len(text) == 4 and not text.startswith('0') and _YEAR_LIKE.match(text))
+
+
+def may_state_resolution_absolute(name: str) -> bool:
+    """True when a bracketed number in name is a resolution value that could
+    still be an absolute episode once the show's episode counts are known."""
+    return any(int(n) in _RESOLUTIONS for m in _EXPLICIT_ABS_RANGE.finditer(name or '') for n in m.groups()) or \
+        any(int(m.group(1)) in _RESOLUTIONS for m in _EXPLICIT_ABS_SINGLE.finditer(name or ''))
 
 
 def explicit_absolute_numbers(name: str, seasons=None, episodes=None,
@@ -287,7 +298,8 @@ def explicit_absolute_numbers(name: str, seasons=None, episodes=None,
 
     Not taken as absolute: a number no larger than the name's own episode
     ("S02E05 (05)"), a range starting at 1 ("S02 [01-12]" counts the season),
-    years and resolutions. With season_counts (the show's {season: episodes}),
+    years, and resolutions unless season_counts shows the show has that many
+    episodes ("Gintama S10E19 (360)"). With season_counts (the show's {season: episodes}),
     numbers that fit inside the named season ("S03 Part 2 [13-22]" for a
     22-episode season 3) count that season, not the show.
     """
@@ -298,13 +310,14 @@ def explicit_absolute_numbers(name: str, seasons=None, episodes=None,
         return []
     episodes = [e for e in (episodes or []) if isinstance(e, int)]
     season_size = max((season_counts or {}).get(s, 0) or 0 for s in seasons)
+    show_size = sum(c or 0 for c in (season_counts or {}).values())
 
     def beyond_season(numbers: List[int]) -> bool:
         return not season_counts or max(numbers) > season_size
 
     for match in _EXPLICIT_ABS_RANGE.finditer(name):
         lo_text, hi_text = match.groups()
-        if not (_plausible_absolute(lo_text) and _plausible_absolute(hi_text)):
+        if not (_plausible_absolute(lo_text, show_size) and _plausible_absolute(hi_text, show_size)):
             continue
         lo, hi = int(lo_text), int(hi_text)
         if 1 < lo < hi and hi - lo < 2000 and beyond_season([hi]):
@@ -314,7 +327,7 @@ def explicit_absolute_numbers(name: str, seasons=None, episodes=None,
         return []
     for match in _EXPLICIT_ABS_SINGLE.finditer(name):
         text = match.group(1)
-        if _plausible_absolute(text) and int(text) > episodes[0] and beyond_season([int(text)]):
+        if _plausible_absolute(text, show_size) and int(text) > episodes[0] and beyond_season([int(text)]):
             return [int(text)]
     return []
 

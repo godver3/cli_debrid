@@ -32,10 +32,29 @@ def _is_excluded_release(item: Dict[str, Any], result: Dict[str, Any]) -> bool:
 
 
 class ScrapingQueue:
+    # How long an item waits after being deferred for a sibling in Adding
+    DEFER_SECONDS = 60
+
     def __init__(self):
         self.items = []
         # Use a set for efficient ID lookup of in-memory items
         self._item_ids = set()
+        # item_id -> monotonic deadline. update() re-sorts by show every tick, so
+        # moving a deferred item to the back of the list doesn't stick; process()
+        # skips these instead (one show with 5+ episodes at the head froze Scraping).
+        self._deferred_until: Dict[Any, float] = {}
+
+    def _next_item(self):
+        """First item that isn't deferred, or None when every item is."""
+        now = time.monotonic()
+        self._deferred_until = {
+            item_id: until for item_id, until in self._deferred_until.items()
+            if until > now and item_id in self._item_ids
+        }
+        for item in self.items:
+            if item.get('id') not in self._deferred_until:
+                return item
+        return None
 
     def update(self):
         """Synchronize the in-memory queue with the database state."""
@@ -242,9 +261,12 @@ class ScrapingQueue:
         # Specific ID for debugging
         DEBUG_ITEM_ID = '177245'
 
-        if self.items:
-            # Peek at the first item instead of popping immediately
-            item_to_process = self.items[0]
+        item_to_process = self._next_item() if self.items else None
+        if self.items and item_to_process is None:
+            logging.debug(f"Scraping queue: all {len(self.items)} item(s) deferred behind related items in Adding")
+            return False
+        if item_to_process is not None:
+            # Peek at the item instead of popping immediately
             item_id_being_processed = item_to_process['id'] # Store ID for later check
             item_identifier = queue_manager.generate_identifier(item_to_process)
             processed_successfully_or_moved = False # Flag to track if item was moved/handled
@@ -425,14 +447,13 @@ class ScrapingQueue:
                             if str(item_id_being_processed) == DEBUG_ITEM_ID:
                                 # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] DEFERRED - related item found in Adding Queue.")
                                 pass
-                            # Rotate to the end so other shows can still scrape this tick
-                            # instead of aborting the whole Scraping batch.
+                            # Skip it for a while so other shows can still scrape this
+                            # tick instead of aborting the whole Scraping batch.
                             logging.debug(
-                                f"Deferring {item_identifier} (IMDb: {item_imdb_id}) - related "
-                                f"item in Adding; rotating to end of Scraping queue"
+                                f"Deferring {item_identifier} (IMDb: {item_imdb_id}) for "
+                                f"{self.DEFER_SECONDS}s - related item in Adding"
                             )
-                            if self.items and self.items[0] is item_to_process:
-                                self.items.append(self.items.pop(0))
+                            self._deferred_until[item_id_being_processed] = time.monotonic() + self.DEFER_SECONDS
                             return True
                         elif str(item_id_being_processed) == DEBUG_ITEM_ID:
                             # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] PASSED Adding Queue check (no related item found).")
@@ -1299,15 +1320,15 @@ class ScrapingQueue:
                 # Don't increment processed_count here, let the main logic do it if needed
 
             finally:
-                # Check if the item we processed is *still* at the front of the list.
+                # Check if the item we processed is *still* in the queue (it need not
+                # be at the front: deferred items ahead of it are skipped).
                 # This means it wasn't successfully moved by any of the processing steps or error handling.
                 if not processed_successfully_or_moved:
-                    # Double check it's the same item we started with
-                    if self.items and self.items[0]['id'] == item_id_being_processed:
+                    if item_id_being_processed in self._item_ids:
                         logging.warning(f"Item {item_identifier} completed processing cycle in ScrapingQueue without being moved. Removing explicitly.")
                         self.remove_item(item_to_process) # Remove the item we peeked at
-                    elif not self.items or self.items[0]['id'] != item_id_being_processed:
-                         logging.warning(f"Item {item_identifier} was expected at index 0 for removal but wasn't found (likely removed concurrently or list empty).")
+                    else:
+                         logging.warning(f"Item {item_identifier} was expected in the queue for removal but wasn't found (likely removed concurrently or list empty).")
 
                 # Increment processed count if we actually started processing this item
                 if processed_an_item_this_cycle:

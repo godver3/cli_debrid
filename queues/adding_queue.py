@@ -283,6 +283,8 @@ class AddingQueue:
         self._nzb_submitted_ids: set = set()  # IDs submitted to cli_mount; guards concurrent process() calls
         self._adding_ticks: dict = {}  # item_id → tick count in Adding; at 3 → not-wanted + Wanted
         self._nzb_downloading_job_ids: set = set()  # job IDs confirmed actively downloading; skip in Adding loop
+        self._held_summary = None  # last "nothing actionable" counts logged at INFO
+        self._held_summary_at = 0.0
 
     def reinitialize_provider(self):
         """Reinitialize the debrid provider and processors"""
@@ -396,7 +398,15 @@ class AddingQueue:
         if not items_to_process:
              held = nzb_awaiting + nzb_downloading + upgrade_locked
              if held:
-                 logging.info(
+                 # Runs every tick: INFO only when the counts change or every
+                 # 10 minutes, so a long NZB wait isn't one identical line per tick.
+                 summary = (nzb_awaiting, nzb_downloading, upgrade_locked)
+                 now = time.monotonic()
+                 log = logging.debug
+                 if summary != self._held_summary or now - self._held_summary_at >= 600:
+                     log = logging.info
+                     self._held_summary, self._held_summary_at = summary, now
+                 log(
                      f"Adding Queue: nothing actionable this cycle "
                      f"(awaiting NZB health={nzb_awaiting}, downloading NZB={nzb_downloading}, "
                      f"upgrade-locked={upgrade_locked}; queue size={len(self.items)})"
@@ -405,6 +415,7 @@ class AddingQueue:
                  logging.debug("Adding Queue: No items available to process this cycle (either empty or locked).")
              return False
 
+        self._held_summary = None
         logging.info(
             f"Adding Queue - Starting processing of {len(items_to_process)} available items"
             + (f" ({nzb_awaiting} awaiting NZB health, {nzb_downloading} NZB downloading held aside)"

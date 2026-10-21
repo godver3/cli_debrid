@@ -92,5 +92,45 @@ class PartitionAddingItemsTests(unittest.TestCase):
         self.assertTrue(adding_item_blocks_scraping({'filled_by_torrent_id': 'RDHASH'}))
 
 
+class ScrapingDeferralTests(unittest.TestCase):
+    """A show deferred behind its Adding sibling must not hold the head of Scraping.
+
+    update() re-sorts by (imdb_id, season, episode) every tick, so moving the
+    deferred item to the back of the list was undone on the next tick: a show
+    with 5+ episodes at the head used up every batch slot on deferrals.
+    """
+
+    def _queue(self, items):
+        from queues.scraping_queue import ScrapingQueue
+        q = ScrapingQueue()
+        q.items = list(items)
+        q._item_ids = {i['id'] for i in items}
+        return q
+
+    def test_deferred_items_skipped_even_after_resort(self):
+        import time
+        show_a = [{'id': n, 'imdb_id': 'tt1', 'season_number': 1, 'episode_number': n} for n in range(1, 7)]
+        show_b = [{'id': 100, 'imdb_id': 'tt2', 'season_number': 1, 'episode_number': 1}]
+        q = self._queue(show_a + show_b)
+        for item in show_a:
+            q._deferred_until[item['id']] = time.monotonic() + 60
+        q.items.sort(key=lambda i: (i['imdb_id'], i['season_number'], i['episode_number']))
+        self.assertEqual(q._next_item()['id'], 100)
+
+    def test_all_deferred_returns_none_and_expiry_releases(self):
+        q = self._queue([{'id': 1, 'imdb_id': 'tt1'}])
+        q._deferred_until[1] = float('inf')
+        self.assertIsNone(q._next_item())
+        q._deferred_until[1] = 0  # expired
+        self.assertEqual(q._next_item()['id'], 1)
+        self.assertEqual(q._deferred_until, {})
+
+    def test_deferrals_for_items_gone_from_queue_are_dropped(self):
+        q = self._queue([{'id': 2, 'imdb_id': 'tt1'}])
+        q._deferred_until[1] = float('inf')
+        self.assertEqual(q._next_item()['id'], 2)
+        self.assertNotIn(1, q._deferred_until)
+
+
 if __name__ == '__main__':
     unittest.main()

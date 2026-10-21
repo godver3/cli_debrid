@@ -69,6 +69,7 @@ class ExplicitAbsoluteNumbersTests(unittest.TestCase):
             ('Show S02 [01-12]', [2], list(range(1, 13))),  # the season's own count
             ('Show S01E01 (2009)', [1], [1]),          # a year
             ('Show S01E01 (1080p)', [1], [1]),         # a resolution tag (trailing p)
+            ('Show S01E01 (1080)', [1], [1]),          # a bare resolution, show size unknown
             ('Show - 0422 (0422)', [], [422]),         # no season: already absolute
             ('Show S02E01E02 (0021)', [2], [1, 2]),    # which episode would it be?
         ]
@@ -76,9 +77,20 @@ class ExplicitAbsoluteNumbersTests(unittest.TestCase):
             self.assertEqual(explicit_absolute_numbers(name, seasons, episodes), [], name)
 
     def test_resolution_like_absolute_numbers(self):
-        # Bare (360)/(1080) next to S/E is absolute; long anime hit these values.
-        self.assertEqual(explicit_absolute_numbers('Gintama S10E19 (360)', [10], [19]), [360])
-        self.assertEqual(explicit_absolute_numbers('One Piece S01E01 (1080)', [1], [1]), [1080])
+        # Bare (360)/(1080) next to S/E is absolute when the show has that many
+        # episodes (long anime hit these values), a resolution otherwise.
+        self.assertEqual(explicit_absolute_numbers('Gintama S10E19 (360)', [10], [19], {1: 370}), [360])
+        self.assertEqual(explicit_absolute_numbers('One Piece S21E01 (1080)', [21], [1], {1: 1100}), [1080])
+        self.assertEqual(explicit_absolute_numbers('Show S01E05 [1080]', [1], [5], {1: 12}), [])
+        self.assertEqual(explicit_absolute_numbers('Show S02E03 (720) [x265]', [2], [3], {1: 12, 2: 12}), [])
+        self.assertEqual(explicit_absolute_numbers('Gintama S10E19 (360)', [10], [19]), [])
+
+    def test_resolution_like_absolute_needs_counts_in_scrape_filter(self):
+        from scraper.functions.anime_utils import may_state_resolution_absolute
+        self.assertTrue(may_state_resolution_absolute('Gintama S10E19 (360)'))
+        self.assertTrue(may_state_resolution_absolute('Show S01 [360-367]'))
+        self.assertFalse(may_state_resolution_absolute('One Piece S13E01 (0422)'))
+        self.assertFalse(may_state_resolution_absolute('Show S01E05 (1080p)'))
 
     def test_range_inside_the_named_season_counts_that_season(self):
         name = 'Show S03 Part 2 [13-22]'
