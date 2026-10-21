@@ -188,7 +188,6 @@ a = Analysis(
         'requests',
         'aiohttp',
         'bs4',
-        'grpc',
         'urwid',
         'plexapi',
         'PIL',
