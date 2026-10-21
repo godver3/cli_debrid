@@ -119,11 +119,59 @@ class ManualAssignAbsoluteTests(unittest.TestCase):
         self.assertEqual(self.m.match_absolute_files(items, files, absolute_order, aired), 2)
         self.assertEqual(_assigned(items), {(1, 6): 'Show.S02E01.mkv', (1, 10): 'Show.S02E05.mkv'})
 
-    def test_multi_episode_file_is_left_for_the_user(self):
+    def test_multi_episode_file_goes_to_each_episode(self):
         seasons = _seasons({1: 12, 2: 12})
         items = _items([(2, 1), (2, 2)])
         files = [_file('Show - 13-14.mkv', episodes=[13, 14])]
+        self.assertEqual(self.m.match_absolute_files(items, files, seasons), 2)
+        self.assertEqual(_assigned(items), {(2, 1): 'Show - 13-14.mkv', (2, 2): 'Show - 13-14.mkv'})
+
+    def test_multi_episode_file_with_an_unknown_number_is_left_alone(self):
+        seasons = _seasons({1: 12})
+        items = _items([(1, 12)])
+        files = [_file('Show - 12-13.mkv', episodes=[12, 13])]
         self.assertEqual(self.m.match_absolute_files(items, files, seasons), 0)
+
+    def test_multi_episode_file_used_by_the_s_e_pass_still_fills_its_second_episode(self):
+        # Phase 1 gave "001-002" to S01E01 and marked it used
+        seasons = _seasons({1: 12})
+        items = _items([(1, 1), (1, 2)])
+        items[0].update(assigned=True, suggested_file_path='[CBT] Gintama 001-002.mkv')
+        files = [_file('[CBT] Gintama 001-002.mkv', episodes=[1, 2])]
+        files[0]['used'] = True
+        self.assertEqual(self.m.match_absolute_files(items, files, seasons), 1)
+        self.assertEqual(items[1]['suggested_file_path'], '[CBT] Gintama 001-002.mkv')
+
+    def test_bare_number_after_the_title(self):
+        # PTT: "[CBT] Gintama 050 [DVDrip 760x576 x264 FLAC].mkv" -> title "Gintama 050", no episode
+        seasons = _seasons({1: 49, 2: 50})
+        items = _items([(1, 3), (2, 1), (2, 2)])
+        files = [_file(f'[CBT] Gintama {n:03d} [DVDrip].mkv') for n in (3, 50, 51)]
+        for f, n in zip(files, (3, 50, 51)):
+            f['parsed']['title'] = f'Gintama {n:03d}'
+        self.assertEqual(self.m.match_absolute_files(items, files, seasons), 3)
+        self.assertEqual(_assigned(items), {(1, 3): '[CBT] Gintama 003 [DVDrip].mkv',
+                                            (2, 1): '[CBT] Gintama 050 [DVDrip].mkv',
+                                            (2, 2): '[CBT] Gintama 051 [DVDrip].mkv'})
+
+    def test_lone_title_ending_in_a_number_is_not_an_episode(self):
+        seasons = _seasons({1: 120})
+        items = _items([(1, 100)])
+        files = [_file('Mob Psycho 100.mkv')]
+        files[0]['parsed']['title'] = 'Mob Psycho 100'
+        self.assertEqual(self.m.match_absolute_files(items, files, seasons), 0)
+
+    def test_bare_numbers_follow_the_most_common_title(self):
+        # Two NCOPs next to three episodes: only "Show NN" reads as episodes
+        seasons = _seasons({1: 12})
+        items = _items([(1, 1), (1, 2), (1, 3)])
+        names = {'Show 01': 'a.mkv', 'Show 02': 'b.mkv', 'Show 03': 'c.mkv', 'Show NCOP 1': 'op1.mkv', 'Show NCOP 2': 'op2.mkv'}
+        files = []
+        for title, name in names.items():
+            files.append(_file(name))
+            files[-1]['parsed']['title'] = title
+        self.assertEqual(self.m.match_absolute_files(items, files, seasons), 3)
+        self.assertEqual(_assigned(items), {(1, 1): 'a.mkv', (1, 2): 'b.mkv', (1, 3): 'c.mkv'})
 
     def test_two_files_with_one_number_are_left_alone(self):
         seasons = _seasons({1: 12, 2: 12})
