@@ -6,10 +6,11 @@ from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
 from utilities.settings import get_all_settings
 import trakt.core
+import threading
 import time
 import pickle
 import os
-from database.database_reading import get_all_media_items, get_media_item_presence
+from database.database_reading import get_all_media_items, get_media_item_presence, get_media_item_presence_overall
 from database.database_writing import update_media_item
 from datetime import datetime, date, timedelta, timezone
 from utilities.settings import get_setting
@@ -24,6 +25,12 @@ TRAKT_API_URL = "https://api.trakt.tv"
 DEFAULT_REMOVAL_DELAY = 2  # seconds between watchlist removals
 DEFAULT_INITIAL_RETRY_DELAY = 3  # seconds for rate limit retry
 
+# Pagination configuration for large lists
+PAGINATION_LIMIT = 100  # Max items per page (Trakt API limit)
+PAGINATION_DELAY = 0.5  # Delay between pagination requests (seconds)
+PAGINATION_BATCH_SIZE = 5  # Extra delay every N pages
+PAGINATION_BATCH_DELAY = 2.0  # Extra delay after batch (seconds)
+
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 LAST_ACTIVITY_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_last_activity.pkl')
@@ -32,6 +39,10 @@ TRAKT_LISTS_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_lists_cache.pkl')
 TRAKT_COLLECTION_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_collection_cache.pkl')
 TRAKT_IMDB_ID_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_imdb_id_cache.pkl')
 CACHE_EXPIRY_DAYS = 7
+
+# In-memory TTL cache for special/discover list endpoints (reduces calls from every 15min to every 6h)
+_special_list_endpoint_cache: Dict[str, Any] = {}
+_SPECIAL_LIST_CACHE_TTL = 6 * 3600  # 6 hours
 
 # Get config directory from environment variable with fallback
 CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
@@ -83,10 +94,12 @@ def is_cache_entry_valid(cache_entry, imdb_id, current_state=None):
         if not trakt_id:
             return False
 
-        # Rule 2: If state is "Unreleased", cache for 1 day only
+        # Rule 2: If state is "Unreleased", cache Trakt ID for 7 days.
+        # Trakt IDs are permanent and never reassigned; only release dates shift.
+        # 1-day TTL caused ~400 API calls every 24h for 197 unreleased items.
         if current_state == 'Unreleased':
-            if age_days > 1:
-                logging.debug(f"Cache expired for {imdb_id}: Unreleased item older than 1 day")
+            if age_days > 7:
+                logging.debug(f"Cache expired for {imdb_id}: Unreleased item older than 7 days")
                 return False
             return True
 
@@ -183,68 +196,78 @@ class TraktRateLimiter:
 
         Args:
             task_priority: 'high' for critical tasks, 'normal' for others
+
+        All sleeps happen OUTSIDE the lock so that concurrent callers are not
+        serialized behind a sleeping thread. Each phase snapshots the values it
+        needs under the lock, releases, sleeps, then re-acquires to record.
         """
         if not self.enabled:
             return
 
+        # --- Phase 1: Cooldown check ---
+        # Snapshot the remaining cooldown under the lock; sleep outside it.
+        with self.lock:
+            now = time.time()
+            cooldown_wait = max(0.0, self.cooldown_until - now) if now < self.cooldown_until else 0.0
+
+        if cooldown_wait > 0:
+            logging.warning(
+                f"Cooldown active ({task_priority} priority): "
+                f"waiting {cooldown_wait:.1f}s before making Trakt request"
+            )
+            time.sleep(cooldown_wait)
+
+        # --- Phase 2: Per-request delay + budget/rate checks ---
+        # Compute all required waits under the lock, sleep outside it.
         with self.lock:
             now = time.time()
 
-            # Phase 2.2: Check if we're in cooldown period
-            if now < self.cooldown_until:
-                remaining_cooldown = self.cooldown_until - now
-                if task_priority == 'high':
-                    logging.info(f"High-priority task proceeding despite cooldown ({remaining_cooldown:.0f}s remaining)")
-                else:
-                    logging.warning(f"Cooldown active: waiting {remaining_cooldown:.1f}s before making Trakt request")
-                    time.sleep(remaining_cooldown)
-                    now = time.time()
-                    # Reset cooldown after waiting
-                    self.cooldown_until = 0
-                    self._reset_adaptive_scaling()
+            # If we slept out a cooldown, reset it now
+            if cooldown_wait > 0:
+                self.cooldown_until = 0
+                self._reset_adaptive_scaling()
 
-            # Phase 1.3 & 2.2: Apply adaptive per-request delay with scaling
-            effective_delay = self.per_request_delay * self.adaptive_scaling_factor
-            effective_delay = min(effective_delay, self.max_per_request_delay)
+            # Adaptive per-request delay
+            effective_delay = min(
+                self.per_request_delay * self.adaptive_scaling_factor,
+                self.max_per_request_delay
+            )
+            per_request_wait = max(0.0, effective_delay - (now - self.last_request_time))
 
-            time_since_last = now - self.last_request_time
-            if time_since_last < effective_delay:
-                delay = effective_delay - time_since_last
-                time.sleep(delay)
-                now = time.time()
-
-            # Remove requests older than the window
+            # Prune stale entries
             self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
-
-            # Phase 2.1: Global API budget tracking
             current_usage = len(self.request_times)
             budget_percentage = current_usage / self.requests_per_window
 
+            budget_wait = 0.0
             if budget_percentage >= self.budget_pause_threshold and task_priority != 'high':
-                # Pause non-critical tasks when budget is nearly exhausted
                 oldest_in_window = self.request_times[0]
-                wait_time = self.window_seconds - (now - oldest_in_window) + 1
+                budget_wait = self.window_seconds - (now - oldest_in_window) + 1
                 logging.warning(
-                    f"API budget nearly exhausted ({current_usage}/{self.requests_per_window} = {budget_percentage:.1%}). "
-                    f"Pausing non-critical task for {wait_time:.1f}s"
+                    f"API budget nearly exhausted ({current_usage}/{self.requests_per_window} "
+                    f"= {budget_percentage:.1%}). Pausing non-critical task for {budget_wait:.1f}s"
                 )
-                time.sleep(wait_time)
-                now = time.time()
-                self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
             elif budget_percentage >= self.budget_warning_threshold:
                 logging.info(f"API budget at {budget_percentage:.1%} ({current_usage}/{self.requests_per_window})")
 
-            if len(self.request_times) >= self.requests_per_window:
-                # Calculate how long to wait
+            rate_wait = 0.0
+            if current_usage >= self.requests_per_window:
                 oldest_in_window = self.request_times[0]
-                wait_time = self.window_seconds - (now - oldest_in_window) + 1
-                logging.warning(f"Trakt rate limit approaching ({len(self.request_times)}/{self.requests_per_window}). Waiting {wait_time:.1f}s")
-                time.sleep(wait_time)
-                # Clear old requests after waiting
-                now = time.time()
-                self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
+                rate_wait = self.window_seconds - (now - oldest_in_window) + 1
+                logging.warning(
+                    f"Trakt rate limit approaching ({current_usage}/{self.requests_per_window}). "
+                    f"Waiting {rate_wait:.1f}s"
+                )
 
-            # Record this request
+        total_wait = max(per_request_wait, budget_wait, rate_wait)
+        if total_wait > 0:
+            time.sleep(total_wait)
+
+        # --- Phase 3: Record the request ---
+        # Re-acquire lock to append the timestamp atomically.
+        with self.lock:
+            now = time.time()
+            self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
             self.request_times.append(now)
             self.last_request_time = now
 
@@ -846,9 +869,33 @@ def fetch_items_from_trakt(
             # Detect HTML responses that sometimes appear instead of JSON
             content_type = response.headers.get("content-type", "")
             if "html" in content_type.lower():
-                logging.error(f"Received HTML response instead of JSON from Trakt API. Status: {response.status_code}, Content-Type: {content_type}")
+                if response.status_code == 404 and '/lists/personal/' in url:
+                    logging.debug(f"Trakt 404 for {url} — no personal lists for this item yet. Skipping.")
+                    return []
+
+                logging.error(f"Received HTML response instead of JSON from Trakt API. URL: {url}, Status: {response.status_code}, Content-Type: {content_type}")
                 logging.error(f"Response headers: {dict(response.headers)}")
                 logging.error(f"Response body preview: {response.text[:500]}...")
+
+                # If this is a 429 rate limit with HTML response (Cloudflare block),
+                # extract Retry-After header before raising error so it gets handled properly
+                if response.status_code == 404:
+                    logging.warning(f"Trakt API returned 404 for {url} — resource may no longer exist. Skipping.")
+                    return []
+
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get("Retry-After", 60))
+                    logging.warning(f"Rate limit (429) returned HTML. Retry-After: {retry_after}s")
+                    # Report to rate limiter and global coordinator
+                    _trakt_rate_limiter.report_429_error(retry_after)
+                    GlobalTraktCoordinator.get_instance().set_global_cooldown(retry_after)
+                    # Set delay for this attempt
+                    delay = retry_after
+                    if attempt < max_retries - 1:
+                        logging.warning(f"Waiting {delay}s before retry {attempt + 1}/{max_retries}")
+                        sleep(delay)
+                    continue  # Skip to next retry attempt
+
                 raise ValueError("Received HTML response instead of JSON from Trakt API")
 
             response.raise_for_status()
@@ -862,19 +909,19 @@ def fetch_items_from_trakt(
             if status_code == 429:  # Too Many Requests – rate-limited
                 retry_after = int(http_err.response.headers.get("Retry-After", 0)) if http_err.response else 0
 
-                # Phase 1.4: Enforce minimum 300s wait (5 minutes)
+                # Trust Trakt's Retry-After header instead of enforcing conservative minimum
                 if retry_after > 0:
-                    # Cloudflare/Trakt explicitly told us how long to wait
-                    delay = max(retry_after, 300)  # Minimum 5 minutes
+                    # Trakt explicitly told us how long to wait - respect it
+                    delay = retry_after
                     logging.warning(
-                        f"Rate limit hit (429). Cloudflare requires {retry_after}s, enforcing minimum 300s. "
+                        f"Rate limit hit (429). Trakt requires {retry_after}s wait. "
                         f"Waiting {delay:.0f}s before retry {attempt + 1}/{max_retries}"
                     )
                 else:
-                    # No Retry-After header, use exponential backoff with minimum
-                    delay = max(initial_delay * (2 ** attempt), 300)
+                    # No Retry-After header, use 60s fallback
+                    delay = 60
                     logging.warning(
-                        f"Rate limit hit (429). Enforcing minimum 300s wait. "
+                        f"Rate limit hit (429) with no Retry-After header. "
                         f"Waiting {delay:.0f}s before retry {attempt + 1}/{max_retries}"
                     )
 
@@ -904,6 +951,12 @@ def fetch_items_from_trakt(
             elif status_code == 426:  # VIP Only
                 upgrade_url = http_err.response.headers.get('X-Upgrade-URL', 'https://trakt.tv/vip') if http_err.response else 'https://trakt.tv/vip'
                 logging.error(f"This API method requires Trakt VIP. Upgrade at {upgrade_url}")
+                return []
+
+            elif status_code == 404:  # Not Found — resource no longer exists, no point retrying
+                logging.warning(
+                    f"Trakt API returned 404 for {url} — resource may no longer exist. Skipping."
+                )
                 return []
 
             elif status_code in (502, 504):  # Temporary gateway issues
@@ -1000,7 +1053,7 @@ def get_imdb_id(item: Dict[str, Any], media_type: str) -> str:
     logging.warning(f"No IMDb, TMDB, or TVDB ID found in 'ids' for item: {json.dumps(item, indent=2)}")
     return ''
 
-def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def process_trakt_items(items: List[Dict[str, Any]], unblacklist: bool = False) -> List[Dict[str, Any]]:
     from database.core import get_db_connection
 
     processed_items = []
@@ -1008,6 +1061,7 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     skipped_count = 0
     duplicate_count = 0
     blacklisted_count = 0
+    unblacklisted_count = 0
 
     for item in items:
         media_type = assign_media_type(item)
@@ -1026,7 +1080,10 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             duplicate_count += 1
             continue
 
-        # GHOSTLIST CHECK: Skip blacklisted/ghostlisted items from Trakt Collection
+        # GHOSTLIST/BLACKLIST CHECK
+        # Always skip ghostlisted items (user-deleted, permanent).
+        # For blacklisted-only items (ghostlisted=0): skip unless unblacklist=True,
+        # in which case let the item through — add_wanted_items will clear the state.
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -1042,11 +1099,22 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 is_ghostlisted = row[2] == 1
                 is_blacklisted = item_state == 'Blacklisted'
 
-                if is_ghostlisted or is_blacklisted:
-                    logging.info(f"⛔ BLOCKED: Skipping {'ghostlisted' if is_ghostlisted else 'blacklisted'} item from Trakt Collection: {item_title} (IMDB: {imdb_id})")
+                if is_ghostlisted:
+                    # Always block ghostlisted items regardless of toggle
+                    logging.info(f"⛔ BLOCKED: Skipping ghostlisted item from Trakt: {item_title} (IMDB: {imdb_id})")
                     blacklisted_count += 1
-                    seen_imdb_ids.add(imdb_id)  # Mark as seen to avoid re-checking
+                    seen_imdb_ids.add(imdb_id)
                     continue
+                elif is_blacklisted:
+                    if unblacklist:
+                        # Allow through — add_wanted_items will unblacklist it
+                        logging.info(f"🔓 Allowing blacklisted item through for unblacklist: {item_title} (IMDB: {imdb_id})")
+                        unblacklisted_count += 1
+                    else:
+                        logging.info(f"⛔ BLOCKED: Skipping blacklisted item from Trakt: {item_title} (IMDB: {imdb_id})")
+                        blacklisted_count += 1
+                        seen_imdb_ids.add(imdb_id)
+                        continue
         except Exception as e:
             logging.error(f"Error checking blacklist status for {imdb_id}: {e}")
             # Continue processing - don't block on database errors
@@ -1062,7 +1130,9 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if duplicate_count > 0:
         logging.info(f"Skipped {duplicate_count} duplicate items")
     if blacklisted_count > 0:
-        logging.info(f"⛔ Blocked {blacklisted_count} blacklisted/ghostlisted items from Trakt Collection")
+        logging.info(f"⛔ Blocked {blacklisted_count} blacklisted/ghostlisted items from Trakt")
+    if unblacklisted_count > 0:
+        logging.info(f"🔓 Passing {unblacklisted_count} blacklisted item(s) through for unblacklist processing")
 
     return processed_items
 
@@ -1124,9 +1194,22 @@ def is_refresh_token_expired() -> bool:
 
 def ensure_trakt_auth():
     logging.debug("Checking Trakt authentication")
-    
+
     # Read config directly from file like the battery does
     trakt_config = get_trakt_config()
+
+    # settings.json is where a fresh authorization writes client_id/secret,
+    # but .pytrakt.json's own CLIENT_ID/CLIENT_SECRET (saved alongside the
+    # OAuth tokens at authorization time) is the actual source of truth for
+    # an already-completed auth — same fallback order used everywhere else
+    # Trakt credentials are read (see discover_routes.py). Checking
+    # settings.json alone would treat a real, working authorization as
+    # "not configured" whenever settings.json's Trakt section is empty.
+    client_id = trakt_config.get('CLIENT_ID', '') or get_setting('Trakt', 'client_id', '')
+    client_secret = trakt_config.get('CLIENT_SECRET', '') or get_setting('Trakt', 'client_secret', '')
+    if not str(client_id or '').strip() or not str(client_secret or '').strip():
+        logging.debug("Trakt is not configured; skipping Trakt authentication")
+        return None
     
     # Extract tokens from config
     access_token = trakt_config.get('OAUTH_TOKEN')
@@ -1291,7 +1374,7 @@ def check_for_updates(list_url: str = None, cache_ttl_minutes=30) -> bool:
 
     return False
 
-def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_trakt_watchlist(versions: Dict[str, bool], unblacklist: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     logging.debug("Fetching Trakt watchlist")
     # Phase 2.3: Set high priority for user watchlist (critical task)
     _set_task_priority('high')
@@ -1302,8 +1385,7 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
 
     all_wanted_items = []
     trakt_sources = get_trakt_sources()
-    disable_caching = True  # Hardcoded to True
-    cache = {} if disable_caching else load_trakt_cache(TRAKT_WATCHLIST_CACHE_FILE)
+    cache = load_trakt_cache(TRAKT_WATCHLIST_CACHE_FILE)
     current_time = datetime.now()
 
     # Check if watchlist removal is enabled
@@ -1316,16 +1398,28 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
     # Process Trakt Watchlist
     for watchlist_source in trakt_sources['watchlist']:
         if watchlist_source.get('enabled', False):
+            # Skip API fetch if watchlist hasn't changed and removal is not enabled
+            # (removal needs fresh items to check which are collected)
+            cached_processed = cache.get('processed_items') if isinstance(cache, dict) else None
+            if not should_remove and cached_processed and not check_for_updates(cache_ttl_minutes=30):
+                logging.debug("Trakt watchlist unchanged (check_for_updates=False), using cached items")
+                processed_items = cached_processed
+                all_wanted_items.append((processed_items, versions))
+                continue
+
             watchlist_items = fetch_items_from_trakt("/sync/watchlist")
-            processed_items = process_trakt_items(watchlist_items)
+            processed_items = process_trakt_items(watchlist_items, unblacklist=unblacklist)
+            # Save to cache for future skip-if-unchanged logic
+            cache['processed_items'] = processed_items
+            save_trakt_cache(cache, TRAKT_WATCHLIST_CACHE_FILE)
             
             # Handle removal of collected items if enabled
             if should_remove:
                 movies_to_remove = []
                 shows_to_remove = []
                 for item in processed_items[:]:  # Create a copy to iterate while modifying
-                    item_state = get_media_item_presence(imdb_id=item['imdb_id'])
-                    if item_state == "Collected":
+                    item_state = get_media_item_presence_overall(imdb_id=item['imdb_id'])
+                    if item_state in ("Collected", "Partial"):
                         # If it's a TV show and we want to keep series, skip removal
                         if item['media_type'] == 'tv':
                             if keep_series:
@@ -1382,7 +1476,7 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
 
     return all_wanted_items
 
-def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool], unblacklist: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     logging.debug("Fetching Trakt lists")
     # Phase 2.3: Set high priority for user-created lists (critical task)
     _set_task_priority('high')
@@ -1409,18 +1503,46 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
     clean_username = clean_username_for_api(username)
     if clean_username != username:
         logging.info(f"Cleaned username for list access: '{username}' -> '{clean_username}'")
-    
-    # Get list items
-    endpoint = f"/users/{clean_username}/lists/{list_id}/items"
-    list_items = fetch_items_from_trakt(endpoint)
-    
-    processed_items = process_trakt_items(list_items)
+
+    # Get all list items with pagination support
+    # Uses X-Pagination-Page-Count header to know total pages
+    headers = get_trakt_headers()
+    all_list_items = []
+    page = 1
+    page_count = 1  # will be updated from response headers
+    import time as _time
+
+    while page <= page_count:
+        _trakt_rate_limiter.wait_if_needed(task_priority=_trakt_rate_limiter.current_task_priority)
+        GlobalTraktCoordinator.get_instance().wait_if_needed()
+        url = f"{TRAKT_API_URL}/users/{clean_username}/lists/{list_id}/items?limit={PAGINATION_LIMIT}&page={page}"
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            if response.status_code == 200:
+                page_items = response.json()
+                all_list_items.extend(page_items)
+                # Read total page count from headers on first page
+                if page == 1:
+                    page_count = int(response.headers.get('X-Pagination-Page-Count', 1))
+                    total_items = response.headers.get('X-Pagination-Item-Count', '?')
+                    logging.info(f"[Trakt] List {list_id}: {total_items} items across {page_count} pages")
+                if page < page_count:
+                    _time.sleep(PAGINATION_DELAY)
+                page += 1
+            else:
+                logging.error(f"[Trakt] List page {page} returned {response.status_code}")
+                break
+        except Exception as e:
+            logging.error(f"[Trakt] Failed to fetch list page {page}: {e}")
+            break
+
+    processed_items = process_trakt_items(all_list_items, unblacklist=unblacklist)
     logging.info(f"Found {len(processed_items)} items from Trakt list")
     all_wanted_items.append((processed_items, versions))
-    
+
     return all_wanted_items
 
-def get_wanted_from_trakt_collection(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_trakt_collection(versions: Dict[str, bool], unblacklist: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     # Phase 2.3: Set high priority for user collection (critical task)
     _set_task_priority('high')
     logging.debug("Fetching Trakt collection")
@@ -1431,19 +1553,35 @@ def get_wanted_from_trakt_collection(versions: Dict[str, bool]) -> List[Tuple[Li
 
     all_wanted_items = []
 
-    # Get collection items
-    response = make_trakt_request('get', "/sync/collection/movies")
-    movie_items = response.json() if response else []
-    
-    response = make_trakt_request('get', "/sync/collection/shows")
-    show_items = response.json() if response else []
-    
+    def _fetch_all_collection_pages(endpoint):
+        """Fetch all pages from a paginated Trakt collection endpoint."""
+        all_items = []
+        page = 1
+        while True:
+            resp = make_trakt_request('get', f"{endpoint}?page={page}&limit=1000")
+            if not resp:
+                break
+            batch = resp.json()
+            if not batch:
+                break
+            all_items.extend(batch)
+            page_count = int(resp.headers.get('X-Pagination-Page-Count', 1))
+            logging.debug(f"[Trakt] {endpoint} page {page}/{page_count} ({len(batch)} items)")
+            if page >= page_count:
+                break
+            page += 1
+        return all_items
+
+    # Get collection items with pagination (default limit is 100, collection can have thousands)
+    movie_items = _fetch_all_collection_pages("/sync/collection/movies")
+    show_items = _fetch_all_collection_pages("/sync/collection/shows")
+
     collection_items = movie_items + show_items
-    processed_items = process_trakt_items(collection_items)
-    
+    processed_items = process_trakt_items(collection_items, unblacklist=unblacklist)
+
     logging.info(f"Found {len(processed_items)} items from Trakt collection")
     all_wanted_items.append((processed_items, versions))
-    
+
     return all_wanted_items
 
 def clean_username_for_api(username: str, auth_id: str = None) -> str:
@@ -1477,7 +1615,7 @@ def clean_username_for_api(username: str, auth_id: str = None) -> str:
     
     return username
 
-def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versions: Dict[str, bool], unblacklist: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     """Get wanted items from a friend's Trakt watchlist"""
     auth_id = source_config.get('auth_id')
     if not auth_id:
@@ -1516,37 +1654,37 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
     logging.info(f"Fetching watchlist for friend's Trakt account: {username} (cleaned: {clean_username})")
     
     try:
-        # Get the watchlist from Trakt
+        # Get the watchlist from Trakt with pagination support
         endpoint = f"/users/{clean_username}/watchlist"
         logging.debug(f"Making watchlist request to endpoint: {endpoint}")
         logging.debug(f"Using headers: {headers}")
         items = fetch_items_from_trakt(endpoint, headers)
         
         # Process the items
-        processed_items = process_trakt_items(items)
+        processed_items = process_trakt_items(items, unblacklist=unblacklist)
         logging.info(f"Found {len(processed_items)} wanted items from friend's Trakt watchlist: {username}")
-        
+
         # Return in the same format as other content source functions
         return [(processed_items, versions)]
-        
+
     except Exception as e:
         logging.error(f"Error fetching friend's Trakt watchlist using cleaned username '{clean_username}' (original: '{username}'): {str(e)}")
-        
+
         # Try fallback: use user ID instead of username
         try:
             # Get user ID from auth state
             state_file = os.path.join(TRAKT_FRIENDS_DIR, f'{auth_id}.json')
             with open(state_file, 'r') as file:
                 state = json.load(file)
-            
+
             # Try to get user ID from the user data we fetched during authorization
             user_id = state.get('user_id')
             if user_id:
                 logging.info(f"Trying fallback with user ID: {user_id}")
                 endpoint = f"/users/{user_id}/watchlist"
                 items = fetch_items_from_trakt(endpoint, headers)
-                
-                processed_items = process_trakt_items(items)
+
+                processed_items = process_trakt_items(items, unblacklist=unblacklist)
                 logging.info(f"Found {len(processed_items)} wanted items from friend's Trakt watchlist using user ID: {user_id}")
                 return [(processed_items, versions)]
             else:
@@ -1556,7 +1694,7 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
         
         return []
 
-def get_wanted_from_special_trakt_lists(source_config: Dict[str, Any], versions_profile: Dict[str, Any]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_special_trakt_lists(source_config: Dict[str, Any], versions_profile: Dict[str, Any], unblacklist: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     """
     Fetches and processes items from configured Special Trakt Lists.
     """
@@ -1613,30 +1751,36 @@ def get_wanted_from_special_trakt_lists(source_config: Dict[str, Any], versions_
             if not endpoint_path: continue # Skip if None (e.g. Box Office for shows)
 
             full_api_path = f"{endpoint_path}?{fetch_params_str}"
-            logging.info(f"Fetching from Special Trakt List '{list_type}', endpoint: {full_api_path}")
-            
-            response = make_trakt_request('get', full_api_path)
-            if response:
+
+            # Check in-memory TTL cache before hitting the API
+            cached_entry = _special_list_endpoint_cache.get(full_api_path)
+            if cached_entry and (time.time() - cached_entry['ts']) < _SPECIAL_LIST_CACHE_TTL:
+                logging.debug(f"Using cached result for Special Trakt List endpoint: {full_api_path} (age: {int(time.time() - cached_entry['ts'])}s)")
+                processed_batch = cached_entry['items']
+            else:
+                logging.info(f"Fetching from Special Trakt List '{list_type}', endpoint: {full_api_path}")
+                response = make_trakt_request('get', full_api_path)
+                if not response:
+                    logging.error(f"Failed to fetch data from {full_api_path} for list type {list_type}")
+                    continue
                 try:
                     raw_items = response.json()
                     if not isinstance(raw_items, list):
-                        # Some endpoints might return a dict with items inside, e.g. list items
-                        # For simplicity, this example assumes endpoints return a direct list of media items.
-                        # If structure varies (e.g. item['movie'] or item['show']), process_trakt_items handles it.
                         logging.warning(f"Expected a list from {full_api_path}, got {type(raw_items)}. Skipping this response.")
                         continue
-                    
-                    processed_batch = process_trakt_items(raw_items)
-                    for item_detail in processed_batch:
-                        if item_detail['imdb_id'] and item_detail['imdb_id'] not in seen_imdb_ids_for_this_source:
-                            all_items_for_this_source.append(item_detail)
-                            seen_imdb_ids_for_this_source.add(item_detail['imdb_id'])
+                    processed_batch = process_trakt_items(raw_items, unblacklist=unblacklist)
+                    _special_list_endpoint_cache[full_api_path] = {'items': processed_batch, 'ts': time.time()}
                 except json.JSONDecodeError:
                     logging.error(f"Failed to decode JSON from {full_api_path}")
+                    continue
                 except Exception as e:
                     logging.error(f"Error processing items from {full_api_path}: {e}")
-            else:
-                logging.error(f"Failed to fetch data from {full_api_path} for list type {list_type}")
+                    continue
+
+            for item_detail in processed_batch:
+                if item_detail['imdb_id'] and item_detail['imdb_id'] not in seen_imdb_ids_for_this_source:
+                    all_items_for_this_source.append(item_detail)
+                    seen_imdb_ids_for_this_source.add(item_detail['imdb_id'])
 
     if not all_items_for_this_source:
         logging.info(f"No items found for Special Trakt List source: {source_config.get('display_name')}")
@@ -1678,16 +1822,31 @@ def check_trakt_early_releases():
             continue
 
         imdb_id = item['imdb_id']
+        tmdb_id = item.get('tmdb_id')
+
+        # Skip if no IMDB ID or TMDB ID
+        if not imdb_id and not tmdb_id:
+            logging.debug(f"Skipping {item.get('title', 'Unknown')} - no IMDb or TMDB ID (Trakt early release check requires at least one)")
+            skipped_count += 1
+            continue
+
+        # Use IMDB ID as primary cache key, fallback to TMDB
+        cache_key = imdb_id if imdb_id else f"tmdb_{tmdb_id}"
 
         # Check cache first to avoid redundant API calls
-        cached_entry = imdb_trakt_cache.get(imdb_id)
+        cached_entry = imdb_trakt_cache.get(cache_key)
         if cached_entry and 'trakt_id' in cached_entry:
             trakt_id = str(cached_entry['trakt_id'])
             cache_hits += 1
-            logging.debug(f"Cache hit: IMDB {imdb_id} → Trakt {trakt_id}")
+            logging.debug(f"Cache hit: {cache_key} → Trakt {trakt_id}")
         else:
             # Cache miss - perform Trakt API lookup
-            trakt_id_search = fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
+            # Prefer IMDB ID, fallback to TMDB ID
+            if imdb_id:
+                trakt_id_search = fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
+            else:
+                media_type = 'movie' if item['type'] == 'movie' else 'show'
+                trakt_id_search = fetch_items_from_trakt(f"/search/tmdb/{tmdb_id}?type={media_type}")
             cache_misses += 1
 
             if trakt_id_search and isinstance(trakt_id_search, list) and len(trakt_id_search) > 0:
@@ -1700,26 +1859,27 @@ def check_trakt_early_releases():
 
                 # Cache the newly fetched trakt_id
                 if trakt_id:
-                    imdb_trakt_cache[imdb_id] = {
+                    imdb_trakt_cache[cache_key] = {
                         'trakt_id': trakt_id,
                         'cached_at': datetime.now().isoformat()
                     }
-                    logging.debug(f"Cached: IMDB {imdb_id} → Trakt {trakt_id}")
+                    logging.debug(f"Cached: {cache_key} → Trakt {trakt_id}")
             else:
-                logging.warning(f"Unexpected Trakt API response structure or missing Trakt ID for IMDB ID: {imdb_id}")
+                logging.warning(f"Unexpected Trakt API response structure or missing Trakt ID for {cache_key}")
                 continue # Skip if we can't get a valid trakt ID
 
             # If we couldn't extract a valid trakt_id, skip
             if not trakt_id:
-                 logging.warning(f"Could not extract Trakt ID for IMDB ID: {imdb_id}")
+                 logging.warning(f"Could not extract Trakt ID for {cache_key}")
                  continue
 
         # Now use the trakt_id (either from cache or freshly fetched)
         endpoint = f"/movies/{trakt_id}/lists/personal/popular" if item['type'] == 'movie' else f"/shows/{trakt_id}/lists/personal/popular"
+        logging.debug(f"Fetching personal lists for '{item.get('title')}' (Trakt ID: {trakt_id}, {cache_key}): {endpoint}")
         try:
             trakt_lists = fetch_items_from_trakt(endpoint)
         except Exception as e:
-             logging.error(f"Error fetching Trakt lists for {item['type']} ID {trakt_id} (IMDB: {imdb_id}): {e}")
+             logging.error(f"Error fetching Trakt lists for '{item.get('title')}' Trakt ID {trakt_id} ({cache_key}): {e}")
              continue # Skip item if list fetching fails
 
         if trakt_lists: # Ensure trakt_lists is not None or empty

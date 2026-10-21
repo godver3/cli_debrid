@@ -98,16 +98,16 @@ def search_tv_shows(search_term):
     return items
 
 @trace_memory_usage
-def get_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None, limit: Optional[int] = None):
+def get_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None, limit: Optional[int] = None, columns: Optional[List[str]] = None):
     """
     Retrieves all media items matching the criteria and returns them as a list.
     This function is a wrapper around stream_all_media_items for backward compatibility.
     It can be memory-intensive for large datasets.
     """
-    return list(stream_all_media_items(state, media_type, imdb_id, tmdb_id, limit))
+    return list(stream_all_media_items(state, media_type, imdb_id, tmdb_id, limit, columns))
 
 @trace_memory_usage
-def stream_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None, limit: Optional[int] = None):
+def stream_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None, limit: Optional[int] = None, columns: Optional[List[str]] = None):
     """
     A generator that streams media items from the database one by one.
     This is memory-efficient and suitable for large datasets.
@@ -115,7 +115,8 @@ def stream_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=No
     conn = None
     try:
         conn = get_db_connection()
-        query = 'SELECT * FROM media_items WHERE 1=1'
+        col_str = ', '.join(columns) if columns else '*'
+        query = f'SELECT {col_str} FROM media_items WHERE 1=1'
         params = []
         if state:
             if isinstance(state, (list, tuple)):
@@ -156,6 +157,22 @@ def stream_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=No
     finally:
         if conn:
             conn.close()
+
+def get_media_items_by_torrent_id(torrent_id, columns: Optional[List[str]] = None) -> List[Dict]:
+    """All media items (any state) filled by one torrent / NZB job, via the
+    filled_by_torrent_id index."""
+    if not torrent_id:
+        return []
+    conn = get_db_connection()
+    try:
+        col_str = ', '.join(columns) if columns else '*'
+        cursor = conn.execute(
+            f'SELECT {col_str} FROM media_items WHERE filled_by_torrent_id = ?',
+            (str(torrent_id),),
+        )
+        return [dict(row) for row in cursor]
+    finally:
+        conn.close()
 
 def get_media_item_presence(imdb_id=None, tmdb_id=None):
     conn = get_db_connection()
@@ -205,10 +222,17 @@ def get_media_item_by_id(item_id):
     finally:
         conn.close()
 
+# Runtimes below this are TVDB/TMDB placeholders (typically 1) stored when an
+# unreleased show was added; they are never refreshed and inflate bitrate ~40x.
+MIN_PLAUSIBLE_RUNTIME_MINUTES = 5
+
 def get_movie_runtime(tmdb_id):
     conn = get_db_connection()
     try:
-        cursor = conn.execute('SELECT runtime FROM media_items WHERE tmdb_id = ? AND type = "movie"', (tmdb_id,))
+        cursor = conn.execute(
+            'SELECT runtime FROM media_items WHERE tmdb_id = ? AND type = "movie" AND runtime >= ?',
+            (tmdb_id, MIN_PLAUSIBLE_RUNTIME_MINUTES),
+        )
         result = cursor.fetchone()
         return result['runtime'] if result else None
     except Exception as e:
@@ -221,12 +245,14 @@ def get_episode_runtime(tmdb_id):
     conn = get_db_connection()
     query_start_time = None # Initialize
     try:
+        # Season 0 specials/extras are legitimately short clips and would skew the average.
         query = '''
-            SELECT AVG(runtime) as runtime FROM media_items 
+            SELECT AVG(runtime) as runtime FROM media_items
             WHERE tmdb_id = ? AND type = "episode"
+              AND runtime >= ? AND COALESCE(season_number, 1) != 0
         '''
         query_start_time = time.time()
-        cursor = conn.execute(query, (tmdb_id,))
+        cursor = conn.execute(query, (tmdb_id, MIN_PLAUSIBLE_RUNTIME_MINUTES))
         result = cursor.fetchone()
         query_duration = time.time() - query_start_time
         #logging.debug(f"get_episode_runtime query for TMDB ID {tmdb_id} took {query_duration:.4f}s")
@@ -294,15 +320,15 @@ def get_all_season_episode_counts(tmdb_id):
         
         deduplicated_episodes = all_episodes
 
-        # Count episodes per season from deduplicated list
-        season_counts = {}
+        # Count distinct episode numbers per season. Rows are per version, so
+        # counting rows inflated a season for every extra or fallback version
+        # (e.g. 104 rows for 98 episodes), which shifted every absolute
+        # episode number computed for later seasons.
+        season_episodes = {}
         for episode in deduplicated_episodes:
-            season = episode['season_number']
-            if season not in season_counts:
-                season_counts[season] = 0
-            season_counts[season] += 1
-        
-        return season_counts
+            season_episodes.setdefault(episode['season_number'], set()).add(episode['episode_number'])
+
+        return {season: len(episodes) for season, episodes in season_episodes.items()}
     except Exception as e:
         logging.error(f"Error retrieving season episode counts (TMDB ID: {tmdb_id}): {str(e)}")
         return {}
@@ -603,18 +629,20 @@ def get_media_item_by_filename(filename: str) -> Optional[Dict]:
     """
     conn = get_db_connection()
     try:
-        # Select all columns for the matching filename
-        # Check multiple location fields to find the item
-        query = '''
-            SELECT * FROM media_items 
-            WHERE filled_by_file = ? 
-               OR location_on_disk LIKE ? 
-               OR location_basename = ?
-        '''
-        # Use LIKE for location_on_disk to handle full paths, exact match for others
-        location_on_disk_pattern = f'%{filename}'
-        cursor = conn.execute(query, (filename, location_on_disk_pattern, filename))
+        # Indexed exact matches first. The location_on_disk suffix LIKE is a
+        # full table scan, so it only runs when they miss (e.g. NZB rows,
+        # which the location_basename triggers skip).
+        cursor = conn.execute(
+            'SELECT * FROM media_items WHERE filled_by_file = ? OR location_basename = ?',
+            (filename, filename),
+        )
         item = cursor.fetchone()
+        if not item:
+            cursor = conn.execute(
+                'SELECT * FROM media_items WHERE location_on_disk LIKE ?',
+                (f'%{filename}',),
+            )
+            item = cursor.fetchone()
         
         if item:
             item_dict = row_to_dict(item) # Use existing helper function
@@ -1273,18 +1301,29 @@ def get_media_items_presence_batch(tmdb_ids: list[int]) -> dict[int, str]:
             tmdb_states[tmdb_id].add(state)
 
         # Apply the same logic as get_media_item_presence_overall for each ID
+        # "Partial" should ONLY mean: some episodes collected/blacklisted AND some actively wanted
         result = {}
+        wanted_states = {'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping'}
+
         for tmdb_id in tmdb_ids:
             # Look up using string key since database returns tmdb_id as TEXT
             states = tmdb_states.get(str(tmdb_id), set())
 
             if not states:
                 result[tmdb_id] = "Missing"
-            elif 'Blacklisted' in states:
+            elif 'Blacklisted' in states and len(states) == 1:
+                # All episodes blacklisted
                 result[tmdb_id] = 'Blacklisted'
-            elif 'Collected' in states:
-                result[tmdb_id] = 'Collected' if len(states) == 1 else 'Partial'
+            elif 'Collected' in states or 'Blacklisted' in states:
+                # Has some collected or blacklisted episodes
+                # Check if there are any actively wanted episodes
+                if any(state in wanted_states for state in states):
+                    result[tmdb_id] = 'Partial'
+                else:
+                    # All episodes are either Collected, Blacklisted, or Unreleased (no wanted)
+                    result[tmdb_id] = 'Collected'
             else:
+                # No collected/blacklisted episodes, return first state (likely Wanted or Unreleased)
                 result[tmdb_id] = next(iter(states))
 
         return result
@@ -1522,6 +1561,45 @@ def get_items_with_all_blacklisted_versions() -> List[int]:
         if conn:
             conn.close()
 
+def get_item_counts_by_states(states: list) -> dict:
+    """Fetch COUNT(*) for multiple states in a single DB connection.
+
+    Creates the state index if it doesn't already exist (idempotent), then
+    runs one COUNT query per state inside the same open connection, which
+    is much cheaper than opening/closing a connection for each state.
+
+    Args:
+        states: List of state strings to count (e.g. ['Wanted', 'Blacklisted']).
+
+    Returns:
+        Dict mapping each state string to its item count.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        try:
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_state ON media_items(state);')
+        except Exception as e:
+            logging.debug(f"Index creation attempt (may already exist): {e}")
+
+        counts = {}
+        for state in states:
+            if state == 'Blacklisted':
+                query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ? AND (ghostlisted IS NULL OR ghostlisted = 0)'
+            else:
+                query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ?'
+            cursor = conn.execute(query, (state,))
+            result = cursor.fetchone()
+            counts[state] = result['count'] if result else 0
+        return counts
+    except Exception as e:
+        logging.error(f"Error in get_item_counts_by_states: {e}")
+        return {state: 0 for state in states}
+    finally:
+        if conn:
+            conn.close()
+
+
 # =============================================================================
 # Deletion Helper Functions (for DeletionManager)
 # =============================================================================
@@ -1704,6 +1782,7 @@ __all__ = [
     'get_show_episode_identifiers_from_db',
     'get_media_item_ids',
     'get_item_count_by_state',
+    'get_item_counts_by_states',
     'check_item_exists_by_directory_name',
     'check_item_exists_by_symlink_path',
     'check_item_exists_with_symlink_path_containing',

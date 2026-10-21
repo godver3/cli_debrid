@@ -14,7 +14,6 @@ from content_checkers.overseerr import get_overseerr_details, get_overseerr_head
 from routes.api_tracker import api
 from typing import Dict, Any
 from scraper.functions.ptt_parser import parse_with_ptt
-from cli_battery.app.trakt_metadata import TraktMetadata
 from cli_battery.app.direct_api import DirectAPI
 from fuzzywuzzy import fuzz
 from database.core import get_db_connection
@@ -201,7 +200,10 @@ def rclone_webhook():
 
         thread = threading.Thread(
             target=_run_rclone_to_symlink_task,
-            args=(scan_path, symlink_base_path_str, dry_run, task_id, True, final_dir_component)
+            # Trailing True is user_initiated: this content is in the mount because
+            # a person put it there, so it may unghost an existing entry. The periodic
+            # mount scan deliberately does not pass it.
+            args=(scan_path, symlink_base_path_str, dry_run, task_id, True, final_dir_component, True)
         )
         thread.daemon = True
         thread.start()
@@ -425,12 +427,14 @@ def agregarr_create_request():
         
         # Add season information for TV shows
         if media_type == 'tv' and seasons:
-            webhook_payload["extra"] = []
-            for season_num in seasons:
-                webhook_payload["extra"].append({
-                    "name": "Requested Seasons",
-                    "value": str(season_num)
-                })
+            # Set directly on media so process_overseerr_webhook() can read it
+            # (it reads media.get('requested_seasons') and never parses extra itself)
+            webhook_payload["media"]["requested_seasons"] = seasons
+            # Also populate extra with a single comma-separated entry for compatibility
+            webhook_payload["extra"] = [{
+                "name": "Requested Seasons",
+                "value": ",".join(str(s) for s in seasons)
+            }]
         
         # Process using existing webhook handler
         process_overseerr_webhook(webhook_payload)

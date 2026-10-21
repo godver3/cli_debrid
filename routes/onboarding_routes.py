@@ -15,6 +15,12 @@ from .models import admin_required
 
 onboarding_bp = Blueprint('onboarding', __name__)
 
+def _media_provider_configured():
+    """Return True if either a debrid provider or usenet provider is configured."""
+    debrid_ok = bool(get_setting('Debrid Provider', 'provider') and get_setting('Debrid Provider', 'api_key'))
+    usenet_ok = bool(get_setting('Usenet Provider', 'enabled') and get_setting('Usenet Provider', 'url'))
+    return debrid_ok or usenet_ok
+
 def get_next_onboarding_step():
     # Load the current configuration
     config = load_config()
@@ -24,24 +30,19 @@ def get_next_onboarding_step():
         return 1
     
     # Step 2: Check if required settings are configured
+    # Trakt is an optional integration and is intentionally not part of this list.
     required_settings = [
         ('Plex', 'url'),
         ('Plex', 'token'),
         ('Plex', 'shows_libraries'),
         ('Plex', 'movie_libraries'),
-        ('Debrid Provider', 'provider'),
-        ('Debrid Provider', 'api_key'),
-        ('Trakt', 'client_id'),
-        ('Trakt', 'client_secret')
     ]
-    
+
     for category, key in required_settings:
         if not get_setting(category, key):
             return 2
-    
-    # Check if Trakt is authorized
-    trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))
-    if trakt_status['status'] != 'authorized':
+
+    if not _media_provider_configured():
         return 2
 
     # Step 3: Check if at least one scraper is configured
@@ -129,12 +130,8 @@ def onboarding_step(step):
                                is_onboarding=True)
        
     elif step_num == 2:
-        required_settings = [
-            ('Debrid Provider', 'provider'),
-            ('Debrid Provider', 'api_key'),
-            ('Trakt', 'client_id'),
-            ('Trakt', 'client_secret')
-        ]
+        # Trakt is an optional integration and is intentionally not required here.
+        required_settings = []
 
         # Check if platform is Windows
         is_windows = platform.system() == 'Windows'
@@ -207,32 +204,46 @@ def onboarding_step(step):
                             ('Plex', 'movie_libraries')
                         ])
                 
-                # Handle debrid provider selection
-                provider = request.form.get('debrid_provider', 'RealDebrid')
-                api_key = request.form.get('debrid_api_key', '')
+                # Handle debrid or usenet provider selection
+                provider_type = request.form.get('provider_type', 'debrid')
+                if provider_type == 'usenet':
+                    usenet_url = request.form.get('usenet_url', '').rstrip('/')
+                    usenet_token = request.form.get('usenet_api_token', '')
+                    if 'Usenet Provider' not in config:
+                        config['Usenet Provider'] = {}
+                    config['Usenet Provider']['enabled'] = True
+                    config['Usenet Provider']['url'] = usenet_url
+                    if usenet_token:
+                        config['Usenet Provider']['api_token'] = usenet_token
+                else:
+                    provider = request.form.get('debrid_provider', 'RealDebrid')
+                    api_key = request.form.get('debrid_api_key', '')
+                    config['Debrid Provider'] = {
+                        'provider': provider,
+                        'api_key': api_key
+                    }
                 
-                config['Debrid Provider'] = {
-                    'provider': provider,
-                    'api_key': api_key
-                }
-                
-                config['Trakt'] = {
-                    'client_id': request.form['trakt_client_id'],
-                    'client_secret': request.form['trakt_client_secret']
-                }
-                
+                # Trakt is optional — only save if the user provided credentials.
+                trakt_client_id = request.form.get('trakt_client_id', '')
+                trakt_client_secret = request.form.get('trakt_client_secret', '')
+                if trakt_client_id or trakt_client_secret:
+                    config['Trakt'] = {
+                        'client_id': trakt_client_id,
+                        'client_secret': trakt_client_secret
+                    }
+
                 save_config(config)
                 
                 # Check if all required settings are now present
-                can_proceed = all(get_setting(category, key) for category, key in required_settings)
-                
+                can_proceed = all(get_setting(category, key) for category, key in required_settings) and _media_provider_configured()
+
                 return jsonify({'success': True, 'can_proceed': can_proceed})
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)})
         
         # For GET requests, load existing settings if any
         config = load_config()
-        can_proceed = all(get_setting(category, key) for category, key in required_settings)
+        can_proceed = all(get_setting(category, key) for category, key in required_settings) and _media_provider_configured()
         is_windows = platform.system() == 'Windows'  # Proper platform detection
         
         # Get Trakt auth status
@@ -431,6 +442,7 @@ def add_onboarding_content_source():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @onboarding_bp.route('/content_sources/get', methods=['GET'])
+@admin_required  # returns every content source's config, including Other Plex Watchlist account tokens
 def get_onboarding_content_sources():
     config = load_config()
     content_source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
@@ -563,12 +575,12 @@ def validate_onboarding_settings():
             })
             
         # For existing Plex setups
-        elif management_type in ['plex_direct', 'plex_symlink']:
+        elif management_type in ['plex_direct', 'plex_symlink', 'Plex', 'Symlinked/Local']:
             checks = []
             is_valid = True
-            
+
             # Validate based on setup type
-            if management_type == 'plex_direct':
+            if management_type in ('plex_direct', 'Plex'):
                 # Check for direct mount requirements - only validate if path is provided
                 mount_path = config.get('File Management', {}).get('original_files_path')
                 # Since original_files_path is optional, we don't need to validate it if it's empty
@@ -580,7 +592,7 @@ def validate_onboarding_settings():
                     })
                 # Don't add any validation check if mount_path is empty since it's optional
                     
-            elif management_type == 'plex_symlink':
+            elif management_type in ('plex_symlink', 'Symlinked/Local'):
                 # Check for symlink requirements
                 symlink_path = config.get('File Management', {}).get('symlinked_files_path')
                 if not symlink_path:

@@ -1,138 +1,155 @@
-{% extends "base.html" %}  {# Or your actual base template #}
+{% extends "base.html" %}
 
 {% block title %}Event Calendar{% endblock %}
 
-{% block head_content %}
-{{ super() }}
-{# Link to your main CSS file that will contain calendar styles #}
-{# <link rel="stylesheet" href="{{ url_for('static', filename='css/calendar_view.css') }}"> #}
-{# For now, styles are in base.css or added directly below in a <style> tag for this example #}
-{% endblock %}
 
 {% block content %}
 <div class="container calendar-page-container">
 
-    <!-- New 3-Week Calendar Grid View -->
-    {% if three_week_grid_days %}
-        <div class="calendar-grid-section">
-            <div class="calendar-grid-header">
-                <h2>{{ three_week_grid_header }}</h2>
-            </div>
-            <table class="calendar-grid">
-                <thead>
-                    <tr>
-                        <th>Mon</th>
-                        <th>Tue</th>
-                        <th>Wed</th>
-                        <th>Thu</th>
-                        <th>Fri</th>
-                        <th>Sat</th>
-                        <th>Sun</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for week_of_dates in three_week_grid_days %}
-                    <tr>
-                        {% for day_date_obj in week_of_dates %}
-                            {% set day_iso_str = day_date_obj.isoformat() %}
-                            {% set day_display_str = day_date_obj.strftime("%A, %B %d, %Y") %}
-                            {# Special display names for today, yesterday, tomorrow #}
-                            {% if day_date_obj == today_date %}
-                                {% set day_display_str = "Today, " + day_date_obj.strftime("%B %d") %}
-                            {% elif day_date_obj == yesterday_date %}
-                                {% set day_display_str = "Yesterday, " + day_date_obj.strftime("%B %d") %}
-                            {% elif day_date_obj == tomorrow_date %}
-                                {% set day_display_str = "Tomorrow, " + day_date_obj.strftime("%B %d") %}
-                            {% endif %}
-
-                            {% set td_classes = ["calendar-day-cell"] %} {# Added class for JS targeting #}
-                            {% if day_date_obj == today_date %}
-                                {% set td_classes = td_classes + ["is-today"] %}
-                            {% endif %}
-                            
-                            <td class="{{ td_classes | join(' ') }}" data-dateiso="{{ day_iso_str }}" data-displaydate="{{ day_display_str }}">
-                                <div class="day-number">{{ day_date_obj.day }}</div>
-                                {% if grouped_events.get(day_iso_str) and grouped_events[day_iso_str]['items'] %}
-                                    <ul class="grid-event-list">
-                                        {% for event in grouped_events[day_iso_str]['items'] | sort(attribute='sort_datetime') %}
-                                            {% if loop.index <= 3 %} 
-                                            <li class="grid-event-item event-type-{{ event.type }} status-{{ event.display_status | replace('_', '-') }}"
-                                                title="{{ event.title }} - {% if event.type == 'movie' %}Movie{% elif event.type == 'tv_show' %}TV Episode{% endif %} ({{ event.display_status.replace('_', ' ') | title }})">
-                                                {{ event.title | truncate(20, True) }}
-                                            </li>
-                                            {% elif loop.index == 4 %}
-                                            <li class="grid-event-item more-events">...</li>
-                                            {% endif %}
-                                        {% endfor %}
-                                    </ul>
-                                {% else %}
-                                    <div class="no-events-in-cell"></div> {# Placeholder for empty cells to maintain height/clickability consistency #}
-                                {% endif %}
-                            </td>
-                        {% endfor %}
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+    <!-- View Toggle -->
+    <div class="cal-toggle-wrap">
+        <div class="cal-toggle-group">
+            <button id="cal-toggle-simple" type="button" class="cal-toggle-btn" onclick="calSetView('simple')">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
+                Simple
+            </button>
+            <button id="cal-toggle-advanced" type="button" class="cal-toggle-btn" onclick="calSetView('advanced')">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 9v7.5" /></svg>
+                Advanced
+            </button>
         </div>
-    {% else %}
-        <div class="calendar-grid-section">
-             <div class="calendar-grid-header">
-                <h2>Calendar</h2>
-            </div>
-            <p style="text-align: center; padding: 20px;">No event data available to display in the calendar grid.</p>
-        </div>
-    {% endif %}
-
-    <!-- Existing Timeline View (modified to use new variable names) -->
-    <div class="calendar-timeline-section">
-        <h2 class="timeline-header">Media Schedule</h2>
-
-        {% if not sorted_dates_for_timeline %}
-            <p class="no-timeline-events">No events found for the timeline view.</p>
-        {% else %}
-            {% for date_iso_str in sorted_dates_for_timeline %}
-                {% set group = grouped_events[date_iso_str] %}
-                {# Ensure group['items'] exists and is not empty before accessing [0] #}
-                {% if group['items'] %} 
-                    {% set current_event_date_obj = group['items'][0].date %} {# Use ['items'] to access the list #}
-                    
-                    {# MODIFIED Filter for timeline: Show events ONLY from yesterday, today, or tomorrow #}
-                    {% if current_event_date_obj == today_date or current_event_date_obj == yesterday_date or current_event_date_obj == tomorrow_date %}
-                        <div class="calendar-day-group">
-                            {# Use the display_str_timeline prepared in Python #}
-                            <h3>{{ group.display_str_timeline }}</h3>
-                            <ul class="calendar-event-list">
-                                {% for event in group['items'] | sort(attribute='sort_datetime') %} {# Sort within the day #}
-                                    <li class="calendar-event event-type-{{ event.type }} status-{{ event.display_status | replace('_', '-') }}">
-                                        <div class="event-time">
-                                            {% if event.time %}
-                                                {{ event.time }}
-                                            {% else %}
-                                                <span class="all-day-indicator">All Day</span>
-                                            {% endif %}
-                                        </div>
-                                        <div class="event-details">
-                                            <span class="event-title">{{ event.title }}</span>
-                                            <span class="event-category">
-                                                {% if event.type == 'movie' %}Movie{% elif event.type == 'tv_show' %}TV Episode{% endif %}
-                                            </span>
-                                            <span class="event-status-badge status-{{ event.display_status | replace('_', '-') }}">
-                                                {{ event.display_status.replace('_', ' ') | title }}
-                                            </span>
-                                        </div>
-                                    </li>
-                                {% endfor %}
-                            </ul>
-                        </div>
-                    {% endif %}
-                {% endif %}
-            {% endfor %}
-        {% endif %}
     </div>
+
+    <!-- ===== SIMPLE VIEW: 3-week grid + timeline (original layout, untouched) ===== -->
+    <div id="cal-simple-view">
+
+        {% if three_week_grid_days %}
+            <div class="calendar-grid-section">
+                <div class="calendar-grid-header">
+                    <h5>{{ three_week_grid_header }}</h5>
+                </div>
+                <table class="calendar-grid">
+                    <thead>
+                        <tr>
+                            <th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for week_of_dates in three_week_grid_days %}
+                        <tr>
+                            {% for day_date_obj in week_of_dates %}
+                                {% set day_iso_str = day_date_obj.isoformat() %}
+                                {% set day_display_str = day_date_obj.strftime("%A, %B %d, %Y") %}
+                                {% if day_date_obj == today_date %}
+                                    {% set day_display_str = "Today, " + day_date_obj.strftime("%B %d") %}
+                                {% elif day_date_obj == yesterday_date %}
+                                    {% set day_display_str = "Yesterday, " + day_date_obj.strftime("%B %d") %}
+                                {% elif day_date_obj == tomorrow_date %}
+                                    {% set day_display_str = "Tomorrow, " + day_date_obj.strftime("%B %d") %}
+                                {% endif %}
+                                <td class="calendar-day-cell {% if day_date_obj == today_date %}is-today{% endif %}"
+                                    data-dateiso="{{ day_iso_str }}" data-displaydate="{{ day_display_str }}">
+                                    <div class="day-number">{{ day_date_obj.day }}</div>
+                                    {% if grouped_events.get(day_iso_str) and grouped_events[day_iso_str]['items'] %}
+                                        <ul class="grid-event-list">
+                                            {% for event in grouped_events[day_iso_str]['items'] | sort(attribute='sort_datetime') %}
+                                                {% if loop.index <= 3 %}
+                                                <li class="grid-event-item event-type-{{ event.type }} status-{{ event.display_status | replace('_', '-') }}"
+                                                    title="{{ event.title }} - {% if event.type == 'movie' %}Movie{% elif event.type == 'tv_show' %}TV Episode{% endif %} ({{ event.display_status.replace('_', ' ') | title }})">
+                                                    {{ event.title | truncate(20, True) }}
+                                                </li>
+                                                {% elif loop.index == 4 %}
+                                                <li class="grid-event-item more-events">...</li>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </ul>
+                                    {% else %}
+                                        <div class="no-events-in-cell"></div>
+                                    {% endif %}
+                                </td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+
+        <div class="calendar-timeline-section">
+            <h5 class="timeline-header">Media Schedule</h5>
+            {% if not sorted_dates_for_timeline %}
+                <p class="no-timeline-events">No events found for the timeline view.</p>
+            {% else %}
+                {% for date_iso_str in sorted_dates_for_timeline %}
+                    {% set group = grouped_events[date_iso_str] %}
+                    {% if group['items'] %}
+                        {% set current_event_date_obj = group['items'][0].date %}
+                        {% if current_event_date_obj == today_date or current_event_date_obj == yesterday_date or current_event_date_obj == tomorrow_date %}
+                            <div class="calendar-day-group">
+                                <h5>{{ group.display_str_timeline }}</h5>
+                                <ul class="calendar-event-list">
+                                    {% for event in group['items'] | sort(attribute='sort_datetime') %}
+                                        <li class="calendar-event event-type-{{ event.type }} status-{{ event.display_status | replace('_', '-') }}">
+                                            <div class="event-time">
+                                                {% if event.time %}{{ event.time }}{% else %}<span class="all-day-indicator">All Day</span>{% endif %}
+                                            </div>
+                                            <div class="event-details">
+                                                <span class="event-title">{{ event.title }}</span>
+                                                <span class="event-category">
+                                                    {% if event.type == 'movie' %}Movie{% elif event.type == 'tv_show' %}TV Episode{% endif %}
+                                                </span>
+                                                <span class="event-status-badge status-{{ event.display_status | replace('_', '-') }}">
+                                                    {{ event.display_status.replace('_', ' ') | title }}
+                                                </span>
+                                            </div>
+                                        </li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                        {% endif %}
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+        </div>
+
+    </div>{# end #cal-simple-view #}
+
+    <!-- ===== ADVANCED VIEW: client-side rendered, slide animation ===== -->
+    <div id="cal-advanced-view" style="display:none;">
+
+        <!-- Week navigation header -->
+        <div class="cal-adv-header">
+            <button id="cal-adv-prev" class="cal-nav-btn" type="button">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <h5 id="cal-adv-title" class="cal-adv-title"></h5>
+            <button id="cal-adv-next" class="cal-nav-btn" type="button">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+        </div>
+
+        <!-- Desktop: slide-animated week grid -->
+        <div class="cal-week-grid-wrap">
+            <div class="cal-slide-viewport">
+                <div id="cal-adv-grid" class="cal-adv-grid-inner"></div>
+            </div>
+        </div>
+
+        <!-- Mobile: single-day column, paginated by JS -->
+        <div class="cal-mobile-day-view">
+            <div class="cal-mobile-nav">
+                <button id="cal-day-prev" class="cal-nav-btn" type="button">&#8249;</button>
+                <h5 id="cal-mobile-day-title" class="cal-mobile-title"></h5>
+                <button id="cal-day-next" class="cal-nav-btn" type="button">&#8250;</button>
+            </div>
+            <div id="cal-mobile-day-body" class="cal-mobile-day-body"></div>
+        </div>
+
+    </div>{# end #cal-advanced-view #}
+
 </div>
 
-<!-- Modal for Day Events -->
+<!-- Modal for Simple view grid cells -->
 <div id="day-events-modal-overlay" class="day-events-modal-overlay"></div>
 <div id="day-events-modal" class="day-events-modal">
     <div class="day-events-modal-header">
@@ -140,7 +157,6 @@
         <button id="day-events-modal-close" class="day-events-modal-close">&times;</button>
     </div>
     <div id="day-events-modal-body" class="day-events-modal-body">
-        <!-- Event items will be injected here by JavaScript -->
         <p class="no-modal-events" style="display:none;">No events scheduled for this day.</p>
     </div>
 </div>
@@ -149,70 +165,313 @@
 {% block scripts %}
 {{ super() }}
 <script>
-    document.addEventListener('DOMContentLoaded', function () {
-        const modal = document.getElementById('day-events-modal');
-        const modalOverlay = document.getElementById('day-events-modal-overlay');
-        const modalTitle = document.getElementById('day-events-modal-title');
-        const modalBody = document.getElementById('day-events-modal-body');
-        const modalCloseButton = document.getElementById('day-events-modal-close');
-        const noModalEventsMessage = modal.querySelector('.no-modal-events');
+(function () {
+    // ── Preloaded data ──────────────────────────────────────────────────────
+    const allGroupedEvents = {{ grouped_events_json | tojson | safe }};
+    const allWeeksMeta     = {{ all_weeks_meta | tojson | safe }};
+    const initialOffset    = {{ week_offset }};
+    const todayISO         = "{{ today_date.isoformat() }}";
 
-        // Make grouped_events available to JavaScript
-        // Ensure this is properly escaped and parsed if it contains complex data
-        const allGroupedEvents = JSON.parse('{{ grouped_events | tojson | safe }}');
-        const use24HourFormatJS = {{ use_24hour_format | tojson }};
+    // ── State ───────────────────────────────────────────────────────────────
+    let currentOffset = initialOffset;
+    let mobileDay     = 0;
+    let animating     = false;
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+    function weekMeta(offset) {
+        return allWeeksMeta.find(w => w.offset === offset);
+    }
+
+    function esc(s) {
+        return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function eventCardHTML(ev) {
+        const timeStr  = ev.time ? `<div class="cal-adv-event-time">${esc(ev.time)}</div>` : '';
+        const typeStr  = ev.type === 'movie' ? 'Movie' : 'TV Episode';
+        const statusStr = (ev.display_status || '').replace(/_/g,' ').replace(/\b\w/g, l => l.toUpperCase());
+        const slug     = (ev.display_status || '').replace(/_/g,'-');
+        // Store click data in data-attributes to avoid inline JSON quoting issues
+        return `<div class="cal-adv-event cal-clickable-event event-type-${esc(ev.type)} status-${slug}"
+                     style="cursor:pointer"
+                     data-status="${esc(ev.display_status||'')}"
+                     data-tmdb="${esc(ev.tmdb_id||'')}"
+                     data-imdb="${esc(ev.imdb_id||'')}"
+                     data-type="${esc(ev.type||'')}"
+                     data-season="${ev.season_number != null ? ev.season_number : ''}"
+                     data-episode="${ev.episode_number != null ? ev.episode_number : ''}">
+            ${timeStr}
+            <div class="cal-adv-event-title">${esc(ev.title)}</div>
+            <div class="cal-adv-event-meta">
+                <span class="cal-adv-event-type">${typeStr}</span>
+                <span class="cal-adv-event-status status-${slug}">${statusStr}</span>
+            </div>
+        </div>`;
+    }
+
+    function buildTableHTML(meta) {
+        const thead = meta.days.map(d => {
+            const todayCls = d.is_today ? ' cal-adv-th-today' : '';
+            const pillCls  = d.is_today ? ' cal-today-pill'   : '';
+            const monthLbl = d.month_label ? `<span class="cal-th-month">${esc(d.month_label)}</span>` : '';
+            return `<th class="cal-adv-th${todayCls}">
+                <span class="cal-th-dayname">${esc(d.dayname)}</span>
+                <span class="cal-th-daynum${pillCls}">${d.daynum}</span>
+                ${monthLbl}
+            </th>`;
+        }).join('');
+
+        const tcells = meta.days.map(d => {
+            const cellCls = d.is_today ? ' cal-adv-cell-today' : '';
+            const group   = allGroupedEvents[d.iso];
+            let inner     = '<div class="cal-adv-empty"></div>';
+            if (group && group.items && group.items.length) {
+                const sorted = group.items.slice().sort((a,b) => new Date(a.sort_datetime) - new Date(b.sort_datetime));
+                inner = sorted.map(eventCardHTML).join('');
+            }
+            return `<td class="cal-adv-cell${cellCls}">${inner}</td>`;
+        }).join('');
+
+        return `<table class="cal-adv-table">
+            <thead><tr>${thead}</tr></thead>
+            <tbody><tr class="cal-adv-body-row">${tcells}</tr></tbody>
+        </table>`;
+    }
+
+    // ── Advanced grid render + slide ────────────────────────────────────────
+    function renderAdvGrid(offset, direction) {
+        const meta    = weekMeta(offset);
+        if (!meta) return;
+        const grid    = document.getElementById('cal-adv-grid');
+        const viewport= grid && grid.parentNode;
+        const titleEl = document.getElementById('cal-adv-title');
+        const prevBtn = document.getElementById('cal-adv-prev');
+        const nextBtn = document.getElementById('cal-adv-next');
+        if (!grid) return;
+
+        if (titleEl) titleEl.textContent = meta.header;
+        if (prevBtn) prevBtn.disabled = offset <= -2;
+        if (nextBtn) nextBtn.disabled = offset >= 2;
+
+        // Update URL without reload
+        const url = new URL(window.location.href);
+        url.searchParams.set('week_offset', offset);
+        history.replaceState({weekOffset: offset}, '', url.toString());
+
+        if (!direction || animating) {
+            grid.innerHTML = buildTableHTML(meta);
+            return;
+        }
+
+        animating = true;
+        const DURATION = 320;
+
+        // Lock viewport height to current content so layout doesn't jump
+        viewport.style.height = grid.offsetHeight + 'px';
+
+        // Build incoming panel off-screen
+        const incoming = document.createElement('div');
+        incoming.className = 'cal-slide-incoming';
+        incoming.innerHTML = buildTableHTML(meta);
+
+        // Position both panels: outgoing stays where it is, incoming starts off-screen
+        const fromClass = direction === 'next' ? 'cal-slide-from-right' : 'cal-slide-from-left';
+        const toClass   = direction === 'next' ? 'cal-slide-to-left'    : 'cal-slide-to-right';
+
+        incoming.classList.add(fromClass);
+        grid.classList.add('cal-animating');
+        viewport.appendChild(incoming);
+
+        // Force reflow so initial positions are painted before transitions start
+        incoming.getBoundingClientRect();
+
+        // Trigger transitions simultaneously
+        incoming.classList.remove(fromClass);
+        incoming.classList.add('cal-slide-to-center');
+        grid.classList.add(toClass);
+
+        setTimeout(() => {
+            // Swap: replace grid content, remove incoming, restore layout
+            grid.innerHTML = buildTableHTML(meta);
+            grid.className = 'cal-adv-grid-inner';
+            incoming.remove();
+            viewport.style.height = '';
+            animating = false;
+        }, DURATION);
+    }
+
+    function calAdvNav(dir) {
+        const next = currentOffset + dir;
+        if (next < -2 || next > 2) return;
+        currentOffset = next;
+        renderAdvGrid(currentOffset, dir > 0 ? 'next' : 'prev');
+        // Sync mobile day to same relative position
+        calMobileRenderForOffset(currentOffset);
+    }
+
+    // ── Mobile ───────────────────────────────────────────────────────────────
+    function calMobileRenderForOffset(offset) {
+        const meta = weekMeta(offset);
+        if (!meta) return;
+        // Keep same day-of-week index; clamp
+        const iso    = meta.days[mobileDay] ? meta.days[mobileDay].iso : meta.days[0].iso;
+        const label  = meta.days[mobileDay] ? meta.days[mobileDay].dayname + ', ' + new Date(iso + 'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
+        _renderMobileDay(iso, label, offset);
+    }
+
+    function calMobileRender() {
+        calMobileRenderForOffset(currentOffset);
+    }
+
+    function _renderMobileDay(iso, label, offset) {
+        const title  = document.getElementById('cal-mobile-day-title');
+        const body   = document.getElementById('cal-mobile-day-body');
+        const prevBtn= document.getElementById('cal-day-prev');
+        const nextBtn= document.getElementById('cal-day-next');
+        if (!title) return;
+
+        title.textContent = iso === todayISO ? 'Today, ' + label.split(', ').slice(1).join(', ') : label;
+        if (prevBtn) prevBtn.disabled = mobileDay === 0 && offset <= -2;
+        if (nextBtn) nextBtn.disabled = mobileDay === 6 && offset >= 2;
+
+        const group = allGroupedEvents[iso];
+        if (!group || !group.items || !group.items.length) {
+            body.innerHTML = '<p class="cal-mobile-no-events">No events</p>';
+            return;
+        }
+        const sorted = group.items.slice().sort((a,b) => new Date(a.sort_datetime) - new Date(b.sort_datetime));
+        body.innerHTML = sorted.map(eventCardHTML).join('');
+    }
+
+    function calDayNav(dir) {
+        const newDay = mobileDay + dir;
+        if (newDay < 0) {
+            if (currentOffset > -2) { currentOffset--; mobileDay = 6; calMobileRenderForOffset(currentOffset); }
+            return;
+        }
+        if (newDay > 6) {
+            if (currentOffset < 2) { currentOffset++; mobileDay = 0; calMobileRenderForOffset(currentOffset); }
+            return;
+        }
+        mobileDay = newDay;
+        calMobileRender();
+    }
+
+    // ── Event click ─────────────────────────────────────────────────────────
+    function calEventClick(status, tmdbId, imdbId, type, seasonNumber, episodeNumber) {
+        const collected = ['collected', 'upgrading', 'checking_upgrade'];
+        const mediaType = type === 'movie' ? 'movie' : 'tv';
+        let params = '';
+        if (seasonNumber && type !== 'movie') {
+            params = `?season=${seasonNumber}`;
+            if (episodeNumber) params += `&episode=${episodeNumber}`;
+        }
+        if (collected.includes(status)) {
+            const libBase = type === 'movie' ? '/library/' : `/library/show/${tmdbId || imdbId}`;
+            window.location.href = libBase + params;
+        } else if (tmdbId && tmdbId !== 'None' && tmdbId !== 'null') {
+            window.location.href = `/discover/details/${tmdbId}/${mediaType}${params}`;
+        } else if (imdbId && imdbId !== 'None' && imdbId !== 'null') {
+            window.location.href = `/discover/?search=${imdbId}`;
+        }
+    }
+    window.calEventClick = calEventClick;
+
+    // ── View toggle ─────────────────────────────────────────────────────────
+    function calSetView(mode) {
+        localStorage.setItem('calViewMode', mode);
+        document.getElementById('cal-simple-view').style.display  = mode === 'simple'   ? '' : 'none';
+        document.getElementById('cal-advanced-view').style.display = mode === 'advanced' ? '' : 'none';
+        document.getElementById('cal-toggle-simple').classList.toggle('active',   mode === 'simple');
+        document.getElementById('cal-toggle-advanced').classList.toggle('active', mode === 'advanced');
+        if (mode === 'advanced') {
+            renderAdvGrid(currentOffset, null);
+            calMobileRender();
+        }
+    }
+    window.calSetView = calSetView;
+
+    // ── Init ────────────────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', function () {
+        // Advanced nav
+        const advPrev = document.getElementById('cal-adv-prev');
+        const advNext = document.getElementById('cal-adv-next');
+        if (advPrev) advPrev.addEventListener('click', () => calAdvNav(-1));
+        if (advNext) advNext.addEventListener('click', () => calAdvNav(1));
+
+        // Delegated click for JS-rendered event cards (survives grid rebuilds)
+        const advancedView = document.getElementById('cal-advanced-view');
+        if (advancedView) {
+            advancedView.addEventListener('click', function(e) {
+                const card = e.target.closest('.cal-clickable-event');
+                if (!card) return;
+                const s  = card.dataset.season;
+                const ep = card.dataset.episode;
+                calEventClick(
+                    card.dataset.status,
+                    card.dataset.tmdb,
+                    card.dataset.imdb,
+                    card.dataset.type,
+                    s  ? parseInt(s)  : null,
+                    ep ? parseInt(ep) : null
+                );
+            });
+        }
+
+        // Mobile nav
+        const dayPrev = document.getElementById('cal-day-prev');
+        const dayNext = document.getElementById('cal-day-next');
+        if (dayPrev) dayPrev.addEventListener('click', () => calDayNav(-1));
+        if (dayNext) dayNext.addEventListener('click', () => calDayNav(1));
+
+        // Start mobile on today if visible in current week
+        const meta = weekMeta(currentOffset);
+        if (meta) {
+            const todayIdx = meta.days.findIndex(d => d.iso === todayISO);
+            if (todayIdx >= 0) mobileDay = todayIdx;
+        }
+
+        // ── Modal for simple-view grid cells ────────────────────────────────
+        const modal        = document.getElementById('day-events-modal');
+        const modalOverlay = document.getElementById('day-events-modal-overlay');
+        const modalTitle   = document.getElementById('day-events-modal-title');
+        const modalBody    = document.getElementById('day-events-modal-body');
+        const modalClose   = document.getElementById('day-events-modal-close');
+        const noModalMsg   = modal.querySelector('.no-modal-events');
 
         document.querySelectorAll('.calendar-day-cell').forEach(cell => {
             cell.addEventListener('click', function () {
-                const dateISO = this.dataset.dateiso;
-                const displayDate = this.dataset.displaydate;
-                
+                const dateISO    = this.dataset.dateiso;
+                const displayDate= this.dataset.displaydate;
                 modalTitle.textContent = 'Events for ' + displayDate;
-                modalBody.innerHTML = ''; // Clear previous events
-                noModalEventsMessage.style.display = 'none';
+                modalBody.innerHTML = '';
+                noModalMsg.style.display = 'none';
 
-                if (allGroupedEvents[dateISO] && allGroupedEvents[dateISO].items && allGroupedEvents[dateISO].items.length > 0) {
-                    const events = allGroupedEvents[dateISO].items.sort((a, b) => {
-                        // Sort by sort_datetime within JS
-                        const dtA = new Date(a.sort_datetime);
-                        const dtB = new Date(b.sort_datetime);
-                        return dtA - dtB;
-                    });
-
+                const group = allGroupedEvents[dateISO];
+                if (group && group.items && group.items.length) {
+                    const sorted = group.items.slice().sort((a,b) => new Date(a.sort_datetime) - new Date(b.sort_datetime));
                     const ul = document.createElement('ul');
                     ul.className = 'modal-event-list';
-
-                    events.forEach(event => {
-                        const li = document.createElement('li');
-                        li.className = `modal-event-item event-type-${event.type} status-${event.display_status.replace(/_/g, '-')}`;
-                        
-                        let timeStr = '';
-                        if (event.time) {
-                            timeStr = event.time; // Already formatted in Python
-                        } else {
-                            timeStr = '<span class="all-day-indicator">All Day</span>';
-                        }
-
-                        const typeStr = event.type === 'movie' ? 'Movie' : 'TV Episode';
-                        const statusStr = event.display_status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-
+                    sorted.forEach(ev => {
+                        const li  = document.createElement('li');
+                        const slug= (ev.display_status||'').replace(/_/g,'-');
+                        li.className = `modal-event-item event-type-${ev.type} status-${slug}`;
+                        const timeStr  = ev.time || '<span class="all-day-indicator">All Day</span>';
+                        const typeStr  = ev.type === 'movie' ? 'Movie' : 'TV Episode';
+                        const statusStr= (ev.display_status||'').replace(/_/g,' ').replace(/\b\w/g,l=>l.toUpperCase());
                         li.innerHTML = `
                             <div class="modal-event-time">${timeStr}</div>
                             <div class="modal-event-details">
-                                <span class="modal-event-title">${event.title}</span>
+                                <span class="modal-event-title">${esc(ev.title)}</span>
                                 <span class="modal-event-category">${typeStr}</span>
-                                <span class="modal-event-status-badge status-${event.display_status.replace(/_/g, '-')}">
-                                    ${statusStr}
-                                </span>
-                            </div>
-                        `;
+                                <span class="modal-event-status-badge status-${slug}">${statusStr}</span>
+                            </div>`;
                         ul.appendChild(li);
                     });
                     modalBody.appendChild(ul);
                 } else {
-                    noModalEventsMessage.style.display = 'block';
+                    noModalMsg.style.display = 'block';
                 }
-
                 modal.style.display = 'flex';
                 modalOverlay.style.display = 'block';
                 document.body.classList.add('modal-open');
@@ -224,15 +483,14 @@
             modalOverlay.style.display = 'none';
             document.body.classList.remove('modal-open');
         }
-
-        modalCloseButton.addEventListener('click', closeModal);
+        modalClose.addEventListener('click', closeModal);
         modalOverlay.addEventListener('click', closeModal);
+        document.addEventListener('keydown', e => { if (e.key === 'Escape' && modal.style.display === 'flex') closeModal(); });
 
-        document.addEventListener('keydown', function(event) {
-            if (event.key === 'Escape' && modal.style.display === 'flex') {
-                closeModal();
-            }
-        });
+        // Apply saved view (renders the advanced grid if needed)
+        const saved = localStorage.getItem('calViewMode') || 'simple';
+        calSetView(saved);
     });
+})();
 </script>
 {% endblock %}

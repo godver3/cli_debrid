@@ -974,6 +974,20 @@ ease;
     line-height: normal;
 }
 
+.episode-broken-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.5rem 0.2rem 0.5rem;
+    border-radius: 4px;
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    white-space: nowrap;
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: normal;
+}
+
 /* Broken File Icon */
 .broken-icon {
     width: 16px;
@@ -1165,11 +1179,82 @@ ease;
 /* ==========================================================================
    Responsive Design
    ========================================================================== */
-
-@media (max-width: 1024px) {
+@media (max-width: 1200px) {
     .release-tags {
-        display: inline;
+        display: block;
         align-self: center;
+        padding-bottom: 5px;
+    }
+    .release-title-wrapper {
+        display: contents;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .movie-main-grid {
+        grid-template-columns: 1.8fr 1fr;
+    }
+    .movie-sidebar {
+        width: 100%;
+        max-width: fit-content;
+    }
+    .movie-title {
+        font-size: 1.5rem;
+    }
+    .details-row {
+        gap: 0.5rem;
+        font-size: 0.845rem;
+    }
+    .quality-badge {
+        margin-right: 4px;
+    }
+    .status-badge {
+        font-size: 0.65rem;
+    }
+    .movie-meta {
+        font-size: 0.745rem;
+    }
+    .movie-file-row {
+        display: block;
+    }
+    .movie-file-number {
+        display: inline;
+    }
+    .movie-file-status-icon {
+        vertical-align: sub;
+    }
+    .movie-file-info-section {
+        display: contents;
+    }
+    .movie-file-title {
+        display: inline;
+        line-height: 30px;
+    }
+    .movie-file-meta {
+        line-height: 5px;
+        padding-bottom: 10px;
+    }
+    .file-action-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: 0;
+        margin-right: 5px;
+        line-height: 0;
+        white-space: nowrap;
+    }
+
+}
+
+@media (max-width: 768px) {
+    .release-tags {
+        display: block;
+        align-self: center;
+        padding-bottom: 0px;
+    }
+    .release-title-wrapper {
+        display: contents;
+        flex-direction: column;
+        gap: 6px;
     }
     .quality-badge {
         margin-right: 4px;
@@ -1205,14 +1290,14 @@ ease;
         display: block;
     }
 
-    .movie-title-row .status-badge.missing {
+    /* .movie-title-row .status-badge.missing {
         display: block;
         background: transparent;
         padding: 0;
         border: none;
         margin-bottom: 0.75rem;
         line-height: 1.5;
-    }
+    } */
 
     .movie-title-row .status-badge.missing * {
         display: inline;
@@ -1344,7 +1429,9 @@ ease;
     }
 
     .file-action-btn {
-        display: inline-block;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         padding: 0.5rem;
         line-height: 0;
         margin-left: 0;
@@ -1369,6 +1456,8 @@ ease;
     }
 }
 
+
+
 /* Prevent scrolling when modal is open */
 body.modal-open {
     overflow: hidden;
@@ -1376,64 +1465,250 @@ body.modal-open {
 }
 
 /* Version Modal Styles */
+/* ==========================================================================
+   Version Request Modal — Tangerine Theme
+   ========================================================================== */
+
 .version-modal {
     display: none;
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.7);
-    z-index: 1000;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(6px);
+    z-index: 10000;
     align-items: center;
     justify-content: center;
 }
 
 .version-modal-content {
-    background-color: #333;
+    background: #1a1a1a;
+    border: 1px solid #3d3d3d;
+    border-top: 3px solid #e8601c;
+    border-radius: 10px;
+    width: 320px;
+    max-width: calc(100vw - 32px);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+.version-modal-content h3 {
+    display: none;
+}
+
+/* dialog-body: padded content area */
+.dialog-body {
     padding: 20px;
+}
+
+/* title row with left accent bar */
+.dialog-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: #e0e0e0;
+    border-left: 3px solid #e8601c;
+    padding-left: 10px;
+    margin-bottom: 14px;
+    line-height: 1.3;
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* subtitle pill: "Requesting: Title (Year)" */
+.dialog-sub {
+    font-size: 11px;
+    color: #e8601c;
+    font-weight: 500;
+    margin-bottom: 14px;
+    padding: 5px 9px;
+    background: rgba(232, 96, 28, 0.08);
+    border: 1px solid rgba(232, 96, 28, 0.25);
     border-radius: 5px;
-    width: 300px;
-    max-width: 90%;
-    color: white;
-}
-
-.version-modal h3 {
-    margin-top: 0;
-    margin-bottom: 15px;
-    text-align: center;
-}
-
-.version-checkbox {
-    margin-bottom: 10px;
-}
-
-.version-checkbox input[type="radio"],
-.version-checkbox input[type="checkbox"] {
-    margin-right: 10px;
-}
-
-.version-modal-buttons {
     display: flex;
-    justify-content: space-between;
-    margin-top: 20px;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Inter', system-ui, sans-serif;
 }
 
-.version-modal-buttons button {
-    padding: 8px 16px;
-    border: none;
-    border-radius: 4px;
+.dialog-sub i { font-size: 10px; }
+
+/* section label above option groups */
+.section-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: #555;
+    margin-bottom: 8px;
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* option rows (shared by checkbox and radio) */
+.option-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 11px;
+    border-radius: 6px;
+    border: 1px solid #333;
+    background: #222;
     cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    margin-bottom: 6px;
+    user-select: none;
 }
 
-.version-modal-buttons button:first-child {
-    background-color: #2ecc71;
-    color: white;
+.option-row:last-child { margin-bottom: 0; }
+
+.option-row:hover {
+    border-color: #3d3d3d;
+    background: #2a2a2a;
 }
 
-.version-modal-buttons button:last-child {
-    background-color: #7f8c8d;
-    color: white;
+.option-row.checked,
+.option-row.selected {
+    border-color: rgba(232, 96, 28, 0.25);
+    background: rgba(232, 96, 28, 0.08);
+}
+
+/* custom radio indicator */
+.custom-radio {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1.5px solid #3d3d3d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.option-row.selected .custom-radio {
+    border-color: #e8601c;
+    background: #e8601c;
+}
+
+.custom-radio-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #fff;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.option-row.selected .custom-radio-dot { opacity: 1; }
+
+/* custom checkbox indicator */
+.custom-cb {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1.5px solid #3d3d3d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.option-row.checked .custom-cb {
+    border-color: #e8601c;
+    background: #e8601c;
+}
+
+.custom-cb i {
+    font-size: 9px;
+    color: #fff;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.option-row.checked .custom-cb i { opacity: 1; }
+
+/* option label text */
+.option-label {
+    font-size: 13px;
+    color: #aaa;
+    font-weight: 500;
+    transition: color 0.15s;
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+.option-row.checked .option-label,
+.option-row.selected .option-label { color: #e0e0e0; }
+
+/* divider between sections */
+.vm-divider {
+    height: 1px;
+    background: #333;
+    margin: 14px 0;
+}
+
+/* season container */
+.season-selection-container {
+    margin: 8px 0 0;
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 8px;
+    background: rgba(232, 96, 28, 0.04);
+    border: 1px solid rgba(232, 96, 28, 0.15);
+    border-radius: 6px;
+}
+
+.seasons-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* footer with buttons */
+.dialog-footer {
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.vm-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'Inter', system-ui, sans-serif;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    white-space: nowrap;
+    flex: 1;
+    justify-content: center;
+    border: none;
+}
+
+.vm-btn i { font-size: 11px; }
+
+.vm-btn-accent {
+    background: #e8601c;
+    border: 1px solid #e8601c;
+    color: #fff;
+}
+
+.vm-btn-accent:hover {
+    background: #f07030;
+    border-color: #f07030;
+}
+
+.vm-btn-ghost {
+    background: #222;
+    border: 1px solid #3d3d3d;
+    color: #aaa;
+}
+
+.vm-btn-ghost:hover {
+    background: #2a2a2a;
+    border-color: #555;
+    color: #e0e0e0;
 }
 
 /* Overlay Styles */
@@ -1456,7 +1731,7 @@ body.modal-open {
 .overlay-content {
     position: relative;
     background-color: #1a1a1a;
-    padding: 0 20px 20px 20px;
+    /* padding: 0 20px 20px 20px; */
     border-radius: 8px;
     width: 85%;
     max-width: 1200px;
@@ -1595,19 +1870,7 @@ tr.filtered-out-item:hover {
     align-items: center;
 }
 
-.loading-content {
-    background: rgba(26, 26, 26, 0.95);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 20px;
-    border-radius: 20px;
-    text-align: center;
-}
-
-.loading-content p {
-    color: #e0e0e0;
-    margin-bottom: 15px;
-}
+/* Loading overlay styles defined in base.css */
 
 .loading-message {
     margin-bottom: 10px;
@@ -1635,27 +1898,6 @@ tr.filtered-out-item:hover {
     border-radius: 20px 0 0 0;
 }
 
-.close-loading {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-    color: white;
-    border: none;
-    padding: 12px 20px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 16px;
-    font-weight: 600;
-    margin: 4px 2px;
-    cursor: pointer;
-    border-radius: 12px;
-    transition: all 0.3s ease;
-}
-
-.close-loading:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(255, 107, 53, 0.4);
-}
-
 /* ========================================
    Torrent Overlay Styles (from tangerine_scraper.css)
    ======================================== */
@@ -1665,7 +1907,7 @@ tr.filtered-out-item:hover {
     background: rgba(26, 26, 26, 0.95);
     backdrop-filter: blur(20px);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 0 20px 20px 20px;
+    /* padding: 0 20px 20px 20px; */
     border-radius: 20px;
     width: 85%;
     max-width: 1200px;
@@ -2062,4 +2304,612 @@ td#scraper-source .source-badge {
     background: #c82333;
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
+}
+
+.files-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+button.btn.btn-sm.replace-movie-btn {
+    margin: 0px 0px 10px 0px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.35rem 0.75rem;
+    background: rgba(255, 165, 0, 0.15);
+    border: 1px solid rgba(255, 165, 0, 0.3);
+    color: rgba(255, 255, 255, 0.9);
+    border-radius: 0.375rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.875rem;
+}
+
+button.btn.btn-sm.replace-movie-btn:hover {
+    background: rgba(255, 165, 0, 0.25);
+    border-color: rgba(255, 165, 0, 0.5);
+    transform: translateY(-1px);
+}
+
+button.btn.btn-sm.replace-movie-btn.replace-movie-pending {
+    border-color: rgba(234, 179, 8, 0.4);
+    background: rgba(234, 179, 8, 0.15);
+}
+
+button.btn.btn-sm.replace-movie-btn.replace-movie-pending:hover {
+    background: rgba(234, 179, 8, 0.25);
+    border-color: rgba(234, 179, 8, 0.6);
+}
+
+.replace-pending-badge {
+    display: inline-block;
+    margin-left: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    background: rgba(234, 179, 8, 0.2);
+    border: 1px solid rgba(234, 179, 8, 0.4);
+    border-radius: 9999px;
+    color: rgba(234, 179, 8, 0.9);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+/* Hide trailer text on mobile, show only play icon */
+@media (max-width: 768px) {
+    .trailer-text {
+        display: none;
+    }
+}
+
+/* ==========================================================================
+   Tangerine Formula Overrides — scoped to tangerine theme
+   ========================================================================== */
+
+body[data-theme="tangerine"] {
+    --tm-accent: #e8601c;
+    --tm-accent-muted: rgba(232, 96, 28, 0.15);
+    --tm-accent-border: rgba(232, 96, 28, 0.3);
+    --tm-surface-1: #161616;
+    --tm-surface-2: #1e1e1e;
+    --tm-surface-3: #252525;
+    --tm-border: #3a3a3a;
+    --tm-text: #e8e8e8;
+    --tm-text-muted: rgba(232, 232, 232, 0.55);
+    --tm-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    --tm-sans: 'Inter', system-ui, sans-serif;
+    --tm-radius: 6px;
+}
+
+/* Fonts */
+body[data-theme="tangerine"] .movie-title,
+body[data-theme="tangerine"] .files-title,
+body[data-theme="tangerine"] .info-box-title,
+body[data-theme="tangerine"] .movie-meta,
+body[data-theme="tangerine"] .stat-label,
+body[data-theme="tangerine"] .movie-file-title,
+body[data-theme="tangerine"] .movie-file-meta,
+body[data-theme="tangerine"] .video-title,
+body[data-theme="tangerine"] .video-meta,
+body[data-theme="tangerine"] .detail-label,
+body[data-theme="tangerine"] .detail-value,
+body[data-theme="tangerine"] .file-tab-title {
+    font-family: var(--tm-sans);
+}
+
+body[data-theme="tangerine"] .detail-code,
+body[data-theme="tangerine"] .video-file {
+    font-family: var(--tm-mono);
+}
+
+/* Movie header */
+body[data-theme="tangerine"] .movie-title {
+    font-size: 1.375rem;
+    font-weight: 700;
+    font-family: var(--tm-sans);
+    letter-spacing: -0.01em;
+    color: #e0e0e0;
+    margin-bottom: 6px;
+}
+
+body[data-theme="tangerine"] .movie-meta {
+    font-family: var(--tm-sans);
+    font-size: 12px;
+    color: #aaa;
+    gap: 8px;
+    margin-top: 8px;
+    align-items: center;
+}
+body[data-theme="tangerine"] .movie-meta .separator {
+    color: #666;
+    opacity: 1;
+    font-size: 11px;
+}
+
+body[data-theme="tangerine"] #movie-rating-text {
+    color: #f59e0b;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+body[data-theme="tangerine"] .movie-tagline {
+    font-size: 12px;
+    color: #aaa;
+    font-style: italic;
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
+body[data-theme="tangerine"] .details-row {
+    font-family: var(--tm-sans);
+    font-size: 12px;
+    gap: 16px;
+    margin: 0.5rem 0 0.75rem;
+    color: #666;
+}
+body[data-theme="tangerine"] .details-row .label {
+    color: #666;
+    font-weight: 400;
+    opacity: 1;
+}
+body[data-theme="tangerine"] .details-row span:last-child {
+    color: #aaa;
+    font-weight: 500;
+}
+
+body[data-theme="tangerine"] .files-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+body[data-theme="tangerine"] .info-box-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--tm-text-muted);
+    padding-top: 4px;
+}
+
+/* Poster border */
+body[data-theme="tangerine"] .movie-poster {
+    border-radius: var(--tm-radius);
+}
+
+/* Info boxes — replace warm brown with dark surface */
+body[data-theme="tangerine"] .info-box {
+    background: var(--tm-surface-2);
+    border: 1px solid var(--tm-border);
+    border-radius: var(--tm-radius);
+    backdrop-filter: none;
+}
+
+body[data-theme="tangerine"] .info-box:hover {
+    background: var(--tm-surface-3);
+    border-color: var(--tm-accent-border);
+    transform: none;
+}
+
+body[data-theme="tangerine"] .detail-row {
+    border-bottom-color: var(--tm-border);
+}
+
+body[data-theme="tangerine"] .detail-code {
+    background: var(--tm-surface-1);
+    border-radius: 4px;
+}
+
+/* Files container — replace warm brown with dark surface */
+body[data-theme="tangerine"] .files-container {
+    background: var(--tm-surface-2);
+    border: 1px solid var(--tm-border);
+    border-radius: var(--tm-radius);
+    backdrop-filter: none;
+}
+
+/* File tabs — replace warm brown */
+body[data-theme="tangerine"] .file-tabs {
+    background: var(--tm-surface-2);
+    border: 1px solid var(--tm-border);
+    border-radius: var(--tm-radius);
+    backdrop-filter: none;
+}
+
+body[data-theme="tangerine"] .file-tab {
+    border-radius: var(--tm-radius);
+}
+
+body[data-theme="tangerine"] .file-tab-title {
+    font-family: var(--tm-sans);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--tm-text-muted);
+}
+
+body[data-theme="tangerine"] .file-tab.active .file-tab-title {
+    color: #e0e0e0;
+}
+
+body[data-theme="tangerine"] .file-tab-stats {
+    font-family: var(--tm-mono);
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: #aaa;
+    letter-spacing: 0;
+}
+
+body[data-theme="tangerine"] .file-tab.active .file-tab-stats {
+    color: #e0e0e0;
+}
+
+/* Movie file rows */
+body[data-theme="tangerine"] .movie-file-row {
+    background: var(--tm-surface-2);
+    border: 1px solid var(--tm-border);
+    border-radius: var(--tm-radius);
+}
+
+body[data-theme="tangerine"] .movie-file-row:hover {
+    background: var(--tm-surface-3);
+    border-color: rgba(255, 107, 53, 0.4);
+}
+
+/* Video rows */
+body[data-theme="tangerine"] .video-row {
+    background: var(--tm-surface-2);
+    border: 1px solid var(--tm-border);
+    border-radius: var(--tm-radius);
+}
+
+body[data-theme="tangerine"] .video-row:hover {
+    background: var(--tm-surface-3);
+    border-color: rgba(255, 107, 53, 0.4);
+}
+
+/* Action buttons — keep original colours, only fix radius */
+body[data-theme="tangerine"] .action-btn,
+body[data-theme="tangerine"] .delete-video-btn,
+body[data-theme="tangerine"] .search-video-btn,
+body[data-theme="tangerine"] .refresh-btn,
+body[data-theme="tangerine"] .files-toggle-btn,
+body[data-theme="tangerine"] button.btn.btn-sm.btn-danger.delete-movie-file-btn,
+body[data-theme="tangerine"] button.btn.btn-sm.replace-movie-btn {
+    font-family: var(--tm-sans);
+    font-size: 0.82rem;
+    font-weight: 500;
+    border-radius: var(--tm-radius);
+    padding: 0 12px;
+    height: 30px;
+    gap: 5px;
+    transition: background 0.15s, border-color 0.15s;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .action-btn:not(.primary-btn):not(.danger-btn):not(.ghost-btn):not(.success-btn) {
+    background: #1e1e1e;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #e8e8e8;
+}
+
+body[data-theme="tangerine"] .action-btn:not(.primary-btn):not(.danger-btn):not(.ghost-btn):not(.success-btn):hover {
+    background: #2a2a2a;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+body[data-theme="tangerine"] .action-btn:hover,
+body[data-theme="tangerine"] .search-video-btn:hover,
+body[data-theme="tangerine"] .refresh-btn:hover,
+body[data-theme="tangerine"] .files-toggle-btn:hover,
+body[data-theme="tangerine"] button.btn.btn-sm.replace-movie-btn:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .action-btn svg {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+}
+
+body[data-theme="tangerine"] .primary-btn {
+    background: #1e1e1e;
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+body[data-theme="tangerine"] .primary-btn:hover {
+    background: #2a2a2a;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+body[data-theme="tangerine"] .ghost-btn {
+    background: #1e1e1e;
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+body[data-theme="tangerine"] .ghost-btn:hover {
+    background: #1e1e1e;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+body[data-theme="tangerine"] .danger-btn {
+    background: #1e1e1e;
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+body[data-theme="tangerine"] .danger-btn:hover {
+    background: #2a2a2a;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Video files panel */
+body[data-theme="tangerine"] .video-files-panel {
+    background: rgba(20, 20, 22, 0.98);
+    border-radius: 0.5rem;
+}
+
+body[data-theme="tangerine"] .video-file {
+    font-family: var(--tm-mono);
+}
+
+/* Loading progress bar */
+body[data-theme="tangerine"] .loading-progress-bar {
+    background-color: var(--tm-accent);
+}
+
+/* ── File selection popup — full tangerine redesign ─────── */
+body[data-theme="tangerine"] .file-selection-popup {
+    background: var(--tm-surface-2);
+    border: 1px solid var(--tm-border);
+    border-radius: var(--tm-radius);
+    padding: 1.5rem;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+body[data-theme="tangerine"] .file-selection-popup h3 {
+    font-family: var(--tm-sans);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--tm-text);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-left: 3px solid var(--tm-accent);
+    padding-left: 10px;
+    margin: 0 0 0.5rem 0;
+}
+
+body[data-theme="tangerine"] .file-selection-subtitle {
+    font-family: var(--tm-sans);
+    font-size: 0.82rem;
+    color: var(--tm-text-muted);
+    margin: 0 0 1.25rem 0;
+    padding-left: 13px;
+}
+
+body[data-theme="tangerine"] .file-selection-list {
+    margin-bottom: 1.25rem;
+}
+
+body[data-theme="tangerine"] .file-selection-item {
+    background: var(--tm-surface-3);
+    border: 1px solid var(--tm-border);
+    border-radius: var(--tm-radius);
+    padding: 0.625rem 0.75rem;
+    margin-bottom: 0.4rem;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+body[data-theme="tangerine"] .file-selection-item:hover {
+    background: #2a2a2a;
+    border-color: #4a4a4a;
+}
+
+body[data-theme="tangerine"] .file-selection-item input[type="checkbox"] {
+    accent-color: var(--tm-accent);
+    margin-top: 0.2rem;
+}
+
+body[data-theme="tangerine"] .file-number {
+    font-family: var(--tm-mono);
+    font-size: 0.82rem;
+    color: var(--tm-accent);
+    font-weight: 400;
+}
+
+body[data-theme="tangerine"] .file-name {
+    font-family: var(--tm-sans);
+    font-size: 12px;
+    color: var(--tm-text);
+    font-weight: 500;
+}
+
+body[data-theme="tangerine"] .file-version {
+    font-family: var(--tm-mono);
+    font-size: 0.75rem;
+    color: var(--tm-text-muted);
+}
+
+body[data-theme="tangerine"] .file-selection-actions {
+    border-top: 1px solid var(--tm-border);
+    padding-top: 1rem;
+    gap: 0.5rem;
+}
+
+body[data-theme="tangerine"] .file-selection-btn {
+    font-family: var(--tm-sans);
+    font-size: 0.82rem;
+    font-weight: 500;
+    border-radius: var(--tm-radius);
+    padding: 0 14px;
+    height: 32px;
+    text-transform: none;
+    letter-spacing: 0;
+    margin-top: 0;
+    width: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, border-color 0.15s;
+    transform: none;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .file-selection-btn:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .file-selection-btn:active {
+    transform: none;
+}
+
+body[data-theme="tangerine"] .file-selection-cancel {
+    background: var(--tm-surface-3);
+    border: 1px solid var(--tm-border);
+    color: var(--tm-text);
+}
+
+body[data-theme="tangerine"] .file-selection-cancel:hover {
+    background: #2a2a2a;
+    border-color: #4a4a4a;
+    transform: none;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .file-selection-delete {
+    background: var(--tm-accent);
+    border: 1px solid var(--tm-accent);
+    color: #fff;
+}
+
+body[data-theme="tangerine"] .file-selection-delete:hover {
+    background: #f07030;
+    border-color: #f07030;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Overlay content (torrent viewer) */
+body[data-theme="tangerine"] .overlay-content {
+    background: var(--tm-surface-2);
+    border: 1px solid var(--tm-border);
+    border-radius: var(--tm-radius);
+}
+
+body[data-theme="tangerine"] .overlay-content::before {
+    background: var(--tm-accent);
+}
+
+body[data-theme="tangerine"] .overlay-content h3,
+body[data-theme="tangerine"] .overlay-content thead {
+    background-color: var(--tm-surface-2);
+}
+
+body[data-theme="tangerine"] .overlay-content td button {
+    background-color: var(--tm-accent);
+    border-radius: var(--tm-radius);
+}
+
+body[data-theme="tangerine"] td#scraper-source .source-badge {
+    background: var(--tm-accent-muted);
+    border-color: var(--tm-accent-border);
+    border-radius: var(--tm-radius);
+}
+
+/* Movie file number — mono */
+body[data-theme="tangerine"] .movie-file-number {
+    font-family: var(--tm-mono);
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #e8601c;
+    opacity: 1;
+}
+
+/* Movie file title — Inter */
+body[data-theme="tangerine"] .movie-file-title {
+    font-family: var(--tm-sans);
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #e0e0e0;
+}
+
+/* Movie file meta row — Inter, 12px, muted */
+body[data-theme="tangerine"] .movie-file-meta {
+    font-family: var(--tm-sans);
+    font-size: 12px;
+    color: #aaa;
+    opacity: 1;
+    gap: 6px;
+}
+
+body[data-theme="tangerine"] .movie-file-meta span {
+    color: #aaa;
+}
+
+/* Version / size badges — mono, dark surface */
+body[data-theme="tangerine"] .movie-file-meta .file-version {
+    font-family: var(--tm-mono);
+    font-size: 11px;
+    font-weight: 500;
+    font-variant: normal;
+    background: var(--tm-surface-3);
+    border: 1px solid var(--tm-border);
+    color: #aaa;
+    border-radius: 4px;
+    padding: 1px 6px;
+}
+
+/* Audio / subtitle track badges */
+body[data-theme="tangerine"] .movie-file-meta .episode-track-badge {
+    font-family: var(--tm-mono);
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--tm-surface-3);
+    border: 1px solid var(--tm-border);
+    color: #aaa;
+    border-radius: 4px;
+    padding: 1px 6px;
+}
+
+/* Quality badges (resolution, source etc) — mono */
+body[data-theme="tangerine"] .quality-badge {
+    font-family: var(--tm-mono);
+    font-size: 11px;
+    font-weight: 500;
+    font-variant: normal;
+    text-transform: none;
+    letter-spacing: 0;
+    border-radius: 4px;
+    padding: 1px 6px;
+    line-height: normal !important;
+}
+
+/* Broken badge */
+body[data-theme="tangerine"] .episode-broken-badge {
+    font-family: var(--tm-mono);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 1px 6px;
+    border-radius: 4px;
+    line-height: normal;
+}
+
+/* Files count — mono */
+body[data-theme="tangerine"] .files-count {
+    font-family: var(--tm-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+body[data-theme="tangerine"] .cast-header h3 {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(232, 232, 232, 0.55);
+    padding-top: 4px;
 }

@@ -1,21 +1,42 @@
-<h3>Notification Settings</h3>
-<div class="settings-expand-collapse-buttons">
-    <button type="button" class="settings-expand-all">Expand All</button>
-    <button type="button" class="settings-collapse-all">Collapse All</button>
-</div>
+<div class="notifications-settings-page">
+    <h2 class="notifications-settings-title">Notification Settings</h2>
+    <p class="notifications-settings-subtitle">Manage notification channels and preferences</p>
 
-<button id="add-notification-btn" class="add-source-link">Add New Notification</button>
+    <div class="content-section">
+        <div class="notifications-settings-header section-header">
+            <h3 class="notifications-settings-settings-title section-title">
+                <span class="title-bar"></span>
+                Notifications
+            </h3>
+            <div class="notifications-settings-actions action-buttons settings-expand-collapse-buttons">
+                <button type="button" class="notifications-settings-btn btn-secondary settings-collapse-all"><i class="fa-solid fa-compress"></i> Collapse All</button>
+                <button type="button" class="notifications-settings-btn btn-secondary settings-expand-all"><i class="fa-solid fa-expand"></i> Expand All</button>
+                <button id="add-notification-btn" class="notifications-settings-btn-primary btn-primary add-notification-link"><i class="fa-solid fa-plus"></i> Add New Notification</button>
+            </div>
+        </div>
+
+        <div class="notification-list">
 
 {% if notification_settings %}
     {% for notification_id, config in notification_settings.items() %}
         {% if config is not none %}
-        <div class="settings-section" data-notification-id="{{ notification_id }}">
-            <div class="settings-section-header">
-                <span class="settings-toggle-icon">+</span>
-                <h4>{{ config.title }}_{{ notification_id.split('_')[-1] }}</h4>
-                <div class="notification-buttons">
-                    <button type="button" class="test-notification-btn" data-notification-id="{{ notification_id }}">Test Notification</button>
-                    <button type="button" class="delete-notification-btn" data-notification-id="{{ notification_id }}">Delete Notification</button>
+        <div class="settings-section settings-card notification-card" data-notification-id="{{ notification_id }}">
+            <div class="settings-section-header notification-header">
+                <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                </svg>
+                <div class="notification-header-left settings-header-left">
+                    <h4>{{ config.title }}_{{ notification_id.split('_')[-1] }}</h4>
+                </div>
+                <div class="notification-buttons notification-actions">
+                    <button type="button" class="test-notification-btn btn-secondary" data-notification-id="{{ notification_id }}">
+                        <i class="fa-solid fa-bell"></i>
+                <span class="btn-text">Test</span>
+                    </button>
+                    <button type="button" class="delete-notification-btn btn-danger" data-notification-id="{{ notification_id }}">
+                        <i class="fa-solid fa-trash"></i>
+                <span class="btn-text">Delete</span>
+                    </button>
                 </div>
             </div>
             <div class="settings-section-content" style="display: none;">
@@ -85,8 +106,12 @@
 
 <div class="settings-section">
     <div class="settings-section-header">
-        <span class="settings-toggle-icon">+</span>
-        <h4>General Notification Options</h4>
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>General Notification Options</h4>
+        </div>
     </div>
     <div class="settings-section-content" style="display: none;">
         <div class="settings-form-group">
@@ -169,10 +194,11 @@ function testNotificationHandler(e) {
 function testNotification(notificationId) {
     // Disable the button and show loading state
     const button = document.querySelector(`.test-notification-btn[data-notification-id="${notificationId}"]`);
-    const originalText = button.textContent;
-    button.textContent = 'Sending...';
+    const btnText = button.querySelector('.btn-text');
+    const originalText = btnText.textContent;
+    btnText.textContent = 'Sending...';
     button.disabled = true;
-    
+
     fetch('/settings/notifications/test', {
         method: 'POST',
         headers: {
@@ -183,7 +209,7 @@ function testNotification(notificationId) {
     .then(response => response.json())
     .then(data => {
         // Reset button state
-        button.textContent = originalText;
+        btnText.textContent = originalText;
         button.disabled = false;
         
         if (data.success) {
@@ -454,3 +480,7 @@ function initializeContentSourceFilter() {
     });
 }
 </script>
+
+        </div>
+    </div>
+</div>

@@ -261,14 +261,14 @@
 }
 
 /* Main Content Area */
-.settings-main-content {
+/* .settings-main-content {
     flex: 1;
     margin-left: 280px;
     padding: 2rem 3rem;
     min-height: calc(100vh - 60px);
     position: relative;
     z-index: 1;
-}
+} */
 
 /* Tab Content Sections */
 .settings-tab-content {
@@ -368,12 +368,12 @@
 }
 
 /* Common styles */
-.settings-container {
+/* .settings-container {
     width: 100%;
     max-width: 1400px;
     margin: 0 auto;
     padding: 0;
-}
+} */
 
 /* Content Header */
 .content-header {
@@ -1121,7 +1121,7 @@ button.delete-scraper-btn:disabled,
 
     .btn-primary { 
         background: #ff6b35;
-        margin: 0 0px 10px;
+        /* margin: 0 0px 10px; */
      }
     .btn-primary:hover { background: #f7931e; }
     .btn-secondary { background-color: rgba(255, 255, 255, 0.08); }
@@ -1332,7 +1332,7 @@ button.delete-scraper-btn:disabled,
         border: none;
         color: white;
         padding: 5px 10px;
-        margin: 0 0px 10px;
+        /* margin: 0 0px 10px; */
         text-align: center;
         text-decoration: none;
         display: inline-block;
@@ -1839,10 +1839,27 @@ div#trakt-auth-status {
 }
 
 .plex-auth-section {
-    padding: 20px;
-    background-color: var(--card-bg);
-    border-radius: 12px;
+    padding: 12px 14px;
+    background-color: #222;
+    border-radius: 6px;
+    margin: 0px 0 15px 0;
 }
+
+.plex-auth-section h5 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary, #e2e8f0);
+    margin: 0 0 4px 0;
+    border-left: 3px solid #e8601c !important;
+    padding-left: 9px !important;
+}
+
+.plex-auth-section .settings-description {
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748b);
+    margin: 0 0 10px 0;
+}
+
 
 .plex-auth-btn {
     background-color: #282a2d;
@@ -2079,79 +2096,88 @@ div#trakt-auth-status {
 
     /* AIOStreams info box styling - Tangerine theme (blue) */
     .aiostreams-info-box {
-        background: rgba(59, 130, 246, 0.1);
-        border: 1px solid rgba(59, 130, 246, 0.3);
-        border-radius: 12px;
-        padding: 1rem 1.25rem;
-        margin: 20px 0;
-        display: flex;
-        gap: 0.75rem;
-        align-items: flex-start;
+        background: rgba(59, 130, 246, 0.07) !important;
+        border: 1px solid rgba(59, 130, 246, 0.2) !important;
+        border-radius: 7px !important;
+        padding: 11px 14px !important;
+        margin: 12px 0 !important;
+        display: flex !important;
+        gap: 10px !important;
+        align-items: flex-start !important;
+        font-size: 12px !important;
+        font-family: 'Inter', sans-serif !important;
+        color: #aaa !important;
+        line-height: 1.6 !important;
         overflow: hidden;
     }
 
     .aiostreams-info-box .info-icon {
-        width: 20px;
-        height: 20px;
-        color: #60a5fa;
-        flex-shrink: 0;
+        width: 16px !important;
+        height: 16px !important;
+        color: #3b82f6 !important;
+        flex-shrink: 0 !important;
+        margin-top: 1px !important;
     }
 
     .aiostreams-info-box-content {
-        flex: 1;
-        min-width: 0;
+        flex: 1 !important;
+        min-width: 0 !important;
         overflow-wrap: break-word;
         word-wrap: break-word;
     }
 
     .aiostreams-info-box p {
-        margin: 0 0 10px 0;
-        line-height: 1.5;
-        color: #e5e7eb;
+        margin: 0 0 8px 0 !important;
+        line-height: 1.6 !important;
+        color: #aaa !important;
+        font-size: 12px !important;
         overflow-wrap: break-word;
         word-wrap: break-word;
     }
 
     .aiostreams-info-box p:last-child {
-        margin-bottom: 0;
+        margin-bottom: 0 !important;
     }
 
-    /* Add spacing between steps */
     .aiostreams-info-box p + p {
-        margin-top: 20px;
+        margin-top: 10px !important;
     }
 
     .aiostreams-info-box ul {
-        margin: 8px 0 20px 30px;
-        padding: 0;
-        list-style-type: disc;
+        margin: 0.4rem 0 0 1rem !important;
+        padding: 0 !important;
+        list-style-type: disc !important;
     }
 
     .aiostreams-info-box li {
-        margin: 5px 0;
-        line-height: 1.4;
-        color: #e5e7eb;
+        margin-bottom: 3px !important;
+        line-height: 1.6 !important;
+        color: #aaa !important;
+        font-size: 12px !important;
         overflow-wrap: break-word;
         word-wrap: break-word;
     }
 
-    .aiostreams-info-box strong {
-        color: #ffffff;
+    .aiostreams-info-box strong,
+    .aiostreams-info-box b {
+        color: #e8601c !important;
+        font-weight: 600 !important;
         overflow-wrap: break-word;
         word-wrap: break-word;
     }
 
     .aiostreams-info-box pre {
-        background-color: rgba(0, 0, 0, 0.3);
-        padding: 10px;
-        border-radius: 8px;
-        overflow-x: auto;
-        font-size: 12px;
-        color: #e5e7eb;
-        border: 1px solid rgba(59, 130, 246, 0.2);
-        white-space: pre-wrap;
-        word-wrap: break-word;
-        margin: 8px 0 20px 0;
+        background: #111 !important;
+        padding: 10px !important;
+        border-radius: 5px !important;
+        overflow-x: auto !important;
+        font-size: 11px !important;
+        color: #aaa !important;
+        border: 1px solid #2d2d2d !important;
+        white-space: pre-wrap !important;
+        word-wrap: break-word !important;
+        margin: 8px 0 10px 0 !important;
+        font-family: 'JetBrains Mono', monospace !important;
     }
 
 /* Content Sources Page Styling - Tangerine Theme (matching settings.html) */
@@ -2197,9 +2223,14 @@ div#trakt-auth-status {
 
 .info-text,
 .info-banner-content {
-    color: #93c5fd;
-    font-size: 0.875rem;
-    line-height: 1.6;
+    color: #aaa !important;
+    font-size: 12px !important;
+    font-family: 'Inter', sans-serif !important;
+    line-height: 1.6 !important;
+}
+.info-banner-content strong {
+    color: #e8601c !important;
+    font-weight: 600 !important;
 }
 
 .info-text a,
@@ -2676,6 +2707,10 @@ div#trakt-auth-status {
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+.stats-box h3, .status-box h3, .info-box h3, .card h3, .panel h3, .container h3, .section h3, .widget h3, .module h3, [class*="-box"] h3, [class*="-card"] h3, [class*="-panel"] h3, [class*="-container"] h3 {
+    margin-bottom: 0px;
+}
+
 .scrapers-settings-title,
 .scrapers-settings-title.section-title {
     font-size: 1.25rem;
@@ -2684,6 +2719,7 @@ div#trakt-auth-status {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    margin-bottom: 0px;
 }
 
 /* Scraper List */
@@ -3001,6 +3037,7 @@ div#trakt-auth-status {
     border-width: 0 !important;
     border-color: transparent !important;
     background-color: rgba(255, 255, 255, 0.03) !important;
+    font-size: 13px;
 }
 
 .scraping-settings-page .version-list .settings-section .settings-section-content input:focus,
@@ -4060,7 +4097,7 @@ ease;
     .debug-settings-page .settings-list .settings-section .settings-section-content .settings-input,
 
     /* True Debug Settings page inputs */
-    .true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
+    /* .true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
     .true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="number"],
     .true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="email"],
     .true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="password"],
@@ -4070,7 +4107,7 @@ ease;
         width: auto !important;
         min-width: 500px !important;
         max-width: 100% !important;
-    }
+    } */
 
     /* Textareas always full width */
     .scrapers-page .scraper-list .settings-section .settings-section-content textarea,
@@ -4086,13 +4123,15 @@ ease;
 }
 
 
-.search-highlight {
-    background: rgba(255, 107, 53, 0.1) !important;
+.search-highlight,
+.settings-form-group.search-highlight,
+.settings-section .settings-form-group.search-highlight {
+    background: rgba(255, 107, 53, 0.15) !important;
     border-left: 3px solid #ff6b35 !important;
     padding-left: 12px !important;
-    /* margin-left: -15px; */
     border-radius: 4px !important;
     animation: highlightFade 0.5s ease !important;
+    outline: 1px solid rgba(255, 107, 53, 0.3) !important;
 }
 
 button#trakt-auth-btn {
@@ -4400,64 +4439,72 @@ input#settingsSearch {
     align-items: center;
 }
 
-.loading-content {
-    background: rgba(26, 26, 26, 0.95);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 20px;
-    border-radius: 20px;
-    text-align: center;
+/* Loading overlay styles defined in base.css */
+
+.loading-progress-bar-container {
+    height: 3px;
+    background: rgba(255, 255, 255, 0.06);
 }
 
-.loading-content p {
-    color: #e0e0e0;
-    margin-bottom: 15px;
+.loading-progress-bar {
+    height: 100%;
+    width: 20%;
+    background: linear-gradient(90deg, #ff6b35, #ff8c5a);
+    border-radius: 0 2px 2px 0;
+    animation: loading-bar-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes loading-bar-pulse {
+    0%   { width: 20%; opacity: 1; }
+    50%  { width: 70%; opacity: 0.85; }
+    100% { width: 20%; opacity: 1; }
+}
+
+.loading-inner {
+    padding: 1.5rem 1.75rem 1.25rem;
+}
+
+.loading-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    margin-bottom: 0.6rem;
+}
+
+.loading-spin-icon {
+    color: #888;
+    font-size: 1.1rem;
+    flex-shrink: 0;
 }
 
 .loading-message {
-    margin-bottom: 10px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e8e8e8;
+    margin: 0;
 }
 
 .loading-details {
-    font-size: 14px;
-    color: #ccc;
-    margin-top: 10px;
+    font-size: 0.82rem;
+    color: #888;
+    margin-left: 1.95rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
 }
 
-.spinner {
-    border: 4px solid rgba(255, 255, 255, 0.1);
-    border-top: 4px solid #ff6b35;
-    border-radius: 50%;
-    width: 40px;
-    height: 40px;
-    animation: spin 1s linear infinite;
-    margin: 0 auto 10px;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-.close-loading {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-    color: white;
-    border: none;
-    padding: 12px 20px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 16px;
+.loading-progress {
+    font-size: 0.82rem;
+    color: #ff8c5a;
     font-weight: 600;
-    margin: 4px 2px;
-    cursor: pointer;
-    border-radius: 12px;
-    transition: all 0.3s ease;
+    margin-left: 1.95rem;
+    margin-top: 0.3rem;
+    letter-spacing: 0.01em;
 }
 
-.close-loading:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(255, 107, 53, 0.4);
+.loading-button-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 1.1rem;
 }
 
 /* Plex Labels Disabled Fields Styling */
@@ -4512,4 +4559,1142 @@ input#settingsSearch {
     .settings-section {
         transition: none;
     }
+}
+
+
+/* ========================================
+   TANGERINE REDESIGN
+   Based on settings_page.html mockup
+   ======================================== */
+
+/* ROOT */
+.settings-page-container,
+.settings-page-container,
+.settings-page-container * {
+    font-family: 'Inter', sans-serif;
+    line-height: normal !important;
+}
+/* Bare labels in form-groups (e.g. content sources add modal) */
+.settings-page-container .form-group label,
+.settings-page-container .form-group > label {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    color: #aaa !important;
+    margin-bottom: 5px !important;
+    display: block !important;
+    font-family: 'Inter', sans-serif !important;
+}
+
+/* Kill all backdrop-filter blur on settings page — GPU compositing degrades text sharpness */
+.settings-page-container,
+.settings-page-container *,
+.settings-sidebar,
+.settings-sidebar * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+.settings-main-content {
+    font-size: 13px !important;
+    color: #e0e0e0 !important;
+}
+
+/* SCROLLBAR */
+.settings-sidebar::-webkit-scrollbar,
+.settings-main-content::-webkit-scrollbar { width: 4px !important; height: 4px !important; }
+.settings-sidebar::-webkit-scrollbar-thumb,
+.settings-main-content::-webkit-scrollbar-thumb { background: #3d3d3d !important; border-radius: 2px !important; }
+
+/* SIDEBAR */
+.settings-sidebar {
+    width: 220px !important;
+    background: #1a1a1a !important;
+    border-right: 1px solid #2d2d2d !important;
+    backdrop-filter: none !important;
+    padding-top: 0 !important;
+}
+.settings-sidebar-header {
+    padding: 14px 16px 12px !important;
+    border-bottom: 1px solid #2d2d2d !important;
+    margin-bottom: 0 !important;
+    flex-shrink: 0;
+}
+.settings-sidebar-title {
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    color: #e8601c !important;
+    background: none !important;
+    -webkit-background-clip: unset !important;
+    -webkit-text-fill-color: #e8601c !important;
+    background-clip: unset !important;
+    line-height: 1 !important;
+    margin-bottom: 0 !important;
+}
+.settings-sidebar-subtitle {
+    font-size: 11px !important;
+    color: #555 !important;
+    margin-top: 3px !important;
+    margin-bottom: 0 !important;
+}
+.settings-search-container {
+    position: relative !important;
+    padding: 10px 12px 0px 12px !important;
+    /* border-bottom: 1px solid #2d2d2d !important; */
+    margin: 0 !important;
+    flex-shrink: 0;
+}
+.settings-search-container .settings-search-icon {
+    position: absolute !important;
+    left: 22px !important;
+    top: 62% !important;
+    transform: translateY(-50%) !important;
+    /* width: 14px !important; */
+    height: 12px !important;
+    stroke: #555 !important;
+    pointer-events: none !important;
+}
+.settings-search-input {
+    width: 100% !important;
+    background: #1a1a1a !important;
+    border: 1px solid #2d2d2d !important;
+    border-radius: 6px !important;
+    padding: 7px 28px 7px 32px !important;
+    font-size: 12px !important;
+    color: #e0e0e0 !important;
+    outline: none !important;
+    box-shadow: none !important;
+    transition: border-color 0.15s !important;
+    box-sizing: border-box !important;
+}
+.settings-search-input:focus { border-color: #e8601c !important; box-shadow: none !important; }
+.settings-search-input:focus + .settings-search-clear + .settings-search-icon,
+.settings-search-container:focus-within .settings-search-icon { stroke: #e8601c !important; }
+.settings-search-input::placeholder { color: #444 !important; }
+.settings-nav-section-title {
+    padding: 14px 12px 4px !important;
+    font-size: 9px !important;
+    font-weight: 700 !important;
+    letter-spacing: 1px !important;
+    text-transform: uppercase !important;
+    color: #555 !important;
+    margin-bottom: 0 !important;
+}
+.settings-nav-item {
+    display: flex !important;
+    align-items: center !important;
+    gap: 9px !important;
+    padding: 8px 14px !important;
+    cursor: pointer !important;
+    border-radius: 5px !important;
+    margin: 1px 6px !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    color: #555 !important;
+    border: 1px solid transparent !important;
+    transition: all 0.15s !important;
+    position: relative !important;
+}
+.settings-nav-item:hover {
+    background: #222 !important;
+    color: #aaa !important;
+    border-color: transparent !important;
+}
+.settings-nav-item.active {
+    background: rgba(232,96,28,0.08) !important;
+    color: #e0e0e0 !important;
+    border: 1px solid rgba(232,96,28,0.25) !important;
+}
+.settings-nav-item.active::after { display: none !important; }
+.settings-nav-icon { font-size: 12px !important; width: 14px !important; flex-shrink: 0 !important; opacity: 1 !important; }
+
+/* MAIN CONTENT */
+.settings-main-content {
+    margin-left: 220px !important;
+    padding-top: 0 !important;
+    min-height: 100vh !important;
+}
+.settings-container {
+    max-width: 1100px !important;
+    padding: 1.5rem 1.5rem 4rem !important;
+}
+
+/* PAGE HEADERS */
+.content-title,
+.required-settings-title,
+.additional-settings-title,
+.scraping-settings-title,
+.scrapers-title,
+.notifications-settings-title,
+.reverse-parser-settings-title,
+.debug-settings-title,
+.ui-settings-title,
+.true-debug-settings-title,
+.content-sources-title {
+    font-size: 22px !important;
+    font-weight: 700 !important;
+    color: #e0e0e0 !important;
+    /* border-left: 3px solid #e8601c !important; */
+    line-height: 1.2 !important;
+    padding-bottom: 0px;
+}
+
+.scrapers-subtitle,
+.scraping-settings-subtitle,
+.required-settings-subtitle,
+.additional-settings-subtitle,
+.notifications-settings-subtitle,
+.reverse-parser-settings-subtitle,
+.debug-settings-subtitle,
+.true-debug-settings-subtitle,
+.ui-settings-subtitle,
+.content-sources-subtitle,
+.content-subtitle {
+    font-size: 13px !important;
+    color: #555 !important;
+    margin-top: 5px !important;
+    margin-bottom: 1.25rem !important;
+    padding-left: 15px !important;
+}
+
+/* INFO BANNERS */
+.info-box,
+.info-note,
+.info-banner,
+.info-banner-blue,
+.info-banner.info-banner-warning,
+.settings-warning-text,
+.aiostreams-info-box,
+.scraping-info-box,
+.reverse-parser-info-box {
+    background: rgba(59,130,246,0.07) !important;
+    border: 1px solid rgba(59,130,246,0.2) !important;
+    border-radius: 7px !important;
+    padding: 11px 14px !important;
+    margin-bottom: 1.25rem !important;
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+    font-size: 12px !important;
+    font-family: 'Inter', sans-serif !important;
+    color: #aaa !important;
+    line-height: 1.6 !important;
+    backdrop-filter: none !important;
+}
+.info-icon,
+.info-box .info-icon { color: #3b82f6 !important; width: 16px !important; flex-shrink: 0 !important; margin-top: 1px !important; }
+.info-banner b,
+.info-banner strong,
+.info-box b,
+.info-box strong { color: #e8601c !important; }
+.info-banner ul,
+.info-box ul { margin: 0.4rem 0 0 1rem !important; padding: 0 !important; }
+.info-banner li,
+.info-box li { margin-bottom: 3px !important; color: #aaa !important; font-size: 12px !important; line-height: 1.6 !important; }
+.info-box p { color: #aaa !important; font-size: 12px !important; line-height: 1.6 !important; margin: 0 0 8px !important; }
+.info-box p:last-child { margin-bottom: 0 !important; }
+
+/* SECTION CARD (.content-section = mockup .section-card) */
+.content-section {
+    background: #1a1a1a !important;
+    border: 1px solid #2d2d2d !important;
+    border-radius: 8px !important;
+    margin-bottom: 1rem !important;
+    overflow: hidden !important;
+    backdrop-filter: none !important;
+    padding: 0 !important;
+    transition: none !important;
+}
+.content-section:hover {
+    background: #1a1a1a !important;
+    border-color: #2d2d2d !important;
+    transform: none !important;
+}
+
+/* SECTION HEADER */
+.section-header,
+.scrapers-header,
+.content-sources-header,
+.required-settings-header,
+.scraping-settings-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 12px 16px !important;
+    border-bottom: 1px solid #2d2d2d !important;
+    flex-wrap: wrap !important;
+    gap: 0.5rem !important;
+    background: transparent !important;
+    margin-bottom: 0 !important;
+}
+.section-title,
+.scrapers-settings-title,
+.content-sources-settings-title,
+.required-settings-settings-title,
+.scraping-settings-title-inner {
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    color: #e0e0e0 !important;
+    border-left: 3px solid #e8601c !important;
+    padding-left: 9px !important;
+    display: flex !important;
+    align-items: center !important;
+}
+.section-title::before,
+.scrapers-settings-title::before,
+.content-sources-settings-title::before { display: none !important; }
+.title-bar { display: none !important; }
+.section-actions,
+.scrapers-actions,
+.scraping-settings-actions,
+.content-sources-actions,
+.notifications-settings-actions,
+.required-settings-actions,
+.additional-settings-actions,
+.action-buttons {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    flex-wrap: wrap !important;
+}
+
+/* SECTION BODY */
+.settings-list,
+.scraper-list,
+.source-list,
+.version-list,
+.notification-list {
+    padding: 12px !important;
+    background: transparent !important;
+}
+
+/* ACCORDION ROW (.settings-section / .settings-card = mockup .accordion-row)
+   Card style: bg #222, 1px solid border, border-radius 7px */
+.settings-section,
+.settings-card {
+    background: #222 !important;
+    border: 1px solid #2d2d2d !important;
+    border-radius: 7px !important;
+    margin-bottom: 6px !important;
+    overflow: hidden !important;
+    transition: border-color 0.15s !important;
+    padding: 0 !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+}
+.settings-section:last-child,
+.settings-card:last-child { margin-bottom: 0 !important; }
+.settings-section:hover,
+.settings-card:hover {
+    background: #222 !important;
+    border-color: #2d2d2d !important;
+    border-radius: 7px !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+.settings-section.expanded,
+.settings-card.expanded {
+    background: #222 !important;
+    border-color: #3d3d3d !important;
+    border-radius: 7px !important;
+}
+.settings-section:has(.scraper-disabled),
+.settings-section:has(.source-disabled),
+.settings-section.has-error {
+    border-left: 3px solid #ef4444 !important;
+    border-radius: 7px !important;
+    background: #222 !important;
+}
+
+/* ACCORDION HEADER (.settings-section-header = mockup .accordion-hdr) */
+.settings-section-header {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    padding: 11px 13px !important;
+    cursor: pointer !important;
+    background: transparent !important;
+    border-bottom: none !important;
+    transition: background 0.12s !important;
+}
+.settings-section-header:hover { background: rgba(255,255,255,0.02) !important; }
+
+/* ACCORDION TITLE (.settings-section-header h4 = mockup .accordion-name)
+   white-space: nowrap prevents multi-line wrapping */
+.settings-section-header h4 {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: #e0e0e0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    flex: 1 !important;
+    min-width: 0 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    text-align: left !important;
+}
+.settings-section-header h4::before { display: none !important; }
+
+/* CHEVRON */
+.expand-icon,
+.settings-toggle-icon {
+    color: #555 !important;
+    transition: transform 0.2s !important;
+    flex-shrink: 0 !important;
+}
+.settings-section.expanded .expand-icon,
+.settings-section.expanded .settings-toggle-icon,
+.settings-card.expanded .expand-icon,
+.settings-card.expanded .settings-toggle-icon {
+    transform: rotate(90deg) !important;
+    color: #e8601c !important;
+}
+
+/* TAG / BADGE */
+.source-type,
+.content-source-type,
+.scraper-type {
+    padding: 2px 7px !important;
+    border-radius: 3px !important;
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    background: #2a2a2a !important;
+    border: 1px solid #3d3d3d !important;
+    color: #555 !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+}
+
+/* DRAG HANDLE */
+.drag-handle { color: #555 !important; font-size: 11px !important; cursor: grab !important; padding: 2px 4px !important; flex-shrink: 0 !important; }
+
+/* ACCORDION BODY (.settings-section-content = mockup .accordion-body) */
+.settings-section-content {
+    padding: 14px 16px !important;
+    border-top: 1px solid #2d2d2d !important;
+    background: #1a1a1a !important;
+    margin: 0 !important;
+}
+
+/* SCRAPER/SOURCE CARDS — same card style as accordion-row */
+.scraper-item, .scraper-card,
+.source-item, .content-source-card {
+    background: #222 !important;
+    border: 1px solid #2d2d2d !important;
+    border-radius: 7px !important;
+    margin-bottom: 6px !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+    transition: border-color 0.15s !important;
+}
+.scraper-item:last-child, .scraper-card:last-child,
+.source-item:last-child, .content-source-card:last-child { margin-bottom: 0 !important; }
+.scraper-item:hover, .scraper-card:hover,
+.source-item:hover, .content-source-card:hover {
+    background: #222 !important;
+    border-color: #3d3d3d !important;
+    border-radius: 7px !important;
+    transform: none !important;
+}
+.scraper-item.expanded, .scraper-card.expanded,
+.source-item.expanded, .content-source-card.expanded {
+    background: #222 !important;
+    border-color: #3d3d3d !important;
+    border-radius: 7px !important;
+}
+.scraper-item:has(.scraper-disabled),
+.scraper-card:has(.scraper-disabled),
+.source-item:has(.source-disabled),
+.content-source-card:has(.source-disabled) {
+    border-left: 3px solid #ef4444 !important;
+    border-radius: 7px !important;
+}
+.scraper-card .settings-section-header,
+.scraper-item .settings-section-header,
+.source-item .settings-section-header,
+.content-source-card .settings-section-header {
+    padding: 11px 13px !important;
+    background: transparent !important;
+    border-bottom: none !important;
+}
+.scraper-item.expanded .expand-icon,
+.scraper-card.expanded .settings-toggle-icon,
+.source-item.expanded .expand-icon,
+.content-source-card.expanded .settings-toggle-icon {
+    transform: rotate(90deg) !important;
+    color: #e8601c !important;
+}
+.source-name, .content-source-name, .scraper-name {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: #e0e0e0 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    min-width: 0 !important;
+}
+
+/* FORM ELEMENTS */
+/* .settings-form-group {
+    margin-bottom: 18px !important;
+    padding: 0 !important;
+} */
+/* .settings-form-group:last-child { margin-bottom: 0 !important; } */
+.settings-title {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: #e0e0e0 !important;
+    margin-bottom: 6px !important;
+    display: block !important;
+}
+.settings-description {
+    font-size: 11px !important;
+    color: #666 !important;
+    margin-top: 4px !important;
+}
+.settings-input {
+    width: 100% !important;
+    background: #1a1a1a !important;
+    border: 1px solid #2d2d2d !important;
+    color: #e0e0e0 !important;
+    border-radius: 5px !important;
+    padding: 8px 12px !important;
+    font-size: 13px !important;
+    font-family: 'Inter', sans-serif !important;
+    outline: none !important;
+    transition: border-color 0.15s !important;
+    box-sizing: border-box !important;
+}
+.settings-input:focus { border-color: #e8601c !important; box-shadow: none !important; }
+.settings-input::placeholder { color: #444 !important; }
+textarea.settings-input { font-family: 'JetBrains Mono', monospace !important; }
+.settings-page-container select.settings-input,
+.settings-page-container select {
+    -webkit-appearance: none !important;
+    appearance: none !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23666' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: right 10px center !important;
+    background-color: #1a1a1a !important;
+    border: 1px solid #2d2d2d !important;
+    border-radius: 5px !important;
+    padding: 8px 30px 8px 12px !important;
+    font-size: 13px !important;
+    color: #e0e0e0 !important;
+    cursor: pointer !important;
+}
+.settings-page-container select:focus,
+.settings-page-container select:hover { border-color: #555 !important; color: #e0e0e0 !important; }
+
+/* BUTTONS — base */
+.settings-page-container .btn,
+.settings-expand-all,
+.settings-collapse-all,
+.settings-submit-button,
+#saveSettingsButton,
+.add-scraper-link,
+.add-version-link,
+.add-source-link,
+.export-version-btn,
+.rename-version-btn,
+.duplicate-version-btn,
+.duplicate-source-btn,
+.duplicate-scraper-btn,
+.delete-scraper-btn,
+.delete-source-btn,
+.delete-version-btn,
+.delete-notification-btn,
+.test-notification-btn,
+.import-liked-to-source-btn,
+.get-user-watchlist-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 5px !important;
+    padding: 6px 12px !important;
+    border-radius: 5px !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    font-family: 'Inter', sans-serif !important;
+    cursor: pointer !important;
+    transition: all 0.15s !important;
+    white-space: nowrap !important;
+    text-decoration: none !important;
+}
+/* Restore FontAwesome font inside buttons — overridden by font-family: Inter */
+.settings-page-container button i[class*="fa-"],
+.settings-page-container a i[class*="fa-"] {
+    font-family: "Font Awesome 6 Free" !important;
+    font-weight: 900 !important;
+}
+
+/* BTN-DEFAULT: ghost style */
+.settings-expand-all,
+.settings-collapse-all,
+.export-version-btn,
+.rename-version-btn,
+.duplicate-version-btn,
+.duplicate-source-btn,
+.duplicate-scraper-btn,
+.scrapers-btn,
+.scraping-settings-btn,
+.required-settings-btn,
+.content-sources-btn,
+.notifications-settings-btn,
+.additional-settings-btn,
+.settings-page-container .btn-secondary,
+#import-versions-btn,
+#add-default-version-btn,
+#add-separate-versions-btn,
+.import-versions-link {
+    background: #222 !important;
+    border: 1px solid #3d3d3d !important;
+    color: #aaa !important;
+}
+.settings-expand-all:hover,
+.settings-collapse-all:hover,
+.export-version-btn:hover,
+.rename-version-btn:hover,
+.duplicate-version-btn:hover,
+.duplicate-source-btn:hover,
+.duplicate-scraper-btn:hover,
+.scrapers-btn:hover,
+.scraping-settings-btn:hover,
+.settings-page-container .btn-secondary:hover,
+#import-versions-btn:hover,
+#add-default-version-btn:hover,
+#add-separate-versions-btn:hover,
+.import-versions-link:hover {
+    background: #2a2a2a !important;
+    border-color: #555 !important;
+    color: #e0e0e0 !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* BTN-ACCENT: orange fill */
+#add-scraper-btn,
+#add-version-btn,
+#add-source-btn,
+#add-notification-btn,
+.settings-page-container .btn-primary:not(#import-versions-btn):not(#add-default-version-btn):not(#add-separate-versions-btn):not(.import-versions-link),
+.settings-submit-button,
+#saveSettingsButton {
+    background: #e8601c !important;
+    border: 1px solid #e8601c !important;
+    color: #fff !important;
+}
+#add-scraper-btn:hover,
+#add-version-btn:hover,
+#add-source-btn:hover,
+#add-notification-btn:hover,
+.settings-submit-button:hover,
+#saveSettingsButton:hover {
+    background: #f07030 !important;
+    border-color: #f07030 !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* BTN-RED: subtle red */
+.delete-scraper-btn,
+.delete-source-btn,
+.delete-version-btn,
+.delete-notification-btn {
+    background: rgba(239,68,68,0.1) !important;
+    border: 1px solid rgba(239,68,68,0.3) !important;
+    color: #ef4444 !important;
+}
+.delete-scraper-btn:hover,
+.delete-source-btn:hover,
+.delete-version-btn:hover,
+.delete-notification-btn:hover {
+    background: #ef4444 !important;
+    border-color: #ef4444 !important;
+    color: #fff !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* BTN-GREEN */
+.test-notification-btn {
+    background: rgba(34,197,94,0.1) !important;
+    border: 1px solid rgba(34,197,94,0.3) !important;
+    color: #22c55e !important;
+}
+.test-notification-btn:hover {
+    background: #22c55e !important;
+    border-color: #22c55e !important;
+    color: #fff !important;
+    transform: none !important;
+}
+
+/* SAVE BUTTON */
+.settings-submit-button,
+#saveSettingsButton {
+    padding: 7px 14px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    margin-top: 1.5rem !important;
+}
+
+/* PLEX AUTH BTN */
+.plex-auth-btn {
+    background: #0d0901 !important;
+    border: 1px solid #d4920c !important;
+    color: #e0e0e0 !important;
+    font-weight: 700 !important;
+    border-radius: 5px !important;
+    padding: 8px 16px !important;
+    font-size: 12px !important;
+}
+
+/* MULTI-SELECT */
+#notifications-general-enabled-content-sources {
+    background: #222 !important;
+    border: 1px solid #3d3d3d !important;
+    border-radius: 5px !important;
+    color: #aaa !important;
+    font-size: 12px !important;
+    padding: 5px !important;
+}
+
+/* LOGO PICKER */
+.logo-option label {
+    border: 2px solid #3d3d3d !important;
+    border-radius: 7px !important;
+    background: #222 !important;
+    padding: 10px 14px !important;
+    min-width: 90px !important;
+}
+.logo-option label:hover { background: #2a2a2a !important; }
+.logo-option input[type="radio"]:checked + label { border-color: #e8601c !important; background: rgba(232,96,28,0.08) !important; }
+.logo-label { font-size: 11px !important; font-weight: 600 !important; color: #555 !important; }
+
+/* FORMAT MODAL */
+.format-modal-content {
+    background: #1a1a1a !important;
+    border: 1px solid #2d2d2d !important;
+    border-radius: 8px !important;
+    backdrop-filter: none !important;
+}
+.format-modal-header {
+    background: transparent !important;
+    border-bottom: 1px solid #2d2d2d !important;
+    padding: 16px 20px !important;
+}
+.format-modal-title { font-size: 15px !important; font-weight: 700 !important; color: #e0e0e0 !important; }
+.format-modal-close { background: #222 !important; border: 1px solid #3d3d3d !important; color: #aaa !important; border-radius: 5px !important; }
+
+/* RESPONSIVE SIDEBAR */
+@media (max-width: 1045px) {
+    .settings-sidebar { width: 200px !important; }
+    .settings-main-content { margin-left: 200px !important; }
+}
+@media (max-width: 768px) {
+    .settings-sidebar { width: 260px !important; left: -260px !important; }
+    .settings-sidebar.mobile-open { left: 0 !important; }
+    .settings-main-content { margin-left: 0 !important; }
+}
+@media (max-width: 480px) {
+    .settings-sidebar { width: 66vw !important; left: -85vw !important; }
+}
+
+/* ========================================
+   HIGH-SPECIFICITY OVERRIDES
+   Match every conflicting !important rule
+   with equal or greater specificity so our
+   redesign values win.
+   ======================================== */
+
+/* ── Override: .settings-section all page-scoped rules
+   (lines 3444-3467 set bg/border/border-radius/padding to old values) ── */
+.scraping-settings-page .settings-section,
+.scraping-settings-page .settings-card,
+.required-settings-page .settings-section,
+.required-settings-page .settings-card,
+.additional-settings-page .settings-section,
+.additional-settings-page .settings-card,
+.ui-settings-page .settings-section,
+.ui-settings-page .settings-card,
+.notifications-settings-page .settings-section,
+.notifications-settings-page .settings-card,
+.reverse-parser-settings-page .settings-section,
+.reverse-parser-settings-page .settings-card,
+.debug-settings-page .settings-section,
+.debug-settings-page .settings-card,
+.true-debug-settings-page .settings-section,
+.true-debug-settings-page .settings-card {
+    background: #222 !important;
+    border: 1px solid #2d2d2d !important;
+    border-radius: 7px !important;
+    margin-bottom: 6px !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+    transition: border-color 0.15s !important;
+}
+
+/* ── Override: page-scoped hover (lines 3328-3347 add translateX + orange border) ── */
+.scraping-settings-page .settings-section:hover,
+.scraping-settings-page .settings-card:hover,
+.required-settings-page .settings-section:hover,
+.required-settings-page .settings-card:hover,
+.additional-settings-page .settings-section:hover,
+.additional-settings-page .settings-card:hover,
+.ui-settings-page .settings-section:hover,
+.ui-settings-page .settings-card:hover,
+.notifications-settings-page .settings-section:hover,
+.notifications-settings-page .settings-card:hover,
+.reverse-parser-settings-page .settings-section:hover,
+.reverse-parser-settings-page .settings-card:hover,
+.debug-settings-page .settings-section:hover,
+.debug-settings-page .settings-card:hover,
+.true-debug-settings-page .settings-section:hover,
+.true-debug-settings-page .settings-card:hover {
+    background: #222 !important;
+    border-color: #2d2d2d !important;
+    border-radius: 7px !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* ── Override: page-scoped expanded state (lines 3372-3390) ── */
+.scraping-settings-page .settings-section.expanded,
+.scraping-settings-page .settings-card.expanded,
+.required-settings-page .settings-section.expanded,
+.required-settings-page .settings-card.expanded,
+.additional-settings-page .settings-section.expanded,
+.additional-settings-page .settings-card.expanded,
+.ui-settings-page .settings-section.expanded,
+.ui-settings-page .settings-card.expanded,
+.notifications-settings-page .settings-section.expanded,
+.notifications-settings-page .settings-card.expanded,
+.reverse-parser-settings-page .settings-section.expanded,
+.reverse-parser-settings-page .settings-card.expanded,
+.debug-settings-page .settings-section.expanded,
+.debug-settings-page .settings-card.expanded,
+.true-debug-settings-page .settings-section.expanded,
+.true-debug-settings-page .settings-card.expanded {
+    background: #222 !important;
+    border-color: #3d3d3d !important;
+    border-radius: 7px !important;
+}
+
+/* ── Override: h4 in all page-scoped contexts
+   (lines 3414-3430: display:block, font-size:0.95rem, flex-grow:0 — these prevent single-line titles) ── */
+.scraping-settings-page .settings-section-header h4,
+.required-settings-page .settings-section-header h4,
+.additional-settings-page .settings-section-header h4,
+.ui-settings-page .settings-section-header h4,
+.notifications-settings-page .settings-section-header h4,
+.reverse-parser-settings-page .settings-section-header h4,
+.debug-settings-page .settings-section-header h4,
+.true-debug-settings-page .settings-section-header h4,
+.scraper-card .settings-section-header h4,
+.scraper-item .settings-section-header h4,
+.content-source-card .settings-section-header h4,
+.source-item .settings-section-header h4 {
+    display: block !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: #e0e0e0 !important;
+    flex: 1 !important;
+    flex-grow: 1 !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    text-align: left !important;
+}
+
+/* ── Override: scraper/source card headers
+   (lines 2489-2498, 2797-2806: padding:0, gap:1rem) ── */
+.scraper-card .settings-section-header,
+.scraper-item .settings-section-header,
+.content-source-card .settings-section-header,
+.source-item .settings-section-header {
+    padding: 11px 13px !important;
+    gap: 10px !important;
+    background: transparent !important;
+    border-bottom: none !important;
+    display: flex !important;
+    align-items: center !important;
+    cursor: pointer !important;
+}
+
+/* ── Override: settings-section-content
+   (lines 2514-2521: bg rgba(0,0,0,0.2), margin-top:1rem, border-radius:8px, padding:1.5rem) ── */
+.settings-section-content,
+.source-item .settings-section-content,
+.content-source-card .settings-section-content,
+.scraper-card .settings-section-content,
+.scraper-item .settings-section-content {
+    padding: 14px 16px !important;
+    border-top: 1px solid #2d2d2d !important;
+    background: #1a1a1a !important;
+    margin: 0 !important;
+    margin-top: 0 !important;
+    border-radius: 0 !important;
+}
+
+/* ── Override: disabled source/scraper border
+   (lines 2351-2357: border-left:4px, bg rgba) — use mockup 3px red ── */
+.source-item:has(.source-disabled),
+.content-source-card:has(.source-disabled),
+.settings-section:has(.source-disabled),
+.scraper-card:has(.scraper-disabled),
+.settings-section:has(.scraper-disabled) {
+    background: rgba(172,25,25,0.10) !important;
+    border-left: 3px solid #ef4444 !important;
+    border-radius: 7px !important;
+}
+
+/* ── Override: scraper/source card base styles
+   (lines 2697-2705, 3349-3358: border-radius:12px, padding:1.25rem) ── */
+.scraper-item,
+.scraper-card,
+.source-item,
+.content-source-card {
+    background: #222 !important;
+    border: 1px solid #2d2d2d !important;
+    border-radius: 7px !important;
+    margin-bottom: 6px !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+    display: block !important;
+    transition: border-color 0.15s !important;
+}
+
+.scraper-item:hover,
+.scraper-card:hover,
+.source-item:hover,
+.content-source-card:hover {
+    background: #222 !important;
+    border-color: #3d3d3d !important;
+    border-radius: 7px !important;
+    transform: none !important;
+}
+
+.scraper-item.expanded,
+.scraper-card.expanded,
+.source-item.expanded,
+.content-source-card.expanded {
+    background: #222 !important;
+    border-color: #3d3d3d !important;
+    border-radius: 7px !important;
+}
+
+/* ── Override: section (outer card) base
+   (line 3360-3369: border-radius:20px, margin-bottom:20px, backdrop-filter) ── */
+.settings-section {
+    background: #222 !important;
+    border: 1px solid #2d2d2d !important;
+    border-radius: 7px !important;
+    margin-bottom: 6px !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+    transition: border-color 0.15s !important;
+}
+
+/* ── Override: content-section outer card
+   (lines 396-404, 2222-2230: border-radius:20px, padding:2rem, backdrop-filter) ── */
+.content-section {
+    background: #1a1a1a !important;
+    border: 1px solid #2d2d2d !important;
+    border-radius: 8px !important;
+    margin-bottom: 1rem !important;
+    overflow: hidden !important;
+    backdrop-filter: none !important;
+    padding: 0 !important;
+    transition: none !important;
+}
+
+/* ── Override: section-header inner card header
+   (lines 410-417, 2237-2245: margin-bottom:1.5rem, padding-bottom:1rem, border-bottom old) ── */
+.section-header,
+.scrapers-header,
+.content-sources-header,
+.required-settings-header,
+.scraping-settings-header {
+    padding: 12px 16px !important;
+    border-bottom: 1px solid #2d2d2d !important;
+    margin-bottom: 0 !important;
+    padding-bottom: 12px !important;
+    flex-direction: row !important;
+    align-items: center !important;
+}
+
+/* ── Override: section-header h4 inline gap (line 1185: gap:1rem !important) ── */
+.settings-section-header {
+    gap: 10px !important;
+    padding: 11px 13px !important;
+}
+
+/* ── Override: input width for desktop (lines 1405-1409: width:auto, min-width:300px) ── */
+@media (min-width: 769px) {
+    .settings-title {
+        min-width: auto !important;
+        max-width: none !important;
+    }
+    .settings-input,
+    .settings-form-group input[type="text"],
+    .settings-form-group input[type="number"],
+    .settings-form-group input[type="email"],
+    .settings-form-group input[type="password"],
+    .settings-form-group input[type="url"],
+    .settings-form-group input[type="string"],
+    .settings-form-group select {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        flex: 1 1 auto !important;
+    }
+}
+
+/* ── Override: mobile responsive (line 3923-3925: padding:0rem on .settings-section-header) ── */
+@media (max-width: 768px) {
+    .settings-section-header {
+        padding: 11px 13px !important;
+        gap: 10px !important;
+    }
+    .scraper-card .settings-section-header,
+    .scraper-item .settings-section-header,
+    .content-source-card .settings-section-header,
+    .source-item .settings-section-header {
+        padding: 11px 13px !important;
+    }
+    .settings-section-header h4 {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+    .source-item,
+    .content-source-card,
+    .scraper-item,
+    .scraper-card {
+        padding: 0 !important;
+        border-radius: 7px !important;
+    }
+}
+
+/* ── Tangerine: checkbox settings rows ───────────────────────────────────── */
+
+/* Custom checkbox appearance (all structures) */
+body[data-theme="tangerine"] .settings-form-group input[type="checkbox"] {
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    flex-shrink: 0 !important;
+    width: 16px !important;
+    height: 16px !important;
+    min-width: 16px !important;
+    margin: 0 !important;
+    border: 1.5px solid rgba(255,255,255,0.25) !important;
+    border-radius: 4px !important;
+    background: rgba(255,255,255,0.05) !important;
+    cursor: pointer !important;
+    position: relative !important;
+    transition: border-color 0.15s, background 0.15s !important;
+}
+body[data-theme="tangerine"] .settings-form-group input[type="checkbox"]:checked {
+    background: #e8601c !important;
+    border-color: #e8601c !important;
+}
+body[data-theme="tangerine"] .settings-form-group input[type="checkbox"]:checked::after {
+    content: '' !important;
+    position: absolute !important;
+    left: 4px !important;
+    top: 1px !important;
+    width: 5px !important;
+    height: 9px !important;
+    border: 2px solid #fff !important;
+    border-top: none !important;
+    border-left: none !important;
+    transform: rotate(45deg) !important;
+}
+
+/* Structure A: <label class="settings-title"><input type="checkbox"> Text</label>
+   checkbox is INSIDE label — make label a flex row */
+body[data-theme="tangerine"] .settings-form-group label.settings-title:has(> input[type="checkbox"]) {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 9px !important;
+    margin: 0 !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: #e0e0e0 !important;
+    cursor: pointer !important;
+    line-height: 1.4 !important;
+}
+
+/* Structure B: <label class="settings-title">Text</label><input type="checkbox">
+   checkbox is a sibling AFTER label — use grid on the form-group to reorder */
+body[data-theme="tangerine"] .settings-form-group:has(> input[type="checkbox"]) {
+    display: grid !important;
+    grid-template-columns: 16px 1fr !important;
+    grid-template-rows: auto auto !important;
+    column-gap: 9px !important;
+    row-gap: 1px !important;
+    align-items: center !important;
+    padding: 5px 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    border: none !important;
+}
+body[data-theme="tangerine"] .settings-form-group:has(> input[type="checkbox"]):hover {
+    background: transparent !important;
+}
+body[data-theme="tangerine"] .settings-form-group:has(> input[type="checkbox"]) > input[type="checkbox"] {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    align-self: center !important;
+}
+body[data-theme="tangerine"] .settings-form-group:has(> input[type="checkbox"]) > label.settings-title {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    display: block !important;
+    margin: 0 !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    color: #e0e0e0 !important;
+    cursor: pointer !important;
+    line-height: 1.4 !important;
+}
+body[data-theme="tangerine"] .settings-form-group:has(> input[type="checkbox"]) > .settings-description {
+    grid-column: 2 !important;
+    grid-row: 2 !important;
+    margin: 0 !important;
+}
+
+/* Also handle structure A form-group wrapper */
+body[data-theme="tangerine"] .settings-form-group:has(label > input[type="checkbox"]) {
+    padding: 5px 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    display: block !important;
+}
+body[data-theme="tangerine"] .settings-form-group:has(label > input[type="checkbox"]):hover {
+    background: transparent !important;
+}
+
+/* Description style (both structures) */
+body[data-theme="tangerine"] .settings-form-group:has(input[type="checkbox"]) .settings-description,
+body[data-theme="tangerine"] .settings-form-group:has(input[type="checkbox"]) .settings-description p {
+    display: block !important;
+    padding: 0 !important;
+    font-size: 11px !important;
+    font-style: italic !important;
+    color: #666 !important;
+    font-weight: 400 !important;
+    line-height: 1.4 !important;
+    margin: 0 !important;
 }

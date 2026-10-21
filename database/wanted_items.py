@@ -11,7 +11,57 @@ from utilities.settings import get_setting
 from content_checkers.trakt import fetch_items_from_trakt, load_imdb_trakt_cache, save_imdb_trakt_cache
 import re
 
-def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
+def _get_existing_item_id_collected(conn, imdb_id, tmdb_id, item_type, item):
+    """Get DB id of an existing Collected/Upgrading item matching the given identifiers."""
+    if item_type == 'movie':
+        for id_col, id_val in [('imdb_id', imdb_id), ('tmdb_id', tmdb_id)]:
+            if id_val:
+                row = conn.execute(
+                    f"SELECT id FROM media_items WHERE type='movie' AND {id_col}=? AND state IN ('Collected','Upgrading') LIMIT 1",
+                    (id_val,)
+                ).fetchone()
+                if row:
+                    return row['id']
+    else:
+        season = item.get('season_number')
+        episode = item.get('episode_number')
+        for id_col, id_val in [('imdb_id', imdb_id), ('tmdb_id', tmdb_id)]:
+            if id_val:
+                row = conn.execute(
+                    f"SELECT id FROM media_items WHERE type='episode' AND {id_col}=? AND season_number=? AND episode_number=? AND state IN ('Collected','Upgrading') LIMIT 1",
+                    (id_val, season, episode)
+                ).fetchone()
+                if row:
+                    return row['id']
+    return None
+
+
+def _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item):
+    """Get DB id of any existing item matching the given identifiers (any state)."""
+    if item_type == 'movie':
+        for id_col, id_val in [('imdb_id', imdb_id), ('tmdb_id', tmdb_id)]:
+            if id_val:
+                row = conn.execute(
+                    f"SELECT id FROM media_items WHERE type='movie' AND {id_col}=? LIMIT 1",
+                    (id_val,)
+                ).fetchone()
+                if row:
+                    return row['id']
+    else:
+        season = item.get('season_number')
+        episode = item.get('episode_number')
+        for id_col, id_val in [('imdb_id', imdb_id), ('tmdb_id', tmdb_id)]:
+            if id_val:
+                row = conn.execute(
+                    f"SELECT id FROM media_items WHERE type='episode' AND {id_col}=? AND season_number=? AND episode_number=? LIMIT 1",
+                    (id_val, season, episode)
+                ).fetchone()
+                if row:
+                    return row['id']
+    return None
+
+
+def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, unblacklist: bool = False, force_granular_versions: bool = False):
     from metadata.metadata import get_show_airtime_by_imdb_id
     from utilities.settings import get_setting
 
@@ -39,6 +89,26 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             'monitor_mode_recent_skip': 0
         }
         airtime_cache = {}
+
+        # Which watchlist titles were not added and why. The skip summary only had counts, so a
+        # watchlist item blocked by the blacklist, ghostlist, watch history or an existing row looked
+        # like it had simply vanished. Bounded, deduplicated per title and reason.
+        skipped_watchlist_titles = {}
+        added_watchlist_titles = {}
+        def _note_skip(reason, item_):
+            if 'Plex' not in str(item_.get('content_source') or ''):
+                return
+            title_ = item_.get('title') or item_.get('imdb_id') or item_.get('tmdb_id') or 'Unknown'
+            titles_ = skipped_watchlist_titles.setdefault((reason, item_.get('content_source')), {})
+            if title_ in titles_ or len(titles_) < 100:
+                titles_[title_] = titles_.get(title_, 0) + 1
+        def _note_added(item_):
+            # What a Plex watchlist source actually added (episodes are counted per show).
+            if 'Plex' not in str(item_.get('content_source') or ''):
+                return
+            title_ = item_.get('title') or item_.get('imdb_id') or item_.get('tmdb_id') or 'Unknown'
+            per_source_ = added_watchlist_titles.setdefault(item_.get('content_source'), {})
+            per_source_[title_] = per_source_.get(title_, 0) + 1
 
         # Load IMDB→Trakt ID cache to avoid redundant API calls
         imdb_trakt_cache = load_imdb_trakt_cache()
@@ -198,7 +268,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             'episodes': {}
         }
 
-        enable_granular_versions = get_setting('Debug', 'enable_granular_version_additions', False)
+        enable_granular_versions = force_granular_versions or get_setting('Debug', 'enable_granular_version_additions', False)
 
         if movie_imdb_ids:
             movie_imdb_list = list(movie_imdb_ids)
@@ -206,16 +276,15 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 batch = movie_imdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT imdb_id, version, state FROM media_items
+                    SELECT imdb_id, version, state, ghostlisted FROM media_items
                     WHERE type = 'movie' AND imdb_id IN ({placeholders})
-                    AND (ghostlisted IS NULL OR ghostlisted = FALSE)
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
                     movie_id = str(row['imdb_id'])
                     if movie_id not in existing_movies:
                         existing_movies[movie_id] = []
-                    existing_movies[movie_id].append((strip_version(row['version']), row['state']))
+                    existing_movies[movie_id].append((strip_version(row['version']), row['state'], row['ghostlisted']))
 
         if movie_tmdb_ids:
             movie_tmdb_list = list(movie_tmdb_ids)
@@ -223,16 +292,15 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 batch = movie_tmdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT tmdb_id, version, state FROM media_items
+                    SELECT tmdb_id, version, state, ghostlisted FROM media_items
                     WHERE type = 'movie' AND tmdb_id IN ({placeholders})
-                    AND (ghostlisted IS NULL OR ghostlisted = FALSE)
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
                     movie_id = str(row['tmdb_id'])
                     if movie_id not in existing_movies:
                         existing_movies[movie_id] = []
-                    existing_movies[movie_id].append((strip_version(row['version']), row['state']))
+                    existing_movies[movie_id].append((strip_version(row['version']), row['state'], row['ghostlisted']))
 
         existing_episodes = {}
 
@@ -242,16 +310,15 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 batch = episode_imdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT imdb_id, season_number, episode_number, version, state FROM media_items
+                    SELECT imdb_id, season_number, episode_number, version, state, ghostlisted, filled_by_torrent_id FROM media_items
                     WHERE type = 'episode' AND imdb_id IN ({placeholders})
-                    AND (ghostlisted IS NULL OR ghostlisted = FALSE)
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
                     key = (str(row['imdb_id']), row['season_number'], row['episode_number'])
                     if key not in existing_episodes:
                         existing_episodes[key] = []
-                    existing_episodes[key].append((strip_version(row['version']), row['state']))
+                    existing_episodes[key].append((strip_version(row['version']), row['state'], row['ghostlisted'], row['filled_by_torrent_id']))
 
         if episode_tmdb_ids:
             episode_tmdb_list = list(episode_tmdb_ids)
@@ -259,22 +326,55 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 batch = episode_tmdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT tmdb_id, season_number, episode_number, version, state FROM media_items
+                    SELECT tmdb_id, season_number, episode_number, version, state, ghostlisted, filled_by_torrent_id FROM media_items
                     WHERE type = 'episode' AND tmdb_id IN ({placeholders})
-                    AND (ghostlisted IS NULL OR ghostlisted = FALSE)
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
                     key = (str(row['tmdb_id']), row['season_number'], row['episode_number'])
                     if key not in existing_episodes:
                         existing_episodes[key] = []
-                    existing_episodes[key].append((strip_version(row['version']), row['state']))
+                    existing_episodes[key].append((strip_version(row['version']), row['state'], row['ghostlisted'], row['filled_by_torrent_id']))
+
+        # Check plex_labels once before the loop — avoids repeated config lookups
+        try:
+            from utilities.plex_label_manager import is_plex_labels_enabled_anywhere as _plex_enabled_check
+            _plex_labels_active = _plex_enabled_check()
+        except Exception:
+            _plex_labels_active = False
+
+        pending_secondary_labels = []  # [(existing_id, source_name, source_detail)] — Collected items needing label from second source
+        pending_source_records = []   # [(existing_id, source_name, source_detail)] — not-yet-Collected items needing source recorded
+
+        # Build O(1) lookup: set of (imdb_id, season_number) pairs that are covered by a
+        # genuine single season-pack download — i.e. every Collected/Upgrading episode
+        # seen for that season shares the SAME filled_by_torrent_id, and there are at
+        # least 2 such episodes (one download containing multiple episodes). A season
+        # built from several individually-downloaded episodes (each its own
+        # filled_by_torrent_id) is NOT included here — see usage below for why.
+        _season_pack_torrent_ids = {}  # (imdb_id, season) -> set of distinct filled_by_torrent_id seen
+        _season_pack_episode_counts = {}  # (imdb_id, season) -> count of Collected/Upgrading episodes seen
+        for (eid, seas, _epnum), vs in existing_episodes.items():
+            for _, st, _, filled_by_torrent_id in vs:
+                if st in ('Collected', 'Upgrading'):
+                    season_key = (eid, seas)
+                    _season_pack_torrent_ids.setdefault(season_key, set()).add(filled_by_torrent_id)
+                    _season_pack_episode_counts[season_key] = _season_pack_episode_counts.get(season_key, 0) + 1
+                    break
+
+        _collected_seasons = {
+            season_key for season_key, torrent_ids in _season_pack_torrent_ids.items()
+            if len(torrent_ids) == 1 and None not in torrent_ids and _season_pack_episode_counts[season_key] >= 2
+        }
 
         filtered_media_items_batch_after_existence_check = []
         for item in media_items_batch:
             imdb_id = item.get('imdb_id')
             tmdb_id = item.get('tmdb_id')
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
+            item_enable_granular_versions = enable_granular_versions and not (
+                item_type == 'episode' and item.get('monitor_missing_episodes_only', False)
+            )
             normalized_title = normalize_string(str(item.get('title', 'Unknown')))
 
             if do_not_add_watched and watch_history_conn:
@@ -288,7 +388,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         if conditions_wh:
                             query_wh += " OR ".join(conditions_wh)
                             if watch_history_conn.execute(query_wh, params_wh).fetchone():
-                                skip_stats['already_watched'] += 1; items_skipped += 1; continue
+                                skip_stats['already_watched'] += 1; items_skipped += 1; _note_skip('watch history', item); continue
                 else:
                     # TIERED FALLBACK: Check watch history with IMDb, then TMDb, then show_title
                     # This prevents cross-ID matching and handles title mismatches
@@ -323,19 +423,25 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         if is_watched:
                             skip_stats['already_watched'] += 1
                             items_skipped += 1
+                            _note_skip('watch history', item)
                             continue
             
             is_blacklisted_in_db = False
+            is_ghostlisted_in_db = False
             if item_type == 'movie':
                 existing_versions_states_check = []
                 if imdb_id and imdb_id in existing_movies:
                     existing_versions_states_check.extend(existing_movies[imdb_id])
                 if tmdb_id and tmdb_id in existing_movies and (not imdb_id or imdb_id != tmdb_id):
                     existing_versions_states_check.extend(existing_movies[tmdb_id])
-                for _, state in existing_versions_states_check:
-                    if state == 'Blacklisted':
-                        is_blacklisted_in_db = True; break
-            else: 
+                for _, state, ghostlisted in existing_versions_states_check:
+                    if ghostlisted == 1:
+                        is_ghostlisted_in_db = True; is_blacklisted_in_db = True
+                    elif state == 'Blacklisted':
+                        is_blacklisted_in_db = True
+                    if is_ghostlisted_in_db:
+                        break
+            else:
                 season_number_check = item.get('season_number'); episode_number_check = item.get('episode_number')
                 existing_versions_states_check = []
                 imdb_key_check = None; tmdb_key_check = None
@@ -346,13 +452,29 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     tmdb_key_check = (str(tmdb_id), season_number_check, episode_number_check)
                     if tmdb_key_check in existing_episodes and (not imdb_key_check or imdb_key_check != tmdb_key_check):
                          existing_versions_states_check.extend(existing_episodes[tmdb_key_check])
-                for _, state in existing_versions_states_check:
-                    if state == 'Blacklisted':
-                        is_blacklisted_in_db = True; break
-            
+                for _, state, ghostlisted, _ in existing_versions_states_check:
+                    if ghostlisted == 1:
+                        is_ghostlisted_in_db = True; is_blacklisted_in_db = True
+                    elif state == 'Blacklisted':
+                        is_blacklisted_in_db = True
+                    if is_ghostlisted_in_db:
+                        break
+
             if is_blacklisted_in_db:
-                if not enable_granular_versions:
-                    skip_stats['existing_blacklisted'] += 1; items_skipped += 1; continue
+                if not item_enable_granular_versions:
+                    # If unblacklist is enabled and item is only blacklisted (not ghostlisted), reset it
+                    if unblacklist and not is_ghostlisted_in_db:
+                        db_item_id = _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item)
+                        if db_item_id:
+                            conn.execute(
+                                "UPDATE media_items SET state='Wanted', blacklisted_date=NULL, sleep_cycles=0 WHERE id=?",
+                                (db_item_id,)
+                            )
+                            conn.commit()
+                            logging.info(f"Unblacklisted item id={db_item_id} ({item.get('title', 'Unknown')}) per source unblacklist setting")
+                            # Allow item to proceed — do not skip
+                    else:
+                        skip_stats['existing_blacklisted'] += 1; items_skipped += 1; _note_skip('existing version is Blacklisted/Ghostlisted', item); continue
 
             # Check if item is already Collected or Upgrading (prevent duplicate re-addition)
             is_collected_or_upgrading_in_db = False
@@ -362,7 +484,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     existing_versions_states_check_collected.extend(existing_movies[imdb_id])
                 if tmdb_id and tmdb_id in existing_movies and (not imdb_id or imdb_id != tmdb_id):
                     existing_versions_states_check_collected.extend(existing_movies[tmdb_id])
-                for _, state in existing_versions_states_check_collected:
+                for _, state, _ in existing_versions_states_check_collected:
                     if state in ('Collected', 'Upgrading'):
                         is_collected_or_upgrading_in_db = True; break
             else:
@@ -376,25 +498,87 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     tmdb_key_check_collected = (str(tmdb_id), season_number_check_collected, episode_number_check_collected)
                     if tmdb_key_check_collected in existing_episodes and (not imdb_key_check_collected or imdb_key_check_collected != tmdb_key_check_collected):
                          existing_versions_states_check_collected.extend(existing_episodes[tmdb_key_check_collected])
-                for _, state in existing_versions_states_check_collected:
+                for _, state, _, _ in existing_versions_states_check_collected:
                     if state in ('Collected', 'Upgrading'):
                         is_collected_or_upgrading_in_db = True; break
 
-            if is_collected_or_upgrading_in_db:
-                if not enable_granular_versions:
-                    skip_stats['already_collected_or_upgrading'] += 1; items_skipped += 1; continue
+                # If no per-episode entry found, check if a genuine season-pack file
+                # already covers this episode. Only trust this when every Collected/
+                # Upgrading episode we've seen for this season shares the SAME
+                # filled_by_torrent_id — that's the actual signature of one pack
+                # download containing multiple episodes. "Any sibling is Collected"
+                # alone is not proof: a partially-collected season built from several
+                # individually-downloaded episodes (each its own filled_by_torrent_id)
+                # previously got misread as "season already fully covered," silently
+                # skipping real gaps (e.g. missing episodes never re-requested).
+                if not is_collected_or_upgrading_in_db and imdb_id and season_number_check_collected is not None:
+                    if (str(imdb_id), season_number_check_collected) in _collected_seasons:
+                        is_collected_or_upgrading_in_db = True
+
+            # User-initiated adds (Request button / manual magnet assign) must always
+            # be allowed to scrape and collect their own copy, even if this
+            # imdb/tmdb+season+episode already has a Collected/Upgrading entry —
+            # the user is explicitly asking for an additional/replacement file, not
+            # a background re-sync of a source that already covers this content.
+            # Automated content sources (Trakt, Overseerr, Plex Watchlist, etc.)
+            # keep the original dedup-skip behavior unchanged.
+            is_user_initiated_add = item.get('content_source') in ('content_requester', 'Magnet_Assigner')
+
+            if is_collected_or_upgrading_in_db and not is_user_initiated_add:
+                if not item_enable_granular_versions:
+                    if _plex_labels_active:
+                        new_source = item.get('content_source')
+                        new_detail = item.get('content_source_detail')
+                        if new_source and new_detail and new_detail.lower() != 'unknown':
+                            lookup_id = _get_existing_item_id_collected(conn, imdb_id, tmdb_id, item_type, item)
+                            if lookup_id:
+                                # Skip re-queuing if this source already has its label(s) applied —
+                                # without this check, the same handful of items get re-labelled
+                                # (a no-op write) on every wanted-items pass, needlessly.
+                                already_labelled = False
+                                try:
+                                    from utilities.plex_label_manager import parse_plex_labels, determine_labels_for_item
+                                    pl_row = conn.execute('SELECT plex_labels FROM media_items WHERE id = ?', (lookup_id,)).fetchone()
+                                    existing_plex_labels = parse_plex_labels(pl_row['plex_labels'] if pl_row else None)
+                                    expected_labels = determine_labels_for_item({'content_source': new_source, 'content_source_detail': new_detail})
+                                    already_labelled = bool(expected_labels) and all(
+                                        new_source in existing_plex_labels.get(lbl, {}).get('sources', [])
+                                        for lbl in expected_labels
+                                    )
+                                except Exception:
+                                    already_labelled = False
+                                if not already_labelled:
+                                    pending_secondary_labels.append((lookup_id, new_source, new_detail))
+                                # Write source+detail to content_sources so secondary-source label
+                                # re-processing can find it (add_label_to_item only writes source, no detail)
+                                try:
+                                    from utilities.plex_label_manager import parse_content_sources, serialize_content_sources
+                                    cs_row = conn.execute('SELECT content_sources FROM media_items WHERE id = ?', (lookup_id,)).fetchone()
+                                    cs_list = parse_content_sources(cs_row['content_sources'] if cs_row else None)
+                                    if not any(s['source'] == new_source for s in cs_list):
+                                        cs_list.append({'source': new_source, 'detail': new_detail, 'added_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
+                                        conn.execute('UPDATE media_items SET content_sources = ? WHERE id = ?',
+                                                     (serialize_content_sources(cs_list), lookup_id))
+                                except Exception as _cs_err:
+                                    logging.warning(f"Failed to write content_sources for collected item {lookup_id}: {_cs_err}")
+                                if item.get('source_position') is not None:
+                                    conn.execute(
+                                        "UPDATE media_items SET source_position=? WHERE id=?",
+                                        (item['source_position'], lookup_id)
+                                    )
+                    skip_stats['already_collected_or_upgrading'] += 1; items_skipped += 1; _note_skip('already Collected/Upgrading', item); continue
 
             if item_type == 'movie':
                 skip = False; media_id_vs = imdb_id or tmdb_id
                 existing_versions_set_vs = set(); existing_states_set_vs = set()
                 if imdb_id and imdb_id in existing_movies:
-                    for version_vs, state_vs in existing_movies[imdb_id]:
+                    for version_vs, state_vs, _ in existing_movies[imdb_id]:
                         existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
                 if tmdb_id and tmdb_id in existing_movies and (not imdb_id or imdb_id != tmdb_id):
-                    for version_vs, state_vs in existing_movies[tmdb_id]:
+                    for version_vs, state_vs, _ in existing_movies[tmdb_id]:
                         existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
 
-                if not enable_granular_versions:
+                if not (item_enable_granular_versions or is_user_initiated_add):
                     if existing_versions_set_vs:
                         skip = True
                         if imdb_id and imdb_id in existing_movies: skip_stats['existing_movie_imdb'] += 1
@@ -413,7 +597,16 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         skip = True; skip_stats['existing_movie_imdb'] += 1
                         if media_id_vs not in version_summary['movies']:
                             version_summary['movies'][media_id_vs] = {'existing': existing_versions_set_vs, 'added': set(), 'title': normalized_title, 'states': existing_states_set_vs}
-                if skip: items_skipped += 1; continue
+                if skip:
+                    _note_skip('a version already exists', item)
+                    if _plex_labels_active:
+                        new_source = item.get('content_source')
+                        new_detail = item.get('content_source_detail')
+                        if new_source and new_detail and new_detail.lower() != 'unknown':
+                            lookup_id = _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item)
+                            if lookup_id:
+                                pending_source_records.append((lookup_id, new_source, new_detail))
+                    items_skipped += 1; continue
             else: # Episode
                 season_number_vs = item.get('season_number'); episode_number_vs = item.get('episode_number')
                 skip = False; media_id_vs = imdb_id or tmdb_id
@@ -423,15 +616,15 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 if imdb_id:
                     imdb_key_vs = (str(imdb_id), season_number_vs, episode_number_vs)
                     if imdb_key_vs in existing_episodes:
-                        for version_vs, state_vs in existing_episodes[imdb_key_vs]:
+                        for version_vs, state_vs, _, _ in existing_episodes[imdb_key_vs]:
                             existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
                 if tmdb_id:
                     tmdb_key_vs = (str(tmdb_id), season_number_vs, episode_number_vs)
                     if tmdb_key_vs in existing_episodes and (not imdb_key_vs or imdb_key_vs != tmdb_key_vs):
-                        for version_vs, state_vs in existing_episodes[tmdb_key_vs]:
+                        for version_vs, state_vs, _, _ in existing_episodes[tmdb_key_vs]:
                             existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
 
-                if not enable_granular_versions:
+                if not (item_enable_granular_versions or is_user_initiated_add):
                     if existing_versions_set_vs:
                         skip = True
                         if imdb_key_vs and imdb_key_vs in existing_episodes: skip_stats['existing_episode_imdb'] += 1
@@ -450,12 +643,22 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         skip = True; skip_stats['existing_episode_imdb'] += 1
                         if episode_key_vs not in version_summary['episodes']:
                              version_summary['episodes'][episode_key_vs] = {'existing': existing_versions_set_vs, 'added': set(), 'title': normalized_title, 'states': existing_states_set_vs}
-                if skip: items_skipped += 1; continue
-            
+                if skip:
+                    _note_skip('a version already exists', item)
+                    if _plex_labels_active:
+                        new_source = item.get('content_source')
+                        new_detail = item.get('content_source_detail')
+                        if new_source and new_detail and new_detail.lower() != 'unknown':
+                            lookup_id = _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item)
+                            if lookup_id:
+                                pending_source_records.append((lookup_id, new_source, new_detail))
+                    items_skipped += 1; continue
+
             filtered_media_items_batch_after_existence_check.append(item)
 
         media_items_batch = filtered_media_items_batch_after_existence_check
-        
+
+        _tmdb_lookup_cache = {}  # Cache tmdb lookups within this batch to avoid repeated calls for the same imdb_id
         movies_to_insert = []
         episodes_to_insert = []
         show_titles_to_potentially_update = set()
@@ -474,15 +677,24 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             if is_item_blacklisted:
                 skip_stats['blacklisted'] += 1
                 items_skipped += 1
+                _note_skip('manually blacklisted', item)
                 continue
 
             if not item.get('tmdb_id'):
-                from metadata.metadata import get_tmdb_id_and_media_type
-                tmdb_id_meta, media_type_meta = get_tmdb_id_and_media_type(item['imdb_id'])
-                if tmdb_id_meta:
-                    item['tmdb_id'] = str(tmdb_id_meta)
+                imdb_id_lookup = item['imdb_id']
+                if imdb_id_lookup in _tmdb_lookup_cache:
+                    cached_tmdb = _tmdb_lookup_cache[imdb_id_lookup]
+                    if cached_tmdb:
+                        item['tmdb_id'] = cached_tmdb
                 else:
-                    logging.warning(f"Unable to retrieve tmdb_id for {item.get('title', 'Unknown')} (IMDb ID: {item['imdb_id']})")
+                    from metadata.metadata import get_tmdb_id_and_media_type
+                    tmdb_id_meta, media_type_meta = get_tmdb_id_and_media_type(imdb_id_lookup)
+                    if tmdb_id_meta:
+                        item['tmdb_id'] = str(tmdb_id_meta)
+                        _tmdb_lookup_cache[imdb_id_lookup] = str(tmdb_id_meta)
+                    else:
+                        _tmdb_lookup_cache[imdb_id_lookup] = None
+                        logging.warning(f"Unable to retrieve tmdb_id for {item.get('title', 'Unknown')} (IMDb ID: {imdb_id_lookup})")
 
             normalized_title = normalize_string(str(item.get('title', 'Unknown')))
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
@@ -534,6 +746,20 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             item_genres_list = [str(g).lower() for g in item.get('genres', [])]
             is_anime = 'anime' in item_genres_list
             versions_to_use = item.get('versions_to_add', versions)
+
+            # Resolve tags from content source config (Plex mode NZB folder routing)
+            # item may already have tags set (e.g. from content requestor), otherwise look up from source config
+            _item_tags = item.get('tags') or ''
+            if not _item_tags:
+                _cs_id = item.get('content_source', '')
+                if _cs_id:
+                    try:
+                        _cs_config = config.get('Content Sources', {}).get(_cs_id, {})
+                        _cs_tags = _cs_config.get('tags', [])
+                        if isinstance(_cs_tags, list) and _cs_tags:
+                            _item_tags = ','.join(t.strip() for t in _cs_tags if t.strip())
+                    except Exception:
+                        pass
 
             for version, enabled in versions_to_use.items():
                 if not enabled:
@@ -611,35 +837,88 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                             logging.error(f"Error checking Trakt early release for {imdb_id}: {str(e)}")
                             skip_stats['trakt_error'] += 1
                     
+                    # Battery year fallback: process_metadata may have gotten year=None if
+                    # battery didn't have the item yet. Try battery now before inserting.
+                    if not item.get('year') and item.get('imdb_id'):
+                        try:
+                            from cli_battery.app.direct_api import DirectAPI as _DirectAPI
+                            _batt_meta, _ = _DirectAPI.get_movie_metadata(item['imdb_id'])
+                            if _batt_meta and _batt_meta.get('year'):
+                                item['year'] = _batt_meta['year']
+                            elif _batt_meta and _batt_meta.get('release_date'):
+                                _rd = str(_batt_meta['release_date'])
+                                if len(_rd) >= 4 and _rd[:4].isdigit():
+                                    item['year'] = int(_rd[:4])
+                        except Exception:
+                            pass
+
                     movie_data = (
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
                         item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'),
                         item.get('country', '').lower(), item.get('content_source'), item.get('content_source_detail'),
-                        item.get('physical_release_date'), item.get('theatrical_release_date'), early_release_flag
+                        item.get('physical_release_date'), item.get('theatrical_release_date'), early_release_flag,
+                        item.get('source_position'), item.get('selected_folder'), item.get('selected_folder_is_custom', False),
+                        _item_tags or None
                     )
                     movies_to_insert.append(movie_data)
                     items_added += 1
+                    _note_added(item)
                 else: # episode
                     if item.get('imdb_id') or item.get('tmdb_id'):
                         show_titles_to_potentially_update.add(
                             (item.get('imdb_id'), item.get('tmdb_id'), item.get('title'))
                         )
-                    
+
                     airtime = item.get('airtime') or '19:00'
                     initial_state = 'Wanted'
                     if get_setting('Debug', 'allow_partial_overseerr_requests'):
                          initial_state = 'Wanted' if item.get('is_requested_season', True) else 'Blacklisted'
                     blacklisted_date = datetime.now(timezone.utc) if initial_state == 'Blacklisted' else None
 
+                    # Battery fallback for Unknown release dates
+                    release_date = item.get('release_date')
+                    if not release_date or str(release_date).lower() == 'unknown':
+                        imdb_id = item.get('imdb_id')
+                        season_num = item.get('season_number')
+                        episode_num = item.get('episode_number')
+
+                        if imdb_id and season_num is not None and episode_num is not None:
+                            try:
+                                from cli_battery.app.direct_api import DirectAPI
+                                metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+
+                                if metadata and 'seasons' in metadata:
+                                    season_data = metadata['seasons'].get(str(season_num))
+                                    if season_data and 'episodes' in season_data:
+                                        episode_data_battery = season_data['episodes'].get(str(episode_num))
+                                        if episode_data_battery and 'first_aired' in episode_data_battery:
+                                            first_aired = episode_data_battery['first_aired']
+                                            if first_aired:
+                                                # Extract date from first_aired (format: "2026-02-14 04:00:00" or "2026-02-14T04:00:00")
+                                                try:
+                                                    first_aired_str = str(first_aired).replace('T', ' ')
+                                                    if ' ' in first_aired_str:
+                                                        release_date = first_aired_str.split(' ', 1)[0][:10]  # YYYY-MM-DD
+                                                    else:
+                                                        release_date = first_aired_str[:10]
+                                                    logging.info(f"Battery fallback: Found air date {release_date} for {normalized_title} S{season_num}E{episode_num}")
+                                                except Exception as e:
+                                                    logging.warning(f"Could not parse Battery first_aired '{first_aired}': {e}")
+                            except Exception as e:
+                                logging.debug(f"Battery fallback failed for {normalized_title} S{season_num}E{episode_num}: {e}")
+
                     episode_data = (
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
-                        item.get('release_date'), initial_state, 'episode',
+                        release_date, initial_state, 'episode',
                         item['season_number'], item['episode_number'], item.get('episode_title', ''),
                         datetime.now(), version, item.get('runtime'), airtime, genres, item.get('country', '').lower(),
-                        blacklisted_date, item.get('requested_season', False), item.get('content_source'), item.get('content_source_detail')
+                        blacklisted_date, item.get('requested_season', False), item.get('content_source'), item.get('content_source_detail'),
+                        item.get('source_position'), item.get('selected_folder'), item.get('selected_folder_is_custom', False),
+                        _item_tags or None
                     )
                     episodes_to_insert.append(episode_data)
                     items_added += 1
+                    _note_added(item)
         
         # Perform deferred show title updates
         updated_any_title = False
@@ -653,22 +932,162 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         if movies_to_insert:
             conn.executemany('''
                 INSERT INTO media_items
-                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source, content_source_detail, physical_release_date, theatrical_release_date, early_release)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source, content_source_detail, physical_release_date, theatrical_release_date, early_release, source_position, selected_folder, selected_folder_is_custom, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', movies_to_insert)
 
         if episodes_to_insert:
             conn.executemany('''
                 INSERT INTO media_items
-                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, 
+                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number,
                  episode_title, last_updated, version, runtime, airtime, genres, country, blacklisted_date,
-                 requested_season, content_source, content_source_detail)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 requested_season, content_source, content_source_detail, source_position, selected_folder, selected_folder_is_custom, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', episodes_to_insert)
 
-        if movies_to_insert or episodes_to_insert or updated_any_title:
+        # Always commit here — the content_sources/source_position UPDATEs made
+        # above (line ~520) while scanning already-Collected items are on this
+        # same connection and would otherwise stay open into add_label_to_item
+        # below, which opens its OWN connection and self-deadlocks against the
+        # uncommitted write lock (each retry then burns ~870s before failing).
+        conn.commit()
+
+        # Apply labels for secondary sources on already-Collected items
+        if pending_secondary_labels:
+            try:
+                from utilities.plex_label_manager import (
+                    is_plex_labels_enabled_anywhere,
+                    determine_labels_for_item,
+                    add_label_to_item
+                )
+                if is_plex_labels_enabled_anywhere():
+                    for (existing_id, src, detail) in pending_secondary_labels:
+                        temp_item = {'content_source': src, 'content_source_detail': detail}
+                        labels = determine_labels_for_item(temp_item)
+                        for label in labels:
+                            try:
+                                add_label_to_item(existing_id, label, src, apply_to_plex=True)
+                                logging.info(f"Applied secondary source label '{label}' from {src} to item {existing_id}")
+                            except Exception as e:
+                                logging.warning(f"Failed to apply secondary source label '{label}' from {src} to item {existing_id}: {e}")
+            except Exception as e:
+                logging.warning(f"Failed to apply secondary source labels: {e}")
+
+        # Record secondary sources for not-yet-Collected items (for future label application when item reaches Collected)
+        # Only runs when plex_labels is enabled for at least one content source
+        if pending_source_records:
+            try:
+                from utilities.plex_label_manager import is_plex_labels_enabled_anywhere, parse_content_sources, serialize_content_sources
+                _labels_enabled = is_plex_labels_enabled_anywhere()
+            except Exception:
+                _labels_enabled = False
+        if pending_source_records and _labels_enabled:
+            from utilities.plex_label_manager import parse_content_sources, serialize_content_sources
+            for (existing_id, src, detail) in pending_source_records:
+                try:
+                    row = conn.execute('SELECT content_sources FROM media_items WHERE id = ?', (existing_id,)).fetchone()
+                    sources = parse_content_sources(row['content_sources'] if row else None)
+                    if not any(s['source'] == src for s in sources):
+                        sources.append({'source': src, 'detail': detail, 'added_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
+                        conn.execute('UPDATE media_items SET content_sources = ? WHERE id = ?',
+                                     (serialize_content_sources(sources), existing_id))
+                        logging.debug(f"Recorded secondary source '{src}' on item {existing_id} for future label application")
+                except Exception as e:
+                    logging.warning(f"Failed to record secondary source for item {existing_id}: {e}")
             conn.commit()
-        
+
+        # Send notifications for newly added items
+        if (movies_to_insert or episodes_to_insert) and items_added > 0:
+            try:
+                from routes.notifications import send_notifications
+                from routes.settings_routes import get_enabled_notifications_for_category
+                from routes.extensions import app
+                from database.database_reading import get_all_media_items
+
+                with app.app_context():
+                    response = get_enabled_notifications_for_category('wanted')
+                    if response.json['success']:
+                        enabled_notifications = response.json['enabled_notifications']
+                        if enabled_notifications:
+                            # Get the newly inserted items from the database
+                            notifications_to_send = []
+
+                            # Build a set of unique identifiers for the items we just inserted
+                            inserted_identifiers = set()
+                            for movie_data in movies_to_insert:
+                                # movie_data tuple: (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, ...)
+                                imdb_id, tmdb_id, title, year = movie_data[0], movie_data[1], movie_data[2], movie_data[3]
+                                version = movie_data[8]
+                                inserted_identifiers.add((imdb_id, tmdb_id, title, year, version, 'movie'))
+
+                            for episode_data in episodes_to_insert:
+                                # episode_data tuple: (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, ...)
+                                imdb_id, tmdb_id, title, year = episode_data[0], episode_data[1], episode_data[2], episode_data[3]
+                                season_num, episode_num = episode_data[7], episode_data[8]
+                                version = episode_data[11]
+                                inserted_identifiers.add((imdb_id, tmdb_id, title, year, version, 'episode', season_num, episode_num))
+
+                            # Query for items in Wanted state that match our inserted items
+                            wanted_items = get_all_media_items(state='Wanted')
+
+                            for db_item in wanted_items:
+                                # Check if this item matches one we just inserted
+                                item_type = db_item.get('type', 'unknown')
+                                if item_type == 'movie':
+                                    identifier = (
+                                        db_item.get('imdb_id'),
+                                        db_item.get('tmdb_id'),
+                                        db_item.get('title'),
+                                        db_item.get('year'),
+                                        db_item.get('version'),
+                                        'movie'
+                                    )
+                                    if identifier in inserted_identifiers and not db_item.get('upgrading'):
+                                        notification_data = {
+                                            'id': db_item.get('id'),
+                                            'title': db_item.get('title', 'Unknown Title'),
+                                            'type': item_type,
+                                            'year': db_item.get('year', ''),
+                                            'version': db_item.get('version', ''),
+                                            'season_number': None,
+                                            'episode_number': None,
+                                            'new_state': 'Wanted',
+                                            'is_upgrade': False,
+                                            'upgrading_from': None
+                                        }
+                                        notifications_to_send.append(notification_data)
+                                elif item_type == 'episode':
+                                    identifier = (
+                                        db_item.get('imdb_id'),
+                                        db_item.get('tmdb_id'),
+                                        db_item.get('title'),
+                                        db_item.get('year'),
+                                        db_item.get('version'),
+                                        'episode',
+                                        db_item.get('season_number'),
+                                        db_item.get('episode_number')
+                                    )
+                                    if identifier in inserted_identifiers and not db_item.get('upgrading'):
+                                        notification_data = {
+                                            'id': db_item.get('id'),
+                                            'title': db_item.get('title', 'Unknown Title'),
+                                            'type': item_type,
+                                            'year': db_item.get('year', ''),
+                                            'version': db_item.get('version', ''),
+                                            'season_number': str(db_item.get('season_number', '')) if db_item.get('season_number') is not None else None,
+                                            'episode_number': str(db_item.get('episode_number', '')) if db_item.get('episode_number') is not None else None,
+                                            'new_state': 'Wanted',
+                                            'is_upgrade': False,
+                                            'upgrading_from': None
+                                        }
+                                        notifications_to_send.append(notification_data)
+
+                            if notifications_to_send:
+                                send_notifications(notifications_to_send, enabled_notifications, notification_category='state_change')
+                                logging.info(f"Sent Wanted state notifications for {len(notifications_to_send)} items")
+            except Exception as e:
+                logging.error(f"Failed to send Wanted state change notifications: {str(e)}")
+
         # Immediately trigger a Wanted queue run if new items were added
         if items_added > 0:
             try:
@@ -750,6 +1169,14 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
 
         if skip_report:
             logging.info("Wanted items processing complete. Skip summary:\n" + "\n".join(skip_report))
+        for (reason_, source_), titles_ in skipped_watchlist_titles.items():
+            shown_ = ', '.join(repr(t) if n == 1 else f"{t!r} ({n} entries)" for t, n in list(titles_.items())[:25])
+            more_ = f" (+{len(titles_) - 25} more)" if len(titles_) > 25 else ''
+            logging.info(f"Plex watchlist items not added from {source_} ({reason_}): {shown_}{more_}")
+        for source_, per_source_ in added_watchlist_titles.items():
+            parts_ = [repr(t) if n == 1 else f"{t!r} ({n} entries)" for t, n in list(per_source_.items())[:25]]
+            more_ = f" (+{len(per_source_) - 25} more)" if len(per_source_) > 25 else ''
+            logging.info(f"Plex watchlist items added from {source_}: {', '.join(parts_)}{more_}")
         logging.info(f"Final stats - Added: {items_added}, Updated: {items_updated}, Total Skipped: {items_skipped}")
         
         return items_added
@@ -842,11 +1269,12 @@ def process_batch(conn, batch_items, versions, processed):
             for version, enabled in versions.items():
                 if enabled:
                     movie_items.append((
-                        item.get('imdb_id'), item.get('tmdb_id'), normalized_title, 
-                        item.get('year'), item.get('release_date'), 'Wanted', 'movie', 
-                        datetime.now(), version, genres, item.get('runtime'), 
+                        item.get('imdb_id'), item.get('tmdb_id'), normalized_title,
+                        item.get('year'), item.get('release_date'), 'Wanted', 'movie',
+                        datetime.now(), version, genres, item.get('runtime'),
                         item.get('country', '').lower(), item.get('content_source'),
-                        item.get('content_source_detail'), item.get('physical_release_date')
+                        item.get('content_source_detail'), item.get('physical_release_date'),
+                        item.get('source_position')
                     ))
         else:
             for version, enabled in versions.items():
@@ -861,25 +1289,26 @@ def process_batch(conn, batch_items, versions, processed):
                         datetime.now(), version, item.get('runtime'), item.get('airtime', '19:00'),
                         genres, item.get('country', '').lower(), blacklisted_date,
                         item.get('requested_season', False), item.get('content_source'),
-                        item.get('content_source_detail')
+                        item.get('content_source_detail'), item.get('source_position')
                     ))
     
     if movie_items:
         conn.executemany('''
             INSERT INTO media_items
-            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, 
-             version, genres, runtime, country, content_source, content_source_detail, physical_release_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated,
+             version, genres, runtime, country, content_source, content_source_detail, physical_release_date,
+             source_position)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', movie_items)
         processed['movies'] += len(movie_items)
-    
+
     if episode_items:
         conn.executemany('''
             INSERT INTO media_items
             (imdb_id, tmdb_id, title, year, release_date, state, type, season_number,
              episode_number, episode_title, last_updated, version, runtime, airtime,
              genres, country, blacklisted_date, requested_season, content_source,
-             content_source_detail)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             content_source_detail, source_position)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', episode_items)
         processed['episodes'] += len(episode_items)

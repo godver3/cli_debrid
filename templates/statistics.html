@@ -2,15 +2,58 @@
 
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/statistics.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper-mobile.css') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_statistics.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_scraper-mobile.css') }}">
 <!-- Disabled: Using quality badges instead of pipe-separated format -->
 <!-- <script src="{{ url_for('static', filename='js/tangerine_filename_formatter.js') }}"></script> -->
+<style>
+    /* Show desktop uptime format by default, hide mobile */
+    .uptime-desktop { display: inline; }
+    .uptime-mobile { display: none; }
+
+    /* On mobile screens, hide desktop and show mobile format */
+    @media (max-width: 768px) {
+        .uptime-desktop { display: none; }
+        .uptime-mobile { display: inline; }
+    }
+
+    /* Panel scrollbars — override tangerine_base.css global rules */
+    .stats-box.recently-aired ul::-webkit-scrollbar,
+    .stats-box.airing-soon ul::-webkit-scrollbar,
+    .stats-box.upcoming-releases ul::-webkit-scrollbar,
+    .stats-cards-container::-webkit-scrollbar { width: 3px !important; }
+
+    .stats-box.recently-aired ul::-webkit-scrollbar-track,
+    .stats-box.airing-soon ul::-webkit-scrollbar-track,
+    .stats-box.upcoming-releases ul::-webkit-scrollbar-track,
+    .stats-cards-container::-webkit-scrollbar-track { background: transparent !important; border: none !important; }
+
+    .stats-box.recently-aired ul::-webkit-scrollbar-thumb,
+    .stats-box.airing-soon ul::-webkit-scrollbar-thumb,
+    .stats-box.upcoming-releases ul::-webkit-scrollbar-thumb,
+    .stats-cards-container::-webkit-scrollbar-thumb { background: #3d3d3d !important; border-radius: 0 !important; border: none !important; }
+
+    .stats-box.recently-aired ul::-webkit-scrollbar-button,
+    .stats-box.airing-soon ul::-webkit-scrollbar-button,
+    .stats-box.upcoming-releases ul::-webkit-scrollbar-button,
+    .stats-cards-container::-webkit-scrollbar-button { display: none !important; width: 0 !important; height: 0 !important; }
+</style>
 {% endblock %}
 {% block title %}Home{% endblock %}
 
 {% block content %}
+<!-- Hidden version select for torrent modal dropdown (populated server-side like library_show.html) -->
+<select id="version-select" style="display: none;">
+    {% for version in versions %}
+        <option value="{{ version }}">{{ version }}</option>
+    {% endfor %}
+    <option value="No Version">No Version</option>
+</select>
+
 <!-- Add modal for external links -->
 <div id="external-links-modal" class="modal">
     <div class="modal-content" id="external-links-modal-content">
@@ -35,63 +78,75 @@
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // Check if on mobile
+        // On mobile, always force compact list view regardless of server-side setting
         if (window.innerWidth <= 768) {
-            // Add compact-view class to statistics-wrapper
             document.querySelector('.statistics-wrapper').classList.add('compact-view');
+            // If server rendered poster cards (non-compact), re-render as list via JS
+            const hasPosters = document.querySelector('.stats-cards-container .stats-poster-container');
+            if (hasPosters) {
+                // Trigger a data refresh so JS re-renders cards as file-details list
+                setTimeout(function() {
+                    if (typeof refreshStats === 'function') refreshStats();
+                }, 100);
+            }
         }
     });
 </script>
 
 <div class="statistics-wrapper {% if compact_view %}compact-view{% endif %}">
     <div class="toggle-container" id="toggle_container">
+      <div class="topbar-inner">
+        {% set _stats_source = stats.active_downloads_data.get('source') if stats.active_downloads_data else none %}
+        {% set _is_dcy = _stats_source in ('climount', 'combined') %}
         {% if not limited_env %}
-        <div class="toggle-item">
-            <span class="toggle-label"><i class="fas fa-hdd"></i> Library:</span>
-            <span id="library-size-display">{{ stats.total_library_size | default('Click Refresh') }}</span>
-            <button id="refresh-library-size-btn" class="refresh-btn" title="Refresh Library Size">
-                 <i class="fas fa-sync-alt"></i>
-            </button>
+        <div class="tb-pill">
+            <i class="fas fa-server" style="color:var(--st-accent)"></i>
+            <span class="tb-label">Library:</span>
+            <span class="tb-val" id="library-size-display">{% if _is_dcy %}{{ stats.active_downloads_data.get('library_size', 'N/A') }}{% else %}{{ stats.total_library_size | default('Click Refresh') }}{% endif %}</span>
+            <button id="refresh-library-size-btn" class="tb-refresh" title="Refresh Library Size"><i class="fas fa-rotate"></i></button>
         </div>
-        {% endif %}
-        {% if not limited_env %}
-        <div class="toggle-item">
-            <span class="toggle-label"><i class="fas fa-globe"></i> {{ stats.timezone }}</span>
+        <div class="tb-sep"></div>
+        <div class="tb-pill">
+            <i class="fas fa-globe" style="color:var(--st-blue)"></i>
+            <span class="tb-val">{{ stats.timezone }}</span>
         </div>
-        {% endif %}
-        {% if not limited_env %}
-        <div class="toggle-item">
-            <span class="toggle-label"><i class="fas fa-crown"></i> Sub:</span>
-            <span id="subscription-days-toggle" class="{% if stats.subscription_status and stats.subscription_status.days_remaining is not none and stats.subscription_status.days_remaining < 10 %}critical{% endif %}">{% if stats.subscription_status and stats.subscription_status.days_remaining is not none %}{{ stats.subscription_status.days_remaining }} days{% else %}N/A{% endif %}</span>
+        <div class="tb-break"></div>
+        <div class="tb-pill">
+            {% if _is_dcy %}
+                {% set _broken = stats.active_downloads_data.get('broken_nzbs', 0) %}
+                <i class="fas fa-triangle-exclamation" style="color:{% if _broken > 0 %}var(--st-red){% else %}var(--st-yellow){% endif %};line-height:1;display:flex;align-items:center"></i>
+                <span class="tb-label">Broken:</span>
+                <span class="tb-val {% if _broken > 0 %}critical{% endif %}" id="subscription-days-toggle">{{ _broken }}</span>
+            {% else %}
+                <i class="fas fa-crown" style="color:var(--st-yellow)"></i>
+                <span class="tb-label">Sub:</span>
+                <span class="tb-val {% if stats.subscription_status and stats.subscription_status.days_remaining is not none and stats.subscription_status.days_remaining < 10 %}critical{% endif %}" id="subscription-days-toggle">{% if stats.subscription_status and stats.subscription_status.days_remaining is not none %}{{ stats.subscription_status.days_remaining }} days{% else %}N/A{% endif %}</span>
+            {% endif %}
         </div>
+        <div class="tb-sep"></div>
         {% endif %}
-        <div class="toggle-item">
-            <span class="toggle-label">24h</span>
+        <div class="tb-toggle-wrap">
+            <span class="tb-label">24h</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="time-format-toggle">
                 <span class="toggle-slider"></span>
             </label>
         </div>
-        <div class="toggle-item" id="compact_toggle">
-            <span class="toggle-label">Compact</span>
+        <div class="tb-toggle-wrap" id="compact_toggle">
+            <span class="tb-label">Compact</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="compact-toggle">
                 <span class="toggle-slider"></span>
             </label>
         </div>
-        <div class="toggle-item">
-            <span class="toggle-label"><i class="fas fa-palette"></i> Theme:</span>
-            <select id="theme-selector" class="theme-selector">
-                <option value="classic">Classic</option>
-                <option value="tangerine">Tangerine</option>
-            </select>
-        </div>
-        <div class="toggle-item search-box-item" id="stats-search-box" style="display: none;">
-            <form id="stats-search-form" class="stats-search-form">
-                <i class="fas fa-search stats-search-icon"></i>
+        <div class="tb-break"></div>
+        <div class="tb-search" id="stats-search-box" style="display: none;">
+            <i class="fas fa-magnifying-glass tb-search-icon"></i>
+            <form id="stats-search-form">
                 <input type="text" id="stats-search-input" placeholder="Search or enter IMDb/TMDB ID..." class="stats-search-input">
             </form>
         </div>
+      </div>
     </div>
 
     <script>
@@ -103,24 +158,10 @@
                 document.querySelector('.statistics-wrapper').classList.add('compact-view');
             }
 
-            // Show/hide search box based on theme
-            function toggleSearchBox() {
-                const currentTheme = localStorage.getItem('selectedTheme') || 'classic';
-                const searchBox = document.getElementById('stats-search-box');
-                if (searchBox) {
-                    searchBox.style.display = currentTheme === 'tangerine' ? 'flex' : 'none';
-                }
-            }
-
-            // Initial check
-            toggleSearchBox();
-
-            // Listen for theme changes
-            const themeSelector = document.getElementById('theme-selector');
-            if (themeSelector) {
-                themeSelector.addEventListener('change', function() {
-                    setTimeout(toggleSearchBox, 100);
-                });
+            // Show search box (tangerine is the only theme now)
+            const searchBox = document.getElementById('stats-search-box');
+            if (searchBox) {
+                searchBox.style.display = 'block';
             }
 
             // Handle search form submission
@@ -329,6 +370,8 @@
                     <li>
                         <div class="show-info clickable"
                              data-title="${item.title}"
+                             data-show-title="${item.show_title || item.title}"
+                             data-year="${item.year || ''}"
                              data-imdb-id="${item.imdb_id}"
                              data-tmdb-id="${item.tmdb_id}"
                              data-season="${item.season_number}"
@@ -402,7 +445,7 @@
                         data-season="${item.season_number}"
                         data-episode="${item.episode_number}">
                         <span class="show-title">${item.title}</span>
-                        <span class="air-time">${item.formatted_datetime}</span>
+                        <span class="air-time${item.formatted_datetime.startsWith('Today') ? ' today' : ''}">${item.formatted_datetime}</span>
                     </li>
                 `).join('');
             }
@@ -418,7 +461,7 @@
                         data-tmdb-id="${release.tmdb_ids && release.tmdb_ids.length > 0 ? release.tmdb_ids : ''}"
                         data-imdb-id="${release.imdb_ids && release.imdb_ids.length > 0 ? release.imdb_ids : ''}">
                         <span class="titles">${release.titles}</span>
-                        <span class="release-date">${release.formatted_date}</span>
+                        <span class="release-date${release.is_soon ? ' soon' : ''}">${release.formatted_date}</span>
                     </li>
                 `).join('');
             }
@@ -429,14 +472,16 @@
                 console.log('Updating recently added movies');
                 console.log('Recently added movies data:', JSON.stringify(data.recently_added.movies, null, 2));
                 recentMoviesContainer.innerHTML = data.recently_added.movies.map(movie => {
-                    console.log('Processing movie:', movie);
                     const collectedAt = movie.formatted_collected_at || movie.formatted_date || 'Unknown';
+                    const sizeStr = movie.formatted_size ? ` <span style="color:#e17c52;">•</span> Size: ${movie.formatted_size}` : '';
+                    const meta = `Version: ${movie.version}${sizeStr} <span style="color:#e17c52;">•</span> ${collectedAt}`;
+                    const isCompact = document.querySelector('.statistics-wrapper').classList.contains('compact-view');
                     return `
                     <div class="stats-card">
-                        ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
+                        ${isCompact ? `
                             <div class="file-details">
                                 <span class="title">${movie.title} (${movie.year})</span>
-                                <span class="metadata">Version: ${movie.version} - ${collectedAt}</span>
+                                <span class="metadata">${meta}</span>
                                 <span class="filename">${movie.filled_by_file}</span>
                             </div>
                         ` : `
@@ -444,7 +489,7 @@
                                 <img src="${movie.poster_url}" alt="${movie.title} poster" class="poster" loading="lazy">
                                 <div class="stats-poster-hover">
                                     <span class="title">${movie.title} (${movie.year})</span>
-                                    <span class="metadata">Version: ${movie.version} - ${collectedAt}</span>
+                                    <span class="metadata">${meta}</span>
                                     <span class="filename">${movie.filled_by_file}</span>
                                 </div>
                             </div>
@@ -460,22 +505,26 @@
                 console.log('Updating recently added shows');
                 console.log('Recently added shows data:', JSON.stringify(data.recently_added.shows, null, 2));
                 recentShowsContainer.innerHTML = data.recently_added.shows.map(show => {
-                    console.log('Processing show:', show);
                     const collectedAt = show.formatted_collected_at || show.formatted_date || 'Unknown';
+                    const epStr = (show.season_number && show.episode_number) ? `S${String(show.season_number).padStart(2,'0')}E${String(show.episode_number).padStart(2,'0')} <span style="color:#e17c52;">•</span> ` : '';
+                    const sizeStr = show.formatted_size ? ` <span style="color:#e17c52;">•</span> Size: ${show.formatted_size}` : '';
+                    const verStr = show.version ? `Version: ${show.version}${sizeStr} <span style="color:#e17c52;">•</span> ` : '';
+                    const meta = `${epStr}${verStr}${collectedAt}`;
+                    const isCompact = document.querySelector('.statistics-wrapper').classList.contains('compact-view');
                     return `
                     <div class="stats-card">
-                        ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
+                        ${isCompact ? `
                             <div class="file-details">
-                                <span class="title">${show.title}</span>
-                                <span class="metadata">${show.season_number && show.episode_number ? `S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')}` : ''}${show.year ? ` (${show.year})` : ''}${show.version ? ` - Version: ${show.version}` : ''} - ${collectedAt}</span>
+                                <span class="title">${show.title}${show.year ? ` (${show.year})` : ''}</span>
+                                <span class="metadata">${meta}</span>
                                 <span class="filename">${show.filled_by_file}</span>
                             </div>
                         ` : `
                             <div class="stats-poster-container">
                                 <img src="${show.poster_url}" alt="${show.title} poster" class="poster" loading="lazy">
                                 <div class="stats-poster-hover">
-                                    <span class="title">${show.title}</span>
-                                    <span class="metadata">${show.season_number && show.episode_number ? `S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')}` : ''}${show.year ? ` (${show.year})` : ''}${show.version ? ` - Version: ${show.version}` : ''} - ${collectedAt}</span>
+                                    <span class="title">${show.title}${show.year ? ` (${show.year})` : ''}</span>
+                                    <span class="metadata">${meta}</span>
                                     <span class="filename">${show.filled_by_file}</span>
                                 </div>
                             </div>
@@ -543,20 +592,50 @@
             // Reattach click event listeners for external links modal after updating content
             reattachExternalLinksListeners();
 
-            // Update subscription days in toggle bar, if present
+            // Re-apply quality badges to newly rendered cards
+            document.querySelectorAll('.stats-card[data-badges-applied]').forEach(c => c.removeAttribute('data-badges-applied'));
+            setTimeout(applyQualityBadges, 100);
+
+            // Update the toggle-bar Broken/Sub pill, mode-aware
             try {
-                const subToggle = document.getElementById('subscription-days-toggle');
-                const subData = data.subscription_status || (data.stats && data.stats.subscription_status) || null;
-                if (subToggle) {
-                    if (subData && subData.days_remaining !== null && subData.days_remaining !== undefined) {
-                        subToggle.textContent = `${subData.days_remaining} days`;
-                        subToggle.classList.toggle('critical', Number(subData.days_remaining) < 10);
-                    } else {
-                        subToggle.textContent = 'N/A';
-                        subToggle.classList.remove('critical');
-                    }
-                }
+                updateStatsToggleBarPill(data);
             } catch (e) {}
+        }
+
+        // Updates the shared #subscription-days-toggle element with either the
+        // broken count (usenet/combined stats_provider_priority mode) or
+        // subscription days remaining (debrid mode). The element is reused for
+        // both meanings (see templates/statistics.html's toggle-bar markup),
+        // so any refresh path touching it must check
+        // active_downloads_data.source first — writing "N days" over what is
+        // currently showing "Broken: N" (or vice versa) is the bug this
+        // guards against.
+        function updateStatsToggleBarPill(data) {
+            const subToggle = document.getElementById('subscription-days-toggle');
+            if (!subToggle) return;
+
+            const activeDownloadsData = data.active_downloads_data ||
+                                      (data.stats && data.stats.active_downloads_data) ||
+                                      null;
+            const source = activeDownloadsData && activeDownloadsData.source;
+
+            if (source === 'climount' || source === 'combined') {
+                const broken = activeDownloadsData.broken_nzbs || 0;
+                subToggle.textContent = `${broken}`;
+                subToggle.classList.toggle('critical', broken > 0);
+                return;
+            }
+
+            // Debrid mode (or unknown/absent source): fall back to
+            // subscription days, matching the pill's original behavior.
+            const subData = data.subscription_status || (data.stats && data.stats.subscription_status) || null;
+            if (subData && subData.days_remaining !== null && subData.days_remaining !== undefined) {
+                subToggle.textContent = `${subData.days_remaining} days`;
+                subToggle.classList.toggle('critical', Number(subData.days_remaining) < 10);
+            } else {
+                subToggle.textContent = 'N/A';
+                subToggle.classList.remove('critical');
+            }
         }
 
         // Function to reattach external links listeners
@@ -591,6 +670,11 @@
                     const inLibrary = this.dataset.inLibrary === 'true';
                     const mediaType = this.dataset.mediaType;
                     const season = this.dataset.season;
+                    const episode = this.dataset.episode;
+
+                    const episodeParams = (mediaType === 'episode' && season)
+                        ? `?season=${season}${episode ? `&episode=${episode}` : ''}`
+                        : '';
 
                     // Determine which page to navigate to
                     let url;
@@ -598,21 +682,12 @@
                     if (inLibrary) {
                         // Navigate to library page
                         if (mediaType === 'episode' && imdbId) {
-                            // For episodes/shows, go to library show page with season parameter
-                            url = `/library/show/${imdbId}`;
-                            if (season) {
-                                url += `?season=${season}`;
-                            }
+                            url = `/library/show/${imdbId}${episodeParams}`;
                         } else if (mediaType === 'movie' && imdbId) {
-                            // For movies, go to library movie page
                             url = `/library/movie/${imdbId}`;
                         } else if (tmdbId) {
-                            // Fallback to TMDB ID
                             if (mediaType === 'episode') {
-                                url = `/library/show/${tmdbId}`;
-                                if (season) {
-                                    url += `?season=${season}`;
-                                }
+                                url = `/library/show/${tmdbId}${episodeParams}`;
                             } else {
                                 url = `/library/movie/${tmdbId}`;
                             }
@@ -621,11 +696,10 @@
                         // Navigate to discover details page
                         if (tmdbId) {
                             const type = mediaType === 'episode' ? 'tv' : 'movie';
-                            url = `/discover/details/${tmdbId}/${type}`;
+                            url = `/discover/details/${tmdbId}/${type}${episodeParams}`;
                         } else if (imdbId) {
-                            // Try with IMDb ID as fallback
                             const type = mediaType === 'episode' ? 'tv' : 'movie';
-                            url = `/discover/details/${imdbId}/${type}`;
+                            url = `/discover/details/${imdbId}/${type}${episodeParams}`;
                         }
                     }
 
@@ -670,7 +744,7 @@
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('Error moving item to Wanted state: ' + error.message);
+                showPopup({ type: 'error', title: 'Error', message: 'Error moving item to Wanted state: ' + error.message, autoClose: 5000 });
                 btn.disabled = false;
             });
         }
@@ -680,23 +754,17 @@
             const btn = event.currentTarget;
             const showInfo = btn.closest('li').querySelector('.show-info');
 
-            const title = showInfo.dataset.title;
             const imdbId = btn.dataset.imdbId;
             const tmdbId = btn.dataset.tmdbId;
             const season = parseInt(btn.dataset.season);
             const episode = parseInt(btn.dataset.episode);
 
-            // Call selectMedia from scraper.js to search for this specific episode
-            // Note: We need to extract year from title if present (format: "Show Title (2020)")
-            const yearMatch = title.match(/\((\d{4})\)$/);
-            // Use current year as fallback if no year in title (required by endpoint)
-            const year = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
-            // Remove year if present, and also remove S##E## pattern
-            let cleanTitle = yearMatch ? title.replace(/\s*\(\d{4}\)$/, '') : title;
-            cleanTitle = cleanTitle.replace(/\s+S\d+E\d+$/i, ''); // Remove season/episode from end
+            // Use pre-parsed show_title and year from data attributes (avoids regex parsing issues)
+            const cleanTitle = showInfo.dataset.showTitle || showInfo.dataset.title.replace(/\s+S\d+E\d+.*$/i, '').replace(/\s*\(\d{4}\)\s*$/, '').trim();
+            const year = showInfo.dataset.year || new Date().getFullYear().toString();
 
-            // Get version from show data if available (default to 'Default')
-            const version = 'Default';
+            // Version is looked up server-side for recently_aired fixes; pass null here
+            const version = null;
 
             // Debug logging
             console.log('[Statistics] Search episode click - data:', {
@@ -721,11 +789,12 @@
                     episode,
                     false, // multi = false for single episode
                     null, // genre_ids
-                    version
+                    version,
+                    'recently_aired' // source_context: fix missed item, update existing entry
                 );
             } else {
                 console.error('[Statistics] selectMedia function not found - scraper.js may not be loaded');
-                alert('Error: Search functionality not available');
+                showPopup({ type: 'error', title: 'Error', message: 'Error: Search functionality not available', autoClose: 5000 });
             }
         }
 
@@ -760,7 +829,7 @@
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('Error moving item to Wanted state: ' + error.message);
+                showPopup({ type: 'error', title: 'Error', message: 'Error moving item to Wanted state: ' + error.message, autoClose: 5000 });
                 btn.disabled = false;
             });
         }
@@ -858,7 +927,7 @@
                         </div>
                         <div class="stat-text-content">
                             <div class="stat-label">Movies</div>
-                            <div class="stat-number">{{ stats.total_movies }}</div>
+                            <div class="stat-number">{{ "{:,}".format(stats.total_movies | int) }}</div>
                         </div>
                     </div>
                     <!-- <div class="stat-badges">
@@ -873,7 +942,7 @@
                         </div>
                         <div class="stat-text-content">
                             <div class="stat-label">Shows</div>
-                            <div class="stat-number">{{ stats.total_shows }}</div>
+                            <div class="stat-number">{{ "{:,}".format(stats.total_shows | int) }}</div>
                         </div>
                     </div>
                     <!-- <div class="stat-badges">
@@ -884,59 +953,66 @@
                 <div class="stat-item">
                     <div class="stat-content">
                         <div class="stat-icon">
-                            <i class="fas fa-video"></i>
+                            <i class="fas fa-clapperboard"></i>
                         </div>
                         <div class="stat-text-content">
                             <div class="stat-label">Episodes</div>
-                            <div class="stat-number">{{ stats.total_episodes }}</div>
+                            <div class="stat-number">{{ "{:,}".format(stats.total_episodes | int) }}</div>
                         </div>
                     </div>
                 </div>
                 {% if not limited_env %}
-                <div class="stat-item">
+                {% set is_climount = stats.active_downloads_data and stats.active_downloads_data.get('source') in ('climount', 'combined') %}
+                <div class="stat-item {% if not is_climount %}stat-item-clickable{% endif %} status-{{ stats.active_downloads_data.status }}" id="kpi-active" {% if not is_climount %}onclick="window.location.href='/debrid_manager/?tab=active'"{% endif %}>
                     <div class="stat-content">
                         <div class="stat-icon">
-                            <i class="fas fa-download"></i>
+                            <i class="fas fa-{% if is_climount %}newspaper{% else %}download{% endif %}"></i>
                         </div>
                         <div class="stat-text-content">
-                            <div class="stat-label">Active</div>
+                            <div class="stat-label">{% if is_climount %}Connections{% else %}Active{% endif %}</div>
                             <div class="stat-number {{ stats.active_downloads_data.status }}">
+                                {% if is_climount %}
+                                <span id="active_downloads" title="Active connections">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="idle_downloads" title="Idle connections">{{ stats.active_downloads_data.idle|default(0) }}</span>
+                                {% else %}
                                 <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>
+                                {% endif %}
                             </div>
                         </div>
                     </div>
                 </div>
-                <div class="stat-item">
+                <div class="stat-item {% if not is_climount %}stat-item-clickable{% endif %}" {% if not is_climount %}onclick="window.location.href='/debrid_manager/?tab=usage'"{% endif %}>
                     <div class="stat-content">
                         <div class="stat-icon">
                             <i class="fas fa-chart-line"></i>
                         </div>
                         <div class="stat-text-content">
-                            <div class="stat-label"><span class="hide-mobile-text">Daily </span>Usage</div>
+                            <div class="stat-label">{% if is_climount %}Pool Usage{% else %}Usage{% endif %}</div>
                             <div class="stat-number">
                                 <span id="daily_usage">{{ stats.usage_stats_data.percentage }}%</span>
                             </div>
                         </div>
                     </div>
-                    <!-- <div class="stat-badges">
-                        <span class="stat-badge episodes">{{ stats.active_downloads_data.count|default(0) }}/{{ stats.active_downloads_data.limit|default(25) }} active</span>
-                        <span class="stat-badge warning">{{ stats.usage_stats_data.used }} used</span>
-                        <span class="stat-badge warning">{{ stats.usage_stats_data.limit }} limit</span>
-                    </div> -->
                 </div>
                 {% endif %}
-                <div class="stat-item stat-item-clickable" onclick="window.location.href='/performance/dashboard'">
+                <div class="stat-item stat-item-clickable" id="kpi-uptime" onclick="window.location.href='/performance/dashboard'">
                     <div class="stat-content">
                         <div class="stat-icon">
                             <i class="fas fa-clock"></i>
                         </div>
                         <div class="stat-text-content">
                             <div class="stat-label">Uptime</div>
-                            <div class="stat-number">{{ '%dd %dh %dm' | format(
-                                stats.uptime // 86400,
-                                (stats.uptime % 86400) // 3600,
-                                (stats.uptime % 3600) // 60
-                            ) }}</div>
+                            <div class="stat-number">
+                                <span class="uptime-desktop">{{ '%dd %dh %dm' | format(
+                                    stats.uptime // 86400,
+                                    (stats.uptime % 86400) // 3600,
+                                    (stats.uptime % 3600) // 60
+                                ) }}</span>
+                                <span class="uptime-mobile">{{ '%dd%dh%dm' | format(
+                                    stats.uptime // 86400,
+                                    (stats.uptime % 86400) // 3600,
+                                    (stats.uptime % 3600) // 60
+                                ) }}</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -984,6 +1060,8 @@
                     <li>
                         <div class="show-info clickable"
                              data-title="{{ item.title }}"
+                             data-show-title="{{ item.show_title | default(item.title) }}"
+                             data-year="{{ item.year or '' }}"
                              data-imdb-id="{{ item.imdb_id }}"
                              data-tmdb-id="{{ item.tmdb_id }}"
                              data-season="{{ item.season_number }}"
@@ -1001,7 +1079,7 @@
                             {# Uncollected episodes: show search button only #}
                             {# Checking_upgrade episodes: show both search and move-to-wanted buttons #}
                             {# Collected episodes: show old rescrape button only #}            
-                            {% set show_move_to_wanted = item.display_status == 'checking_upgrade' %}
+                            {% set show_move_to_wanted = false %}
                             {% set show_rescrape = item.display_status == 'collected' %}
                             {% set show_search_button = item.display_status == 'uncollected' or item.display_status == 'checking_upgrade' %}
 
@@ -1017,11 +1095,7 @@
                                     data-season="{{ item.season_number }}"
                                     data-episode="{{ item.episode_number }}"
                                     title="Move back to Wanted state">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M12 15V3"></path>
-                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                    <path d="m7 10 5 5 5-5"></path>
-                                </svg>
+                                <i class="fas fa-rotate"></i>
                             </button>
                             {% endif %}
                         </div>
@@ -1069,7 +1143,7 @@
                         data-in-library="true"
                         data-media-type="episode">
                         <span class="show-title">{{ item.title }}</span>
-                        <span class="air-time">{{ item.formatted_datetime }}</span>
+                        <span class="air-time{% if item.formatted_datetime.startswith('Today') %} today{% endif %}">{{ item.formatted_datetime }}</span>
                     </li>
                     {% endfor %}
                 </ul>
@@ -1078,7 +1152,7 @@
             <div class="stats-box upcoming-releases" id="upcoming_releases">
                 <h3>
                     Upcoming Releases
-                    <a href="/statistics/calendar" class="calendar-link tangerine-only">Calendar →</a>
+                    <a href="/library?status=upcoming&type=movie&sort=release_asc" class="calendar-link tangerine-only">View All →</a>
                 </h3>
                 <ul>
                     {% for release in upcoming_releases %}
@@ -1090,7 +1164,7 @@
                         data-in-library="false"
                         data-media-type="movie">
                         <span class="titles">{{ release.titles }}</span>
-                        <span class="release-date">{{ release.formatted_date }}</span>
+                        <span class="release-date{% if release.is_soon %} soon{% endif %}">{{ release.formatted_date }}</span>
                     </li>
                     {% endfor %}
                 </ul>
@@ -1276,20 +1350,29 @@
     function updateActiveDownloadsDisplay() {
         const data = {{ stats.active_downloads_data|tojson|safe }};
         const downloadsElement = document.getElementById('active_downloads');
+        // Only one of these two siblings exists at a time — debrid mode
+        // renders #download_limit (active/limit), usenet/combined mode
+        // renders #idle_downloads (active/idle) instead.
         const limitElement = document.getElementById('download_limit');
+        const idleElement = document.getElementById('idle_downloads');
         const subDaysElement = document.getElementById('subscription_days');
-        
+
         // Skip if elements don't exist (limited environment)
-        if (!downloadsElement || !limitElement || !data) {
+        if (!downloadsElement || !data) {
             return;
         }
-        
+
         const statusElement = downloadsElement.parentElement;
-        
+
         // Update the display values with fallbacks
         downloadsElement.textContent = data.count || 0;
-        limitElement.textContent = data.limit || 25;  // Fallback to default max downloads
-        
+        if (limitElement) {
+            limitElement.textContent = data.limit || 25;  // Fallback to default max downloads
+        }
+        if (idleElement) {
+            idleElement.textContent = data.idle || 0;
+        }
+
         // Update styling based on status
         statusElement.classList.remove('warning', 'critical');
         if (data.status === 'critical') {
@@ -1479,6 +1562,7 @@
         let refreshTimer = null;
         
         // Function to refresh stats without full page reload
+        window.refreshStats = refreshStats;
         function refreshStats() {
             console.log('Attempting to refresh stats...');
             
@@ -1505,14 +1589,26 @@
                                              (data.stats && data.stats.usage_stats_data) || 
                                              {};
                         
-                        // Update active downloads (only if not in limited environment)
+                        // Update active downloads (only if not in limited environment).
+                        // Two mutually exclusive layouts share #active_downloads:
+                        // debrid mode pairs it with #download_limit (active/limit),
+                        // usenet/combined mode pairs it with #idle_downloads
+                        // (active/idle connections) — only one of the two sibling
+                        // elements exists in the DOM at a time, per which the
+                        // server rendered.
                         const activeDownloadsElement = document.getElementById('active_downloads');
                         const downloadLimitElement = document.getElementById('download_limit');
+                        const idleDownloadsElement = document.getElementById('idle_downloads');
                         const subDaysElement = document.getElementById('subscription_days');
-                        if (activeDownloadsElement && downloadLimitElement && activeDownloadsData) {
+                        if (activeDownloadsElement && activeDownloadsData) {
                             activeDownloadsElement.textContent = activeDownloadsData.count || "0";
-                            downloadLimitElement.textContent = activeDownloadsData.limit || "25";
-                            
+                            if (downloadLimitElement) {
+                                downloadLimitElement.textContent = activeDownloadsData.limit || "25";
+                            }
+                            if (idleDownloadsElement) {
+                                idleDownloadsElement.textContent = activeDownloadsData.idle || "0";
+                            }
+
                             // Also update class if status is provided
                             if (activeDownloadsData.status) {
                                 const statusElement = activeDownloadsElement.parentElement;
@@ -1534,19 +1630,9 @@
                             }
                         }
                         
-                        // Update subscription days in toggle bar on auto-refresh
+                        // Update the toggle-bar Broken/Sub pill on auto-refresh, mode-aware
                         try {
-                            const subToggle = document.getElementById('subscription-days-toggle');
-                            const subData = data.subscription_status || (data.stats && data.stats.subscription_status) || null;
-                            if (subToggle) {
-                                if (subData && subData.days_remaining !== null && subData.days_remaining !== undefined) {
-                                    subToggle.textContent = `${subData.days_remaining} days`;
-                                    subToggle.classList.toggle('critical', Number(subData.days_remaining) < 10);
-                                } else {
-                                    subToggle.textContent = 'N/A';
-                                    subToggle.classList.remove('critical');
-                                }
-                            }
+                            updateStatsToggleBarPill(data);
                         } catch (e) {}
 
                         // Update usage stats (only if not in limited environment)
@@ -1634,10 +1720,10 @@
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 
 <!-- Include torrent modal utilities for scraper modals -->
-<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v=20260118"></script>
+<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}"></script>
 
 <!-- Include scraper.js for search episode functionality -->
-<script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
+<script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
 
 <!-- Scraper overlay for episode search -->
 <div id="overlay" class="overlay">
@@ -1666,8 +1752,8 @@ function applyQualityBadges() {
 
     console.log('Applying quality badges...');
 
-    // Find all filename elements in both views (compact and poster)
-    const filenameElements = document.querySelectorAll('.file-details .filename, .stats-poster-hover .filename');
+    // Find filename elements — file-details first so card dedup doesn't skip them
+    const filenameElements = document.querySelectorAll('.file-details .filename');
     console.log('Found filename elements:', filenameElements.length);
 
     // Group by parent card to handle upgraded items with From/To

@@ -1,0 +1,1107 @@
+/* ═══════════════════════════════════════════════════════
+   Overlays — Tangerine Theme
+   Matches the overlay_management.html mockup design.
+   Scoped to body[data-theme="tangerine"] only.
+   ═══════════════════════════════════════════════════════ */
+
+/* Design tokens (same as tangerine_mobile_nav.css) */
+body[data-theme="tangerine"] {
+    --ov-bg:      #111;
+    --ov-surf:    #161616;
+    --ov-surf2:   #1e1e1e;
+    --ov-surf3:   #242424;
+    --ov-border:  #252525;
+    --ov-border2: #333;
+    --ov-accent:  #e8601c;
+    --ov-accent-d:#e8601c22;
+    --ov-accent-b:#e8601c44;
+    --ov-green:   #22c55e;
+    --ov-green-d: #22c55e18;
+    --ov-green-b: #22c55e33;
+    --ov-red:     #ef4444;
+    --ov-red-d:   #ef444418;
+    --ov-red-b:   #ef444433;
+    --ov-blue:    #3b82f6;
+    --ov-yellow:  #f59e0b;
+    --ov-text:    #f0f0f0;
+    --ov-text2:   #888;
+    --ov-text3:   #444;
+    --ov-sans:    'Inter', system-ui, sans-serif;
+    --ov-mono:    'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+    --ov-radius:  8px;
+}
+
+/* ── Page container ── */
+body[data-theme="tangerine"] .overlays-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+    color: var(--ov-text);
+    font-family: var(--ov-sans);
+    font-size: 13px;
+}
+
+/* ── Page header ── */
+body[data-theme="tangerine"] .overlays-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.75rem;
+    flex-wrap: wrap;
+}
+
+body[data-theme="tangerine"] .overlays-title {
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    color: var(--ov-text) !important;
+    margin-bottom: 3px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    background: none !important;
+    -webkit-text-fill-color: unset !important;
+    background-clip: unset !important;
+    -webkit-background-clip: unset !important;
+}
+body[data-theme="tangerine"] .overlays-title::before {
+    content: '';
+    width: 3px;
+    height: 22px;
+    background: var(--ov-accent);
+    flex-shrink: 0;
+}
+
+body[data-theme="tangerine"] .overlays-subtitle {
+    font-size: 12px !important;
+    color: var(--ov-text2) !important;
+    padding-left: 13px;
+}
+
+/* Header actions row */
+body[data-theme="tangerine"] .overlays-header-actions,
+body[data-theme="tangerine"] .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* ── Buttons ── */
+body[data-theme="tangerine"] .btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    height: 32px !important;
+    padding: 0 13px !important;
+    border-radius: var(--ov-radius) !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    font-family: var(--ov-sans) !important;
+    cursor: pointer !important;
+    border: none !important;
+    transition: opacity .15s, transform .1s !important;
+    white-space: nowrap !important;
+}
+body[data-theme="tangerine"] .btn:hover { opacity: .85 !important; }
+body[data-theme="tangerine"] .btn:active { transform: scale(.97) !important; }
+body[data-theme="tangerine"] .btn:disabled {
+    opacity: .45 !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important;
+}
+
+/* btn-success = solid accent (Create Layout) */
+body[data-theme="tangerine"] .btn-success {
+    background: var(--ov-accent) !important;
+    color: #fff !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* btn-primary = warning dim/ghost (Import Layout) */
+body[data-theme="tangerine"] .btn-primary {
+    background: var(--ov-accent-d) !important;
+    color: var(--ov-accent) !important;
+    border: 1px solid var(--ov-accent-b) !important;
+    box-shadow: none !important;
+}
+body[data-theme="tangerine"] .btn-primary:hover {
+    background: var(--ov-accent) !important;
+    color: #fff !important;
+    opacity: 1 !important;
+}
+
+body[data-theme="tangerine"] .btn-warning,
+body[data-theme="tangerine"] .action-btn:not(.action-btn-danger) {
+    background: var(--ov-accent-d) !important;
+    color: var(--ov-accent) !important;
+    border: 1px solid var(--ov-accent-b) !important;
+}
+body[data-theme="tangerine"] .btn-warning:hover {
+    background: var(--ov-accent) !important;
+    color: #fff !important;
+    opacity: 1 !important;
+}
+
+body[data-theme="tangerine"] .btn-danger,
+body[data-theme="tangerine"] .action-btn.action-btn-danger {
+    background: var(--ov-red-d) !important;
+    color: var(--ov-red) !important;
+    border: 1px solid var(--ov-red-b) !important;
+}
+body[data-theme="tangerine"] .btn-danger:hover,
+body[data-theme="tangerine"] .action-btn.action-btn-danger:hover {
+    background: var(--ov-red) !important;
+    color: #fff !important;
+    opacity: 1 !important;
+}
+
+body[data-theme="tangerine"] .btn-secondary,
+body[data-theme="tangerine"] .btn-ghost {
+    background: var(--ov-surf2) !important;
+    color: var(--ov-text2) !important;
+    border: 1px solid var(--ov-border2) !important;
+}
+body[data-theme="tangerine"] .btn-secondary:hover,
+body[data-theme="tangerine"] .btn-ghost:hover {
+    color: var(--ov-text) !important;
+    opacity: 1 !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* Small variant */
+body[data-theme="tangerine"] .btn-sm {
+    height: 26px !important;
+    padding: 0 9px !important;
+    font-size: 11px !important;
+}
+
+/* ── KPI / Stats grid ── */
+body[data-theme="tangerine"] .stats-container {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 10px;
+    margin-bottom: 1.25rem;
+}
+@media (max-width: 1100px) {
+    body[data-theme="tangerine"] .stats-container { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 600px) {
+    body[data-theme="tangerine"] .stats-container { grid-template-columns: repeat(2, 1fr); }
+}
+
+body[data-theme="tangerine"] .stat-card {
+    background: var(--ov-surf) !important;
+    border: 1px solid var(--ov-border) !important;
+    border-radius: var(--ov-radius) !important;
+    padding: 16px 14px 12px !important;
+    position: relative !important;
+    overflow: hidden !important;
+    transition: border-color .15s !important;
+    box-shadow: none !important;
+    text-align: left !important;
+    backdrop-filter: none !important;
+    transform: none !important;
+}
+body[data-theme="tangerine"] .stat-card:hover {
+    border-color: var(--ov-border2) !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+/* 2px top accent bar */
+body[data-theme="tangerine"] .stat-card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--ov-accent);
+    opacity: .5;
+    border-radius: var(--ov-radius) var(--ov-radius) 0 0;
+}
+/* Active filter highlight */
+body[data-theme="tangerine"] .stat-filter-active {
+    border-color: var(--ov-accent) !important;
+    background: var(--ov-accent-d) !important;
+    box-shadow: none !important;
+}
+body[data-theme="tangerine"] .stat-card-clickable { cursor: pointer; }
+
+body[data-theme="tangerine"] .stat-value {
+    font-size: 26px !important;
+    font-weight: 700 !important;
+    color: var(--ov-accent) !important;
+    font-family: var(--ov-mono) !important;
+    line-height: 1 !important;
+    margin-bottom: 6px !important;
+    background: none !important;
+    -webkit-text-fill-color: unset !important;
+}
+body[data-theme="tangerine"] .stat-label {
+    font-size: 9px !important;
+    font-weight: 700 !important;
+    letter-spacing: .8px !important;
+    text-transform: uppercase !important;
+    color: var(--ov-text2) !important;
+    margin-bottom: 8px !important;
+}
+body[data-theme="tangerine"] .stat-breakdown-item {
+    font-size: 10px !important;
+    color: var(--ov-text3) !important;
+    font-family: var(--ov-mono) !important;
+}
+body[data-theme="tangerine"] .stat-breakdown-sep {
+    color: var(--ov-text3) !important;
+}
+body[data-theme="tangerine"] .stat-reset-btn {
+    color: var(--ov-text3) !important;
+}
+body[data-theme="tangerine"] .stat-reset-btn:hover {
+    color: var(--ov-accent) !important;
+}
+
+/* Backup card action buttons — small icon boxes, hidden until card hover */
+body[data-theme="tangerine"] .backup-action-btn {
+    width: 20px !important;
+    height: 20px !important;
+    border-radius: 4px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: var(--ov-surf2) !important;
+    border: 1px solid var(--ov-border) !important;
+    color: var(--ov-text3) !important;
+    font-size: 9px !important;
+    cursor: pointer !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+    transition: color .15s, border-color .15s !important;
+    transform: none !important;
+    opacity: 0 !important;
+}
+body[data-theme="tangerine"] .stat-card:hover .backup-action-btn {
+    opacity: 1 !important;
+}
+body[data-theme="tangerine"] .backup-action-btn:hover {
+    color: var(--ov-text2) !important;
+    border-color: var(--ov-border2) !important;
+    background: var(--ov-surf2) !important;
+    transform: none !important;
+}
+
+/* ── Sync / library bar ── */
+body[data-theme="tangerine"] #library-sync-bar {
+    background: var(--ov-surf) !important;
+    border: 1px solid var(--ov-border) !important;
+    border-radius: var(--ov-radius) !important;
+    padding: 10px 14px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+    margin-bottom: 1.5rem !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+}
+body[data-theme="tangerine"] #sync-library-status {
+    font-size: 12px !important;
+    color: var(--ov-text2) !important;
+    flex: 1 !important;
+}
+
+/* ── Tabs ── */
+body[data-theme="tangerine"] .overlay-tabs {
+    display: flex !important;
+    align-items: center !important;
+    gap: 0 !important;
+    border-bottom: 1px solid var(--ov-border) !important;
+    margin-bottom: 1.25rem !important;
+    padding-bottom: 0 !important;
+    overflow-x: auto;
+}
+body[data-theme="tangerine"] .overlay-tab {
+    padding: 9px 16px !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    color: var(--ov-text2) !important;
+    cursor: pointer !important;
+    border-bottom: 2px solid transparent !important;
+    margin-bottom: -1px !important;
+    transition: color .15s !important;
+    white-space: nowrap !important;
+    background: none !important;
+    border-top: none !important;
+    border-left: none !important;
+    border-right: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    transform: none !important;
+}
+body[data-theme="tangerine"] .overlay-tab:hover {
+    color: var(--ov-text) !important;
+    background: none !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+body[data-theme="tangerine"] .overlay-tab.active {
+    color: var(--ov-accent) !important;
+    border-bottom-color: var(--ov-accent) !important;
+    background: none !important;
+    font-weight: 600 !important;
+    box-shadow: none !important;
+}
+
+/* ── Toolbar / controls ── */
+body[data-theme="tangerine"] .overlay-controls {
+    display: flex !important;
+    gap: 8px !important;
+    margin-bottom: 1.25rem !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+}
+
+body[data-theme="tangerine"] .layout-selector,
+body[data-theme="tangerine"] .template-selector,
+body[data-theme="tangerine"] .search-box {
+    height: 32px !important;
+    background: var(--ov-surf2) !important;
+    border: 1px solid var(--ov-border) !important;
+    border-radius: var(--ov-radius) !important;
+    color: var(--ov-text2) !important;
+    font-family: var(--ov-sans) !important;
+    font-size: 12px !important;
+    padding: 0 10px !important;
+    outline: none !important;
+    transition: border-color .15s !important;
+    min-width: 160px !important;
+    box-shadow: none !important;
+}
+body[data-theme="tangerine"] .layout-selector:focus,
+body[data-theme="tangerine"] .template-selector:focus,
+body[data-theme="tangerine"] .search-box:focus {
+    border-color: var(--ov-accent) !important;
+    color: var(--ov-text) !important;
+    box-shadow: none !important;
+    background: var(--ov-surf2) !important;
+}
+body[data-theme="tangerine"] .layout-selector option,
+body[data-theme="tangerine"] .template-selector option {
+    background: var(--ov-surf);
+    color: var(--ov-text);
+}
+body[data-theme="tangerine"] .search-box::placeholder { color: var(--ov-text3) !important; }
+
+/* Checkbox */
+body[data-theme="tangerine"] .checkbox-container,
+body[data-theme="tangerine"] .checkbox-wrap {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    color: var(--ov-text2) !important;
+    font-size: 12px !important;
+    cursor: pointer !important;
+    white-space: nowrap !important;
+}
+body[data-theme="tangerine"] .checkbox-container input[type="checkbox"],
+body[data-theme="tangerine"] .checkbox-wrap input[type="checkbox"] {
+    width: 14px !important;
+    height: 14px !important;
+    accent-color: var(--ov-accent) !important;
+    cursor: pointer !important;
+}
+body[data-theme="tangerine"] .checkbox-container label {
+    color: var(--ov-text2) !important;
+    font-size: 12px !important;
+    cursor: pointer !important;
+}
+
+/* ── Media / Movie grid ── */
+body[data-theme="tangerine"] .media-grid {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important;
+    gap: 14px !important;
+    margin-top: 0 !important;
+}
+@media (max-width: 600px) {
+    body[data-theme="tangerine"] .media-grid {
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important;
+        gap: 10px !important;
+    }
+}
+
+body[data-theme="tangerine"] .media-card {
+    background: var(--ov-surf) !important;
+    border: 1px solid var(--ov-border) !important;
+    border-radius: var(--ov-radius) !important;
+    overflow: hidden !important;
+    cursor: pointer !important;
+    transition: border-color .15s, transform .15s !important;
+    position: relative !important;
+    backdrop-filter: none !important;
+}
+body[data-theme="tangerine"] .media-card:hover {
+    border-color: var(--ov-border2) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 20px #00000044 !important;
+}
+body[data-theme="tangerine"] .media-card.selected {
+    border-color: var(--ov-accent) !important;
+    box-shadow: none !important;
+}
+
+body[data-theme="tangerine"] .media-poster {
+    width: 100% !important;
+    aspect-ratio: 2/3 !important;
+    height: auto !important;
+    object-fit: cover !important;
+    background: var(--ov-surf2) !important;
+    display: block !important;
+}
+
+body[data-theme="tangerine"] .media-info {
+    padding: 7px 8px !important;
+    background: var(--ov-surf) !important;
+}
+body[data-theme="tangerine"] .media-title {
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    color: var(--ov-text1) !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    margin: 0 !important;
+}
+body[data-theme="tangerine"] .media-year {
+    font-size: 10px !important;
+    color: var(--ov-text2) !important;
+    font-family: var(--ov-mono) !important;
+}
+
+/* ── Overlay status badges ── */
+body[data-theme="tangerine"] .overlay-status {
+    position: absolute !important;
+    top: 7px !important;
+    right: 7px !important;
+    font-size: 9px !important;
+    font-weight: 700 !important;
+    padding: 2px 6px !important;
+    border-radius: 4px !important;
+    letter-spacing: .4px !important;
+    text-transform: uppercase !important;
+    z-index: 10 !important;
+    box-shadow: 0 2px 8px #00000066 !important;
+}
+body[data-theme="tangerine"] .status-applied    { background: #22c55e !important; color: #fff !important; }
+body[data-theme="tangerine"] .status-pending    { background: #f59e0b !important; color: #fff !important; }
+body[data-theme="tangerine"] .status-analyzing  { background: #3b82f6 !important; color: #fff !important; }
+body[data-theme="tangerine"] .status-failed     { background: var(--ov-red) !important; color: #fff !important; }
+body[data-theme="tangerine"] .status-not-started{ background: #475569 !important; color: #fff !important; }
+body[data-theme="tangerine"] .status-removed    { background: #475569 !important; color: #fff !important; }
+
+/* ── Card regen button ── */
+body[data-theme="tangerine"] .card-regen-btn {
+    background: rgba(232, 96, 28, .85) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 50% !important;
+    width: 28px !important;
+    height: 28px !important;
+    font-size: 14px !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    position: absolute !important;
+    top: 6px !important;
+    left: 6px !important;
+    opacity: 0 !important;
+    transition: opacity .2s, background .15s !important;
+    z-index: 10 !important;
+    box-shadow: 0 2px 8px #00000066 !important;
+}
+body[data-theme="tangerine"] .media-card:hover .card-regen-btn { opacity: 1 !important; }
+body[data-theme="tangerine"] .card-regen-btn:hover { background: var(--ov-accent) !important; }
+
+/* ── Card poster picker button ── */
+body[data-theme="tangerine"] .card-poster-btn {
+    background: rgba(0,0,0,.82) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 50% !important;
+    width: 22px !important;
+    height: 22px !important;
+    font-size: 13px !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    position: absolute !important;
+    bottom: 2px !important;
+    right: 6px !important;
+    opacity: 0 !important;
+    transition: opacity .2s, background .15s !important;
+    z-index: 10 !important;
+    box-shadow: 0 2px 8px #00000066 !important;
+}
+body[data-theme="tangerine"] .media-card:hover .card-poster-btn { opacity: 1 !important; }
+body[data-theme="tangerine"] .card-poster-btn:hover { background: #7d4d99 !important; }
+
+/* ── Card version badge ── */
+body[data-theme="tangerine"] .card-version-badge {
+    position: absolute !important;
+    bottom: 6px !important;
+    left: 60px !important;
+    background: rgba(232, 96, 28, .85) !important;
+    color: #fff !important;
+    border-radius: 4px !important;
+    padding: 2px 6px !important;
+    font-size: 9px !important;
+    font-weight: 700 !important;
+    letter-spacing: .3px !important;
+    pointer-events: none !important;
+    z-index: 10 !important;
+}
+
+/* ── Season button on show cards ── */
+body[data-theme="tangerine"] .card-seasons-btn {
+    position: absolute !important;
+    bottom: 28px !important;
+    right: 6px !important;
+    background: rgba(232, 96, 28, .85) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 5px !important;
+    padding: 3px 7px !important;
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    cursor: pointer !important;
+    opacity: 0 !important;
+    transition: opacity .2s, background .15s !important;
+    z-index: 10 !important;
+    white-space: nowrap !important;
+    text-transform: uppercase !important;
+    letter-spacing: .4px !important;
+}
+body[data-theme="tangerine"] .media-card:hover .card-seasons-btn { opacity: 1 !important; }
+body[data-theme="tangerine"] .card-seasons-btn:hover { background: var(--ov-accent) !important; }
+body[data-theme="tangerine"] .card-seasons-unprocessed { color: var(--ov-yellow) !important; }
+
+/* ── Layout/Templates list ── */
+body[data-theme="tangerine"] #templates-list,
+body[data-theme="tangerine"] #templates-tab .template-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* Layout cards (new class-based markup) */
+body[data-theme="tangerine"] .layout-card {
+    background: var(--ov-surf) !important;
+    border: 1px solid #3a3a3a !important;
+    border-radius: var(--ov-radius) !important;
+    padding: 14px 16px !important;
+    transition: border-color .15s !important;
+    backdrop-filter: none !important;
+}
+body[data-theme="tangerine"] .layout-card:hover {
+    border-color: #555 !important;
+}
+body[data-theme="tangerine"] .layout-card.active-layout {
+    border-color: #e8601c88 !important;
+    background: #e8601c14 !important;
+}
+body[data-theme="tangerine"] .layout-card-hdr {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    margin-bottom: 8px !important;
+}
+body[data-theme="tangerine"] .layout-name {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: var(--ov-text) !important;
+}
+body[data-theme="tangerine"] .layout-badge {
+    display: inline-flex !important;
+    align-items: center !important;
+    font-size: 9px !important;
+    font-weight: 700 !important;
+    padding: 2px 8px !important;
+    border-radius: 10px !important;
+    letter-spacing: .4px !important;
+    line-height: 1.6 !important;
+    flex-shrink: 0 !important;
+}
+body[data-theme="tangerine"] .badge-default {
+    background: rgba(0,162,199,.2) !important;
+    color: #38bdf8 !important;
+    border: 1px solid rgba(56,189,248,.5) !important;
+}
+body[data-theme="tangerine"] .badge-active {
+    background: rgba(34,197,94,.2) !important;
+    color: #4ade80 !important;
+    border: 1px solid rgba(74,222,128,.5) !important;
+}
+body[data-theme="tangerine"] .badge-inactive {
+    background: #2a2a2a !important;
+    color: #666 !important;
+    border: 1px solid #3a3a3a !important;
+}
+body[data-theme="tangerine"] .layout-meta {
+    font-size: 11px !important;
+    color: var(--ov-text2) !important;
+    margin-bottom: 10px !important;
+    font-family: var(--ov-mono) !important;
+}
+body[data-theme="tangerine"] .layout-meta .yes { color: var(--ov-green) !important; }
+body[data-theme="tangerine"] .layout-meta .no  { color: var(--ov-red) !important; }
+body[data-theme="tangerine"] .layout-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    flex-wrap: wrap !important;
+}
+
+/* Legacy .template-card fallback */
+body[data-theme="tangerine"] #templates-list .template-card {
+    background: var(--ov-surf) !important;
+    border: 1px solid var(--ov-border) !important;
+    border-radius: var(--ov-radius) !important;
+    padding: 14px 16px !important;
+    transition: border-color .15s !important;
+    backdrop-filter: none !important;
+    transform: none !important;
+}
+body[data-theme="tangerine"] #templates-list .template-card:hover {
+    border-color: var(--ov-border2) !important;
+    transform: none !important;
+}
+body[data-theme="tangerine"] #templates-list .template-card h4 {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: var(--ov-text) !important;
+    margin-bottom: 6px !important;
+    background: none !important;
+    -webkit-text-fill-color: unset !important;
+}
+body[data-theme="tangerine"] #templates-list .template-card p {
+    font-size: 11px !important;
+    color: var(--ov-text2) !important;
+    margin-bottom: 4px !important;
+}
+
+/* ── Badges / section headers ── */
+body[data-theme="tangerine"] #templates-tab h3,
+body[data-theme="tangerine"] #badges-tab h3 {
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    color: var(--ov-text) !important;
+    padding-left: 10px !important;
+    border-left: 3px solid var(--ov-accent) !important;
+    margin-bottom: 6px !important;
+}
+body[data-theme="tangerine"] #badges-tab p {
+    font-size: 12px !important;
+    color: var(--ov-text2) !important;
+    margin-bottom: 1rem !important;
+    line-height: 1.6 !important;
+}
+
+/* ── Cleanup tab ── */
+body[data-theme="tangerine"] #cleanup-tab h3 {
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    color: var(--ov-text) !important;
+    padding-left: 10px !important;
+    border-left: 3px solid var(--ov-accent) !important;
+    margin-bottom: 8px !important;
+}
+body[data-theme="tangerine"] #cleanup-tab p {
+    font-size: 12px !important;
+    color: var(--ov-text2) !important;
+    margin-bottom: 1.25rem !important;
+}
+
+/* ── Loading state ── */
+body[data-theme="tangerine"] .loading,
+body[data-theme="tangerine"] .loading-msg {
+    text-align: center !important;
+    padding: 3rem !important;
+    color: var(--ov-text2) !important;
+    font-size: 12px !important;
+}
+
+/* ── Season overlay modal ── */
+body[data-theme="tangerine"] #seasons-modal {
+    background: var(--ov-surf) !important;
+    color: var(--ov-text) !important;
+    border: 1px solid var(--ov-border) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 16px 48px #00000077 !important;
+}
+body[data-theme="tangerine"] #seasons-modal-header {
+    border-bottom: 1px solid var(--ov-border) !important;
+}
+body[data-theme="tangerine"] #seasons-modal-title {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: var(--ov-text) !important;
+}
+body[data-theme="tangerine"] #seasons-modal-close {
+    color: var(--ov-text2) !important;
+}
+body[data-theme="tangerine"] #seasons-modal-close:hover { color: var(--ov-accent) !important; }
+body[data-theme="tangerine"] #seasons-modal-controls {
+    border-bottom: 1px solid var(--ov-border) !important;
+    gap: 10px !important;
+}
+body[data-theme="tangerine"] #seasons-layout-selector {
+    background: var(--ov-surf2) !important;
+    border: 1px solid var(--ov-border) !important;
+    color: var(--ov-text2) !important;
+    border-radius: var(--ov-radius) !important;
+    padding: 5px 10px !important;
+    font-size: 12px !important;
+}
+body[data-theme="tangerine"] #seasons-modal-body {
+    scrollbar-width: thin !important;
+    scrollbar-color: var(--ov-border2) transparent !important;
+}
+body[data-theme="tangerine"] .season-row {
+    border-bottom: 1px solid var(--ov-border) !important;
+    transition: background .15s !important;
+}
+body[data-theme="tangerine"] .season-row:hover { background: var(--ov-surf2) !important; }
+body[data-theme="tangerine"] .season-title { color: var(--ov-text) !important; }
+
+/* Season status badges (static position inside rows) */
+body[data-theme="tangerine"] .season-status-badge.overlay-status {
+    position: static !important;
+    display: inline-block !important;
+}
+
+/* ── Poster picker modal ── */
+body[data-theme="tangerine"] .poster-picker-overlay {
+    background: rgba(0,0,0,.75) !important;
+}
+body[data-theme="tangerine"] .poster-picker-modal {
+    background: var(--ov-surf) !important;
+    border: 1px solid var(--ov-border) !important;
+    border-radius: 10px !important;
+    color: var(--ov-text) !important;
+    box-shadow: 0 16px 48px #00000077 !important;
+}
+body[data-theme="tangerine"] .poster-picker-modal h3 {
+    color: var(--ov-text) !important;
+    font-size: 13px !important;
+}
+body[data-theme="tangerine"] .poster-picker-close {
+    color: var(--ov-text2) !important;
+}
+body[data-theme="tangerine"] .poster-picker-close:hover { color: var(--ov-text) !important; }
+body[data-theme="tangerine"] .poster-nav-btn {
+    background: var(--ov-surf2) !important;
+    border: 1px solid var(--ov-border) !important;
+    color: var(--ov-text2) !important;
+    border-radius: 6px !important;
+}
+body[data-theme="tangerine"] .poster-nav-btn:hover {
+    background: var(--ov-accent) !important;
+    color: #fff !important;
+    border-color: var(--ov-accent) !important;
+}
+body[data-theme="tangerine"] .poster-picker-apply-btn {
+    background: var(--ov-accent) !important;
+    color: #fff !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    font-size: 12px !important;
+}
+body[data-theme="tangerine"] .poster-picker-apply-btn:hover {
+    background: #f07030 !important;
+}
+body[data-theme="tangerine"] .poster-picker-apply-btn:disabled {
+    background: var(--ov-surf3) !important;
+    cursor: default !important;
+}
+
+/* ── Add-variation / generic modal ── */
+body[data-theme="tangerine"] .modal-overlay {
+    background: rgba(0,0,0,.75) !important;
+}
+body[data-theme="tangerine"] .modal-box {
+    background: var(--ov-surf) !important;
+    border: 1px solid var(--ov-border) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 16px 48px #00000077 !important;
+}
+body[data-theme="tangerine"] .modal-box h3 {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: var(--ov-text) !important;
+}
+body[data-theme="tangerine"] .form-group label {
+    color: var(--ov-text2) !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+}
+body[data-theme="tangerine"] .form-group input {
+    background: var(--ov-surf2) !important;
+    border: 1px solid var(--ov-border) !important;
+    border-radius: var(--ov-radius) !important;
+    color: var(--ov-text) !important;
+    padding: 6px 10px !important;
+    font-size: 12px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    outline: none !important;
+    transition: border-color .15s !important;
+}
+body[data-theme="tangerine"] .form-group input:focus {
+    border-color: var(--ov-accent) !important;
+    box-shadow: none !important;
+}
+body[data-theme="tangerine"] .form-group input::placeholder {
+    color: var(--ov-text3) !important;
+}
+
+/* ── Badge Library page ── */
+body[data-theme="tangerine"] .badges-container {
+    max-width: 1400px !important;
+    margin: 0 auto !important;
+    padding: 2rem 1.5rem !important;
+    color: var(--ov-text) !important;
+}
+body[data-theme="tangerine"] .badges-header h1 {
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    color: var(--ov-text) !important;
+    background: none !important;
+    -webkit-text-fill-color: unset !important;
+    background-clip: unset !important;
+    -webkit-background-clip: unset !important;
+}
+body[data-theme="tangerine"] .back-link {
+    color: var(--ov-accent) !important;
+    font-size: 12px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 5px !important;
+    text-decoration: none !important;
+}
+body[data-theme="tangerine"] .back-link:hover { color: #f07030 !important; }
+
+body[data-theme="tangerine"] .category-tabs {
+    display: flex !important;
+    align-items: center !important;
+    gap: 0 !important;
+    border-bottom: 1px solid var(--ov-border) !important;
+    margin-bottom: 1.25rem !important;
+    padding-bottom: 0 !important;
+    overflow-x: auto !important;
+}
+body[data-theme="tangerine"] .category-tab {
+    padding: 9px 16px !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    color: var(--ov-text2) !important;
+    cursor: pointer !important;
+    border-bottom: 2px solid transparent !important;
+    margin-bottom: -1px !important;
+    transition: color .15s !important;
+    white-space: nowrap !important;
+    background: none !important;
+    border-top: none !important;
+    border-left: none !important;
+    border-right: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+}
+body[data-theme="tangerine"] .category-tab:hover {
+    color: var(--ov-text) !important;
+    background: none !important;
+}
+body[data-theme="tangerine"] .category-tab.active {
+    color: var(--ov-accent) !important;
+    border-bottom-color: var(--ov-accent) !important;
+    background: none !important;
+    font-weight: 600 !important;
+    box-shadow: none !important;
+}
+
+body[data-theme="tangerine"] .stats-bar {
+    background: var(--ov-surf) !important;
+    border: 1px solid var(--ov-border) !important;
+    border-radius: var(--ov-radius) !important;
+    padding: 12px 16px !important;
+    margin-bottom: 1.25rem !important;
+    display: flex !important;
+    gap: 2rem !important;
+    flex-wrap: wrap !important;
+    box-shadow: none !important;
+}
+body[data-theme="tangerine"] .stat-num {
+    font-size: 24px !important;
+    font-weight: 700 !important;
+    color: var(--ov-accent) !important;
+    font-family: var(--ov-mono) !important;
+    line-height: 1 !important;
+}
+body[data-theme="tangerine"] .stat-lbl {
+    font-size: 9px !important;
+    color: var(--ov-text2) !important;
+    text-transform: uppercase !important;
+    letter-spacing: .7px !important;
+    font-weight: 700 !important;
+}
+
+body[data-theme="tangerine"] .badge-type-card {
+    background: var(--ov-surf) !important;
+    border: 1px solid var(--ov-border) !important;
+    border-radius: var(--ov-radius) !important;
+    margin-bottom: 1.5rem !important;
+    overflow: hidden !important;
+    transition: border-color .15s !important;
+}
+body[data-theme="tangerine"] .badge-type-card:hover { border-color: var(--ov-border2) !important; }
+
+body[data-theme="tangerine"] .badge-type-header {
+    background: var(--ov-surf2) !important;
+    border-bottom: 1px solid var(--ov-border) !important;
+    padding: 10px 14px !important;
+}
+body[data-theme="tangerine"] .badge-type-title {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: var(--ov-accent) !important;
+}
+body[data-theme="tangerine"] .badge-type-meta {
+    font-size: 11px !important;
+    color: var(--ov-text2) !important;
+}
+body[data-theme="tangerine"] .fill-indicator {
+    font-size: 11px !important;
+    color: var(--ov-text2) !important;
+}
+
+body[data-theme="tangerine"] .badge-type-chip {
+    background: var(--ov-accent) !important;
+    color: #fff !important;
+    font-size: 9px !important;
+    padding: 2px 6px !important;
+    border-radius: 3px !important;
+}
+body[data-theme="tangerine"] .composite-badge {
+    background: rgba(111,66,193,.85) !important;
+    color: #fff !important;
+    font-size: 9px !important;
+    padding: 2px 5px !important;
+    border-radius: 3px !important;
+}
+
+body[data-theme="tangerine"] .section-enable-cb { accent-color: var(--ov-accent) !important; }
+
+body[data-theme="tangerine"] .variation-slot {
+    border: 2px dashed var(--ov-border2) !important;
+    border-radius: var(--ov-radius) !important;
+    padding: 12px 12px 10px !important;
+    text-align: center !important;
+    background: var(--ov-surf2) !important;
+    cursor: pointer !important;
+    transition: border-color .2s, box-shadow .2s !important;
+    min-height: 110px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 6px !important;
+    position: relative !important;
+}
+body[data-theme="tangerine"] .variation-slot:hover {
+    border-color: var(--ov-accent-b) !important;
+    box-shadow: none !important;
+}
+body[data-theme="tangerine"] .variation-slot.has-asset {
+    border-style: solid !important;
+    border-color: var(--ov-green-b) !important;
+    background: var(--ov-green-d) !important;
+}
+body[data-theme="tangerine"] .variation-slot.has-system-asset {
+    border-style: solid !important;
+    border-color: var(--ov-accent-b) !important;
+    background: var(--ov-accent-d) !important;
+}
+body[data-theme="tangerine"] .variation-slot.custom-slot {
+    border-color: rgba(111,66,193,.5) !important;
+}
+body[data-theme="tangerine"] .variation-placeholder {
+    background: var(--ov-surf3) !important;
+    border-radius: 4px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    color: var(--ov-text3) !important;
+    font-size: 1.5rem !important;
+    width: 100% !important;
+    height: 56px !important;
+}
+body[data-theme="tangerine"] .variation-name {
+    color: var(--ov-text) !important;
+    font-size: 10px !important;
+    font-weight: 600 !important;
+}
+body[data-theme="tangerine"] .variation-key {
+    color: var(--ov-text3) !important;
+    font-size: 9px !important;
+    font-family: var(--ov-mono) !important;
+}
+body[data-theme="tangerine"] .user-tag {
+    background: var(--ov-green-d) !important;
+    color: var(--ov-green) !important;
+    border: 1px solid var(--ov-green-b) !important;
+    font-size: 9px !important;
+    padding: 1px 5px !important;
+    border-radius: 3px !important;
+}
+body[data-theme="tangerine"] .system-tag {
+    background: var(--ov-accent-d) !important;
+    color: var(--ov-accent) !important;
+    border: 1px solid var(--ov-accent-b) !important;
+    font-size: 9px !important;
+    padding: 1px 5px !important;
+    border-radius: 3px !important;
+}
+
+body[data-theme="tangerine"] .btn-add-variation {
+    background: var(--ov-surf2) !important;
+    border: 1px dashed var(--ov-border2) !important;
+    color: var(--ov-text2) !important;
+    border-radius: var(--ov-radius) !important;
+    padding: 5px 12px !important;
+    font-size: 11px !important;
+    cursor: pointer !important;
+    transition: border-color .2s, color .2s !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 5px !important;
+    margin: 0 1rem 1rem !important;
+}
+body[data-theme="tangerine"] .btn-add-variation:hover {
+    border-color: var(--ov-accent-b) !important;
+    color: var(--ov-accent) !important;
+    background: var(--ov-accent-d) !important;
+}
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+    body[data-theme="tangerine"] .overlays-container { padding: 1rem !important; }
+    body[data-theme="tangerine"] .overlay-tabs { gap: 2rem !important; overflow-x: auto !important; }
+    body[data-theme="tangerine"] .overlay-controls { flex-direction: column !important; align-items: stretch !important; }
+    body[data-theme="tangerine"] .layout-selector,
+    body[data-theme="tangerine"] .template-selector,
+    body[data-theme="tangerine"] .search-box { width: 100% !important; }
+    body[data-theme="tangerine"] .stats-container { grid-template-columns: repeat(3, 1fr) !important; }
+}
+@media (max-width: 600px) {
+    body[data-theme="tangerine"] .stats-container { grid-template-columns: repeat(2, 1fr) !important; }
+}

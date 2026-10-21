@@ -47,9 +47,46 @@ CONFIG_FILE = os.path.join(config_dir, 'runtime-config.json')
 
 register_blueprints(app)
 
+# Start AI Butler health monitor (Phase 3 — proactive notifications)
+try:
+    from utilities.ai_health_monitor import start_health_monitor
+    start_health_monitor()
+except Exception as _e:
+    logging.warning(f"AI Health Monitor failed to start: {_e}")
+
 @app.context_processor
 def inject_program_status():
     return dict(program_is_running=program_is_running, get_program_status=get_program_status)
+
+@app.context_processor
+def inject_usenet_provider_name():
+    """Make `usenet_provider_name` available to all Jinja templates.
+
+    Returns the display name of the configured usenet backend so base.html
+    can inject window.USENET_PROVIDER_NAME for JS dialogs.
+    """
+    try:
+        from usenet import get_usenet_provider_display_name
+        return dict(usenet_provider_name=get_usenet_provider_display_name())
+    except Exception:
+        return dict(usenet_provider_name='cli_mount')
+
+@app.context_processor
+def inject_nzbdav_categories():
+    """Expose the managed NzbDAV category list to templates.
+
+    The NzbDAV setup helper's scaffold generator (compose/rclone/union examples)
+    uses this so it lists the SAME categories cli-debrid actually submits to and
+    that repair/the check helper expect — derived from the optional
+    `Usenet Provider.nzbdav_category_map`. Keeps all category surfaces in sync.
+    """
+    try:
+        from usenet.nzbdav_client import _parse_category_map, managed_categories
+        from utilities.settings import get_setting
+        cm = _parse_category_map(get_setting('Usenet Provider', 'nzbdav_category_map', ''))
+        return dict(nzbdav_managed_categories=sorted(managed_categories(cm)))
+    except Exception:
+        return dict(nzbdav_managed_categories=[])
 
 @app.context_processor
 def inject_logo_selection():
@@ -75,6 +112,12 @@ def inject_support_message_setting():
     # Get the hide_support_message setting from UI Settings
     hide_support_message = get_setting('UI Settings', 'hide_support_message', False)
     return dict(hide_support_message=hide_support_message)
+
+@app.context_processor
+def inject_ai_butler_enabled():
+    from utilities.settings import get_setting
+    ai_butler_enabled = get_setting('AI Assistant', 'enabled', False)
+    return dict(ai_butler_enabled=ai_butler_enabled)
 
 @app.context_processor
 def utility_processor():

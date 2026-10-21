@@ -3,215 +3,611 @@
 {% block title %}Manual Blacklist{% endblock %}
 
 {% block content %}
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/manual_blacklist.css') }}">
-<div class="container">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>Manual Blacklist</h2>
-    </div>
-    <form action="{{ url_for('debug.manual_blacklist') }}" method="POST" class="mb-4" id="blacklistForm">
-        <div class="input-group">
-            <div class="input-group-prepend">
-                <label class="input-group-text" for="imdb_id">IMDb ID:</label>
-            </div>
-            <input type="text" id="imdb_id" name="imdb_id" required class="form-control">
-            <input type="hidden" name="action" value="add">
-            <button type="submit" class="btn btn-primary">
-                <i class="fas fa-plus"></i> Add to Blacklist
-            </button>
-            <button type="button" id="saveAllChanges" class="btn btn-primary">
-                <i class="fas fa-save"></i> Save All Changes
-            </button>
-        </div>
-    </form>
+<style>
+*{box-sizing:border-box}
+:root{
+  --bl-bg:#111;--bl-surface:#1a1a1a;--bl-surface2:#222;--bl-surface3:#2a2a2a;
+  --bl-border:#333;--bl-border2:#3d3d3d;--bl-accent:#e8601c;
+  --bl-text:#e0e0e0;--bl-text2:#aaa;--bl-text3:#666;
+  --bl-green:#22c55e;--bl-red:#ef4444;--bl-blue:#3b82f6;--bl-yellow:#f59e0b;
+  --bl-sans:'Inter',system-ui,sans-serif;
+}
 
-    <h3>Current Blacklist</h3>
-    <table class="table">
-        <thead>
-            <tr>
-                <th>IMDb ID</th>
-                <th>Title</th>
-                <th>Year</th>
-                <th>Media Type</th>
-                <th>Seasons</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for imdb_id, item in blacklist.items() %}
-            <tr>
-                <td>{{ imdb_id }}</td>
-                <td>{{ item.title }}</td>
-                <td>{{ item.year }}</td>
-                <td>{{ item.media_type }}</td>
-                <td>
-                    {% if item.media_type == 'episode' %}
-                        <form class="seasons-form" data-imdb-id="{{ imdb_id }}">
-                            <div class="form-check mb-2 d-flex align-items-center">
-                                <input type="checkbox" class="form-check-input" id="all_seasons_{{ imdb_id }}" name="all_seasons" {% if not item.seasons %}checked{% endif %}>
-                                <label class="form-check-label ms-2" for="all_seasons_{{ imdb_id }}">All Seasons</label>
-                                <a href="#" class="toggle-seasons text-secondary ms-2" title="Toggle Seasons">
-                                    <i class="fas fa-chevron-down"></i>
-                                </a>
-                            </div>
-                            <div class="seasons-container">
-                                <div class="seasons-list" style="display: none;">
-                                    {% if item.available_seasons %}
-                                        {% for season in item.available_seasons %}
-                                            <div class="form-check">
-                                                <input type="checkbox" class="form-check-input season-checkbox" id="season_{{ imdb_id }}_{{ season }}" 
-                                                       name="seasons" value="{{ season }}" 
-                                                       {% if item.seasons and season in item.seasons %}checked{% endif %}>
-                                                <label class="form-check-label" for="season_{{ imdb_id }}_{{ season }}">
-                                                    Season {{ season }}
-                                                    {% if item.season_episodes and season in item.season_episodes %}
-                                                        <small class="text-muted">({{ item.season_episodes[season] }} episodes)</small>
-                                                    {% endif %}
-                                                </label>
-                                            </div>
-                                        {% endfor %}
-                                    {% else %}
-                                        <div class="text-muted">No season information available</div>
-                                    {% endif %}
-                                </div>
-                            </div>
-                        </form>
-                    {% else %}
-                        N/A
-                    {% endif %}
-                </td>
-                <td>
-                    <form action="{{ url_for('debug.manual_blacklist') }}" method="POST" class="d-inline">
-                        <input type="hidden" name="action" value="remove">
-                        <input type="hidden" name="imdb_id" value="{{ imdb_id }}">
-                        <button type="submit" class="btn btn-link text-danger p-0">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </form>
-                </td>
-            </tr>
+.bl-wrap{max-width:1400px;margin:0 auto;padding:1.5rem 1.25rem;font-family:var(--bl-sans);font-size:13px;color:var(--bl-text)}
+
+.bl-page-title{font-size:20px;font-weight:700;color:var(--bl-text);border-left:3px solid var(--bl-accent);padding-left:10px;margin-bottom:1.25rem}
+
+/* Buttons */
+.bl-btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:7px 14px;border-radius:6px;
+  font-family:var(--bl-sans);font-size:12px;font-weight:500;
+  cursor:pointer;transition:all .15s;white-space:nowrap;
+  background:transparent;
+}
+.bl-btn svg{width:13px;height:13px;flex-shrink:0}
+.bl-btn-green{border:1px solid #166534;color:#22c55e}
+.bl-btn-green:hover{background:#16653422;border-color:#22c55e}
+.bl-btn-blue{border:1px solid #1e40af;color:#60a5fa}
+.bl-btn-blue:hover{background:#1e40af22;border-color:#60a5fa}
+
+/* Add bar */
+.bl-add-bar{background:var(--bl-surface);border:1px solid var(--bl-border);border-radius:7px;padding:12px 14px;margin-bottom:1.25rem;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.bl-add-label{font-size:12px;font-weight:500;color:var(--bl-text2);white-space:nowrap}
+.bl-add-input{box-sizing:border-box;background:var(--bl-surface2) !important;border:1px solid var(--bl-border2) !important;color:var(--bl-text) !important;border-radius:5px !important;padding:6px 11px !important;font-size:13px !important;font-family:var(--bl-sans) !important;width:220px !important;height:auto !important;line-height:normal !important;transition:border-color .15s;box-shadow:none !important}
+.bl-add-input:focus{outline:none !important;border-color:var(--bl-accent) !important;box-shadow:none !important}
+.bl-add-input::placeholder{color:var(--bl-text3)}
+
+/* Section header */
+.bl-section-header{display:flex;align-items:center;gap:10px;margin-bottom:1rem;flex-wrap:wrap}
+.bl-section-title{font-size:14px;font-weight:600;color:var(--bl-text);border-left:3px solid var(--bl-accent);padding-left:10px}
+.bl-item-count{font-size:11px;color:var(--bl-text3);font-family:monospace;background:var(--bl-surface2);border:1px solid var(--bl-border);border-radius:4px;padding:2px 8px}
+
+/* Search bar */
+.bl-search-bar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+.bl-search-wrap{position:relative;flex:1;min-width:200px;max-width:380px}
+.bl-search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--bl-text3);pointer-events:none}
+.bl-search-icon svg{width:13px;height:13px}
+.bl-search-input{box-sizing:border-box;width:100% !important;max-width:none !important;background:var(--bl-surface2) !important;border:1px solid var(--bl-border2) !important;color:var(--bl-text) !important;border-radius:5px !important;padding:7px 11px 7px 32px !important;font-size:12px !important;font-family:var(--bl-sans) !important;height:auto !important;line-height:normal !important;transition:border-color .15s;box-shadow:none !important}
+.bl-search-input:focus{outline:none !important;border-color:var(--bl-accent) !important;box-shadow:none !important}
+.bl-search-input::placeholder{color:var(--bl-text3)}
+.bl-filter-select{box-sizing:border-box;background:var(--bl-surface2) !important;border:1px solid var(--bl-border2) !important;color:var(--bl-text) !important;border-radius:5px !important;padding:7px 10px !important;font-size:12px !important;font-family:var(--bl-sans) !important;cursor:pointer;height:34px !important;line-height:normal !important;appearance:none !important;-webkit-appearance:none !important;-moz-appearance:none !important;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23aaa' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E") !important;background-repeat:no-repeat !important;background-position:right 8px center !important;padding-right:26px !important}
+.bl-filter-select:focus{outline:none;border-color:var(--bl-accent)}
+.bl-filter-select{transition:border-color .15s !important}.bl-filter-select:hover{background:var(--bl-surface2) !important;border-color:var(--bl-border2) !important;color:var(--bl-text) !important;box-shadow:none !important;transform:none !important}
+.bl-clear-btn{font-size:11px;color:var(--bl-text3);cursor:pointer;padding:4px 8px;border-radius:4px;border:1px solid transparent;background:none;font-family:var(--bl-sans);transition:all .15s}
+.bl-clear-btn:hover{color:var(--bl-text2);border-color:var(--bl-border)}
+
+/* Table */
+.bl-table-wrap{background:var(--bl-surface);border:1px solid var(--bl-border);border-radius:7px;overflow:hidden;overflow-x:auto}
+.bl-table{width:100%;border-collapse:collapse;min-width:600px}
+.bl-table thead tr{background:var(--bl-surface2)}
+.bl-table th{padding:9px 14px;text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--bl-text3);border-bottom:1px solid var(--bl-border);white-space:nowrap}
+.bl-table td{padding:10px 14px;border-bottom:1px solid var(--bl-border);font-size:13px;color:var(--bl-text);vertical-align:middle}
+.bl-table tr:last-child td{border-bottom:none}
+.bl-table tr:hover td{background:#ffffff03}
+.bl-table tr.bl-removing td{opacity:.3;transition:opacity .25s}
+
+.bl-mono{font-size:12px;color:var(--bl-accent) !important;font-family:monospace}
+.bl-pill{display:inline-flex;align-items:center;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:600;letter-spacing:.3px}
+.bl-p-movie{background:#3b1e5f22;color:#a78bfa;border:1px solid #3b1e5f}
+.bl-p-episode{background:#1e1e3f22;color:#818cf8;border:1px solid #2d2d5e}
+
+/* Season selector */
+.bl-season-wrap{display:flex;flex-direction:column;gap:6px}
+.bl-all-seasons-row{display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;font-weight:500;color:var(--bl-text)}
+.bl-all-seasons-row input[type=checkbox]{accent-color:var(--bl-blue);width:15px;height:15px;cursor:pointer;flex-shrink:0}
+.bl-chevron{width:16px;height:16px;color:var(--bl-text3);transition:transform .2s;cursor:pointer;flex-shrink:0;margin-left:2px}
+.bl-chevron.open{transform:rotate(180deg)}
+.bl-season-list{background:var(--bl-surface2);border:1px solid var(--bl-border2);border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:4px;min-width:190px;max-height:260px;overflow-y:auto}
+.bl-season-list::-webkit-scrollbar{width:4px}
+.bl-season-list::-webkit-scrollbar-thumb{background:var(--bl-border2);border-radius:2px}
+.bl-season-item{display:flex;align-items:center;gap:7px;padding:4px 6px;border-radius:4px;cursor:pointer;transition:background .1s}
+.bl-season-item:hover{background:var(--bl-surface3)}
+.bl-season-item input[type=checkbox]{accent-color:var(--bl-blue);width:14px;height:14px;cursor:pointer;flex-shrink:0}
+.bl-season-item-label{font-size:12px;color:var(--bl-text);font-weight:500;cursor:pointer}
+.bl-season-item-label span{font-size:11px;color:var(--bl-text3);font-weight:400}
+.bl-na-badge{font-size:11px;color:var(--bl-text3);font-style:italic;padding-top:6px;display:inline-block}
+.bl-season-summary{font-size:11px;color:var(--bl-text3);font-family:monospace;margin-left:2px}
+.bl-season-loading{font-size:11px;color:var(--bl-text3);padding:6px}
+
+/* Delete button */
+.bl-del-btn{
+  width:28px;height:28px;border-radius:5px;
+  border:1px solid #7f1d1d;background:transparent;
+  color:#ef4444;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;
+}
+.bl-del-btn:hover{background:#7f1d1d22;border-color:#ef4444}
+.bl-del-btn svg{width:13px;height:13px}
+
+/* Table footer */
+.bl-table-footer{padding:10px 14px;border-top:1px solid var(--bl-border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem}
+.bl-footer-info{font-size:11px;color:var(--bl-text3);font-family:monospace}
+
+.bl-no-results{text-align:center;padding:3rem 1rem;color:var(--bl-text3);font-size:13px}
+.bl-no-results svg{width:36px;height:36px;margin:0 auto 10px;display:block;opacity:.3}
+
+/* Mobile cards */
+@media (max-width: 768px) {
+  .bl-table-wrap{overflow-x:hidden}
+  .bl-table{display:none}
+  .bl-card-list{display:flex;flex-direction:column;gap:0}
+  .bl-card{background:var(--bl-surface);border-bottom:1px solid var(--bl-border);padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .bl-card:last-child{border-bottom:none}
+  .bl-card.bl-removing{opacity:.3;transition:opacity .25s}
+  .bl-card-row{display:flex;align-items:flex-start;gap:10px}
+  .bl-card-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--bl-accent);width:80px;flex-shrink:0;padding-top:2px}
+  .bl-card-value{font-size:13px;color:var(--bl-text);flex:1;min-width:0}
+  .bl-card-actions{display:flex;justify-content:flex-start;padding-top:2px}
+}
+@media (min-width: 769px) {
+  .bl-card-list{display:none}
+}
+
+/* Toast */
+.bl-toast{position:fixed;bottom:1.5rem;right:1.5rem;background:var(--bl-surface);border:1px solid var(--bl-border2);border-radius:7px;padding:10px 16px;font-size:12px;color:var(--bl-text);box-shadow:0 4px 20px #00000066;z-index:9999;opacity:0;transform:translateY(8px);transition:all .25s;pointer-events:none;display:flex;align-items:center;gap:8px}
+.bl-toast.show{opacity:1;transform:translateY(0)}
+.bl-toast-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.bl-toast-green .bl-toast-dot{background:var(--bl-green)}
+.bl-toast-red .bl-toast-dot{background:var(--bl-red)}
+.bl-toast-blue .bl-toast-dot{background:var(--bl-blue)}
+</style>
+
+<div class="bl-wrap">
+  <div class="bl-page-title">Manual Blacklist</div>
+
+  <!-- Add bar -->
+  <div class="bl-add-bar">
+    <span class="bl-add-label">IMDb ID:</span>
+    <input class="bl-add-input" id="blImdbInput" type="text" placeholder="e.g. tt1234567">
+    <select class="bl-filter-select" id="blTypeSelect" style="height:32px;font-size:13px;padding:0 8px;min-width:90px">
+      <option value="movie">Movie</option>
+      <option value="episode">Show</option>
+    </select>
+    <button class="bl-btn bl-btn-green" id="blAddBtn">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 2v12M2 8h12"/></svg>
+      Add to Blacklist
+    </button>
+    <button class="bl-btn bl-btn-blue" id="blSaveAllBtn">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h8l2 2v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M5 3v4h6V3"/></svg>
+      Save All Changes
+    </button>
+    <span id="blUnsavedBadge" style="display:none;font-size:11px;color:var(--bl-yellow);font-family:monospace">&#9679; Unsaved changes</span>
+  </div>
+
+  <div class="bl-section-header">
+    <div class="bl-section-title">Current Blacklist</div>
+    <div class="bl-item-count" id="blItemCount">{{ blacklist|length }} item{{ 's' if blacklist|length != 1 else '' }}</div>
+  </div>
+
+  <div class="bl-search-bar">
+    <div class="bl-search-wrap">
+      <span class="bl-search-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4"/><path d="M11 11l3 3"/></svg></span>
+      <input class="bl-search-input" id="blSearchInput" type="text" placeholder="Search by title or IMDb ID…">
+    </div>
+    <select class="bl-filter-select" id="blTypeFilter">
+      <option value="all">All Types</option>
+      <option value="movie">Movies</option>
+      <option value="episode">Shows</option>
+    </select>
+    <button class="bl-clear-btn" id="blClearBtn">Clear</button>
+    <span id="blFilterInfo" style="font-size:11px;color:var(--bl-text3);font-family:monospace"></span>
+  </div>
+
+  <div class="bl-table-wrap">
+    <table class="bl-table">
+      <thead>
+        <tr>
+          <th>IMDb ID</th>
+          <th>Title</th>
+          <th>Year</th>
+          <th>Media Type</th>
+          <th>Seasons</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="blTbody">
+        {% for imdb_id, item in blacklist.items() %}
+        <tr id="blrow-{{ imdb_id }}" data-imdb="{{ imdb_id }}" data-title="{{ item.title|e }}" data-type="{{ item.media_type }}" data-year="{{ item.year }}" data-seasons="{{ (item.seasons if item.seasons is defined else []) | tojson | e }}">
+          <td class="bl-mono">{{ imdb_id }}</td>
+          <td style="font-weight:500">{{ item.title }}</td>
+          <td style="color:var(--bl-text2);font-family:monospace;font-size:12px">{{ item.year }}</td>
+          <td><span class="bl-pill {{ 'bl-p-movie' if item.media_type == 'movie' else 'bl-p-episode' }}">{{ item.media_type }}</span></td>
+          <td class="bl-season-cell">
+            {% if item.media_type == 'episode' %}
+            <div class="bl-season-wrap" data-imdb="{{ imdb_id }}" data-selected="{{ (item.seasons if item.seasons is defined else []) | tojson | e }}">
+              <div class="bl-all-seasons-row">
+                <input type="checkbox" class="bl-all-seasons-cb" {% if not item.seasons %}checked{% endif %}>
+                <label style="cursor:pointer;font-size:12px;font-weight:500">All Seasons</label>
+                <svg class="bl-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+                <span class="bl-season-summary"></span>
+              </div>
+              <div class="bl-season-list" style="display:none"></div>
+            </div>
             {% else %}
-            <tr>
-                <td colspan="6">No items in the blacklist</td>
-            </tr>
-            {% endfor %}
-        </tbody>
+            <span class="bl-na-badge">N/A</span>
+            {% endif %}
+          </td>
+          <td style="text-align:right;vertical-align:middle">
+            <button class="bl-del-btn" data-imdb="{{ imdb_id }}">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5"/><rect x="3" y="4" width="10" height="10" rx="1"/></svg>
+            </button>
+          </td>
+        </tr>
+        {% else %}
+        <tr id="blEmptyRow"><td colspan="6" style="text-align:center;color:var(--bl-text3);padding:2rem">No items in the blacklist</td></tr>
+        {% endfor %}
+      </tbody>
     </table>
+
+    <!-- Mobile card view -->
+    <div class="bl-card-list" id="blCardList">
+      {% for imdb_id, item in blacklist.items() %}
+      <div class="bl-card" id="blcard-{{ imdb_id }}" data-imdb="{{ imdb_id }}" data-title="{{ item.title|e }}" data-type="{{ item.media_type }}">
+        <div class="bl-card-row">
+          <span class="bl-card-label">IMDb ID</span>
+          <span class="bl-card-value bl-mono">{{ imdb_id }}</span>
+        </div>
+        <div class="bl-card-row">
+          <span class="bl-card-label">Title</span>
+          <span class="bl-card-value" style="font-weight:500">{{ item.title }}</span>
+        </div>
+        <div class="bl-card-row">
+          <span class="bl-card-label">Year</span>
+          <span class="bl-card-value" style="color:var(--bl-text2);font-family:monospace;font-size:12px">{{ item.year }}</span>
+        </div>
+        <div class="bl-card-row">
+          <span class="bl-card-label">Media Type</span>
+          <span class="bl-card-value"><span class="bl-pill {{ 'bl-p-movie' if item.media_type == 'movie' else 'bl-p-episode' }}">{{ item.media_type }}</span></span>
+        </div>
+        {% if item.media_type == 'episode' %}
+        <div class="bl-card-row">
+          <span class="bl-card-label">Seasons</span>
+          <span class="bl-card-value">
+            <div class="bl-season-wrap" data-imdb="{{ imdb_id }}" data-selected="{{ (item.seasons if item.seasons is defined else []) | tojson | e }}">
+              <div class="bl-all-seasons-row">
+                <input type="checkbox" class="bl-all-seasons-cb" {% if not item.seasons %}checked{% endif %}>
+                <label style="cursor:pointer;font-size:12px;font-weight:500">All Seasons</label>
+                <svg class="bl-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+                <span class="bl-season-summary"></span>
+              </div>
+              <div class="bl-season-list" style="display:none"></div>
+            </div>
+          </span>
+        </div>
+        {% endif %}
+        <div class="bl-card-row">
+          <span class="bl-card-label">Actions</span>
+          <div class="bl-card-actions">
+            <button class="bl-del-btn" data-imdb="{{ imdb_id }}">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5"/><rect x="3" y="4" width="10" height="10" rx="1"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <div style="text-align:center;color:var(--bl-text3);padding:2rem">No items in the blacklist</div>
+      {% endfor %}
+    </div>
+
+    <div id="blNoResults" class="bl-no-results" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M8 11h6"/></svg>
+      No items match your search
+    </div>
+    <div class="bl-table-footer">
+      <span class="bl-footer-info" id="blFooterInfo"></span>
+      <button class="bl-btn bl-btn-blue" id="blSaveAllBtn2" style="font-size:11px;padding:5px 10px">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="12" height="12"><path d="M3 3h8l2 2v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M5 3v4h6V3"/></svg>
+        Save All Changes
+      </button>
+    </div>
+  </div>
 </div>
 
+<div class="bl-toast" id="blToast"><span class="bl-toast-dot"></span><span id="blToastMsg"></span></div>
+
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Handle season checkboxes and "All Seasons" interaction
-    document.querySelectorAll('.seasons-form').forEach(form => {
-        const allSeasonsCheckbox = form.querySelector('[name="all_seasons"]');
-        const seasonsList = form.querySelector('.seasons-list');
-        const seasonCheckboxes = form.querySelectorAll('.season-checkbox');
-        const toggleButton = form.querySelector('.toggle-seasons');
-        
-        // Function to check if all seasons are selected
-        const areAllSeasonsSelected = () => {
-            return Array.from(seasonCheckboxes).every(cb => cb.checked);
-        };
-        
-        // Function to update "All Seasons" checkbox based on individual selections
-        const updateAllSeasonsCheckbox = () => {
-            allSeasonsCheckbox.checked = areAllSeasonsSelected();
-        };
+(function() {
+  const BLACKLIST_URL = "{{ url_for('debug.manual_blacklist') }}";
+  let unsaved = false;
+  let toastTimer;
 
-        // Handle "All Seasons" checkbox changes
-        allSeasonsCheckbox.addEventListener('change', function() {
-            seasonCheckboxes.forEach(cb => cb.checked = this.checked);
-        });
+  // ── Toast ──
+  function showToast(msg, color) {
+    const t = document.getElementById('blToast');
+    t.className = 'bl-toast bl-toast-' + (color || 'blue');
+    document.getElementById('blToastMsg').textContent = msg;
+    void t.offsetWidth;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
+  }
 
-        // Handle toggle button
-        toggleButton.addEventListener('click', function(e) {
-            e.preventDefault();
-            const seasonsList = this.closest('.seasons-form').querySelector('.seasons-list');
-            const isHidden = seasonsList.style.display === 'none';
-            seasonsList.style.display = isHidden ? 'block' : 'none';
-            this.classList.toggle('active');
-        });
+  function markUnsaved() {
+    unsaved = true;
+    document.getElementById('blUnsavedBadge').style.display = 'inline';
+  }
 
-        // Handle individual season checkbox changes
-        seasonCheckboxes.forEach(checkbox => {
-            checkbox.addEventListener('change', function() {
-                updateAllSeasonsCheckbox();
-            });
-        });
+  // ── Search / filter ──
+  function getAllRows() {
+    return Array.from(document.querySelectorAll('#blTbody tr[data-imdb]'));
+  }
 
-        // Handle shift-click selection
-        let lastChecked = null;
-        seasonCheckboxes.forEach(checkbox => {
-            checkbox.addEventListener('click', function(e) {
-                if (!lastChecked) {
-                    lastChecked = this;
-                    return;
+  function getAllCards() {
+    return Array.from(document.querySelectorAll('#blCardList .bl-card[data-imdb]'));
+  }
+
+  function applyFilter() {
+    const q = document.getElementById('blSearchInput').value.trim().toLowerCase();
+    const t = document.getElementById('blTypeFilter').value;
+    const rows = getAllRows();
+    const cards = getAllCards();
+    let visible = 0;
+
+    function matchItem(el) {
+      const title = (el.dataset.title || '').toLowerCase();
+      const imdb = (el.dataset.imdb || '').toLowerCase();
+      const type = el.dataset.type || '';
+      const matchQ = !q || title.includes(q) || imdb.includes(q);
+      const matchT = t === 'all' || type === t;
+      return matchQ && matchT;
+    }
+
+    rows.forEach(row => {
+      const show = matchItem(row);
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    cards.forEach(card => {
+      card.style.display = matchItem(card) ? '' : 'none';
+    });
+
+    const total = rows.length || cards.length;
+    document.getElementById('blItemCount').textContent = total + ' item' + (total !== 1 ? 's' : '');
+    document.getElementById('blFooterInfo').textContent = visible === total
+      ? total + ' total items'
+      : visible + ' of ' + total + ' shown';
+    document.getElementById('blFilterInfo').textContent = (q || t !== 'all') && visible !== total
+      ? visible + ' result' + (visible !== 1 ? 's' : '') + ' found'
+      : '';
+    const noRes = document.getElementById('blNoResults');
+    noRes.style.display = visible === 0 && total > 0 ? 'block' : 'none';
+  }
+
+  document.getElementById('blSearchInput').addEventListener('input', applyFilter);
+  document.getElementById('blTypeFilter').addEventListener('change', applyFilter);
+  document.getElementById('blClearBtn').addEventListener('click', () => {
+    document.getElementById('blSearchInput').value = '';
+    document.getElementById('blTypeFilter').value = 'all';
+    applyFilter();
+  });
+
+  // ── Season logic ──
+  function updateSeasonSummary(wrap) {
+    const allCb = wrap.querySelector('.bl-all-seasons-cb');
+    const summaryEl = wrap.querySelector('.bl-season-summary');
+    if (!summaryEl) return;
+    if (allCb.checked) {
+      summaryEl.textContent = '';
+    } else {
+      const checked = Array.from(wrap.querySelectorAll('.bl-season-cb:checked')).map(cb => 'S' + cb.value);
+      summaryEl.textContent = checked.length ? checked.join(', ') : 'None';
+    }
+  }
+
+  function initSeasonWrap(wrap) {
+    const imdbId = wrap.dataset.imdb;
+    const selectedSeasons = JSON.parse(wrap.dataset.selected || '[]');
+    const allCb = wrap.querySelector('.bl-all-seasons-cb');
+    const chevron = wrap.querySelector('.bl-chevron');
+    const list = wrap.querySelector('.bl-season-list');
+    let loaded = false;
+
+    updateSeasonSummary(wrap);
+
+    allCb.addEventListener('change', function() {
+      const cbs = wrap.querySelectorAll('.bl-season-cb');
+      cbs.forEach(cb => cb.checked = this.checked);
+      updateSeasonSummary(wrap);
+      markUnsaved();
+      // Auto-expand season list when unchecking All Seasons so user can pick specific seasons
+      if (!this.checked && list.style.display === 'none') {
+        chevron.click();
+      }
+    });
+
+    chevron.addEventListener('click', async function() {
+      const isHidden = list.style.display === 'none';
+
+      if (isHidden && !loaded) {
+        loaded = true;
+        list.style.display = 'block';
+        chevron.classList.add('open');
+        list.innerHTML = '<div class="bl-season-loading">Loading…</div>';
+
+        try {
+          const res = await fetch('/debug/api/manual_blacklist/' + imdbId + '/seasons');
+          const data = await res.json();
+          list.innerHTML = '';
+
+          if (data.success && data.seasons.length) {
+            let lastChecked = null;
+            data.seasons.forEach(season => {
+              const eps = data.season_episodes[season] || 0;
+              const isChecked = selectedSeasons.length === 0 || selectedSeasons.includes(season);
+              const label = document.createElement('label');
+              label.className = 'bl-season-item';
+              label.innerHTML = `<input type="checkbox" class="bl-season-cb" value="${season}" ${isChecked ? 'checked' : ''}>
+                <span class="bl-season-item-label">Season ${season}${eps ? ` <span>(${eps} episodes)</span>` : ''}</span>`;
+              list.appendChild(label);
+
+              const cb = label.querySelector('input');
+              cb.addEventListener('change', function() {
+                const allChecked = Array.from(wrap.querySelectorAll('.bl-season-cb')).every(c => c.checked);
+                allCb.checked = allChecked;
+                updateSeasonSummary(wrap);
+                markUnsaved();
+              });
+              cb.addEventListener('click', function(e) {
+                if (e.shiftKey && lastChecked) {
+                  const boxes = Array.from(wrap.querySelectorAll('.bl-season-cb'));
+                  const start = boxes.indexOf(this);
+                  const end = boxes.indexOf(lastChecked);
+                  const shouldCheck = this.checked;
+                  boxes.slice(Math.min(start, end), Math.max(start, end) + 1).forEach(b => b.checked = shouldCheck);
+                  const allChecked = boxes.every(c => c.checked);
+                  allCb.checked = allChecked;
+                  updateSeasonSummary(wrap);
+                  markUnsaved();
                 }
-
-                if (e.shiftKey) {
-                    const checkboxes = Array.from(seasonCheckboxes);
-                    const start = checkboxes.indexOf(this);
-                    const end = checkboxes.indexOf(lastChecked);
-                    
-                    const shouldCheck = this.checked;
-                    
-                    checkboxes
-                        .slice(Math.min(start, end), Math.max(start, end) + 1)
-                        .forEach(cb => {
-                            cb.checked = shouldCheck;
-                        });
-                    
-                    updateAllSeasonsCheckbox();
-                }
-
                 lastChecked = this;
+              });
             });
-        });
+            const allChecked = Array.from(wrap.querySelectorAll('.bl-season-cb')).every(c => c.checked);
+            allCb.checked = allChecked;
+            updateSeasonSummary(wrap);
+          } else {
+            list.innerHTML = '<div class="bl-season-loading">No season information available</div>';
+          }
+        } catch(err) {
+          list.innerHTML = '<div class="bl-season-loading" style="color:var(--bl-red)">Failed to load seasons</div>';
+        }
+      } else {
+        list.style.display = isHidden ? 'block' : 'none';
+        chevron.classList.toggle('open', isHidden);
+      }
     });
+  }
 
-    // Handle save all changes
-    document.getElementById('saveAllChanges').addEventListener('click', async function() {
-        const forms = document.querySelectorAll('.seasons-form');
-        let success = true;
-        
-        for (const form of forms) {
-            const imdbId = form.dataset.imdbId;
-            const allSeasons = form.querySelector('[name="all_seasons"]').checked;
-            const selectedSeasons = Array.from(form.querySelectorAll('.season-checkbox:checked')).map(cb => cb.value);
-            
-            const formData = new FormData();
-            formData.append('action', 'update_seasons');
-            formData.append('imdb_id', imdbId);
-            if (allSeasons) {
-                formData.append('all_seasons', 'on');
-            } else {
-                selectedSeasons.forEach(season => {
-                    formData.append('seasons', season);
-                });
+  // Init season wraps in both table rows and mobile cards
+  // De-dupe by imdb id so each item only has one active season state
+  const initializedSeasonIds = new Set();
+  document.querySelectorAll('.bl-season-wrap').forEach(wrap => {
+    const id = wrap.dataset.imdb;
+    if (!initializedSeasonIds.has(id)) {
+      initializedSeasonIds.add(id);
+      initSeasonWrap(wrap);
+    } else {
+      // For duplicate card wraps, just init without tracking (mobile mirror)
+      initSeasonWrap(wrap);
+    }
+  });
+
+  // ── Delete ──
+  function bindDelBtn(btn) {
+    btn.addEventListener('click', async function() {
+      const imdbId = this.dataset.imdb;
+      const row = document.getElementById('blrow-' + imdbId);
+      const card = document.getElementById('blcard-' + imdbId);
+      if (row) row.classList.add('bl-removing');
+      if (card) card.classList.add('bl-removing');
+
+      const fd = new FormData();
+      fd.append('action', 'remove');
+      fd.append('imdb_id', imdbId);
+
+      try {
+        const res = await fetch(BLACKLIST_URL, { method: 'POST', body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success) {
+          setTimeout(() => {
+            if (row) row.remove();
+            if (card) card.remove();
+            const remaining = getAllRows();
+            if (remaining.length === 0 && !document.getElementById('blEmptyRow')) {
+              const tbody = document.getElementById('blTbody');
+              const tr = document.createElement('tr');
+              tr.id = 'blEmptyRow';
+              tr.innerHTML = '<td colspan="6" style="text-align:center;color:var(--bl-text3);padding:2rem">No items in the blacklist</td>';
+              tbody.appendChild(tr);
             }
-            
-            try {
-                const response = await fetch(window.location.href, {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                if (!response.ok) {
-                    success = false;
-                    console.error(`Failed to update seasons for ${imdbId}`);
-                }
-            } catch (error) {
-                success = false;
-                console.error('Error:', error);
-            }
-        }
-        
-        if (success) {
-            window.location.reload();
+            applyFilter();
+            if (window.toastManager) window.toastManager.show('Blacklist', 'Removed from blacklist', 'success');
+          }, 250);
         } else {
-            alert('Failed to update some or all seasons. Please try again.');
+          if (row) row.classList.remove('bl-removing');
+          if (card) card.classList.remove('bl-removing');
+          if (window.toastManager) window.toastManager.show('Blacklist', data.error || 'Failed to remove item', 'error');
         }
+      } catch(err) {
+        if (row) row.classList.remove('bl-removing');
+        if (card) card.classList.remove('bl-removing');
+        if (window.toastManager) window.toastManager.show('Blacklist', 'Error removing item', 'error');
+      }
     });
-});
+  }
+
+  document.querySelectorAll('.bl-del-btn').forEach(bindDelBtn);
+
+  // ── Add ──
+  async function addItem() {
+    const input = document.getElementById('blImdbInput');
+    const val = input.value.trim();
+    if (!val) { showToast('Enter an IMDb ID first', 'red'); return; }
+    if (!val.startsWith('tt')) { showToast('IMDb ID must start with "tt"', 'red'); return; }
+    if (document.getElementById('blrow-' + val)) { showToast('Already in blacklist', 'red'); return; }
+
+    const mediaType = document.getElementById('blTypeSelect').value;
+    const fd = new FormData();
+    fd.append('action', 'add');
+    fd.append('imdb_id', val);
+    fd.append('media_type', mediaType);
+
+    try {
+      const res = await fetch(BLACKLIST_URL, { method: 'POST', body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        input.value = '';
+        if (window.toastManager) window.toastManager.show('Blacklist', 'Added to blacklist — reloading…', 'success');
+        setTimeout(() => window.location.reload(), 1200);
+      } else {
+        if (window.toastManager) window.toastManager.show('Blacklist', data.error || 'Failed to add item', 'error');
+      }
+    } catch(err) {
+      if (window.toastManager) window.toastManager.show('Blacklist', 'Error adding item', 'error');
+    }
+  }
+
+  document.getElementById('blAddBtn').addEventListener('click', addItem);
+  document.getElementById('blImdbInput').addEventListener('keydown', e => { if (e.key === 'Enter') addItem(); });
+
+  // ── Save all ──
+  async function saveAll() {
+    // De-dupe by imdb id — table and card both have wraps for the same item.
+    // Prefer the wrap that already has season checkboxes loaded (desktop table row)
+    // over one that hasn't been expanded yet (mobile card).
+    const byId = {};
+    document.querySelectorAll('.bl-season-wrap').forEach(w => {
+      const id = w.dataset.imdb;
+      if (!byId[id]) {
+        byId[id] = w;
+      } else {
+        // Prefer whichever has season checkboxes loaded
+        const existing = byId[id];
+        if (w.querySelectorAll('.bl-season-cb').length > existing.querySelectorAll('.bl-season-cb').length) {
+          byId[id] = w;
+        }
+      }
+    });
+    const wraps = Object.values(byId);
+    let success = true;
+
+    for (const wrap of wraps) {
+      const imdbId = wrap.dataset.imdb;
+      const allCb = wrap.querySelector('.bl-all-seasons-cb');
+      const seasonCbs = wrap.querySelectorAll('.bl-season-cb:checked');
+
+      const fd = new FormData();
+      fd.append('action', 'update_seasons');
+      fd.append('imdb_id', imdbId);
+      if (allCb && allCb.checked) {
+        fd.append('all_seasons', 'on');
+      } else {
+        seasonCbs.forEach(cb => fd.append('seasons', cb.value));
+      }
+
+      try {
+        const res = await fetch(BLACKLIST_URL, { method: 'POST', body: fd });
+        if (!res.ok) { success = false; }
+      } catch(err) {
+        success = false;
+      }
+    }
+
+    if (success) {
+      unsaved = false;
+      document.getElementById('blUnsavedBadge').style.display = 'none';
+      showToast('All changes saved', 'blue');
+    } else {
+      showToast('Failed to save some changes', 'red');
+    }
+  }
+
+  document.getElementById('blSaveAllBtn').addEventListener('click', saveAll);
+  document.getElementById('blSaveAllBtn2').addEventListener('click', saveAll);
+
+  // Initial filter state
+  applyFilter();
+})();
 </script>
 {% endblock %}

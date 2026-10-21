@@ -6,9 +6,9 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const theme = getCurrentTheme();
-        const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper.css' : 'css/scraper.css';
-        const trendingCssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper_trending.css' : 'css/scraper_trending.css';
-        const mobileCssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper-mobile.css' : 'css/scraper-mobile.css';
+        const cssFile = 'css/tangerine/tangerine_scraper.css';
+        const trendingCssFile = 'css/tangerine/tangerine_scraper_trending.css';
+        const mobileCssFile = 'css/tangerine/tangerine_scraper-mobile.css';
         
         const link1 = document.createElement('link');
         link1.rel = 'stylesheet';
@@ -157,13 +157,14 @@
         <!-- Version Selection Modal -->
         <div id="versionModal" class="version-modal">
             <div class="version-modal-content">
-                <h3>Select Versions</h3>
-                <div id="versionCheckboxes">
-                    <!-- Version checkboxes will be dynamically inserted here -->
+                <div class="dialog-body">
+                    <div id="versionCheckboxes">
+                        <!-- Dynamically populated by JS -->
+                    </div>
                 </div>
-                <div class="version-modal-buttons">
-                    <button id="confirmVersions">Request</button>
-                    <button id="cancelVersions">Cancel</button>
+                <div class="dialog-footer">
+                    <button id="confirmVersions" class="vm-btn vm-btn-accent"><i class="fa-solid fa-paper-plane"></i> Request</button>
+                    <button id="cancelVersions" class="vm-btn vm-btn-ghost"><i class="fa-solid fa-xmark"></i> Cancel</button>
                 </div>
             </div>
         </div>
@@ -171,13 +172,14 @@
         <!-- Scrape Version Selection Modal -->
         <div id="scrapeVersionModal" class="version-modal">
             <div class="version-modal-content">
-                <h3>Select Scrape Version</h3>
-                <div id="scrapeVersionRadios">
-                    <!-- Version radio buttons will be dynamically inserted here -->
+                <div class="dialog-body">
+                    <div id="scrapeVersionRadios">
+                        <!-- Dynamically populated by JS -->
+                    </div>
                 </div>
-                <div class="version-modal-buttons">
-                    <button id="confirmScrapeVersion">Scrape</button>
-                    <button id="cancelScrapeVersion">Cancel</button>
+                <div class="dialog-footer">
+                    <button id="confirmScrapeVersion" class="vm-btn vm-btn-accent"><i class="fa-solid fa-magnifying-glass"></i> Scrape</button>
+                    <button id="cancelScrapeVersion" class="vm-btn vm-btn-ghost"><i class="fa-solid fa-xmark"></i> Cancel</button>
                 </div>
             </div>
         </div>
@@ -202,7 +204,7 @@
     {% endif %}
 
     <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v=20260118"></script>
-    <script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
+    <script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
 {% endblock %}

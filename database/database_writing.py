@@ -5,9 +5,113 @@ import json
 import pickle
 from pathlib import Path
 import os
+import threading
+from utilities.atomic_io import atomic_write_bytes
 from utilities.post_processing import handle_state_change
-from typing import List
+from typing import List, Optional
 import sqlite3
+
+# original_collected_at records an item's first-ever collection time and must
+# never be reset without also resetting collected_at (and vice versa) — every
+# site that sends an item back to 'Wanted' for a genuine re-download needs
+# both cleared together, or the item permanently loses its "first collection"
+# notification (see queue_manager.move_to_collected and local_library_scan.py,
+# which both key off original_collected_at being unset). Interpolate this
+# into each reset UPDATE's SET clause instead of hand-typing the two columns.
+RESET_COLLECTION_STATE_SQL = "collected_at = NULL, original_collected_at = NULL"
+
+# Columns saved for a row's old files when they're about to be replaced; once the
+# replacement is Collected, post_processing.cleanup_files_replaced_by_move_to_wanted
+# removes them (symlink, mount file, provider job, media server entry).
+REPLACED_FILE_FIELDS = (
+    'id', 'imdb_id', 'tmdb_id', 'type', 'title', 'episode_title', 'season_number',
+    'episode_number', 'version', 'state', 'location_on_disk', 'original_path_for_symlink',
+    'filled_by_torrent_id', 'filled_by_file', 'filled_by_title', 'location_basename',
+)
+
+
+def stash_replaced_files(rows):
+    """Return (id, json) pairs: each row's current files appended to its replaced_files list."""
+    stashed = []
+    for row in rows:
+        row = dict(row)
+        if not (row.get('location_on_disk') or row.get('original_path_for_symlink')
+                or row.get('filled_by_torrent_id')):
+            continue
+        try:
+            pending = json.loads(row.get('replaced_files') or '[]')
+        except (TypeError, ValueError):
+            pending = []
+        pending.append({k: row.get(k) for k in REPLACED_FILE_FIELDS})
+        stashed.append((row['id'], json.dumps(pending, default=str)))
+    return stashed
+
+
+@retry_on_db_lock()
+def replace_collected_item(item: dict) -> Optional[int]:
+    """Point the library's Collected row for this episode/movie and version at a new release.
+
+    Used by manual assign's "Replace episodes already in the library": instead of
+    inserting a second row next to the one already Collected (two copies, and
+    DupPrevention would drop the new one at collection), the existing row goes
+    back to Checking on the new torrent/file. Its old files are saved in
+    replaced_files and removed once the replacement is Collected.
+    Returns the row id, or None when there's no Collected row to replace.
+    """
+    imdb_id = item.get('imdb_id')
+    item_type = item.get('type')
+    if not imdb_id or item_type not in ('episode', 'movie'):
+        return None
+    where = ("imdb_id = ? AND type = ? AND state = 'Collected' AND (ghostlisted = 0 OR ghostlisted IS NULL) "
+             "AND RTRIM(COALESCE(version, ''), '*') = ?")
+    params = [imdb_id, item_type, (item.get('version') or '').rstrip('*')]
+    if item_type == 'episode':
+        if item.get('season_number') is None or item.get('episode_number') is None:
+            return None
+        where += " AND season_number = ? AND episode_number = ?"
+        params += [item['season_number'], item['episode_number']]
+    conn = get_db_connection()
+    try:
+        row = conn.execute(f"SELECT * FROM media_items WHERE {where} ORDER BY id LIMIT 1", params).fetchone()
+        if not row:
+            return None
+        row = dict(row)
+        stashed = stash_replaced_files([row])
+        conn.execute(
+            """UPDATE media_items SET
+                   state = 'Checking',
+                   version = ?,
+                   filled_by_file = ?,
+                   filled_by_title = ?,
+                   filled_by_magnet = ?,
+                   filled_by_torrent_id = ?,
+                   original_scraped_torrent_title = ?,
+                   location_on_disk = NULL,
+                   original_path_for_symlink = NULL,
+                   original_filename = NULL,
+                   collected_at = NULL,
+                   upgrading_from = NULL,
+                   upgrading = NULL,
+                   manual_replace = 0,
+                   replaced_files = ?,
+                   last_updated = ?
+               WHERE id = ?""",
+            (item.get('version'), item.get('filled_by_file'), item.get('filled_by_title'),
+             item.get('filled_by_magnet'), item.get('filled_by_torrent_id'),
+             item.get('original_scraped_torrent_title'),
+             stashed[0][1] if stashed else row.get('replaced_files'), datetime.now(), row['id'])
+        )
+        conn.commit()
+        logging.info(f"Replacing Collected item {row['id']} ({item_type} {imdb_id} "
+                     f"S{item.get('season_number')}E{item.get('episode_number')}, version {row.get('version')}) "
+                     f"with {item.get('filled_by_file')}; {'old files saved for removal' if stashed else 'no old files'}")
+        return row['id']
+    except sqlite3.OperationalError:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
 
 @retry_on_db_lock()
 def bulk_delete_by_id(id_value, id_type):
@@ -89,20 +193,37 @@ def update_release_date_and_state(
         early_release: bool | None = None, 
         physical_release_date: str | None = None,
         theatrical_release_date: str | None = None,
-        no_early_release: bool | None = None  # Add the new flag parameter
+        no_early_release: bool | None = None,  # Add the new flag parameter
+        runtime: int | None = None,
+        expected_state: str | None = None
     ):
-    """Update the release date, state, and potentially airtime, early_release, physical_release_date, and no_early_release flag for a media item."""
+    """Update the release date, state, and potentially airtime, early_release, physical_release_date, and no_early_release flag for a media item.
+
+    expected_state: only change the state if the row is still in this state.
+    Callers working from an earlier snapshot (the release-date refresh) would
+    otherwise overwrite a state another queue set in the meantime, e.g. send
+    an item that just moved to Checking back to Wanted. The date fields are
+    updated either way.
+    """
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
 
         # Build the query dynamically
-        set_clauses = [
-            'release_date = ?', 
-            'state = ?',
-            'last_updated = ?'
-        ]
-        params = [release_date, state, datetime.now()]
+        if expected_state is None:
+            set_clauses = [
+                'release_date = ?',
+                'state = ?',
+                'last_updated = ?'
+            ]
+            params = [release_date, state, datetime.now()]
+        else:
+            set_clauses = [
+                'release_date = ?',
+                'state = CASE WHEN state = ? THEN ? ELSE state END',
+                'last_updated = ?'
+            ]
+            params = [release_date, expected_state, state, datetime.now()]
 
         if airtime is not None:
             set_clauses.append('airtime = ?')
@@ -124,6 +245,10 @@ def update_release_date_and_state(
             set_clauses.append('no_early_release = ?')
             params.append(no_early_release)
 
+        if runtime is not None:
+            set_clauses.append('runtime = ?')
+            params.append(runtime)
+
         params.append(item_id)
 
         query = f'''
@@ -138,7 +263,11 @@ def update_release_date_and_state(
 
         conn.commit()
 
-        logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
+        if updated_item_row and updated_item_row['state'] != state:
+            logging.info(f"Item {item_id} left {expected_state} (now {updated_item_row['state']}) before the "
+                         f"release-date update; kept its state instead of setting {state}")
+        else:
+            logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
         
         return dict(updated_item_row) if updated_item_row else None
 
@@ -168,7 +297,7 @@ def update_release_date_and_state(
             conn.close()
     
 @retry_on_db_lock()
-def update_media_item_state(item_id, state, **kwargs):
+def update_media_item_state(item_id, state, skip_state_change_hook=False, **kwargs):
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
@@ -181,7 +310,19 @@ def update_media_item_state(item_id, state, **kwargs):
         params = [state, datetime.now()]
 
         # Add optional fields to the query if they are provided
-        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'filled_by_torrent_id', 'scrape_results', 'version', 'resolution', 'upgrading_from']
+        optional_fields = [
+            'filled_by_title',
+            'filled_by_magnet',
+            'filled_by_file',
+            'filled_by_torrent_id',
+            'scrape_results',
+            'version',
+            'resolution',
+            'upgrading_from',
+            'debrid_folder_name',
+            'original_filename',
+            'debrid_provider',
+        ]
         for field in optional_fields:
             if field in kwargs:
                 query += f", {field} = ?"
@@ -189,6 +330,12 @@ def update_media_item_state(item_id, state, **kwargs):
                 if field == 'scrape_results':
                     value = json.dumps(value) if value else None
                 params.append(value)
+
+        # Always clear scrape_results when transitioning to a terminal state —
+        # scrape_results is only needed while adding/checking and can grow to
+        # hundreds of MB if left on collected/blacklisted items.
+        if state in ('Collected', 'Blacklisted', 'Ghostlisted', 'Unreleased') and 'scrape_results' not in kwargs:
+            query += ", scrape_results = NULL"
 
         # Complete the query
         query += " WHERE id = ?"
@@ -207,11 +354,17 @@ def update_media_item_state(item_id, state, **kwargs):
         if updated_item_row:
             item_dict = dict(updated_item_row)
 
-            # Handle post-processing based on state
-            if state == 'Collected':
-                handle_state_change(item_dict)
-            elif state == 'Upgrading':
-                handle_state_change(item_dict)
+            # Handle post-processing based on state. Callers that already ran
+            # handle_state_change() for this exact state transition themselves
+            # (e.g. checking_queue.py, after local_library_scan.py's explicit
+            # call) pass skip_state_change_hook=True to avoid double-running
+            # CineSync, the subtitle downloader, and any custom post-processing
+            # script for the same item in the same cycle.
+            if not skip_state_change_hook:
+                if state == 'Collected':
+                    handle_state_change(item_dict)
+                elif state == 'Upgrading':
+                    handle_state_change(item_dict)
 
         logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
 
@@ -415,6 +568,10 @@ def delete_items_batch(item_ids, blacklist=False):
         if conn:
             conn.close()
 
+# Serializes the read-append-write below; concurrent callers lost entries.
+_collected_notifications_lock = threading.Lock()
+
+
 def add_to_collected_notifications(media_item):
     # Get db_content directory from environment variable with fallback
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -422,17 +579,17 @@ def add_to_collected_notifications(media_item):
     
     try:
         os.makedirs(notifications_file.parent, exist_ok=True)
-        
-        if notifications_file.exists():
-            with open(notifications_file, "rb") as f:
-                notifications = pickle.load(f)
-        else:
-            notifications = []
-        
-        notifications.append(media_item)
-        
-        with open(notifications_file, "wb") as f:
-            pickle.dump(notifications, f)
+
+        with _collected_notifications_lock:
+            if notifications_file.exists():
+                with open(notifications_file, "rb") as f:
+                    notifications = pickle.load(f)
+            else:
+                notifications = []
+
+            notifications.append(media_item)
+
+            atomic_write_bytes(str(notifications_file), pickle.dumps(notifications))
         
         logging.debug(f"Added notification for collected item: {media_item['title']} (ID: {media_item['id']})")
     except Exception as e:
@@ -483,6 +640,52 @@ def update_media_item(item_id: int, **kwargs):
     finally:
         if conn:
             conn.close()
+
+def enable_fallback_to_single_scraper(item: dict, reason: str = ""):
+    """Sets fall_back_to_single_scraper=True for `item` and every other pending
+    episode of the same series/season/version, regardless of episode number.
+
+    Multi-pack mode (queues/scraping_queue.py) is forced on for any episode
+    scrape older than 7 days - a single stuck-in-multi episode (e.g. episode 1,
+    since nothing "before" it can ever propagate the flag to it) can otherwise
+    be starved of single-episode candidates forever if the only multi-pack
+    result available gets filtered out for an unrelated reason (bad language,
+    wrong group, etc.), since forcing multi-pack rejects every single-episode
+    result outright. Previously this only propagated to *later* episodes
+    (episode_number > current), which is exactly what let episode 1 get stuck.
+    """
+    item_id = item.get('id')
+    if not item_id or item.get('fall_back_to_single_scraper'):
+        return
+    update_media_item(item_id, fall_back_to_single_scraper=True)
+    logging.info(f"Enabled single scraper fallback for item ID {item_id} ({item.get('title')}){f': {reason}' if reason else ''}")
+
+    if item.get('type') != 'episode':
+        return
+    series_title = item.get('series_title', '') or item.get('title', '')
+    season = item.get('season') or item.get('season_number')
+    version = item.get('version')
+    current_id = item_id
+
+    from .database_reading import stream_all_media_items
+    for candidate in stream_all_media_items(state=None, media_type='episode'):
+        try:
+            if candidate.get('id') == current_id:
+                continue
+            if (candidate.get('series_title', '') or candidate.get('title', '')) != series_title:
+                continue
+            if (candidate.get('season') or candidate.get('season_number')) != season:
+                continue
+            if candidate.get('version') != version:
+                continue
+            if candidate.get('fall_back_to_single_scraper'):
+                continue
+            match_id = candidate.get('id')
+            if match_id:
+                update_media_item(match_id, fall_back_to_single_scraper=True)
+                logging.debug(f"Enabled single scraper fallback for related item ID: {match_id} ({candidate.get('title')})")
+        except Exception as iter_err:
+            logging.error(f"Error while streaming candidate items for single scraper fallback: {iter_err}")
 
 @retry_on_db_lock()
 def update_blacklisted_date(item_id: int, blacklisted_date: datetime | None):
@@ -705,17 +908,45 @@ def add_media_item(item: dict, user_initiated: bool = False) -> int:
         item_type = item.get('type')
         version = item.get('version')
 
+        # Resolve imdb_id from tmdb_id if missing — ensures Plex GUID fast-path works
+        # and prevents trial-and-error match loops for items added with only TMDB ID.
+        if not imdb_id and tmdb_id:
+            try:
+                from cli_battery.app.direct_api import DirectAPI
+                _resolved_imdb, _ = DirectAPI.tmdb_to_imdb(
+                    str(tmdb_id),
+                    media_type='show' if item_type in ('episode', 'show') else 'movie'
+                )
+                if _resolved_imdb:
+                    imdb_id = _resolved_imdb
+                    item['imdb_id'] = _resolved_imdb
+                    logging.debug(f"[add_media_item] Resolved imdb_id {_resolved_imdb} from tmdb_id {tmdb_id}")
+            except Exception:
+                pass
+
+        if item_type == 'movie':
+            from .movie_release_overrides import apply_movie_release_override_to_item
+            apply_movie_release_override_to_item(item, conn=conn)
+
         # GHOSTLIST/BLACKLIST CHECK
+        # Scoped to the same normalized version being inserted for the 'Blacklisted'
+        # half: create_and_add_item_to_wanted_queue() blacklists the original item
+        # (e.g. '1080p') immediately before calling add_media_item() to insert the
+        # fallback item (e.g. '720 and below'), so an unscoped match here always found
+        # that just-blacklisted original row and silently killed every fallback
+        # insertion, mirroring the bug already fixed in queue_manager.py's own
+        # duplicate check. A genuine permanent ghostlist still blocks at any version.
+        target_version = (version or '').rstrip('*')
         if imdb_id or tmdb_id:
             # Build query to check for ghostlisted/blacklisted entries
             ghostlist_check_query = '''
                 SELECT id, version FROM media_items
                 WHERE (imdb_id = ? OR tmdb_id = ?)
                 AND type = ?
-                AND (ghostlisted = 1 OR state = 'Blacklisted')
+                AND (ghostlisted = 1 OR (state = 'Blacklisted' AND RTRIM(COALESCE(version, ''), '*') = ?))
                 LIMIT 1
             '''
-            ghostlist_check_params = [imdb_id, tmdb_id, item_type]
+            ghostlist_check_params = [imdb_id, tmdb_id, item_type, target_version]
 
             # For episodes, also check season/episode number
             if item_type == 'episode' and 'season_number' in item and 'episode_number' in item:
@@ -725,10 +956,10 @@ def add_media_item(item: dict, user_initiated: bool = False) -> int:
                     AND type = ?
                     AND season_number = ?
                     AND episode_number = ?
-                    AND (ghostlisted = 1 OR state = 'Blacklisted')
+                    AND (ghostlisted = 1 OR (state = 'Blacklisted' AND RTRIM(COALESCE(version, ''), '*') = ?))
                     LIMIT 1
                 '''
-                ghostlist_check_params = [imdb_id, tmdb_id, item_type, item['season_number'], item['episode_number']]
+                ghostlist_check_params = [imdb_id, tmdb_id, item_type, item['season_number'], item['episode_number'], target_version]
 
             ghostlist_result = conn.execute(ghostlist_check_query, ghostlist_check_params).fetchone()
 
@@ -769,6 +1000,38 @@ def add_media_item(item: dict, user_initiated: bool = False) -> int:
                         update_fields.append('torrent_name = ?')
                         update_values.append(item['torrent_name'])
 
+                    # An adopted row takes on the incoming item's file identity.
+                    # Without this the caller's file pointers are silently dropped
+                    # and the row keeps pointing at whatever it referenced before
+                    # being ghostlisted — so an add that supplies a file (an
+                    # external mount import, a manual magnet file assignment) ends
+                    # up with the wrong file, or a Checking item hunting for one
+                    # that is no longer there. Only fields the caller actually
+                    # supplied are written, so this is a no-op for callers adding
+                    # a queue-destined item that has no file yet.
+                    #
+                    # 'version' is deliberately absent: this branch only runs when
+                    # the existing and incoming versions already match.
+                    for _identity_field in (
+                        'filled_by_file', 'filled_by_title', 'filled_by_magnet',
+                        'filled_by_torrent_id', 'location_on_disk',
+                        'original_path_for_symlink', 'collected_at',
+                        'content_source',
+                    ):
+                        if _identity_field in item:
+                            update_fields.append(f'{_identity_field} = ?')
+                            update_values.append(item[_identity_field])
+
+                    # original_collected_at records when the item was FIRST
+                    # collected, so it is filled in but never overwritten —
+                    # matching the COALESCE pattern used in collected_items.py.
+                    # Overwriting it would make a long-held item that was
+                    # re-acquired look newly added and could re-open upgrade
+                    # windows that had already closed.
+                    if 'original_collected_at' in item:
+                        update_fields.append('original_collected_at = COALESCE(original_collected_at, ?)')
+                        update_values.append(item['original_collected_at'])
+
                     # Always update last_updated
                     update_fields.append('last_updated = ?')
                     update_values.append(datetime.now())
@@ -786,6 +1049,22 @@ def add_media_item(item: dict, user_initiated: bool = False) -> int:
                 # Different version: INSERT new entry (leave old ghostlisted alone)
                 else:
                     logging.info(f"🔓 User-initiated add: Different version detected (existing: {existing_version}, new: {version}). Inserting new entry, leaving old ghostlisted entry (ID: {existing_id}) as-is.")
+
+        # Sanitize year — never store the string "None", convert to None/int
+        if 'year' in item:
+            y = item['year']
+            if y == 'None' or y == '' or y is None:
+                # Try to recover from release_date
+                rd = item.get('release_date', '')
+                if rd and len(str(rd)) >= 4:
+                    try:
+                        item['year'] = int(str(rd)[:4])
+                    except (ValueError, TypeError):
+                        item['year'] = None
+                else:
+                    item['year'] = None
+            elif isinstance(y, str) and y.isdigit():
+                item['year'] = int(y)
 
         # Get the column names from the item dictionary
         columns = list(item.keys())
@@ -961,9 +1240,9 @@ def update_media_items_state_batch(item_ids: List[int], state: str, **kwargs):
         base_params = [state, datetime.now()]
 
         # Add optional fields to the query
-        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 
-                         'filled_by_torrent_id', 'scrape_results', 'version', 
-                         'resolution', 'upgrading_from']
+        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file',
+                         'filled_by_torrent_id', 'scrape_results', 'version',
+                         'resolution', 'upgrading_from', 'debrid_folder_name']
         
         for field in kwargs:
             if field in optional_fields:

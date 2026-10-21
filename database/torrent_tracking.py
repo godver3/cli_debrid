@@ -2,7 +2,7 @@ import logging
 import json
 from datetime import datetime, date
 from typing import Optional, Dict, Any
-from .core import get_db_connection
+from .core import get_db_connection, retry_on_db_lock
 import sqlite3
 
 # Helper function for JSON serialization
@@ -45,6 +45,7 @@ def create_torrent_tracking_table():
     finally:
         conn.close()
 
+@retry_on_db_lock()
 def record_torrent_addition(
     torrent_hash: str,
     trigger_source: str,
@@ -273,7 +274,7 @@ def update_torrent_tracking(
         return True
         
     except Exception as e:
-        logging.error(f"Error updating torrent tracking record: {e}")
+        logging.debug(f"Error updating torrent tracking record: {e}")
         raise
     finally:
-        conn.close() 
+        conn.close()

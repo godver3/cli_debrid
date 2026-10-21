@@ -1,6 +1,8 @@
 # cli_debrid
 
-cli_debrid is a successor to, and pays homage to plex_debrid. cli_debrid is designed to automatically manage and upgrade your media collection, leveraging various sources and services to ensure you always have the best quality content available.
+cli_debrid is a successor to, and pays homage to, plex_debrid. It watches your lists, finds the best release for everything on them, gets it through your debrid service or Usenet, and keeps your Plex or Jellyfin library organised and upgraded, with no files downloaded to your server.
+
+**📖 [Getting Started](https://godver3.github.io/cli_docs/getting-started/)** · [Documentation](https://godver3.github.io/cli_docs/) · [Discord](https://discord.gg/ynqnXGJ4hU)
 
 ## How can you support the project?
 
@@ -22,264 +24,155 @@ cli_debrid will always be free.
 
 ## Community
 
-- [Discord](https://discord.gg/ynqnXGJ4hU)
-- Feel free to join and ask questions or to share ideas.
+- [Discord](https://discord.gg/ynqnXGJ4hU): join to ask questions or share ideas.
 
 ## Screenshots
 
-![image](https://github.com/user-attachments/assets/084c3685-8ba7-481a-8dae-e4c45304e489)
-![image](https://github.com/user-attachments/assets/a11fde0a-52a7-47da-8a95-120e977d6f8c)
-![image](https://github.com/user-attachments/assets/1715c872-d508-4d54-845e-13de096feadf)
-![image](https://github.com/user-attachments/assets/335b739d-99f3-4cb9-ac97-a8ae6e887a4f)
-![image](https://github.com/user-attachments/assets/59d049cc-e17c-49d3-9afb-9b24ea7f0606)
+**Dashboard:** library totals, what's airing, and what was just added or upgraded.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+**Discover:** browse trending titles, recommendations and lists, and request them in one click.
+
+![Discover](docs/screenshots/discover.png)
+
+**Database:** every movie and episode cli_debrid tracks, with filters, saved presets and bulk actions.
+
+![Database](docs/screenshots/database.png)
+
+**Queues:** what's wanted, unreleased, collected or blacklisted.
+
+![Queues](docs/screenshots/queues.png)
+
+## How it works
+
+```
+Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> Library ──> Plex / Jellyfin / Emby
+ (what you want)    (find it)     (get it)            (stream)   (organise)  (watch)
+```
+
+1. **Content sources** say what you want: watchlists, lists, requests.
+2. **Scrapers** search torrent indexers and Usenet indexers. Results are ranked against your **Versions**, the quality profiles you define (resolution, size, codecs, languages, preferred groups).
+3. The best cached release goes to your **debrid service** or your **Usenet provider**.
+4. A **mount** (cli_mount, Decypharr or Zurg + rclone) streams the files from the cloud. Nothing is downloaded to your server.
+5. cli_debrid files them into your **library**, as Plex-tracked items or a symlinked folder tree, tells your media server to scan, and keeps looking for **upgrades**.
 
 ## Key Features
 
-- **Automated Media Management**: Continuously scans for new content and upgrades existing media.
-- **Multiple Content Sources**: Supports MDBList, Trakt, Overseerr and more.
-- **Intelligent Scraping**: Uses multiple scrapers to find the best quality content available.
-- **Real-Debrid Integration**: Uses Real-Debrid for cached/uncached content. More providers to come in the future.
-- **Upgrading Function**: Automatically seeks and applies upgrades for newly added content.
-- **Web Interface**: Provides a user-friendly web interface for monitoring.
-- **Metadata Battery**: Metadata is stored locally in a battery to avoid over-usage of APIs.
+### Getting content
+- **Debrid providers:** Real-Debrid, AllDebrid, Premiumize, TorBox and Debrid-Link.
+- **Usenet:** NZBs from your Newznab indexers, streamed through [cli_mount](https://github.com/mash2k3/decypharr/tree/dev), NzbDAV or Zurg, with no download step. Usenet can be used alone or next to a debrid service.
+- **Scrapers:** Torrentio, Jackett, Prowlarr, Zilean, Nyaa, MediaFusion, AIOStreams and Newznab, with SeaDex for best-release anime picks.
+- **Content sources:** MDBList, Trakt (watchlists, lists, collection, friends), Plex (your watchlist, other users' and friends' watchlists, RSS), Seerr/Overseerr, Agregarr, Scrob, Adaptive Lists and your existing collection.
+- **Manual and magnet assign:** paste a magnet, torrent or NZB, then map the files to episodes yourself or let the matcher do it. It understands season packs, absolute-numbered anime packs and multi-episode files, and can replace episodes already in your library.
+
+### Keeping it healthy
+- **Upgrading:** collected items keep getting checked for better releases within your upgrade window.
+- **Repair:** broken or incomplete files (dead torrents, missing Usenet articles) are detected and replaced automatically.
+- **Blacklisting and not-wanted lists:** bad releases aren't picked again.
+- **Sync deletions:** removing something from your media server or a source can remove it from cli_debrid too.
+
+### Anime and TV
+- **Absolute numbering:** packs like `Show - 152.mkv` or `S01E152` are matched to the right season and episode.
+- **Episode orders:** each show can follow TVDB aired, DVD or absolute order, or any TMDB episode group. Collected files are renamed to match, and Plex's ordering is kept in sync.
+- **Per-show anime setting**, romaji and alternative-title searching, and seasons that are really movies (e.g. *Initial D Third Stage*).
+
+### Library and media servers
+- **Plex or symlinked library:** Plex mode tracks your library through Plex's API. Symlinked mode builds a clean folder tree from your mount, with naming templates, for Plex, Jellyfin or Emby.
+- **Plex extras:** collections, smart collections, labels, movie box sets and poster overlays.
+- **Subtitles:** built-in subtitle downloading, or let Bazarr connect to cli_debrid as if it were Radarr/Sonarr.
+
+### Web interface
+- **Library, Discover, Calendar, Upgrade Hub, Debrid Manager, Statistics and Task Manager.**
+- **Scraper Tester:** see exactly how each release is scored, and tune your Versions until the right one wins.
+- **Multiple users** with roles (admin, user, requester) and optional SSO (Authentik, Authelia or generic OIDC).
+- **AI Butler:** an optional chat assistant through [OpenClaw](https://godver3.github.io/cli_docs/integrations/openclaw/).
+- **Notifications:** Discord, Telegram, NTFY and Email.
+- **Metadata battery:** metadata is cached locally to keep external API calls to a minimum.
+
+## Usenet
+
+cli_debrid can use Usenet as a source alongside, or instead of, a debrid service:
+
+1. Add your Newznab indexers as scrapers ([guide](https://godver3.github.io/cli_docs/scrapers/newznab/)).
+2. Set up a Usenet provider. **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** is recommended ([setup guide](https://godver3.github.io/cli_docs/integrations/cli_mount/)), and NzbDAV and Zurg are also supported. cli_mount streams NZBs straight from your news server through the same mount it uses for debrid, so nothing is downloaded first.
+3. Enable Usenet under **Settings → Required Settings → Usenet Provider**.
+
+NZB results are ranked with your torrent results using the same Versions. Releases with missing articles are caught and replaced automatically. Coming from another Usenet setup? See [Usenet migration](https://godver3.github.io/cli_docs/features/usenet-migration/).
 
 ## Firefox Extension
 
-cli_debrid offers a Firefox extension called **cli_debrid magnet assign** that integrates with [debridmediamanager.com](https://debridmediamanager.com) to pre-populate the magnet assignment tool with information from DMM.com.
+cli_debrid offers a Firefox extension called **cli_debrid magnet assign** that integrates with [debridmediamanager.com](https://debridmediamanager.com) to pre-populate the magnet assignment tool with information from DMM.
 
 **Download**: [Firefox Add-on](https://addons.mozilla.org/firefox/downloads/file/4567721/baa7b13ad11b4c308b3e-1.2.xpi)
 
 **Requirements**: Minimum cli_debrid version 0.7.12
 
-This extension streamlines the process of assigning magnets to your media by automatically populating the magnet assignment tool with relevant information from DebridMediaManager - simply add your cli_debrid instance URL, username and password.
+Add your cli_debrid instance URL, username and password, and magnets you pick on DMM arrive in the assign tool already filled in.
 
-## Overall Program
+## Getting Started
 
-### Run Program
+New to cli_debrid? Start with the **[Getting Started guide](https://godver3.github.io/cli_docs/getting-started/)**: prerequisites, mounting your debrid storage, installing, and your first content sources and scrapers.
 
-The core functionality of the software. When started, it:
+### Quick Start (Docker)
 
-1. Determines your current existing content.
-2. Checks content sources for any wanted content that isn't already collected.
-3. Scrapes various sources for the best quality versions of wanted content.
-4. Manages downloads through your Debrid provider.
-5. Seeks upgrades for your media if available.
+```bash
+mkdir -p ${HOME}/cli_debrid && cd ${HOME}/cli_debrid
+curl -O https://raw.githubusercontent.com/godver3/cli_debrid/main/docker-compose.yml
+docker compose up -d
+```
+
+Then open `http://your-server-ip:5000` and follow the onboarding wizard.
+
+cli_debrid is built for both AMD64 and ARM64:
+
+- **Stable**: `godver3/cli_debrid:main` / `godver3/cli_debrid:main-arm64`
+- **Dev**: `godver3/cli_debrid:dev` / `godver3/cli_debrid:dev-arm64`
+
+You'll also need a mount for your debrid and/or Usenet files. cli_debrid works best with **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)**, mash2k3's fork of Decypharr built alongside cli_debrid. It handles debrid and Usenet in one container and talks to cli_debrid directly for repairs and imports.
+
+| Mount | Debrid | Usenet | Notes |
+|---|---|---|---|
+| [cli_mount](https://github.com/mash2k3/decypharr/tree/dev) ([setup](https://godver3.github.io/cli_docs/integrations/cli_mount/)) | ✓ | ✓ | **Recommended.** All-in-one, built for cli_debrid |
+| [Decypharr](https://godver3.github.io/cli_docs/integrations/decypharr/) | ✓ | | All-in-one debrid mount |
+| [Zurg](https://godver3.github.io/cli_docs/integrations/zurg/) + rclone | ✓ | ✓ (Zurg 2.0) | Long-standing Real-Debrid favourite |
+
+*If running on Windows, Developer Mode must be enabled to allow symlinking. Plex does not support symlinks on Windows, so Jellyfin is the better choice there when using symlinks.*
+
+### Documentation
+
+- **Installing:** [Docker](https://godver3.github.io/cli_docs/installation/docker/), [Unraid](https://godver3.github.io/cli_docs/installation/unraid/), [Portainer/Dockge](https://godver3.github.io/cli_docs/installation/portainer-dockge/), [Proxmox](https://godver3.github.io/cli_docs/installation/proxmox/), [TrueNAS](https://godver3.github.io/cli_docs/installation/truenas/), [Ubuntu](https://godver3.github.io/cli_docs/installation/ubuntu/), [Windows](https://godver3.github.io/cli_docs/installation/windows/), [Updating](https://godver3.github.io/cli_docs/installation/updating/)
+- **Configuring:** [Required](https://godver3.github.io/cli_docs/configuration/required/), [Content Sources](https://godver3.github.io/cli_docs/configuration/content-sources/), [Scrapers](https://godver3.github.io/cli_docs/configuration/scrapers/), [Versions](https://godver3.github.io/cli_docs/configuration/versions/), [Users](https://godver3.github.io/cli_docs/configuration/manage-users/), [Notifications](https://godver3.github.io/cli_docs/configuration/notifications/)
+- **Scrapers:** [Torrentio](https://godver3.github.io/cli_docs/scrapers/torrentio/), [Jackett](https://godver3.github.io/cli_docs/scrapers/jackett/), [Prowlarr](https://godver3.github.io/cli_docs/scrapers/prowlarr/), [Zilean](https://godver3.github.io/cli_docs/scrapers/zilean/), [Nyaa](https://godver3.github.io/cli_docs/scrapers/nyaa/), [MediaFusion](https://godver3.github.io/cli_docs/scrapers/mediafusion/), [AIOStreams](https://godver3.github.io/cli_docs/scrapers/aiostreams/), [Newznab](https://godver3.github.io/cli_docs/scrapers/newznab/)
+- **Integrations:** [cli_mount](https://godver3.github.io/cli_docs/integrations/cli_mount/), [Decypharr](https://godver3.github.io/cli_docs/integrations/decypharr/), [Zurg](https://godver3.github.io/cli_docs/integrations/zurg/), [Plex](https://godver3.github.io/cli_docs/integrations/plex/), [Jellyfin](https://godver3.github.io/cli_docs/integrations/jellyfin/), [Seerr](https://godver3.github.io/cli_docs/integrations/seerr/), [OpenClaw](https://godver3.github.io/cli_docs/integrations/openclaw/)
+- **Features:** [Library](https://godver3.github.io/cli_docs/features/library/), [Queues](https://godver3.github.io/cli_docs/features/queues/), [Upgrade Hub](https://godver3.github.io/cli_docs/features/upgrade-hub/), [Discover](https://godver3.github.io/cli_docs/features/discover/), [Overlays](https://godver3.github.io/cli_docs/features/overlays/), [Plex Collections](https://godver3.github.io/cli_docs/features/plex-collections/), [Debrid Manager](https://godver3.github.io/cli_docs/features/debrid-manager/), [Scraper Tester](https://godver3.github.io/cli_docs/features/scraper-tester/), [Task Manager](https://godver3.github.io/cli_docs/features/task-manager/), [AI Butler](https://godver3.github.io/cli_docs/features/ai-butler/)
+- **Troubleshooting:** [FAQ](https://godver3.github.io/cli_docs/faq/), [Debug Functions](https://godver3.github.io/cli_docs/features/debug-functions/)
 
 ### dev vs main
 
-dev is the latest version of cli_debrid. It is generally recommended for day to day use as issues are most quickly identified in dev.
+**main** is the stable release
 
-main is the stable version of cli_debrid. main tends to fall behind dev and is not highly recommended.
+**dev** gets new features and fixes first. It is a good choice if you want the latest changes and don't mind reporting the occasional issue.
 
-Development generally works on a 6-8 week cycle, with dev being moved to main at the end of each cycle.
-
-### Library Management
-
-Supports either a Plex or Symlinked library:
-
-- Plex: Uses Plex's API to get your library and track what you have.
-- Symlinked: Uses a local folder structure to track your library.
-- *Important - if running on Windows, Developer Mode must be enabled to allow symlinking! Additionally Plex does not support symlinks on Windows, meaning Jellyfin is the best option on Windows when using symlinks*
-
-### Settings
-
-A settings menu allows you to configure all program settings:
-
-- Required settings (Plex, Debrid Provider, Trakt)
-- Scrapers (Zilean, Jackett, Torrentio, Nyaa)
-- Scraping settings (Quality preferences, filters)
-- Content sources (MDBList, Collected content, Trakt watchlists/lists, Overseerr)
-- Additional settings (UI settings, TMDB key, Metadata age threshold, deletions syncing, queue management)
-- Advanced settings
-- Notifications (Discord, Email, Telegram, NTFY)
-- Reverse Parser (used to assign versions to existing content through regex terms)
-- Debug settings
-
-### Manual/Testing Scraper
-
-Allows you to manually initiate scraping for specific content. The Testing Scraper allows you to fine tune your scraping settings and weights to ensure your preferred releases are grabbed.
-
-### Debug Functions
-
-Provides various debugging tools for advanced users.
-
-## Detailed Queue Operations
-<details>
-<summary>Queue Processing Intervals</summary>
-<br>
-cli_debrid processes different queues at various intervals to optimize performance and resource usage. Here are the default processing intervals for each queue:
-
-- Wanted Queue: Every 5 seconds - Moves items to either Scraping or Unreleased queues
-- Scraping Queue: Every 5 seconds - Searches for items and moves into Adding or Sleeping (if not found)
-- Adding Queue: Every 5 seconds - Adds items to Real Debrid or moves into Sleeping (if failed)
-- Checking Queue: Every 5 minutes (300 seconds) - Runs a Plex Recently Added scan and marks items as Collected if found. If an item isn't found for 6 hours move the item back into Wanted and mark the magnet as unwanted
-- Sleeping Queue: Every 15 minutes (900 seconds) - Details below, used for items that have not yet been scraped successfully
-- Upgrading Queue: Every 5 minutes (300 seconds) - Checks for items eligible for upgrades every 5 minutes
-
-</details>
-<details>
-<summary>Additional Tasks and Their Intervals</summary>
-<br>
-Additional task information:
-
-- Full Plex Scan: Every 1 hour (3600 seconds)
-- Overseerr Wanted Content Check: Every 15 minutes (900 seconds)
-- MDBList Wanted Content Check: Every 15 minutes (900 seconds)
-- Debug Log: Every 1 minute (60 seconds)
-- Refresh Release Dates: Every 1 hour (3600 seconds)
-- Collected Wanted Content Check: Every 24 hours (86400 seconds)
-- Tasks can be managed/enabled through the Task Manager page
-
-</details>
-<details>
-<summary>Upgrading Queue Criteria</summary>
-<br>
-Items are added to the Upgrading Queue when:
-
-- They are successfully added to Real-Debrid and moved to the Checking Queue.
-- They were released within the past week
-
-Items in the Upgrading Queue are processed every 60 minutes to check for potential quality upgrades for recently added content.
-</details>
-<details>
-<summary>Sleep and Wake Mechanism</summary>
-<br>
-Items in the Sleeping Queue use a wake count system:
-
-- Initial sleep duration: 30 minutes
-- After each sleep cycle, the wake count for the item is incremented
-- Default wake limit: 3 attempts (configurable in settings)
-- If an item reaches the wake limit, it's moved to the Blacklisted state
-- Items with a release date older than one week are also moved to the Blacklisted state
-
-</details>
-<details>
-<summary>Blacklisting</summary>
-<br>
-Items are blacklisted (moved to the Blacklisted state) when:
-
-- They exceed the wake limit in the Sleeping Queue
-- Their release date is more than one week old and weren't found on first scrape
-
-Blacklisted items are no longer processed by the queue system. Blacklisted items are woken per your Blacklist Duration if enabled.
-</details>
-<details>
-<summary>Multi-pack Processing</summary>
-<br>
-When a multi-pack result (e.g., a full season) is found:
-
-- The original item is moved to the Checking Queue
-- All matching episodes in the Wanted, Scraping, and Sleeping queues are also moved to the Checking Queue
-- All moved items are added to the Upgrading Queue for potential future upgrades
-
-</details>
-<details>
-<summary>Webhook Support</summary>
-<br>
-cli_debrid supports webhooks from Overseerr:
-
-- Receives notifications for new content requests
-- Processes the webhook data and adds new items to the Wanted Queue
-- To use, enable the Webhook agent in Overseerr, set the URL to https://localhost:5000/webhook (or wherever Overseerr can see your cli_debrid instance at) and enable Notifications for "Request Pending Approval" and "Request Automatically Approved"
-
-cli_debrid can also receive webhooks from Zurg to process non-cli_debrid added items (i.e. through DebridMediaManager)
-
-See the [Wiki](https://github.com/godver3/cli_debrid/wiki/Webhooks) for more details
-
-</details>
+Development works in cycles, with dev merged into main at the end of each one.
 
 ## Philosophy
 
 ### Database and "I Know What I Got"
 
-cli_debrid maintains a local database of your media collection, keeping track of what you have and what quality it's in. This "I Know What I Got" approach allows cli_debrid to maintain a list of what you have, and what you want. Other philosophies include minimized API calls, high specificity in scraping, and an easy to use interface, with a fulsome backend.
-
-## Required Components
-
-- **Plex or Jellyfin**: Used as the primary source of information about your current media collection.
-- **Trakt Account**: Used by our Metadata Battery to retrieve all needed Metadata.
-- **Debrid Provider**: A Real-Debrid API key.
-- **Method to Mount Media from Debrid Provider**: While we don't require Zurg, we highly recommend this as a very effective way to locally mount your Debrid Provider's content locally for Plex to see.
-
-## Other Settings
-
-- **TMDB API Key**: Used to retrieve Home Screen posters.
-
-## Getting Started
-
-### Prerequisites
-
-- Docker and Docker Compose installed on your system
-- A Plex server
-- An Overseerr instance
-- A Real-Debrid or account
-
-### Setup Instructions
-
-1. Create a directory for cli_debrid:
-   ```
-   mkdir -p ${HOME}/cli_debrid
-   ```
-
-2. Download the `docker-compose.yml` file from the repository:
-   ```
-   cd ${HOME}/cli_debrid
-   curl -O https://raw.githubusercontent.com/godver3/cli_debrid/main/docker-compose.yml
-   ```
-
-3. Edit the `docker-compose.yml` file to match your local folder structure.
-  
-4. Start the container:
-   ```
-   cd ${HOME}/cli_debrid
-   docker-compose up -d
-   ```
-
-5. Access the web interface:
-   Open a web browser and navigate to `http://your-server-ip:5000`
-
-### Other Notes
-
-cli_debrid is built for both AMD64 and ARM64 using tags:
-
-- dev:
-  - godver3/cli_debrid:dev-arm64 (arm64)
-  - godver3/cli_debrid:dev (amd64)
-- stable:
-  - godver3/cli_debrid:main-arm64 (arm64)
-  - godver3/cli_debrid:main (amd64)
-
-latest can also be used which is pinned to the newest dev build. Alternatively cli_debrid is built for Windows as a frozen Python application
-
-### Post-Setup
-
-- Monitor the logs at `/host/location/logs` or wherever you have configured for log storage
-- Check the content of your queues in the webUI
-- Adjust settings as needed to scrape for exactly the results you want
-
-### Updating
-
-To update to the latest version of cli_debrid:
-
-```
-cd ${HOME}/cli_debrid
-docker-compose pull
-docker-compose up -d
-```
-
-This will pull the latest image and restart the container with the updated version.
+cli_debrid maintains a local database of your media collection, keeping track of what you have and what quality it's in. This "I Know What I Got" approach lets cli_debrid keep a list of what you have and what you want. Other goals are minimal API calls, high specificity in scraping, and an easy-to-use interface on top of a thorough backend.
 
 ## Issues
 
-Submit issues through Discord or GitHub issues. Try to include relevant logging, or at minimum error Tracebacks where possible. Preference is for Discord submission.
+Submit issues through Discord or GitHub issues. Include relevant logs, or at minimum error tracebacks, where possible. Discord is preferred. The **Share logs** button on the Logs page uploads your logs and current settings (tokens, keys and usernames redacted) and gives you a link to post.
 
 ## Contributing
 
-Please contribute through either Issues or by submitting code.
+Contributions are welcome through Issues or pull requests against the `dev` branch.
 
 ## License
 
-cli_debrid will always be free for anyone to use. 
+cli_debrid will always be free for anyone to use.
 
 ## Acknowledgements
 
@@ -287,7 +180,8 @@ Thanks to:
 
 - Various other projects that have come before this one, and likely do things better in many ways
 - Specific thanks to the NyaaPy, PTT/Parsett, and downsub libraries (https://github.com/JuanjoSalvador/NyaaPy, https://github.com/dreulavelle/PTT, and https://github.com/ericvlog/Downsub)
-- The original creator of plex_debrid
+- mash2k3 for [cli_mount](https://github.com/mash2k3/decypharr/tree/dev), the Decypharr fork that powers cli_debrid's debrid and Usenet mounting, and sirrobot01 for the original [Decypharr](https://github.com/sirrobot01/decypharr)
+- The original creator of plex_debrid.
 - Helpful communities of content creators
 
 ## Caveat

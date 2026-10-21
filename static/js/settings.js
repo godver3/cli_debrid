@@ -86,6 +86,7 @@ function togglePlexSection() {
     // Toggle path input fields and Plex symlink settings
     const originalFilesPath = document.getElementById('file management-original_files_path');
     const symlinkedFilesPath = document.getElementById('file management-symlinked_files_path');
+    const externalAddScan = document.getElementById('file management-scan_mount_for_external_adds');
     const plexSymlinkSettings = document.querySelectorAll('.symlink-plex-setting');
 
     if (fileManagementSelect) {
@@ -94,7 +95,9 @@ function togglePlexSection() {
         // Handle path fields
         const pathElements = [
             originalFilesPath?.closest('.settings-form-group'),
-            symlinkedFilesPath?.closest('.settings-form-group')
+            symlinkedFilesPath?.closest('.settings-form-group'),
+            // Symlink-mode only: the scan imports mount content by symlinking it
+            externalAddScan?.closest('.settings-form-group')
         ].filter(Boolean);
 
         pathElements.forEach(element => {
@@ -150,7 +153,17 @@ export function updateSettings() {
 
         // Skip hidden inputs and inputs inside hidden containers
         // This prevents hidden duplicate fields from overwriting visible ones
-        if (input.offsetParent === null && input.type !== 'hidden') return;
+        // EXCEPTION: Include inputs with data-section attribute (legitimate settings in collapsed sections),
+        // BUT exclude inputs inside mode-switching panels that are currently display:none — these panels
+        // contain duplicate fields that would overwrite the visible counterparts (e.g. plex library fields
+        // duplicated across #plex-settings-in-file-management and .symlink-plex-setting).
+        if (input.offsetParent === null && input.type !== 'hidden') {
+            if (!input.hasAttribute('data-section')) return;
+            // Check if a nearest ancestor panel (not a collapsible settings-section-content) is display:none.
+            // Mode-switching panels are direct children of the form or have specific ids/classes.
+            const hiddenPanel = input.closest('#plex-settings-in-file-management, #jellyfin-settings-in-file-management, .symlink-plex-setting');
+            if (hiddenPanel && hiddenPanel.style.display === 'none') return;
+        }
         
         let value = input.value;
         
@@ -201,7 +214,73 @@ export function updateSettings() {
         settingsData['Custom Post-Processing'][key] = input.type === 'checkbox' ? input.checked : input.value;
     });
 
-    
+    // Create Bazarr Integration section if it doesn't exist
+    if (!settingsData['Bazarr Integration']) {
+        settingsData['Bazarr Integration'] = {};
+    }
+
+    // Handle Bazarr Integration settings
+    const bazarrIntegrationInputs = document.querySelectorAll('[id^="bazarr-"][name^="Bazarr Integration."]');
+    bazarrIntegrationInputs.forEach(input => {
+        const key = input.name.split('.')[1];
+        settingsData['Bazarr Integration'][key] = input.type === 'checkbox' ? input.checked : input.value;
+    });
+
+    // Create AI Assistant section if it doesn't exist
+    if (!settingsData['AI Assistant']) {
+        settingsData['AI Assistant'] = {};
+    }
+
+    // Handle AI Assistant settings
+    const aiAssistantInputs = document.querySelectorAll('[name^="AI Assistant."]');
+    aiAssistantInputs.forEach(input => {
+        const parts = input.name.split('.');
+        // parts[0] = 'AI Assistant', parts[1] = key or sub-section, parts[2] = sub-key (optional)
+        const val = input.type === 'checkbox' ? input.checked : input.value;
+        if (parts.length === 3) {
+            // nested: e.g. AI Assistant.plex_labels.enabled
+            if (!settingsData['AI Assistant'][parts[1]] || typeof settingsData['AI Assistant'][parts[1]] !== 'object') {
+                settingsData['AI Assistant'][parts[1]] = {};
+            }
+            settingsData['AI Assistant'][parts[1]][parts[2]] = val;
+        } else {
+            settingsData['AI Assistant'][parts[1]] = val;
+        }
+    });
+
+
+    // Handle Plex Smart Collections settings
+    if (!settingsData['Plex Smart Collections']) {
+        settingsData['Plex Smart Collections'] = {};
+    }
+    const plexSmartInputs = document.querySelectorAll('[name^="Plex Smart Collections."]');
+    plexSmartInputs.forEach(input => {
+        const parts = input.name.split('.');
+        const val = input.type === 'checkbox' ? input.checked :
+                    (input.type === 'range' || input.type === 'number') ? parseFloat(input.value) || 0 :
+                    input.value;
+        if (parts.length >= 2) {
+            settingsData['Plex Smart Collections'][parts[1]] = val;
+        }
+    });
+
+    // Handle Plex Movie Box Sets settings
+    if (!settingsData['Plex Movie Box Sets']) {
+        settingsData['Plex Movie Box Sets'] = {};
+    }
+    const plexBoxSetsInputs = document.querySelectorAll('[name^="Plex Movie Box Sets."]');
+    plexBoxSetsInputs.forEach(input => {
+        const parts = input.name.split('.');
+        const key = parts[1];
+        const val = input.type === 'checkbox' ? input.checked :
+                    (input.type === 'range' || input.type === 'number') ? parseFloat(input.value) || 0 :
+                    key === 'min_movies' ? parseInt(input.value, 10) || 2 :
+                    input.value;
+        if (parts.length >= 2) {
+            settingsData['Plex Movie Box Sets'][key] = val;
+        }
+    });
+
     // Ensure UI Settings section exists
     if (!settingsData['UI Settings']) {
         settingsData['UI Settings'] = {};
@@ -290,7 +369,18 @@ export function updateSettings() {
             const sourceData = {};
             sourceData.versions = [];
 
+            // scrob-list-multiselect is a picker UI only (no name attribute) — its
+            // selection is mirrored into a real hidden input by initializeScrobListPickers().
+            // Excluded here so it isn't collected as a nameless '' field.
             section.querySelectorAll('input, select, textarea').forEach(input => {
+                if (input.classList.contains('scrob-list-multiselect')) {
+                    return;
+                }
+
+                // Skip radio buttons that are not checked - otherwise the last radio in a
+                // group would always win regardless of the user's selection.
+                if (input.type === 'radio' && !input.checked) return;
+
                 const nameParts = input.name.split('.');
                 // nameParts = ['Content Sources', 'Trakt Lists_1', 'plex_labels', 'enabled']
                 // We need everything after the source ID (index 2+)
@@ -312,6 +402,10 @@ export function updateSettings() {
                     const finalKey = fieldPath[fieldPath.length - 1];
                     if (input.type === 'checkbox') {
                         current[finalKey] = input.checked;
+                    } else if (finalKey === 'poster_design') {
+                        current[finalKey] = parseInt(input.value) || 0;
+                    } else if (finalKey === 'libraries') {
+                        try { current[finalKey] = JSON.parse(input.value) || []; } catch(e) { current[finalKey] = []; }
                     } else {
                         current[finalKey] = input.value;
                     }
@@ -411,9 +505,13 @@ export function updateSettings() {
             }
 
             const scraperId = header.textContent.trim();
-            
+
+            // Get type from the hidden type input if present (handles custom-named scrapers like Newznab)
+            const typeInput = section.querySelector('input[name$=".type"]');
+            const scraperType = typeInput ? typeInput.value : scraperId.split('_')[0];
+
             const scraperData = {
-                type: scraperId.split('_')[0] // Extract type from the scraper ID
+                type: scraperType
             };
 
             // Collect all input fields for this scraper
@@ -433,7 +531,7 @@ export function updateSettings() {
     }
 
     // Remove any scrapers that are not actual scrapers
-    const validScraperTypes = ['Zilean', 'MediaFusion', 'AIOStreams', 'AIOStreams-API', 'Jackett', 'Torrentio', 'Nyaa', 'OldNyaa', 'Prowlarr'];
+    const validScraperTypes = ['Zilean', 'MediaFusion', 'AIOStreams', 'AIOStreams-API', 'Jackett', 'Torrentio', 'Nyaa', 'Prowlarr', 'OldNyaa', 'Newznab'];
     if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
         Object.keys(settingsData['Scrapers']).forEach(key => {
             if (settingsData['Scrapers'][key] && settingsData['Scrapers'][key].type && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
@@ -443,7 +541,7 @@ export function updateSettings() {
     }
     
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider', 'Usenet Provider', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Scrob', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -555,7 +653,8 @@ export function updateSettings() {
                             const weight = parseInt(item.querySelector('.filter-weight')?.value) || 1;
                             versionData[filterType].push([term, weight]);
                         } else {
-                            versionData[filterType].push(term);
+                            const source = item.querySelector('.filter-source')?.value || 'both';
+                            versionData[filterType].push({pattern: term, source: source});
                         }
                     }
                 });
@@ -600,6 +699,12 @@ export function updateSettings() {
     const tmdbApiKeyInput = document.getElementById('tmdb-api-key');
     if (tmdbApiKeyInput) {
         settingsData['TMDB']['api_key'] = tmdbApiKeyInput.value;
+    }
+
+    // Add TMDB certification region
+    const tmdbCertificationRegionSelect = document.getElementById('tmdb-certification-region');
+    if (tmdbCertificationRegionSelect) {
+        settingsData['TMDB']['certification_region'] = tmdbCertificationRegionSelect.value;
     }
 
     // Add this block to handle the Uncached Handling Method
@@ -749,12 +854,18 @@ export function updateSettings() {
     }
 
     // Handle Disable Content Source Caching
-    const disableContentSourceCaching = document.getElementById('debug-disable_content_source_caching'); 
-    
+    const disableContentSourceCaching = document.getElementById('debug-disable_content_source_caching');
+
     if (disableContentSourceCaching) {
         settingsData['Debug']['disable_content_source_caching'] = disableContentSourceCaching.checked;
 
     } else {
+    }
+
+    const emphasizeNumberOfItemsOverQuality = document.getElementById('debug-emphasize_number_of_items_over_quality');
+
+    if (emphasizeNumberOfItemsOverQuality) {
+        settingsData['Debug']['emphasize_number_of_items_over_quality'] = emphasizeNumberOfItemsOverQuality.checked;
     }
 
     const enableUpgrading = document.getElementById('scraping-enable_upgrading');
@@ -815,9 +926,17 @@ export function updateSettings() {
     }
 
     const disableAdult = document.getElementById('scraping-disable_adult');
-    
+
     if (disableAdult) {
         settingsData['Scraping']['disable_adult'] = disableAdult.checked;
+
+    } else {
+    }
+
+    const enableSeadexPriority = document.getElementById('scraping-enable_seadex_priority');
+
+    if (enableSeadexPriority) {
+        settingsData['Scraping']['enable_seadex_priority'] = enableSeadexPriority.checked;
 
     } else {
     }
@@ -942,6 +1061,15 @@ export function updateSettings() {
     } else {
     }
 
+    // Collect NAS paths as array
+    const nasPathInputs = document.querySelectorAll('.nas-path-input');
+    if (nasPathInputs.length > 0) {
+        if (!settingsData['Debug']) settingsData['Debug'] = {};
+        settingsData['Debug']['nas_paths'] = Array.from(nasPathInputs)
+            .map(inp => inp.value.trim())
+            .filter(v => v);
+    }
+
     const animeRenamingUsingAnidb = document.getElementById('scraping-anime_renaming_using_anidb');
     
     if (animeRenamingUsingAnidb) {
@@ -960,6 +1088,31 @@ export function updateSettings() {
         settingsData['Debrid Provider']['provider'] = debridProvider.value;
 
     } else {
+    }
+
+    // Usenet Provider settings
+    const usenetEnabled = document.getElementById('usenet_provider-enabled');
+    const usenetUrl = document.getElementById('usenet_provider-url');
+    const usenetToken = document.getElementById('usenet_provider-api_token');
+    const usenetFolder = document.getElementById('usenet_provider-download_folder');
+    const usenetDataPath = document.getElementById('usenet_provider-data_path');
+    const usenetNzbNaming = document.getElementById('usenet_provider-enable_nzb_naming');
+    const usenetRetentionDays = document.getElementById('usenet_provider-retention_days');
+    const usenetDisableSeasonPacks = document.getElementById('usenet_provider-disable_nzb_season_packs');
+    if (usenetEnabled || usenetUrl || usenetToken || usenetFolder || usenetDataPath || usenetNzbNaming || usenetRetentionDays || usenetDisableSeasonPacks) {
+        if (!settingsData['Usenet Provider']) settingsData['Usenet Provider'] = {};
+        if (usenetEnabled) settingsData['Usenet Provider']['enabled'] = usenetEnabled.checked;
+        if (usenetUrl) settingsData['Usenet Provider']['url'] = usenetUrl.value;
+        if (usenetToken) settingsData['Usenet Provider']['api_token'] = usenetToken.value;
+        if (usenetFolder) settingsData['Usenet Provider']['download_folder'] = usenetFolder.value;
+        if (usenetDataPath) settingsData['Usenet Provider']['data_path'] = usenetDataPath.value;
+        if (usenetNzbNaming) settingsData['Usenet Provider']['enable_nzb_naming'] = usenetNzbNaming.checked;
+        if (usenetRetentionDays) {
+            // 0 is a real choice (retention filter off); only an empty/invalid field falls back to the default.
+            const retentionDays = parseInt(usenetRetentionDays.value, 10);
+            settingsData['Usenet Provider']['retention_days'] = Number.isNaN(retentionDays) ? 5000 : Math.max(0, retentionDays);
+        }
+        if (usenetDisableSeasonPacks) settingsData['Usenet Provider']['disable_nzb_season_packs'] = usenetDisableSeasonPacks.checked;
     }
 
     const updatePlexOnFileDiscovery = document.getElementById('plex-update_plex_on_file_discovery');
@@ -984,6 +1137,24 @@ export function updateSettings() {
         settingsData['Plex']['mounted_file_location'] = mountedFileLocation.value;
 
     } else {
+    }
+
+    const plexDataPath = document.getElementById('additional-plex_data_path');
+
+    if (plexDataPath) {
+        if (!settingsData['Overlay Settings']) {
+            settingsData['Overlay Settings'] = {};
+        }
+        settingsData['Overlay Settings']['plex_data_path'] = plexDataPath.value;
+    }
+
+    const overlayContentCheckDays = document.getElementById('additional-overlay_content_check_interval_days');
+
+    if (overlayContentCheckDays) {
+        if (!settingsData['Overlay Settings']) {
+            settingsData['Overlay Settings'] = {};
+        }
+        settingsData['Overlay Settings']['overlay_content_check_interval_days'] = parseInt(overlayContentCheckDays.value) || 7;
     }
 
     const doNotAddPlexWatchHistoryItemsToQueue = document.getElementById('scraping-do_not_add_plex_watch_history_items_to_queue');
@@ -1037,6 +1208,18 @@ export function updateSettings() {
     .then(response => response.json())
     .then(data => {
         console.log("Server response:", data);
+
+        // Save smart collection states AFTER main save completes (avoids race condition)
+        var smartCols = {};
+        document.querySelectorAll('.smart-coll-cb').forEach(function(cb) {
+            smartCols[cb.dataset.rk] = {enabled: cb.checked, title: cb.dataset.title, section: cb.dataset.section, type: cb.dataset.type};
+        });
+        if (Object.keys(smartCols).length > 0) {
+            fetch('/settings/api/plex-smart-collections', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({collections: smartCols})
+            }).catch(function() {});
+        }
 
         if (data.status === 'success') {
             // Determine the success message based on restart requirement
@@ -1119,10 +1302,15 @@ function updateContentSourceCheckPeriods() {
         'Trakt Watchlist': 900,
         'Trakt Lists': 900,
         'Trakt Collection': 900,
+        'Special Trakt Lists': 900,
+        'Scrob Lists': 900,
+        'Scrob Collection': 900,
+        'Special Scrob Lists': 900,
         'My Plex Watchlist': 900,
         'Other Plex Watchlist': 900,
         'My Plex RSS Watchlist': 900,
         'My Friends Plex RSS Watchlist': 900,
+        'Plex Friends Watchlist': 900,
         'Adaptive List': 900
     };
 
@@ -1361,3 +1549,20 @@ function saveSingleSetting(section, key, value) {
         return false;
     });
 }
+
+function addNasPath() {
+    const container = document.getElementById('nas-paths-container');
+    if (!container) return;
+    const row = document.createElement('div');
+    row.className = 'nas-path-row';
+    row.style.cssText = 'display:flex;gap:8px;margin-bottom:6px;';
+    row.innerHTML = '<input type="text" class="settings-input nas-path-input" data-section="Debug" data-key="nas_paths" placeholder="e.g. /MySamsungNAS_Movies/">' +
+                    '<button type="button" class="btn-danger" onclick="removeNasPath(this)" style="padding:4px 10px;">✕</button>';
+    container.appendChild(row);
+}
+window.addNasPath = addNasPath;
+
+function removeNasPath(btn) {
+    btn.closest('.nas-path-row').remove();
+}
+window.removeNasPath = removeNasPath;

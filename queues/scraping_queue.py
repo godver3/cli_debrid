@@ -8,9 +8,27 @@ import re
 
 from utilities.settings import get_setting
 from scraper.scraper import scrape
-from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
+from scraper.functions.anime_utils import absolute_episode_for
+from database.core import retry_on_db_lock
+from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted, is_nzb_guid_not_wanted, get_base_filename
 from cli_battery.app.direct_api import DirectAPI
 from routes.notifications import send_upgrade_failed_notification
+
+
+def _is_excluded_release(item: Dict[str, Any], result: Dict[str, Any]) -> bool:
+    """True if `result` is the release the item was just moved away from via the
+    library "Move to Wanted" button (item['excluded_release_id']). One-shot,
+    per-item exclusion — unrelated to the global not-wanted lists."""
+    excluded = item.get('excluded_release_id')
+    if not excluded:
+        return False
+    candidate = result.get('magnet') or result.get('nzb_url')
+    if not candidate:
+        return False
+    try:
+        return get_base_filename(excluded) == get_base_filename(candidate)
+    except Exception:
+        return excluded == candidate
 
 
 class ScrapingQueue:
@@ -191,20 +209,26 @@ class ScrapingQueue:
             logging.warning("Attempted to remove item without ID from ScrapingQueue.")
         # else: item not found in memory
 
+    @retry_on_db_lock()
     def reset_not_wanted_check(self, item_id):
-        """Reset the disable_not_wanted_check flag after scraping is complete"""
+        """Reset the disable_not_wanted_check flag and any one-shot excluded_release_id
+        (set by the library "Move to Wanted" button) after scraping is complete."""
         from database import get_db_connection
+        import sqlite3
         conn = get_db_connection()
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE media_items 
-                SET disable_not_wanted_check = FALSE
+                UPDATE media_items
+                SET disable_not_wanted_check = FALSE,
+                    excluded_release_id = NULL
                 WHERE id = ?
             """, (item_id,))
             conn.commit()
+        except sqlite3.OperationalError:
+            raise
         except Exception as e:
-            logging.error(f"Error resetting disable_not_wanted_check flag: {str(e)}")
+            logging.error(f"Error resetting disable_not_wanted_check/excluded_release_id: {str(e)}")
         finally:
             conn.close()
 
@@ -224,6 +248,15 @@ class ScrapingQueue:
             item_id_being_processed = item_to_process['id'] # Store ID for later check
             item_identifier = queue_manager.generate_identifier(item_to_process)
             processed_successfully_or_moved = False # Flag to track if item was moved/handled
+
+            # self.items is only synced with the DB once per tick, and Adding runs
+            # concurrently: a season pack added for a sibling moves the rest of the
+            # season to Checking mid-tick. Don't re-scrape an item that has moved on.
+            _live_item = get_media_item_by_id(item_id_being_processed)
+            if _live_item is not None and _live_item.get('state') != 'Scraping':
+                logging.info(f"Skipping {item_identifier}: state is now {_live_item.get('state')}, no longer Scraping")
+                self.remove_item(item_to_process)
+                return True
 
             if str(item_id_being_processed) == DEBUG_ITEM_ID:
                 # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Now being processed at the start of ScrapingQueue.process(). Force_priority: {item_to_process.get('force_priority', False)}")
@@ -274,7 +307,103 @@ class ScrapingQueue:
                 # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] PASSED alternate scrape window check.")
                 pass
 
-            # --- START: Check if related item is in Adding Queue --- 
+            # A manual retry (usenet/repair_engine.retry_exhausted_item) skips
+            # coalescing on its very next scrape pass — it was retried
+            # specifically to get away from a broken job, and blindly
+            # coalescing into a sibling that still points at that same (or
+            # another dead) job can loop it forever. Every other item's
+            # coalescing behavior below is completely unchanged.
+            _skip_coalesce_manual_retry = False
+            try:
+                from usenet.repair_engine import _manual_retry_pending, _manual_retry_pending_lock
+                with _manual_retry_pending_lock:
+                    if item_to_process.get('id') in _manual_retry_pending:
+                        _manual_retry_pending.discard(item_to_process.get('id'))
+                        _skip_coalesce_manual_retry = True
+            except Exception:
+                pass
+
+            # --- NZB season pack coalescing: if another episode of the same show/season
+            # is already in Adding or Checking with an NZB job, reuse that job directly
+            # instead of scraping again (which would pick a different season pack NZB).
+            if item_to_process.get('type') == 'episode' and not _skip_coalesce_manual_retry:
+                _coalesce_imdb = item_to_process.get('imdb_id')
+                _coalesce_season = item_to_process.get('season_number')
+                if _coalesce_imdb and _coalesce_season is not None:
+                    try:
+                        _coalesce_version = (item_to_process.get('version') or '').rstrip('*')
+                        from database import get_db_connection as _gdb
+                        _cconn = _gdb()
+                        try:
+                            _sibling_nzb = _cconn.execute(
+                                "SELECT filled_by_torrent_id, filled_by_file, filled_by_magnet, "
+                                "filled_by_title, original_scraped_torrent_title, nzb_segment_id, "
+                                "current_score, resolution "
+                                "FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' "
+                                "AND state IN ('Adding','Checking','Collected','Upgrading') "
+                                "AND filled_by_torrent_id LIKE 'nzb:%' "
+                                "AND RTRIM(COALESCE(version, ''), '*') = ? LIMIT 1",
+                                (_coalesce_imdb, _coalesce_season, _coalesce_version)
+                            ).fetchone()
+                        finally:
+                            _cconn.close()
+                        # A sibling job is only safe to reuse as a "season pack" if NONE of its
+                        # available release-identity fields reveal a specific episode marker.
+                        # Checking the scraped title alone is not enough: some indexers (e.g.
+                        # DrunkenSlug REPACK releases) publish a genuinely single-episode NZB
+                        # under a season-level release name like "Show.S03.REPACK.WEB-DL...",
+                        # with the real episode number appearing only in the inner filename once
+                        # downloaded, or only in filled_by_title if the filename is obfuscated.
+                        # Trusting one field by itself caused every other episode of that season
+                        # to silently reuse that one episode's file. is_likely_season_pack checks
+                        # every field (title, filename, job title) and requires at least one to
+                        # be non-empty, so an unresolved sibling's still-blank fields are never
+                        # mistaken for pack evidence.
+                        from debrid.common import is_likely_season_pack
+                        _coal_title = (_sibling_nzb[4] or '') if _sibling_nzb else ''  # original_scraped_torrent_title
+                        _coal_file = (_sibling_nzb[1] or '') if _sibling_nzb else ''  # filled_by_file
+                        _coal_job_title = (_sibling_nzb[3] or '') if _sibling_nzb else ''  # filled_by_title
+                        if _sibling_nzb and is_likely_season_pack(_coal_title, _coal_file, _coal_job_title):
+                            _job_id = _sibling_nzb[0]
+                            # Verify the shared job is still actually queryable on the provider
+                            # before reusing it - a job that completed and was since cleaned up
+                            # (or never existed) will ghost every retry forever if reused blindly,
+                            # since nothing else ever re-checks it once it's written to this item.
+                            _job_hash_for_check = _job_id[4:] if str(_job_id).startswith('nzb:') else _job_id
+                            try:
+                                from usenet import is_nzb_job_alive as _is_job_alive
+                                _coalesce_job_alive = _is_job_alive(_job_hash_for_check)
+                            except Exception:
+                                _coalesce_job_alive = True  # unknown due to error - don't block a legitimate reuse
+                            if not _coalesce_job_alive:
+                                logging.warning(f'[NZBPack] {item_identifier}: sibling job {_job_id} no longer alive on provider - not coalescing, submitting fresh')
+                            else:
+                                _job_url = _sibling_nzb[2] or ''
+                                _job_title = _sibling_nzb[3] or ''
+                                _job_orig = _sibling_nzb[4] or ''
+                                _job_seg = _sibling_nzb[5] or ''
+                                logging.info(f'[NZBPack] {item_identifier}: season pack already submitted (job={_job_id}), coalescing into same job')
+                                from database.database_writing import update_media_item, update_media_item_state
+                                update_media_item_state(item_to_process['id'], 'Adding')
+                                _coal_seg_kwargs = {'nzb_segment_id': _job_seg} if _job_seg else {}
+                                # Same release as the sibling's job, so same score/resolution.
+                                if _sibling_nzb[6]:
+                                    _coal_seg_kwargs['current_score'] = _sibling_nzb[6]
+                                if _sibling_nzb[7]:
+                                    _coal_seg_kwargs['resolution'] = _sibling_nzb[7]
+                                update_media_item(item_to_process['id'],
+                                    filled_by_torrent_id=_job_id,
+                                    filled_by_magnet=_job_url,
+                                    filled_by_title=_job_title,
+                                    original_scraped_torrent_title=_job_orig,
+                                    **_coal_seg_kwargs,
+                                )
+                                self.remove_item(item_to_process)
+                                return True
+                    except Exception as _ce:
+                        logging.debug(f'[NZBPack] Season pack coalesce check failed: {_ce}')
+
+            # --- START: Check if related item is in Adding Queue ---
             item_imdb_id = item_to_process.get('imdb_id')
             if item_imdb_id: # Only check if IMDb ID exists
                 if str(item_id_being_processed) == DEBUG_ITEM_ID:
@@ -312,9 +441,8 @@ class ScrapingQueue:
                 # logging.info(f"Starting to process scraping results for {item_identifier}")
                 processed_an_item_this_cycle = True # Mark that we started processing
 
-                # --- START EDIT: Add content source check ---
+                # Add content source check
                 is_magnet_assigned = item_to_process.get('content_source') == 'Magnet_Assigner'
-                # --- END EDIT ---
 
                 # Check release date logic - skip for early release items AND magnet assigned items
                 # --- Use item_to_process instead of item throughout ---
@@ -324,10 +452,10 @@ class ScrapingQueue:
                         pass
                     if item_to_process['release_date'] == 'Unknown':
                         if str(item_id_being_processed) == DEBUG_ITEM_ID:
-                            # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Release date is 'Unknown'. Moving to Wanted.")
+                            # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Release date is 'Unknown'. Moving to Unreleased.")
                             pass
-                        # logging.info(f"Item {item_identifier} has an unknown release date. Moving back to Wanted queue.")
-                        queue_manager.move_to_wanted(item_to_process, "Scraping")
+                        logging.info(f"Item {item_identifier} has an unknown release date. Moving to Unreleased queue.")
+                        queue_manager.move_to_unreleased(item_to_process, "Scraping")
                         processed_successfully_or_moved = True # Handled by move
                         processed_count += 1
                         # No return here, let finally handle removal check if needed
@@ -356,8 +484,8 @@ class ScrapingQueue:
                         if not processed_successfully_or_moved and not item_to_process.get('early_release', False) and not is_magnet_assigned:
                             release_date_str = item_to_process.get('release_date')
                             if release_date_str == 'Unknown':
-                                logging.info(f"Item {item_identifier} has an unknown release date. Moving back to Wanted queue.")
-                                queue_manager.move_to_wanted(item_to_process, "Scraping")
+                                logging.info(f"Item {item_identifier} has an unknown release date. Moving to Unreleased queue.")
+                                queue_manager.move_to_unreleased(item_to_process, "Scraping")
                                 processed_successfully_or_moved = True
                             else:
                                 release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
@@ -367,7 +495,7 @@ class ScrapingQueue:
                                     processed_successfully_or_moved = True
 
                     except ValueError:
-                         # --- START EDIT: Add content source check ---
+                         # Add content source check
                         # Only move back if not magnet assigned and date is bad
                         if not is_magnet_assigned:
                             if str(item_id_being_processed) == DEBUG_ITEM_ID:
@@ -383,7 +511,6 @@ class ScrapingQueue:
                             # Log but allow Magnet Assigned items to proceed
                             # logging.warning(f"Magnet Assigned item {item_identifier} has an invalid release date format: {item_to_process['release_date']}. Proceeding anyway.")
                             pass
-                        # --- END EDIT ---
                         # Removed return
 
                 # Proceed only if the item wasn't moved back to Wanted due to release date
@@ -552,13 +679,333 @@ class ScrapingQueue:
                             logging.info(f"Episode {item_identifier} is older than 7 days. Forcing multi-pack scrape for initial attempt.")
                         is_multi_pack = True
                     
+                    # --- NZB Batch Detection ---
+                    # If usenet is enabled and this is an episode, check if 5+ episodes of the
+                    # same show+season+version are waiting in Scraping. If so, submit them all
+                    # as an NZB aggregate pack (up to 30 at a time) instead of scraping individually.
+                    _nzb_batch_handled = False
+                    _prescraped_results = None
+                    if (item_to_process.get('type') == 'episode' and
+                            get_setting('Usenet Provider', 'enabled', False)):
+                        try:
+                            _BATCH_MIN = 2
+                            _BATCH_MAX = 30
+                            _curr_imdb = item_to_process.get('imdb_id')
+                            _curr_season = item_to_process.get('season_number')
+                            _curr_version = item_to_process.get('version', '')
+                            # Find all Scraping items for same show+season+version
+                            # Exclude items already Collected/Upgrading in DB (stale Scraping items),
+                            # and in-memory items whose DB state has moved on (e.g. to Checking via
+                            # a sibling's season pack) since the last update().
+                            from database.database_reading import get_all_media_items as _get_items
+                            _show_rows = _get_items(imdb_id=_curr_imdb) or []
+                            _already_collected = {
+                                (r['imdb_id'], r['season_number'], r['episode_number'])
+                                for r in _show_rows
+                                if r.get('state') in ('Collected', 'Upgrading')
+                            }
+                            _still_scraping = {r['id'] for r in _show_rows if r.get('state') == 'Scraping'}
+                            _batch_candidates = [
+                                it for it in self.items
+                                if (it.get('type') == 'episode' and
+                                    it.get('id') in _still_scraping and
+                                    it.get('imdb_id') == _curr_imdb and
+                                    it.get('season_number') == _curr_season and
+                                    it.get('version', '') == _curr_version and
+                                    (_curr_imdb, it.get('season_number'), it.get('episode_number')) not in _already_collected)
+                            ]
+                            if len(_batch_candidates) >= _BATCH_MIN:
+                                # Take up to BATCH_MAX episodes sorted by episode number
+                                _batch = sorted(_batch_candidates, key=lambda x: x.get('episode_number', 0))[:_BATCH_MAX]
+                                _ep_nums = [it['episode_number'] for it in _batch]
+                                logging.info(f'[NZBBatch] {item_to_process.get("title")} S{_curr_season:02d}: '
+                                             f'detected {len(_batch_candidates)} episodes in Scraping, '
+                                             f'batching {len(_batch)} as aggregate ({_ep_nums[0]}-{_ep_nums[-1]})')
+                                # Get newznab scrapers same way as select_media route
+                                _all_scrapers = get_setting('Scrapers') or {}
+                                _newznab_scrapers = [
+                                    (sid, cfg) for sid, cfg in _all_scrapers.items()
+                                    if isinstance(cfg, dict) and cfg.get('type') == 'Newznab'
+                                    and cfg.get('enabled') and cfg.get('url') and cfg.get('api_key', '').strip()
+                                ]
+                                # For season pack: all episodes of the season are in batch → scrape as pack
+                                # For partial batch: fewer than full season → scrape each individually
+                                # but process all of them in this one tick instead of one per tick.
+                                from database.core import get_db_connection as _bconn_fn
+                                try:
+                                    with _bconn_fn() as _bconn:
+                                        _season_total = (_bconn.execute(
+                                            "SELECT COUNT(*) FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode'",
+                                            (_curr_imdb, _curr_season)
+                                        ).fetchone() or [0])[0]
+                                except Exception:
+                                    _season_total = 0
+
+                                _all_eps_requested = (
+                                    _season_total > 0 and
+                                    len(_batch_candidates) >= _season_total
+                                )
+
+                                _disable_nzb_season_packs = get_setting('Usenet Provider', 'disable_nzb_season_packs', True)
+
+                                # "Disable NZB Season Packs" only applies to NZB packs — it must not
+                                # stop a debrid/torrent season pack from being picked. Run the normal
+                                # season-pack scrape first (the filter already drops NZB packs), and
+                                # only fall back to the per-episode batch if no non-NZB pack is found.
+                                # The results are reused by the normal path below so it doesn't scrape twice.
+                                # Skipped when the item is flagged fall_back_to_single_scraper (a previous
+                                # pack attempt failed in Adding, e.g. every debrid pack refused):
+                                # scrape_with_fallback would silently run a single-episode scrape, and its
+                                # single-episode torrents must not be mistaken for a season pack.
+                                # Also skipped when no debrid provider is usable (usenet-only setup, or the
+                                # debrid service is down or expired): Adding drops torrent results then, so
+                                # a torrent pack on top would send one episode to Adding alone with an NZB
+                                # and the rest of the season would wait behind it. Checked first so
+                                # usenet-only setups don't pay for an extra season scrape.
+                                _debrid_pack_found = False
+                                _fell_back_to_single = False
+                                _debrid_providers = []
+                                _debrid_usable = False
+                                if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs:
+                                    try:
+                                        from debrid import get_debrid_providers as _get_debrid_providers
+                                        from utilities.acquisition_health import provider_available as _provider_available
+                                        _debrid_providers = _get_debrid_providers()
+                                        _debrid_usable = any(_provider_available(p) for p in _debrid_providers)
+                                    except Exception:
+                                        _debrid_usable = False
+                                    if not _debrid_usable:
+                                        logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '
+                                                     f'no usable debrid provider, batching episodes individually')
+                                if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs and _debrid_usable:
+                                    try:
+                                        from database import get_media_item_by_id as _get_item_fb
+                                        _fell_back_to_single = bool(
+                                            (_get_item_fb(item_to_process['id']) or {}).get('fall_back_to_single_scraper')
+                                        )
+                                    except Exception:
+                                        _fell_back_to_single = False
+                                if _all_eps_requested and is_multi_pack and _disable_nzb_season_packs and _debrid_usable and not _fell_back_to_single:
+                                    _pre_results, _pre_filtered = self.scrape_with_fallback(
+                                        item_to_process,
+                                        is_multi_pack,
+                                        queue_manager,
+                                        check_pack_wantedness=check_pack_wantedness_for_initial_scrape
+                                    )
+                                    _pre_results = _pre_results if _pre_results is not None else []
+
+                                    # Must be a pack for this whole season: a 2-episode release
+                                    # (S02E01E02) or a partial range (S02 E01-E12) only covers a few
+                                    # siblings, and the rest would wait behind it in Adding.
+                                    def _is_debrid_season_pack(r):
+                                        if r.get('protocol') == 'nzb' or r.get('nzb_url'):
+                                            return False
+                                        _sei = (r.get('parsed_info') or {}).get('season_episode_info') or {}
+                                        _sp = str(_sei.get('season_pack') or '')
+                                        if _sp == 'Complete':
+                                            return True
+                                        if str(_curr_season) not in _sp.split(','):
+                                            return False
+                                        _eps = _sei.get('episodes') or []
+                                        return not _eps or len(_eps) >= _season_total
+
+                                    # Only the top result counts: the normal path below picks
+                                    # results[0], so a pack further down the list would never be
+                                    # used and a higher-ranked single episode would go to Adding alone.
+                                    # Judged after the same usable-backend filter Adding applies.
+                                    try:
+                                        from utilities.acquisition_health import usable_results as _usable_results
+                                        _pre_usable = _usable_results(_pre_results, _debrid_providers)
+                                    except Exception:
+                                        _pre_usable = _pre_results
+                                    _debrid_pack_found = bool(_pre_usable) and _is_debrid_season_pack(_pre_usable[0])
+                                    if _debrid_pack_found:
+                                        _prescraped_results = (_pre_results, _pre_filtered)
+                                        logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '
+                                                     f'NZB season packs disabled but the top result is a debrid season pack, using it')
+                                    else:
+                                        logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '
+                                                     f'top result is not a debrid season pack, batching episodes individually')
+
+                                if _all_eps_requested and is_multi_pack and (not _disable_nzb_season_packs or _debrid_pack_found):
+                                    # Full season in batch and multi-pack mode — current item will
+                                    # scrape as season pack; siblings will coalesce onto its job.
+                                    # No special handling needed here; fall through to normal scrape.
+                                    logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — season pack path handles this')
+                                else:
+                                    # Partial batch, individual mode, or full season with NZB season
+                                    # packs disabled — scrape each episode in the batch right now so
+                                    # they all move to Adding in one tick (as a virtual aggregate pack).
+                                    # Each gets its own cli_mount job and independent health check.
+                                    _batch_submitted = 0
+                                    _batch_ids_to_remove = set()
+                                    # Process the whole batch together, in the same ascending S/E order
+                                    # it was sorted in above (current item included) — previously the
+                                    # current item (always the lowest-numbered episode still in Scraping,
+                                    # per the queue's own S/E sort) was excluded here and left to fall
+                                    # through to the normal scrape path below, which runs *after* this
+                                    # loop finishes submitting every other episode. That meant the
+                                    # lowest episode (typically E1) was always the last one actually
+                                    # submitted/added within a batch tick, even though it's first in
+                                    # queue order. Including it here keeps submission order matching
+                                    # queue order; it no longer gets the richer normal-path handling
+                                    # (not-wanted filtering, delayed-scrape-by-score) in this batched
+                                    # case, same as its siblings already didn't.
+                                    def _bep_moved_on(_b):
+                                        # Adding fans a season pack out to siblings one by one
+                                        # while this loop runs; skip any that have left Scraping.
+                                        _live = get_media_item_by_id(_b['id'])
+                                        if _live is not None and _live.get('state') != 'Scraping':
+                                            _batch_ids_to_remove.add(_b['id'])
+                                            return True
+                                        return False
+
+                                    for _bep in _batch:
+                                        try:
+                                            _bep_id = f"{_bep.get('title')} S{_curr_season:02d}E{_bep.get('episode_number', 0):02d}"
+                                            if _bep_moved_on(_bep):
+                                                logging.info(f'[NZBBatch] {_bep_id} is no longer Scraping — skipping')
+                                                continue
+                                            _bep_results, _ = self.scrape_with_fallback(
+                                                _bep, False, queue_manager,
+                                                check_pack_wantedness=False
+                                            )
+                                            _bep_results = _bep_results if _bep_results is not None else []
+                                            if _bep_results:
+                                                _bep_results = [r for r in _bep_results if not _is_excluded_release(_bep, r)]
+                                            if _bep_results and not _bep.get('disable_not_wanted_check'):
+                                                _bep_results = [
+                                                    r for r in _bep_results
+                                                    if not is_magnet_not_wanted(r.get('magnet') or r.get('nzb_url'))
+                                                    and not is_url_not_wanted(r.get('magnet') or r.get('nzb_url'))
+                                                    and not (r.get('nzb_url') and is_nzb_guid_not_wanted(r.get('parsed_info', {}).get('guid') or r.get('nzb_url')))
+                                                ]
+                                            if _bep_results:
+                                                _bep_best = _bep_results[0]
+
+                                                # Duplicate-Collected check: if this episode is already
+                                                # Collected under the same NZB URL/magnet, this is a
+                                                # duplicate re-add — mark it Collected and skip submitting
+                                                # instead of grabbing the same file again. Mirrors the
+                                                # single-item path's check (line ~966 below).
+                                                _bep_nzb_url_check = _bep_best.get('nzb_url') or _bep_best.get('magnet') or ''
+                                                _bep_is_duplicate = False
+                                                if _bep_nzb_url_check:
+                                                    try:
+                                                        from database import get_db_connection as _gdb_bdup
+                                                        _conn_bdup = _gdb_bdup()
+                                                        try:
+                                                            _bdup = _conn_bdup.execute(
+                                                                "SELECT id FROM media_items "
+                                                                "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                                                                "AND type='episode' AND state='Collected' "
+                                                                "AND filled_by_magnet=?",
+                                                                (_bep.get('imdb_id'), _curr_season,
+                                                                 _bep.get('episode_number'), _bep_nzb_url_check)
+                                                            ).fetchone()
+                                                        finally:
+                                                            _conn_bdup.close()
+                                                        if _bdup:
+                                                            logging.info(f'[NZBBatch] {_bep_id} already Collected with same NZB URL — marking Collected, skipping resubmit')
+                                                            from database.database_writing import update_media_item_state as _bdup_update_state
+                                                            _bdup_update_state(_bep['id'], 'Collected')
+                                                            _batch_ids_to_remove.add(_bep['id'])
+                                                            _bep_is_duplicate = True
+                                                    except Exception as _bdup_err:
+                                                        logging.debug(f'[NZBBatch] Duplicate-Collected check error for {_bep_id}: {_bdup_err}')
+
+                                                if _bep_is_duplicate:
+                                                    continue
+
+                                                # In-flight dedup check: don't submit a second NZB for an
+                                                # episode/version already Adding or Checking under a
+                                                # different item. Mirrors the single-item path's check
+                                                # (line ~1004 below).
+                                                _bep_in_flight = None
+                                                try:
+                                                    _bep_ver = (_bep.get('version') or 'Default').rstrip('*')
+                                                    from database import get_db_connection as _gdb_binf
+                                                    _conn_binf = _gdb_binf()
+                                                    try:
+                                                        _bep_in_flight = _conn_binf.execute(
+                                                            "SELECT id FROM media_items "
+                                                            "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                                                            "AND type='episode' AND state IN ('Adding','Checking') "
+                                                            "AND REPLACE(version,'*','')=? AND id!=?",
+                                                            (_bep.get('imdb_id'), _curr_season,
+                                                             _bep.get('episode_number'), _bep_ver, _bep['id'])
+                                                        ).fetchone()
+                                                    finally:
+                                                        _conn_binf.close()
+                                                except Exception as _binf_err:
+                                                    logging.debug(f'[NZBBatch] In-flight check error for {_bep_id}: {_binf_err}')
+
+                                                if _bep_in_flight:
+                                                    logging.warning(f'[NZBBatch] {_bep_id} already in-flight as ID {_bep_in_flight[0]} '
+                                                                     f'(Adding/Checking, same imdb/season/episode/version) — sending back to Wanted to avoid duplicate NZB')
+                                                    queue_manager.move_to_wanted(_bep, "Scraping")
+                                                    _batch_ids_to_remove.add(_bep['id'])
+                                                    continue
+
+                                                if _bep_moved_on(_bep):
+                                                    logging.info(f'[NZBBatch] {_bep_id} left Scraping while being scraped — not moving to Adding')
+                                                    continue
+
+                                                queue_manager.move_to_adding(
+                                                    _bep, 'Scraping',
+                                                    _bep_best['title'],
+                                                    _bep_results
+                                                )
+                                                self.reset_not_wanted_check(_bep['id'])
+                                                _batch_submitted += 1
+                                                _batch_ids_to_remove.add(_bep['id'])
+                                                logging.info(f'[NZBBatch] Batched sibling {_bep_id} → Adding')
+                                            else:
+                                                logging.info(f'[NZBBatch] No results for {_bep_id} — will retry individually')
+                                        except Exception as _bep_err:
+                                            logging.warning(f'[NZBBatch] Error processing {_bep.get("id")}: {_bep_err}')
+                                    if _batch_ids_to_remove:
+                                        self.items = [it for it in self.items if it.get('id') not in _batch_ids_to_remove]
+                                        self._item_ids -= _batch_ids_to_remove
+                                        logging.info(f'[NZBBatch] Batched {_batch_submitted} episodes to Adding')
+                                    # If the current item itself was submitted, marked Collected (dup),
+                                    # or sent back to Wanted (in-flight) above, it's already removed
+                                    # from self.items — must not also fall through to the normal scrape
+                                    # path below, which would re-process a stale/already-handled item.
+                                    # _batch_submitted alone isn't enough to detect this: the current
+                                    # item can be "handled" (added to _batch_ids_to_remove) via the
+                                    # duplicate-Collected or in-flight branches above without ever
+                                    # incrementing _batch_submitted.
+                                    _nzb_batch_handled = (
+                                        _batch_submitted > 0 or
+                                        item_to_process.get('id') in _batch_ids_to_remove
+                                    )
+                        except Exception as _be:
+                            logging.warning(f'[NZBBatch] Batch processing failed, falling back to individual scrape: {_be}', exc_info=True)
+
+                    if _nzb_batch_handled:
+                        return True
+
                     logging.info(f"Scraping for {item_identifier} (multi-pack: {is_multi_pack}) with initial check_pack_wantedness={check_pack_wantedness_for_initial_scrape}")
-                    results, filtered_out_results = self.scrape_with_fallback(
-                        item_to_process, 
-                        is_multi_pack, 
-                        queue_manager, 
-                        check_pack_wantedness=check_pack_wantedness_for_initial_scrape # Use the determined value
-                    )
+                    if _prescraped_results is not None:
+                        results, filtered_out_results = _prescraped_results
+                    else:
+                        results, filtered_out_results = self.scrape_with_fallback(
+                            item_to_process,
+                            is_multi_pack,
+                            queue_manager,
+                            check_pack_wantedness=check_pack_wantedness_for_initial_scrape
+                        )
+
+                    # The scrape takes a while; a sibling's season pack may have moved
+                    # this item to Checking meanwhile. Every branch below moves the
+                    # item somewhere (Adding, Sleeping, Wanted, Blacklisted) and would
+                    # overwrite that.
+                    _live_after = get_media_item_by_id(item_id_being_processed)
+                    if _live_after is not None and _live_after.get('state') != 'Scraping':
+                        logging.info(f"{item_identifier} left Scraping while being scraped (now {_live_after.get('state')}) — not moving it")
+                        self.remove_item(item_to_process)
+                        return True
 
                     # Ensure both results and filtered_out_results are lists
                     results = results if results is not None else []
@@ -568,10 +1015,14 @@ class ScrapingQueue:
                     filtered_results = []
                     if results: # Only filter if there are raw results
                         for result in results:
+                            if _is_excluded_release(item_to_process, result):
+                                continue
                             if not item_to_process.get('disable_not_wanted_check'):
-                                if is_magnet_not_wanted(result['magnet']):
+                                if is_magnet_not_wanted(result.get('magnet') or result.get('nzb_url')):
                                     continue
-                                if is_url_not_wanted(result['magnet']):
+                                if is_url_not_wanted(result.get('magnet') or result.get('nzb_url')):
+                                    continue
+                                if result.get('nzb_url') and is_nzb_guid_not_wanted(result.get('parsed_info', {}).get('guid') or result.get('nzb_url')):
                                     continue
                             filtered_results.append(result)
 
@@ -678,10 +1129,14 @@ class ScrapingQueue:
                         if fallback_results: # Only filter if there are raw results from fallback
                             current_filtered_fallback_results = []
                             for result in fallback_results:
+                                if _is_excluded_release(item_to_process, result):
+                                    continue
                                 if not item_to_process.get('disable_not_wanted_check'):
-                                    if is_magnet_not_wanted(result['magnet']):
+                                    if is_magnet_not_wanted(result.get('magnet') or result.get('nzb_url')):
                                         continue
-                                    if is_url_not_wanted(result['magnet']):
+                                    if is_url_not_wanted(result.get('magnet') or result.get('nzb_url')):
+                                        continue
+                                    if result.get('nzb_url') and is_nzb_guid_not_wanted(result.get('parsed_info', {}).get('guid') or result.get('nzb_url')):
                                         continue
                                 current_filtered_fallback_results.append(result)
                             
@@ -738,6 +1193,76 @@ class ScrapingQueue:
                         if get_setting("Debug", "enable_reverse_order_scraping", default=False):
                             filtered_results.reverse()
 
+                        # Check if this item is already Collected with the same NZB URL (same file).
+                        # If so, this is a duplicate — delete the DB entry entirely rather than adding to queue.
+                        _nzb_url_check = best_result.get('nzb_url') or best_result.get('magnet') or ''
+                        _is_duplicate = False
+                        if _nzb_url_check and item_to_process.get('type') == 'episode':
+                            try:
+                                from database import get_db_connection as _gdb_sc
+                                _conn_sc = _gdb_sc()
+                                try:
+                                    _dup = _conn_sc.execute(
+                                        "SELECT id FROM media_items "
+                                        "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                                        "AND type='episode' AND state='Collected' "
+                                        "AND filled_by_magnet=?",
+                                        (item_to_process.get('imdb_id'),
+                                         item_to_process.get('season_number'),
+                                         item_to_process.get('episode_number'),
+                                         _nzb_url_check)
+                                    ).fetchone()
+                                finally:
+                                    _conn_sc.close()
+                                if _dup:
+                                    logging.info(f"[ScrapingQueue] {item_identifier} already Collected with same NZB URL — deleting duplicate DB entry {item_to_process['id']}")
+                                    from database.database_writing import update_media_item_state
+                                    update_media_item_state(item_to_process['id'], 'Collected')
+                                    self.remove_item(item_to_process)
+                                    processed_successfully_or_moved = True
+                                    processed_count += 1
+                                    _is_duplicate = True
+                            except Exception as _dup_err:
+                                logging.debug(f"[ScrapingQueue] Duplicate check error: {_dup_err}")
+
+                        if _is_duplicate:
+                            return True
+
+                        # Block submitting a second NZB for the same episode already in Adding/Checking.
+                        # This prevents two different files for the same episode being submitted simultaneously
+                        # (e.g. a season pack and an individual episode NZB both in-flight at once).
+                        if item_to_process.get('type') == 'episode':
+                            _inf_imdb = item_to_process.get('imdb_id')
+                            _inf_sn = item_to_process.get('season_number')
+                            _inf_en = item_to_process.get('episode_number')
+                            _inf_ver = (item_to_process.get('version') or 'Default').rstrip('*')
+                            if _inf_imdb and _inf_sn is not None and _inf_en is not None:
+                                try:
+                                    from database import get_db_connection as _gdb_inf
+                                    _conn_inf = _gdb_inf()
+                                    try:
+                                        _inflight = _conn_inf.execute(
+                                            "SELECT id FROM media_items "
+                                            "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                                            "AND type='episode' AND state IN ('Adding','Checking') "
+                                            "AND REPLACE(version,'*','')=? AND id!=?",
+                                            (_inf_imdb, _inf_sn, _inf_en, _inf_ver, item_to_process['id'])
+                                        ).fetchone()
+                                    finally:
+                                        _conn_inf.close()
+                                    if _inflight:
+                                        logging.warning(
+                                            f"[ScrapingQueue] {item_identifier} already in-flight as ID {_inflight[0]} "
+                                            f"(Adding/Checking, same imdb/season/episode/version) — sending back to Wanted to avoid duplicate NZB"
+                                        )
+                                        queue_manager.move_to_wanted(item_to_process, "Scraping")
+                                        self.remove_item(item_to_process)
+                                        processed_successfully_or_moved = True
+                                        processed_count += 1
+                                        return True
+                                except Exception as _inf_err:
+                                    logging.debug(f"[ScrapingQueue] In-flight dedup check failed: {_inf_err}")
+
                         logging.info(f"Moving {item_identifier} to Adding queue with {len(filtered_results)} results")
                         try:
                             queue_manager.move_to_adding(item_to_process, "Scraping", best_result['title'], filtered_results)
@@ -773,17 +1298,15 @@ class ScrapingQueue:
                 if processed_an_item_this_cycle:
                     processed_count += 1
 
-            # --- START EDIT: Fetch setting from Queue section ---
+            # Fetch setting from Queue section
             if processed_an_item_this_cycle:
-                # --- START EDIT: Add try-except for float conversion ---
+                # Add try-except for float conversion
                 try:
                     delay_seconds = float(get_setting('Queue', 'item_process_delay_seconds', 0.0))
                 except (ValueError, TypeError):
                     delay_seconds = 0.0
-                # --- END EDIT ---
                 if delay_seconds > 0:
                     time.sleep(delay_seconds)
-            # --- END EDIT ---
 
         # Return True if there are more items potentially left to process in the queue
         # Or if we actually processed an item in this call (even if it resulted in removal)
@@ -820,12 +1343,16 @@ class ScrapingQueue:
         filtered_out = filtered_out if filtered_out is not None else []
 
         if not skip_filter: # Apply existing filters
-            # Filter out unwanted magnets and URLs
+            # Filter out unwanted magnets, URLs and NZB guids
             results = [
-                r for r in results 
-                if not (
-                    not item.get('disable_not_wanted_check') and 
-                    (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))
+                r for r in results
+                if not _is_excluded_release(item, r)
+                and not (
+                    not item.get('disable_not_wanted_check') and (
+                        is_magnet_not_wanted(r.get('magnet') or r.get('nzb_url')) or
+                        is_url_not_wanted(r.get('magnet') or r.get('nzb_url')) or
+                        (r.get('nzb_url') and is_nzb_guid_not_wanted(r.get('parsed_info', {}).get('guid') or r.get('nzb_url')))
+                    )
                 )
             ]
             
@@ -884,6 +1411,11 @@ class ScrapingQueue:
             # Filter results based on scene mapping if available, otherwise original item S/E
             filtered_results_using_mapping = []
             for r in results:
+                if r.get('movie_episode'):
+                    # A movie standing in for this episode (scraper.movie_episodes):
+                    # its release has no S/E to check, the scrape filtered it as the movie.
+                    filtered_results_using_mapping.append(r)
+                    continue
                 parsed_info = r.get('parsed_info', {})
                 season_episode_info = parsed_info.get('season_episode_info', {})
                 parsed_seasons = season_episode_info.get('seasons', [])
@@ -933,7 +1465,19 @@ class ScrapingQueue:
                     #                   f"Match S:{season_match}, E:{episode_match}")
                 else: # Original logic for non-F1 or F1 with XEM
                     season_match = (target_season is None or parsed_seasons == [target_season])
-                    episode_match = (target_episode is None or parsed_episodes == [target_episode])
+                    # A multi-episode pack that reached this point already passed
+                    # filter_results.py's bitrate/size gate using its real per-episode
+                    # size (not the pack's raw total) - so if the target episode number
+                    # is genuinely present in the pack's parsed episode list, downloading
+                    # it is exactly as bandwidth-reasonable as a true single-episode
+                    # release. Strict single-episode equality used to reject every
+                    # legitimate small pack (e.g. a ~1GB 28-episode range) exactly like
+                    # a 700GB monster.
+                    episode_match = (
+                        target_episode is None or
+                        parsed_episodes == [target_episode] or
+                        (len(parsed_episodes) > 1 and target_episode in parsed_episodes)
+                    )
                 
                 # Define original_filename for use in fallback logic
                 original_filename = parsed_info.get('original_filename', '')
@@ -953,12 +1497,11 @@ class ScrapingQueue:
                             base_season = target_season  # This is already XEM-mapped if scene_mapping exists
                             base_episode = target_episode  # This is already XEM-mapped if scene_mapping exists
 
-                            target_absolute_episode = 0
-                            # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata
-                            sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < base_season])
-                            for s_num in sorted_seasons:
-                                target_absolute_episode += season_episode_counts.get(s_num, 0)
-                            target_absolute_episode += base_episode
+                            target_absolute_episode = absolute_episode_for(
+                                base_season, base_episode, season_episode_counts,
+                                imdb_id=None if scene_mapping else item.get('imdb_id'))
+                            if target_absolute_episode is None:
+                                raise ValueError(f"no absolute episode for S{base_season}E{base_episode}")
 
                             # Check if torrent uses absolute episode numbering
                             torrent_seasons = parsed_seasons
@@ -1065,12 +1608,18 @@ class ScrapingQueue:
             temp_individual_results = []
             for r_idx, r_val in enumerate(individual_results):
                 logging.debug(f"  Checking individual result #{r_idx + 1} ('{r_val.get('original_title', 'N/A')}') for not_wanted/rescrape filters.")
+                if _is_excluded_release(item, r_val):
+                    logging.info(f"    Filtered out '{r_val.get('original_title')}' — excluded release from a recent Move to Wanted.")
+                    continue
                 if not item.get('disable_not_wanted_check'):
-                    if is_magnet_not_wanted(r_val['magnet']):
+                    if is_magnet_not_wanted(r_val.get('magnet') or r_val.get('nzb_url')):
                         logging.info(f"    Filtered out '{r_val.get('original_title')}' due to is_magnet_not_wanted.")
                         continue
                     if is_url_not_wanted(r_val['magnet']):
                         logging.info(f"    Filtered out '{r_val.get('original_title')}' due to is_url_not_wanted.")
+                        continue
+                    if r_val.get('nzb_url') and is_nzb_guid_not_wanted(r_val.get('parsed_info', {}).get('guid') or r_val.get('nzb_url')):
+                        logging.info(f"    Filtered out '{r_val.get('original_title')}' due to is_nzb_guid_not_wanted.")
                         continue
                 if stored_rescrape_title and r_val.get('original_title') and r_val.get('original_title') == stored_rescrape_title:
                     # Only filter out if there are other results available
@@ -1095,11 +1644,15 @@ class ScrapingQueue:
         if season is not None and episode is not None:
             date_based_results = []
             regular_results = []
+            movie_episode_results = []
             logging.debug(f"Processing {len(individual_results)} individual results for S/E matching for {item_identifier} (Item S{season}E{episode}).")
             # Separate date-based and regular results
             for result_idx, result in enumerate(individual_results):
                 logging.debug(f"  S/E Pre-sort check for individual result #{result_idx + 1} '{result.get('original_title', 'N/A')}': Parsed PTT: {result.get('parsed_info')}")
-                if result.get('parsed_info', {}).get('date'):
+                if result.get('movie_episode'):
+                    # Filtered as the movie it is; no S/E to check (scraper.movie_episodes)
+                    movie_episode_results.append(result)
+                elif result.get('parsed_info', {}).get('date'):
                     result['is_date_based'] = True # Mark it
                     date_based_results.append(result)
                     logging.debug(f"    '{result.get('original_title')}' marked as date_based.")
@@ -1156,7 +1709,19 @@ class ScrapingQueue:
                 else: # Original logic for non-F1 or F1 with XEM
                     logging.debug(f"{log_prefix} Applying Non-F1/XEM matching logic.")
                     season_match = (target_season is None or parsed_seasons == [target_season])
-                    episode_match = (target_episode is None or parsed_episodes == [target_episode])
+                    # A multi-episode pack that reached this point already passed
+                    # filter_results.py's bitrate/size gate using its real per-episode
+                    # size (not the pack's raw total) - so if the target episode number
+                    # is genuinely present in the pack's parsed episode list, downloading
+                    # it is exactly as bandwidth-reasonable as a true single-episode
+                    # release. Strict single-episode equality used to reject every
+                    # legitimate small pack (e.g. a ~1GB 28-episode range) exactly like
+                    # a 700GB monster.
+                    episode_match = (
+                        target_episode is None or
+                        parsed_episodes == [target_episode] or
+                        (len(parsed_episodes) > 1 and target_episode in parsed_episodes)
+                    )
                     logging.debug(f"{log_prefix} Non-F1/XEM S_match:{season_match} (PTT_S:{parsed_seasons} vs TargetS:{target_season}), E_match:{episode_match} (PTT_E:{parsed_episodes} vs TargetE:{target_episode}).")
 
                 if season_match and episode_match:
@@ -1182,12 +1747,11 @@ class ScrapingQueue:
                                 base_season = target_season  # This is already XEM-mapped if scene_mapping exists
                                 base_episode = target_episode  # This is already XEM-mapped if scene_mapping exists
 
-                                target_absolute_episode = 0
-                                # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata
-                                sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < base_season])
-                                for s_num in sorted_seasons:
-                                    target_absolute_episode += season_episode_counts.get(s_num, 0)
-                                target_absolute_episode += base_episode
+                                target_absolute_episode = absolute_episode_for(
+                                    base_season, base_episode, season_episode_counts,
+                                    imdb_id=None if scene_mapping else item.get('imdb_id'))
+                                if target_absolute_episode is None:
+                                    raise ValueError(f"no absolute episode for S{base_season}E{base_episode}")
 
                                 # Check if torrent uses absolute episode numbering
                                 torrent_seasons = parsed_seasons
@@ -1264,7 +1828,7 @@ class ScrapingQueue:
 
             logging.debug(f"  Finished S/E checks. Date-based: {len(date_based_results)}, Filtered Regular: {len(filtered_regular_results)} for {item_identifier}.")
             # Combine date-based and filtered regular results
-            individual_results = date_based_results + filtered_regular_results
+            individual_results = movie_episode_results + date_based_results + filtered_regular_results
             if individual_results:
                  logging.info(f"  After all S/E filtering, {len(individual_results)} individual results remain for {item_identifier}.")
                  logging.debug(f"    Final individual titles: {[r.get('original_title', 'N/A') for r in individual_results]}")
@@ -1399,6 +1963,8 @@ class ScrapingQueue:
                 self.reset_not_wanted_check(item['id'])
                 self.remove_item(item) # Remove from current queue
         else: # Item is NOT old, check wake limits
+            if self._try_scrape_time_fallback(item, queue_manager):
+                return
             logging.warning(f"No results found for {item_identifier}. Checking wake count limits before moving to Sleeping or Final_Check/Blacklisted.")
             # Get wake count settings for this item's version
             version_settings = get_setting('Scraping', 'versions', {}).get(item.get('version', ''), {})
@@ -1428,6 +1994,136 @@ class ScrapingQueue:
             self.reset_not_wanted_check(item['id'])
             if moved and self.contains_item_id(item.get('id')) and max_wake_count > 0 and current_wake_count < max_wake_count:
                  self.remove_item(item)
+
+    def _try_scrape_time_fallback(self, item: Dict[str, Any], queue_manager) -> bool:
+        """Opt-in per version (fallback_at_scrape_time). fallback_version is otherwise only
+        applied by blacklist_item(), i.e. after the whole sleep/Final_Check cycle (~20h on
+        common settings) even when the strict version can never match. Probe the fallback
+        version once; if it finds results, hand the item to the blacklist-time fallback now
+        (original blacklisted silently, fallback item created as Wanted and scraped through
+        the normal pipeline). If the probe finds nothing, the caller sleeps the item as usual.
+        Returns True if the item was handed off."""
+        item_identifier = queue_manager.generate_identifier(item)
+        current_version = item.get('version') or ''
+        versions = get_setting('Scraping', 'versions', {}) or {}
+        version_settings = versions.get(current_version, {})
+        if not version_settings.get('fallback_at_scrape_time'):
+            return False
+
+        fallback_version = version_settings.get('fallback_version', 'None')
+        if not fallback_version or fallback_version in ('None', current_version) or fallback_version not in versions:
+            return False
+        # blacklist_item() turns a not-yet-released early_release item back to Unreleased
+        # instead of falling back, so a probe would be wasted.
+        if item.get('early_release'):
+            return False
+
+        from database import get_wake_count
+        attempts = get_wake_count(item['id']) + 1  # includes the scrape that just failed
+        try:
+            required_attempts = int(version_settings.get('fallback_after_attempts') or 0)
+        except (TypeError, ValueError):
+            required_attempts = 0
+        if attempts < required_attempts:
+            logging.info(f"Scrape-time fallback for {item_identifier}: attempt {attempts}/{required_attempts}, not probing '{fallback_version}' yet.")
+            return False
+
+        # If the fallback item already exists, blacklist_item() would only blacklist the
+        # original (no new item), so leave this one on its normal retry cycle.
+        from database.database_reading import check_existing_media_item
+        if check_existing_media_item(
+            item_details={
+                'type': item.get('type'),
+                'imdb_id': item.get('imdb_id'),
+                'tmdb_id': item.get('tmdb_id'),
+                'season_number': item.get('season_number') if item.get('type') == 'episode' else None,
+                'episode_number': item.get('episode_number') if item.get('type') == 'episode' else None,
+            },
+            target_version=fallback_version,
+            target_states=['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased',
+                           'Pending Uncached', 'Upgrading', 'Collected', 'Final_Check'],
+        ):
+            logging.info(f"Scrape-time fallback for {item_identifier}: '{fallback_version}' item already exists, skipping probe.")
+            return False
+
+        logging.info(f"Scrape-time fallback for {item_identifier}: no results for '{current_version}' (attempt {attempts}), probing '{fallback_version}'.")
+        try:
+            probe_results, _ = self.scrape_with_fallback(
+                dict(item, version=fallback_version),
+                is_multi_pack=item.get('type') == 'episode',
+                queue_manager=queue_manager,
+            )
+        except Exception as e:
+            logging.error(f"Scrape-time fallback probe failed for {item_identifier}: {e}", exc_info=True)
+            return False
+
+        if not probe_results:
+            logging.info(f"Scrape-time fallback for {item_identifier}: '{fallback_version}' found nothing either, keeping '{current_version}' on its retry cycle.")
+            return False
+        if not self._probe_has_addable_result(probe_results, item, item_identifier):
+            logging.info(f"Scrape-time fallback for {item_identifier}: '{fallback_version}' found {len(probe_results)} result(s) but none cached, keeping '{current_version}' on its retry cycle.")
+            return False
+
+        logging.info(f"Scrape-time fallback for {item_identifier}: '{fallback_version}' found {len(probe_results)} result(s), switching to it now.")
+        queue_manager.move_to_blacklisted(item, "Scraping")
+        self.reset_not_wanted_check(item['id'])
+        if self.contains_item_id(item.get('id')):
+            self.remove_item(item)
+        return True
+
+    _PROBE_CACHE_CHECK_LIMIT = 5
+
+    def _probe_has_addable_result(self, results, item, item_identifier) -> bool:
+        """Whether the Adding queue could take one of the probe's results. When it would only
+        take cached torrents (uncached_content_handling None, hybrid_mode off, outside the
+        accept_uncached_within_hours window) an uncached torrent can't be added, and switching
+        to a fallback that then sleeps would have blacklisted the original for nothing. Checks
+        the top few torrents with the Adding queue's own cache check; NZB results don't need
+        one. An error counts as not cached, which only keeps the original on its retry cycle."""
+        from queues.adding_queue import accepts_uncached_now
+        if accepts_uncached_now(item, item_identifier) or get_setting('Scraping', 'hybrid_mode', False):
+            return True
+        if any(r.get('protocol') == 'nzb' or r.get('nzb_url') for r in results):
+            return True
+
+        from debrid import get_debrid_provider
+        from queues.torrent_processor import TorrentProcessor
+        try:
+            processor = TorrentProcessor(get_debrid_provider())
+            providers = processor._providers
+        except Exception as e:
+            logging.warning(f"Scrape-time fallback for {item_identifier}: cache check unavailable ({e})")
+            return False
+
+        for result in results[:self._PROBE_CACHE_CHECK_LIMIT]:
+            link = result.get('magnet') or result.get('link')
+            if not link:
+                continue
+            magnet, temp_file = processor.process_torrent(link)
+            try:
+                if not magnet and not temp_file:
+                    continue
+                for provider in providers:
+                    try:
+                        cached, _ = processor.check_cache_status(
+                            magnet if not temp_file else "", temp_file,
+                            remove_cached=True,  # the probe adds nothing; don't leave it on the account
+                            item=dict(item, title=result.get('title', item.get('title'))),
+                            provider=provider,
+                        )
+                    except Exception as e:
+                        logging.warning(f"Scrape-time fallback for {item_identifier}: cache check failed on {provider.PROVIDER_NAME}: {e}")
+                        continue
+                    if cached:
+                        logging.info(f"Scrape-time fallback for {item_identifier}: '{result.get('title')}' is cached on {provider.PROVIDER_NAME}.")
+                        return True
+            finally:
+                if temp_file and os.path.exists(temp_file):
+                    try:
+                        os.unlink(temp_file)
+                    except OSError:
+                        pass
+        return False
 
     def is_item_old(self, item: Dict[str, Any]) -> bool:
         # If early release flag is set, it's never considered old for the purpose of immediate blacklisting

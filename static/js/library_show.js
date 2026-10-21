@@ -45,6 +45,9 @@ function attachEventListeners() {
     const btnSeasonPacks = document.getElementById('btn-season-packs');
     const btnRefreshTMDB = document.getElementById('btn-refresh-tmdb');
     const btnSettings = document.getElementById('btn-settings');
+    const btnDownsubShow = document.getElementById('btn-downsub-show');
+    const btnFixMatch = document.getElementById('btn-fix-match');
+    const btnShowOptions = document.getElementById('btn-show-options');
 
     if (btnGetMissing) {
         btnGetMissing.addEventListener('click', handleGetMissing);
@@ -60,6 +63,17 @@ function attachEventListeners() {
 
     if (btnSettings) {
         btnSettings.addEventListener('click', handleSettings);
+    }
+
+    if (btnDownsubShow) {
+        btnDownsubShow.addEventListener('click', handleDownsubShow);
+    }
+
+    if (btnShowOptions) {
+        btnShowOptions.addEventListener('click', handleShowOptions);
+    }
+    if (btnFixMatch) {
+        btnFixMatch.addEventListener('click', handleFixMatch);
     }
 
     // Close overlay when pressing Escape key
@@ -88,14 +102,18 @@ async function loadShowData() {
 
     try {
 
-        // Fetch show data and broken files in parallel
-        const [showResponse, brokenResponse] = await Promise.all([
+        // Fetch show data, broken files, and settings in parallel
+        const [showResponse, brokenResponse, configResponse] = await Promise.all([
             fetch(`/library/show/${mediaId}/data`),
-            fetch('/library/check_broken_files', { method: 'POST' })
+            fetch('/library/check_broken_files', { method: 'POST' }),
+            fetch('/settings/api/config')
         ]);
 
         const data = await showResponse.json();
         const brokenData = await brokenResponse.json();
+        const configData = configResponse.ok ? await configResponse.json() : {};
+        const lm = configData['Library Manager'] || {};
+        window._hideSeasonZero = lm.hide_season_zero !== undefined ? lm.hide_season_zero : true;
 
         // Store broken files in Set for fast lookup
         if (brokenData.success && brokenData.broken_files) {
@@ -105,6 +123,11 @@ async function loadShowData() {
 
         if (data.success) {
             showData = data.show;
+            // Strip year from title if already embedded (e.g. "Scrubs (2026)" → "Scrubs")
+            // so the scraper doesn't receive a double year in the payload
+            if (showData.year && showData.title) {
+                showData.title = showData.title.replace(new RegExp(`\\s*\\(${showData.year}\\)$`), '').trim();
+            }
             seasonsData = data.seasons;
 
             // Add phantom rows for missing episodes before stats calculation
@@ -113,14 +136,33 @@ async function loadShowData() {
             renderShowHeader(showData);
             renderSeasons(seasonsData);
 
-            // Check for season parameter in URL and switch to that season
+            // Check for season/episode parameters in URL and switch to that season + scroll to episode
             const urlParams = new URLSearchParams(window.location.search);
             const seasonParam = urlParams.get('season');
+            const episodeParam = urlParams.get('episode');
             if (seasonParam) {
                 const seasonNumber = parseInt(seasonParam);
-                // Use setTimeout to ensure tabs are fully rendered before switching
                 setTimeout(() => {
                     switchTab(seasonNumber);
+                    if (episodeParam) {
+                        const epNumber = parseInt(episodeParam);
+                        // Poll until the panel has children (header is always added synchronously)
+                        let attempts = 0;
+                        const poll = setInterval(() => {
+                            const panel = document.querySelector(`.season-panel[data-season="${seasonNumber}"]`);
+                            if (panel && panel.querySelector('.episode-row')) {
+                                clearInterval(poll);
+                                const epRow = panel.querySelector(`.episode-row[data-episode="${epNumber}"]`);
+                                if (epRow) {
+                                    epRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    epRow.classList.add('cal-episode-highlight');
+                                    setTimeout(() => epRow.classList.remove('cal-episode-highlight'), 6000);
+                                }
+                            } else if (++attempts > 30) {
+                                clearInterval(poll);
+                            }
+                        }, 100);
+                    }
                 }, 100);
             }
 
@@ -170,13 +212,16 @@ function addPhantomRowsToSeasonData(seasons) {
             episodeGroups[epNum].push(ep);
         });
 
-        // Find gaps from episode 1 to max episode
+        // Find gaps between the min and max episode numbers in the season
+        // Start from minEp (not 1) to avoid creating phantom rows for absolute-numbered anime
+        // where season 2 might start at episode 63 — those lower episodes belong to season 1
         const episodeNumbers = Object.keys(episodeGroups).map(n => parseInt(n));
         if (episodeNumbers.length > 0) {
+            const minEp = Math.min(...episodeNumbers);
             const maxEp = Math.max(...episodeNumbers);
 
-            // Add phantom episodes for gaps
-            for (let i = 1; i <= maxEp; i++) {
+            // Add phantom episodes for gaps within the season's episode range
+            for (let i = minEp; i <= maxEp; i++) {
                 if (!episodeGroups[i]) {
                     season.episodes.push({
                         episode_number: i,
@@ -200,7 +245,8 @@ function renderShowHeader(show) {
     console.log('[Show Detail] Metadata values - overview:', show.overview, 'genres:', show.genres, 'network:', show.network, 'status:', show.status);
 
     // Set title with year in parentheses
-    const titleText = show.title + (show.year ? ` (${show.year})` : '');
+    const titleAlreadyHasYear = show.year && show.title.trim().endsWith(`(${show.year})`);
+    const titleText = show.title + (show.year && !titleAlreadyHasYear ? ` (${show.year})` : '');
     const titleEl = document.getElementById('show-title');
     if (titleEl) {
         titleEl.textContent = titleText;
@@ -274,6 +320,21 @@ function renderShowHeader(show) {
             if (ratingSeparator) {
                 ratingSeparator.style.display = 'none';
             }
+        }
+    }
+
+    // Set certification (check both certification and content_rating fields)
+    const certificationText = document.getElementById('show-certification-text');
+    const certificationSeparator = document.getElementById('show-certification-separator');
+    if (certificationText && certificationSeparator) {
+        const cert = show.certification || show.content_rating;
+        if (cert) {
+            certificationText.textContent = cert;
+            certificationText.style.display = 'inline';
+            certificationSeparator.style.display = 'inline';
+        } else {
+            certificationText.style.display = 'none';
+            certificationSeparator.style.display = 'none';
         }
     }
 
@@ -351,6 +412,21 @@ function renderShowHeader(show) {
     const progressPercText = document.getElementById('progress-percent');
     if (progressPercText) {
         progressPercText.textContent = `(${progressPercent}% complete)`;
+        // Gradient: red(249,67,67) → yellow(255,215,97) at 50% → green(84,255,141) at 100%
+        const p = Math.max(0, Math.min(100, progressPercent));
+        let r, g, b;
+        if (p <= 50) {
+            const t = p / 50;
+            r = Math.round(249 + (255 - 249) * t);
+            g = Math.round(67 + (215 - 67) * t);
+            b = Math.round(67 + (97 - 67) * t);
+        } else {
+            const t = (p - 50) / 50;
+            r = Math.round(255 + (84 - 255) * t);
+            g = Math.round(215 + (255 - 215) * t);
+            b = Math.round(97 + (141 - 97) * t);
+        }
+        progressPercText.style.color = `rgb(${r}, ${g}, ${b})`;
     }
 
     const progressFill = document.getElementById('progress-fill');
@@ -361,7 +437,7 @@ function renderShowHeader(show) {
     // Update details row
     const qualityValue = document.getElementById('quality-value');
     if (qualityValue && show.version) {
-        qualityValue.textContent = show.version;
+        qualityValue.textContent = show.version.replace(/\*/g, '');
     }
 
     const pathValue = document.getElementById('path-value');
@@ -381,10 +457,29 @@ function renderShowHeader(show) {
         sizeValue.textContent = '-';
     }
 
+    // Update discover button
+    const discoverBtn = document.getElementById('btn-discover');
+    if (discoverBtn && show.tmdb_id) {
+        discoverBtn.href = `/discover/details/${show.tmdb_id}/tv`;
+        discoverBtn.style.display = '';
+    }
+
     // Update external links in header
     const tmdbLink = document.getElementById('link-tmdb');
     if (tmdbLink && show.tmdb_id) {
         tmdbLink.href = `https://www.themoviedb.org/tv/${show.tmdb_id}`;
+    }
+
+    const tvdbLink = document.getElementById('link-tvdb');
+    if (tvdbLink && (show.tvdb_slug || show.title)) {
+        // Use real slug from battery if available, otherwise generate from title as fallback
+        const slug = show.tvdb_slug || show.title
+            .toLowerCase()
+            .replace(/[^\w\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-')
+            .trim();
+        tvdbLink.href = `https://thetvdb.com/series/${slug}`;
     }
 
     const imdbLink = document.getElementById('link-imdb');
@@ -445,6 +540,18 @@ function renderShowHeader(show) {
     if (tmdbLinkDetail && show.tmdb_id) {
         tmdbLinkDetail.href = `https://www.themoviedb.org/tv/${show.tmdb_id}`;
         tmdbLinkDetail.textContent = show.tmdb_id;
+    }
+
+    const tvdbLinkDetail = document.getElementById('tvdb-link-detail');
+    if (tvdbLinkDetail && (show.tvdb_slug || show.title)) {
+        const slug = show.tvdb_slug || show.title
+            .toLowerCase()
+            .replace(/[^\w\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-')
+            .trim();
+        tvdbLinkDetail.href = `https://thetvdb.com/series/${slug}`;
+        tvdbLinkDetail.textContent = show.tvdb_id || 'View on TVDB';
     }
 
     const imdbLinkDetail = document.getElementById('imdb-link-detail');
@@ -511,6 +618,10 @@ function renderSeasons(seasons) {
 
     tabsNav.innerHTML = '';
     tabsContent.innerHTML = '';
+
+    if (window._hideSeasonZero) {
+        seasons = seasons.filter(s => s.season_number !== 0);
+    }
 
     // Count unique episodes, not files
     let totalEpisodes = 0;
@@ -584,12 +695,16 @@ function createSeasonTab(season, isActive) {
     const progressPercent = totalEpisodes > 0 ? Math.round((collectedEpisodes / totalEpisodes) * 100) : 0;
 
     const tab = document.createElement('button');
-    tab.className = `season-tab ${isActive ? 'active' : ''}`;
+    const isPhantomSeason = season.is_phantom_season === true;
+    tab.className = `season-tab ${isActive ? 'active' : ''} ${isPhantomSeason ? 'phantom-season-tab' : ''}`;
     tab.dataset.season = season.season_number;
     tab.setAttribute('type', 'button');
 
+    // Add dashed warning icon for phantom seasons (like phantom episodes)
+    const phantomIcon = isPhantomSeason ? `<svg style="width: 14px; height: 14px; margin-right: 4px; vertical-align: middle; stroke-dasharray: 4 4; opacity: 0.7;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>` : '';
+
     tab.innerHTML = `
-        <div class="season-tab-title">Season ${season.season_number}</div>
+        <div class="season-tab-title">${phantomIcon}Season ${season.season_number}</div>
         <div class="season-tab-stats">${collectedEpisodes} / ${totalEpisodes}</div>
         <div class="season-tab-progress">
             <div class="season-tab-progress-bar">
@@ -608,10 +723,13 @@ function createSeasonPanel(season, isActive) {
 
     // Check permissions for delete button
     const hasAdminPermissions = document.getElementById('has_admin_permissions')?.value === 'True';
+    const isPhantomSeason = season.is_phantom_season === true;
 
-    // Season delete button - only for admins
+    // Season delete button - only for admins and non-phantom seasons
     let deleteButtonHtml = '';
-    if (hasAdminPermissions) {
+    let replaceButtonHtml = '';
+    const hasPendingReplace = season.has_pending_replace === true;
+    if (hasAdminPermissions && !isPhantomSeason) {
         const deleteIconSvg = `
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M10 11v6"></path>
@@ -621,6 +739,14 @@ function createSeasonPanel(season, isActive) {
                 <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
             </svg>
         `;
+        const replaceIconSvg = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                <path d="M3 3v5h5"/>
+                <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+                <path d="M16 16h5v5"/>
+            </svg>
+        `;
 
         deleteButtonHtml = `
             <button class="btn btn-sm btn-danger delete-season-btn"
@@ -628,25 +754,182 @@ function createSeasonPanel(season, isActive) {
                     data-imdb-id="${showData.imdb_id}"
                     title="Delete entire season">
                 ${deleteIconSvg}
-                Delete Season
+                <span class="action-text">Delete Season</span>
             </button>
         `;
+
+        if (hasPendingReplace) {
+            replaceButtonHtml = `
+                <button class="btn btn-sm replace-season-btn replace-season-pending"
+                        data-season-number="${season.season_number}"
+                        data-imdb-id="${showData.imdb_id}"
+                        title="Cancel season replacement">
+                    ${replaceIconSvg}
+                    <span class="action-text">Cancel Replace</span>
+                </button>
+            `;
+        } else {
+            replaceButtonHtml = `
+                <button class="btn btn-sm replace-season-btn"
+                        data-season-number="${season.season_number}"
+                        data-imdb-id="${showData.imdb_id}"
+                        title="Replace entire season with a new torrent">
+                    ${replaceIconSvg}
+                    <span class="action-text">Replace Season</span>
+                </button>
+            `;
+        }
     }
 
     // Add season header with optional delete button
     const seasonHeader = document.createElement('div');
     seasonHeader.className = 'season-panel-header';
+    const phantomIndicator = isPhantomSeason ? '<span style="color: rgba(239, 68, 68, 0.8); font-style: italic; font-size: 0.875rem; margin-left: 0.5rem;">(Missing Season)</span>' : '';
+    const pendingBadge = hasPendingReplace ? '<span class="replace-pending-badge">Replacement Pending</span>' : '';
+    const magnetSeasonSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(270deg)"><path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const magnetSeasonBtnHtml = `
+        <button class="magnet-assign-episode-btn refresh-btn magnet-season-btn" type="button" title="Assign magnet for Season ${season.season_number}">
+            ${magnetSeasonSvg}
+        </button>
+    `;
+
+    // Season-level not-wanted magnet button — show if any episodes share a common pack magnet
+    const seasonMagnets = [...new Set((season.episodes || []).map(ep => ep.filled_by_magnet).filter(Boolean))];
+    const packMagnet = seasonMagnets.length === 1 && season.episodes.filter(ep => ep.filled_by_magnet).length > 1
+        ? seasonMagnets[0] : null;
+    const seasonNotWantedMagnetSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(270deg)"><path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+    const seasonNotWantedBtnHtml = packMagnet ? `
+        <button class="not-wanted-magnet-season-btn btn btn-sm" type="button"
+                title="Add season pack magnet to not-wanted list"
+                data-pack-magnet="${packMagnet.replace(/"/g, '&quot;')}"
+                data-season-item-ids="${(season.episodes || []).filter(ep => ep.filled_by_magnet === packMagnet).map(ep => ep.id).join(',')}">
+            ${seasonNotWantedMagnetSvg}
+        </button>
+    ` : '';
+
+    const downsubSeasonBtnHtml = `
+        <button class="downsub-season-btn refresh-btn" type="button"
+                title="Download subtitles for Season ${season.season_number}"
+                data-imdb-id="${showData.imdb_id}"
+                data-season-number="${season.season_number}">
+            <i class="fa-solid fa-closed-captioning" style="font-size:14px;"></i><i class="fa-solid fa-arrow-down" style="font-size:8px;margin-left:1px;vertical-align:middle;"></i>
+        </button>
+    `;
+
     seasonHeader.innerHTML = `
-        <h3>Season ${season.season_number}</h3>
-        ${deleteButtonHtml}
+        <h3>Season ${season.season_number}${phantomIndicator}${pendingBadge}</h3>
+        <div class="season-action-buttons">
+            ${magnetSeasonBtnHtml}
+            ${seasonNotWantedBtnHtml}
+            ${downsubSeasonBtnHtml}
+            ${replaceButtonHtml}
+            ${deleteButtonHtml}
+        </div>
     `;
     panel.appendChild(seasonHeader);
 
-    // Attach delete handler if button exists
-    if (hasAdminPermissions) {
+    // Bulk-delete action bar — hidden until at least one episode checkbox is checked
+    if (hasAdminPermissions && !isPhantomSeason) {
+        const bulkActionBar = document.createElement('div');
+        bulkActionBar.className = 'episode-bulk-action-bar';
+        bulkActionBar.style.display = 'none';
+        bulkActionBar.innerHTML = `
+            <span class="episode-bulk-selected-count">0 selected</span>
+            <button type="button" class="btn btn-sm btn-danger episode-bulk-delete-btn">Delete Selected</button>
+            <button type="button" class="btn btn-sm episode-bulk-clear-btn">Clear Selection</button>
+        `;
+        panel.appendChild(bulkActionBar);
+
+        const updateBulkActionBar = () => {
+            const checked = panel.querySelectorAll('.episode-bulk-select-checkbox:checked');
+            if (checked.length > 0) {
+                bulkActionBar.style.display = 'flex';
+                bulkActionBar.querySelector('.episode-bulk-selected-count').textContent = `${checked.length} selected`;
+            } else {
+                bulkActionBar.style.display = 'none';
+            }
+        };
+
+        // Delegate change events from the panel so dynamically-added rows are covered too
+        panel.addEventListener('change', (e) => {
+            if (e.target.classList.contains('episode-bulk-select-checkbox')) {
+                updateBulkActionBar();
+            }
+        });
+
+        bulkActionBar.querySelector('.episode-bulk-clear-btn').addEventListener('click', () => {
+            panel.querySelectorAll('.episode-bulk-select-checkbox:checked').forEach(cb => cb.checked = false);
+            updateBulkActionBar();
+        });
+
+        bulkActionBar.querySelector('.episode-bulk-delete-btn').addEventListener('click', () => {
+            const checkedBoxes = Array.from(panel.querySelectorAll('.episode-bulk-select-checkbox:checked'));
+            handleBulkDeleteEpisodes(checkedBoxes, season.season_number);
+        });
+    }
+
+    // Magnet season button handler
+    const magnetSeasonBtn = seasonHeader.querySelector('.magnet-season-btn');
+    if (magnetSeasonBtn) {
+        magnetSeasonBtn.addEventListener('click', function() {
+            const params = new URLSearchParams({
+                prefill_title: showData.title || '',
+                prefill_year: showData.year || '',
+                prefill_type: 'show',
+                prefill_selection: 'seasons',
+                prefill_seasons: String(season.season_number),
+            });
+            if (showData.imdb_id) params.set('prefill_id', showData.imdb_id);
+            else if (showData.tmdb_id) params.set('prefill_id', String(showData.tmdb_id));
+            const seasonVersion = (showData.version || '').replace(/\*/g, '').trim();
+            if (seasonVersion) params.set('prefill_version', seasonVersion);
+            window.location.href = `/magnet/assign_magnet?${params.toString()}`;
+        });
+    }
+
+    // Season not-wanted magnet button handler
+    const seasonNotWantedBtn = seasonHeader.querySelector('.not-wanted-magnet-season-btn');
+    if (seasonNotWantedBtn) {
+        seasonNotWantedBtn.addEventListener('click', async () => {
+            const itemIds = seasonNotWantedBtn.dataset.seasonItemIds.split(',').map(Number).filter(Boolean);
+            await handleNotWantedMagnetDirect(seasonNotWantedBtn, itemIds, `Season ${season.season_number} pack`);
+        });
+    }
+
+    // Season subtitle download handler
+    const downsubSeasonBtn = seasonHeader.querySelector('.downsub-season-btn');
+    if (downsubSeasonBtn) {
+        downsubSeasonBtn.addEventListener('click', async () => {
+            downsubSeasonBtn.disabled = true;
+            try {
+                const resp = await fetch('/library/download_subtitles/season', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({imdb_id: showData.imdb_id, season_number: season.season_number})
+                });
+                const result = await resp.json();
+                showPopup({ type: result.success ? POPUP_TYPES.SUCCESS : POPUP_TYPES.WARNING, message: result.message || result.error || 'Failed', autoClose: 5000 });
+            } catch(e) {
+                showPopup({ type: POPUP_TYPES.ERROR, message: 'Error starting subtitle download', autoClose: 4000 });
+            } finally {
+                downsubSeasonBtn.disabled = false;
+            }
+        });
+    }
+
+    // Attach button handlers if buttons exist (not for phantom seasons)
+    if (hasAdminPermissions && !isPhantomSeason) {
         const deleteBtn = seasonHeader.querySelector('.delete-season-btn');
         if (deleteBtn) {
             deleteBtn.addEventListener('click', handleDeleteSeason);
+        }
+        const replaceBtn = seasonHeader.querySelector('.replace-season-btn');
+        if (replaceBtn) {
+            if (hasPendingReplace) {
+                replaceBtn.addEventListener('click', handleCancelSeasonReplace);
+            } else {
+                replaceBtn.addEventListener('click', handleReplaceSeason);
+            }
         }
     }
 
@@ -661,13 +944,15 @@ function createSeasonPanel(season, isActive) {
     });
 
     // Detect gaps in episode numbering and create phantom rows
+    // Start from minEp (not 1) to avoid inflating counts for absolute-numbered anime
+    // where season 2 starts at episode 63 — episodes 1-62 belong to season 1
     const episodeNumbers = Object.keys(episodeGroups).map(n => parseInt(n)).sort((a, b) => a - b);
     if (episodeNumbers.length > 0) {
-        const maxEp = Math.max(...episodeNumbers);
+        const minEp = episodeNumbers[0];
+        const maxEp = episodeNumbers[episodeNumbers.length - 1];
 
-        // Check for gaps from episode 1 to max episode
-        // This catches missing episodes at the start and in the middle
-        for (let i = 1; i <= maxEp; i++) {
+        // Check for gaps from minEp to maxEp (within the season's own episode range)
+        for (let i = minEp; i <= maxEp; i++) {
             if (!episodeGroups[i]) {
                 // Create phantom row for missing episode
                 episodeGroups[i] = [{
@@ -761,8 +1046,14 @@ function getQualityScore(episode) {
 }
 
 function getHighestQualityEpisode(episodes) {
-    // Return the episode with the highest quality score
-    return episodes.reduce((best, current) => {
+    // Return the episode with the highest quality score.
+    // Prefer entries that actually have a collected file - otherwise a
+    // Blacklisted/Wanted row for a higher-labeled version (e.g. a 2160p
+    // version that was never found and got blacklisted) outscores the
+    // real Collected file and its version badge gets shown instead.
+    const collectedEpisodes = episodes.filter(ep => ep.state === 'Collected' || ep.state === 'Upgrading');
+    const candidates = collectedEpisodes.length > 0 ? collectedEpisodes : episodes;
+    return candidates.reduce((best, current) => {
         const bestScore = getQualityScore(best);
         const currentScore = getQualityScore(current);
         return currentScore > bestScore ? current : best;
@@ -772,7 +1063,40 @@ function getHighestQualityEpisode(episodes) {
 function createEpisodeRow(episodes, seasonNumber) {
     // episodes is an array of entries for the same episode number
     // (can have multiple entries if there are multiple files/versions)
-    const firstEp = episodes[0];
+
+    // Sort episodes to prioritize better states and proper metadata
+    // Priority: Collected > Upgrading > others > Unreleased (placeholders)
+    const statePriority = {
+        'Collected': 1,
+        'Upgrading': 2,
+        'Wanted': 3,
+        'Scraping': 4,
+        'Final_Scrape': 5,
+        'Final_Check': 6,
+        'Sleeping': 7,
+        'Blacklisted': 8,
+        'Unreleased': 9  // Unreleased placeholders have lowest priority
+    };
+
+    const sortedEpisodes = [...episodes].sort((a, b) => {
+        const aPriority = statePriority[a.state] || 99;
+        const bPriority = statePriority[b.state] || 99;
+
+        // If priorities are different, use that
+        if (aPriority !== bPriority) {
+            return aPriority - bPriority;
+        }
+
+        // If same priority, prefer entries with actual episode titles over generic ones
+        const aHasTitle = a.episode_title && !a.episode_title.startsWith('Episode ');
+        const bHasTitle = b.episode_title && !b.episode_title.startsWith('Episode ');
+        if (aHasTitle && !bHasTitle) return -1;
+        if (!aHasTitle && bHasTitle) return 1;
+
+        return 0;
+    });
+
+    const firstEp = sortedEpisodes[0];
     const isPhantom = firstEp.is_phantom || false;
     const isCollected = episodes.some(ep => ep.state === 'Collected');
     const isUpgrading = episodes.some(ep => ep.state === 'Upgrading');
@@ -785,6 +1109,7 @@ function createEpisodeRow(episodes, seasonNumber) {
 
     const row = document.createElement('div');
     row.className = isPhantom ? 'episode-row phantom-row' : 'episode-row';
+    row.dataset.episode = firstEp.episode_number;
 
     // Status icon
     let statusIcon = '';
@@ -835,16 +1160,42 @@ function createEpisodeRow(episodes, seasonNumber) {
     // Episode metadata
     let metaParts = [];
 
+    // Check if any episode entry is broken (Collected/Upgrading but missing from Plex)
+    const brokenPlexEps = new Set(
+        episodes
+            .filter(ep => (ep.state === 'Collected' || ep.state === 'Upgrading') && !ep.ms_item_id)
+            .map(ep => ep.filled_by_file || ep.location_basename || '')
+            .filter(Boolean)
+    );
+    const isPlexBroken = brokenPlexEps.size > 0;
+
+    if (isPlexBroken) {
+        metaParts.push(`<span class="episode-broken-badge" title="Collected/Upgrading but missing from Plex (no ms_item_id)">Broken</span>`);
+    }
+
     // Show only the highest quality version
     if (episodes.length > 0) {
         const highestQualityEp = getHighestQualityEpisode(episodes);
         if (highestQualityEp.version) {
-            metaParts.push(`<span class="episode-version">${escapeHtml(highestQualityEp.version)}</span>`);
+            metaParts.push(`<span class="episode-version">${escapeHtml(highestQualityEp.version.replace(/\*/g, ''))}</span>`);
         }
         // Add largest size badge if available (in case of multiple files per episode)
         const largestSize = Math.max(...episodes.map(ep => ep.size || 0));
         if (largestSize > 0) {
             metaParts.push(`<span class="episode-version">${largestSize.toFixed(2)} GB</span>`);
+        }
+        // Audio / subtitle tracks
+        const audioTrack = highestQualityEp.ms_audio_track;
+        const subTrack = highestQualityEp.ms_subtitle_track;
+        if (audioTrack) {
+            const langs = audioTrack.split(',').map(l => l.trim()).filter(Boolean);
+            const label = langs.length > 1 ? `${langs[0]} +${langs.length - 1}` : langs[0];
+            metaParts.push(`<span class="episode-track-badge" title="${escapeHtml(langs.join(', '))}"><i class="fa-solid fa-volume-high"></i> ${escapeHtml(label)}</span>`);
+        }
+        if (subTrack) {
+            const langs = subTrack.split(',').map(l => l.trim()).filter(Boolean);
+            const label = langs.length > 1 ? `${langs[0]} +${langs.length - 1}` : langs[0];
+            metaParts.push(`<span class="episode-track-badge" title="${escapeHtml(langs.join(', '))}"><i class="fa-solid fa-closed-captioning"></i> ${escapeHtml(label)}</span>`);
         }
     }
 
@@ -885,7 +1236,7 @@ function createEpisodeRow(episodes, seasonNumber) {
         return ep.location_basename && brokenFiles.has(ep.location_basename);
     });
 
-    // Broken file icon
+    // Broken file icon (unplayable)
     let brokenIcon = '';
     if (isBroken) {
         brokenIcon = `
@@ -894,6 +1245,7 @@ function createEpisodeRow(episodes, seasonNumber) {
             </svg>
         `;
     }
+
 
     // Check permissions for conditional button rendering
     const hasAdminPermissions = document.getElementById('has_admin_permissions')?.value === 'True';
@@ -927,6 +1279,48 @@ function createEpisodeRow(episodes, seasonNumber) {
         </button>
     `;
 
+    // Not-wanted magnet icon (magnet with slash)
+    const notWantedMagnetSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(270deg)"><path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+
+    // Build not-wanted magnet button for episode level
+    // Collect unique magnets across all versions of this episode
+    const episodeMagnets = [...new Set(episodes.map(ep => ep.filled_by_magnet).filter(Boolean))];
+    // Include ALL episode versions for popup display; only those with magnets can be submitted
+    const episodeMagnetFiles = episodeMagnets.length > 0
+        ? episodes.map(ep => ({
+            id: ep.id,
+            file: ep.filled_by_file || ep.location_basename || 'Unknown file',
+            version: ep.version || 'Unknown',
+            magnet: ep.filled_by_magnet || null
+          }))
+        : [];
+    const notWantedMagnetIcon = episodeMagnetFiles.length > 0
+        ? `<button class="not-wanted-magnet-btn refresh-btn" type="button" title="Add magnet to not-wanted list">${notWantedMagnetSvg}</button>`
+        : '';
+
+    // Magnet assign icon
+    const magnetIcon = `
+        <button class="magnet-assign-episode-btn refresh-btn" type="button" title="Assign magnet for this episode">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(270deg)">
+                <path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </button>
+    `;
+
+    // Bulk-select checkbox (Admin only, not for phantom rows — they don't exist in the DB)
+    let bulkSelectCheckbox = '';
+    if (hasAdminPermissions && !isPhantom) {
+        const allEpisodeIds = episodes.map(ep => ep.id).join(',');
+        bulkSelectCheckbox = `
+            <input type="checkbox" class="episode-bulk-select-checkbox"
+                   data-imdb-id="${firstEp.imdb_id || ''}"
+                   data-season="${seasonNumber}"
+                   data-episode="${firstEp.episode_number || 0}"
+                   data-episode-ids="${allEpisodeIds}">
+        `;
+    }
+
     // Delete icon - deletes episode (Admin only)
     let deleteIcon = '';
     if (hasAdminPermissions) {
@@ -938,9 +1332,18 @@ function createEpisodeRow(episodes, seasonNumber) {
                 const parts = ep.location_on_disk.split('/');
                 fileName = parts[parts.length - 1];
             }
+            // Rows with no file at all are Blacklisted/Wanted placeholders for a
+            // version that was never actually found/downloaded - label them as such
+            // instead of the misleading "Unknown file" (there's nothing unknown
+            // about it: no version matching those criteria was ever collected).
+            if (!fileName) {
+                fileName = (ep.state === 'Blacklisted')
+                    ? 'No file (blacklisted - version never found)'
+                    : 'No file collected yet';
+            }
             return {
                 id: ep.id,
-                file: fileName || 'Unknown file',
+                file: fileName,
                 version: ep.version || 'Unknown'
             };
         }));
@@ -956,7 +1359,12 @@ function createEpisodeRow(episodes, seasonNumber) {
             </svg>
         `;
 
+        const collectedEp = episodes.find(ep => ep.state === 'Collected' || ep.state === 'Upgrading') || firstEp;
         deleteIcon = `
+            <button class="downsub-episode-btn refresh-btn" type="button" title="Download subtitles"
+                    data-item-id="${collectedEp.id || ''}">
+                <i class="fa-solid fa-closed-captioning"></i><i class="fa-solid fa-arrow-down" style="font-size:8px;margin-left:1px;vertical-align:middle;"></i>
+            </button>
             <button class="delete-episode-btn" type="button" title="Delete episode"
                     data-imdb-id="${episodes[0].imdb_id || ''}"
                     data-season="${seasonNumber}"
@@ -1002,7 +1410,11 @@ function createEpisodeRow(episodes, seasonNumber) {
                     </svg>
                 </button>
                 <div class="episode-files">
-                    ${files.map(file => `<div class="episode-file" title="${escapeHtml(file)}">${escapeHtml(file)}</div>`).join('')}
+                    ${episodes.filter(ep => ep.filled_by_file || ep.location_basename).map(ep => {
+                        const fname = ep.filled_by_file || ep.location_basename || '';
+                        const epBroken = (ep.state === 'Collected' || ep.state === 'Upgrading') && !ep.ms_item_id;
+                        return `<div class="episode-file" title="${escapeHtml(fname)}">${escapeHtml(fname)}${epBroken ? `<span style="margin-left:6px;font-size:0.72em;padding:1px 5px;border-radius:4px;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);" title="Missing from Plex">Broken</span>` : ''}</div>`;
+                    }).join('')}
                 </div>
             </div>
         ` : `
@@ -1018,12 +1430,15 @@ function createEpisodeRow(episodes, seasonNumber) {
             ${brokenIcon}
             ${searchIcon}
             ${refreshIcon}
+            ${magnetIcon}
+            ${notWantedMagnetIcon}
             ${deleteIcon}
             ${filesButtonHtml}
         `;
     }
 
     row.innerHTML = `
+        ${bulkSelectCheckbox}
         <div class="episode-number">${firstEp.episode_number}</div>
         ${statusIcon}
         <div class="episode-info-section">
@@ -1042,15 +1457,61 @@ function createEpisodeRow(episodes, seasonNumber) {
     }
 
     // Add event listener for refresh button
-    const refreshBtn = row.querySelector('.refresh-btn');
+    const refreshBtn = row.querySelector('.refresh-btn:not(.magnet-assign-episode-btn)');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', handleRefreshClick);
+    }
+
+    // Add event listener for magnet assign button
+    const magnetBtn = row.querySelector('.magnet-assign-episode-btn');
+    if (magnetBtn) {
+        magnetBtn.addEventListener('click', function() {
+            const params = new URLSearchParams({
+                prefill_title: showData.title || '',
+                prefill_year: showData.year || '',
+                prefill_type: 'show',
+                prefill_selection: 'episode',
+                prefill_seasons: String(seasonNumber),
+                prefill_episode: String(firstEp.episode_number || 0),
+            });
+            if (showData.imdb_id) params.set('prefill_id', showData.imdb_id);
+            else if (showData.tmdb_id) params.set('prefill_id', String(showData.tmdb_id));
+            const epVersion = (getHighestQualityEpisode(episodes).version || '').replace(/\*/g, '').trim();
+            if (epVersion) params.set('prefill_version', epVersion);
+            window.location.href = `/magnet/assign_magnet?${params.toString()}`;
+        });
+    }
+
+    // Add event listener for episode subtitle download button
+    const downsubEpisodeBtn = row.querySelector('.downsub-episode-btn');
+    if (downsubEpisodeBtn) {
+        downsubEpisodeBtn.addEventListener('click', async () => {
+            const itemId = downsubEpisodeBtn.dataset.itemId;
+            if (!itemId) return;
+            downsubEpisodeBtn.disabled = true;
+            try {
+                const resp = await fetch(`/library/download_subtitles/item/${itemId}`, {method: 'POST'});
+                const result = await resp.json();
+                showPopup({ type: result.success ? POPUP_TYPES.SUCCESS : POPUP_TYPES.WARNING, message: result.message || result.error || 'Failed', autoClose: 5000 });
+            } catch(e) {
+                showPopup({ type: POPUP_TYPES.ERROR, message: 'Error starting subtitle download', autoClose: 4000 });
+            } finally {
+                downsubEpisodeBtn.disabled = false;
+            }
+        });
     }
 
     // Add event listener for delete button
     const deleteBtn = row.querySelector('.delete-episode-btn');
     if (deleteBtn) {
         deleteBtn.addEventListener('click', handleDeleteEpisode);
+    }
+
+    // Add event listener for not-wanted magnet button
+    const notWantedBtn = row.querySelector('.not-wanted-magnet-btn');
+    if (notWantedBtn) {
+        notWantedBtn._magnetFiles = episodeMagnetFiles;
+        notWantedBtn.addEventListener('click', () => handleNotWantedMagnet(notWantedBtn));
     }
 
     // Add event listener for files toggle button
@@ -1060,6 +1521,14 @@ function createEpisodeRow(episodes, seasonNumber) {
 
         toggleBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            const isOpening = !filesPanel.classList.contains('open');
+            if (isOpening) {
+                const btnRect = toggleBtn.getBoundingClientRect();
+                filesPanel.style.top = (btnRect.top + btnRect.height / 2) + 'px';
+                filesPanel.style.left = 'auto';
+                const panelWidth = filesPanel.offsetWidth || 400;
+                filesPanel.style.right = (window.innerWidth - btnRect.right - panelWidth * 0.2) + 'px';
+            }
             filesPanel.classList.toggle('open');
             toggleBtn.classList.toggle('active');
         });
@@ -1123,11 +1592,63 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+/**
+ * Handle not-wanted magnet for episode rows.
+ * Single version: fires directly. Multiple versions: shows selection popup.
+ */
+async function handleNotWantedMagnet(btn) {
+    const magnetFiles = btn._magnetFiles || [];
+    if (magnetFiles.length === 0) return;
+
+    // Only versions with a magnet can actually be submitted
+    const submittableFiles = magnetFiles.filter(f => f.magnet);
+    if (submittableFiles.length === 0) return;
+
+    let selectedIds;
+    if (magnetFiles.length === 1) {
+        // Single version — fire directly
+        selectedIds = [submittableFiles[0].id];
+    } else {
+        // Multiple versions — show popup with all versions; non-magnet ones will be greyed out
+        selectedIds = await showFileSelectionPopup(magnetFiles, 'Select versions to blacklist magnet', 'Blacklist Magnet');
+        if (!selectedIds) return;
+        // Filter to only those that have a magnet (popup may have included greyed-out entries)
+        const submittableIds = new Set(submittableFiles.map(f => f.id));
+        selectedIds = selectedIds.filter(id => submittableIds.has(id));
+        if (selectedIds.length === 0) return;
+    }
+    await handleNotWantedMagnetDirect(btn, selectedIds, 'magnet');
+}
+
+async function handleNotWantedMagnetDirect(btn, itemIds, label) {
+    const origTitle = btn.title;
+    btn.disabled = true;
+    try {
+        const resp = await fetch('/library/add_not_wanted_magnet', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ item_ids: itemIds }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showPopup({ type: POPUP_TYPES.SUCCESS, message: `Added ${data.added} magnet(s) to not-wanted list`, autoClose: 3000 });
+            btn.style.opacity = '0.4';
+            btn.title = 'Already in not-wanted list';
+        } else {
+            showPopup({ type: POPUP_TYPES.ERROR, message: 'Failed: ' + (data.error || 'Unknown error'), autoClose: 4000 });
+        }
+    } catch (e) {
+        showPopup({ type: POPUP_TYPES.ERROR, message: 'Request failed: ' + e.message, autoClose: 4000 });
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 async function handleSearchEpisode(event) {
     if (!showData) return;
 
     const btn = event.currentTarget;
-    const version = showData.version || 'Default';
+    const version = (showData.version || 'Default').replace(/\*/g, '');
     const season = parseInt(btn.dataset.season);
     const episode = parseInt(btn.dataset.episode);
 
@@ -1150,7 +1671,7 @@ async function handleSearchEpisode(event) {
     );
 }
 
-function handleRefreshClick(event) {
+async function handleRefreshClick(event) {
     const btn = event.currentTarget;
     const data = {
         imdb_id: btn.dataset.imdbId,
@@ -1159,34 +1680,42 @@ function handleRefreshClick(event) {
         episode_number: parseInt(btn.dataset.episode)
     };
 
-    // Disable button while processing
-    btn.disabled = true;
+    // Remember which season tab is active so we can restore it after reload
+    const activeTab = document.querySelector('.season-tab.active');
+    const activeSeason = activeTab ? parseInt(activeTab.dataset.season) : null;
 
-    fetch('/statistics/move_to_wanted', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(data)
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Reload the show data to reflect the updated state
-            loadShowData();
+    // Disable button and show spinner while processing
+    btn.disabled = true;
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 0.8s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`;
+
+    try {
+        const response = await fetch('/statistics/move_to_wanted', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            await loadShowData();
+            // Restore the season tab the user was on
+            if (activeSeason !== null) {
+                switchTab(activeSeason);
+            }
         } else {
-            throw new Error(data.error || 'Failed to move item to Wanted state');
+            throw new Error(result.error || 'Failed to move item to Wanted state');
         }
-    })
-    .catch(error => {
+    } catch (error) {
         console.error('Error:', error);
         showPopup({
             type: POPUP_TYPES.ERROR,
             message: `Error moving item to Wanted state: ${error.message}`,
             autoClose: 5000
         });
+        btn.innerHTML = originalHTML;
         btn.disabled = false;
-    });
+    }
 }
 
 function formatDate(dateInput) {
@@ -1262,7 +1791,7 @@ async function handleSeasonPacks() {
     if (!showData) return;
 
     // Use the version from showData metadata, or 'Default' if not available
-    const version = showData.version || 'Default';
+    const version = (showData.version || 'Default').replace(/\*/g, '');
 
     // Get the currently active season tab
     const activeTab = document.querySelector('.season-tab.active');
@@ -1285,6 +1814,98 @@ async function handleSeasonPacks() {
         genres, // genre_ids - pass genres for auto-select
         version
     );
+}
+
+async function handleReplaceSeason(event) {
+    if (!showData) return;
+    const button = event.currentTarget;
+    const seasonNumber = parseInt(button.dataset.seasonNumber);
+    const imdbId = button.dataset.imdbId;
+
+    if (!imdbId || isNaN(seasonNumber)) return;
+
+    // Mark the season for replacement on the backend
+    try {
+        const resp = await fetch(`/library/mark_season_replace/${imdbId}/${seasonNumber}`, { method: 'POST' });
+        const data = await resp.json();
+        if (!data.success) {
+            showPopup({ type: POPUP_TYPES.ERROR, message: data.error || 'Failed to mark season for replacement', autoClose: 4000 });
+            return;
+        }
+    } catch (err) {
+        showPopup({ type: POPUP_TYPES.ERROR, message: 'Failed to mark season for replacement', autoClose: 4000 });
+        return;
+    }
+
+    // Open the same torrent picker as Season Pack for the target season
+    const version = (showData.version || 'Default').replace(/\*/g, '');
+    const genres = showData.genres ?
+        (typeof showData.genres === 'string' ? showData.genres.split(',').map(g => g.trim()) : showData.genres)
+        : [];
+
+    // Reload to show the "Replacement Pending" badge before opening torrent picker
+    await loadShowData();
+
+    // Watch the overlay: if it is closed without a torrent being queued, auto-cancel the replacement
+    const _overlay = document.getElementById('overlay');
+    if (_overlay) {
+        window._scraperTorrentWasQueued = false;
+        let _overlayWasOpened = false;
+        const _capturedImdbId = imdbId;
+        const _capturedSeason = seasonNumber;
+        const _observer = new MutationObserver(async () => {
+            const d = _overlay.style.display;
+            if (d !== 'none' && d !== '') {
+                _overlayWasOpened = true;
+            } else if (_overlayWasOpened && d === 'none') {
+                _observer.disconnect();
+                if (!window._scraperTorrentWasQueued) {
+                    // Scraper closed without selecting a torrent — silently cancel the pending replacement
+                    try {
+                        await fetch(`/library/cancel_season_replace/${_capturedImdbId}/${_capturedSeason}`, { method: 'POST' });
+                        await loadShowData();
+                    } catch (e) { /* ignore */ }
+                } else {
+                    window._scraperTorrentWasQueued = false;
+                }
+            }
+        });
+        _observer.observe(_overlay, { attributes: true, attributeFilter: ['style'] });
+    }
+
+    await selectMedia(
+        showData.tmdb_id || showData.imdb_id,
+        showData.title,
+        showData.year || '',
+        'tv',
+        seasonNumber,
+        null,
+        true,
+        genres,
+        version
+    );
+}
+
+async function handleCancelSeasonReplace(event) {
+    if (!showData) return;
+    const button = event.currentTarget;
+    const seasonNumber = parseInt(button.dataset.seasonNumber);
+    const imdbId = button.dataset.imdbId;
+
+    if (!imdbId || isNaN(seasonNumber)) return;
+
+    try {
+        const resp = await fetch(`/library/cancel_season_replace/${imdbId}/${seasonNumber}`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+            showPopup({ type: POPUP_TYPES.SUCCESS, message: 'Season replacement cancelled', autoClose: 3000 });
+            loadShowData();
+        } else {
+            showPopup({ type: POPUP_TYPES.ERROR, message: data.error || 'Failed to cancel replacement', autoClose: 4000 });
+        }
+    } catch (err) {
+        showPopup({ type: POPUP_TYPES.ERROR, message: 'Failed to cancel replacement', autoClose: 4000 });
+    }
 }
 
 function handleRefreshTMDB() {
@@ -1324,6 +1945,53 @@ function handleRefreshTMDB() {
         btn.disabled = false;
         btn.innerHTML = originalHTML;
     });
+}
+
+function handleFixMatch() {
+    if (!showData) return;
+
+    // The URL carries whichever ID the page was opened with, and that ID is
+    // about to change — reload onto the corrected one rather than a dead URL.
+    window.openFixMatchModal({
+        mediaType: 'show',
+        title: showData.title,
+        year: showData.year,
+        imdbId: showData.imdb_id,
+        tmdbId: showData.tmdb_id,
+        tvdbId: showData.tvdb_id,
+        onApplied: function(result) {
+            window.location.href = '/library/show/' + (result.imdb_id || result.tmdb_id);
+        }
+    });
+}
+
+function handleShowOptions() {
+    if (!showData || !showData.imdb_id) return;
+    window.openShowOptionsModal({
+        imdbId: showData.imdb_id,
+        title: showData.title,
+        // Seasons and episode numbers changed; show them as they are now
+        onOrderApplied: function() { if (typeof loadShowData === 'function') loadShowData(); }
+    });
+}
+
+async function handleDownsubShow() {
+    if (!showData) return;
+    const btn = document.getElementById('btn-downsub-show');
+    if (btn) btn.disabled = true;
+    try {
+        const resp = await fetch('/library/download_subtitles/show', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({imdb_id: showData.imdb_id})
+        });
+        const result = await resp.json();
+        showPopup({ type: result.success ? POPUP_TYPES.SUCCESS : POPUP_TYPES.WARNING, message: result.message || result.error || 'Failed', autoClose: 5000 });
+    } catch(e) {
+        showPopup({ type: POPUP_TYPES.ERROR, message: 'Error starting subtitle download', autoClose: 4000 });
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 function handleSettings() {
@@ -1371,15 +2039,7 @@ async function handleDeleteShow(event) {
     }
 
     // Custom deletion with progress tracking
-    if (!skipConfirmation) {
-        const action = showData && showData.auto_ghostlist_enabled ? 'ghostlist' : 'delete';
-        const actionUpper = action === 'ghostlist' ? 'ghostlist' : 'delete';
-        const canUndo = action === 'ghostlist' ? 'Ghostlisted items can be recovered.' : 'This action cannot be undone.';
-        const confirmed = confirm(`This will ${actionUpper} ALL episodes of "${showData.title}". ${canUndo}`);
-        if (!confirmed) {
-            return;
-        }
-    }
+    const proceedWithDelete = async () => {
 
     // Simulate progress updates
     const steps = [
@@ -1495,22 +2155,22 @@ async function handleDeleteShow(event) {
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     message: reportMessage,
-                    autoClose: false,  // Require user to close manually
-                    onConfirm: () => {
-                        // Redirect to library page after user closes notification
-                        window.location.href = '/library';
-                    }
+                    autoClose: false  // Require user to close manually
                 });
 
-                // Add close button callback for redirect
-                setTimeout(() => {
-                    const closeButton = document.querySelector('.universal-popup #popupClose');
-                    if (closeButton) {
-                        closeButton.onclick = () => {
-                            window.location.href = '/library';
-                        };
-                    }
-                }, 100);
+                // Redirect once the user closes the report. showPopup's onConfirm
+                // isn't invoked for SUCCESS-type popups (only CONFIRM/PROMPT), so
+                // wire the close button directly - synchronously, right here, since
+                // the popup and its default close handler already exist in the DOM
+                // by the time showPopup() returns (no setTimeout delay needed, and
+                // a delay here previously raced the default handler: closing fast
+                // enough left the user stranded on the now-deleted show's page).
+                const closeButton = document.querySelector('.universal-popup #popupClose');
+                if (closeButton) {
+                    closeButton.onclick = () => {
+                        window.location.href = '/library';
+                    };
+                }
             } else {
                 throw new Error(result.error || 'Failed to delete show');
             }
@@ -1523,6 +2183,24 @@ async function handleDeleteShow(event) {
             message: `Error deleting show: ${error.message}`,
             autoClose: 5000
         });
+    }
+
+    }; // end proceedWithDelete
+
+    if (!skipConfirmation) {
+        const action = showData && showData.auto_ghostlist_enabled ? 'ghostlist' : 'delete';
+        const actionUpper = action === 'ghostlist' ? 'ghostlist' : 'delete';
+        const canUndo = action === 'ghostlist' ? 'Ghostlisted items can be recovered.' : 'This action cannot be undone.';
+        showPopup({
+            type: 'confirm',
+            title: 'Confirm Deletion',
+            message: `This will ${actionUpper} ALL episodes of "${showData.title}". ${canUndo}`,
+            confirmText: actionUpper.charAt(0).toUpperCase() + actionUpper.slice(1),
+            cancelText: 'Cancel',
+            onConfirm: proceedWithDelete
+        });
+    } else {
+        proceedWithDelete();
     }
 }
 
@@ -1577,10 +2255,13 @@ async function handleDeleteSeason(event) {
     }
 
     // Confirm deletion - season deletion always uses delete (not ghostlist)
-    const confirmed = confirm(`This will delete all ${episodeCount} episodes in ${seasonTitle}. This action cannot be undone.`);
-    if (!confirmed) {
-        return;
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Season',
+        message: `This will delete all ${episodeCount} episodes in ${seasonTitle}. This action cannot be undone.`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
 
     // Progress steps for season deletion (no content source removal)
     const steps = [
@@ -1689,28 +2370,21 @@ async function handleDeleteSeason(event) {
         hideDeletionLoading();
 
         if (result && result.success) {
+            // Refresh immediately - see comment on the single-episode delete path
+            // for why this doesn't wait on the popup being closed.
+            await loadShowData();
+            // Re-render defaults back to season 1 - switch back to the season that
+            // was just deleted so its now-missing state is visible.
+            switchTab(seasonNumber);
+
             // Build deletion report using shared utility
             const reportMessage = buildDeletionReport(result, seasonTitle);
 
             showPopup({
                 type: POPUP_TYPES.SUCCESS,
                 message: reportMessage,
-                autoClose: false,  // Require user to close manually
-                onConfirm: () => {
-                    // Reload show data after user closes notification
-                    loadShowData();
-                }
+                autoClose: false  // Require user to close manually
             });
-
-            // Add close button callback for reload
-            setTimeout(() => {
-                const closeButton = document.querySelector('.universal-popup #popupClose');
-                if (closeButton) {
-                    closeButton.onclick = () => {
-                        loadShowData();
-                    };
-                }
-            }, 100);
         } else {
             throw new Error(result.error || 'Failed to delete season');
         }
@@ -1724,6 +2398,9 @@ async function handleDeleteSeason(event) {
             autoClose: 5000
         });
     }
+
+        } // end onConfirm
+    }); // end showPopup
 }
 
 /**
@@ -1773,32 +2450,41 @@ function showChoicePopup(title, message, choices) {
 /**
  * Show file selection popup for episodes with multiple files
  */
-function showFileSelectionPopup(files, episodeTitle) {
+function showFileSelectionPopup(files, episodeTitle, actionLabel) {
+    const confirmLabel = actionLabel || 'Delete Selected';
+    const titleLabel = actionLabel ? actionLabel : 'Select Files to Delete';
     return new Promise((resolve) => {
         // Create popup HTML
         const popupHtml = `
             <div class="file-selection-popup-overlay" id="fileSelectionPopup">
                 <div class="file-selection-popup">
-                    <h3>Select Files to Delete</h3>
+                    <h3>${titleLabel}</h3>
                     <p class="file-selection-subtitle">${episodeTitle}</p>
                     <div class="file-selection-list">
-                        ${files.map((file, index) => `
-                            <div class="file-selection-item">
+                        ${files.map((file, index) => {
+                            const hasAction = file.magnet !== undefined ? !!file.magnet : true;
+                            const disabledAttr = !hasAction ? 'disabled' : '';
+                            const checkedAttr = (files.length === 1 && hasAction) ? 'checked' : '';
+                            const itemClass = !hasAction ? 'file-selection-item file-selection-item--no-magnet' : 'file-selection-item';
+                            return `
+                            <div class="${itemClass}">
                                 <input type="checkbox"
                                        id="file-${file.id}"
                                        value="${file.id}"
-                                       ${files.length === 1 ? 'checked' : ''}>
+                                       ${checkedAttr}
+                                       ${disabledAttr}>
                                 <label for="file-${file.id}">
                                     <span class="file-number">${index + 1}.</span>
                                     <span class="file-name">${escapeHtml(file.file)}</span>
                                     <span class="file-version">${escapeHtml(file.version)}</span>
+                                    ${!hasAction ? '<span class="file-no-magnet">(no magnet)</span>' : ''}
                                 </label>
-                            </div>
-                        `).join('')}
+                            </div>`;
+                        }).join('')}
                     </div>
                     <div class="file-selection-actions">
                         <button class="file-selection-btn file-selection-cancel">Cancel</button>
-                        <button class="file-selection-btn file-selection-delete">Delete</button>
+                        <button class="file-selection-btn file-selection-delete">${confirmLabel}</button>
                     </div>
                 </div>
             </div>
@@ -1849,6 +2535,108 @@ function showFileSelectionPopup(files, episodeTitle) {
  * Handle delete episode button click
  * Supports single and multi-file episodes with progress tracking
  */
+/**
+ * Bulk-delete every file for each checked episode row.
+ *
+ * Reuses the exact same per-episode endpoint as the single-episode delete button
+ * (/library/delete_episode/<imdbId>/<season>/<episode>), one call per selected
+ * episode, passing that episode's full item_ids list so every file is removed —
+ * this intentionally skips the interactive single-file picker used by the
+ * one-at-a-time delete flow, since a bulk action has no per-file choice to make.
+ * No backend or DeletionManager changes — inherits Plex/Symlinked-Local handling
+ * for free from the existing endpoint.
+ */
+async function handleBulkDeleteEpisodes(checkboxes, seasonNumber) {
+    if (!checkboxes || checkboxes.length === 0) return;
+
+    const episodesToDelete = checkboxes.map(cb => ({
+        imdbId: cb.dataset.imdbId,
+        episodeNumber: parseInt(cb.dataset.episode),
+        itemIds: cb.dataset.episodeIds.split(',').map(Number).filter(Boolean)
+    })).filter(ep => ep.imdbId && ep.episodeNumber && ep.itemIds.length > 0);
+
+    if (episodesToDelete.length === 0) {
+        showPopup({ type: POPUP_TYPES.ERROR, message: 'Cannot delete: Missing episode information', autoClose: 3000 });
+        return;
+    }
+
+    const episodeLabels = episodesToDelete.map(ep => `S${seasonNumber.toString().padStart(2, '0')}E${ep.episodeNumber.toString().padStart(2, '0')}`);
+    const confirmed = await new Promise(resolve => {
+        showPopup({
+            type: 'confirm',
+            title: 'Delete Selected Episodes',
+            message: `Delete ${episodesToDelete.length} episode${episodesToDelete.length !== 1 ? 's' : ''} (${episodeLabels.join(', ')})?\n\nThis action cannot be undone.`,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => resolve(true),
+            onCancel: () => resolve(false)
+        });
+    });
+    if (!confirmed) return;
+
+    showDeletionLoading(`Deleting ${episodesToDelete.length} episode${episodesToDelete.length !== 1 ? 's' : ''}`);
+
+    const succeeded = [];
+    const failed = [];
+
+    for (let i = 0; i < episodesToDelete.length; i++) {
+        const ep = episodesToDelete[i];
+        const label = episodeLabels[i];
+        updateDeletionLoading(`Deleting ${label}...`, `Episode ${i + 1} of ${episodesToDelete.length}`);
+
+        try {
+            const response = await fetch(`/library/delete_episode/${ep.imdbId}/${seasonNumber}/${ep.episodeNumber}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    item_ids: ep.itemIds,
+                    layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache']
+                })
+            });
+
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                failed.push({ label, error: `Unexpected response (status ${response.status})` });
+                continue;
+            }
+
+            const result = await response.json();
+            if (result && result.success) {
+                succeeded.push(label);
+            } else {
+                failed.push({ label, error: result.error || 'Failed to delete episode' });
+            }
+        } catch (error) {
+            failed.push({ label, error: error.message });
+        }
+    }
+
+    hideDeletionLoading();
+
+    const reportLines = [];
+    if (succeeded.length > 0) {
+        reportLines.push(`<strong>Deleted ${succeeded.length} episode${succeeded.length !== 1 ? 's' : ''}:</strong> ${succeeded.join(', ')}`);
+    }
+    if (failed.length > 0) {
+        reportLines.push('');
+        reportLines.push(`<strong>Failed (${failed.length}):</strong>`);
+        failed.forEach(f => reportLines.push(`✗ ${f.label}: ${escapeHtml(f.error)}`));
+    }
+
+    // Refresh immediately - see comment on the single-episode delete path for why
+    // this doesn't wait on the popup being closed.
+    await loadShowData();
+    // Re-render defaults back to season 1 - switch back to the season these
+    // episodes were actually deleted from.
+    switchTab(seasonNumber);
+
+    showPopup({
+        type: failed.length === 0 ? POPUP_TYPES.SUCCESS : POPUP_TYPES.WARNING,
+        message: reportLines.join('\n'),
+        autoClose: false
+    });
+}
+
 async function handleDeleteEpisode(event) {
     const button = event.currentTarget;
     const imdbId = button.dataset.imdbId;
@@ -1944,12 +2732,21 @@ async function handleDeleteEpisode(event) {
             }
         } else {
             // Single file - episode deletion always uses delete (not ghostlist)
-            const confirmed = confirm(`Delete ${episodeTitle}?\n\nThis action cannot be undone.`);
-            if (!confirmed) return;
-
-            selectedItemIds = episodeFiles.map(f => f.id);
+            showPopup({
+                type: 'confirm',
+                title: 'Delete Episode',
+                message: `Delete ${episodeTitle}?\n\nThis action cannot be undone.`,
+                confirmText: 'Delete',
+                cancelText: 'Cancel',
+                onConfirm: async function() {
+                    selectedItemIds = episodeFiles.map(f => f.id);
+                    await proceedWithEpisodeDelete();
+                }
+            });
+            return;
         }
 
+        async function proceedWithEpisodeDelete() {
         // Progress steps (no content source removal)
         const steps = [
             'Removing from database...',
@@ -1969,6 +2766,8 @@ async function handleDeleteEpisode(event) {
             if (progressInterval) clearInterval(progressInterval);
             if (continueButtonTimeout) clearTimeout(continueButtonTimeout);
         };
+
+        try {
 
         // Show loading box
         showDeletionLoading(`Deleting ${episodeTitle}`, cleanup);
@@ -2044,35 +2843,43 @@ async function handleDeleteEpisode(event) {
         hideDeletionLoading();
 
         if (result && result.success) {
+            // Refresh immediately so the deleted episode's row updates (e.g. to a
+            // "Missing" phantom row) right away, instead of depending on how the
+            // user happens to dismiss the popup below (which was racy: onclick set
+            // after the popup exists could lose to an already-attached default
+            // close handler if the user closed it fast enough).
+            await loadShowData();
+            // Re-render defaults back to season 1 - switch back to the season the
+            // deleted episode was actually in.
+            switchTab(seasonNumber);
+
             // Build detailed deletion report
             const reportMessage = buildDeletionReport(result, episodeTitle);
 
             showPopup({
                 type: POPUP_TYPES.SUCCESS,
                 message: reportMessage,
-                autoClose: false,
-                onConfirm: () => loadShowData()
+                autoClose: false
             });
-
-            // Add close button callback
-            setTimeout(() => {
-                const closeButton = document.querySelector('.universal-popup #popupClose');
-                if (closeButton) {
-                    closeButton.onclick = () => loadShowData();
-                }
-            }, 100);
         } else {
             throw new Error(result.error || 'Failed to delete episode');
         }
+        } catch (error) {
+            cleanup();
+            hideDeletionLoading();
+            console.error('Error deleting episode:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: `Error deleting episode: ${error.message}`,
+                autoClose: 5000
+            });
+        }
+        } // end proceedWithEpisodeDelete
+
+        // Multi-file path: proceed directly
+        await proceedWithEpisodeDelete();
     } catch (error) {
-        cleanup();
-        hideDeletionLoading();
-        console.error('Error deleting episode:', error);
-        showPopup({
-            type: POPUP_TYPES.ERROR,
-            message: `Error deleting episode: ${error.message}`,
-            autoClose: 5000
-        });
+        console.error('Error in handleDeleteEpisode:', error);
     }
 }
 

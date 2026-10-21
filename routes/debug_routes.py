@@ -9,10 +9,12 @@ from queues.run_program import (
     run_recent_local_library_scan
 )
 from database.manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist, save_manual_blacklist
+from database.core import add_db_notification
 from utilities.settings import get_all_settings, get_setting, set_setting
 from queues.config_manager import load_config
 import logging
 from routes import admin_required
+from routes.models import user_required
 from cli_battery.app.direct_api import DirectAPI
 from database.torrent_tracking import get_recent_additions, get_torrent_history
 import os
@@ -39,9 +41,12 @@ import queue
 import asyncio
 from utilities.plex_functions import get_collected_from_plex, plex_update_item
 from content_checkers.content_cache_management import (
-    load_source_cache, save_source_cache, 
-    should_process_item, update_cache_for_item
+    load_source_cache, save_source_cache,
+    update_cache_for_item,
+    normalize_enabled_versions, metadata_output_ids, item_has_metadata_output, UNRESOLVED_RETRY_HOURS
 )
+from content_checkers.source_run_report import SourceRunReport
+from content_checkers.blocked_items import drop_blocked_items
 import traceback
 from database.symlink_verification import get_unverified_files, get_verification_stats
 from content_checkers.content_source_detail import append_content_source_detail
@@ -62,7 +67,7 @@ from flask import Response, stream_with_context
 import sqlite3
 from utilities.local_library_scan import convert_item_to_symlink, get_symlink_path, create_symlink, resync_symlinks_with_new_settings
 from scraper.functions.ptt_parser import parse_with_ptt
-from database.database_writing import add_media_item
+from database.database_writing import add_media_item, RESET_COLLECTION_STATE_SQL
 from routes.program_operation_routes import get_program_runner
 from utilities.plex_removal_cache import cache_plex_removal
 import subprocess
@@ -83,52 +88,78 @@ riven_analysis_progress = {}
 
 # --- Helper function to get cache files ---
 def get_cache_files():
-    """Returns a list of tuples (filename, display_label) for content source cache files."""
+    """Returns a dict with content source cache files and other cache files."""
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    user_config_dir = os.environ.get('USER_CONFIG', '/user/config')
+
+    # ── Content source cache files ────────────────────────────────────────────
+    content_source_files = []
     try:
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        if not os.path.isdir(db_content_dir):
-            logging.error(f"Cache directory not found: {db_content_dir}")
-            return []
-
-        # Find files matching the pattern
-        pattern = os.path.join(db_content_dir, 'content_source_*.pkl')
-        cache_files = [os.path.basename(f) for f in glob.glob(pattern)]
-
-        # Get content sources settings to map filenames to display names
-        content_sources = get_all_settings().get('Content Sources', {})
-
-        # Create list of (filename, display_label) tuples
-        cache_files_with_labels = []
-        for filename in sorted(cache_files):
-            # Extract source_id from filename: content_source_{source_id}_cache.pkl
-            if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
-                source_id = filename[15:-10]  # Remove 'content_source_' prefix and '_cache.pkl' suffix
-
-                # Try to find matching content source and get display name
-                display_label = None
-                for source_key, source_config in content_sources.items():
-                    # Check if this source matches the cache file
-                    # The source_id in cache file uses the source_key with '/' replaced by '_'
-                    safe_source_key = source_key.replace('/', '_').replace('\\', '_')
-                    if source_id == safe_source_key or source_id.startswith(safe_source_key + '_'):
-                        if isinstance(source_config, dict):
-                            display_name = source_config.get('display_name', source_key)
-                            display_label = f"{display_name} ({source_id})"
-                            break
-
-                # If no match found, just show the source_id
-                if not display_label:
-                    display_label = f"{source_id} ({source_id})"
-
-                cache_files_with_labels.append((filename, display_label))
-            else:
-                # If filename doesn't match expected pattern, just show filename
-                cache_files_with_labels.append((filename, filename))
-
-        return cache_files_with_labels
+        if os.path.isdir(db_content_dir):
+            pattern = os.path.join(db_content_dir, 'content_source_*.pkl')
+            cache_files = [os.path.basename(f) for f in glob.glob(pattern)]
+            content_sources = get_all_settings().get('Content Sources', {})
+            for filename in sorted(cache_files):
+                if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
+                    source_id = filename[15:-10]
+                    display_label = None
+                    for source_key, source_config in content_sources.items():
+                        safe_source_key = source_key.replace('/', '_').replace('\\', '_')
+                        if source_id == safe_source_key or source_id.startswith(safe_source_key + '_'):
+                            if isinstance(source_config, dict):
+                                display_name = source_config.get('display_name', source_key)
+                                display_label = f"{display_name} ({source_id})"
+                                break
+                    if not display_label:
+                        display_label = f"{source_id} ({source_id})"
+                    content_source_files.append((filename, display_label))
     except Exception as e:
-        logging.error(f"Error getting cache files: {str(e)}", exc_info=True)
-        return []
+        logging.error(f"Error getting content source cache files: {e}", exc_info=True)
+
+    # ── Other cache files ─────────────────────────────────────────────────────
+    OTHER_CACHE_FILES = [
+        # (filename, base_dir, display_label, description)
+        ('plex_collection_state.json', user_config_dir,
+         'Plex Collection State',
+         'Clears sync state for all Plex collections — forces full re-sync on next trigger'),
+        ('plex_smart_collection_state.json', user_config_dir,
+         'Plex Smart Collection State',
+         'Clears Smart Collection Posters state — forces poster re-apply on next trigger'),
+        ('plex_boxsets_state.json', user_config_dir,
+         'Plex Box Sets State',
+         'Clears Box Sets fingerprints — forces poster re-apply for all box sets on next trigger'),
+        ('trakt_lists_cache.pkl', db_content_dir,
+         'Trakt Lists Cache',
+         'Cached Trakt list data — forces re-fetch from Trakt API'),
+        ('trakt_imdb_id_cache.pkl', db_content_dir,
+         'Trakt IMDb ID Cache',
+         'IMDb↔Trakt ID mappings — re-fetches on next Trakt API call'),
+        ('trakt_watchlist_cache.pkl', db_content_dir,
+         'Trakt Watchlist Cache',
+         'Cached Trakt watchlist — forces re-sync with Trakt'),
+        ('adaptive_list_imdb_cache.pkl', db_content_dir,
+         'Adaptive List IMDb Cache',
+         'Cached IMDb data for Adaptive Lists — forces re-fetch'),
+        ('poster_cache.pkl', db_content_dir,
+         'Poster Cache',
+         'Cached TMDB poster URLs — forces fresh API calls for artwork'),
+        ('failed_upgrades.pkl', db_content_dir,
+         'Failed Upgrades History',
+         'Failed upgrade attempt history — allows retry of previously failed items'),
+    ]
+
+    other_files = []
+    for filename, base_dir, label, desc in OTHER_CACHE_FILES:
+        exists = os.path.exists(os.path.join(base_dir, filename))
+        other_files.append({
+            'filename': filename,
+            'base_dir': base_dir,
+            'label': label,
+            'description': desc,
+            'exists': exists,
+        })
+
+    return {'content_source': content_source_files, 'other': other_files}
 # --- End Helper function ---
 
 def async_get_wanted_content(source):
@@ -234,13 +265,16 @@ def async_get_collected_from_plex(collection_type):
 def debug_functions():
     content_sources = get_all_settings().get('Content Sources', {})
     enabled_sources = {source: data for source, data in content_sources.items() if data.get('enabled', False)}
-    cache_files = get_cache_files()
+    cache_data = get_cache_files()
     environment_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
+    from utilities.settings import get_nas_paths
     return render_template(
         'debug_functions.html',
         content_sources=enabled_sources,
-        cache_files=cache_files,
-        environment_mode=environment_mode
+        cache_files=cache_data.get('content_source', []),
+        other_cache_files=cache_data.get('other', []),
+        environment_mode=environment_mode,
+        nas_paths=get_nas_paths()
     )
 
 @debug_bp.route('/bulk_delete_by_imdb', methods=['POST'])
@@ -263,8 +297,35 @@ def bulk_delete_by_imdb():
 @admin_required
 def refresh_release_dates_route():
     from metadata.metadata import refresh_release_dates # Added import here
-    refresh_release_dates()
+    # Manual trigger: bypass the periodic task's 24h-per-item cache floor so
+    # this always forces a real provider re-fetch, not just a re-read of
+    # whatever was already cached (which could be minutes old and still
+    # showing 'Unknown').
+    refresh_release_dates(force_bypass_cache=True)
     return jsonify({'success': True, 'message': 'Release dates refreshed successfully'})
+
+@debug_bp.route('/reset_battery_show_cache', methods=['POST'])
+@admin_required
+def reset_battery_show_cache():
+    """Reset battery show cache by nulling last_trakt_fetch for all shows.
+    This forces a fresh re-fetch from TVDB/Trakt on the next TV status update,
+    which will correctly apply the canceled vs ended cross-check fix.
+    """
+    try:
+        from cli_battery.app.database import managed_session, Item
+        with managed_session() as session:
+            updated = session.query(Item).filter(Item.type == 'show').update(
+                {'last_trakt_fetch': None},
+                synchronize_session=False
+            )
+        logging.info(f"[Reset Battery Cache] Nulled last_trakt_fetch for {updated} shows in battery DB")
+        return jsonify({
+            'success': True,
+            'message': f'Reset cache for {updated} shows. Run "Update TV Show Status" task to re-fetch status from TVDB/Trakt.'
+        })
+    except Exception as e:
+        logging.error(f"reset_battery_show_cache error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @debug_bp.route('/delete_database', methods=['POST'])
 @admin_required
@@ -462,23 +523,37 @@ def manual_blacklist():
     if request.method == 'POST':
         action = request.form.get('action')
         imdb_id = request.form.get('imdb_id')
-        
+
         if not imdb_id:
-            flash('IMDb ID is required', 'error')
-            return redirect(url_for('debug.manual_blacklist'))
+            return jsonify({'success': False, 'error': 'IMDb ID is required'}), 400
 
         blacklist = get_manual_blacklist()
         direct_api = DirectAPI()
-        
+
         if action == 'add':
             try:
                 logging.info(f"Attempting to add IMDb ID '{imdb_id}' to manual blacklist.")
-                # 1. Determine the actual media type
-                tmdb_id, actual_media_type = get_tmdb_id_and_media_type(imdb_id)
+                # 1. Determine media type — use caller-supplied type if present,
+                #    otherwise check our own DB, then fall back to TMDB API.
+                passed_type = request.form.get('media_type')  # 'movie' or 'episode'
+                if passed_type in ('movie', 'episode'):
+                    actual_media_type = 'tv' if passed_type == 'episode' else 'movie'
+                    tmdb_id = None
+                else:
+                    from database.core import get_db_connection as _get_db
+                    _conn = _get_db()
+                    _row = _conn.execute(
+                        "SELECT type FROM media_items WHERE imdb_id=? LIMIT 1", (imdb_id,)
+                    ).fetchone()
+                    _conn.close()
+                    if _row:
+                        actual_media_type = 'tv' if _row[0] == 'episode' else 'movie'
+                        tmdb_id = None
+                    else:
+                        tmdb_id, actual_media_type = get_tmdb_id_and_media_type(imdb_id)
 
                 if not actual_media_type:
-                    flash(f'Could not determine media type for IMDb ID {imdb_id}. Cannot add to blacklist.', 'error')
-                    return redirect(url_for('debug.manual_blacklist'))
+                    return jsonify({'success': False, 'error': f'Could not determine media type for IMDb ID {imdb_id}. Cannot add to blacklist.'}), 400
 
                 # 2. Fetch metadata based on the determined type
                 metadata = None
@@ -494,12 +569,10 @@ def manual_blacklist():
                     try:
                         metadata = json.loads(metadata)
                     except json.JSONDecodeError:
-                        flash(f'Failed to parse metadata for {imdb_id}. Cannot add to blacklist.', 'error')
                         metadata = None
 
                 if not metadata or not isinstance(metadata, dict):
-                    flash(f'Unable to fetch metadata for IMDb ID {imdb_id} (Type: {actual_media_type}). Cannot add to blacklist.', 'error')
-                    return redirect(url_for('debug.manual_blacklist'))
+                    return jsonify({'success': False, 'error': f'Unable to fetch metadata for IMDb ID {imdb_id} (Type: {actual_media_type}). Cannot add to blacklist.'}), 400
 
                 # 3. Determine the media type to store in the blacklist file
                 media_type_to_store = 'episode' if actual_media_type == 'tv' else 'movie'
@@ -512,11 +585,13 @@ def manual_blacklist():
                     title=metadata.get('title', 'Unknown Title'),
                     year=str(metadata.get('year', '')),
                 )
-                flash(f'Successfully added {metadata.get("title", "Item")} ({actual_media_type}) to blacklist as type "{media_type_to_store}"', 'success')
+                msg = f'Successfully added {metadata.get("title", "Item")} ({actual_media_type}) to blacklist as type "{media_type_to_store}"'
+                add_db_notification('Blacklist', msg, 'info')
+                return jsonify({'success': True, 'message': msg})
 
             except Exception as e:
-                flash(f'Error adding to blacklist: {str(e)}', 'error')
                 logging.error(f"Error adding to blacklist: {str(e)}", exc_info=True)
+                return jsonify({'success': False, 'error': f'Error adding to blacklist: {str(e)}'}), 500
 
         elif action == 'update_seasons':
             try:
@@ -546,56 +621,52 @@ def manual_blacklist():
         elif action == 'remove':
             try:
                 remove_from_manual_blacklist(imdb_id)
-                flash('Successfully removed from blacklist', 'success')
+                add_db_notification('Blacklist', f'Removed {imdb_id} from blacklist', 'info')
+                return jsonify({'success': True, 'message': 'Successfully removed from blacklist'})
             except Exception as e:
-                flash(f'Error removing from blacklist: {str(e)}', 'error')
+                logging.error(f"Error removing from blacklist: {str(e)}", exc_info=True)
+                return jsonify({'success': False, 'error': f'Error removing from blacklist: {str(e)}'}), 500
 
-        if action != 'update_seasons':
-             return redirect(url_for('debug.manual_blacklist'))
+        return jsonify({'success': False, 'error': 'Unknown action'}), 400
 
     # --- GET Request Logic ---
     blacklist = get_manual_blacklist()
-    
-    # ... (keep existing sorting logic) ...
+
     def get_sort_key(item):
         try:
             title = item[1].get('title', '')
             if not isinstance(title, str):
-                logging.warning(f"Invalid title type for IMDb ID {item[0]}: {type(title)}, converting to string")
                 title = str(title) if title is not None else ''
             return title.lower()
-        except Exception as e:
-            logging.error(f"Error getting sort key for blacklist item {item[0]}: {str(e)}")
+        except Exception:
             return ''
     sorted_blacklist = dict(sorted(blacklist.items(), key=get_sort_key))
-    
-    direct_api = DirectAPI()
-    for imdb_id, item in sorted_blacklist.items():
-        # REVERT: Check against 'episode' type for fetching seasons
-        if item['media_type'] == 'episode':
-            try:
-                # Fetching seasons based on IMDb ID remains the same
-                seasons_data, _ = direct_api.get_show_seasons(imdb_id)
-                if seasons_data:
-                    logging.debug(f"Seasons data for {imdb_id}: {seasons_data}")
-                    if isinstance(seasons_data, str):
-                        seasons_data = json.loads(seasons_data)
-
-                    if isinstance(seasons_data, dict) and all(str(k).isdigit() for k in seasons_data.keys()):
-                        item['available_seasons'] = sorted([int(season) for season in seasons_data.keys()])
-                        item['season_episodes'] = {int(season): data.get('episode_count', 0) for season, data in seasons_data.items()}
-                    else: # Backward compatibility
-                        item['available_seasons'] = sorted([int(s['season_number']) for s in seasons_data.get('seasons', []) if str(s.get('season_number')).isdigit()])
-                        item['season_episodes'] = {}
-                else:
-                    item['available_seasons'] = []
-                    item['season_episodes'] = {}
-            except Exception as e:
-                logging.error(f"Error fetching seasons for {imdb_id}: {str(e)}")
-                item['available_seasons'] = []
-                item['season_episodes'] = {}
-
+    # Seasons are no longer pre-fetched here — loaded lazily via /api/manual_blacklist/<id>/seasons
     return render_template('manual_blacklist.html', blacklist=sorted_blacklist)
+
+
+@debug_bp.route('/api/manual_blacklist/<imdb_id>/seasons', methods=['GET'])
+@admin_required
+def manual_blacklist_seasons(imdb_id):
+    """Lazy-load available seasons for a blacklisted show."""
+    direct_api = DirectAPI()
+    try:
+        seasons_data, _ = direct_api.get_show_seasons(imdb_id)
+        if seasons_data:
+            if isinstance(seasons_data, str):
+                seasons_data = json.loads(seasons_data)
+            if isinstance(seasons_data, dict) and all(str(k).isdigit() for k in seasons_data.keys()):
+                available_seasons = sorted([int(s) for s in seasons_data.keys()])
+                season_episodes = {int(s): d.get('episode_count', 0) for s, d in seasons_data.items()}
+            else:
+                available_seasons = sorted([int(s['season_number']) for s in seasons_data.get('seasons', [])
+                                            if str(s.get('season_number')).isdigit()])
+                season_episodes = {}
+            return jsonify({'success': True, 'seasons': available_seasons, 'season_episodes': season_episodes})
+        return jsonify({'success': True, 'seasons': [], 'season_episodes': {}})
+    except Exception as e:
+        logging.error(f"manual_blacklist_seasons error for {imdb_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @debug_bp.route('/api/get_collected_from_plex', methods=['POST'])
 @admin_required
@@ -881,10 +952,11 @@ def update_trakt_settings(content_sources):
 def get_and_add_wanted_content(source_id):
     from content_checkers.overseerr import get_wanted_from_overseerr
     from content_checkers.collected import get_wanted_from_collected
-    from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
+    from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist, get_wanted_from_plex_friends_watchlist
     from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
     from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist, get_wanted_from_special_trakt_lists
-    from content_checkers.mdb_list import get_wanted_from_mdblists
+    from content_checkers.scrob import get_wanted_from_scrob_lists, get_wanted_from_scrob_collection, get_wanted_from_scrob_special
+    from content_checkers.mdb_list import get_wanted_from_mdblist_source
     from content_checkers.adaptive_list import get_wanted_from_adaptive_list
     from content_checkers.content_source_detail import append_content_source_detail
     from metadata.metadata import process_metadata
@@ -906,6 +978,12 @@ def get_and_add_wanted_content(source_id):
     except (ValueError, TypeError):
         logging.warning(f"Invalid list_length_limit value for source {source_id}: {source_data.get('list_length_limit')}. Using default value 0.")
         list_length_limit = 0
+    unblacklist_on_source_run = bool(source_data.get('unblacklist_on_source_run', False))
+    granular_versions = get_setting('Debug', 'enable_granular_version_additions', False)
+    logging.info(
+        f"Starting content source run: source={source_id}, unblacklist={unblacklist_on_source_run}, "
+        f"granular={granular_versions}, bypass_cache=True"
+    )
     parsed_cutoff_date = None
 
     if raw_cutoff_date:
@@ -925,6 +1003,16 @@ def get_and_add_wanted_content(source_id):
     
     cutoff_date = parsed_cutoff_date # Use the parsed_cutoff_date
 
+    # Same version handling as run_program.process_content_source: only enabled versions count,
+    # and a source with none cannot be processed.
+    versions_dict = normalize_enabled_versions(versions_from_config)
+    if not versions_dict:
+        logging.error(
+            f"Content source {source_id} has no enabled versions in current settings. "
+            "Skipping this run before metadata processing; select and save at least one version."
+        )
+        return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Source {source_id} has no enabled versions"}
+
     logging.info(f"Processing source: {source_id}")
     logging.debug(f"Source type: {source_type}, media type: {source_media_type}, versions (as dict): {versions_from_config}")
     
@@ -936,6 +1024,7 @@ def get_and_add_wanted_content(source_id):
     media_type_skipped = 0
     genre_skipped = 0
     cutoff_date_skipped = 0
+    report = SourceRunReport(source_id, source_type)  # no-op except for Plex watchlist sources
 
     wanted_content = []
     try: # Add try block for source fetching
@@ -955,6 +1044,8 @@ def get_and_add_wanted_content(source_id):
                 logging.error(f"Missing URL for source: {source_id}")
                 return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Missing URL for {source_id}"}
             wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config)
+        elif source_type == 'Plex Friends Watchlist':
+            wanted_content = get_wanted_from_plex_friends_watchlist(source_data, versions_from_config)
         elif source_type == 'Other Plex Watchlist':
             wanted_content = get_wanted_from_other_plex_watchlist(
                 username=source_data.get('username', ''),
@@ -962,30 +1053,32 @@ def get_and_add_wanted_content(source_id):
                 versions=versions_from_config
             )
         elif source_type == 'MDBList':
-            mdblist_urls = source_data.get('urls', '').split(',')
-            for mdblist_url in mdblist_urls:
-                mdblist_url = mdblist_url.strip()
-                if mdblist_url: # Check if url is not empty
-                    wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions_from_config))
+            wanted_content = get_wanted_from_mdblist_source(source_data, versions_from_config)
         elif source_type == 'Special Trakt Lists':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_special_trakt_lists(source_data, versions_from_config)
+            wanted_content = get_wanted_from_special_trakt_lists(source_data, versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Trakt Watchlist':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_trakt_watchlist(versions_from_config)
+            wanted_content = get_wanted_from_trakt_watchlist(versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Trakt Lists':
             update_trakt_settings(content_sources)
             trakt_lists = source_data.get('trakt_lists', '').split(',')
             for trakt_list in trakt_lists:
                 trakt_list = trakt_list.strip()
                 if trakt_list: # Check if list name is not empty
-                    wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions_from_config))
+                    wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions_from_config, unblacklist=unblacklist_on_source_run))
         elif source_type == 'Friends Trakt Watchlist':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_friend_trakt_watchlist(source_data, versions_from_config)
+            wanted_content = get_wanted_from_friend_trakt_watchlist(source_data, versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Trakt Collection':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_trakt_collection(versions_from_config)
+            wanted_content = get_wanted_from_trakt_collection(versions_from_config, unblacklist=unblacklist_on_source_run)
+        elif source_type == 'Scrob Lists':
+            wanted_content = get_wanted_from_scrob_lists(source_data.get('scrob_list_ids', ''), versions_from_config, unblacklist=unblacklist_on_source_run)
+        elif source_type == 'Scrob Collection':
+            wanted_content = get_wanted_from_scrob_collection(versions_from_config, unblacklist=unblacklist_on_source_run)
+        elif source_type == 'Special Scrob Lists':
+            wanted_content = get_wanted_from_scrob_special(source_data, versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Collected':
             wanted_content = get_wanted_from_collected()
         elif source_type == 'Adaptive List':
@@ -1027,6 +1120,10 @@ def get_and_add_wanted_content(source_id):
                 wanted_content = wanted_content[:list_length_limit]
                 logging.info(f"Applied list length limit to {source_id}: limited to {list_length_limit} items from {original_length}")
 
+    report.fetched(wanted_content)
+    wanted_content = drop_blocked_items(wanted_content, source_id, source_type, unblacklist_on_source_run, granular_versions, report)
+    if not wanted_content:
+        report.log()  # fetcher returned nothing: say so explicitly
     if wanted_content:
         try: # Add try block for processing
             if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
@@ -1046,35 +1143,33 @@ def get_and_add_wanted_content(source_id):
                         # Note: Media type and genre filtering moved to after metadata processing
 
                         # Filter by cache
-                        items_to_process_raw = [
-                            item for item in items
-                            if should_process_item(item, source_id, source_cache)
-                        ]
-                        batch_cache_skipped += len(items) - len(items_to_process_raw)
-                        logging.debug(f"Batch {source_id}: Cache filtering results: {batch_cache_skipped} skipped, {len(items_to_process_raw)} to process")
+                        items_to_process_raw = list(items)
+                        logging.debug(f"Batch {source_id}: Cache bypassed for manual run, {len(items_to_process_raw)} to process")
 
                         if items_to_process_raw:
                             batch_items_processed += len(items_to_process_raw)
                             
-                            # Convert versions from tuple if necessary
-                            if isinstance(item_versions_from_source_tuple, list):
-                                versions_to_inject = {v: True for v in item_versions_from_source_tuple}
-                            elif isinstance(item_versions_from_source_tuple, dict):
-                                versions_to_inject = item_versions_from_source_tuple
-                            else:
-                                logging.warning(f"Unexpected format for versions in tuple for {source_id}. Using main source versions dict.")
-                                versions_to_inject = versions_from_config # Fallback to the converted source versions
+                            # Normalise versions from the fetcher tuple (only enabled ones)
+                            versions_to_inject = normalize_enabled_versions(item_versions_from_source_tuple)
+                            if not versions_to_inject:
+                                logging.warning(f"Unexpected or empty versions in tuple for {source_id}. Using main source versions dict.")
+                                versions_to_inject = versions_dict # Fallback to the converted source versions
 
                             # Inject the CONVERTED versions dictionary into each item
                             items_for_metadata = []
                             for item_dict_raw in items_to_process_raw:
                                 item_dict_processed = item_dict_raw.copy()
                                 item_dict_processed['versions'] = versions_to_inject # Inject the dict
+                                item_dict_processed['content_source'] = source_id  # Needed by metadata.py for per-source allow_specials/seasons_per_show
                                 items_for_metadata.append(item_dict_processed)
 
                             processed_items_meta = process_metadata(items_for_metadata)
+                            if not processed_items_meta:
+                                report.metadata_failed(items_to_process_raw)
                             if processed_items_meta:
-                                all_items_meta_processed_batch = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', [])
+                                all_items_meta_processed_batch = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', []) + processed_items_meta.get('anime', [])
+                                output_ids = metadata_output_ids(all_items_meta_processed_batch)
+                                report.metadata_done(items_to_process_raw, output_ids, all_items_meta_processed_batch, UNRESOLVED_RETRY_HOURS)
                                 for item in all_items_meta_processed_batch:
                                     item['content_source'] = source_id
                                     item = append_content_source_detail(item, source_type=source_type)
@@ -1130,7 +1225,9 @@ def get_and_add_wanted_content(source_id):
                                             release_date = item.get('release_date')
                                         
                                         if not release_date or release_date.lower() == 'unknown':
-                                            final_items_for_db_batch.append(item)
+                                            # A cutoff is set, so an unknown release date is dropped (as in the scheduled run)
+                                            current_batch_cutoff_skipped += 1
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to unknown release date (cutoff date is set)")
                                             continue
                                         try:
                                             item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
@@ -1140,8 +1237,8 @@ def get_and_add_wanted_content(source_id):
                                                 current_batch_cutoff_skipped += 1
                                                 logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date}")
                                         except ValueError:
-                                            final_items_for_db_batch.append(item)
-                                            logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through (pre-DB add)")
+                                            current_batch_cutoff_skipped += 1
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to invalid date format: {release_date} (cutoff date is set)")
                                 else:
                                     # No cutoff date, so all processed items are candidates for DB for this batch
                                     final_items_for_db_batch = all_items_meta_processed_batch
@@ -1151,15 +1248,18 @@ def get_and_add_wanted_content(source_id):
                                 if current_batch_cutoff_skipped > 0: # Log if items were skipped in this batch
                                     logging.debug(f"Batch {source_id}: Skipped {current_batch_cutoff_skipped} items due to cutoff date (pre-DB add)")
                                 
+                                report.filters_done(final_items_for_db_batch)
                                 if final_items_for_db_batch:
                                     from database import add_wanted_items
-                                    added_count = add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_from_config)
+                                    added_count = add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_dict, unblacklist=unblacklist_on_source_run)
+                                    report.added(len(final_items_for_db_batch), added_count)
                                     batch_total_items_added += added_count or 0
                                     
                                     # Update cache for all items that were processed (regardless of whether they made it through filtering)
                                     # This prevents reprocessing the same items repeatedly
                                     for item_original in items_to_process_raw:
-                                        update_cache_for_item(item_original, source_id, source_cache)
+                                        update_cache_for_item(item_original, source_id, source_cache,
+                                                              retry_after_hours=None if item_has_metadata_output(item_original, output_ids) else UNRESOLVED_RETRY_HOURS)
 
                     except Exception as batch_error:
                         logging.error(f"Error processing batch from {source_id}: {str(batch_error)}", exc_info=True)
@@ -1177,13 +1277,8 @@ def get_and_add_wanted_content(source_id):
                 original_count = len(wanted_content)
                 # Note: Media type and genre filtering moved to after metadata processing
 
-                # Filter by cache
-                items_to_process_raw = [
-                    item for item in wanted_content
-                    if should_process_item(item, source_id, source_cache)
-                ]
-                cache_skipped += len(wanted_content) - len(items_to_process_raw)
-                logging.debug(f"{source_id}: Cache filtering results: {cache_skipped} skipped, {len(items_to_process_raw)} to process")
+                items_to_process_raw = list(wanted_content)
+                logging.debug(f"{source_id}: Cache bypassed for manual run, {len(items_to_process_raw)} to process")
 
                 if items_to_process_raw:
                     items_processed += len(items_to_process_raw)
@@ -1193,12 +1288,17 @@ def get_and_add_wanted_content(source_id):
                     for item_dict_raw in items_to_process_raw:
                         item_dict_processed = item_dict_raw.copy()
                         # Use the CONVERTED source-level versions_dict here
-                        item_dict_processed['versions'] = versions_from_config 
+                        item_dict_processed['versions'] = versions_dict
+                        item_dict_processed['content_source'] = source_id  # Needed by metadata.py for per-source allow_specials/seasons_per_show
                         items_for_metadata.append(item_dict_processed)
                         
                     processed_items_meta = process_metadata(items_for_metadata)
+                    if not processed_items_meta:
+                        report.metadata_failed(items_to_process_raw)
                     if processed_items_meta:
-                        all_items_meta_processed_non_batch = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', [])
+                        all_items_meta_processed_non_batch = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', []) + processed_items_meta.get('anime', [])
+                        output_ids = metadata_output_ids(all_items_meta_processed_non_batch)
+                        report.metadata_done(items_to_process_raw, output_ids, all_items_meta_processed_non_batch, UNRESOLVED_RETRY_HOURS)
                         for item in all_items_meta_processed_non_batch:
                             item['content_source'] = source_id
                             item = append_content_source_detail(item, source_type=source_type)
@@ -1255,7 +1355,8 @@ def get_and_add_wanted_content(source_id):
                                     release_date = item.get('release_date')
                                 
                                 if not release_date or release_date.lower() == 'unknown':
-                                    final_items_for_db_non_batch.append(item)
+                                    current_non_batch_cutoff_skipped += 1
+                                    logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to unknown release date (cutoff date is set)")
                                     continue
                                 try:
                                     item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
@@ -1265,8 +1366,8 @@ def get_and_add_wanted_content(source_id):
                                         current_non_batch_cutoff_skipped += 1
                                         logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date} (pre-DB add for non-batch)")
                                 except ValueError:
-                                    final_items_for_db_non_batch.append(item)
-                                    logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through (pre-DB add for non-batch)")
+                                    current_non_batch_cutoff_skipped += 1
+                                    logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to invalid date format: {release_date} (cutoff date is set)")
                         else:
                             # If no cutoff_date, all items processed from metadata are candidates for DB
                             final_items_for_db_non_batch = all_items_meta_processed_non_batch
@@ -1277,15 +1378,18 @@ def get_and_add_wanted_content(source_id):
                              logging.debug(f"{source_id}: Skipped {current_non_batch_cutoff_skipped} items due to cutoff date (pre-DB add for non-batch)")
 
                         # Add only the date-filtered items to the database
+                        report.filters_done(final_items_for_db_non_batch)
                         if final_items_for_db_non_batch:
                             from database import add_wanted_items # Already imported at your line 1077
-                            added_count = add_wanted_items(final_items_for_db_non_batch, versions_from_config) 
+                            added_count = add_wanted_items(final_items_for_db_non_batch, versions_dict, unblacklist=unblacklist_on_source_run)
+                            report.added(len(final_items_for_db_non_batch), added_count)
                             total_items_added += added_count or 0
                             
                             # Update cache for all items that were processed (regardless of whether they made it through filtering)
                             # This prevents reprocessing the same items repeatedly
                             for item_original in items_to_process_raw:
-                                update_cache_for_item(item_original, source_id, source_cache)
+                                update_cache_for_item(item_original, source_id, source_cache,
+                                                      retry_after_hours=None if item_has_metadata_output(item_original, output_ids) else UNRESOLVED_RETRY_HOURS)
 
             # Save the updated cache
             save_source_cache(source_id, source_cache)
@@ -1299,6 +1403,7 @@ def get_and_add_wanted_content(source_id):
             if cutoff_date_skipped > 0: stats_msg += f", Skipped {cutoff_date_skipped} (cutoff date)"
             if list_length_limit > 0: stats_msg += f", list length limited to {list_length_limit}"
             logging.info(stats_msg)
+            report.log(cache_skipped=cache_skipped)
 
         except Exception as process_error:
             logging.error(f"Error processing items from {source_id}: {str(process_error)}", exc_info=True)
@@ -1322,6 +1427,13 @@ def get_wanted_content():
     source_id = request.json.get('source_id', 'all')
     from routes.extensions import task_queue # Import the task_queue
     task_id = task_queue.add_task(async_get_wanted_content, source_id) # Use task_queue
+    try:
+        from flask_login import current_user as _cu
+        from utilities.ai_habits import track_action
+        _uid = _cu.username if _cu.is_authenticated else 'system'
+        track_action('wanted_source_run', detail=source_id, user_id=_uid)
+    except Exception:
+        pass
     return jsonify({'task_id': task_id}), 202 # Return the real task_id and 202 Accepted
 
 @debug_bp.route('/api/rate_limit_info')
@@ -1330,8 +1442,8 @@ def get_rate_limit_info():
     current_time = time.time()
     
     for domain in api.monitored_domains:
-        hourly_calls = [t for t in api.rate_limiter.hourly_calls[domain] if t > current_time - 3600]
-        five_minute_calls = [t for t in api.rate_limiter.five_minute_calls[domain] if t > current_time - 300]
+        hourly_calls = [t for t in list(api.rate_limiter.hourly_calls[domain]) if t > current_time - 3600]
+        five_minute_calls = [t for t in list(api.rate_limiter.five_minute_calls[domain]) if t > current_time - 300]
         
         rate_limit_info[domain] = {
             'five_minute': {
@@ -1488,14 +1600,14 @@ def move_item_to_wanted(item_id, current_original_scraped_title=None):
                     cur_lookup.close()
 
         cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE media_items 
-            SET state = 'Wanted', 
-                filled_by_file = NULL, 
-                filled_by_title = NULL, 
-                filled_by_magnet = NULL, 
-                filled_by_torrent_id = NULL, 
-                collected_at = NULL,
+        cursor.execute(f'''
+            UPDATE media_items
+            SET state = 'Wanted',
+                filled_by_file = NULL,
+                filled_by_title = NULL,
+                filled_by_magnet = NULL,
+                filled_by_torrent_id = NULL,
+                {RESET_COLLECTION_STATE_SQL},
                 last_updated = ?,
                 location_on_disk = NULL,
                 original_path_for_symlink = NULL,
@@ -1675,6 +1787,51 @@ def move_to_upgrading():
     finally:
         conn.close()
 
+@debug_bp.route('/run_full_climount_sync', methods=['POST'])
+@admin_required
+def run_full_climount_sync():
+    """Run a full cli_mount sync (since=0) in a background thread, pausing the queue during sync."""
+    try:
+        import threading
+        from usenet.climount_sync import sync_changes_from_climount
+        from routes.program_operation_routes import get_program_runner
+
+        runner = get_program_runner()
+
+        def _run():
+            paused = False
+            try:
+                if runner:
+                    runner.pause_info = {
+                        'reason_string': 'cli_mount full sync in progress — queue resumes automatically when complete',
+                        'error_type': 'SYSTEM_MAINTENANCE',
+                        'service_name': 'cli_mount sync',
+                        'status_code': None,
+                        'retry_count': 0,
+                    }
+                    runner.pause_queue()
+                    paused = True
+                    logging.info('[FullCMSync] Queue paused during full sync')
+                result = sync_changes_from_climount(force_full=True)
+                logging.info(f'[FullCMSync] Complete: {result}')
+            except Exception as e:
+                logging.error(f'[FullCMSync] Error: {e}', exc_info=True)
+            finally:
+                if paused and runner:
+                    runner.last_resume_time = None  # bypass 30s throttle
+                    runner.pause_info = {'reason_string': None, 'error_type': None,
+                                         'service_name': None, 'status_code': None, 'retry_count': 0}
+                    runner.resume_queue()
+                    logging.info('[FullCMSync] Queue resumed after full sync')
+
+        t = threading.Thread(target=_run, daemon=True, name='full-cm-sync')
+        t.start()
+        return jsonify({'success': True, 'message': 'Full cli_mount sync started — queue will pause automatically'}), 200
+    except Exception as e:
+        logging.error(f"Error in run_full_climount_sync: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @debug_bp.route('/run_task', methods=['POST'])
 @admin_required
 def run_task():
@@ -1778,6 +1935,10 @@ def get_available_tasks():
         {'id': 'task_debug_log', 'display_name': 'Debug Log'},
         {'id': 'task_refresh_release_dates', 'display_name': 'Refresh Release Dates'},
         {'id': 'task_purge_not_wanted_magnets_file', 'display_name': 'Purge Not Wanted Magnets File'},
+        {'id': 'task_purge_not_wanted_urls_file', 'display_name': 'Purge Not Wanted URLs File'},
+        {'id': 'task_purge_not_wanted_nzbs_files', 'display_name': 'Purge Not Wanted NZBs (segments + GUIDs)'},
+        {'id': 'task_purge_all_not_wanted_files', 'display_name': 'Purge All Not Wanted Lists (magnets, URLs, NZBs)'},
+        {'id': 'task_reset_trakt_auth', 'display_name': 'Reset Trakt Authorization (clears tokens, keeps client ID/secret)'},
         {'id': 'task_generate_airtime_report', 'display_name': 'Generate Airtime Report'},
         {'id': 'task_check_service_connectivity', 'display_name': 'Check Service Connectivity'},
         {'id': 'task_send_notifications', 'display_name': 'Send Notifications'},
@@ -1797,7 +1958,10 @@ def get_available_tasks():
         {'id': 'task_update_tv_show_status', 'display_name': 'Update TV Show Status'},
         {'id': 'task_heartbeat', 'display_name': 'Heartbeat'},
         {'id': 'final_check_queue', 'display_name': 'Final Check Queue'},
-        {'id': 'task_analyze_library', 'display_name': 'Analyze Library'}
+        {'id': 'task_analyze_library', 'display_name': 'Analyze Library'},
+        {'id': 'task_overlay_sync', 'display_name': 'Overlay Sync'},
+        {'id': 'task_overlay_cleanup', 'display_name': 'Overlay State Maintenance (cleanup orphaned DB records)'},
+        {'id': 'task_backfill_nzb_torrent_ids', 'display_name': 'Backfill NZB Torrent IDs (Usenet migration)'},
     ]
     
     # Get content sources from program runner for content source tasks
@@ -2157,14 +2321,14 @@ def convert_to_symlinks():
                                 logging.info(f"Deleted item {item_dict['title']} as duplicate exists")
                             else:
                                 # Update the item to Wanted state
-                                cursor.execute("""
-                                    UPDATE media_items 
+                                cursor.execute(f"""
+                                    UPDATE media_items
                                     SET state = 'Wanted',
                                         filled_by_file = NULL,
                                         filled_by_title = NULL,
                                         filled_by_magnet = NULL,
                                         filled_by_torrent_id = NULL,
-                                        collected_at = NULL,
+                                        {RESET_COLLECTION_STATE_SQL},
                                         location_on_disk = NULL,
                                         last_updated = CURRENT_TIMESTAMP,
                                         version = TRIM(version, '*')
@@ -2447,20 +2611,22 @@ def verify_torrent(hash_value):
 @admin_required
 def get_trakt_token_status():
     try:
-        from cli_battery.app.trakt_auth import TraktAuth
-        trakt_auth = TraktAuth()
-        
-        token_data = trakt_auth.get_token_data()
-        last_refresh = trakt_auth.get_last_refresh_time()
-        expires_at = trakt_auth.get_expiration_time()
-        
+        from cli_battery.app import trakt_auth
+        from utilities.settings import get_setting
+
+        access_token = get_setting('Trakt', 'access_token', default='')
+        expires_at = get_setting('Trakt', 'expires_at', default='')
+        last_refresh = get_setting('Trakt', 'last_refresh', default='')
+        token_data = {
+            'access_token': access_token[:10] + '...' if access_token else None,
+            'expires_at': expires_at,
+            'last_refresh': last_refresh,
+        }
+
         logging.debug(f"Trakt token status - Token Data: {token_data}")
         logging.debug(f"Trakt token status - Last Refresh: {last_refresh}")
         logging.debug(f"Trakt token status - Expires At: {expires_at}")
-        
-        # Ensure last_refresh is included in both places for compatibility
-        token_data['last_refresh'] = last_refresh
-        
+
         status = {
             'is_authenticated': trakt_auth.is_authenticated(),
             'token_data': token_data,
@@ -2606,29 +2772,47 @@ def direct_emby_scan():
 @debug_bp.route('/api/delete_cache_files', methods=['POST'])
 @admin_required
 def delete_cache_files_route():
-    """API endpoint to delete selected cache files."""
-    selected_files = request.form.getlist('selected_files') # Get list of filenames from form
+    """API endpoint to delete selected cache files (content source + other cache files)."""
+    selected_files = request.form.getlist('selected_files')
     if not selected_files:
         return jsonify({'success': False, 'error': 'No cache files selected'}), 400
 
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    user_config_dir = os.environ.get('USER_CONFIG', '/user/config')
+
+    # Allowed other cache files with their base directories
+    OTHER_ALLOWED = {
+        'plex_collection_state.json': user_config_dir,
+        'plex_smart_collection_state.json': user_config_dir,
+        'plex_boxsets_state.json': user_config_dir,
+        'trakt_lists_cache.pkl': db_content_dir,
+        'trakt_imdb_id_cache.pkl': db_content_dir,
+        'trakt_watchlist_cache.pkl': db_content_dir,
+        'adaptive_list_imdb_cache.pkl': db_content_dir,
+        'poster_cache.pkl': db_content_dir,
+        'failed_upgrades.pkl': db_content_dir,
+    }
+
     deleted_count = 0
     errors = []
 
     for filename in selected_files:
-        # Basic validation to prevent deleting unintended files
-        if not (filename.startswith('content_source_') and filename.endswith('_cache.pkl')):
+        # Determine file path based on type
+        if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
+            file_path = os.path.join(db_content_dir, filename)
+        elif filename in OTHER_ALLOWED:
+            file_path = os.path.join(OTHER_ALLOWED[filename], filename)
+        else:
             errors.append(f"Invalid cache filename skipped: {filename}")
             continue
-            
-        file_path = os.path.join(db_content_dir, filename)
+
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
                 deleted_count += 1
                 logging.info(f"Deleted cache file: {file_path}")
             else:
-                logging.warning(f"Cache file not found, skipping deletion: {file_path}")
+                logging.warning(f"Cache file not found, skipping: {file_path}")
         except OSError as e:
             logging.error(f"Error deleting cache file {file_path}: {e}")
             errors.append(f"Failed to delete {filename}: {e.strerror}")
@@ -2639,8 +2823,7 @@ def delete_cache_files_route():
     if not errors:
         return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} cache file(s).'})
     else:
-        error_message = f'Deleted {deleted_count} cache file(s). Errors encountered: {"; ".join(errors)}'
-        # Return success=True even with partial failures, but include error details
+        error_message = f'Deleted {deleted_count} cache file(s). Errors: {"; ".join(errors)}'
         return jsonify({'success': True, 'message': error_message, 'errors': errors})
 # --- End new route ---
 
@@ -3154,8 +3337,12 @@ def perform_recovery():
 
                 # Call add_media_item and handle potential IntegrityError
                 try:
-                    # Pass the explicitly constructed and filtered dictionary
-                    item_id = add_media_item(db_item_filtered)
+                    # Pass the explicitly constructed and filtered dictionary.
+                    # user_initiated=True: an admin explicitly triggered this
+                    # recovery, so a ghostlisted/blacklisted row should be
+                    # adopted (and unghosted) rather than silently refused --
+                    # the same reasoning as the external-add import path.
+                    item_id = add_media_item(db_item_filtered, user_initiated=True)
                     if item_id:
                         successful_recoveries += 1
                     else:
@@ -3399,12 +3586,98 @@ def delete_battery_db_files():
     elif not deleted_files:
          return jsonify({'success': True, 'message': 'No battery DB files found to delete.'}), 200
     else:
-        return jsonify({'success': True, 'message': f'Successfully deleted files: {", ".join(deleted_files)}'}), 200
+        # Reinitialize the battery database engine so tables are recreated on the
+        # next request.  Without this the stale SQLAlchemy engine continues to
+        # point at the now-deleted file and every subsequent query fails with
+        # "no such table: items".
+        try:
+            from cli_battery.app.database import init_db
+            import cli_battery.app.database as _bat_db
+            if _bat_db.engine is not None:
+                try:
+                    _bat_db.Session.remove()
+                    _bat_db.engine.dispose()
+                except Exception:
+                    pass
+                _bat_db.engine = None
+            init_db()
+            logging.info("Battery database reinitialized after file deletion.")
+        except Exception as reinit_err:
+            logging.warning(f"Battery DB reinit after deletion failed (will retry on next request): {reinit_err}")
+        return jsonify({'success': True, 'message': f'Successfully deleted and reinitialized battery DB: {", ".join(deleted_files)}'}), 200
 
 # --- Rclone Mount to Symlinks Logic ---
 
-def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id, trigger_plex_update_on_success: bool = False, assumed_item_title_from_path: str = None): # Add new parameter
-    """Background task to scan Rclone mount, fetch metadata, and create DB entries/symlinks."""
+def _describe_add_media_item_failure(item: dict) -> str:
+    """Explain why add_media_item returned None.
+
+    It swallows several distinct failures into a bare None — a ghostlist or
+    blacklist block, and any sqlite3.Error (IntegrityError included) — so the
+    caller cannot tell them apart. 'add_media_item no ID returned' on its own
+    sends you digging through add_media_item to guess which one happened.
+    Runs only on the failure path, so the extra query costs nothing normally.
+    """
+    try:
+        from database.core import get_db_connection
+        imdb_id = item.get('imdb_id')
+        tmdb_id = item.get('tmdb_id')
+        item_type = item.get('type')
+        if not (imdb_id or tmdb_id):
+            return ("add_media_item returned None and the item has neither an IMDb "
+                    "nor a TMDB ID — check the metadata stage")
+
+        # Must mirror add_media_item's guard exactly, including the
+        # version-scoping of the 'Blacklisted' half — an unscoped query here
+        # would blame the ghostlist for a failure it did not cause.
+        target_version = (item.get('version') or '').rstrip('*')
+        guard = ("(ghostlisted = 1 OR (state = 'Blacklisted' "
+                 "AND RTRIM(COALESCE(version, ''), '*') = ?))")
+
+        conn = get_db_connection()
+        try:
+            # Key presence, not value truthiness -- must match add_media_item's
+            # own guard exactly ('season_number' in item and 'episode_number' in
+            # item), or this can silently take the unscoped branch/match the
+            # wrong row and misreport why an add failed.
+            if item_type == 'episode' and 'season_number' in item and 'episode_number' in item:
+                query = ('SELECT id, state, ghostlisted, version FROM media_items '
+                         'WHERE (imdb_id = ? OR tmdb_id = ?) AND type = ? '
+                         'AND season_number = ? AND episode_number = ? '
+                         f'AND {guard} LIMIT 1')
+                params = [imdb_id, tmdb_id, item_type, item.get('season_number'),
+                          item.get('episode_number'), target_version]
+            else:
+                query = ('SELECT id, state, ghostlisted, version FROM media_items '
+                         'WHERE (imdb_id = ? OR tmdb_id = ?) AND type = ? '
+                         f'AND {guard} LIMIT 1')
+                params = [imdb_id, tmdb_id, item_type, target_version]
+            row = conn.execute(query, params).fetchone()
+        finally:
+            conn.close()
+
+        if row:
+            reason = 'ghostlisted' if row['ghostlisted'] else f"state={row['state']}"
+            return (f"blocked by add_media_item: existing item id={row['id']} is {reason} "
+                    f"(version={row['version']}). An external add should pass "
+                    f"user_initiated=True to unghost and update it in place.")
+        return ("add_media_item returned None but no ghostlisted/blacklisted row "
+                "matches — check the preceding 'SQLite error' or 'Unexpected error' "
+                "log line from add_media_item for the real cause")
+    except Exception as e:
+        return f"add_media_item returned None; could not determine why ({e})"
+
+
+def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id, trigger_plex_update_on_success: bool = False, assumed_item_title_from_path: str = None, user_initiated: bool = False): # Add new parameter
+    """Background task to scan Rclone mount, fetch metadata, and create DB entries/symlinks.
+
+    user_initiated is passed straight to add_media_item, where it bypasses the
+    ghostlist/blacklist guard. Only set it for an import a person actually asked
+    for -- the rclone webhook, which fires because someone put content in the
+    debrid account by hand. It must stay False for anything running on a timer:
+    the mount also fills up with cli_debrid's own leftovers (cache-check probes,
+    torrents orphaned when a grab failed), and bypassing the guard for those
+    re-imports the exact releases the queues just blacklisted.
+    """
     global rclone_scan_progress
 
     # --- Progress File Setup ---
@@ -3690,16 +3963,30 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                     title_for_best_match_selection = parsed_title # Raw PTT output as last resort
                     logging.debug(f"[RcloneScan {task_id}] No suitable cleaned filename or folder title, falling back to raw parsed_title for best_match selection: '{title_for_best_match_selection}'")
                 
+                # A Fix Match correction for this title wins outright. The fuzzy
+                # search below is stateless, so whatever it mis-resolved once it
+                # mis-resolves again for every new release of the same show --
+                # undoing the correction each time a file lands.
+                from database.match_overrides import find_match_override
+                override_imdb_id = find_match_override(
+                    [cleaned_folder_title, cleaned_filename_title, parsed_title],
+                    parsed_year,
+                    'show' if current_parsed_type == 'episode' else 'movie',
+                )
+
                 best_match_from_search = None
-                if final_search_results:
-                    from cli_battery.app.metadata_manager import MetadataManager 
-                    best_match_from_search = MetadataManager.find_best_match_from_results(
+                if final_search_results and not override_imdb_id:
+                    best_match_from_search = DirectAPI.find_best_match_from_results(
                         original_query_title=title_for_best_match_selection, 
                         query_year=parsed_year,
                         search_results=final_search_results
                     )
-                
-                if best_match_from_search:
+
+                if override_imdb_id:
+                    logging.info(f"[RcloneScan {task_id}] Using Fix Match override for "
+                                 f"'{title_for_best_match_selection}' ({parsed_year}): {override_imdb_id}")
+                    item_id_to_use = override_imdb_id
+                elif best_match_from_search:
                     logging.info(f"[RcloneScan {task_id}] Best match selected by find_best_match_from_results: {best_match_from_search.get('title')} ({best_match_from_search.get('year')}) using matching title '{title_for_best_match_selection}' (search performed with '{title_that_yielded_search_results}')")
                     item_id_to_use = best_match_from_search.get('imdb_id') or best_match_from_search.get('tmdb_id')
                 elif final_search_results: 
@@ -3949,12 +4236,34 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
             else:
                 item_id_from_db = None
                 try:
-                    # add_media_item is called with item_for_db_filtered_for_db, 
+                    # add_media_item is called with item_for_db_filtered_for_db,
                     # which has 'genres' as a JSON string
-                    item_id_from_db = add_media_item(item_for_db_filtered_for_db)
-                    if not item_id_from_db: raise Exception("add_media_item no ID returned")
+                    #
+                    # user_initiated bypasses add_media_item's ghostlist/blacklist
+                    # guard, so an existing entry of the same version is unghosted
+                    # and updated in place instead of blocked. Only the rclone
+                    # webhook sets it: content that reached the mount because a
+                    # person put it there is disproportionately likely to be
+                    # ghostlisted already, since that is usually why they went and
+                    # got it elsewhere. It is a decision for the caller to make --
+                    # it was briefly derived from trigger_plex_update_on_success,
+                    # which silently handed the bypass to the periodic mount scan
+                    # and let it re-import releases the queues had just blacklisted.
+                    item_id_from_db = add_media_item(
+                        item_for_db_filtered_for_db,
+                        user_initiated=user_initiated
+                    )
+                    if not item_id_from_db:
+                        raise Exception(_describe_add_media_item_failure(item_for_db_filtered_for_db))
                     items_added_to_db += 1; update_progress(items_added_to_db=items_added_to_db)
                 except sqlite3.IntegrityError:
+                    # NOTE: unreachable. add_media_item catches sqlite3.Error —
+                    # IntegrityError is a subclass — and returns None instead of
+                    # propagating, so a duplicate surfaces through the None branch
+                    # above, not here. media_items also declares no UNIQUE/NOT NULL
+                    # constraints, so nothing raises IntegrityError in the first
+                    # place. Kept only so behaviour does not change if either of
+                    # those two facts is ever revisited.
                     logging.warning(f"[RcloneScan {task_id}] DB IntegrityError for {item_path.name}, V:{current_parsed_version}. Likely duplicate.")
                     skipped_duplicates += 1; update_progress(skipped_duplicates=skipped_duplicates)
                     # If it's a duplicate, we should still mark original_file_path_str as processed if we intend to skip it next time
@@ -3984,6 +4293,29 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                         )
                         if not symlink_success: raise Exception("create_symlink returned False")
                         symlinks_created += 1; update_progress(symlinks_created=symlinks_created)
+
+                        # Sync the file pointers onto the row. Required for the
+                        # adopt path: when add_media_item unghosts an existing
+                        # entry of the same version it returns that entry's id
+                        # after updating only ghostlisted/state/magnet/torrent
+                        # fields, so location_on_disk and friends would still
+                        # reference the file this import just replaced. A no-op
+                        # for a fresh insert, which already has these values.
+                        try:
+                            from database.database_writing import update_media_item as _update_media_item
+                            _location_fields = {
+                                k: item_for_db_filtered_for_db.get(k)
+                                for k in ('location_on_disk', 'original_path_for_symlink',
+                                          'filled_by_file', 'filled_by_title', 'state',
+                                          'collected_at', 'version')
+                                if item_for_db_filtered_for_db.get(k) is not None
+                            }
+                            if _location_fields:
+                                _update_media_item(item_id_from_db, **_location_fields)
+                        except Exception as _loc_err:
+                            logging.error(
+                                f"[RcloneScan {task_id}] Symlink created but failed to sync file "
+                                f"pointers on item {item_id_from_db}: {_loc_err}", exc_info=True)
                         
                         # Successfully processed, add to persistent progress and save
                         processed_original_files.add(original_file_path_str)
@@ -4114,7 +4446,9 @@ def rclone_to_symlinks_route():
     # Start the background task
     thread = threading.Thread(
         target=_run_rclone_to_symlink_task,
-        args=(rclone_mount_path, symlink_base_path, dry_run, task_id, False, assumed_item_title_from_path_manual) # Pass False for trigger_plex_update and None for assumed_item_title
+        # False, then False: no Plex trigger, and not user_initiated -- the bulk scan
+        # sweeps the whole mount, so it must not unghost everything still sitting there.
+        args=(rclone_mount_path, symlink_base_path, dry_run, task_id, False, assumed_item_title_from_path_manual, False)
     )
     thread.daemon = True
     thread.start()
@@ -4716,7 +5050,10 @@ def perform_riven_recovery(): # New function
                     raise ValueError(f"Missing essential data (imdb_id or type) after filtering")
 
                 try:
-                    item_id = add_media_item(db_item_filtered)
+                    # user_initiated=True: an admin explicitly triggered this
+                    # recovery, so a ghostlisted/blacklisted row should be
+                    # adopted (and unghosted) rather than silently refused.
+                    item_id = add_media_item(db_item_filtered, user_initiated=True)
                     if item_id:
                         # --- Create the new symlink ---
                         try:
@@ -4884,6 +5221,182 @@ def run_bulk_subtitle_scan():
     task_id = task_queue.add_task(async_run_bulk_subs)
     return jsonify({'task_id': task_id}), 202
 
+@debug_bp.route('/api/scan_duplicate_symlinks', methods=['POST'])
+@admin_required
+def scan_duplicate_symlinks():
+    """Read-only scan: find TV episode symlinks that point at the same underlying
+    file. Usually means a season pack was mismatched during collection and
+    multiple "different" episodes actually got symlinked to the same single
+    file instead of their own - so playing S01E04 actually plays S01E01, etc.
+    Makes no changes; rescraping affected items is a separate explicit action."""
+    import os
+    from collections import defaultdict
+    from database import get_db_connection
+
+    try:
+        symlink_root = get_setting('File Management', 'symlinked_files_path', '')
+        if not symlink_root:
+            return jsonify({'success': False, 'error': 'no symlinked_files_path configured'}), 400
+
+        tv_folder_names = [get_setting('Debug', 'tv_shows_folder_name', 'TV Shows')]
+        if get_setting('Debug', 'enable_separate_anime_folders', False):
+            tv_folder_names.append(get_setting('Debug', 'anime_tv_shows_folder_name', 'Anime TV Shows'))
+
+        tv_roots = [os.path.join(symlink_root, name) for name in tv_folder_names]
+        existing_roots = [r for r in tv_roots if os.path.isdir(r)]
+        if not existing_roots:
+            return jsonify({'success': False, 'error': f'No TV symlink folders found (checked: {", ".join(tv_roots)})'}), 400
+
+        by_target = defaultdict(list)
+        scanned = 0
+        for tv_root in existing_roots:
+            for dirpath, dirnames, filenames in os.walk(tv_root):
+                for name in filenames:
+                    full = os.path.join(dirpath, name)
+                    if not os.path.islink(full):
+                        continue
+                    scanned += 1
+                    try:
+                        target = os.readlink(full)
+                    except OSError:
+                        continue
+                    by_target[target].append(full)
+
+        dupe_groups = {t: paths for t, paths in by_target.items() if len(paths) > 1}
+
+        conn = get_db_connection()
+        groups_out = []
+        for target, paths in dupe_groups.items():
+            items = []
+            for p in paths:
+                row = conn.execute(
+                    "SELECT id, title, year, season_number, episode_number FROM media_items WHERE location_on_disk = ?",
+                    (p,)
+                ).fetchone()
+                # Only items matched to a real database row are actionable from
+                # this UI (nothing to safely rescrape otherwise) - drop the rest
+                # rather than showing an inert "not matched" row.
+                if not row:
+                    continue
+                items.append({
+                    'path': p,
+                    'item_id': row['id'],
+                    'title': row['title'],
+                    'year': row['year'],
+                    'season_number': row['season_number'],
+                    'episode_number': row['episode_number'],
+                })
+            if len(items) > 1:
+                # Distinguish a genuine mismatch (different episodes wrongly sharing a file)
+                # from a legitimate combined multi-episode release file (e.g. a premiere
+                # packaged as one S01E01E02.mkv covering both episodes) - same episode/season
+                # numbers on both sides is the signal either way, but only the latter is
+                # expected/harmless. Reuse the same title parser the scraper already uses for
+                # ranking (parse_with_ptt) rather than writing new episode-detection logic.
+                is_multi_episode_release = False
+                try:
+                    from scraper.functions.ptt_parser import parse_with_ptt
+                    target_basename = os.path.basename(target)
+                    parsed = parse_with_ptt(target_basename)
+                    parsed_episodes = set(parsed.get('episodes') or [])
+                    group_episodes = {i['episode_number'] for i in items if i.get('episode_number') is not None}
+                    if group_episodes and parsed_episodes == group_episodes:
+                        is_multi_episode_release = True  # "possible" - PTT parsing isn't infallible, still shown for review either way
+                except Exception as e:
+                    logging.debug(f"Multi-episode release detection failed for {target}: {e}")
+                groups_out.append({
+                    'target': target,
+                    'items': items,
+                    'is_multi_episode_release': is_multi_episode_release,
+                })
+        conn.close()
+
+        groups_out.sort(key=lambda g: -len(g['items']))
+
+        return jsonify({
+            'success': True,
+            'scanned': scanned,
+            'group_count': len(groups_out),
+            'affected_count': sum(len(g['items']) for g in groups_out),
+            'groups': groups_out,
+        })
+    except Exception as e:
+        logging.error(f"Error scanning for duplicate symlink targets: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/rescrape_duplicate_symlinks', methods=['POST'])
+@admin_required
+def rescrape_duplicate_symlinks():
+    """Fully delete the given items (media server entry, symlink, source file/
+    debrid-or-usenet download, cache) the same way deleting an episode from the
+    library does, then move them back to Wanted so they get rescraped fresh.
+    Deletion runs as one batch via DeletionManager.delete_multiple_items, whose
+    sibling guard already excludes other items in the same batch when deciding
+    whether a shared season-pack torrent/NZB is still needed elsewhere - so
+    rescraping an entire duplicate-target group in one go won't have the items
+    block each other's cleanup."""
+    from database import get_db_connection
+
+    try:
+        data = request.get_json(silent=True) or {}
+        item_ids = data.get('item_ids') or []
+        if not item_ids:
+            return jsonify({'success': False, 'error': 'No item_ids provided'}), 400
+
+        debrid_provider = get_debrid_provider()
+        deletion_manager = DeletionManager(debrid_provider=debrid_provider)
+        result = deletion_manager.delete_multiple_items(
+            item_ids=item_ids,
+            blacklist=False,
+            blacklist_sources=False,
+            delete_from_media_server=True,
+            delete_files=True,
+            delete_from_debrid=True,
+            delete_symlinks=True,
+            clear_cache=True,
+            remove_from_content_source=False,
+            skip_database=True  # We reset state to Wanted ourselves below instead of deleting the row
+        )
+
+        if not result.get('success'):
+            errors_list = result.get('errors', ['Deletion failed'])
+            logging.error(f"Error deleting duplicate-symlink items before rescrape: {errors_list}")
+            return jsonify({'success': False, 'error': errors_list[0] if errors_list else 'Deletion failed', 'errors': errors_list}), 500
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        now = datetime.now()
+        moved = 0
+        for item_id in item_ids:
+            cursor.execute(f'''
+                UPDATE media_items
+                SET state = 'Wanted',
+                    filled_by_file = NULL,
+                    filled_by_title = NULL,
+                    filled_by_magnet = NULL,
+                    filled_by_torrent_id = NULL,
+                    {RESET_COLLECTION_STATE_SQL},
+                    last_updated = ?,
+                    disable_not_wanted_check = TRUE,
+                    location_on_disk = NULL,
+                    original_path_for_symlink = NULL,
+                    original_scraped_torrent_title = NULL,
+                    upgrading_from = NULL,
+                    version = TRIM(version, '*'),
+                    upgrading = NULL
+                WHERE id = ?
+                AND state NOT IN ('Wanted', 'Scraping', 'Adding')
+            ''', (now, item_id))
+            moved += cursor.rowcount
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'moved': moved})
+    except Exception as e:
+        logging.error(f"Error rescraping duplicate-symlink items: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @debug_bp.route('/api/fix_zurg_symlinks', methods=['POST'])
 @admin_required
 def fix_zurg_symlinks():
@@ -5050,11 +5563,26 @@ def fix_zurg_symlinks():
 def remove_duplicate_items():
     try:
         dry_run = request.form.get('dry_run') == 'on'
-        
+        nas_filter = request.form.get('nas_filter', 'all')  # 'all', 'exclude_nas', 'only_nas'
+
+        # Parse exclude patterns (comma or pipe separated)
+        exclude_patterns_raw = request.form.get('exclude_patterns', '').strip()
+        exclude_patterns = []
+        if exclude_patterns_raw:
+            exclude_patterns = [p.strip() for p in exclude_patterns_raw.replace('|', ',').split(',') if p.strip()]
+
+        def _is_excluded(filename, patterns):
+            if not patterns or not filename:
+                return False
+            fn_lower = filename.lower()
+            return any(p.lower() in fn_lower for p in patterns)
+
         from database import get_db_connection
+        from utilities.settings import get_nas_paths, is_nas_path
+        nas_paths = get_nas_paths()
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Find all items with filled_by_file that have duplicates
         # Filter out Sample.mkv files
         cursor.execute("""
@@ -5068,11 +5596,22 @@ def remove_duplicate_items():
             ORDER BY count DESC
         """)
         duplicate_groups = cursor.fetchall()
-        
+
+        # Apply NAS filter to groups if configured
+        if nas_filter != 'all' and nas_paths:
+            filtered_groups = []
+            for group in duplicate_groups:
+                group_is_nas = is_nas_path(group['filled_by_file'] or '', nas_paths)
+                if nas_filter == 'exclude_nas' and not group_is_nas:
+                    filtered_groups.append(group)
+                elif nas_filter == 'only_nas' and group_is_nas:
+                    filtered_groups.append(group)
+            duplicate_groups = filtered_groups
+
         total_duplicates = 0
         items_to_delete = []
         preview = []
-        
+
         for group in duplicate_groups:
             filled_by_file = group['filled_by_file']
             count = group['count']
@@ -5115,6 +5654,13 @@ def remove_duplicate_items():
                     # Mixed states (no Collected) - keep oldest
                     keep_item = items[0]
                     delete_items = items[1:]
+
+            # Apply exclude patterns — protect matching items from deletion
+            if exclude_patterns:
+                protected = [item for item in delete_items if _is_excluded(item['filled_by_file'] or '', exclude_patterns)]
+                delete_items = [item for item in delete_items if not _is_excluded(item['filled_by_file'] or '', exclude_patterns)]
+                if protected:
+                    logging.debug(f"[CLEANUP_DUPES] Protected {len(protected)} items via exclude patterns")
             
             total_duplicates += len(delete_items)
             items_to_delete.extend([item['id'] for item in delete_items])
@@ -5463,292 +6009,98 @@ def fix_episode_numbers():
             'error': f'An error occurred: {str(e)}'
         })
 
-@debug_bp.route('/api/cleanup_ghostlisted_duplicates', methods=['POST'])
+@debug_bp.route('/api/cleanup_collected_watchlist', methods=['POST'])
 @admin_required
-def cleanup_ghostlisted_duplicates():
-    """
-    Remove ghostlisted duplicate entries while keeping collected versions.
-    Supports both movies and TV shows.
-    """
-    from database.core import get_db_connection
-    from datetime import datetime
-    import time
+def cleanup_collected_watchlist():
+    """Remove all Collected items from My Plex Watchlist and all Other Plex Watchlists."""
+    import threading
+    from flask import current_app
+    app = current_app._get_current_object()
 
-    dry_run = request.form.get('dry_run') == 'on'
-    media_type = request.form.get('media_type', 'movie')  # 'movie' or 'show'
-    logging.info(f"Ghostlist cleanup requested. Media type: {media_type}, Dry run: {dry_run}")
+    def _run():
+        with app.app_context():
+            try:
+                from content_checkers.plex_watchlist import get_plex_client
+                from database.core import get_db_connection
+                from plexapi.myplex import MyPlexAccount
 
-    conn = None
-    start_time = time.time()
-    total_deleted = 0
-    total_movies = 0
-    results = []
-    groups = []  # Store groups with keep/delete items
+                # Build set of collected imdb_ids
+                conn = get_db_connection()
+                rows = conn.execute(
+                    "SELECT DISTINCT imdb_id, title, type FROM media_items WHERE state = 'Collected' AND imdb_id IS NOT NULL AND imdb_id != ''"
+                ).fetchall()
+                conn.close()
 
-    try:
-        conn = get_db_connection()
+                collected = {row['imdb_id']: {'imdb_id': row['imdb_id'], 'title': row['title'], 'type': row['type']} for row in rows}
+                if not collected:
+                    logging.info("[WatchlistCleanup] No collected items with IMDB IDs found.")
+                    return
 
-        # Determine the type filter for SQL
-        if media_type == 'show':
-            type_filter = "type = 'episode'"
-            media_label = "shows"
-        else:  # movie
-            type_filter = "type = 'movie'"
-            media_label = "movies"
+                logging.info(f"[WatchlistCleanup] Found {len(collected)} collected items to check against watchlists.")
+                total_removed = 0
 
-        # Find items with both collected and ghostlisted versions
-        # Uses TWO-PASS approach via UNION to catch duplicates by EITHER TMDB or IMDb
-        # Pass 1: Group by TMDB (finds items with same TMDB)
-        # Pass 2: Group by IMDb (finds items with same IMDb but different/missing TMDB)
-        if media_type == 'show':
-            cursor = conn.execute(f"""
-                SELECT * FROM (
-                    -- Pass 1: TMDB-based duplicates
-                    SELECT 'tmdb_' || tmdb_id as unified_id,
-                           MIN(imdb_id) as imdb_id, tmdb_id, season_number, episode_number,
-                           COUNT(*) as total_versions,
-                           SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
-                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') THEN 1 ELSE 0 END) as collected_count
-                    FROM media_items
-                    WHERE {type_filter} AND tmdb_id IS NOT NULL
-                    GROUP BY tmdb_id, season_number, episode_number
-                    HAVING ghostlisted_count > 0 AND collected_count > 0
+                def _extract_imdb(witem):
+                    for guid in getattr(witem, 'guids', []):
+                        guid_str = str(guid.id) if hasattr(guid, 'id') else str(guid)
+                        if 'imdb://' in guid_str:
+                            return guid_str.replace('imdb://', '').strip()
+                    return None
 
-                    UNION
+                # --- My Plex Watchlist ---
+                try:
+                    account, _token = get_plex_client()
+                    if account:
+                        watchlist = account.watchlist()
+                        logging.info(f"[WatchlistCleanup] My Plex Watchlist has {len(watchlist)} items.")
+                        for witem in watchlist:
+                            witem_imdb = _extract_imdb(witem)
+                            if witem_imdb and witem_imdb in collected:
+                                try:
+                                    account.removeFromWatchlist(witem)
+                                    total_removed += 1
+                                    logging.info(f"[WatchlistCleanup] Removed '{collected[witem_imdb]['title']}' ({witem_imdb}) from My Plex Watchlist.")
+                                except Exception as e:
+                                    logging.warning(f"[WatchlistCleanup] Failed to remove {witem_imdb} from My Plex Watchlist: {e}")
+                except Exception as e:
+                    logging.error(f"[WatchlistCleanup] Error accessing My Plex Watchlist: {e}")
 
-                    -- Pass 2: IMDb-based duplicates (where TMDB differs or is missing)
-                    SELECT imdb_id as unified_id,
-                           imdb_id, MIN(tmdb_id) as tmdb_id, season_number, episode_number,
-                           COUNT(*) as total_versions,
-                           SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
-                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') THEN 1 ELSE 0 END) as collected_count
-                    FROM media_items
-                    WHERE {type_filter} AND imdb_id IS NOT NULL
-                          AND imdb_id IN (
-                              SELECT imdb_id FROM media_items
-                              WHERE {type_filter} AND imdb_id IS NOT NULL
-                              GROUP BY imdb_id, season_number, episode_number
-                              HAVING COUNT(DISTINCT tmdb_id) > 1
-                                 OR (COUNT(*) > COUNT(tmdb_id))
-                          )
-                    GROUP BY imdb_id, season_number, episode_number
-                    HAVING ghostlisted_count > 0 AND collected_count > 0
-                )
-                ORDER BY unified_id, season_number, episode_number
-            """)
-        else:
-            cursor = conn.execute(f"""
-                SELECT * FROM (
-                    -- Pass 1: TMDB-based duplicates
-                    SELECT 'tmdb_' || tmdb_id as unified_id,
-                           MIN(imdb_id) as imdb_id, tmdb_id,
-                           COUNT(*) as total_versions,
-                           SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
-                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') THEN 1 ELSE 0 END) as collected_count
-                    FROM media_items
-                    WHERE {type_filter} AND tmdb_id IS NOT NULL
-                    GROUP BY tmdb_id
-                    HAVING ghostlisted_count > 0 AND collected_count > 0
+                # --- Other Plex Watchlists ---
+                try:
+                    runner = get_program_runner()
+                    content_sources = runner.get_content_sources() if runner else {}
+                    for source_key, source_data in content_sources.items():
+                        if source_data.get('type') != 'Other Plex Watchlist':
+                            continue
+                        username = source_data.get('username', '')
+                        other_token = source_data.get('token', '')
+                        if not other_token:
+                            continue
+                        try:
+                            other_account = MyPlexAccount(token=other_token)
+                            watchlist = other_account.watchlist()
+                            logging.info(f"[WatchlistCleanup] {username}'s watchlist has {len(watchlist)} items.")
+                            for witem in watchlist:
+                                witem_imdb = _extract_imdb(witem)
+                                if witem_imdb and witem_imdb in collected:
+                                    try:
+                                        other_account.removeFromWatchlist(witem)
+                                        total_removed += 1
+                                        logging.info(f"[WatchlistCleanup] Removed '{collected[witem_imdb]['title']}' ({witem_imdb}) from {username}'s Plex Watchlist.")
+                                    except Exception as e:
+                                        logging.warning(f"[WatchlistCleanup] Failed to remove {witem_imdb} from {username}'s watchlist: {e}")
+                        except Exception as e:
+                            logging.error(f"[WatchlistCleanup] Error accessing {username}'s Plex Watchlist: {e}")
+                except Exception as e:
+                    logging.error(f"[WatchlistCleanup] Error iterating Other Plex Watchlist sources: {e}")
 
-                    UNION
+                logging.info(f"[WatchlistCleanup] Done. Removed {total_removed} items total across all watchlists.")
 
-                    -- Pass 2: IMDb-based duplicates (where TMDB differs or is missing)
-                    SELECT imdb_id as unified_id,
-                           imdb_id, MIN(tmdb_id) as tmdb_id,
-                           COUNT(*) as total_versions,
-                           SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
-                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') THEN 1 ELSE 0 END) as collected_count
-                    FROM media_items
-                    WHERE {type_filter} AND imdb_id IS NOT NULL
-                          AND imdb_id IN (
-                              SELECT imdb_id FROM media_items
-                              WHERE {type_filter} AND imdb_id IS NOT NULL
-                              GROUP BY imdb_id
-                              HAVING COUNT(DISTINCT tmdb_id) > 1
-                                 OR (COUNT(*) > COUNT(tmdb_id))
-                          )
-                    GROUP BY imdb_id
-                    HAVING ghostlisted_count > 0 AND collected_count > 0
-                )
-                ORDER BY unified_id
-            """)
-        mixed_movies = cursor.fetchall()
-        cursor.close()
+            except Exception as e:
+                logging.error(f"[WatchlistCleanup] Unexpected error: {e}", exc_info=True)
 
-        total_movies = len(mixed_movies)
-        logging.info(f"Found {total_movies} {media_label} with mixed ghostlist status")
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'success': True, 'message': 'Watchlist cleanup started — check logs for progress.'})
 
-        if total_movies == 0:
-            return jsonify({
-                'success': True,
-                'message': f'No ghostlisted duplicates found for {media_label}',
-                'total_movies': 0,
-                'total_deleted': 0,
-                'elapsed_time': 0,
-                'results': []
-            })
-
-        # Process each item
-        for idx, movie in enumerate(mixed_movies, 1):
-            unified_id = movie['unified_id']
-            imdb_id = movie['imdb_id']
-            tmdb_id = movie['tmdb_id']
-
-            # Build WHERE clause based on group type (TMDB-based or IMDb-based)
-            # The UNION query already separated these into distinct groups
-            if unified_id.startswith('tmdb_'):
-                # TMDB-based group: match all items with this TMDB
-                tmdb_id_value = unified_id.replace('tmdb_', '')
-                id_where = "tmdb_id = ?"
-                id_params = [tmdb_id_value]
-            else:
-                # IMDb-based group: match all items with this IMDb
-                id_where = "imdb_id = ?"
-                id_params = [unified_id]
-
-            # Get all versions of this item
-            # For shows, also filter by season/episode to get the correct duplicates
-            if media_type == 'show':
-                season_num = movie['season_number']
-                episode_num = movie['episode_number']
-                cursor = conn.execute(f"""
-                    SELECT id, title, state, ghostlisted, content_source,
-                           filled_by_file, location_basename, location_on_disk, filled_by_torrent_id,
-                           season_number, episode_number
-                    FROM media_items
-                    WHERE {id_where} AND {type_filter}
-                          AND season_number = ? AND episode_number = ?
-                    ORDER BY ghostlisted, id
-                """, id_params + [season_num, episode_num])
-            else:
-                cursor = conn.execute(f"""
-                    SELECT id, title, state, ghostlisted, content_source,
-                           filled_by_file, location_basename, location_on_disk, filled_by_torrent_id
-                    FROM media_items
-                    WHERE {id_where} AND {type_filter}
-                    ORDER BY ghostlisted, id
-                """, id_params)
-            versions = cursor.fetchall()
-            cursor.close()
-
-            collected_versions = [v for v in versions if v['ghostlisted'] == 0]
-            ghostlisted_versions = [v for v in versions if v['ghostlisted'] == 1]
-
-            # Safety check: ensure we're keeping at least one collected version
-            if not collected_versions:
-                id_str = f"imdb={imdb_id or 'None'}, tmdb={tmdb_id or 'None'}"
-                logging.warning(f"Skipping {id_str} - no collected versions found")
-                continue
-
-            # Delete ghostlisted versions
-            deleted_ids = []
-            for ghost in ghostlisted_versions:
-                deleted_ids.append(ghost['id'])
-
-                if not dry_run:
-                    conn.execute("DELETE FROM media_items WHERE id = ?", (ghost['id'],))
-
-                # Determine which location field to use (first non-null)
-                location = ghost['filled_by_file'] or ghost['location_basename'] or ghost['location_on_disk'] or 'N/A'
-
-                result_data = {
-                    'movie_id': ghost['id'],
-                    'title': ghost['title'],
-                    'imdb_id': imdb_id or 'N/A',
-                    'tmdb_id': tmdb_id or 'N/A',
-                    'state': ghost['state'],
-                    'source': ghost['content_source'],
-                    'location': location,
-                    'torrent_id': ghost['filled_by_torrent_id'] or 'N/A',
-                    'action': 'deleted' if not dry_run else 'would_delete'
-                }
-
-                # Add season/episode info for shows
-                if media_type == 'show':
-                    result_data['season_number'] = ghost['season_number'] if 'season_number' in ghost.keys() else 'N/A'
-                    result_data['episode_number'] = ghost['episode_number'] if 'episode_number' in ghost.keys() else 'N/A'
-
-                results.append(result_data)
-
-            total_deleted += len(deleted_ids)
-
-            # Build grouped data for display
-            group_keep_items = []
-            group_delete_items = []
-
-            # Add kept (collected) versions
-            for collected in collected_versions:
-                location = collected['filled_by_file'] or collected['location_basename'] or collected['location_on_disk'] or 'N/A'
-                keep_data = {
-                    'movie_id': collected['id'],
-                    'title': collected['title'],
-                    'imdb_id': imdb_id or 'N/A',
-                    'tmdb_id': tmdb_id or 'N/A',
-                    'state': collected['state'],
-                    'source': collected['content_source'],
-                    'location': location,
-                    'torrent_id': collected['filled_by_torrent_id'] or 'N/A',
-                    'action': 'kept'
-                }
-                if media_type == 'show':
-                    keep_data['season_number'] = collected['season_number'] if 'season_number' in collected.keys() else 'N/A'
-                    keep_data['episode_number'] = collected['episode_number'] if 'episode_number' in collected.keys() else 'N/A'
-                group_keep_items.append(keep_data)
-
-            # Add deleted (ghostlisted) versions
-            for ghost in ghostlisted_versions:
-                location = ghost['filled_by_file'] or ghost['location_basename'] or ghost['location_on_disk'] or 'N/A'
-                delete_data = {
-                    'movie_id': ghost['id'],
-                    'title': ghost['title'],
-                    'imdb_id': imdb_id or 'N/A',
-                    'tmdb_id': tmdb_id or 'N/A',
-                    'state': ghost['state'],
-                    'source': ghost['content_source'],
-                    'location': location,
-                    'torrent_id': ghost['filled_by_torrent_id'] or 'N/A',
-                    'action': 'deleted' if not dry_run else 'would_delete'
-                }
-                if media_type == 'show':
-                    delete_data['season_number'] = ghost['season_number'] if 'season_number' in ghost.keys() else 'N/A'
-                    delete_data['episode_number'] = ghost['episode_number'] if 'episode_number' in ghost.keys() else 'N/A'
-                group_delete_items.append(delete_data)
-
-            # Add this group
-            group_data = {
-                'keep_items': group_keep_items,
-                'delete_items': group_delete_items
-            }
-            groups.append(group_data)
-
-        if not dry_run and total_deleted > 0:
-            conn.commit()
-
-        elapsed_time = time.time() - start_time
-
-        return jsonify({
-            'success': True,
-            'message': f'{"Would delete" if dry_run else "Deleted"} {total_deleted} ghostlisted duplicates from {total_movies} {media_label}',
-            'total_movies': total_movies,
-            'total_deleted': total_deleted,
-            'elapsed_time': round(elapsed_time, 2),
-            'dry_run': dry_run,
-            'results': results,  # Return all results for pagination (flat list for backwards compatibility)
-            'groups': groups  # Grouped data for better display
-        })
-
-    except Exception as e:
-        if conn:
-            conn.rollback()
-            conn.close()
-        logging.error(f"Error in cleanup_ghostlisted_duplicates: {str(e)}", exc_info=True)
-        return jsonify({
-            'success': False,
-            'error': f'An error occurred: {str(e)}'
-        }), 500
-    finally:
-        if conn:
-            conn.close()
 
 @debug_bp.route('/api/cleanup_failed_upgrades', methods=['POST'])
 @admin_required
@@ -5772,7 +6124,8 @@ def cleanup_failed_upgrades():
         dry_run: If 'on', only preview what would be deleted
         version_match: If 'same', only delete items with matching version. If 'all', delete all.
         media_type: 'movie' or 'show' (default: 'movie')
-        keep_action: 'keep_collected', 'keep_blacklisted', or 'keep_best_quality' (default: 'keep_collected')
+        keep_action: 'keep_collected', 'keep_blacklisted', 'keep_collected_delete_ghostlisted',
+                     'keep_ghostlisted_delete_collected', or 'keep_best_quality' (default: 'keep_collected')
     """
     from database.core import get_db_connection
     import time
@@ -5783,6 +6136,25 @@ def cleanup_failed_upgrades():
         version_match = request.form.get('version_match', 'all')  # 'all' or 'same'
         media_type = request.form.get('media_type', 'movie')  # 'movie' or 'show'
         keep_action = request.form.get('keep_action', 'keep_collected')  # 'keep_collected' or 'keep_blacklisted'
+        nas_filter = request.form.get('nas_filter', 'all')  # 'all', 'exclude_nas', 'only_nas'
+
+        from utilities.settings import get_nas_paths, is_nas_path
+        nas_paths = get_nas_paths()
+
+        def _group_is_nas(versions_list):
+            """Return True if any item in the group has a NAS location_on_disk."""
+            return any(is_nas_path(v.get('location_on_disk') or '', nas_paths) for v in versions_list)
+
+        def _skip_for_nas_filter(versions_list):
+            """Return True if this group should be skipped based on the NAS filter setting."""
+            if nas_filter == 'all' or not nas_paths:
+                return False
+            group_is_nas = _group_is_nas(versions_list)
+            if nas_filter == 'exclude_nas' and group_is_nas:
+                return True
+            if nas_filter == 'only_nas' and not group_is_nas:
+                return True
+            return False
 
         # Parse exclude patterns (comma or pipe separated)
         exclude_patterns_raw = request.form.get('exclude_patterns', '').strip()
@@ -5973,8 +6345,11 @@ def cleanup_failed_upgrades():
                 if len(versions) < 2:
                     continue
 
+                # Apply NAS filter
+                if _skip_for_nas_filter(versions):
+                    continue
+
                 # Load user's configured version settings and helper function for quality scoring
-                from utilities.settings import get_setting
                 from scraper.functions.rank_results import check_preferred
 
                 scraping_versions = get_setting('Scraping', 'versions', {})
@@ -6125,6 +6500,7 @@ def cleanup_failed_upgrades():
                             'id': version_to_keep['id'],
                             'title': version_to_keep['title'],
                             'state': version_to_keep['state'],
+                            'ghostlisted': version_to_keep.get('ghostlisted', 0),
                             'version': version_to_keep['version'],
                             'content_source': version_to_keep['content_source'],
                             'location': location,
@@ -6150,6 +6526,7 @@ def cleanup_failed_upgrades():
                                     'id': version['id'],
                                     'title': version['title'],
                                     'state': version['state'],
+                                    'ghostlisted': version.get('ghostlisted', 0),
                                     'version': version['version'],
                                     'content_source': version['content_source'],
                                     'location': location,
@@ -6175,6 +6552,7 @@ def cleanup_failed_upgrades():
                                     'id': version['id'],
                                     'title': version['title'],
                                     'state': version['state'],
+                                    'ghostlisted': version.get('ghostlisted', 0),
                                     'version': version['version'],
                                     'content_source': version['content_source'],
                                     'location': location,
@@ -6216,6 +6594,7 @@ def cleanup_failed_upgrades():
                     'id': version_to_keep['id'],
                     'title': version_to_keep['title'],
                     'state': version_to_keep['state'],
+                    'ghostlisted': version_to_keep.get('ghostlisted', 0),
                     'version': version_to_keep['version'],
                     'content_source': version_to_keep['content_source'],
                     'location': location,
@@ -6241,6 +6620,7 @@ def cleanup_failed_upgrades():
                             'id': version['id'],
                             'title': version['title'],
                             'state': version['state'],
+                            'ghostlisted': version.get('ghostlisted', 0),
                             'version': version['version'],
                             'content_source': version['content_source'],
                             'location': location,
@@ -6266,6 +6646,7 @@ def cleanup_failed_upgrades():
                             'id': version['id'],
                             'title': version['title'],
                             'state': version['state'],
+                            'ghostlisted': version.get('ghostlisted', 0),
                             'version': version['version'],
                             'content_source': version['content_source'],
                             'location': location,
@@ -6488,6 +6869,479 @@ def cleanup_failed_upgrades():
                 'session_id': session_id if 'session_id' in locals() else None
             })
 
+        # Handle keep_collected_delete_ghostlisted and keep_ghostlisted_delete_collected modes
+        if keep_action in ('keep_collected_delete_ghostlisted', 'keep_ghostlisted_delete_collected'):
+            # Find items with both collected and ghostlisted versions
+            # For shows, group by season/episode to find actual duplicate episodes
+            if media_type == 'show':
+                cursor.execute(f"""
+                    SELECT imdb_id, season_number, episode_number,
+                           COUNT(*) as total_versions,
+                           SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
+                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') THEN 1 ELSE 0 END) as collected_count
+                    FROM media_items
+                    WHERE {type_filter} AND imdb_id IS NOT NULL
+                    GROUP BY imdb_id, season_number, episode_number
+                    HAVING ghostlisted_count > 0 AND collected_count > 0
+                """)
+            else:
+                cursor.execute(f"""
+                    SELECT imdb_id,
+                           COUNT(*) as total_versions,
+                           SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
+                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') THEN 1 ELSE 0 END) as collected_count
+                    FROM media_items
+                    WHERE {type_filter} AND imdb_id IS NOT NULL
+                    GROUP BY imdb_id
+                    HAVING ghostlisted_count > 0 AND collected_count > 0
+                """)
+
+            problem_movies = cursor.fetchall()
+            total_movies = len(problem_movies)
+            total_deleted = 0
+            results = []
+            groups = []  # Store groups with keep/delete items
+            items_to_delete_with_cleanup = []  # Collected/Upgrading items needing full cleanup
+            items_to_delete_database_only = []  # Blacklisted/other items needing only database deletion
+            total_excluded = 0  # Count of items excluded by patterns
+
+            for movie_row in problem_movies:
+                imdb_id = movie_row[0]
+
+                # Get all versions of this item
+                # For shows, also filter by season/episode to get the correct duplicates
+                if media_type == 'show':
+                    season_num = movie_row[1]
+                    episode_num = movie_row[2]
+                    cursor.execute(f"""
+                        SELECT id, title, state, ghostlisted, content_source, version,
+                               filled_by_file, location_basename, location_on_disk, filled_by_torrent_id,
+                               season_number, episode_number
+                        FROM media_items
+                        WHERE imdb_id = ? AND {type_filter}
+                              AND season_number = ? AND episode_number = ?
+                        ORDER BY state, id
+                    """, (imdb_id, season_num, episode_num))
+
+                    versions = [dict(zip(['id', 'title', 'state', 'ghostlisted', 'content_source', 'version',
+                                          'filled_by_file', 'location_basename', 'location_on_disk', 'filled_by_torrent_id',
+                                          'season_number', 'episode_number'], row))
+                               for row in cursor.fetchall()]
+                else:
+                    cursor.execute(f"""
+                        SELECT id, title, state, ghostlisted, content_source, version,
+                               filled_by_file, location_basename, location_on_disk, filled_by_torrent_id
+                        FROM media_items
+                        WHERE imdb_id = ? AND {type_filter}
+                        ORDER BY state, id
+                    """, (imdb_id,))
+
+                    versions = [dict(zip(['id', 'title', 'state', 'ghostlisted', 'content_source', 'version',
+                                          'filled_by_file', 'location_basename', 'location_on_disk', 'filled_by_torrent_id'], row))
+                               for row in cursor.fetchall()]
+
+                # Separate collected and ghostlisted versions
+                collected_versions = [v for v in versions if v['state'] in ('Collected', 'Upgrading')]
+                ghostlisted_versions = [v for v in versions if v['ghostlisted'] == 1]
+
+                # Safety check: ensure we have both types before proceeding
+                if not collected_versions or not ghostlisted_versions:
+                    logging.warning(f"Skipping {imdb_id} - missing collected or ghostlisted versions (safety check)")
+                    continue
+
+                # Apply NAS filter
+                if _skip_for_nas_filter(versions):
+                    continue
+
+                # Determine which versions to delete based on keep_action
+                versions_to_delete = []
+                versions_to_keep = []
+
+                if keep_action == 'keep_ghostlisted_delete_collected':
+                    # Delete collected versions, keep ghostlisted
+                    if version_match == 'same':
+                        # Only delete collected versions that match a ghostlisted version
+                        ghostlisted_version_set = {v['version'] for v in ghostlisted_versions}
+                        versions_to_delete = [v for v in collected_versions if v['version'] in ghostlisted_version_set]
+                        versions_to_keep = [v for v in ghostlisted_versions if v['version'] in ghostlisted_version_set]
+                    else:  # 'all'
+                        # Delete all collected versions regardless of version field
+                        versions_to_delete = collected_versions
+                        versions_to_keep = ghostlisted_versions
+                else:  # keep_collected_delete_ghostlisted
+                    # Delete ghostlisted versions, keep collected (default behavior)
+                    if version_match == 'same':
+                        # Only delete ghostlisted versions that match a collected version
+                        collected_version_set = {v['version'] for v in collected_versions}
+                        versions_to_delete = [v for v in ghostlisted_versions if v['version'] in collected_version_set]
+                        versions_to_keep = [v for v in collected_versions if v['version'] in collected_version_set]
+                    else:  # 'all'
+                        # Delete all ghostlisted versions regardless of version field
+                        versions_to_delete = ghostlisted_versions
+                        versions_to_keep = collected_versions
+
+                # Build group data
+                group_keep_items = []
+                group_delete_items = []
+
+                # Add kept versions
+                for version in versions_to_keep:
+                    location = version['filled_by_file'] or version['location_basename'] or version['location_on_disk'] or 'N/A'
+                    keep_data = {
+                        'id': version['id'],
+                        'title': version['title'],
+                        'state': version['state'],
+                        'ghostlisted': version['ghostlisted'],
+                        'version': version['version'],
+                        'content_source': version['content_source'],
+                        'location': location,
+                        'torrent_id': version['filled_by_torrent_id'] or 'N/A'
+                    }
+                    if media_type == 'show':
+                        keep_data['season_number'] = version.get('season_number', 'N/A')
+                        keep_data['episode_number'] = version.get('episode_number', 'N/A')
+                    group_keep_items.append(keep_data)
+
+                # Collect items for deletion (check exclusions first)
+                for version in versions_to_delete:
+                    location = version['filled_by_file'] or version['location_basename'] or version['location_on_disk'] or 'N/A'
+
+                    # Check if item should be excluded from deletion
+                    is_excluded, matched_pattern = should_exclude_item(version, exclude_patterns)
+
+                    if is_excluded:
+                        # Item is excluded - mark it but don't delete
+                        total_excluded += 1
+                        delete_data = {
+                            'id': version['id'],
+                            'title': version['title'],
+                            'state': version['state'],
+                            'ghostlisted': version['ghostlisted'],
+                            'version': version['version'],
+                            'content_source': version['content_source'],
+                            'location': location,
+                            'torrent_id': version['filled_by_torrent_id'] or 'N/A',
+                            'action': 'excluded',
+                            'excluded_pattern': matched_pattern
+                        }
+                        if media_type == 'show':
+                            delete_data['season_number'] = version.get('season_number', 'N/A')
+                            delete_data['episode_number'] = version.get('episode_number', 'N/A')
+                        group_delete_items.append(delete_data)
+                        results.append(delete_data)
+                    else:
+                        # Item will be deleted - separate by state for proper cleanup
+                        if version['state'] in ('Collected', 'Upgrading'):
+                            items_to_delete_with_cleanup.append(version['id'])
+                        else:
+                            items_to_delete_database_only.append(version['id'])
+
+                        total_deleted += 1
+                        delete_data = {
+                            'id': version['id'],
+                            'title': version['title'],
+                            'state': version['state'],
+                            'ghostlisted': version['ghostlisted'],
+                            'version': version['version'],
+                            'content_source': version['content_source'],
+                            'location': location,
+                            'torrent_id': version['filled_by_torrent_id'] or 'N/A',
+                            'action': 'deleted' if not dry_run else 'would_delete'
+                        }
+                        if media_type == 'show':
+                            delete_data['season_number'] = version.get('season_number', 'N/A')
+                            delete_data['episode_number'] = version.get('episode_number', 'N/A')
+                        group_delete_items.append(delete_data)
+                        results.append(delete_data)
+
+                # Add this group
+                group_data = {
+                    'keep_items': group_keep_items,
+                    'delete_items': group_delete_items
+                }
+                groups.append(group_data)
+
+            # Pause queues if we're performing actual deletions
+            if not dry_run and (items_to_delete_with_cleanup or items_to_delete_database_only):
+                # Pause queue for cleanup operations (not for dry run)
+                needs_pause = (
+                    len(items_to_delete_with_cleanup) > 5 or  # Large batch
+                    len(items_to_delete_with_cleanup) > 0  # Any items with physical files
+                )
+
+                if needs_pause:
+                    program_runner = get_program_runner()
+                    if program_runner and hasattr(program_runner, 'is_running') and program_runner.is_running():
+                        if hasattr(program_runner, 'pause_queue') and callable(program_runner.pause_queue):
+                            program_runner.pause_info = {
+                                "reason_string": "Ghostlisted duplicate cleanup in progress",
+                                "error_type": "SYSTEM_MAINTENANCE",
+                                "service_name": "Manage Duplicates",
+                                "status_code": None,
+                                "retry_count": 0
+                            }
+                            program_runner.pause_queue()
+                            paused_queue = True
+                            logging.info(f"[CLEANUP_DUPLICATES] Queue paused for {len(items_to_delete_with_cleanup)} collected item deletion")
+
+            # Perform actual deletion if not dry run
+            if not dry_run and (items_to_delete_with_cleanup or items_to_delete_database_only):
+                # Delete Collected/Upgrading items (full cleanup)
+                if items_to_delete_with_cleanup:
+                    # PHASE 1: Delete from Plex first
+                    logging.info(f"[CLEANUP_DUPLICATES] Deleting {len(items_to_delete_with_cleanup)} items from Plex")
+                    plex_deleted = 0
+                    plex_failed = 0
+                    plex_not_found = 0
+                    items_with_torrent_id = 0
+                    items_without_torrent_id = 0
+
+                    for item_id in items_to_delete_with_cleanup:
+                        cursor.execute("""
+                            SELECT title, episode_title, location_on_disk, filled_by_torrent_id
+                            FROM media_items WHERE id = ?
+                        """, (item_id,))
+                        row = cursor.fetchone()
+
+                        if row:
+                            item_title = row[0]
+                            episode_title = row[1]
+                            location = row[2]
+                            torrent_id = row[3]
+
+                            # Track torrent_id stats
+                            if torrent_id:
+                                items_with_torrent_id += 1
+                            else:
+                                items_without_torrent_id += 1
+
+                        if location:
+                            try:
+                                result = remove_file_from_plex(
+                                    item_title=item_title,
+                                    item_path=location,
+                                    episode_title=episode_title
+                                )
+                                if result:
+                                    plex_deleted += 1
+                                else:
+                                    plex_not_found += 1
+                            except Exception as e:
+                                plex_failed += 1
+                                logging.warning(f"[CLEANUP_DUPLICATES] Failed to delete from Plex for item {item_id} ({item_title}): {e}")
+                        else:
+                            plex_not_found += 1
+
+                    logging.info(f"[CLEANUP_DUPLICATES] Plex deletion complete: {plex_deleted} deleted, {plex_failed} failed, {plex_not_found} not found")
+                    logging.info(f"[CLEANUP_DUPLICATES] Torrent ID stats: {items_with_torrent_id} with torrent_id, {items_without_torrent_id} without torrent_id")
+
+                    # PHASE 2: Call DeletionManager for debrid/cache/symlinks cleanup
+                    # (Plex deletion already done above - Plex handles filesystem cleanup)
+                    logging.info(f"[CLEANUP_DUPLICATES] Running DeletionManager for debrid/cache/symlinks cleanup")
+                    debrid_provider = get_debrid_provider()
+                    deletion_manager = DeletionManager(debrid_provider=debrid_provider)
+
+                    deletion_result = deletion_manager.delete_multiple_items(
+                        item_ids=items_to_delete_with_cleanup,
+                        blacklist=False,
+                        blacklist_sources=False,
+                        delete_from_media_server=False,  # Already handled above
+                        delete_files=False,  # Already handled above
+                        delete_from_debrid=True,
+                        delete_symlinks=True,
+                        clear_cache=True,
+                        remove_from_content_source=False,
+                        skip_database=True,  # Skip DeletionManager's database operation (bypasses ghostlist mode)
+                        force_delete_parent_folder=False,
+                        plex_deletion_type=None
+                    )
+
+                    if not deletion_result['success']:
+                        logging.error(f"[CLEANUP_DUPLICATES] Deletion errors: {deletion_result.get('errors', [])}")
+                        if deletion_result.get('database_locked'):
+                            logging.error("[CLEANUP_DUPLICATES] Database lock detected during deletion")
+
+                    # Log debrid removal stats
+                    debrid_removed = deletion_result.get('debrid_torrents_removed', 0)
+                    if debrid_removed > 0:
+                        logging.info(f"[CLEANUP_DUPLICATES] Debrid removal: {debrid_removed} torrents removed")
+
+                    # PHASE 4: Delete from database (bypasses ghostlist mode)
+                    logging.info(f"[CLEANUP_DUPLICATES] Deleting {len(items_to_delete_with_cleanup)} items from database (force delete)")
+                    placeholders = ','.join(['?'] * len(items_to_delete_with_cleanup))
+                    cursor.execute(f"DELETE FROM media_items WHERE id IN ({placeholders})", items_to_delete_with_cleanup)
+
+                # Delete Blacklisted/other items (database only - no files to clean up)
+                if items_to_delete_database_only:
+                    logging.info(f"[CLEANUP_DUPLICATES] Deleting {len(items_to_delete_database_only)} Blacklisted/other items (database only)")
+                    placeholders = ','.join(['?'] * len(items_to_delete_database_only))
+                    cursor.execute(f"DELETE FROM media_items WHERE id IN ({placeholders})", items_to_delete_database_only)
+
+                conn.commit()
+            elif not dry_run:
+                conn.commit()
+
+            elapsed_time = time.time() - start_time
+
+            # Build message with excluded count if applicable
+            action_label = 'collected' if keep_action == 'keep_collected_delete_ghostlisted' else 'ghostlisted'
+            message = f'{"Would delete" if dry_run else "Deleted"} {total_deleted} {action_label} duplicates from {total_movies} {media_label}'
+            if total_excluded > 0:
+                message += f', excluded {total_excluded} items by pattern'
+
+            return jsonify({
+                'success': True,
+                'message': message,
+                'total_movies': total_movies,
+                'total_deleted': total_deleted,
+                'total_excluded': total_excluded,
+                'elapsed_time': round(elapsed_time, 2),
+                'dry_run': dry_run,
+                'keep_action': keep_action,
+                'version_match': version_match,
+                'results': results,
+                'groups': groups
+            })
+
+        # Handle keep_collected_delete_stale — delete Wanted/Scraping/Adding/Checking/Upgrading
+        # duplicates that exist alongside a Collected version
+        if keep_action == 'keep_collected_delete_stale':
+            STALE_STATES = ('Wanted', 'Scraping', 'Adding', 'Checking', 'Unreleased', 'Final Scrape')
+            stale_in = ','.join(f"'{s}'" for s in STALE_STATES)
+            if media_type == 'show':
+                cursor.execute(f"""
+                    SELECT imdb_id, season_number, episode_number,
+                           COUNT(*) as total_versions,
+                           SUM(CASE WHEN state IN ({stale_in}) THEN 1 ELSE 0 END) as stale_count,
+                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') AND ghostlisted = 0 THEN 1 ELSE 0 END) as collected_count
+                    FROM media_items
+                    WHERE {type_filter} AND imdb_id IS NOT NULL
+                    GROUP BY imdb_id, season_number, episode_number
+                    HAVING stale_count > 0 AND collected_count > 0
+                """)
+            else:
+                cursor.execute(f"""
+                    SELECT imdb_id,
+                           COUNT(*) as total_versions,
+                           SUM(CASE WHEN state IN ({stale_in}) THEN 1 ELSE 0 END) as stale_count,
+                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') AND ghostlisted = 0 THEN 1 ELSE 0 END) as collected_count
+                    FROM media_items
+                    WHERE {type_filter} AND imdb_id IS NOT NULL
+                    GROUP BY imdb_id
+                    HAVING stale_count > 0 AND collected_count > 0
+                """)
+
+            problem_items = cursor.fetchall()
+            total_movies = len(problem_items)
+            total_deleted = 0
+            total_excluded = 0
+            results = []
+            groups = []
+            start_time = time.time()
+
+            import os as _os_stale
+            for row in problem_items:
+                row = dict(row)
+                imdb_id = row['imdb_id']
+                if media_type == 'show':
+                    cursor.execute(f"""
+                        SELECT id, title, state, version, filled_by_file, location_on_disk,
+                               season_number, episode_number, ghostlisted
+                        FROM media_items
+                        WHERE {type_filter} AND imdb_id = ?
+                        AND season_number = ? AND episode_number = ?
+                    """, (imdb_id, row['season_number'], row['episode_number']))
+                else:
+                    cursor.execute(f"""
+                        SELECT id, title, state, version, filled_by_file, location_on_disk,
+                               ghostlisted
+                        FROM media_items
+                        WHERE {type_filter} AND imdb_id = ?
+                    """, (imdb_id,))
+
+                all_versions = []
+                for r in cursor.fetchall():
+                    v = dict(r)
+                    v['location_basename'] = _os_stale.path.basename(v.get('location_on_disk') or '')
+                    all_versions.append(v)
+                collected = [v for v in all_versions if v['state'] in ('Collected', 'Upgrading') and not v['ghostlisted']]
+                stale = [v for v in all_versions if v['state'] in STALE_STATES]
+
+                if not collected or not stale:
+                    continue
+
+                if _skip_for_nas_filter(collected):
+                    total_excluded += 1
+                    continue
+
+                def _fmt_item(v, action='keep'):
+                    loc = v.get('filled_by_file') or v.get('location_basename') or v.get('location_on_disk') or 'N/A'
+                    return {
+                        'id': v['id'],
+                        'title': v.get('title', ''),
+                        'state': v.get('state', ''),
+                        'version': v.get('version', ''),
+                        'location': loc,
+                        'ghostlisted': bool(v.get('ghostlisted', 0)),
+                        'current_score': v.get('current_score', 'N/A'),
+                        'season_number': v.get('season_number'),
+                        'episode_number': v.get('episode_number'),
+                        'action': action,
+                    }
+
+                # Apply exclude patterns — protect matching stale items from deletion
+                stale_to_delete = []
+                stale_protected = []
+                for v in stale:
+                    is_excl, _ = should_exclude_item(v, exclude_patterns)
+                    if is_excl:
+                        stale_protected.append(v)
+                    else:
+                        stale_to_delete.append(v)
+
+                group_keep_items = [_fmt_item(v, 'keep') for v in collected] + [_fmt_item(v, 'exclude') for v in stale_protected]
+                group_delete_items = [_fmt_item(v, 'delete') for v in stale_to_delete]
+
+                if not group_delete_items:
+                    continue
+
+                for v in stale_to_delete:
+                    if not dry_run:
+                        cursor.execute("DELETE FROM media_items WHERE id = ?", (v['id'],))
+                    total_deleted += 1
+
+                groups.append({'keep_items': group_keep_items, 'delete_items': group_delete_items})
+                results.append({
+                    'title': all_versions[0]['title'] if all_versions else imdb_id,
+                    'imdb_id': imdb_id,
+                    'keep_count': len(group_keep_items),
+                    'delete_count': len(group_delete_items),
+                    'kept': [v['state'] + ' v' + str(v['version']) for v in group_keep_items],
+                    'deleted': [v['state'] + ' v' + str(v['version']) for v in group_delete_items],
+                })
+
+            if not dry_run:
+                conn.commit()
+
+            elapsed_time = time.time() - start_time
+            message = f'{"Would delete" if dry_run else "Deleted"} {total_deleted} stale duplicates from {total_movies} {media_label} (kept Collected)'
+            if total_excluded:
+                message += f', excluded {total_excluded} items by NAS filter'
+
+            return jsonify({
+                'success': True,
+                'message': message,
+                'total_movies': total_movies,
+                'total_deleted': total_deleted,
+                'total_excluded': total_excluded,
+                'elapsed_time': round(elapsed_time, 2),
+                'dry_run': dry_run,
+                'keep_action': keep_action,
+                'version_match': version_match,
+                'results': results,
+                'groups': groups
+            })
+
         # Find items with both collected and blacklisted (non-ghostlisted) versions
         # For shows, group by season/episode to find actual duplicate episodes
         if media_type == 'show':
@@ -6566,6 +7420,10 @@ def cleanup_failed_upgrades():
                 logging.warning(f"Skipping {imdb_id} - missing collected or blacklisted versions (safety check)")
                 continue
 
+            # Apply NAS filter
+            if _skip_for_nas_filter(versions):
+                continue
+
             # Determine which versions to delete based on keep_action
             versions_to_delete = []
             versions_to_keep = []
@@ -6604,6 +7462,7 @@ def cleanup_failed_upgrades():
                     'id': version['id'],
                     'title': version['title'],
                     'state': version['state'],
+                    'ghostlisted': version['ghostlisted'],
                     'version': version['version'],
                     'content_source': version['content_source'],
                     'location': location,
@@ -6629,6 +7488,7 @@ def cleanup_failed_upgrades():
                         'id': version['id'],
                         'title': version['title'],
                         'state': version['state'],
+                        'ghostlisted': version['ghostlisted'],
                         'version': version['version'],
                         'content_source': version['content_source'],
                         'location': location,
@@ -6653,6 +7513,7 @@ def cleanup_failed_upgrades():
                         'id': version['id'],
                         'title': version['title'],
                         'state': version['state'],
+                        'ghostlisted': version['ghostlisted'],
                         'version': version['version'],
                         'content_source': version['content_source'],
                         'location': location,
@@ -7017,7 +7878,6 @@ def scan_old_databases():
     """Scan for old database files in both backups and db_content folders"""
     try:
         import sqlite3
-        from main import verify_backup
 
         config = load_config()
         db_content_dir = config.get('db_content_dir', '/user/db_content')
@@ -7026,14 +7886,35 @@ def scan_old_databases():
         # Current database files that should NEVER be deleted
         protected_files = {'media_items.db', 'users.db', 'cli_battery.db'}
 
+        def is_valid_sqlite_db(filepath):
+            """Check if file is a valid SQLite database (any schema)"""
+            try:
+                if not os.path.exists(filepath):
+                    return False
+
+                # Check minimum size (SQLite header is 100 bytes)
+                if os.path.getsize(filepath) < 100:
+                    return False
+
+                # Check SQLite header
+                with open(filepath, 'rb') as f:
+                    header = f.read(16)
+                    if not header.startswith(b'SQLite format 3\x00'):
+                        return False
+
+                # Try to connect and run a simple query
+                conn = sqlite3.connect(f'file:{filepath}?mode=ro', uri=True, timeout=5)
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1")
+                cursor.fetchone()
+                conn.close()
+                return True
+            except Exception:
+                return False
+
         def categorize_file(filename, filepath):
             """Categorize a database file"""
-            # Check if it's a valid SQLite file
-            is_valid = False
-            try:
-                is_valid = verify_backup(filepath, min_size_mb=0.001)
-            except:
-                pass
+            # Check if it's a valid SQLite file (using generic validator, not media_items-specific)
+            is_valid = is_valid_sqlite_db(filepath)
 
             filename_lower = filename.lower()
 
@@ -7257,3 +8138,1014 @@ def delete_old_databases():
     except Exception as e:
         logging.error(f"[DELETE] Error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/memory_snapshot', methods=['GET'])
+@admin_required
+def memory_snapshot():
+    """
+    Capture a memory diagnostic snapshot of the running process.
+    Hit this endpoint WHILE memory is high to identify the actual cause.
+    Returns: RSS/VMS, sizes of known module-level caches, top Python object counts by type.
+    """
+    import gc
+    import sys
+    import resource
+    from collections import Counter
+
+    report = {}
+
+    # --- Process-level RSS / VMS ---
+    try:
+        rusage = resource.getrusage(resource.RUSAGE_SELF)
+        # On Linux ru_maxrss is in kilobytes
+        report['process_rss_mb'] = round(rusage.ru_maxrss / 1024, 1)
+    except Exception:
+        pass
+
+    try:
+        with open('/proc/self/status') as fh:
+            for line in fh:
+                if line.startswith('VmRSS:'):
+                    report['vmrss_mb'] = round(int(line.split()[1]) / 1024, 1)
+                elif line.startswith('VmSize:'):
+                    report['vmsize_mb'] = round(int(line.split()[1]) / 1024, 1)
+    except Exception:
+        pass
+
+    # --- Known module-level data structures ---
+    known_structures = {}
+
+    # Session store
+    try:
+        from routes.extensions import InMemorySessionInterface
+        store = InMemorySessionInterface.session_store
+        known_structures['session_store_count'] = len(store)
+        known_structures['session_store_size_kb'] = round(sys.getsizeof(store) / 1024, 1)
+    except Exception as e:
+        known_structures['session_store'] = f'error: {e}'
+
+    # base_routes function cache
+    try:
+        from routes.base_routes import _function_cache
+        total_entries = sum(len(v) for v in _function_cache.values())
+        total_size = sys.getsizeof(_function_cache)
+        known_structures['function_cache_functions'] = list(_function_cache.keys())
+        known_structures['function_cache_total_entries'] = total_entries
+        known_structures['function_cache_size_kb'] = round(total_size / 1024, 1)
+    except Exception as e:
+        known_structures['function_cache'] = f'error: {e}'
+
+    # debug_routes progress dicts
+    try:
+        known_structures['scan_progress_keys'] = len(scan_progress)
+        known_structures['analysis_progress_keys'] = len(analysis_progress)
+        known_structures['rclone_scan_progress_keys'] = len(rclone_scan_progress)
+        known_structures['riven_analysis_progress_keys'] = len(riven_analysis_progress)
+    except Exception:
+        pass
+
+    # Notification queues
+    try:
+        from routes.base_routes import _notification_queues
+        known_structures['notification_queues_count'] = len(_notification_queues)
+    except Exception:
+        pass
+
+    # SimpleTaskQueue
+    try:
+        from routes.extensions import task_queue
+        known_structures['task_queue_count'] = len(task_queue.tasks)
+        done = sum(1 for t in task_queue.tasks.values() if t['status'] in ('SUCCESS', 'FAILURE'))
+        known_structures['task_queue_completed'] = done
+    except Exception:
+        pass
+
+    # queue_times (QueueTimer in-memory dict)
+    try:
+        from queues.queue_manager import QueueManager
+        qt = QueueManager().queue_timer
+        known_structures['queue_times_count'] = len(qt.queue_times)
+    except Exception as e:
+        known_structures['queue_times_count'] = f'error: {e}'
+
+    # _last_scan_results (upgrade hub in-memory scan cache)
+    try:
+        from database.zilean_upgrade import _last_scan_results, _queued_magnets
+        if _last_scan_results:
+            candidates = len(_last_scan_results.get('upgrade_candidates', []))
+            packs = len(_last_scan_results.get('pack_candidates', []))
+            known_structures['last_scan_results_candidates'] = candidates
+            known_structures['last_scan_results_packs'] = packs
+            known_structures['last_scan_results_size_kb'] = round(sys.getsizeof(_last_scan_results) / 1024, 1)
+        else:
+            known_structures['last_scan_results_candidates'] = 0
+        known_structures['queued_magnets_count'] = len(_queued_magnets) if _queued_magnets else 0
+    except Exception as e:
+        known_structures['last_scan_results'] = f'error: {e}'
+
+    # _search_cache (web_scraper module-level cache)
+    try:
+        from utilities.web_scraper import _search_cache
+        info = _search_cache.get_stats() if hasattr(_search_cache, 'get_stats') else {}
+        known_structures['search_cache_size'] = info.get('size', len(_search_cache._cache))
+        known_structures['search_cache_max'] = info.get('max_size', _search_cache.max_size)
+    except Exception as e:
+        known_structures['search_cache'] = f'error: {e}'
+
+    # Open SQLite connections (file handles to .db files)
+    try:
+        import os as _os
+        db_handles = []
+        fd_dir = '/proc/self/fd'
+        for fd_name in _os.listdir(fd_dir):
+            try:
+                target = _os.readlink(_os.path.join(fd_dir, fd_name))
+                if target.endswith('.db') or target.endswith('.db-wal') or target.endswith('.db-shm'):
+                    db_handles.append(_os.path.basename(target))
+            except Exception:
+                pass
+        known_structures['open_db_file_handles'] = len(db_handles)
+        known_structures['open_db_files'] = sorted(set(db_handles))
+    except Exception as e:
+        known_structures['open_db_file_handles'] = f'error: {e}'
+
+    # Poster cache entry count
+    try:
+        from routes.poster_cache import _cache as _poster_cache
+        known_structures['poster_cache_entries'] = len(_poster_cache)
+        known_structures['poster_cache_size_kb'] = round(sys.getsizeof(_poster_cache) / 1024, 1)
+    except Exception as e:
+        known_structures['poster_cache'] = f'error: {e}'
+
+    report['known_structures'] = known_structures
+
+    # --- Top Python object counts by type (gc) ---
+    try:
+        gc.collect()
+        type_counts = Counter(type(obj).__name__ for obj in gc.get_objects())
+        report['top_object_types'] = type_counts.most_common(30)
+    except Exception as e:
+        report['top_object_types_error'] = str(e)
+
+    # --- Thread count ---
+    try:
+        import threading
+        report['thread_count'] = threading.active_count()
+        report['thread_names'] = [t.name for t in threading.enumerate()]
+    except Exception:
+        pass
+
+    return jsonify({'success': True, 'snapshot': report})
+
+
+@debug_bp.route('/api/trim_memory', methods=['POST'])
+@admin_required
+def trim_memory():
+    """Run gc.collect() + malloc_trim(0) synchronously and return before/after RSS."""
+    import gc
+    import ctypes
+
+    def _read_rss_mb():
+        try:
+            with open('/proc/self/status') as f:
+                for line in f:
+                    if line.startswith('VmRSS:'):
+                        return int(line.split()[1]) / 1024
+        except Exception:
+            pass
+        return None
+
+    before = _read_rss_mb()
+
+    # Clear idle RD library cache to free ~200+ MB from torrent list
+    lib_torrents_freed = 0
+    try:
+        from routes.debrid_manager_routes import _lib, _lib_last_accessed
+        with _lib['lock']:
+            if _lib['stable'] is not None:
+                lib_torrents_freed = len(_lib['stable'].get('torrents', []))
+                _lib['stable'] = None
+        logging.info(f"[TRIM_MEMORY] Cleared RD library cache ({lib_torrents_freed} torrents)")
+    except Exception as e:
+        logging.debug(f"[TRIM_MEMORY] Could not clear RD library cache: {e}")
+
+    collected = gc.collect()
+    trim_ok = False
+    try:
+        ctypes.CDLL('libc.so.6').malloc_trim(0)
+        trim_ok = True
+    except Exception:
+        pass
+    after = _read_rss_mb()
+
+    freed = round(before - after, 1) if before and after else None
+    logging.info(f"[TRIM_MEMORY] Manual trigger: gc collected {collected} objects; malloc_trim={'ok' if trim_ok else 'unavailable'}; RSS {before:.0f} MB → {after:.0f} MB (freed {freed} MB)")
+    return jsonify({
+        'success': True,
+        'gc_collected': collected,
+        'malloc_trim': trim_ok,
+        'before_mb': round(before, 1) if before else None,
+        'after_mb': round(after, 1) if after else None,
+        'freed_mb': freed,
+        'lib_torrents_freed': lib_torrents_freed,
+    })
+
+
+# ---------------------------------------------------------------------------
+# cli_mount Cleanup
+# ---------------------------------------------------------------------------
+
+@debug_bp.route('/api/climount_providers', methods=['GET'])
+@admin_required
+def climount_providers():
+    """Return list of debrid provider names configured in cli_mount."""
+    try:
+        from utilities.settings import get_setting
+        from utilities.climount_cleanup import get_climount_providers
+        data_path = get_setting('Usenet Provider', 'data_path', '/climount_data')
+        db_dir = os.path.join(data_path, 'db')
+        providers = get_climount_providers(db_dir)
+        return jsonify({'success': True, 'providers': providers, 'data_path': data_path})
+    except Exception as e:
+        logging.error(f"climount_providers error: {e}")
+        return jsonify({'success': False, 'error': str(e), 'providers': []})
+
+
+_climount_cleanup_jobs = {}  # job_id -> result dict
+
+@debug_bp.route('/api/climount_cleanup', methods=['POST'])
+@admin_required
+def climount_cleanup():
+    """Run cli_mount cleanup in a background thread. Returns job_id immediately."""
+    import uuid, threading
+    try:
+        data = request.get_json() or {}
+        provider = data.get('provider', '').strip()
+        dry_run = bool(data.get('dry_run', True))
+        db_path = data.get('db_path', '').strip()
+
+        if not provider:
+            return jsonify({'success': False, 'error': 'Provider is required'}), 400
+        if not db_path:
+            from utilities.settings import get_setting
+            base = get_setting('Usenet Provider', 'data_path', '/climount_data')
+            db_path = os.path.join(base, 'db')
+        if not os.path.isdir(db_path):
+            return jsonify({'success': False, 'error': f'DB directory not found: {db_path}'}), 400
+
+        job_id = str(uuid.uuid4())[:8]
+        _climount_cleanup_jobs[job_id] = {'status': 'running', 'result': None}
+
+        def _run():
+            try:
+                from utilities.climount_cleanup import run_cleanup
+                result = run_cleanup(db_path, provider, dry_run)
+                _climount_cleanup_jobs[job_id] = {'status': 'done', 'result': result}
+            except Exception as e:
+                logging.error(f"cli_mount cleanup job {job_id} error: {e}", exc_info=True)
+                _climount_cleanup_jobs[job_id] = {
+                    'status': 'error',
+                    'result': {'success': False, 'error': str(e), 'lines': [f"ERROR: {e}"]}
+                }
+
+        threading.Thread(target=_run, daemon=True, name=f'climount-cleanup-{job_id}').start()
+        return jsonify({'success': True, 'job_id': job_id})
+
+    except Exception as e:
+        logging.error(f"climount_cleanup error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/climount_cleanup_status/<job_id>', methods=['GET'])
+@admin_required
+def climount_cleanup_status(job_id):
+    job = _climount_cleanup_jobs.get(job_id)
+    if not job:
+        return jsonify({'status': 'not_found'}), 404
+    return jsonify(job)
+
+
+# ---------------------------------------------------------------------------
+# cli_mount DB Backup / Restore / Scan / Delete
+# (follows same pattern as CLI DB equivalents)
+# ---------------------------------------------------------------------------
+
+def _get_dcy_dirs():
+    """Return (data_path, db_dir, backup_dir) or raise if not configured."""
+    from utilities.settings import get_setting
+    data_path = get_setting('Usenet Provider', 'data_path', '').strip()
+    if not data_path:
+        raise ValueError("cli_mount Data Path is not configured in Settings → Usenet Provider")
+    db_dir = os.path.join(data_path, 'db')
+    backup_dir = os.path.join(db_dir, 'backups')
+    return data_path, db_dir, backup_dir
+
+
+def _dcy_is_valid_hybr(path):
+    """Check if file starts with HYBR magic bytes."""
+    try:
+        with open(path, 'rb') as f:
+            return f.read(4) == b'HYBR'
+    except Exception:
+        return False
+
+
+def _dcy_age_display(age_sec):
+    if age_sec < 3600: return f"{int(age_sec/60)}m ago"
+    if age_sec < 86400: return f"{int(age_sec/3600)}h ago"
+    return f"{int(age_sec/86400)}d ago"
+
+
+@debug_bp.route('/api/climount_backup_now', methods=['POST'])
+@admin_required
+def climount_backup_now():
+    """Trigger an immediate cli_mount DB backup."""
+    try:
+        from main import backup_climount_databases
+        ok = backup_climount_databases()
+        if ok:
+            return jsonify({'success': True, 'message': 'cli_mount databases backed up successfully'})
+        return jsonify({'success': False, 'error': 'Backup failed — check logs'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/list_climount_backups', methods=['GET'])
+@admin_required
+def list_climount_backups():
+    """List available cli_mount DB backups — same structure as list_database_backups."""
+    try:
+        _, db_dir, backup_dir = _get_dcy_dirs()
+        if not os.path.isdir(backup_dir):
+            return jsonify({'success': True, 'backups': []})
+
+        import time as _time
+        now = _time.time()
+        backups = []
+        for fname in sorted(os.listdir(backup_dir)):
+            fpath = os.path.join(backup_dir, fname)
+            if not fname.endswith('.db'):
+                continue
+            stat = os.stat(fpath)
+            age = now - stat.st_mtime
+            is_valid = _dcy_is_valid_hybr(fpath)
+            # Category
+            if fname.startswith(('entries_pre_restore_', 'items_pre_restore_')):
+                cat = 'safety_backup'
+            elif not is_valid:
+                cat = 'corrupted'
+            elif age > 7 * 86400:
+                cat = 'old_version'
+            else:
+                cat = 'recent_backup'
+            backups.append({
+                'filename': fname,
+                'path': fpath,
+                'size_mb': round(stat.st_size / (1024*1024), 2),
+                'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                'age_seconds': int(age),
+                'age_display': _dcy_age_display(age),
+                'category': cat,
+                'is_valid': is_valid,
+            })
+        backups.sort(key=lambda x: x['age_seconds'])
+        return jsonify({'success': True, 'backups': backups})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/request_climount_restore', methods=['POST'])
+@admin_required
+def request_climount_restore():
+    """
+    Restore a cli_mount DB file by direct copy (no container restart needed —
+    cli_mount must be stopped by the user first).
+    """
+    try:
+        data = request.get_json() or {}
+        backup_path = data.get('backup_path', '').strip()
+        create_safety = bool(data.get('create_safety_backup', True))
+        _, db_dir, backup_dir = _get_dcy_dirs()
+
+        if not backup_path:
+            return jsonify({'success': False, 'error': 'backup_path required'}), 400
+        if not os.path.exists(backup_path):
+            return jsonify({'success': False, 'error': f'Backup file not found: {backup_path}'}), 400
+        if not _dcy_is_valid_hybr(backup_path):
+            return jsonify({'success': False, 'error': 'Backup file is not a valid HYBR database'}), 400
+
+        # Determine target filename (entries.db or items.db) from backup name
+        fname = os.path.basename(backup_path)
+        if fname.startswith('entries'):
+            target = os.path.join(db_dir, 'entries.db')
+        elif fname.startswith('items'):
+            target = os.path.join(db_dir, 'items.db')
+        else:
+            return jsonify({'success': False, 'error': f'Cannot determine target DB from filename: {fname}'}), 400
+
+        import shutil as _shutil
+        # Create safety backup if requested
+        if create_safety and os.path.exists(target):
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            safety = os.path.join(backup_dir, f'{os.path.splitext(os.path.basename(target))[0]}_pre_restore_{ts}.db')
+            os.makedirs(backup_dir, exist_ok=True)
+            _shutil.copy2(target, safety)
+            logging.info(f"[DCY_RESTORE] Safety backup: {safety}")
+
+        _shutil.copy2(backup_path, target)
+        logging.info(f"[DCY_RESTORE] Restored {fname} → {target}")
+        return jsonify({'success': True, 'message': f'Restored {os.path.basename(target)} from {fname}. Start cli_mount to apply.'})
+
+    except Exception as e:
+        logging.error(f"[DCY_RESTORE] Error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/scan_climount_old_databases', methods=['GET'])
+@admin_required
+def scan_climount_old_databases():
+    """Scan cli_mount backup dir for old/corrupted DB files — mirrors scan_old_databases."""
+    try:
+        _, db_dir, backup_dir = _get_dcy_dirs()
+        if not os.path.isdir(backup_dir):
+            return jsonify({'success': True, 'files': [], 'total_size_mb': 0})
+
+        import time as _time
+        now = _time.time()
+        files = []
+        protected = {'entries.db', 'items.db'}
+
+        for fname in os.listdir(backup_dir):
+            fpath = os.path.join(backup_dir, fname)
+            if fname in protected or not fname.endswith('.db'):
+                continue
+            stat = os.stat(fpath)
+            age = now - stat.st_mtime
+            is_valid = _dcy_is_valid_hybr(fpath)
+            if fname.startswith(('entries_pre_restore_', 'items_pre_restore_')):
+                cat = 'safety_backup'
+            elif not is_valid:
+                cat = 'corrupted'
+            elif age > 7 * 86400:
+                cat = 'old_version'
+            else:
+                cat = 'recent_backup'
+            files.append({
+                'filename': fname,
+                'path': fpath,
+                'size_mb': round(stat.st_size / (1024*1024), 2),
+                'age_display': _dcy_age_display(age),
+                'category': cat,
+                'is_valid': is_valid,
+            })
+
+        total_mb = round(sum(f['size_mb'] for f in files), 2)
+        return jsonify({'success': True, 'files': files, 'total_size_mb': total_mb})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/delete_climount_old_databases', methods=['POST'])
+@admin_required
+def delete_climount_old_databases():
+    """Delete selected cli_mount backup files — mirrors delete_old_databases."""
+    try:
+        data = request.get_json() or {}
+        file_paths = data.get('file_paths', [])
+        dry_run = bool(data.get('dry_run', False))
+        _, db_dir, backup_dir = _get_dcy_dirs()
+
+        protected_names = {'entries.db', 'items.db'}
+        deleted = []
+        skipped = []
+        freed_mb = 0.0
+
+        for fpath in file_paths:
+            fname = os.path.basename(fpath)
+            if fname in protected_names:
+                skipped.append({'file': fname, 'reason': 'Protected system file'})
+                continue
+            if not fpath.startswith(backup_dir):
+                skipped.append({'file': fname, 'reason': 'Outside backup directory'})
+                continue
+            if not os.path.exists(fpath):
+                skipped.append({'file': fname, 'reason': 'File not found'})
+                continue
+            size_mb = os.path.getsize(fpath) / (1024*1024)
+            if not dry_run:
+                os.remove(fpath)
+                freed_mb += size_mb
+                logging.info(f"[DCY_CLEANUP] Deleted: {fname}")
+            else:
+                freed_mb += size_mb
+            deleted.append(fname)
+
+        return jsonify({
+            'success': True,
+            'deleted': deleted,
+            'skipped': skipped,
+            'deleted_count': len(deleted),
+            'skipped_count': len(skipped),
+            'total_size_freed_mb': round(freed_mb, 2),
+            'dry_run': dry_run,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/backfill_nzb_names', methods=['POST'])
+@user_required
+def backfill_nzb_names():
+    """Backfill NZB job names for collected NZB items.
+    Tier 1: Items not yet in NZB format — rename to new format.
+    Tier 2: Items already in NZB format — update tags, version, content source.
+    """
+    import threading, uuid as _uuid
+    from utilities.settings import get_setting as _gs
+    task_id = str(_uuid.uuid4())
+
+    if not _gs('Usenet Provider', 'enable_nzb_naming', False):
+        return jsonify({'success': False, 'error': 'NZB file naming is not enabled in settings'}), 400
+
+    data = request.get_json(silent=True) or {}
+    item_ids = data.get('item_ids')  # optional list of DB item IDs to limit scope
+    force = data.get('force', False)  # if True, re-process even if already named
+    dry_run = data.get('dry_run', False)  # if True, preview only — no DB or cli_mount changes
+
+    def _run():
+        try:
+            import os as _os
+            from database.core import get_db_connection
+            from routes.scraper_routes import _build_nzb_title, _get_content_source_display_name
+            from usenet.climount_client import get_climount_client
+            client = get_climount_client()
+
+            # Backup both DBs before making any changes (non-dry-run only)
+            if not dry_run:
+                try:
+                    from main import backup_database
+                    backup_database()
+                    logging.info("[NZBBackfill] CLI DB backup completed.")
+                except Exception as _be:
+                    logging.warning(f"[NZBBackfill] CLI DB backup failed: {_be}")
+                try:
+                    from main import backup_climount_databases
+                    backup_climount_databases()
+                    logging.info("[NZBBackfill] cli_mount DB backup completed.")
+                except Exception as _be:
+                    logging.warning(f"[NZBBackfill] cli_mount DB backup failed: {_be}")
+
+            def _build_location(media_type, new_folder, ext):
+                """Build correct location_on_disk.
+                Both folder and filename use new_folder (new NZB name).
+                /debrid/movies/NewName/NewName.mkv
+                """
+                folder = 'movies' if media_type != 'episode' else 'shows'
+                return f'/debrid/{folder}/{new_folder}/{new_folder}{ext}'
+
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            if item_ids:
+                placeholders = ','.join('?' * len(item_ids))
+                cursor.execute(f"""
+                    SELECT id, title, year, imdb_id, tmdb_id, type, season_number, episode_number,
+                           episode_title, version, original_scraped_torrent_title, filled_by_title,
+                           filled_by_torrent_id, location_on_disk, debrid_folder_name,
+                           content_source, tags, filled_by_file, location_basename
+                    FROM media_items
+                    WHERE id IN ({placeholders})
+                    AND state = 'Collected'
+                    AND filled_by_torrent_id IS NOT NULL AND filled_by_torrent_id != ''
+                """, item_ids)
+            else:
+                cursor.execute("""
+                    SELECT id, title, year, imdb_id, tmdb_id, type, season_number, episode_number,
+                           episode_title, version, original_scraped_torrent_title, filled_by_title,
+                           filled_by_torrent_id, location_on_disk, debrid_folder_name,
+                           content_source, tags, filled_by_file, location_basename
+                    FROM media_items
+                    WHERE state = 'Collected'
+                    AND filled_by_torrent_id IS NOT NULL AND filled_by_torrent_id != ''
+                    ORDER BY collected_at DESC
+                """)
+            rows = cursor.fetchall()
+            conn.close()
+
+            # Group by filled_by_torrent_id to detect season packs
+            # Season pack = multiple episodes sharing the same torrent ID
+            from collections import defaultdict
+            torrent_groups = defaultdict(list)
+            for row in rows:
+                torrent_groups[row['filled_by_torrent_id']].append(dict(row))
+
+            # Pre-compute season folder names for season packs
+            # season_folder_map: torrent_id -> season_level_folder_name
+            season_folder_map = {}
+            for torrent_id, group in torrent_groups.items():
+                if len(group) > 1 and group[0]['type'] == 'episode':
+                    # Season pack — build season-level name using first item
+                    first = group[0]
+                    fbf0 = first.get('filled_by_file') or ''
+                    fbf0_noext = _os.path.splitext(fbf0)[0]
+                    fbf0_is_nzb = '{imdb-' in fbf0
+                    orig0 = (
+                        (fbf0_noext if '.' in fbf0_noext and not fbf0_is_nzb else None) or
+                        first.get('original_scraped_torrent_title') or
+                        None
+                    )
+                    cs0 = _get_content_source_display_name(first.get('content_source'))
+                    season_folder = _build_nzb_title(
+                        title=first.get('title'),
+                        year=first.get('year'),
+                        imdb_id=first.get('imdb_id'),
+                        version=first.get('version'),
+                        original_scraped_torrent_title=orig0,
+                        media_type='show',
+                        season=first.get('season_number'),
+                        episode=None,
+                        episode_title=None,
+                        tags=first.get('tags') or None,
+                        content_source_display_name=cs0,
+                    )
+                    if season_folder:
+                        season_folder_map[torrent_id] = season_folder
+
+            # Track which torrent IDs have already been renamed in cli_mount
+            climount_renamed = set()
+            # Queue of {infohash: new_name} to batch rename in cli_mount after loop
+            dcy_rename_queue = {}
+
+            scan_progress[task_id].update({
+                'status': 'running',
+                'total': len(rows),
+                'processed': 0,
+                'renamed': 0,
+                'skipped': 0,
+                'errors': 0,
+                'message': f'Processing {len(rows)} items...',
+            })
+
+            renamed = 0
+            skipped = 0
+            errors = 0
+
+            for i, row in enumerate(rows):
+                item = dict(row)
+                try:
+                    # filled_by_file is the original release filename e.g. "Release.Name.mkv"
+                    fbf = item.get('filled_by_file') or ''
+                    fbf_noext, fbf_ext = _os.path.splitext(fbf)
+
+                    # location_basename is the most reliable source of the original filename
+                    loc_basename = item.get('location_basename') or ''
+                    loc_basename_noext = _os.path.splitext(loc_basename)[0] if loc_basename else ''
+
+                    # Check if filled_by_file was corrupted (overwritten with NZB format)
+                    fbf_is_nzb_format = '{imdb-' in fbf
+
+                    # If filled_by_file is corrupted, use location_basename if it's clean
+                    if fbf_is_nzb_format and loc_basename and '{imdb-' not in loc_basename:
+                        fbf = loc_basename
+                        fbf_noext, fbf_ext = _os.path.splitext(fbf)
+                        fbf_is_nzb_format = False
+
+                    # original_scraped_torrent_title priority:
+                    # 1. filled_by_file (no ext) if it has dots (reliable release name format)
+                    # 2. location_basename (no ext) if clean
+                    # 3. existing original_scraped_torrent_title
+                    fbf_has_dots = '.' in fbf_noext and not fbf_is_nzb_format
+                    existing_orig = item.get('original_scraped_torrent_title') or ''
+                    existing_orig_clean = existing_orig if '{imdb-' not in existing_orig else None
+                    orig_scraped = (
+                        (fbf_noext if fbf_has_dots else None) or
+                        (loc_basename_noext if loc_basename and '{imdb-' not in loc_basename else None) or
+                        existing_orig_clean or
+                        None
+                    )
+
+                    cs_display = _get_content_source_display_name(item.get('content_source'))
+                    media_type = 'episode' if item.get('type') == 'episode' else 'movie'
+                    logging.info(f"[NZBBackfill] item={item['id']} orig_scraped={orig_scraped!r} fbf={fbf!r} fbf_noext={fbf_noext!r}")
+                    new_name = _build_nzb_title(
+                        title=item.get('title'),
+                        year=item.get('year'),
+                        imdb_id=item.get('imdb_id'),
+                        version=item.get('version'),
+                        original_scraped_torrent_title=orig_scraped,
+                        media_type=media_type,
+                        season=item.get('season_number'),
+                        episode=item.get('episode_number'),
+                        episode_title=item.get('episode_title'),
+                        tags=item.get('tags') or None,
+                        content_source_display_name=cs_display,
+                    )
+
+                    current_name = item.get('filled_by_title') or item.get('debrid_folder_name') or ''
+
+                    if not new_name or (new_name == current_name and not force):
+                        skipped += 1
+                        continue
+
+                    # Detect season pack
+                    torrent_id = item.get('filled_by_torrent_id') or ''
+                    is_season_pack = torrent_id in season_folder_map
+                    season_folder = season_folder_map.get(torrent_id)
+
+                    # Build location_on_disk
+                    # For filename, prefer filled_by_file, fall back to location_basename
+                    loc_filename = fbf or loc_basename or ''
+                    ext = fbf_ext if fbf_ext else (_os.path.splitext(loc_basename)[1] if loc_basename else '.mkv')
+                    if is_season_pack and season_folder and loc_filename:
+                        # Season pack: folder = season name, filename = original file (filled_by_file or location_basename)
+                        new_loc = f'/debrid/shows/{season_folder}/{loc_filename}'
+                        dcy_rename_name = season_folder
+                    else:
+                        # Single episode or movie: folder and filename both = new_name
+                        new_loc = _build_location(media_type, new_name, ext)
+                        dcy_rename_name = new_name
+
+                    if dry_run:
+                        renamed += 1
+                        logging.info(f"[NZBBackfill][DRY] {item['id']} ({item.get('title')}): -> {new_name!r} dcy={dcy_rename_name!r} loc={new_loc!r} {'[PACK]' if is_season_pack else ''}")
+                        scan_progress[task_id].update({'processed': i + 1, 'renamed': renamed, 'skipped': skipped, 'errors': errors, 'message': f"[DRY] {item.get('title', '')}"})
+                        continue
+
+                    # Collect cli_mount renames — deduplicated, batched after loop
+                    if torrent_id.startswith('nzb:') and torrent_id not in climount_renamed:
+                        climount_renamed.add(torrent_id)
+                        dcy_rename_queue[torrent_id[4:]] = dcy_rename_name
+
+                    conn2 = get_db_connection()
+                    try:
+                        conn2.execute("""
+                            UPDATE media_items
+                            SET filled_by_title = ?,
+                                debrid_folder_name = ?,
+                                location_on_disk = ?,
+                                last_updated = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        """, (new_name, dcy_rename_name, new_loc, item['id']))
+                        conn2.commit()
+                    finally:
+                        conn2.close()
+
+                    renamed += 1
+                    logging.info(f"[NZBBackfill] {item['id']} ({item.get('title')}): -> {new_name!r} loc={new_loc!r} {'[PACK]' if is_season_pack else ''}")
+
+                except Exception as e:
+                    logging.error(f"[NZBBackfill] Error on item {item.get('id')}: {e}")
+                    errors += 1
+
+                scan_progress[task_id].update({
+                    'processed': i + 1,
+                    'renamed': renamed,
+                    'skipped': skipped,
+                    'errors': errors,
+                    'message': f"Processing: {item.get('title', '')}",
+                })
+
+            # Batch rename in cli_mount using thread pool (10 workers)
+            if dcy_rename_queue and not dry_run:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                total_dcy = len(dcy_rename_queue)
+                dcy_done = 0
+                scan_progress[task_id].update({'message': f'DB updated={renamed}. Sending {total_dcy} renames to cli_mount...'})
+                logging.info(f"[NZBBackfill] Sending {total_dcy} unique renames to cli_mount (10 workers)...")
+
+                def _do_rename(args):
+                    h, name = args
+                    return client.rename_nzb(h, name)
+
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    futures = {executor.submit(_do_rename, item): item for item in dcy_rename_queue.items()}
+                    for future in as_completed(futures):
+                        dcy_done += 1
+                        if dcy_done % 100 == 0:
+                            scan_progress[task_id].update({'message': f'cli_mount renames: {dcy_done}/{total_dcy}...'})
+
+                logging.info(f"[NZBBackfill] cli_mount renames complete: {dcy_done}/{total_dcy}")
+
+            scan_progress[task_id].update({
+                'status': 'complete',
+                'complete': True,
+                'message': f'Done. DB updated={renamed} Skipped={skipped} Errors={errors}' + ('' if dry_run else f' | cli_mount: {len(dcy_rename_queue)} entries renamed.'),
+            })
+
+        except Exception as e:
+            logging.error(f"[NZBBackfill] Fatal: {e}", exc_info=True)
+            scan_progress[task_id].update({'status': 'error', 'complete': True, 'message': str(e)})
+
+    scan_progress[task_id] = {'status': 'starting', 'complete': False}
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'success': True, 'task_id': task_id})
+
+
+@debug_bp.route('/api/backfill_nzb_names/status/<task_id>', methods=['GET'])
+@user_required
+def backfill_nzb_names_status(task_id):
+    """Get status of a backfill_nzb_names task."""
+    return jsonify(scan_progress.get(task_id, {'status': 'not_found', 'complete': True}))
+
+
+@debug_bp.route('/api/deduplicate_climount', methods=['POST'])
+@user_required
+def deduplicate_climount():
+    """Remove duplicate cli_mount entries (same name), keeping the one referenced in cli DB.
+    Runs in background. Returns task_id immediately; check logs for completion.
+    Accepts optional dry_run=true to preview without deleting.
+    """
+    import threading, uuid as _uuid, requests as _req
+    from collections import defaultdict
+    from database.database_reading import get_all_media_items
+    from utilities.settings import get_setting
+
+    data = request.get_json(silent=True) or {}
+    dry_run = data.get('dry_run', False)
+
+    dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
+    dcy_token = get_setting('Usenet Provider', 'api_token', default='')
+    if not dcy_url:
+        return jsonify({'success': False, 'error': 'Usenet Provider URL not configured'}), 400
+    headers = {'Authorization': f'Bearer {dcy_token}'} if dcy_token else {}
+
+    def _fetch_and_compute():
+        """Fetch all entries and compute what to delete. Returns (dupe_groups, to_delete) or raises."""
+        all_entries = []
+        page = 1
+        while True:
+            r = _req.get(f'{dcy_url}/api/torrents',
+                         params={'page': page, 'limit': 100, 'sort_by': 'added_on', 'sort_order': 'desc'},
+                         headers=headers, timeout=30)
+            if r.status_code != 200:
+                raise RuntimeError(f'cli_mount API HTTP {r.status_code}')
+            d = r.json()
+            for t in d.get('torrents', []):
+                name = (t.get('name') or '').strip()
+                ih = (t.get('info_hash') or '').strip()
+                if name and ih:
+                    all_entries.append({'name': name, 'hash': ih})
+            if not d.get('has_next'):
+                break
+            page += 1
+
+        by_name = defaultdict(list)
+        for e in all_entries:
+            by_name[e['name']].append(e['hash'])
+        dupe_groups = {n: v for n, v in by_name.items() if len(v) > 1}
+
+        cli_items = get_all_media_items(state='Collected')
+        referenced_hashes = {
+            item['filled_by_torrent_id'][4:]
+            for item in cli_items
+            if (item.get('filled_by_torrent_id') or '').startswith('nzb:')
+        }
+
+        to_delete = []
+        for name, hashes in dupe_groups.items():
+            keep = next((h for h in hashes if h in referenced_hashes), hashes[0])
+            for h in hashes:
+                if h != keep:
+                    to_delete.append(h)
+
+        return dupe_groups, to_delete
+
+    if dry_run:
+        try:
+            dupe_groups, to_delete = _fetch_and_compute()
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({
+            'success': True,
+            'dry_run': True,
+            'dupe_groups': len(dupe_groups),
+            'would_delete': len(to_delete),
+            'sample': to_delete[:10],
+        })
+
+    task_id = str(_uuid.uuid4())
+    scan_progress[task_id] = {'status': 'running', 'complete': False, 'deleted': 0, 'errors': 0}
+
+    def _run():
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        try:
+            dupe_groups, to_delete = _fetch_and_compute()
+            logging.info(f'[DedupDCY] {len(dupe_groups)} dupe groups, {len(to_delete)} to delete')
+
+            deleted = errors = 0
+
+            def _delete_one(ih):
+                try:
+                    r = _req.delete(f'{dcy_url}/api/browse/torrents/{ih}',
+                                    headers=headers, timeout=15)
+                    return r.status_code in (200, 204, 404)
+                except Exception:
+                    return False
+
+            with ThreadPoolExecutor(max_workers=10) as pool:
+                futures = {pool.submit(_delete_one, ih): ih for ih in to_delete}
+                for fut in as_completed(futures):
+                    if fut.result():
+                        deleted += 1
+                    else:
+                        errors += 1
+
+            msg = f'Done: {deleted} deleted, {errors} errors'
+            logging.info(f'[DedupDCY] {msg}')
+            scan_progress[task_id] = {'status': msg, 'complete': True, 'deleted': deleted, 'errors': errors}
+        except Exception as e:
+            logging.error(f'[DedupDCY] Error: {e}', exc_info=True)
+            scan_progress[task_id] = {'status': f'Error: {e}', 'complete': True, 'deleted': 0, 'errors': 0}
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'success': True, 'task_id': task_id, 'message': 'Dedup running in background — check logs or poll /api/backfill_nzb_names/status/<task_id>'})
+
+
+@debug_bp.route('/api/delete_items_by_id', methods=['POST'])
+@user_required
+def delete_items_by_id():
+    """Delete media_items rows by ID (database only). No filesystem/debrid changes."""
+    from database.database_writing import delete_items_batch
+    data = request.get_json(silent=True) or {}
+    item_ids = data.get('item_ids', [])
+    if not item_ids:
+        return jsonify({'success': False, 'error': 'No item_ids provided'}), 400
+    try:
+        delete_items_batch(item_ids, blacklist=False)
+        return jsonify({'success': True, 'deleted': len(item_ids)})
+    except Exception as e:
+        logging.error(f'[DeleteItems] Error: {e}', exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/fix_nzbdav_uuid_filenames', methods=['POST'])
+@user_required
+def fix_nzbdav_uuid_filenames():
+    """Fix collected NzbDAV items where filled_by_file is a UUID filename.
+    Renames the file on disk and updates the DB to use the folder name instead.
+    Accepts optional dry_run=true.
+    """
+    import re as _re
+    from database.database_reading import get_all_media_items
+    from database.database_writing import update_media_item
+    from utilities.settings import get_setting
+
+    data = request.get_json(silent=True) or {}
+    dry_run = data.get('dry_run', False)
+
+    mount_path = get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/')
+    if mount_path.endswith('/__all__'):
+        mount_path = mount_path[:-8]
+
+    _UUID_RE = _re.compile(r'^[A-Za-z0-9]{20,}$')
+
+    def is_uuid(fname):
+        stem = fname.rsplit('.', 1)[0] if '.' in fname else fname
+        return bool(_UUID_RE.match(stem))
+
+    items = [dict(i) for i in get_all_media_items(state='Collected')
+             if is_uuid(i.get('filled_by_file') or '')]
+
+    fixed = skipped = errors = 0
+    for item in items:
+        fbf = item.get('filled_by_file', '')
+        loc = item.get('location_on_disk', '')
+        folder_name = item.get('debrid_folder_name') or item.get('filled_by_title') or ''
+        if not folder_name or not loc or not mount_path:
+            skipped += 1
+            continue
+
+        ext = fbf.rsplit('.', 1)[-1] if '.' in fbf else 'mkv'
+        new_filename = f'{folder_name}.{ext}'
+
+        if dry_run:
+            logging.info(f'[UUIDFix][DRY] id={item["id"]} {fbf!r} -> {new_filename!r}')
+            fixed += 1
+            continue
+
+        # Rename on disk
+        import os as _os
+        old_path = None
+        new_path = None
+        if loc:
+            old_path = loc
+            new_path = _os.path.join(_os.path.dirname(loc), new_filename)
+            if _os.path.exists(old_path) and old_path != new_path:
+                try:
+                    _os.rename(old_path, new_path)
+                except Exception as e:
+                    logging.warning(f'[UUIDFix] Rename failed for {old_path!r}: {e}')
+
+        # Update DB
+        try:
+            new_loc = _os.path.join(_os.path.dirname(loc), new_filename) if loc else loc
+            update_media_item(item['id'],
+                filled_by_file=new_filename,
+                location_on_disk=new_loc)
+            logging.info(f'[UUIDFix] Fixed id={item["id"]}: {fbf!r} -> {new_filename!r}')
+            fixed += 1
+        except Exception as e:
+            logging.error(f'[UUIDFix] DB update failed for id={item["id"]}: {e}')
+            errors += 1
+
+    return jsonify({'success': True, 'dry_run': dry_run, 'fixed': fixed, 'skipped': skipped, 'errors': errors})

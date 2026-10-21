@@ -1,4 +1,3 @@
-from .trakt_friends_routes import trakt_friends_bp
 from flask import Blueprint, jsonify, redirect, url_for, render_template, g, request, abort, flash
 from functools import wraps
 import json
@@ -30,18 +29,24 @@ from .content_requestor_routes import content_requestor_bp
 from .base_routes import base_bp  # Add this import
 from .library_management_routes import library_management
 from .library_routes import library_bp
+from .show_options_routes import show_options_bp
 from .cors_testing_routes import cors_testing_bp
 from .magnet_routes import magnet_bp
 from .performance_routes import performance_bp
 from .torrent_status_routes import torrent_status_bp
 from .settings_validation_routes import settings_validation_bp
-from .content_requestor_routes import content_requestor_bp
 from .connections_routes import connections_bp
 from .user_token_routes import user_token_bp
 from .symlink_tools_routes import symlink_tools_bp
 from .metadata_routes import metadata_bp
 from .plex_labels_debug_routes import plex_labels_debug_bp
 from .discover_routes import discover_bp
+from .bazarr_spoofing_routes import bazarr_bp
+from .overlay_routes import overlay_bp, overlay_page_bp
+from .debrid_manager_routes import debrid_manager_bp
+from .upgrade_hub_routes import upgrade_hub_bp
+from .ai_routes import ai_bp
+from .oidc_routes import oidc_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -156,6 +161,7 @@ def register_blueprints(app):
         (root_bp, '/'),
         (library_management, '/library_management'),
         (library_bp, '/library'),
+        (show_options_bp, '/library/show_options'),
         (cors_testing_bp, '/cors_testing'),
         (magnet_bp, '/magnet'),
         (performance_bp, '/performance'),
@@ -166,7 +172,14 @@ def register_blueprints(app):
         (symlink_tools_bp, '/symlink_tools'),
         (metadata_bp, '/metadata'),
         (plex_labels_debug_bp, ''),
-        (discover_bp, '/discover')
+        (discover_bp, '/discover'),
+        (bazarr_bp, ''),  # Mounted at root for /api/v3/* and /signalr/* paths
+        (overlay_page_bp, ''),  # Mounted at root for /overlays page
+        (overlay_bp, ''),  # Mounted at root for /api/overlays/* paths (includes prefix in blueprint)
+        (debrid_manager_bp, '/debrid_manager'),
+        (upgrade_hub_bp, '/upgrade_hub'),
+        (ai_bp, ''),  # /api/ai/* routes
+        (oidc_bp, '/auth/oidc'),  # OIDC SSO routes
     ]
     
     for blueprint, url_prefix in blueprints:

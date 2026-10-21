@@ -1,8 +1,9 @@
 import os
 import pickle
+import threading
+import time as _time
 from datetime import datetime, timedelta
 import logging
-import time
 import uuid
 
 # Get db_content directory from environment variable with fallback
@@ -14,172 +15,191 @@ CACHE_EXPIRY_DAYS = 7  # Cache expires after 7 days
 
 UNAVAILABLE_POSTER = "/static/images/placeholder.png"
 
-def is_cache_healthy():
-    """Check if the cache file is valid and can be loaded"""
-    if not os.path.exists(CACHE_FILE):
-        return False
-        
-    try:
-        with open(CACHE_FILE, 'rb') as f:
-            # Try to read and unpickle the first few bytes
-            pickle.load(f)
-        return True
-    except PermissionError as e:
-        # Transient access issues (e.g., AV scanning or another process replacing the file)
-        logging.warning(f"Cache file temporarily unavailable due to permission error: {e}")
-        return False
-    except (EOFError, pickle.UnpicklingError, UnicodeDecodeError, FileNotFoundError) as e:
-        logging.error(f"Cache file is corrupted: {e}")
-        try:
-            # If corrupted, attempt to remove the file
-            os.remove(CACHE_FILE)
-            logging.info("Removed corrupted cache file")
-        except Exception as e:
-            logging.error(f"Failed to remove corrupted cache file: {e}")
-        return False
+# ---------------------------------------------------------------------------
+# In-memory cache — loaded once from disk, kept in RAM, saved periodically.
+# All reads/writes go through the module-level dict; disk I/O is batched.
+# ---------------------------------------------------------------------------
+_cache: dict = {}
+_cache_lock = threading.Lock()
+_cache_dirty = False          # True when in-memory cache differs from disk
+_cache_loaded = False         # True after first load from disk
+_save_interval_seconds = 60   # Flush to disk at most every 60 s
+_expiry_sweep_interval_seconds = 3600  # Purge expired entries at most every hour
 
-def load_cache():
-    """Load the cache, performing a health check first"""
-    if not is_cache_healthy():
-        logging.info("Creating new cache due to health check failure")
+
+def _load_from_disk() -> dict:
+    """Load the pickle file from disk, returning an empty dict on any error."""
+    if not os.path.exists(CACHE_FILE):
         return {}
-        
     try:
         with open(CACHE_FILE, 'rb') as f:
             return pickle.load(f)
+    except (EOFError, pickle.UnpicklingError, UnicodeDecodeError, FileNotFoundError):
+        logging.error("poster_cache: cache file corrupted, starting fresh")
+        try:
+            os.remove(CACHE_FILE)
+        except Exception:
+            pass
+        return {}
     except Exception as e:
-        logging.warning(f"Error loading cache: {e}. Creating a new cache.")
+        logging.warning(f"poster_cache: could not load cache from disk: {e}")
         return {}
 
-def save_cache(cache):
-    """Save the cache to disk with validation and atomic writing"""
-    if not isinstance(cache, dict):
-        logging.error("Invalid cache format: cache must be a dictionary")
-        return False
-        
+
+def _ensure_loaded():
+    """Load the cache from disk the first time it is accessed."""
+    global _cache, _cache_loaded
+    if _cache_loaded:
+        return
+    with _cache_lock:
+        if not _cache_loaded:   # double-checked locking
+            _cache = _load_from_disk()
+            _cache_loaded = True
+            logging.info(f"poster_cache: loaded {len(_cache)} entries from disk")
+            _start_background_saver()
+
+
+def _save_to_disk(cache_snapshot: dict) -> bool:
+    """Atomically write a snapshot of the cache to disk."""
     cache_dir = os.path.dirname(CACHE_FILE)
     try:
         os.makedirs(cache_dir, exist_ok=True)
     except Exception as e:
-        logging.error(f"Failed to create cache directory '{cache_dir}': {e}")
+        logging.error(f"poster_cache: cannot create cache dir: {e}")
         return False
 
-    # Retry loop to mitigate transient PermissionError on Windows (e.g., AV/defender locking)
-    max_attempts = 5
-    backoff_seconds = 0.1
-    last_error = None
-
-    for attempt in range(1, max_attempts + 1):
-        # Unique temp file to avoid collisions between concurrent writers
-        temp_file = os.path.join(
-            cache_dir,
-            f"{os.path.basename(CACHE_FILE)}.{os.getpid()}.{int(time.time()*1000)}.{uuid.uuid4().hex}.tmp"
-        )
+    temp_file = os.path.join(
+        cache_dir,
+        f"{os.path.basename(CACHE_FILE)}.{os.getpid()}.{int(_time.time()*1000)}.{uuid.uuid4().hex}.tmp"
+    )
+    try:
+        with open(temp_file, 'wb') as f:
+            pickle.dump(cache_snapshot, f)
+        # Validate
+        with open(temp_file, 'rb') as f:
+            pickle.load(f)
+        os.replace(temp_file, CACHE_FILE)
+        return True
+    except Exception as e:
+        logging.error(f"poster_cache: failed to save cache to disk: {e}")
         try:
-            # Write to temporary file first
-            with open(temp_file, 'wb') as f:
-                pickle.dump(cache, f)
+            os.remove(temp_file)
+        except Exception:
+            pass
+        return False
 
-            # Validate the temporary file can be read back
-            try:
-                with open(temp_file, 'rb') as f:
-                    pickle.load(f)
-            except Exception as e:
-                logging.error(f"Validation of temporary cache file failed: {e}")
-                try:
-                    os.remove(temp_file)
-                except Exception:
-                    pass
-                last_error = e
-                time.sleep(backoff_seconds)
-                backoff_seconds = min(backoff_seconds * 2, 2.0)
-                continue
 
-            # Atomically replace the real cache file
-            try:
-                os.replace(temp_file, CACHE_FILE)
-            except PermissionError as e:
-                last_error = e
-                logging.warning(f"Permission error replacing cache file (attempt {attempt}/{max_attempts}): {e}")
-                try:
-                    os.remove(temp_file)
-                except Exception:
-                    pass
-                time.sleep(backoff_seconds)
-                backoff_seconds = min(backoff_seconds * 2, 2.0)
-                continue
+def _background_saver():
+    """Daemon thread: flushes the in-memory cache to disk every 60 seconds,
+    and purges expired entries once an hour so the cache doesn't grow forever."""
+    global _cache_dirty
+    elapsed_since_sweep = 0
+    while True:
+        _time.sleep(_save_interval_seconds)
+        elapsed_since_sweep += _save_interval_seconds
 
-            return True
+        if elapsed_since_sweep >= _expiry_sweep_interval_seconds:
+            elapsed_since_sweep = 0
+            clean_expired_cache()
 
-        except PermissionError as e:
-            last_error = e
-            logging.warning(f"Permission error writing temp cache file '{temp_file}' (attempt {attempt}/{max_attempts}): {e}")
-            try:
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-            except Exception:
-                pass
-            time.sleep(backoff_seconds)
-            backoff_seconds = min(backoff_seconds * 2, 2.0)
-        except Exception as e:
-            last_error = e
-            logging.error(f"Error saving cache (attempt {attempt}/{max_attempts}): {e}")
-            try:
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-            except Exception:
-                pass
-            time.sleep(backoff_seconds)
-            backoff_seconds = min(backoff_seconds * 2, 2.0)
+        if _cache_dirty:
+            with _cache_lock:
+                if _cache_dirty:
+                    snapshot = dict(_cache)
+                    _cache_dirty = False
+            _save_to_disk(snapshot)
+            logging.debug("poster_cache: flushed to disk")
 
-    logging.error(f"Failed to save cache after {max_attempts} attempts: {last_error}")
-    return False
+
+def _start_background_saver():
+    t = threading.Thread(target=_background_saver, daemon=True, name="poster-cache-saver")
+    t.start()
+
+
+# ---------------------------------------------------------------------------
+# Public API — same signatures as before, now backed by the in-memory dict
+# ---------------------------------------------------------------------------
+
+def is_cache_healthy():
+    """Returns True if the in-memory cache is populated (always True after load)."""
+    _ensure_loaded()
+    return True
+
+
+def load_cache() -> dict:
+    """Return the live in-memory cache dict (read-only snapshot not needed for callers)."""
+    _ensure_loaded()
+    return _cache
+
+
+def save_cache(cache: dict):
+    """Replace the in-memory cache and mark it dirty for background flush.
+
+    Kept for backwards compatibility — callers that previously called save_cache()
+    after modifying a local copy will still work correctly.
+    """
+    global _cache, _cache_dirty
+    if not isinstance(cache, dict):
+        logging.error("poster_cache: save_cache received non-dict; ignoring")
+        return False
+    with _cache_lock:
+        _cache = cache
+        _cache_dirty = True
+    return True
+
 
 def normalize_media_type(media_type):
     """Normalize media type to either 'tv' or 'movie'"""
     return 'tv' if media_type.lower() in ['tv', 'show', 'series'] else 'movie'
 
+
 def get_cached_poster_url(tmdb_id, media_type):
     if not tmdb_id:
         return UNAVAILABLE_POSTER
-        
-    cache = load_cache()
+    _ensure_loaded()
     normalized_type = normalize_media_type(media_type)
     cache_key = f"{tmdb_id}_{normalized_type}"
-    cache_item = cache.get(cache_key)
-    
+    with _cache_lock:
+        cache_item = _cache.get(cache_key)
     if cache_item:
         url, timestamp = cache_item
         if datetime.now() - timestamp < timedelta(days=CACHE_EXPIRY_DAYS):
             return url
-            
     return None
 
+
 def cache_poster_url(tmdb_id, media_type, url):
+    global _cache_dirty
     if not tmdb_id:
         return
-        
-    cache = load_cache()
+    _ensure_loaded()
     normalized_type = normalize_media_type(media_type)
     cache_key = f"{tmdb_id}_{normalized_type}"
-    cache[cache_key] = (url, datetime.now())
-    save_cache(cache)
+    with _cache_lock:
+        _cache[cache_key] = (url, datetime.now())
+        _cache_dirty = True
+
 
 def clean_expired_cache():
-    cache = load_cache()
+    global _cache_dirty
+    _ensure_loaded()
     current_time = datetime.now()
-    expired_keys = [
-        key for key, (_, timestamp) in cache.items()
-        if current_time - timestamp > timedelta(days=CACHE_EXPIRY_DAYS)
-    ]
-    for key in expired_keys:
-        del cache[key]
-    save_cache(cache)
+    with _cache_lock:
+        expired_keys = [
+            key for key, (_, timestamp) in _cache.items()
+            if current_time - timestamp > timedelta(days=CACHE_EXPIRY_DAYS)
+        ]
+        for key in expired_keys:
+            del _cache[key]
+        if expired_keys:
+            _cache_dirty = True
+
 
 def get_cached_media_meta(tmdb_id, media_type):
-    cache = load_cache()
+    _ensure_loaded()
     cache_key = f"{tmdb_id}_{media_type}_meta"
-    cache_item = cache.get(cache_key)
+    with _cache_lock:
+        cache_item = _cache.get(cache_key)
     if cache_item:
         media_meta, timestamp = cache_item
         if datetime.now() - timestamp < timedelta(days=CACHE_EXPIRY_DAYS):
@@ -190,24 +210,29 @@ def get_cached_media_meta(tmdb_id, media_type):
         logging.info(f"Cache miss for media meta {cache_key}")
     return None
 
+
 def cache_media_meta(tmdb_id, media_type, media_meta):
-    cache = load_cache()
+    global _cache_dirty
+    _ensure_loaded()
     cache_key = f"{tmdb_id}_{media_type}_meta"
-    cache[cache_key] = (media_meta, datetime.now())
-    save_cache(cache)
+    with _cache_lock:
+        _cache[cache_key] = (media_meta, datetime.now())
+        _cache_dirty = True
     logging.info(f"Cached media meta for {cache_key}")
+
 
 def cache_unavailable_poster(tmdb_id, media_type):
     cache_poster_url(tmdb_id, media_type, UNAVAILABLE_POSTER)
 
+
 def get_cached_trending_response():
     """Get cached trending response if available and not expired"""
-    cache = load_cache()
+    _ensure_loaded()
     cache_key = "all_trending_response"
-    cache_item = cache.get(cache_key)
+    with _cache_lock:
+        cache_item = _cache.get(cache_key)
     if cache_item:
         response_data, timestamp = cache_item
-        # Cache trending for 15 minutes (not 7 days)
         if datetime.now() - timestamp < timedelta(minutes=15):
             logging.info("Using cached trending response")
             return response_data
@@ -215,24 +240,30 @@ def get_cached_trending_response():
             logging.info("Cached trending response expired")
     return None
 
+
 def cache_trending_response(response_data):
     """Cache the entire trending response for 15 minutes"""
-    cache = load_cache()
+    global _cache_dirty
+    _ensure_loaded()
     cache_key = "all_trending_response"
-    cache[cache_key] = (response_data, datetime.now())
-    save_cache(cache)
+    with _cache_lock:
+        _cache[cache_key] = (response_data, datetime.now())
+        _cache_dirty = True
     logging.info("Cached trending response for 15 minutes")
+
 
 def clear_all_cache():
     """Clear the entire poster and artwork cache"""
+    global _cache, _cache_dirty
     try:
+        with _cache_lock:
+            _cache = {}
+            _cache_dirty = True
+        # Also remove the file immediately so it doesn't reload on restart
         if os.path.exists(CACHE_FILE):
             os.remove(CACHE_FILE)
             logging.info("Successfully cleared all poster/artwork cache")
-            return True
-        else:
-            logging.info("Cache file does not exist, nothing to clear")
-            return True
+        return True
     except Exception as e:
         logging.error(f"Error clearing cache: {e}")
         return False

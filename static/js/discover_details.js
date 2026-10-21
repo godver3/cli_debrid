@@ -10,6 +10,26 @@ document.addEventListener('DOMContentLoaded', function() {
 let contentData = null;
 let discoverVersions = [];
 
+async function loadDiscoverSettings() {
+    if (window.discoverState && window.discoverState.discoverSettings) return;
+    try {
+        const response = await fetch('/settings/api/config');
+        if (!response.ok) return;
+        const config = await response.json();
+        const s = config['Discover Settings'] || {};
+        if (!window.discoverState) window.discoverState = {};
+        window.discoverState.discoverSettings = {
+            hide_no_rating: s.hide_no_rating || false,
+            hide_no_poster: s.hide_no_poster || false,
+            only_show_missing: s.only_show_missing || false,
+            tv_show_episode_view: s.tv_show_episode_view || 'discover',
+            hide_specials: s.hide_specials !== false
+        };
+    } catch (e) {
+        console.warn('[Discover Details] Could not load settings, using defaults:', e);
+    }
+}
+
 async function initDiscoverDetails() {
     const container = document.querySelector('.movie-container');
     if (!container) return;
@@ -28,6 +48,9 @@ async function initDiscoverDetails() {
     } catch (e) {
         console.warn('Modal initialization failed:', e);
     }
+
+    // Load settings before content so season filtering uses saved preferences
+    await loadDiscoverSettings();
 
     // Fetch available versions in background (don't block page load)
     fetchVersions().catch(e => console.warn('Failed to fetch versions:', e));
@@ -144,6 +167,21 @@ function displayContent(data) {
         }
     }
 
+    // Set certification (check both certification and content_rating fields)
+    const certificationText = document.getElementById('movie-certification-text');
+    const certificationSeparator = document.getElementById('certification-separator');
+    if (certificationText && certificationSeparator) {
+        const cert = data.certification || data.content_rating;
+        if (cert) {
+            certificationText.textContent = cert;
+            certificationText.style.display = 'inline';
+            certificationSeparator.style.display = 'inline';
+        } else {
+            certificationText.style.display = 'none';
+            certificationSeparator.style.display = 'none';
+        }
+    }
+
     // Set poster
     const posterImg = document.getElementById('poster-img');
     if (data.poster_path) {
@@ -151,7 +189,8 @@ function displayContent(data) {
     }
 
     // Set title
-    document.getElementById('movie-title').textContent = data.title + (data.year ? ` (${data.year})` : '');
+    const titleAlreadyHasYear = data.year && data.title.trim().endsWith(`(${data.year})`);
+    document.getElementById('movie-title').textContent = data.title + (data.year && !titleAlreadyHasYear ? ` (${data.year})` : '');
     document.title = `${data.title} - Discover`;
 
     // Update library status badge based on db_status
@@ -178,6 +217,25 @@ function displayContent(data) {
 
     // Set year
     //document.getElementById('movie-year-text').textContent = data.year || '-';
+
+    // Set network (for TV shows in meta section)
+    const networkText = document.getElementById('movie-network-text');
+    const networkSeparator = document.getElementById('network-separator');
+    if (data.media_type === 'tv' && networkText && networkSeparator) {
+        const networks = (data.networks || []).join(', ');
+        if (networks) {
+            networkText.textContent = networks;
+            networkText.style.display = 'inline';
+            networkSeparator.style.display = 'inline';
+        } else {
+            networkText.style.display = 'none';
+            networkSeparator.style.display = 'none';
+        }
+    } else if (networkText && networkSeparator) {
+        // Hide network for movies
+        networkText.style.display = 'none';
+        networkSeparator.style.display = 'none';
+    }
 
     // Set runtime/episodes
     if (data.media_type === 'tv') {
@@ -249,6 +307,26 @@ function displayContent(data) {
     tmdbLinkDetail.href = `https://www.themoviedb.org/${tmdbType}/${data.tmdb_id}`;
     tmdbLinkDetail.textContent = data.tmdb_id;
 
+    // Set TVDB link if available (TV shows only)
+    if (data.media_type === 'tv' && (data.tvdb_slug || data.title)) {
+        const tvdbLink = document.getElementById('link-tvdb');
+        // Use real TVDB slug from battery metadata when available, otherwise generate from title
+        const slug = data.tvdb_slug || data.title
+            .toLowerCase()
+            .replace(/[^\w\s-]/g, '') // Remove special characters except spaces and hyphens
+            .replace(/\s+/g, '-')      // Replace spaces with hyphens
+            .replace(/-+/g, '-')       // Replace multiple hyphens with single hyphen
+            .trim();
+        tvdbLink.href = `https://thetvdb.com/series/${slug}`;
+        tvdbLink.style.display = 'inline-flex';
+
+        const tvdbRow = document.getElementById('tvdb-row');
+        tvdbRow.style.display = 'flex';
+        const tvdbLinkDetail = document.getElementById('tvdb-link-detail');
+        tvdbLinkDetail.href = `https://thetvdb.com/series/${slug}`;
+        tvdbLinkDetail.textContent = data.tvdb_id || 'View on TVDB';
+    }
+
     // Set IMDb link if available
     if (data.imdb_id) {
         const imdbLink = document.getElementById('link-imdb');
@@ -300,7 +378,7 @@ function displayCast(cast) {
     const castHeader = document.getElementById('cast-header');
 
     castGrid.innerHTML = cast.map(person => `
-        <div class="cast-card">
+        <div class="cast-card" title="${person.name}${person.character ? ` · ${person.character}` : ''}">
             <img src="${person.profile_path ? `https://image.tmdb.org/t/p/w185${person.profile_path}` : '/static/images/placeholder.png'}"
                  alt="${person.name}"
                  class="cast-photo"
@@ -327,9 +405,12 @@ async function loadAndDisplaySeasons(data) {
 
     if (!seasonsContainer || !tabsNav || !tabsContent) return;
 
-    // Filter out specials (season 0) and sort by season number
+    // Filter out specials (season 0) based on setting — default true matches previous hardcoded behaviour
+    const hideSpecials = (window.discoverState && window.discoverState.discoverSettings)
+        ? window.discoverState.discoverSettings.hide_specials !== false
+        : true;
     const regularSeasons = data.seasons
-        .filter(s => s.season_number > 0)
+        .filter(s => hideSpecials ? s.season_number > 0 : true)
         .sort((a, b) => a.season_number - b.season_number);
 
     if (regularSeasons.length === 0) return;
@@ -358,6 +439,36 @@ async function loadAndDisplaySeasons(data) {
     }
 
     seasonsContainer.style.display = 'block';
+
+    // Switch to season specified in URL ?season=N&episode=N params
+    const urlParams = new URLSearchParams(window.location.search);
+    const seasonParam = urlParams.get('season');
+    const episodeParam = urlParams.get('episode');
+    if (seasonParam) {
+        const seasonNumber = parseInt(seasonParam);
+        setTimeout(() => {
+            switchTab(seasonNumber);
+        }, 150);
+        if (episodeParam) {
+            const epNumber = parseInt(episodeParam);
+            let attempts = 0;
+            const scrollInterval = setInterval(() => {
+                const panel = document.querySelector(`.season-panel[data-season="${seasonNumber}"]`);
+                const scope = panel || document;
+                const epRow = scope.querySelector(`.episode-row[data-episode="${epNumber}"], .discover-episode-row[data-episode="${epNumber}"]`);
+                if (epRow) {
+                    clearInterval(scrollInterval);
+                    setTimeout(() => {
+                        epRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        epRow.classList.add('cal-episode-highlight');
+                        setTimeout(() => epRow.classList.remove('cal-episode-highlight'), 6000);
+                    }, 100);
+                } else if (++attempts > 40) {
+                    clearInterval(scrollInterval);
+                }
+            }, 250);
+        }
+    }
 }
 
 function createSeasonTab(season, isActive) {
@@ -381,15 +492,24 @@ function createSeasonTab(season, isActive) {
     return tab;
 }
 
+const MAGNET_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(270deg)"><path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
 function createSeasonPanel(season, isActive, showData) {
     const panel = document.createElement('div');
     panel.className = `season-panel ${isActive ? 'active' : ''}`;
     panel.dataset.season = season.season_number;
 
-    // Add season header (without delete button for discover)
+    // Add season header with magnet assign button
     const seasonHeader = document.createElement('div');
     seasonHeader.className = 'discover-season-header';
+    const magnetBtn = document.createElement('button');
+    magnetBtn.className = 'search-episode-btn magnet-assign-episode-btn';
+    magnetBtn.type = 'button';
+    magnetBtn.title = `Assign magnet for Season ${season.season_number}`;
+    magnetBtn.innerHTML = MAGNET_SVG;
+    magnetBtn.addEventListener('click', () => handleMagnetAssignSeason(showData, season.season_number));
     seasonHeader.innerHTML = `<h3>Season ${season.season_number}</h3>`;
+    seasonHeader.appendChild(magnetBtn);
     panel.appendChild(seasonHeader);
 
     // Add loading placeholder
@@ -435,8 +555,10 @@ function displaySeasonEpisodes(seasonNumber, episodes, showData) {
     // Sort episodes by episode number
     episodes.sort((a, b) => a.episode_number - b.episode_number);
 
-    // Count collected episodes for season tab update
-    const collectedCount = episodes.filter(ep => ep.db_data && ep.db_data.state === 'Collected').length;
+    // Count collected episodes for season tab update (includes Upgrading state)
+    const collectedCount = episodes.filter(ep =>
+        ep.db_data && (ep.db_data.state === 'Collected' || ep.db_data.state === 'Upgrading')
+    ).length;
     updateSeasonTabProgress(seasonNumber, collectedCount, episodes.length);
 
     // Render each episode
@@ -472,6 +594,7 @@ function createEpisodeRow(episode, seasonNumber, showData) {
 
     // Use episode-row class for collected episodes (to match library styling)
     row.className = hasDbData ? 'episode-row' : 'discover-episode-row';
+    row.dataset.episode = episode.episode_number;
 
     if (hasDbData) {
         // Episode exists in database - show full details like Library page
@@ -613,6 +736,8 @@ function createEpisodeRow(episode, seasonNumber, showData) {
             </button>
         `;
 
+        const magnetIconHtml = `<button class="search-episode-btn magnet-assign-episode-btn" type="button" title="Assign magnet for this episode">${MAGNET_SVG}</button>`;
+
         row.innerHTML = `
             <div class="episode-number">${episode.episode_number}</div>
             ${statusIcon}
@@ -622,8 +747,11 @@ function createEpisodeRow(episode, seasonNumber, showData) {
             </div>
             ${searchIcon}
             ${refreshIcon}
+            ${magnetIconHtml}
             ${filesIcon}
         `;
+
+        row.querySelector('.magnet-assign-episode-btn')?.addEventListener('click', () => handleMagnetAssignEpisode(showData, seasonNumber, episode.episode_number));
 
         // Add event listeners
         const searchBtn = row.querySelector('.search-episode-btn');
@@ -661,8 +789,14 @@ function createEpisodeRow(episode, seasonNumber, showData) {
             }
         }
 
-        // Note: refresh and delete functionality would need to be implemented similar to library_show.js
-        // For now, just adding the buttons for visual parity
+        // Add event listener for refresh button (move to wanted)
+        const refreshBtn = row.querySelector('.refresh-btn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', handleRefreshClick);
+        }
+
+        // Note: delete functionality would need to be implemented similar to library_show.js
+        // For now, just adding the button for visual parity
 
     } else {
         // Episode not in database - show minimal info with search button
@@ -682,8 +816,7 @@ function createEpisodeRow(episode, seasonNumber, showData) {
         const metaParts = [airDateText, runtimeText].filter(Boolean).join(' • ');
 
         // Conditionally add search button for User/Admin only
-        const searchButtonHTML = hasUserPermissions ? `
-            <div class="discover-episode-actions">
+        const searchBtnInner = hasUserPermissions ? `
                 <button class="search-episode-btn" type="button" title="Search for this episode"
                         data-imdb-id="${showData.imdb_id || ''}"
                         data-tmdb-id="${showData.tmdb_id || ''}"
@@ -693,9 +826,13 @@ function createEpisodeRow(episode, seasonNumber, showData) {
                     <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z"></path>
                     </svg>
-                </button>
+                </button>` : '';
+        const searchButtonHTML = `
+            <div class="discover-episode-actions">
+                ${searchBtnInner}
+                <button class="search-episode-btn magnet-assign-episode-btn" type="button" title="Assign magnet for this episode">${MAGNET_SVG}</button>
             </div>
-        ` : '';
+        `;
 
         row.innerHTML = `
             <div class="discover-episode-number">${episode.episode_number}</div>
@@ -710,6 +847,8 @@ function createEpisodeRow(episode, seasonNumber, showData) {
         if (searchBtn) {
             searchBtn.addEventListener('click', handleSearchEpisode);
         }
+
+        row.querySelector('.magnet-assign-episode-btn')?.addEventListener('click', () => handleMagnetAssignEpisode(showData, seasonNumber, episode.episode_number));
     }
 
     return row;
@@ -767,101 +906,199 @@ function setupRequestButton(data) {
     });
 }
 
+// Episode Order picker of the open request dialog (TV only)
+let detailsOrderPicker = null;
+
 function showVersionModal(data) {
     const modal = document.getElementById('versionModal');
     const versionCheckboxes = document.getElementById('versionCheckboxes');
 
     if (!modal || !versionCheckboxes) return;
+    detailsOrderPicker = null;
 
-    // Clear existing content
     versionCheckboxes.innerHTML = '';
 
-    // Add request type selection for TV shows
-    if (data.media_type === 'tv') {
-        const showSelectionHeader = document.createElement('div');
-        showSelectionHeader.className = 'version-section-header';
-        showSelectionHeader.innerHTML = '<h4>Select Request Type:</h4>';
-        versionCheckboxes.appendChild(showSelectionHeader);
+    // Title
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(titleEl);
 
-        const selectionTypeContainer = document.createElement('div');
-        selectionTypeContainer.className = 'selection-type-container';
-        selectionTypeContainer.innerHTML = `
-            <div class="selection-type-option">
-                <input type="radio" id="whole-show" name="selection-type" value="whole-show" checked>
-                <label for="whole-show">Whole Show</label>
-            </div>
-            <div class="selection-type-option">
-                <input type="radio" id="specific-seasons" name="selection-type" value="specific-seasons">
-                <label for="specific-seasons">Specific Seasons</label>
-            </div>
-        `;
-        versionCheckboxes.appendChild(selectionTypeContainer);
+    // Subtitle pill
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    const isTV = data.media_type === 'tv';
+    const year = data.release_date ? data.release_date.split('-')[0] : (data.first_air_date ? data.first_air_date.split('-')[0] : '');
+    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${data.title}${year ? ` (${year})` : ''}`;
+    versionCheckboxes.appendChild(subEl);
 
-        // Container for season selection (initially hidden)
+    // TV show: request type radio rows
+    if (isTV) {
+        const typeLabel = document.createElement('div');
+        typeLabel.className = 'section-label';
+        typeLabel.textContent = 'Select Request Type';
+        versionCheckboxes.appendChild(typeLabel);
+
+        const wholeRow = document.createElement('div');
+        wholeRow.className = 'option-row selected';
+        wholeRow.id = 'opt-whole-show';
+        wholeRow.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">Whole Show</span>`;
+        versionCheckboxes.appendChild(wholeRow);
+
+        const seasonsRow = document.createElement('div');
+        seasonsRow.className = 'option-row';
+        seasonsRow.id = 'opt-specific-seasons';
+        seasonsRow.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">Specific Seasons</span>`;
+        versionCheckboxes.appendChild(seasonsRow);
+
+        // Season container (hidden initially)
         const seasonSelectionContainer = document.createElement('div');
         seasonSelectionContainer.className = 'season-selection-container';
         seasonSelectionContainer.id = 'season-selection-container';
         seasonSelectionContainer.style.display = 'none';
         versionCheckboxes.appendChild(seasonSelectionContainer);
 
-        // Populate season checkboxes
-        if (data.seasons && data.seasons.length > 0) {
-            const regularSeasons = data.seasons.filter(s => s.season_number > 0);
-            regularSeasons.forEach(season => {
-                const div = document.createElement('div');
-                div.className = 'version-checkbox';
-                div.innerHTML = `
-                    <input type="checkbox" id="season-${season.season_number}" name="seasons" value="${season.season_number}">
-                    <label for="season-${season.season_number}">Season ${season.season_number}</label>
-                `;
-                seasonSelectionContainer.appendChild(div);
+        const list = document.createElement('div');
+        list.className = 'seasons-list';
+        seasonSelectionContainer.appendChild(list);
+        const renderSeasonRows = (seasonNumbers, counts = {}) => {
+            list.innerHTML = '';
+            seasonNumbers.forEach(num => {
+                const row = document.createElement('div');
+                row.className = 'option-row';
+                row.dataset.value = String(num);
+                const count = counts[num] ? ` (${counts[num]} episodes)` : '';
+                row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">Season ${num}${count}</span>`;
+                row.addEventListener('click', () => row.classList.toggle('checked'));
+                list.appendChild(row);
             });
-        }
+        };
+        const _hideSpecials2 = (window.discoverState && window.discoverState.discoverSettings)
+            ? window.discoverState.discoverSettings.hide_specials !== false
+            : true;
+        const defaultSeasons = (data.seasons || [])
+            .filter(s => _hideSpecials2 ? s.season_number > 0 : true)
+            .map(s => s.season_number);
+        renderSeasonRows(defaultSeasons);
 
-        // Add handlers for radio buttons
-        const wholeShowRadio = selectionTypeContainer.querySelector('#whole-show');
-        const specificSeasonsRadio = selectionTypeContainer.querySelector('#specific-seasons');
+        // Seasons are numbered in the picked order (Dragon Ball Kai: 2 aired seasons, more on DVD)
+        detailsOrderPicker = window.EpisodeOrderPicker
+            ? window.EpisodeOrderPicker.mount(versionCheckboxes, data.tmdb_id || data.id, async (order) => {
+                // data.seasons are already in the show's saved order
+                if (!order || order === detailsOrderPicker.current()) {
+                    renderSeasonRows(defaultSeasons);
+                    return;
+                }
+                list.innerHTML = '<p style="padding:8px;opacity:0.6;">Loading seasons...</p>';
+                try {
+                    const response = await fetch(`/content/show_seasons?tmdb_id=${encodeURIComponent(data.tmdb_id || data.id)}&order=${encodeURIComponent(order)}`);
+                    const result = await response.json();
+                    if (!result.success) throw new Error(result.error || 'Could not load seasons');
+                    renderSeasonRows(result.seasons, result.episode_counts || {});
+                } catch (error) {
+                    console.error('Error loading seasons for episode order:', error);
+                    list.innerHTML = '<p style="padding:8px;opacity:0.6;">Could not load seasons in that order.</p>';
+                }
+            })
+            : null;
 
-        wholeShowRadio.addEventListener('change', function() {
-            if (this.checked) {
-                document.getElementById('season-selection-container').style.display = 'none';
-            }
+        wholeRow.addEventListener('click', () => {
+            wholeRow.classList.add('selected');
+            seasonsRow.classList.remove('selected');
+            seasonSelectionContainer.style.display = 'none';
         });
 
-        specificSeasonsRadio.addEventListener('change', function() {
-            if (this.checked) {
-                document.getElementById('season-selection-container').style.display = 'block';
-            }
+        seasonsRow.addEventListener('click', () => {
+            seasonsRow.classList.add('selected');
+            wholeRow.classList.remove('selected');
+            seasonSelectionContainer.style.display = 'block';
         });
 
-        // Add separator
-        const separator = document.createElement('hr');
-        versionCheckboxes.appendChild(separator);
+        const divider = document.createElement('div');
+        divider.className = 'vm-divider';
+        versionCheckboxes.appendChild(divider);
     }
 
-    // Add version selection header
-    const versionHeader = document.createElement('div');
-    versionHeader.className = 'version-section-header';
-    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
-    versionCheckboxes.appendChild(versionHeader);
+    // Version section label
+    const verLabel = document.createElement('div');
+    verLabel.className = 'section-label';
+    verLabel.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(verLabel);
 
-    // Create checkboxes for each version
     discoverVersions.forEach(version => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox';
-        div.innerHTML = `
-            <input type="checkbox" id="version-${version}" name="versions" value="${version}">
-            <label for="version-${version}">${version}</label>
-        `;
-        versionCheckboxes.appendChild(div);
+        const row = document.createElement('div');
+        row.className = 'option-row';
+        row.dataset.value = version;
+        row.dataset.type = 'version';
+        row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => row.classList.toggle('checked'));
+        versionCheckboxes.appendChild(row);
 
-        // If there's only one version available, auto-select it
-        if (discoverVersions.length === 1) {
-            div.querySelector('input[type="checkbox"]').checked = true;
-        }
+        if (discoverVersions.length === 1) row.classList.add('checked');
     });
 
-    // Show the modal
+    // Folder dropdown — symlink mode only
+    const folderContainer = document.createElement('div');
+    folderContainer.id = 'request-folder-container';
+    versionCheckboxes.appendChild(folderContainer);
+    (async () => {
+        try {
+            const fRes = await fetch('/scraper/get_symlink_folders');
+            const fData = await fRes.json();
+            if (!fData.enabled || !fData.folders || !fData.folders.length) return;
+            const fs = fData.folder_settings || {};
+            const genreList = (data.genre_ids || data.genres || []).map(g => String(g).trim().toLowerCase());
+            const isAnime = genreList.some(g => g.includes('anime') || g.includes('animation') || g === '16');
+            const isDoc = genreList.some(g => g.includes('documentary') || g === '99');
+            const mediaType = data.media_type === 'movie' ? 'movie' : 'tv';
+            let autoFolder = mediaType === 'movie'
+                ? ((isAnime && fs.enable_separate_anime_folders) ? fs.anime_movies_folder_name : (isDoc && fs.enable_separate_documentary_folders) ? fs.documentary_movies_folder_name : fs.movies_folder_name)
+                : ((isAnime && fs.enable_separate_anime_folders) ? fs.anime_tv_shows_folder_name : (isDoc && fs.enable_separate_documentary_folders) ? fs.documentary_tv_shows_folder_name : fs.tv_shows_folder_name);
+            const filtered = fData.folders.filter(f => {
+                if (f.is_custom) return true;
+                const n = f.name.toLowerCase();
+                return mediaType === 'movie' ? (n.includes('movie') || n === (fs.movies_folder_name||'').toLowerCase()) : (n.includes('show') || n.includes('tv') || n === (fs.tv_shows_folder_name||'').toLowerCase());
+            });
+            if (!filtered.length) return;
+            const divEl = document.createElement('div'); divEl.className = 'vm-divider'; folderContainer.appendChild(divEl);
+            const lbl = document.createElement('div'); lbl.className = 'section-label'; lbl.textContent = 'Folder'; folderContainer.appendChild(lbl);
+            const sel = document.createElement('select'); sel.id = 'request-folder-select';
+            sel.style.cssText = 'width:100%;padding:8px 10px;background:#1a1a1a;color:#fff;border:1px solid #333;border-radius:6px;font-size:12px;margin-top:4px;';
+            filtered.forEach(f => { const o = document.createElement('option'); o.value = f.name; o.dataset.isCustom = f.is_custom ? 'true' : 'false'; o.textContent = f.is_custom ? `${f.name} (${mediaType === 'movie' ? fs.movies_folder_name : fs.tv_shows_folder_name})` : f.name; if (f.name === autoFolder) o.selected = true; sel.appendChild(o); });
+            folderContainer.appendChild(sel);
+        } catch(e) {}
+    })();
+
+    // Tags multi-select — Plex mode only
+    const tagsContainer = document.createElement('div');
+    tagsContainer.id = 'request-tags-container';
+    versionCheckboxes.appendChild(tagsContainer);
+    (async () => {
+        try {
+            const cfgR = await fetch('/settings/api/config');
+            const cfgD = await cfgR.json();
+            const globalTags = (cfgD['Tags'] || {})['tags_list'] || [];
+            const fileMode = (cfgD['File Management'] || {})['file_collection_management'] || '';
+            if (fileMode !== 'Plex' || !globalTags.length) return;
+            const div2 = document.createElement('div'); div2.className = 'vm-divider'; tagsContainer.appendChild(div2);
+            const lbl2 = document.createElement('div'); lbl2.className = 'section-label'; lbl2.textContent = 'Tags'; tagsContainer.appendChild(lbl2);
+            const pillWrap2 = document.createElement('div');
+            pillWrap2.id = 'request-tags-pills';
+            pillWrap2.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;';
+            globalTags.forEach(tag => {
+                const pill = document.createElement('div');
+                pill.className = 'option-row';
+                pill.dataset.value = tag;
+                pill.dataset.type = 'tag';
+                pill.style.cssText = 'padding:5px 14px;border-radius:14px;cursor:pointer;font-size:12px;flex:none;';
+                pill.innerHTML = `<span class="option-label">${tag}</span>`;
+                pill.addEventListener('click', () => pill.classList.toggle('checked'));
+                pillWrap2.appendChild(pill);
+            });
+            tagsContainer.appendChild(pillWrap2);
+        } catch(e) {}
+    })();
+
     document.body.classList.add('modal-open');
     modal.style.display = 'flex';
 }
@@ -875,8 +1112,8 @@ function closeVersionModal() {
 }
 
 async function handleConfirmRequest() {
-    const selectedVersions = Array.from(document.querySelectorAll('input[name="versions"]:checked'))
-        .map(checkbox => checkbox.value);
+    const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes .option-row.checked[data-type="version"]'))
+        .map(row => row.dataset.value);
 
     if (selectedVersions.length === 0) {
         window.showPopup({
@@ -888,12 +1125,13 @@ async function handleConfirmRequest() {
     }
 
     // Check if TV show and specific seasons selected
-    const selectionType = document.querySelector('input[name="selection-type"]:checked');
+    const wholeShowRow = document.getElementById('opt-whole-show');
+    const wholeShowSelected = wholeShowRow ? wholeShowRow.classList.contains('selected') : true;
     let seasons = null;
 
-    if (selectionType && selectionType.value === 'specific-seasons') {
-        seasons = Array.from(document.querySelectorAll('input[name="seasons"]:checked'))
-            .map(checkbox => parseInt(checkbox.value, 10));
+    if (!wholeShowSelected) {
+        seasons = Array.from(document.querySelectorAll('#season-selection-container .option-row.checked'))
+            .map(row => parseInt(row.dataset.value, 10));
 
         if (seasons.length === 0) {
             window.showPopup({
@@ -904,6 +1142,10 @@ async function handleConfirmRequest() {
             return;
         }
     }
+
+    const folderSelect = document.getElementById('request-folder-select');
+    const selectedFolder = folderSelect ? folderSelect.value : null;
+    const selectedFolderIsCustom = folderSelect ? (folderSelect.options[folderSelect.selectedIndex]?.dataset?.isCustom === 'true') : false;
 
     closeVersionModal();
 
@@ -923,6 +1165,18 @@ async function handleConfirmRequest() {
         if (seasons && seasons.length > 0) {
             payload.seasons = seasons;
         }
+        const pickedOrder = mediaType === 'tv' && detailsOrderPicker ? detailsOrderPicker.value() : null;
+        if (pickedOrder) {
+            payload.episode_order = pickedOrder;
+        }
+
+        if (selectedFolder) {
+            payload.selected_folder = selectedFolder;
+            payload.selected_folder_is_custom = selectedFolderIsCustom;
+        }
+        const tagPills = document.querySelectorAll('#request-tags-container .option-row.checked[data-type="tag"]');
+const selTags = Array.from(tagPills).map(p => p.dataset.value).filter(Boolean).join(',');
+if (selTags) payload.selected_tags = selTags;
 
         const response = await fetch('/content/request', {
             method: 'POST',
@@ -937,7 +1191,7 @@ async function handleConfirmRequest() {
             window.showPopup({
                 type: window.POPUP_TYPES.SUCCESS,
                 title: 'Success',
-                message: `Successfully requested ${contentData.title}`,
+                message: result.message || `Successfully requested ${contentData.title}`,
                 autoClose: 3000
             });
         } else {
@@ -983,7 +1237,7 @@ async function requestContentDirectly(data) {
             window.showPopup({
                 type: window.POPUP_TYPES.SUCCESS,
                 title: 'Success',
-                message: `Successfully requested ${data.title}`,
+                message: result.message || `Successfully requested ${data.title}`,
                 autoClose: 3000
             });
         } else {
@@ -1089,4 +1343,66 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function handleMagnetAssignSeason(showData, seasonNumber) {
+    const params = new URLSearchParams({
+        prefill_title: showData.title || '',
+        prefill_year: showData.year || contentData?.year || '',
+        prefill_type: 'show',
+        prefill_selection: 'seasons',
+        prefill_seasons: String(seasonNumber),
+    });
+    if (showData.imdb_id) params.set('prefill_id', showData.imdb_id);
+    else if (showData.tmdb_id) params.set('prefill_id', String(showData.tmdb_id));
+    window.location.href = `/magnet/assign_magnet?${params.toString()}`;
+}
+
+function handleMagnetAssignEpisode(showData, seasonNumber, episodeNumber) {
+    const params = new URLSearchParams({
+        prefill_title: showData.title || '',
+        prefill_year: showData.year || contentData?.year || '',
+        prefill_type: 'show',
+        prefill_selection: 'episode',
+        prefill_seasons: String(seasonNumber),
+        prefill_episode: String(episodeNumber),
+    });
+    if (showData.imdb_id) params.set('prefill_id', showData.imdb_id);
+    else if (showData.tmdb_id) params.set('prefill_id', String(showData.tmdb_id));
+    window.location.href = `/magnet/assign_magnet?${params.toString()}`;
+}
+
+function handleRefreshClick(event) {
+    const btn = event.currentTarget;
+    const data = {
+        imdb_id: btn.dataset.imdbId,
+        tmdb_id: btn.dataset.tmdbId,
+        season_number: parseInt(btn.dataset.season),
+        episode_number: parseInt(btn.dataset.episode)
+    };
+
+    // Disable button while processing
+    btn.disabled = true;
+
+    fetch('/statistics/move_to_wanted', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Reload the page to reflect the updated state
+            window.location.reload();
+        } else {
+            throw new Error(data.error || 'Failed to move item to Wanted state');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showPopup({ type: 'error', title: 'Error', message: `Error moving item to Wanted state: ${error.message}`, autoClose: 4000 });
+        btn.disabled = false;
+    });
 }

@@ -3,65 +3,27 @@ from utilities.settings_schema import SETTINGS_SCHEMA
 import logging
 import uuid
 import os
-import sys
-import shutil
 from datetime import datetime, date
-from debrid import reset_provider
-from utilities.file_lock import FileLock
-import importlib
-from routes.poster_cache import CACHE_FILE
 
 # Get the base config directory from an environment variable, with a fallback
 CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
 
-# Use os.path.join to create platform-independent paths
-CONFIG_LOCK_FILE = os.path.join(CONFIG_DIR, 'config.lock')
+# config.json is shared with utilities.settings: same file, same lock, same
+# parsed-config cache and atomic writer, so the two modules can't interleave
+# writes or read a half-written file.
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
-
-if sys.platform.startswith('win'):
-    # Windows-specific import and file locking
-    import msvcrt
-    def lock_file(file):
-        msvcrt.locking(file.fileno(), msvcrt.LK_LOCK, 1)
-    def unlock_file(file):
-        msvcrt.locking(file.fileno(), msvcrt.LK_UNLCK, 1)
-else:
-    # Unix-like systems
-    import fcntl
-    def lock_file(file):
-        fcntl.flock(file, fcntl.LOCK_EX)
-    def unlock_file(file):
-        fcntl.flock(file, fcntl.LOCK_UN)
 
 def log_config_state(message, config):
     content_sources = config.get('Content Sources', {})
     #logging.debug(f"[CONFIG_STATE] {message} (Content Sources only): {json.dumps(content_sources, indent=2)}")
 
-def acquire_lock():
-    lock_file_handle = open(CONFIG_LOCK_FILE, 'w')
-    lock_file(lock_file_handle)
-    return lock_file_handle
-
-def release_lock(lock_file_handle):
-    unlock_file(lock_file_handle)
-    lock_file_handle.close()
-
 def load_config():
-    if not os.path.exists(CONFIG_FILE):
-        logging.info(f"Config file not found at {CONFIG_FILE}, returning empty dict.")
+    from utilities.settings import load_config as _load_shared_config
+    config = _load_shared_config()
+    if not isinstance(config, dict):
+        logging.error(f"Config file {CONFIG_FILE} does not contain a valid JSON object. Returning empty dict.")
         return {}
-
-    try:
-        with open(CONFIG_FILE, 'r') as file:
-            config = json.load(file)
-            if not isinstance(config, dict): # Handle case where file content is not a JSON object
-                logging.error(f"Config file {CONFIG_FILE} does not contain a valid JSON object. Returning empty dict.")
-                return {}
-    except json.JSONDecodeError as e:
-        logging.error(f"Error decoding JSON from {CONFIG_FILE}: {e}. Returning empty dict.")
-        return {}
-    except Exception as e:
-        logging.error(f"Error reading config file {CONFIG_FILE}: {e}. Returning empty dict.")
+    if not config:
         return {}
         
     # --- BEGIN Auto-fix for missing Content Source type ---
@@ -233,58 +195,77 @@ def sync_plex_settings(config):
     return config
 
 def save_config(config):
-    lock_handle = None
+    from utilities.settings import Settings, get_config_file_path, get_lock_file_path, write_config_file
     try:
-        # Acquire lock
-        lock_handle = acquire_lock()
-        
-        # Load previous config *after acquiring lock* to check for TMDB API key changes accurately
-        previous_config = {}
-        if os.path.exists(CONFIG_FILE):
-             try:
-                 # Read the file content directly without using load_config to avoid recursion/re-fixing
-                 with open(CONFIG_FILE, 'r') as pf:
-                      previous_config = json.load(pf)
-             except Exception as e:
-                 logging.warning(f"Could not load previous config for comparison during save: {e}")
+        with Settings(get_lock_file_path()):
+            # Load previous config *after acquiring lock* to check for TMDB API key changes accurately
+            previous_config = {}
+            if os.path.exists(get_config_file_path()):
+                 try:
+                     # Read the file content directly without using load_config to avoid recursion/re-fixing
+                     with open(get_config_file_path(), 'r') as pf:
+                          previous_config = json.load(pf)
+                 except Exception as e:
+                     logging.warning(f"Could not load previous config for comparison during save: {e}")
 
 
-        previous_tmdb_key = previous_config.get('TMDB', {}).get('api_key')
-        new_tmdb_key = config.get('TMDB', {}).get('api_key')
+            previous_tmdb_key = previous_config.get('TMDB', {}).get('api_key')
+            new_tmdb_key = config.get('TMDB', {}).get('api_key')
 
-        # Sync Plex settings between sections
-        config = sync_plex_settings(config)
+            # Sync Plex settings between sections
+            config = sync_plex_settings(config)
 
-        # Check if TMDB API key has changed
-        if previous_tmdb_key != new_tmdb_key and new_tmdb_key: # Only clear if new key is set
-            if os.path.exists(CACHE_FILE):
-                try:
-                    os.remove(CACHE_FILE)
-                    logging.info("Deleted poster cache due to TMDB API key change")
-                except Exception as e:
-                    logging.error(f"Failed to delete poster cache: {e}")
+            # Check if TMDB API key has changed
+            if previous_tmdb_key != new_tmdb_key and new_tmdb_key: # Only clear if new key is set
+                # Imported here: routes/__init__ imports the onboarding routes,
+                # which import this module, so a top-level import is circular.
+                from routes.poster_cache import CACHE_FILE
+                if os.path.exists(CACHE_FILE):
+                    try:
+                        os.remove(CACHE_FILE)
+                        logging.info("Deleted poster cache due to TMDB API key change")
+                    except Exception as e:
+                        logging.error(f"Failed to delete poster cache: {e}")
 
-        # Save the new config
-        with open(CONFIG_FILE, 'w') as file:
-            # Move file pointer to beginning and truncate before writing
-            file.seek(0) 
-            file.truncate()
-            json.dump(config, file, indent=4, default=json_serializer)
-            
-        # Clear update cache
-        try:
-            from routes.base_routes import clear_cache
-            clear_cache()
-        except Exception as e:
-            logging.error(f"Error clearing update check cache: {str(e)}")
+            # Clear poster hash for any source whose plex_collection poster settings changed
+            try:
+                _POSTER_KEYS = {'poster_design', 'poster_accent', 'poster_eyebrow', 'poster_icon', 'poster_overlay_opacity', 'poster_glow_opacity', 'poster_glow_radius', 'collection_name'}
+                old_sources = previous_config.get('Content Sources', {})
+                new_sources = config.get('Content Sources', {})
+                _state_file = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'plex_collection_state.json')
+                if os.path.exists(_state_file):
+                    import json as _json
+                    with open(_state_file) as _sf:
+                        _state = _json.load(_sf)
+                    _changed = False
+                    for src_id, new_src in new_sources.items():
+                        old_src = old_sources.get(src_id, {})
+                        old_pc = old_src.get('plex_collection', {}) if isinstance(old_src, dict) else {}
+                        new_pc = new_src.get('plex_collection', {}) if isinstance(new_src, dict) else {}
+                        if any(old_pc.get(k) != new_pc.get(k) for k in _POSTER_KEYS):
+                            if src_id in _state:
+                                _state[src_id].pop('poster_hash', None)
+                                _state[src_id].pop('poster_has_thumbs', None)
+                                _changed = True
+                                logging.info(f"[PlexCollections] Cleared poster hash for {src_id} due to settings change")
+                    if _changed:
+                        with open(_state_file, 'w') as _sf:
+                            _json.dump(_state, _sf, indent=2)
+            except Exception as _e:
+                logging.warning(f"[PlexCollections] Failed to clear poster hashes on save: {_e}")
+
+            # Save the new config
+            write_config_file(config, indent=4, default=json_serializer)
+
+            # Clear update cache
+            try:
+                from routes.base_routes import clear_cache
+                clear_cache()
+            except Exception as e:
+                logging.error(f"Error clearing update check cache: {str(e)}")
 
     except Exception as e:
         logging.error(f"Error during save_config: {e}", exc_info=True)
-        # Re-raise the exception maybe? Or just log it.
-    finally:
-        # Ensure lock is released
-        if lock_handle:
-            release_lock(lock_handle)
 
 def add_content_source(source_type, source_config):
     process_id = str(uuid.uuid4())[:8]
@@ -364,6 +345,16 @@ def delete_content_source(source_id):
     if 'Content Sources' in config and source_id in config['Content Sources']:
         del config['Content Sources'][source_id]
         save_config(config)
+        # Drop the source's item cache: ids are reused ("<type>_<n>"), and a new source that
+        # inherited the old cache would skip items for up to 18h as "already processed".
+        try:
+            from content_checkers.content_cache_management import get_cache_file_path
+            cache_file = get_cache_file_path(source_id)
+            if os.path.exists(cache_file):
+                os.remove(cache_file)
+                logging.info(f"[{process_id}] Removed item cache for deleted content source {source_id}")
+        except Exception as e:
+            logging.warning(f"[{process_id}] Could not remove item cache for {source_id}: {e}")
         logging.info(f"[{process_id}] Content source {source_id} deleted successfully")
         return True
     else:
@@ -396,19 +387,25 @@ def update_content_source(source_id, source_config):
                         value = list(value)
                 config['Content Sources'][source_id][key] = value
         
-        # If this is a Plex watchlist and the token has changed, validate it
-        if (source_config.get('type') == 'Other Plex Watchlist' and 
-            (old_config.get('token') != source_config.get('token') or 
-             old_config.get('username') != source_config.get('username'))):
-            token_status = validate_plex_tokens()
-            username = source_config.get('username')
-            if username in token_status and not token_status[username]['valid']:
-                logging.error(f"Invalid Plex token for newly added/updated user {username}")
-        
         log_config_state(f"[{process_id}] Config after updating content source", config)
         save_config(config)
+
+        # If this is an Other Plex Watchlist whose token/username changed, validate it. This runs
+        # after the save (validate_plex_tokens reads config from disk, so before it checked the
+        # old token) and can never block saving the source.
+        if (source_config.get('type') == 'Other Plex Watchlist' and
+            (old_config.get('token') != source_config.get('token') or
+             old_config.get('username') != source_config.get('username'))):
+            try:
+                token_status = validate_plex_tokens()
+                username = source_config.get('username')
+                if token_status.get(username, {}).get('valid') is False:
+                    logging.error(f"Invalid Plex token for newly added/updated user {username}")
+            except Exception as e:
+                logging.warning(f"Could not validate the Plex token for {source_config.get('username')}: {e}")
         
         # Explicitly reset provider and reinitialize components after updating content source
+        from debrid import reset_provider
         reset_provider()
         from queues.queue_manager import QueueManager
         QueueManager().reinitialize()
@@ -430,6 +427,7 @@ def update_all_content_sources(content_sources):
     save_config(config)
     
     # Explicitly reset provider and reinitialize components after updating all content sources
+    from debrid import reset_provider
     reset_provider()
     from queues.queue_manager import QueueManager
     QueueManager().reinitialize()
@@ -450,7 +448,11 @@ def add_scraper(scraper_type, scraper_config):
         config['Scrapers'] = {}
     
     # Generate a new scraper ID
-    base_name = scraper_type
+    # For Newznab, use the user-provided name as the key prefix instead of the type
+    if scraper_type == 'Newznab' and scraper_config.get('name', '').strip():
+        base_name = scraper_config.get('name').strip().replace(' ', '_')
+    else:
+        base_name = scraper_type
     index = 1
     while f"{base_name}_{index}" in config['Scrapers']:
         index += 1
@@ -501,6 +503,9 @@ def get_content_source_display_names():
         display_name = source_config.get('display_name', '').strip()
         # Use source_id as fallback if display_name is empty
         display_name_map[source_id] = display_name if display_name else source_id
+    # Map ai_butler to the configured AI Assistant display name
+    ai_display_name = (config.get('AI Assistant', {}).get('display_name') or 'AI Butler').strip()
+    display_name_map['ai_butler'] = ai_display_name
     return display_name_map
 
 def save_version_settings(version, settings):
@@ -533,17 +538,49 @@ def get_version_settings(version):
     scraping_config = config.get('Scraping', {})
     versions = scraping_config.get('versions', {})
     settings = versions.get(version, {})
-    
+
     # Convert infinity values back to empty string for both fields
     for field in ['max_size_gb', 'max_bitrate_mbps']:
         if field in settings and settings[field] == float('inf'):
             settings[field] = ''
-    
+
+    # Build the set of currently enabled scraper IDs, used for filtering below.
+    active_scrapers = {
+        k for k, v in config.get('Scrapers', {}).items()
+        if isinstance(v, dict) and v.get('enabled', False)
+    }
+
+    # Valid version config keys = schema keys + display_name + active scraper IDs.
+    # Anything else is a stale scraper key from a disabled or fully removed scraper.
+    valid_version_keys = (
+        set(SETTINGS_SCHEMA.get('Scraping', {}).get('versions', {}).get('schema', {}).keys())
+        | {'display_name'}
+        | active_scrapers
+    )
+
+    # Filter scraper_priorities nested dict to only include currently enabled scrapers.
+    if 'scraper_priorities' in settings and isinstance(settings['scraper_priorities'], dict):
+        settings['scraper_priorities'] = {
+            k: v for k, v in settings['scraper_priorities'].items()
+            if k in active_scrapers
+        }
+
+    # Strip any key not in the valid set (covers disabled AND fully removed scrapers).
+    stale_keys = [k for k in settings if k not in valid_version_keys]
+    for k in stale_keys:
+        del settings[k]
+
+    # Backfill any schema keys that are missing from this version config (new settings added after version was created).
+    version_schema = SETTINGS_SCHEMA.get('Scraping', {}).get('versions', {}).get('schema', {})
+    for k, v in version_schema.items():
+        if k not in settings and 'default' in v:
+            settings[k] = v['default']
+
     logging.debug(f"Fetched settings for version '{version}': {settings}")
-    
+
     if not settings:
         logging.warning(f"No settings found for version: {version}")
-    
+
     return settings
 
 def get_content_source_settings():

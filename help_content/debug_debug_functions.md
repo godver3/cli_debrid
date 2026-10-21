@@ -146,3 +146,13 @@ This page provides access to various functions primarily intended for troublesho
     *   Deletes the internal state database files used by the `cli_battery` background process (`cli_battery.db`, `cli_battery.db-shm`, `cli_battery.db-wal`).
     *   **Use Case:** Resetting the state of the background processor, potentially resolving issues with stuck tasks or internal state corruption. Does *not* delete the main media database.
     *   **Caution:** This resets internal task states and might cause some operations to re-run.
+
+*   **Remove Duplicate Database Items:**
+    *   Finds and removes duplicate database entries that share the same `filled_by_file` value, keeping one entry per unique file using smart selection (prefers Collected state, then oldest entry).
+    *   **NAS / Network Filter** *(visible only when NAS paths are configured in Settings → Advanced Settings → Library Management → NAS / Network Drive Paths)*: Filter duplicate groups by whether they are stored on NAS/network drives — options are **All items**, **Exclude NAS items**, or **Only NAS items**.
+    *   Always use **Dry Run** first to preview what would be removed.
+
+*   **Manage Duplicate Versions:**
+    *   Cleans up situations where the same title exists multiple times in different states (e.g. one Collected and one Blacklisted copy). Supports Movies and TV Shows, multiple keep/delete strategies, version matching, and exclusion patterns.
+    *   **NAS / Network Filter** *(visible only when NAS paths are configured in Settings → Advanced Settings → Library Management → NAS / Network Drive Paths)*: Filter which groups are processed based on whether their items are stored on NAS/network drives — options are **All items**, **Exclude NAS items**, or **Only NAS items**.
+    *   Always use **Dry Run** first.

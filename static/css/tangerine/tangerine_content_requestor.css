@@ -254,44 +254,4 @@
     align-items: center;
 }
 
-.loading-content {
-    background-color: rgba(255, 255, 255, 0.05);
-    padding: 20px;
-    border-radius: 10px;
-    text-align: center;
-}
-
-.spinner {
-    border: 4px solid #f3f3f3;
-    border-top: 4px solid #3498db;
-    border-radius: 50%;
-    width: 40px;
-    height: 40px;
-    animation: spin 1s linear infinite;
-    margin: 0 auto 10px;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-.loading-content p {
-    color: #ffffff;
-    margin: 10px 0;
-}
-
-.close-loading {
-    background: rgba(255, 255, 255, 0.1);
-    border: none;
-    padding: 8px 16px;
-    border-radius: 12px;
-    color: white;
-    cursor: pointer;
-    font-size: 0.9rem;
-    transition: background-color 0.2s;
-}
-
-.close-loading:hover {
-    background: rgba(255, 255, 255, 0.2);
-} 
+/* Loading overlay styles defined in base.css */

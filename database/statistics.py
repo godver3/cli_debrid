@@ -24,14 +24,62 @@ def format_bytes(size):
         size /= 1024.0
     return f"{size:.2f} PB"
 
+# Cache for cli_mount nzbs folder size (updated by background du -sh)
+_dcy_nzbs_size_cache = {'size': 'N/A', 'last_update': 0}
+
+
+def _fetch_climount_debug_stats(timeout=10):
+    """Fetch cli_mount's /debug/stats. Returns the parsed JSON dict, or None if
+    cli_mount is disabled/unreachable/erroring. Shared by the usenet, debrid,
+    and combined branches of _refresh_download_stats_blocking so each doesn't
+    need its own copy of the enabled/url/token/HTTP-error handling.
+    """
+    try:
+        _dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
+        _dcy_token = get_setting('Usenet Provider', 'api_token', default='').strip()
+        _dcy_enabled = get_setting('Usenet Provider', 'enabled', default=False)
+        if not (_dcy_enabled and _dcy_url):
+            return None
+        import requests as _rq
+        _headers = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+        _r = _rq.get(f'{_dcy_url}/debug/stats', headers=_headers, timeout=timeout)
+        if _r.status_code != 200:
+            return None
+        return _r.json()
+    except Exception as _exc:
+        logging.debug(f"cli_mount /debug/stats fetch failed: {_exc}")
+        return None
+
 # Cache for download stats
 download_stats_cache = {
     'active_downloads': None,
     'usage_stats': None,
     'subscription': None,
-    'last_update': 0,
-    'cache_duration': 300  # 5 minutes in seconds
+    'last_update': 0,       # set when a refresh produces data (success or graceful)
+    'last_attempt': 0,      # set whenever a background refresh is started (throttle)
+    'cache_duration': 300   # 5 minutes in seconds
 }
+
+# Background-refresh coordination so the (potentially slow / unreachable) debrid
+# provider can never block the request thread. A down provider used to hang the
+# dashboard for up to ~90s (3 retries x 30s timeout). See get_cached_download_stats.
+import threading as _threading
+_stats_refresh_lock = _threading.Lock()
+_stats_refresh_in_progress = False
+_STATS_MIN_RETRY = 30        # seconds: don't restart a background refresh more often than this
+# Cold start only (no cached value yet): how long the request may wait for the
+# very first refresh before returning a non-blocking placeholder. Kept just long
+# enough for a HEALTHY provider's first response (~1s); a down provider therefore
+# costs at most this, not the full ~90s retry chain. The dashboard renders stats
+# server-side without polling, so a tiny wait lets a healthy first load show real
+# data instead of a placeholder.
+_STATS_COLD_START_WAIT = 3.0  # seconds
+
+# Same coordination for the subscription-status fetch (its own 30-min TTL). The
+# dashboard renders it server-side too, so it must not block on a down provider.
+_sub_refresh_lock = _threading.Lock()
+_sub_refresh_in_progress = False
+_SUB_TTL = 1800  # 30 minutes
 
 def parse_size(size_str):
     """Convert human readable size string to bytes"""
@@ -56,19 +104,222 @@ def parse_size(size_str):
         return 0
 
 def get_cached_download_stats():
-    """Get cached download stats or fetch new ones if cache is expired"""
+    """Return download stats, refreshing in the BACKGROUND (stale-while-revalidate).
+
+    The debrid provider call can be slow or time out (a down provider blocked the
+    dashboard for up to ~90s — 3 retries x 30s). To keep a non-critical stats
+    widget from ever blocking the request, we always serve the last cached value
+    immediately and refresh it on a background thread. On failure the background
+    refresh keeps the last good value (stale-if-error) instead of replacing it
+    with an error state. Only a true cold start (no value yet) waits a short,
+    bounded time and then returns a non-blocking placeholder.
+    """
+    now = time.time()
+    has_data = (download_stats_cache['active_downloads'] is not None and
+                download_stats_cache['usage_stats'] is not None)
+    fresh = has_data and (download_stats_cache['last_update'] + download_stats_cache['cache_duration'] >= now)
+    if fresh:
+        return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+
+    # Kick off (at most one) background refresh, throttled so a failing provider
+    # isn't hammered on every request.
+    global _stats_refresh_in_progress
+    started = False
+    with _stats_refresh_lock:
+        if not _stats_refresh_in_progress and (now - download_stats_cache.get('last_attempt', 0) >= _STATS_MIN_RETRY):
+            _stats_refresh_in_progress = True
+            download_stats_cache['last_attempt'] = now
+            started = True
+    if started:
+        _t = _threading.Thread(target=_run_stats_refresh, name='download-stats-refresh', daemon=True)
+        _t.start()
+        if not has_data:
+            # cold start only: give the very first fetch a short, bounded chance
+            _t.join(timeout=_STATS_COLD_START_WAIT)
+
+    if (download_stats_cache['active_downloads'] is not None and
+            download_stats_cache['usage_stats'] is not None):
+        return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+    # cold start and the provider is still slow → do NOT block; show a placeholder
+    return ({'count': 0, 'limit': 0, 'percentage': 0, 'status': 'loading', 'error': None},
+            {'used': '—', 'limit': '—', 'percentage': 0, 'error': None})
+
+
+def _run_stats_refresh():
+    """Background worker: run the blocking refresh and always clear the in-progress flag."""
+    global _stats_refresh_in_progress
+    try:
+        _refresh_download_stats_blocking()
+    except Exception as e:
+        logging.error(f"Background download-stats refresh failed: {str(e)}")
+    finally:
+        with _stats_refresh_lock:
+            _stats_refresh_in_progress = False
+
+
+def _refresh_download_stats_blocking():
+    """Fetch fresh download stats from the active provider and update the cache.
+
+    May block (provider I/O with retries) — always call this OFF the request
+    thread via _run_stats_refresh. On a provider error it preserves the last good
+    cached value (stale-if-error) rather than overwriting it with an error state.
+    """
     current_time = time.time()
-    if (download_stats_cache['last_update'] + download_stats_cache['cache_duration'] < current_time or 
-        download_stats_cache['active_downloads'] is None or 
+    if (download_stats_cache['last_update'] + download_stats_cache['cache_duration'] < current_time or
+        download_stats_cache['active_downloads'] is None or
         download_stats_cache['usage_stats'] is None):
         
         logging.debug("Download stats cache expired, fetching fresh data...")
         
+        # Determine which provider stats to show based on user preference
+        _stats_priority = get_setting('UI Settings', 'stats_provider_priority', default='auto').strip()
+        _debrid_api_key = get_setting('Debrid Provider', 'api_key', default='').strip()
+        _use_usenet = (_stats_priority == 'usenet') or (_stats_priority == 'auto' and not _debrid_api_key)
+        _use_combined = (_stats_priority == 'combined')
+        if _use_combined:
+            # Combined mode reads cli_mount's /debug/stats directly: 'content'
+            # is already a server-side sum across every debrid provider plus
+            # usenet (see decypharr pkg/stats/stats.go combinedContentStats),
+            # and 'repair.health.broken' is likewise unfiltered by protocol, so
+            # no separate debrid-provider or per-protocol calls are needed.
+            #
+            # The "Connections"/"Active" KPI card (active_downloads_data.count)
+            # is the NNTP connection pool, same as usenet mode — NOT the
+            # content item count. Combined mode still only has one cli_mount
+            # instance to poll for pool stats (debrid providers don't expose an
+            # equivalent connection-pool concept through this API), so this
+            # mirrors the usenet branch below exactly for that part.
+            _data = _fetch_climount_debug_stats()
+            if _data is not None:
+                _pool = _data.get('usenet', {}).get('pool', {})
+                _active = _pool.get('active', 0)
+                _idle = _pool.get('idle', 0)
+                _max = _pool.get('max_connections', 0)
+                _used = _active + _idle
+                _pct = round((_used / _max * 100) if _max > 0 else 0)
+                _status = 'critical' if _pct >= 90 else ('warning' if _pct >= 75 else 'normal')
+
+                _content = _data.get('content', {}) or {}
+                _total_size = _content.get('total_size', 0)
+                _broken = _data.get('repair', {}).get('health', {}).get('broken', 0)
+
+                download_stats_cache['active_downloads'] = {
+                    'count': _active,
+                    'idle': _idle,
+                    'limit': _max,
+                    'percentage': round((_active / _max * 100) if _max > 0 else 0),
+                    'status': _status,
+                    'error': None,
+                    'source': 'combined',
+                    'library_size': format_bytes(_total_size),
+                    'broken_nzbs': _broken,
+                }
+                download_stats_cache['usage_stats'] = {
+                    'used': str(_used),
+                    'limit': str(_max),
+                    'percentage': _pct,
+                    'error': None,
+                    'source': 'combined',
+                    'label': 'Connections',
+                }
+                download_stats_cache['last_update'] = current_time
+                logging.debug(f"Combined stats: pool_active={_active}, pool_max={_max}, total_size={_total_size}, broken={_broken}")
+                return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+            # cli_mount not available — return empty stats (same shape as the usenet-mode fallback below)
+            download_stats_cache['active_downloads'] = {'count': 0, 'limit': 0, 'percentage': 0, 'status': 'error', 'error': 'no_provider'}
+            download_stats_cache['usage_stats'] = {'used': '0', 'limit': '0', 'percentage': 0, 'error': 'no_provider'}
+            download_stats_cache['last_update'] = current_time
+            return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+
+        if _use_usenet:
+            try:
+                _dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
+                _dcy_token = get_setting('Usenet Provider', 'api_token', default='').strip()
+                _dcy_enabled = get_setting('Usenet Provider', 'enabled', default=False)
+                if _dcy_enabled and _dcy_url:
+                    import requests as _rq
+                    _headers = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+                    _r = _rq.get(f'{_dcy_url}/debug/stats', headers=_headers, timeout=10)
+                    if _r.status_code == 200:
+                        _data = _r.json()
+                        _pool = _data.get('usenet', {}).get('pool', {})
+                        _active = _pool.get('active', 0)
+                        _idle = _pool.get('idle', 0)
+                        _max = _pool.get('max_connections', 0)
+                        _used = _active + _idle
+                        _pct = round((_used / _max * 100) if _max > 0 else 0)
+                        _status = 'critical' if _pct >= 90 else ('warning' if _pct >= 75 else 'normal')
+
+                        # Library size — subprocess du -sh inherits FUSE mount namespace, cached 30 min
+                        _library_size_str = _dcy_nzbs_size_cache.get('size', 'N/A')
+                        if time.time() - _dcy_nzbs_size_cache.get('last_update', 0) > 1800:
+                            try:
+                                import os as _os, subprocess as _sp
+                                _file_mgmt = get_setting('File Management', 'file_collection_management', 'Plex')
+                                _mount_raw = (get_setting('File Management', 'original_files_path', '')
+                                              if _file_mgmt == 'Symlinked/Local'
+                                              else get_setting('Plex', 'mounted_file_location', ''))
+                                if _mount_raw:
+                                    _base = _mount_raw.rstrip('/').replace('/__all__', '')
+                                    _nzbs_path = _base + '/nzbs'
+                                    logging.info(f"[LibSize] Checking nzbs path: {_nzbs_path}, exists={_os.path.isdir(_nzbs_path)}")
+                                    if _os.path.isdir(_nzbs_path):
+                                        _du = _sp.run(
+                                            ['du', '-sh', '--apparent-size', _nzbs_path],
+                                            capture_output=True, text=True, timeout=60
+                                        )
+                                        logging.info(f"[LibSize] du rc={_du.returncode} stdout={_du.stdout[:50]!r} stderr={_du.stderr[:50]!r}")
+                                        if _du.stdout.strip():  # accept output even if rc=1 (inaccessible files)
+                                            _library_size_str = _du.stdout.split('\t')[0].strip()
+                                            _dcy_nzbs_size_cache['size'] = _library_size_str
+                                            _dcy_nzbs_size_cache['last_update'] = time.time()
+                                            logging.info(f"[LibSize] nzbs size: {_library_size_str}")
+                            except Exception as _le:
+                                logging.info(f"[LibSize] nzbs size check failed: {_le}")
+
+                        # Broken NZBs from repair health
+                        _broken = _data.get('repair', {}).get('health', {}).get('broken', 0)
+
+                        download_stats_cache['active_downloads'] = {
+                            'count': _active,
+                            'idle': _idle,
+                            'limit': _max,
+                            'percentage': round((_active / _max * 100) if _max > 0 else 0),
+                            'status': _status,
+                            'error': None,
+                            'source': 'climount',
+                            'library_size': _library_size_str,
+                            'broken_nzbs': _broken,
+                        }
+                        download_stats_cache['usage_stats'] = {
+                            'used': str(_used),
+                            'limit': str(_max),
+                            'percentage': _pct,
+                            'error': None,
+                            'source': 'climount',
+                            'label': 'Connections'
+                        }
+                        download_stats_cache['last_update'] = current_time
+                        logging.debug(f"cli_mount stats: active={_active}, idle={_idle}, max={_max}, broken={_broken}, library={_library_size_str}")
+                        return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+            except Exception as _dcy_err:
+                logging.debug(f"cli_mount stats fetch failed: {_dcy_err}")
+            # cli_mount not available either — return empty stats
+            download_stats_cache['active_downloads'] = {'count': 0, 'limit': 0, 'percentage': 0, 'status': 'error', 'error': 'no_provider'}
+            download_stats_cache['usage_stats'] = {'used': '0', 'limit': '0', 'percentage': 0, 'error': 'no_provider'}
+            download_stats_cache['last_update'] = current_time
+            return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+
         try:
             # Add timeout protection for provider initialization
             provider = get_debrid_provider()
+            if not provider:
+                download_stats_cache['active_downloads'] = {'count': 0, 'limit': 0, 'percentage': 0, 'status': 'error', 'error': 'no_provider'}
+                download_stats_cache['usage_stats'] = {'used': '0', 'limit': '0', 'percentage': 0, 'error': 'no_provider'}
+                download_stats_cache['last_update'] = current_time
+                return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
             logging.debug("Debrid provider initialized successfully")
-            
+
             # Get active downloads with timeout protection
             try:
                 logging.debug("Fetching active downloads...")
@@ -115,15 +366,20 @@ def get_cached_download_stats():
                     }
             except Exception as e:
                 logging.error(f"Error getting active downloads: {str(e)}")
-                download_stats_cache['active_downloads'] = {
-                    'count': 0,
-                    'limit': 0,
-                    'percentage': 0,
-                    'status': 'error',
-                    'error': str(e)
-                }
+                # stale-if-error: keep the last good value if we have one; only
+                # surface an error state when there is nothing better to show.
+                _prev = download_stats_cache.get('active_downloads')
+                if not (_prev and _prev.get('error') is None):
+                    download_stats_cache['active_downloads'] = {
+                        'count': 0,
+                        'limit': 0,
+                        'percentage': 0,
+                        'status': 'error',
+                        'error': str(e)
+                    }
             
             # Get usage stats with timeout protection
+            usage = None
             try:
                 logging.debug("Fetching usage stats...")
                 usage = provider.get_user_traffic()
@@ -177,18 +433,21 @@ def get_cached_download_stats():
             except Exception as e:
                 logging.error(f"Error getting usage stats: {str(e)}")
                 logging.error(f"Raw usage data that caused error: {usage}")
-                download_stats_cache['usage_stats'] = {
-                    'used': '0 GB',
-                    'limit': '2000 GB',
-                    'percentage': 0,
-                    'error': str(e)
-                }
+                # stale-if-error: preserve the last good usage value if present.
+                _prev_usage = download_stats_cache.get('usage_stats')
+                if not (_prev_usage and _prev_usage.get('error') is None):
+                    download_stats_cache['usage_stats'] = {
+                        'used': '0 GB',
+                        'limit': '2000 GB',
+                        'percentage': 0,
+                        'error': str(e)
+                    }
 
             download_stats_cache['last_update'] = current_time
             logging.debug("Download stats cache updated successfully")
             
-        except ProviderUnavailableError as e:
-            logging.error(f"Provider unavailable: {str(e)}")
+        except ProviderUnavailableError:
+            pass  # No debrid key configured — expected on usenet-only setups
             if download_stats_cache['active_downloads'] is None:
                 download_stats_cache['active_downloads'] = {
                     'count': 0,
@@ -238,38 +497,81 @@ def get_cached_download_stats():
 
     return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
 
-def get_cached_subscription_status() -> Dict:
-    """Return cached subscription info, refreshing if needed (30 min cache window)."""
+def _refresh_subscription_blocking():
+    """Fetch subscription status from the provider (may block on provider I/O).
+
+    Always run OFF the request thread via _run_subscription_refresh. On a provider
+    error the last good value is preserved (stale-if-error)."""
     try:
-        current_time = time.time()
-        # If we have never populated subscription, or our overall cache TTL expired, refresh
-        if (download_stats_cache.get('subscription') is None or
-            download_stats_cache['last_update'] + 1800 < current_time):
-            provider = get_debrid_provider()
-            # Get fresh subscription status from provider
-            subscription = provider.get_subscription_status() if hasattr(provider, 'get_subscription_status') else {
-                'days_remaining': None,
-                'expiration': None,
-                'premium': None
-            }
-            download_stats_cache['subscription'] = subscription
-            # Do not touch last_update for download/usage cache cadence; subscription has its own TTL above
-        return download_stats_cache['subscription']
+        _debrid_key = get_setting('Debrid Provider', 'api_key', default='').strip()
+        provider = get_debrid_provider() if _debrid_key else None
+        subscription = provider.get_subscription_status() if provider and hasattr(provider, 'get_subscription_status') else {
+            'days_remaining': None,
+            'expiration': None,
+            'premium': None
+        }
+        download_stats_cache['subscription'] = subscription
+        download_stats_cache['subscription_update'] = time.time()
     except ProviderUnavailableError:
-        return {
-            'days_remaining': None,
-            'expiration': None,
-            'premium': None,
-            'error': 'provider_unavailable'
-        }
+        _prev = download_stats_cache.get('subscription')
+        if not (_prev and _prev.get('error') is None):
+            download_stats_cache['subscription'] = {
+                'days_remaining': None, 'expiration': None, 'premium': None,
+                'error': 'provider_unavailable'
+            }
     except Exception as e:
-        logging.error(f"Error getting cached subscription status: {str(e)}")
-        return {
-            'days_remaining': None,
-            'expiration': None,
-            'premium': None,
-            'error': str(e)
-        }
+        logging.error(f"Error refreshing subscription status: {str(e)}")
+        _prev = download_stats_cache.get('subscription')
+        if not (_prev and _prev.get('error') is None):
+            download_stats_cache['subscription'] = {
+                'days_remaining': None, 'expiration': None, 'premium': None,
+                'error': str(e)
+            }
+
+
+def _run_subscription_refresh():
+    """Background worker: run the blocking subscription refresh; clear the flag."""
+    global _sub_refresh_in_progress
+    try:
+        _refresh_subscription_blocking()
+    except Exception as e:
+        logging.error(f"Background subscription refresh failed: {str(e)}")
+    finally:
+        with _sub_refresh_lock:
+            _sub_refresh_in_progress = False
+
+
+def get_cached_subscription_status() -> Dict:
+    """Return subscription info, refreshing in the BACKGROUND (stale-while-revalidate).
+
+    The debrid call can block ~90s when the provider is down; the dashboard renders
+    this server-side, so we never call it on the request thread. Serve the last
+    cached value immediately; a cold start waits a short bounded time then returns
+    a neutral placeholder. (30-minute refresh cadence via _SUB_TTL.)
+    """
+    now = time.time()
+    sub = download_stats_cache.get('subscription')
+    fresh = sub is not None and (download_stats_cache.get('subscription_update', 0) + _SUB_TTL >= now)
+    if fresh:
+        return sub
+
+    global _sub_refresh_in_progress
+    started = False
+    with _sub_refresh_lock:
+        if not _sub_refresh_in_progress and (now - download_stats_cache.get('subscription_attempt', 0) >= _STATS_MIN_RETRY):
+            _sub_refresh_in_progress = True
+            download_stats_cache['subscription_attempt'] = now
+            started = True
+    if started:
+        _t = _threading.Thread(target=_run_subscription_refresh, name='subscription-refresh', daemon=True)
+        _t.start()
+        if sub is None:
+            _t.join(timeout=_STATS_COLD_START_WAIT)
+
+    sub = download_stats_cache.get('subscription')
+    if sub is not None:
+        return sub
+    return {'days_remaining': None, 'expiration': None, 'premium': None, 'error': None}
 
 def cache_for_seconds(seconds):
     """Cache the result of a function for the specified number of seconds."""

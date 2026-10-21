@@ -62,6 +62,9 @@ def get_item_by_imdb(imdb_id: str):
             season_data = {
                 'season': season.season_number,
                 'episode_count': season.episode_count,
+                'plex_guid': season.plex_guid,
+                'tmdb_id': season.tmdb_id,
+                'tvdb_id': season.tvdb_id,
                 'episodes': [],
             }
             if hasattr(season, 'episodes') and season.episodes:
@@ -69,8 +72,13 @@ def get_item_by_imdb(imdb_id: str):
                     episode_data = {
                         'episode_number': episode.episode_number,
                         'title': episode.title,
+                        'overview': episode.overview,
                         'absolute_episode': episode.absolute_episode,
                         'first_aired': episode.first_aired.isoformat() if episode.first_aired else None,
+                        'imdb_id': episode.imdb_id,
+                        'tmdb_id': episode.tmdb_id,
+                        'tvdb_id': episode.tvdb_id,
+                        'plex_guid': episode.plex_guid,
                     }
                     season_data['episodes'].append(episode_data)
             seasons.append(season_data)

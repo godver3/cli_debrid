@@ -12,7 +12,7 @@ from .media_matcher import MediaMatcher
 class PendingUncachedQueue:
     def __init__(self):
         self.items = []
-        self.debrid_provider = get_debrid_provider()
+        self.debrid_provider = get_debrid_provider()  # May be None for usenet-only setups
         self.adding_queue = AddingQueue()
         self.torrent_processor = TorrentProcessor(self.debrid_provider)
         self.media_matcher = MediaMatcher()
@@ -45,9 +45,14 @@ class PendingUncachedQueue:
         self.items = [i for i in self.items if i['id'] != item['id']]
 
     def process(self, queue_manager):
+        if self.debrid_provider is None:
+            return
         logging.debug(f"Processing pending uncached queue. Items: {len(self.items)}")
-        
-        active_downloads, download_limit = self.debrid_provider.get_active_downloads()
+
+        try:
+            active_downloads, download_limit = self.debrid_provider.get_active_downloads()
+        except Exception:
+            return
         
         if active_downloads >= download_limit:
             logging.info("Download limit reached. Stopping pending uncached queue processing.")
@@ -160,10 +165,76 @@ class PendingUncachedQueue:
             title=item.get('title', ''),
             link=item.get('filled_by_magnet', ''),
             filled_by_file=filename,
-            torrent_id=torrent_id
+            torrent_id=torrent_id,
+            debrid_provider=self.debrid_provider.PROVIDER_NAME
         )
         self.remove_item(item)
-            
+
+        # Debrid File Naming: rename cli_mount DFS folder using structured CLI name
+        _dbn_hash3 = torrent_info.get('hash', '').lower()
+        if _dbn_hash3:
+            try:
+                from utilities.settings import get_setting as _dbn_gs3
+                if _dbn_gs3('Debrid Provider', 'enable_debrid_naming', False):
+                    from routes.scraper_routes import _build_debrid_title
+                    _dbn_mt3 = 'tv' if item.get('type') == 'episode' else item.get('type', '')
+                    _dbn_orig3 = item.get('original_scraped_torrent_title') or item.get('filled_by_title', '')
+                    _dbn_title3 = _build_debrid_title(
+                        title=item.get('title', ''),
+                        year=item.get('year', ''),
+                        imdb_id=item.get('imdb_id'),
+                        version=item.get('version', ''),
+                        original_scraped_torrent_title=_dbn_orig3,
+                        media_type=_dbn_mt3,
+                        season=item.get('season_number'),
+                        episode=item.get('episode_number'),
+                        episode_title=item.get('episode_title'),
+                        tags=item.get('tags') or None,
+                        content_source_display_name=item.get('content_source_detail') or item.get('content_source'),
+                    )
+                    if _dbn_title3 and _dbn_title3 != _dbn_orig3:
+                        import threading as _dbn_t3
+                        _dbn_item_id3 = item.get('id')
+                        def _do_rename3(h, name, item_id):
+                            import time as _t
+                            try:
+                                from usenet import get_usenet_client
+                                _dc3 = get_usenet_client()
+                                if not hasattr(_dc3, 'rename_nzb'):
+                                    return  # active usenet provider (e.g. nzbdav) has no rename semantics
+                                # cli_mount only registers an entry as queryable-by-hash after its
+                                # own periodic sync (default ~10 min) — a 404 in the first several
+                                # attempts is expected, not proof the entry is gone. Only treat 404
+                                # as final once it's persisted for that long (20 attempts x 30s).
+                                _consecutive_404_3 = 0
+                                for _a3 in range(100):
+                                    _renamed3, _not_found3 = _dc3.rename_nzb_with_status(h, name)
+                                    if _not_found3:
+                                        _consecutive_404_3 += 1
+                                        if _consecutive_404_3 >= 20:
+                                            logging.warning(f'[DebridNaming] {h!r} not found in cli_mount (404) for {_consecutive_404_3} consecutive attempts — giving up (pending uncached)')
+                                            return
+                                    else:
+                                        _consecutive_404_3 = 0
+                                    if _renamed3:
+                                        logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} (pending uncached)')
+                                        if item_id:
+                                            try:
+                                                from database.database_writing import update_media_item as _umi
+                                                _umi(item_id, debrid_folder_name=name)
+                                            except Exception as _db_err:
+                                                logging.debug(f'[DebridNaming] DB update failed (pending uncached): {_db_err}')
+                                            _dc3.register_cli_ids_for_item(h, item_id)
+                                            _dc3.push_tags_for_item(h, item_id)
+                                        return
+                                    _t.sleep(30)
+                                logging.warning(f'[DebridNaming] Could not rename {h!r} after 100 attempts (pending uncached)')
+                            except Exception as _e3:
+                                logging.debug(f'[DebridNaming] Rename error (pending uncached): {_e3}')
+                        _dbn_t3.Thread(target=_do_rename3, args=(_dbn_hash3, _dbn_title3, _dbn_item_id3), daemon=True).start()
+            except Exception as _dbn_ex3:
+                logging.debug(f'[DebridNaming] Setup error (pending uncached): {_dbn_ex3}')
+
         # Check for related items if it's an episode
         if item.get('type') == 'episode':
             logging.debug(f"Checking for related episodes for {item_identifier}")
@@ -202,7 +273,8 @@ class PendingUncachedQueue:
                     title=related_item_dict.get('title', ''),
                     link=main_item_magnet_link, # Use the main item's magnet link
                     filled_by_file=related_filename_basename,
-                    torrent_id=torrent_id
+                    torrent_id=torrent_id,
+                    debrid_provider=self.debrid_provider.PROVIDER_NAME
                 )
                 # These items are from 'Scraping' or 'Wanted' queues, not self.items.
                 # Their state transition is handled by move_to_checking.

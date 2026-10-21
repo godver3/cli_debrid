@@ -5,6 +5,7 @@ from plexapi.exceptions import Unauthorized, NotFound
 import requests
 from urllib.parse import urlparse
 from trakt.core import get_device_code
+from utilities.jellyfin_auth import jellyfin_auth_headers
 
 settings_validation_bp = Blueprint('settings_validation', __name__)
 
@@ -140,6 +141,58 @@ def validate_debrid_api_key(api_key, provider="RealDebrid"):
         except requests.exceptions.RequestException as e:
             return False, f"Error validating AllDebrid API key: {str(e)}"
 
+    elif provider == "Torbox":
+        try:
+            response = requests.get(
+                "https://api.torbox.app/v1/api/user/me",
+                headers={'Authorization': f'Bearer {api_key}'},
+                timeout=10
+            )
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    if data.get('success') is True:
+                        return True, "Torbox API key is valid"
+                    return False, "Invalid Torbox API response"
+                except ValueError:
+                    return False, "Invalid Torbox API response format"
+            elif response.status_code == 401:
+                return False, "Invalid Torbox API key"
+            elif response.status_code == 403:
+                return False, "Access denied - please check your Torbox API key"
+            else:
+                return False, f"Torbox API error (HTTP {response.status_code})"
+        except requests.exceptions.Timeout:
+            return False, "Timeout while validating Torbox API key"
+        except requests.exceptions.RequestException as e:
+            return False, f"Error validating Torbox API key: {str(e)}"
+
+    elif provider == "DebridLink":
+        try:
+            response = requests.get(
+                "https://debrid-link.com/api/v2/account/infos",
+                headers={'Authorization': f'Bearer {api_key}'},
+                timeout=10
+            )
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    if data.get('success') is True:
+                        return True, "Debrid-Link API key is valid"
+                    return False, "Invalid Debrid-Link API response"
+                except ValueError:
+                    return False, "Invalid Debrid-Link API response format"
+            elif response.status_code == 401:
+                return False, "Invalid Debrid-Link API key"
+            elif response.status_code == 403:
+                return False, "Access denied - please check your Debrid-Link API key"
+            else:
+                return False, f"Debrid-Link API error (HTTP {response.status_code})"
+        except requests.exceptions.Timeout:
+            return False, "Timeout while validating Debrid-Link API key"
+        except requests.exceptions.RequestException as e:
+            return False, f"Error validating Debrid-Link API key: {str(e)}"
+
     return False, f"Unsupported debrid provider: {provider}"
 
 def validate_trakt_credentials(client_id, client_secret):
@@ -147,11 +200,13 @@ def validate_trakt_credentials(client_id, client_secret):
     if not client_id or not client_secret:
         return False, "Both Client ID and Client Secret are required"
     
-    # Validate format
-    if len(client_id) != 64:
-        return False, "Invalid Trakt Client ID format (must be 64 characters)"
-    if len(client_secret) != 64:
-        return False, "Invalid Trakt Client Secret format (must be 64 characters)"
+    # Validate basic sanity (Trakt has changed key lengths over time, so we
+    # avoid hardcoding an exact character count and only guard against
+    # obviously-wrong input, e.g. empty/placeholder text pasted by mistake).
+    if len(client_id.strip()) < 10:
+        return False, "Invalid Trakt Client ID format (too short)"
+    if len(client_secret.strip()) < 10:
+        return False, "Invalid Trakt Client Secret format (too short)"
     
     try:
         # Try to get a device code - this validates both client ID and secret
@@ -234,15 +289,8 @@ def validate_onboarding_settings():
                 'message': original_message
             })
             all_valid = all_valid and original_valid
-    # If update_plex_on_file_discovery is not enabled, only validate if path is provided
-    elif original_path:
-        original_valid, original_message = validate_path_exists(original_path)
-        validation_checks.append({
-            'name': 'Original Files Path',
-            'valid': original_valid,
-            'message': original_message
-        })
-        all_valid = all_valid and original_valid
+    # If update_plex_on_file_discovery is not enabled, original_files_path is optional
+    # during onboarding — skip validation even if a default value is pre-filled
 
     if management_type in ['plex_direct', 'plex_symlink', 'Plex']:
         # Validate Plex settings
@@ -288,11 +336,10 @@ def validate_onboarding_settings():
                 })
                 all_valid = False
 
-    if management_type in ['plex_symlink', 'Local']:
+    if management_type in ['plex_symlink', 'Local', 'Symlinked/Local']:
         # Validate symlink settings
         symlink_path = settings_data.get('symlinked_files_path', '')
-        
-        # Only validate symlink setup if both paths are provided
+
         if symlink_path and original_path:
             symlink_valid, symlink_message = validate_symlink_setup(original_path, symlink_path)
             validation_checks.append({
@@ -302,46 +349,102 @@ def validate_onboarding_settings():
             })
             all_valid = all_valid and symlink_valid
         elif symlink_path:
-            # If only symlink path is provided (original path is optional)
             validation_checks.append({
                 'name': 'Symlink Configuration',
                 'valid': True,
                 'message': 'Symlink path is configured'
             })
 
-        # If Plex integration is configured for symlinks, validate those settings
-        plex_url = settings_data.get('plex_url_for_symlink', '')
-        plex_token = settings_data.get('plex_token_for_symlink', '')
-        if plex_url and plex_token:
-            plex_valid, plex_message = validate_plex_settings(plex_url, plex_token)
-            validation_checks.append({
-                'name': 'Plex Integration (Optional)',
-                'valid': plex_valid,
-                'message': plex_message
-            })
-            # Don't affect all_valid since this is optional
+        # Check which media server is configured (optional)
+        symlink_media_server = settings_data.get('symlink_media_server', 'none')
 
-    # Validate Debrid settings
-    debrid_provider = settings_data.get('debrid_provider', 'RealDebrid')
-    debrid_api_key = settings_data.get('debrid_api_key', '')
-    debrid_valid, debrid_message = validate_debrid_api_key(debrid_api_key, debrid_provider)
-    validation_checks.append({
-        'name': 'Debrid Provider',
-        'valid': debrid_valid,
-        'message': debrid_message
-    })
-    all_valid = all_valid and debrid_valid
+        if symlink_media_server == 'plex':
+            plex_url = settings_data.get('plex_url_for_symlink', '')
+            plex_token = settings_data.get('plex_token_for_symlink', '')
+            if plex_url and plex_token:
+                plex_valid, plex_message = validate_plex_settings(plex_url, plex_token)
+                validation_checks.append({
+                    'name': 'Plex Connection',
+                    'valid': plex_valid,
+                    'message': plex_message
+                })
+                # Don't affect all_valid — media server is optional
+        elif symlink_media_server == 'jellyfin':
+            jellyfin_url = settings_data.get('emby_jellyfin_url', '')
+            jellyfin_token = settings_data.get('emby_jellyfin_token', '')
+            if jellyfin_url and jellyfin_token:
+                try:
+                    import requests as _req
+                    resp = _req.get(f"{jellyfin_url.rstrip('/')}/System/Info",
+                                    headers=jellyfin_auth_headers(jellyfin_token), timeout=5)
+                    jf_valid = resp.status_code == 200
+                    jf_message = 'Jellyfin connection successful' if jf_valid else f'Jellyfin returned status {resp.status_code}'
+                except Exception as e:
+                    jf_valid = False
+                    jf_message = f'Error connecting to Jellyfin: {str(e)}'
+                validation_checks.append({
+                    'name': 'Jellyfin Connection',
+                    'valid': jf_valid,
+                    'message': jf_message
+                })
+                # Don't affect all_valid — media server is optional
+        else:
+            # Fallback: check old-style plex_url_for_symlink fields (backwards compat)
+            plex_url = settings_data.get('plex_url_for_symlink', '')
+            plex_token = settings_data.get('plex_token_for_symlink', '')
+            if plex_url and plex_token:
+                plex_valid, plex_message = validate_plex_settings(plex_url, plex_token)
+                validation_checks.append({
+                    'name': 'Plex Integration (Optional)',
+                    'valid': plex_valid,
+                    'message': plex_message
+                })
 
-    # Validate Trakt settings
+    # Validate Debrid or Usenet provider
+    provider_type = settings_data.get('provider_type', 'debrid')
+    if provider_type == 'usenet':
+        usenet_url = settings_data.get('usenet_url', '').strip()
+        if usenet_url:
+            try:
+                usenet_token = settings_data.get('usenet_api_token', '')
+                headers = {'Authorization': f'Bearer {usenet_token}'} if usenet_token else {}
+                r = requests.get(f"{usenet_url.rstrip('/')}/version", headers=headers, timeout=10)
+                if r.status_code == 200:
+                    provider_valid, provider_message = True, "Successfully connected to cli_mount"
+                else:
+                    provider_valid, provider_message = False, f"cli_mount returned HTTP {r.status_code}"
+            except Exception as e:
+                provider_valid, provider_message = False, f"Could not connect to cli_mount: {str(e)}"
+        else:
+            provider_valid, provider_message = False, "cli_mount URL is required"
+        validation_checks.append({
+            'name': 'Usenet Provider (cli_mount)',
+            'valid': provider_valid,
+            'message': provider_message
+        })
+    else:
+        debrid_provider = settings_data.get('debrid_provider', 'RealDebrid')
+        debrid_api_key = settings_data.get('debrid_api_key', '')
+        provider_valid, provider_message = validate_debrid_api_key(debrid_api_key, debrid_provider)
+        validation_checks.append({
+            'name': 'Debrid Provider',
+            'valid': provider_valid,
+            'message': provider_message
+        })
+    all_valid = all_valid and provider_valid
+
+    # Validate Trakt settings — Trakt is optional, so only validate (and gate
+    # all_valid on) it if the user actually entered credentials.
     trakt_client_id = settings_data.get('trakt_client_id', '')
     trakt_client_secret = settings_data.get('trakt_client_secret', '')
-    trakt_valid, trakt_message = validate_trakt_credentials(trakt_client_id, trakt_client_secret)
-    validation_checks.append({
-        'name': 'Trakt Configuration',
-        'valid': trakt_valid,
-        'message': trakt_message
-    })
-    all_valid = all_valid and trakt_valid
+    if trakt_client_id or trakt_client_secret:
+        trakt_valid, trakt_message = validate_trakt_credentials(trakt_client_id, trakt_client_secret)
+        validation_checks.append({
+            'name': 'Trakt Configuration',
+            'valid': trakt_valid,
+            'message': trakt_message
+        })
+        all_valid = all_valid and trakt_valid
 
     return jsonify({
         'valid': all_valid,

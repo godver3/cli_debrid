@@ -18,6 +18,8 @@ import threading
 import uuid
 from datetime import timedelta
 import os
+import stat
+from werkzeug.security import safe_join
 from tld import get_tld
 from tld.exceptions import TldDomainNotFound, TldBadUrl
 from flask_session import Session
@@ -41,14 +43,18 @@ class InMemorySession(CallbackDict, SessionMixin):
         self.modified = False
         self.created = created or time.time()
 
+# Flask-Login writes these keys into every session (including anonymous ones).
+# Sessions that contain only these keys hold no app state and can be skipped.
+_FLASK_LOGIN_INTERNAL_KEYS = frozenset({'_id', '_fresh', '_remember', '_remember_seconds', 'user_id'})
+
 class InMemorySessionInterface(SessionInterface):
     """Simple in-memory session interface that avoids file system issues"""
-    
+
     # Class-level storage for all sessions with creation timestamps
     # Format: {sid: (pickled_data, created_timestamp)}
     session_store = {}
     last_cleanup = time.time()
-    
+
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
@@ -78,32 +84,30 @@ class InMemorySessionInterface(SessionInterface):
                 )
             return
         
+        # When the user system is disabled, every unauthenticated request
+        # (polls, API calls, etc.) causes Flask-Login to write an `_id` key
+        # into a brand-new session.  Since API clients don't echo the cookie
+        # back, each request allocates a fresh entry that is never reused and
+        # won't expire for 31 days.  Skip saving sessions that contain only
+        # Flask-Login internal keys — they hold no app state.
+        try:
+            if not is_user_system_enabled():
+                app_keys = set(session.keys()) - _FLASK_LOGIN_INTERNAL_KEYS
+                if not app_keys:
+                    return  # Nothing worth persisting; don't store or set cookie
+        except Exception:
+            pass
+
         # Save the session data in the in-memory store with creation time
         created = getattr(session, 'created', time.time())
-        prev_count = len(self.session_store)
         self.session_store[session.sid] = (pickle.dumps(dict(session)), created)
 
-        # --------------------------------------------------------------
-        #  DEBUG ‑ Memory-leak investigation (anonymous session growth)
-        # --------------------------------------------------------------
-        # When the user system is DISABLED we expect many short-lived
-        # anonymous requests.  Each request that fails to send back the
-        # session cookie will allocate a new entry in `session_store`.
-        # The following lightweight logging helps confirm that behaviour
-        # without flooding the logs.
-        try:
-            if not is_user_system_enabled():  # Only track when feature OFF
-                new_count = len(self.session_store)
-                if new_count != prev_count:
-                    # Log every 50th new session (first <50 always logged)
-                    if new_count < 50 or new_count % 50 == 0:
-                        self.logger.info(
-                            f"[MemLeakDebug] Anonymous session added (total: {new_count})")
-        except Exception:
-            # Never let debug instrumentation break normal flow
-            pass
-        # --------------------------------------------------------------
-        
+        # Hard cap: if the store has grown very large, force an immediate
+        # cleanup regardless of the time-based interval.
+        if len(self.session_store) > 200:
+            self._cleanup_sessions(app)
+            self.last_cleanup = time.time()
+
         # Set the cookie with the session ID
         httponly = self.get_cookie_httponly(app)
         secure = self.get_cookie_secure(app)
@@ -264,25 +268,54 @@ class SameSiteMiddleware:
 from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
-app = Flask(__name__, 
+app = Flask(__name__,
            template_folder='../templates',
            static_folder='../static')
+
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # disable static file caching
 
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.wsgi_app = SameSiteMiddleware(app.wsgi_app)
 
-# Enable gzip/brotli compression for better performance (only if available and enabled in settings)
 config = load_config()
 enable_caching = config.get('UI Settings', {}).get('enable_caching', False)
 
-if enable_caching and COMPRESS_AVAILABLE:
+# Compress HTML, JSON, JS and CSS responses. SSE streams are text/event-stream,
+# which is not in COMPRESS_MIMETYPES, so they are never buffered.
+if COMPRESS_AVAILABLE:
     compress = Compress()
     compress.init_app(app)
-    logging.info("Flask-Compress enabled for gzip/brotli compression")
-elif enable_caching and not COMPRESS_AVAILABLE:
-    logging.warning("Caching enabled in settings but Flask-Compress not available. Install with: pip install Flask-Compress==1.15")
-elif not enable_caching:
-    logging.info("Web caching is disabled in settings (UI Settings > Enable Caching)")
+else:
+    logging.warning("Flask-Compress not available; responses are sent uncompressed. Install with: pip install Flask-Compress==1.15")
+
+# Unversioned static URLs revalidate on every use (cheap 304s)
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+
+
+def _static_version(filename):
+    """Version token for a static file: its mtime, or None if not a file."""
+    if not filename:
+        return None
+    try:
+        path = safe_join(app.static_folder, filename)
+        if path is None:
+            return None
+        st = os.stat(path)
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        return None
+    return str(int(st.st_mtime))
+
+
+@app.url_defaults
+def _add_static_version(endpoint, values):
+    # url_for('static', filename=...) gets ?v=<mtime>: the URL changes whenever
+    # the file does, so the browser can cache it indefinitely (see below).
+    if endpoint == 'static' and 'v' not in values:
+        version = _static_version(values.get('filename'))
+        if version:
+            values['v'] = version
 
 # Configure Flask session settings
 app.config['SESSION_TYPE'] = 'filesystem'  # Using a valid type for Flask-Session
@@ -374,10 +407,26 @@ def initialize_app():
             db.create_all()
         else:
             columns = [c['name'] for c in inspector.get_columns('user')]
-            if 'is_default' not in columns:
-                with db.engine.connect() as conn:
+            with db.engine.connect() as conn:
+                if 'is_default' not in columns:
                     conn.execute(db.text('ALTER TABLE user ADD COLUMN is_default BOOLEAN'))
-                    conn.commit()
+                if 'oidc_sub' not in columns:
+                    conn.execute(db.text('ALTER TABLE user ADD COLUMN oidc_sub VARCHAR(255)'))
+                if 'oidc_provider' not in columns:
+                    conn.execute(db.text('ALTER TABLE user ADD COLUMN oidc_provider VARCHAR(50)'))
+                if 'email' not in columns:
+                    conn.execute(db.text('ALTER TABLE user ADD COLUMN email VARCHAR(255)'))
+                if 'api_token' not in columns:
+                    conn.execute(db.text('ALTER TABLE user ADD COLUMN api_token VARCHAR(48)'))
+                conn.commit()
+        # Backfill api_token for any users that don't have one
+        from routes.auth_routes import User, _generate_api_token
+        users_without_token = User.query.filter(User.api_token == None).all()
+        if users_without_token:
+            for u in users_without_token:
+                u.api_token = _generate_api_token()
+            db.session.commit()
+            logging.info(f"Generated API tokens for {len(users_without_token)} existing user(s)")
         create_default_admin()
 
 def is_behind_proxy():
@@ -419,8 +468,15 @@ def add_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
 
-    # Only add cache control headers if caching is enabled in settings
-    if enable_caching:
+    # A static URL carrying its file's current mtime token (url_for adds it)
+    # changes whenever the file does, so it can be cached for good.
+    # Hand-written ?v= values don't qualify.
+    if (request.path.startswith('/static/') and response.status_code in (200, 304)
+            and request.args.get('v')
+            and request.args.get('v') == _static_version(request.path[len('/static/'):])):
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    # Otherwise only add cache control headers if caching is enabled in settings
+    elif enable_caching:
         # Add cache control headers for static assets
         if request.path.startswith('/static/'):
             # Special handling for CSS files - shorter cache with revalidation to support theme switching

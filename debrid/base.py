@@ -55,9 +55,52 @@ class RateLimitError(DebridProviderError):
     """Exception raised when the debrid service rate limit is exceeded"""
     pass
 
+# HTTP statuses that describe the provider or the account, never the torrent:
+# auth, rate limit, a per-provider legal block (451) and server errors.
+_PROVIDER_FAULT_HTTP_CODES = {401, 403, 408, 429, 451}
+_PROVIDER_FAULT_MARKERS = ('temporarily unavailable', 'temporary', 'timed out', 'timeout',
+                           'connection', 'too_many', 'too many')
+
+def is_provider_fault(exc: BaseException) -> bool:
+    """True when a cache-check/add error says the provider can't serve the hash
+    right now (451 legal block, rate limit, outage, auth, account full) rather
+    than that the torrent itself is bad. Callers must not add the hash to the
+    install-wide not-wanted list for these: another provider in the chain may
+    serve it, and the same provider may serve it later."""
+    import re
+    import requests
+    # Raised by add_torrent for torrent problems (no video files, metadata
+    # never arrived) - those stay blacklistable.
+    if isinstance(exc, TorrentAdditionError):
+        return False
+    if isinstance(exc, (RateLimitError, TooManyDownloadsError,
+                        requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+        return True
+    if type(exc).__name__.endswith('AuthError'):
+        return True
+    msg = str(exc)
+    status = re.search(r'\b([45]\d\d)\b', msg)
+    if status:
+        code = int(status.group(1))
+        return code in _PROVIDER_FAULT_HTTP_CODES or code >= 500
+    if isinstance(exc, ProviderUnavailableError):
+        return True
+    lowered = msg.lower()
+    return any(marker in lowered for marker in _PROVIDER_FAULT_MARKERS)
+
 class DebridProvider(ABC):
-    """Abstract base class that defines the interface for debrid providers"""
-    
+    """Abstract base class that defines the interface for debrid providers.
+
+    When adding a new provider (TorBox, Premiumize, etc.) implement every
+    @abstractmethod and set PROVIDER_NAME to the human-readable display name.
+    The rest of the application (routes, templates) uses PROVIDER_NAME so no
+    other file needs to be updated for the name to display correctly.
+    """
+
+    # Human-readable display name for the provider.
+    # Override in every subclass — used by the UI and routes.
+    PROVIDER_NAME: str = "Debrid"
+
     def __init__(self, api_key: str = None, rate_limit: float = 0.5):
         """Initialize the provider"""
         self.rate_limiter = RateLimiter(calls_per_second=rate_limit)
@@ -133,13 +176,39 @@ class DebridProvider(ABC):
         pass
     
     @abstractmethod
+    def get_subscription_status(self) -> Dict:
+        """Return subscription and user profile information.
+
+        All providers MUST return at minimum:
+            days_remaining  : int | None   — days left on subscription
+            expiration      : str | None   — ISO-8601 expiration date
+            premium         : bool         — whether account is premium
+            username        : str          — account username
+            email           : str          — account email
+            points          : int | float  — loyalty/fidelity points (0 if n/a)
+            locale          : str          — account locale/language
+            type            : str          — account type string
+
+        Additional provider-specific keys are allowed.
+        On error return a dict with at least {'error': str}.
+        """
+        pass
+
+    @abstractmethod
     def get_active_downloads(self) -> Tuple[int, int]:
         """Get number of active downloads and the concurrent download limit"""
         pass
-    
+
     @abstractmethod
     def get_user_traffic(self) -> Dict:
-        """Get user traffic/usage information"""
+        """Return traffic/usage information.
+
+        Providers that have daily traffic history SHOULD include:
+            traffic_details : Dict[date_str, {'bytes': int, 'host': Dict}]
+
+        Providers without daily traffic (e.g. AllDebrid) return:
+            {'downloaded': 0, 'limit': None}
+        """
         pass
 
     @abstractmethod
@@ -202,8 +271,8 @@ class DebridProvider(ABC):
         active_count, max_downloads = self.get_active_downloads()
         return active_torrents, (active_count, max_downloads)
 
-    def is_cached_sync(self, magnet_link: str, temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, skip_phalanx_db: bool = False) -> Union[bool, Dict[str, bool], None]:
-        """Synchronous version of is_cached"""
+    def is_cached_sync(self, magnet_link: str, temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, skip_phalanx_db: bool = False, **kwargs) -> Union[bool, Dict[str, bool], None]:
+        """Synchronous version of is_cached — passes all kwargs through to the async method."""
         import asyncio
         try:
             # Create a new event loop for this thread if one doesn't exist
@@ -212,10 +281,11 @@ class DebridProvider(ABC):
             except RuntimeError:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-            
-            # Run the async method in the event loop
+
+            # Run the async method in the event loop, forwarding all extra kwargs
             return loop.run_until_complete(
-                self.is_cached(magnet_link, temp_file_path, result_title, result_index, remove_uncached, skip_phalanx_db=skip_phalanx_db)
+                self.is_cached(magnet_link, temp_file_path, result_title, result_index,
+                               remove_uncached, skip_phalanx_db=skip_phalanx_db, **kwargs)
             )
         except Exception as e:
             logging.error(f"Error in is_cached_sync: {str(e)}")

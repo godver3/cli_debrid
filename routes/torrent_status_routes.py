@@ -20,8 +20,13 @@ def get_torrent_status():
     try:
        
         # Get the configured debrid provider instance
-        provider = get_debrid_provider()
-        
+        try:
+            provider = get_debrid_provider()
+        except Exception:
+            provider = None
+        if not provider:
+            return jsonify({"error": "No debrid provider configured"}), 503
+
         # Get active torrents and stats using the provider
         active_torrents, download_stats = provider.get_torrent_status()
         

@@ -1,0 +1,149 @@
+{
+  "_comment": "cli_debrid OpenClaw Skill Definition — Phase 6",
+  "_instructions": [
+    "TOKEN NOTE: The token here is the same 'OpenClaw Token' value you already set in cli_debrid Settings → AI Assistant.",
+    "It is the token OpenClaw uses to authenticate TO cli_debrid — not a separate cli_debrid password.",
+    "Authentication is passed as a query parameter (?token=...) rather than an Authorization header, for compatibility with clients that cannot set custom headers.",
+    "If you left OpenClaw Token blank in cli_debrid settings, remove the auth block below (the endpoints will be open).",
+    "",
+    "SETUP:",
+    "1. Replace <CLI_DEBRID_URL> with your cli_debrid URL (e.g. http://192.168.1.24:5000).",
+    "2. Replace <YOUR_OPENCLAW_TOKEN> with the token from cli_debrid Settings → AI Assistant → OpenClaw Token.",
+    "3. Copy this file to your OpenClaw config/skills/ directory.",
+    "4. Reload OpenClaw and assign this skill to your agent.",
+    "5. You can then ask your agent (via Telegram, WhatsApp, Discord, etc.): 'What is downloading?', 'Is Breaking Bad collected?', 'Add The Bear to my library'"
+  ],
+  "name": "cli_debrid",
+  "description": "Query and control the cli_debrid media automation application. Provides queue status, library search, recently collected items, and the ability to add titles to the library.",
+  "version": "1.0.0",
+  "base_url": "<CLI_DEBRID_URL>",
+  "auth": {
+    "type": "query",
+    "param": "token",
+    "value": "<YOUR_OPENCLAW_TOKEN>"
+  },
+  "tools": [
+    {
+      "name": "queue_status",
+      "description": "Get the current queue counts (Wanted, Scraping, Adding, Checking, Collecting, Upgrading, Sleeping, Blacklisted) and whether the program is running. Use this when asked 'what is downloading?', 'is the program running?', or 'how many items are in the queue?'",
+      "method": "GET",
+      "path": "/api/ai/tools/queue_status",
+      "parameters": []
+    },
+    {
+      "name": "library_stats",
+      "description": "Get library statistics: total collected movies/shows/episodes, total wanted, total blacklisted, and items collected in the last 24 hours. Use this for 'how many movies do I have?', 'what was recently added?'",
+      "method": "GET",
+      "path": "/api/ai/tools/library_stats",
+      "parameters": []
+    },
+    {
+      "name": "recently_collected",
+      "description": "List the most recently collected media items with title, year, type, and version. Use this for 'what was just downloaded?', 'show me recent additions'.",
+      "method": "GET",
+      "path": "/api/ai/tools/recently_collected",
+      "parameters": [
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Number of items to return (default 20, max 50)",
+          "required": false,
+          "type": "integer",
+          "default": 20
+        }
+      ]
+    },
+    {
+      "name": "search_library",
+      "description": "Search the collected library by title. Returns matching items with their state (Collected, Wanted, etc.). Use this for 'is X in my library?', 'do I have X?', 'is X collected?'",
+      "method": "GET",
+      "path": "/api/ai/tools/search_library",
+      "parameters": [
+        {
+          "name": "q",
+          "in": "query",
+          "description": "Search term (title substring)",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "type",
+          "in": "query",
+          "description": "Filter by type: 'movie' or 'episode'. Omit for all.",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "add_to_library",
+      "description": "Add a movie or TV show to the cli_debrid wanted list so it will be downloaded. Use this when asked to 'add X to my library', 'download X', 'request X'. Always confirm with the user before calling this tool.",
+      "method": "POST",
+      "path": "/api/ai/tools/add_to_library",
+      "parameters": [
+        {
+          "name": "title",
+          "in": "body",
+          "description": "Title of the movie or show",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "year",
+          "in": "body",
+          "description": "Release year (helps disambiguate titles)",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "media_type",
+          "in": "body",
+          "description": "Either 'movie' or 'tv'",
+          "required": true,
+          "type": "string",
+          "enum": ["movie", "tv"]
+        },
+        {
+          "name": "imdb_id",
+          "in": "body",
+          "description": "IMDB ID (e.g. tt1234567) — optional, improves accuracy",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "send_notification",
+      "description": "Send a message to the user via their configured external notification channels (Discord, Telegram, Apprise, etc.). Use this when the user asks you to send them a notification or alert — for example 'send me a notification about the queue status', 'notify me of the upgrade scan results', or 'send me a reminder'. Always compose a clear, concise message.",
+      "method": "POST",
+      "path": "/api/ai/tools/send_notification",
+      "parameters": [
+        {
+          "name": "message",
+          "in": "body",
+          "description": "The notification body text to send",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "title",
+          "in": "body",
+          "description": "Optional title/subject line. Defaults to 'AI Butler'.",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "example_prompts": [
+    "What is currently downloading?",
+    "How many items are in the queue?",
+    "Is Breaking Bad in my library?",
+    "What was recently collected?",
+    "How many movies do I have?",
+    "Add The Bear (2022) to my library",
+    "Is the program running?",
+    "Send me a notification about the current queue status",
+    "Notify me about the upgrade scan results"
+  ]
+}

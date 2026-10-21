@@ -1,81 +1,288 @@
 {% extends "base.html" %}
 
-{% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/inline.css') }}">
-{% endblock %}
 {% block title %}Manage Users{% endblock %}
+
 {% block content %}
-<div class="manage-users">
-    <h2>Manage Users</h2>
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            <ul class="flash-messages">
-            {% for category, message in messages %}
-                <li class="flash-message {{ category }}">{{ message }}</li>
-            {% endfor %}
-            </ul>
-        {% endif %}
-    {% endwith %}
-    <table class="user-list">
-        <thead>
-            <tr>
-                <th>Username</th>
-                <th>Role</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for user in users %}
-            <tr data-user-id="{{ user.id }}">
-                <td>{{ user.username }}</td>
-                <td>{{ user.role }}</td>
-                <td>
-                    {% if user.role == 'admin' %}
-                        {% set admin_count = users|selectattr('role', 'equalto', 'admin')|list|length %}
-                        {% if admin_count > 1 %}
-                            <button class="delete-button" data-user-id="{{ user.id }}">Delete</button>
-                        {% else %}
-                            <span style="font-style: italic;">Cannot Delete</span>
-                        {% endif %}
-                    {% else %}
-                        <button class="delete-button" data-user-id="{{ user.id }}">Delete</button>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
+<style>
+*{box-sizing:border-box}
+:root{
+  --mu-bg:#111;--mu-surface:#1a1a1a;--mu-surface2:#222;--mu-surface3:#2a2a2a;
+  --mu-border:#333;--mu-border2:#3d3d3d;--mu-accent:#e8601c;
+  --mu-text:#e0e0e0;--mu-text2:#aaa;--mu-text3:#666;
+  --mu-green:#22c55e;--mu-red:#ef4444;--mu-blue:#3b82f6;--mu-yellow:#f59e0b;
+  --mu-sans:'Inter',system-ui,sans-serif;
+}
+
+.mu-wrap{max-width:860px;margin:0 auto;padding:1.5rem 1.25rem;font-family:var(--mu-sans);font-size:13px;color:var(--mu-text)}
+
+.mu-page-title{font-size:20px;font-weight:700;color:var(--mu-text);border-left:3px solid var(--mu-accent);padding-left:10px;margin-bottom:1.5rem}
+
+.mu-card{background:var(--mu-surface);border:1px solid var(--mu-border);border-radius:8px;padding:1.25rem;margin-bottom:1.25rem}
+
+.mu-section-title{font-size:14px;font-weight:600;color:var(--mu-text2);text-transform:uppercase;letter-spacing:.05em;margin:0 0 1rem}
+
+/* Flash messages */
+.mu-flash{list-style:none;margin:0 0 1rem;padding:0}
+.mu-flash li{padding:8px 12px;border-radius:5px;font-size:12px;font-weight:500;margin-bottom:6px}
+.mu-flash li.success{background:#14532d22;border:1px solid #14532d;color:var(--mu-green)}
+.mu-flash li.error,.mu-flash li.danger{background:#450a0a22;border:1px solid #7f1d1d;color:var(--mu-red)}
+.mu-flash li.warning{background:#451a0022;border:1px solid #78350f;color:var(--mu-yellow)}
+.mu-flash li.info{background:#1e3a5f22;border:1px solid #1e3a5f;color:var(--mu-blue)}
+
+/* Users table */
+.mu-table{width:100%;border-collapse:collapse}
+.mu-table th{text-align:left;font-size:11px;font-weight:600;color:var(--mu-text3);text-transform:uppercase;letter-spacing:.05em;padding:0 10px 8px;border-bottom:1px solid var(--mu-border)}
+.mu-table td{padding:10px;border-bottom:1px solid var(--mu-border);color:var(--mu-text);vertical-align:middle}
+.mu-table tr:last-child td{border-bottom:none}
+.mu-table tr:hover td{background:rgba(255,255,255,.02)}
+
+.mu-sso-badge{display:inline-block;background:#1d4ed8;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:6px;vertical-align:middle;letter-spacing:.5px}
+.mu-role-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.mu-role-admin{background:rgba(232,96,28,.15);color:var(--mu-accent);border:1px solid rgba(232,96,28,.3)}
+.mu-role-user{background:rgba(59,130,246,.1);color:var(--mu-blue);border:1px solid rgba(59,130,246,.25)}
+.mu-role-requester{background:rgba(34,197,94,.1);color:var(--mu-green);border:1px solid rgba(34,197,94,.25)}
+
+.mu-cannot-delete{font-style:italic;color:var(--mu-text3);font-size:12px}
+
+/* Buttons */
+.mu-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:6px;font-family:var(--mu-sans);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;border:none;white-space:nowrap}
+.mu-btn-primary{background:var(--mu-accent);color:#fff}
+.mu-btn-primary:hover{background:#cc5218}
+.mu-btn-danger{background:transparent;border:1px solid #7f1d1d;color:var(--mu-red)}
+.mu-btn-danger:hover{background:#7f1d1d22;border-color:var(--mu-red)}
+.mu-btn-secondary{background:var(--mu-surface3);border:1px solid var(--mu-border2);color:var(--mu-text2)}
+.mu-btn-secondary:hover{border-color:var(--mu-text3);color:var(--mu-text)}
+.mu-btn-copy{background:var(--mu-surface3);border:1px solid var(--mu-border2);color:var(--mu-text2)}
+.mu-btn-copy:hover{border-color:var(--mu-text3);color:var(--mu-text)}
+.mu-btn-regen{background:transparent;border:1px solid #7f1d1d;color:var(--mu-red)}
+.mu-btn-regen:hover{background:#7f1d1d22;border-color:var(--mu-red)}
+
+/* Form fields */
+.mu-form-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:.75rem;align-items:center}
+.mu-input{flex:1;min-width:160px;padding:7px 10px;border-radius:6px;border:1px solid var(--mu-border2);background:var(--mu-surface3);color:var(--mu-text);font-family:var(--mu-sans);font-size:13px}
+.mu-input:focus{outline:none;border-color:var(--mu-accent)}
+.mu-input[readonly]{cursor:text;opacity:.8}
+.mu-select{padding:7px 10px;border-radius:6px;border:1px solid var(--mu-border2);background:var(--mu-surface3);color:var(--mu-text);font-family:var(--mu-sans);font-size:13px;cursor:pointer}
+.mu-select:focus{outline:none;border-color:var(--mu-accent)}
+
+/* SSO fields */
+.mu-sso-row{display:flex;align-items:center;gap:12px;margin-bottom:.75rem;flex-wrap:wrap}
+.mu-sso-label{min-width:220px;font-size:13px;color:var(--mu-text2);flex-shrink:0}
+.mu-hint{font-size:11px;color:var(--mu-text3)}
+
+.mu-sso-note{font-size:13px;color:var(--mu-text2);font-style:italic;padding:.25rem 0}
+
+/* API token row */
+.mu-token-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:.5rem}
+.mu-token-hint{font-size:12px;color:var(--mu-text3);margin-top:.25rem}
+.mu-token-hint code{background:var(--mu-surface3);border:1px solid var(--mu-border2);border-radius:4px;padding:1px 5px;font-family:monospace;color:var(--mu-yellow);font-size:11px}
+
+/* Override inline.css legacy rules */
+.mu-wrap input[type="text"],
+.mu-wrap input[type="password"],
+.mu-wrap input[type="email"],
+.mu-wrap select{
+  width:auto !important;
+  padding:7px 10px !important;
+  margin-bottom:0 !important;
+  border:1px solid var(--mu-border2) !important;
+  border-radius:6px !important;
+  background:var(--mu-surface3) !important;
+  color:var(--mu-text) !important;
+  font-size:13px !important;
+  font-family:var(--mu-sans) !important;
+}
+.mu-wrap input[type="text"]:focus,
+.mu-wrap input[type="password"]:focus,
+.mu-wrap select:focus{
+  outline:none !important;
+  border-color:var(--mu-accent) !important;
+}
+.mu-wrap input[readonly]{cursor:text !important;opacity:.8 !important}
+.mu-wrap .mu-btn{
+  background:revert !important;
+  color:revert !important;
+  border:revert !important;
+  border-radius:6px !important;
+  padding:7px 14px !important;
+  font-size:12px !important;
+  font-family:var(--mu-sans) !important;
+}
+.mu-wrap .mu-btn-primary{background:var(--mu-accent) !important;color:#fff !important;border:none !important}
+.mu-wrap .mu-btn-primary:hover{background:#cc5218 !important}
+.mu-wrap .mu-btn-danger{background:transparent !important;border:1px solid #7f1d1d !important;color:var(--mu-red) !important}
+.mu-wrap .mu-btn-danger:hover{background:#7f1d1d22 !important;border-color:var(--mu-red) !important}
+.mu-wrap .mu-btn-copy{background:var(--mu-surface3) !important;border:1px solid var(--mu-border2) !important;color:var(--mu-text2) !important}
+.mu-wrap .mu-btn-copy:hover{border-color:var(--mu-text3) !important;color:var(--mu-text) !important}
+.mu-wrap .mu-btn-regen{background:transparent !important;border:1px solid #7f1d1d !important;color:var(--mu-red) !important}
+.mu-wrap .mu-btn-regen:hover{background:#7f1d1d22 !important;border-color:var(--mu-red) !important}
+</style>
+
+<div class="mu-wrap">
+  <div class="mu-page-title">Manage Users</div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <ul class="mu-flash">
+        {% for category, message in messages %}
+          <li class="{{ category }}">{{ message }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endwith %}
+
+  <!-- Users list -->
+  <div class="mu-card">
+    <div class="mu-section-title">Users</div>
+    <table class="mu-table">
+      <thead>
+        <tr>
+          <th>Username</th>
+          <th>Role</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for user in users %}
+        <tr data-user-id="{{ user.id }}">
+          <td>
+            {{ user.username }}
+            {% if user.oidc_sub %}
+              <span class="mu-sso-badge" title="SSO user ({{ user.oidc_provider or 'oidc' }})">SSO</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="mu-role-badge mu-role-{{ user.role }}">{{ user.role }}</span>
+          </td>
+          <td>
+            {% if user.role == 'admin' %}
+              {% set admin_count = users|selectattr('role', 'equalto', 'admin')|list|length %}
+              {% if admin_count > 1 %}
+                <button class="mu-btn mu-btn-danger delete-button" data-user-id="{{ user.id }}">Delete</button>
+              {% else %}
+                <span class="mu-cannot-delete">Cannot Delete</span>
+              {% endif %}
+            {% else %}
+              <button class="mu-btn mu-btn-danger delete-button" data-user-id="{{ user.id }}">Delete</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
     </table>
-    <div class="add-user-form">
-        <h3>Add New User</h3>
-        <form action="{{ url_for('user_management.add_user') }}" method="POST" id="addUserForm">
-            <input type="text" name="username" placeholder="Username" required autocomplete="new-username">
-            <input type="password" name="password" placeholder="Password" required autocomplete="new-password">
-            <select name="role" required>
-                <option value="user">User</option>
-                <option value="requester">Requester</option>
-                <option value="admin">Admin</option>
-            </select>
-            <input type="submit" value="Add User">
-        </form>
-    </div>
+  </div>
 
-    <div class="add-user-form" style="margin-top: 30px;">
-        <h3>Change My Password</h3>
-        <form id="changeOwnPasswordForm">
-            <input type="password" name="new_password" placeholder="New Password" required autocomplete="new-password">
-            <input type="password" name="confirm_password" placeholder="Confirm New Password" required autocomplete="new-password">
-            <input type="submit" value="Change Password">
-        </form>
+  <!-- Add new user -->
+  <div class="mu-card">
+    <div class="mu-section-title">Add New User</div>
+    <form id="addUserForm">
+      <div class="mu-form-row">
+        <input class="mu-input" type="text" name="username" placeholder="Username" required autocomplete="new-username">
+        <input class="mu-input" type="password" name="password" placeholder="Password" required autocomplete="new-password">
+        <select class="mu-select" name="role" required>
+          <option value="user">User</option>
+          <option value="requester">Requester</option>
+          <option value="admin">Admin</option>
+        </select>
+        <button type="submit" class="mu-btn mu-btn-primary">Add User</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Change password / SSO note -->
+  <div class="mu-card">
+    <div class="mu-section-title">Change My Password</div>
+    {% if not current_user.oidc_sub %}
+    <form id="changeOwnPasswordForm">
+      <div class="mu-form-row">
+        <input class="mu-input" type="password" name="new_password" placeholder="New Password" required autocomplete="new-password">
+        <input class="mu-input" type="password" name="confirm_password" placeholder="Confirm New Password" required autocomplete="new-password">
+        <button type="submit" class="mu-btn mu-btn-primary">Change Password</button>
+      </div>
+    </form>
+    {% else %}
+    <p class="mu-sso-note">Your account uses SSO login — password management is handled by your identity provider.</p>
+    {% endif %}
+  </div>
+
+  <!-- API Token -->
+  <div class="mu-card">
+    <div class="mu-section-title">API Token</div>
+    <p style="color:var(--mu-text2);margin:0 0 .75rem">Use this token to access cli_debrid endpoints externally (OpenClaw, homepage widgets, etc.).</p>
+    <div class="mu-token-row">
+      <input type="text" id="api-token-display" class="mu-input" value="{{ current_user.api_token or '' }}" readonly style="font-family:monospace;flex:1;min-width:260px">
+      <button type="button" id="copy-api-token-btn" class="mu-btn mu-btn-copy">Copy</button>
+      <button type="button" id="regen-api-token-btn" class="mu-btn mu-btn-regen">Regenerate</button>
     </div>
+    <p class="mu-token-hint">Append <code>?token=&lt;your-token&gt;</code> to API requests. Regenerating invalidates the old token immediately.</p>
+  </div>
+
+  <!-- SSO / OIDC -->
+  <div class="mu-card">
+    <div class="mu-section-title">SSO / OIDC Configuration</div>
+    <div id="sso-config-form">
+      <div class="mu-sso-row">
+        <label class="mu-sso-label">Enable SSO</label>
+        <input type="checkbox" id="sso-enabled">
+      </div>
+      <div id="sso-fields">
+        <div class="mu-sso-row">
+          <label class="mu-sso-label">Provider</label>
+          <select id="sso-provider" class="mu-select">
+            <option value="authentik">Authentik</option>
+            <option value="authelia">Authelia</option>
+            <option value="generic">Generic OIDC</option>
+          </select>
+        </div>
+        <div class="mu-sso-row">
+          <label class="mu-sso-label">Discovery URL</label>
+          <input type="text" id="sso-discovery-url" class="mu-input" placeholder="https://auth.example.com/application/o/cli-debrid/.well-known/openid-configuration">
+        </div>
+        <div class="mu-sso-row">
+          <label class="mu-sso-label">Client ID</label>
+          <input type="text" id="sso-client-id" class="mu-input" placeholder="cli-debrid">
+        </div>
+        <div class="mu-sso-row">
+          <label class="mu-sso-label">Client Secret</label>
+          <input type="password" id="sso-client-secret" class="mu-input" placeholder="(leave blank if public client)">
+        </div>
+        <div class="mu-sso-row">
+          <label class="mu-sso-label">Default Role for New Users</label>
+          <select id="sso-default-role" class="mu-select">
+            <option value="user">User</option>
+            <option value="requester">Requester</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div class="mu-sso-row">
+          <label class="mu-sso-label">Auto-provision New Users</label>
+          <input type="checkbox" id="sso-auto-provision" checked>
+          <span class="mu-hint">Automatically create an account on first SSO login</span>
+        </div>
+        <div class="mu-sso-row">
+          <label class="mu-sso-label">Disable Local Login</label>
+          <input type="checkbox" id="sso-disable-local-auth">
+          <span class="mu-hint">Hide username/password form — SSO only. Ensure SSO works before enabling.</span>
+        </div>
+        <div class="mu-sso-row">
+          <label class="mu-sso-label">Public Base URL <span class="mu-hint">(override)</span></label>
+          <input type="text" id="sso-redirect-uri-base" class="mu-input" placeholder="https://cli.yourdomain.com">
+          <span class="mu-hint">Required if behind a reverse proxy. Leave blank to auto-detect.</span>
+        </div>
+        <div class="mu-sso-row">
+          <label class="mu-sso-label">Callback URI <span class="mu-hint">(add to your provider)</span></label>
+          <input type="text" id="sso-callback-uri-display" class="mu-input" readonly style="cursor:text;opacity:.7">
+        </div>
+      </div>
+      <button type="button" id="sso-save-btn" class="mu-btn mu-btn-primary" style="margin-top:.5rem">Save SSO Settings</button>
+    </div>
+  </div>
 </div>
-{% endblock %}
 
-{% block scripts %}
 <script type="module">
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Add user form handling
     const addUserForm = document.getElementById('addUserForm');
     if (addUserForm) {
         addUserForm.addEventListener('submit', function(e) {
@@ -83,115 +290,58 @@ document.addEventListener('DOMContentLoaded', function() {
             const formData = new FormData(this);
             const username = formData.get('username');
             const role = formData.get('role');
-
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
                 title: "Add User",
                 message: `Are you sure you want to add user "${username}" with role "${role}"?`,
                 onConfirm: function() {
-                    fetch("{{ url_for('user_management.add_user') }}", {
-                        method: 'POST',
-                        body: formData
-                    })
-                    .then(response => response.json())
+                    fetch("{{ url_for('user_management.add_user') }}", { method: 'POST', body: formData })
+                    .then(r => r.json())
                     .then(data => {
                         if (data.success) {
-                            showPopup({
-                                type: POPUP_TYPES.SUCCESS,
-                                title: 'Success',
-                                message: 'User added successfully. Page will reload.',
-                                onConfirm: () => window.location.reload()
-                            });
+                            showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: 'User added successfully. Page will reload.', onConfirm: () => window.location.reload() });
                         } else {
-                            showPopup({
-                                type: POPUP_TYPES.ERROR,
-                                title: 'Error',
-                                message: data.error || 'An error occurred while adding the user.'
-                            });
+                            showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: data.error || 'An error occurred while adding the user.' });
                         }
                     })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        showPopup({
-                            type: POPUP_TYPES.ERROR,
-                            title: 'Error',
-                            message: 'An unexpected error occurred.'
-                        });
-                    });
+                    .catch(() => showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'An unexpected error occurred.' }));
                 }
             });
         });
     }
 
-    // Delete user handling
     document.querySelectorAll('.delete-button').forEach(button => {
         button.addEventListener('click', function() {
             const userId = this.dataset.userId;
-            const username = this.closest('tr').querySelector('td:first-child').textContent;
+            const username = this.closest('tr').querySelector('td:first-child').textContent.trim();
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
                 title: "Delete User",
                 message: `Are you sure you want to delete user "${username}"?`,
                 onConfirm: function() {
-                    fetch(`/user_management/delete_user/${userId}`, {
-                        method: 'POST',
-                    })
-                    .then(response => response.json())
+                    fetch(`/user_management/delete_user/${userId}`, { method: 'POST' })
+                    .then(r => r.json())
                     .then(data => {
                         if (data.success) {
-                             showPopup({
-                                type: POPUP_TYPES.SUCCESS,
-                                title: 'Success',
-                                message: 'User deleted successfully. Page will reload.',
-                                onConfirm: () => window.location.reload()
-                            });
+                            showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: 'User deleted successfully. Page will reload.', onConfirm: () => window.location.reload() });
                         } else {
-                            showPopup({
-                                type: POPUP_TYPES.ERROR,
-                                message: 'Error deleting user: ' + (data.error || 'Unknown error'),
-                                title: 'Error'
-                            });
+                            showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Error deleting user: ' + (data.error || 'Unknown error') });
                         }
                     })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        showPopup({
-                            type: POPUP_TYPES.ERROR,
-                            message: 'Error deleting user',
-                            title: 'Error'
-                        });
-                    });
+                    .catch(() => showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Error deleting user' }));
                 }
             });
         });
     });
 
-    // Change own password form handling
     const changeOwnPasswordForm = document.getElementById('changeOwnPasswordForm');
     if (changeOwnPasswordForm) {
         changeOwnPasswordForm.addEventListener('submit', function(e) {
             e.preventDefault();
             const newPassword = this.elements.new_password.value;
             const confirmPassword = this.elements.confirm_password.value;
-
-            if (newPassword !== confirmPassword) {
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    title: 'Error',
-                    message: 'Passwords do not match.'
-                });
-                return;
-            }
-            
-            if (!newPassword) {
-                 showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    title: 'Error',
-                    message: 'Password cannot be empty.'
-                });
-                return;
-            }
-
+            if (newPassword !== confirmPassword) { showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Passwords do not match.' }); return; }
+            if (!newPassword) { showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Password cannot be empty.' }); return; }
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
                 title: "Change Password",
@@ -199,46 +349,125 @@ document.addEventListener('DOMContentLoaded', function() {
                 onConfirm: function() {
                     fetch("{{ url_for('user_management.change_own_password') }}", {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Accept': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            new_password: newPassword,
-                            confirm_password: confirmPassword
-                        })
+                        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                        body: JSON.stringify({ new_password: newPassword, confirm_password: confirmPassword })
                     })
-                    .then(response => response.json())
+                    .then(r => r.json())
                     .then(data => {
                         if (data.success) {
-                            showPopup({
-                                type: POPUP_TYPES.SUCCESS,
-                                title: 'Success',
-                                message: data.message || 'Password changed successfully!',
-                                onConfirm: () => {
-                                    changeOwnPasswordForm.reset(); // Reset form fields
-                                }
-                            });
+                            showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: data.message || 'Password changed successfully!', onConfirm: () => changeOwnPasswordForm.reset() });
                         } else {
-                            showPopup({
-                                type: POPUP_TYPES.ERROR,
-                                title: 'Error',
-                                message: data.error || 'An error occurred.'
-                            });
+                            showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: data.error || 'An error occurred.' });
                         }
                     })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        showPopup({
-                            type: POPUP_TYPES.ERROR,
-                            title: 'Error',
-                            message: 'An unexpected error occurred.'
-                        });
-                    });
+                    .catch(() => showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'An unexpected error occurred.' }));
                 }
             });
         });
     }
 });
+
+// API Token
+(function() {
+    const copyBtn = document.getElementById('copy-api-token-btn');
+    const regenBtn = document.getElementById('regen-api-token-btn');
+    const tokenDisplay = document.getElementById('api-token-display');
+    if (!copyBtn || !regenBtn || !tokenDisplay) return;
+
+    copyBtn.addEventListener('click', function() {
+        navigator.clipboard.writeText(tokenDisplay.value).then(() => {
+            const orig = copyBtn.textContent;
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => copyBtn.textContent = orig, 1500);
+        });
+    });
+
+    regenBtn.addEventListener('click', function() {
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Regenerate API Token',
+            message: 'This will invalidate your current token immediately. Any services using it will need to be updated. Continue?',
+            onConfirm: function() {
+                fetch('/user_management/regenerate_api_token', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        tokenDisplay.value = data.api_token;
+                        showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Token Regenerated', message: 'Your new API token is ready. Update any external services.' });
+                    } else {
+                        showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Failed to regenerate token.' });
+                    }
+                });
+            }
+        });
+    });
+})();
+
+// SSO Settings
+(async function() {
+    const enabledCb = document.getElementById('sso-enabled');
+    const fieldsDiv = document.getElementById('sso-fields');
+    const saveBtn   = document.getElementById('sso-save-btn');
+    if (!enabledCb) return;
+
+    function toggleFields() { fieldsDiv.style.display = enabledCb.checked ? '' : 'none'; }
+    enabledCb.addEventListener('change', toggleFields);
+
+    const redirectBaseInput  = document.getElementById('sso-redirect-uri-base');
+    const callbackDisplay    = document.getElementById('sso-callback-uri-display');
+
+    function updateCallbackDisplay() {
+        const base = redirectBaseInput.value.trim().replace(/\/$/, '');
+        callbackDisplay.value = (base || window.location.origin) + '/auth/oidc/callback';
+    }
+    redirectBaseInput.addEventListener('input', updateCallbackDisplay);
+
+    try {
+        const resp = await fetch('/auth/oidc/settings');
+        if (resp.ok) {
+            const s = await resp.json();
+            enabledCb.checked = !!s.enabled;
+            if (s.provider)       document.getElementById('sso-provider').value = s.provider;
+            if (s.discovery_url)  document.getElementById('sso-discovery-url').value = s.discovery_url;
+            if (s.client_id)      document.getElementById('sso-client-id').value = s.client_id;
+            if (s.client_secret)  document.getElementById('sso-client-secret').value = s.client_secret;
+            if (s.default_role)   document.getElementById('sso-default-role').value = s.default_role;
+            document.getElementById('sso-auto-provision').checked   = s.auto_provision !== false;
+            document.getElementById('sso-disable-local-auth').checked = !!s.disable_local_auth;
+            if (s.redirect_uri_base) redirectBaseInput.value = s.redirect_uri_base;
+        }
+    } catch(e) { console.error('Failed to load SSO settings', e); }
+    updateCallbackDisplay();
+    toggleFields();
+
+    saveBtn.addEventListener('click', async function() {
+        const payload = {
+            enabled:           enabledCb.checked,
+            provider:          document.getElementById('sso-provider').value,
+            discovery_url:     document.getElementById('sso-discovery-url').value.trim(),
+            client_id:         document.getElementById('sso-client-id').value.trim(),
+            client_secret:     document.getElementById('sso-client-secret').value,
+            default_role:      document.getElementById('sso-default-role').value,
+            auto_provision:    document.getElementById('sso-auto-provision').checked,
+            disable_local_auth:document.getElementById('sso-disable-local-auth').checked,
+            redirect_uri_base: redirectBaseInput.value.trim().replace(/\/$/, ''),
+        };
+        try {
+            const resp = await fetch('/auth/oidc/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await resp.json();
+            if (data.ok) {
+                showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Saved', message: 'SSO settings saved.' });
+            } else {
+                showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: data.error || 'Failed to save.' });
+            }
+        } catch(e) {
+            showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'An unexpected error occurred.' });
+        }
+    });
+})();
 </script>
 {% endblock %}

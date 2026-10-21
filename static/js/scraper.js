@@ -9,17 +9,28 @@ function addToRealDebrid(magnetLink, torrent) {
         return;
     }
 
+    const isNzb = (torrent.protocol === 'nzb') || (torrent.nzb_url && !magnetLink);
+    const isNzbPack = isNzb && !!torrent.is_nzb_season_pack;
+    const confirmMsg = isNzbPack
+        ? `Submit ${torrent.episode_count} individual episode NZBs to ${window.USENET_PROVIDER_NAME || "Usenet provider"} as a season pack? Each episode will be health-checked independently.`
+        : isNzb
+        ? `Submit this NZB to ${window.USENET_PROVIDER_NAME || "Usenet provider"} for download?`
+        : 'Are you sure you want to add this torrent to your Debrid Provider?';
+
     showPopup({
         type: POPUP_TYPES.CONFIRM,
         title: 'Confirm Action',
-        message: 'Are you sure you want to add this torrent to your Debrid Provider?',
+        message: confirmMsg,
         confirmText: 'Add',
         cancelText: 'Cancel',
         onConfirm: () => {
+            // Set immediately on confirm so replace-season observer doesn't
+            // auto-cancel if the overlay closes before the fetch resolves
+            window._scraperTorrentWasQueued = true;
             showLoadingState();
 
             const formData = new FormData();
-            formData.append('magnet_link', magnetLink);
+            formData.append('magnet_link', magnetLink || '');
             formData.append('title', torrent.title);
             formData.append('year', torrent.year);
             formData.append('media_type', torrent.media_type);
@@ -30,19 +41,35 @@ function addToRealDebrid(magnetLink, torrent) {
             formData.append('genres', torrent.genres || '');
             formData.append('original_scraped_torrent_title', torrent.original_title || torrent.title);
             formData.append('current_score', torrent.score_breakdown?.total_score || '0');
+            // Scraper stats: which scraper/indexer this result came from
+            ['source', 'scraper_type', 'scraper_instance', 'indexer'].forEach(k => {
+                if (torrent[k]) formData.append(k, torrent[k]);
+            });
+            if (_scraperSourceContext) formData.append('source_context', _scraperSourceContext);
+            if (isNzbPack) {
+                formData.append('protocol', 'nzb');
+                formData.append('episode_nzb_urls', JSON.stringify(torrent.episode_nzb_urls || {}));
+                formData.append('fallback_nzb_urls', JSON.stringify(torrent.fallback_nzb_urls || {}));
+                formData.append('episode_filenames', JSON.stringify(torrent.episode_filenames || {}));
+                formData.append('pack_waterfall_level', torrent.waterfall_level || '');
+            } else if (isNzb) {
+                formData.append('protocol', 'nzb');
+                formData.append('nzb_url', torrent.nzb_url || magnetLink || '');
+            }
 
             // Get selected folder from dropdown if it exists (for symlink mode)
             const folderSelect = document.getElementById('torrent-folder-select');
             if (folderSelect && folderSelect.value) {
                 const selectedOption = folderSelect.options[folderSelect.selectedIndex];
                 const isCustom = selectedOption.getAttribute('data-is-custom') === 'true';
-
                 formData.append('selected_folder', folderSelect.value);
                 formData.append('selected_folder_is_custom', isCustom);
-                if (window.DEBUG) console.log('📁 Sending selected folder to backend:', {
-                    folder: folderSelect.value,
-                    isCustom: isCustom
-                });
+            }
+
+            // Get selected tags (Plex mode)
+            const _tagPillsSc = document.querySelectorAll('.torrent-tag-pill.active');
+            if (_tagPillsSc.length > 0) {
+                formData.append('selected_tags', Array.from(_tagPillsSc).map(p => p.dataset.tag).join(','));
             }
 
             fetch('/scraper/add_to_debrid', {
@@ -72,6 +99,9 @@ function addToRealDebrid(magnetLink, torrent) {
                     throw new Error(data.error);
                 } else {
                     // Check if the item is uncached
+                    // Signal to library replace handlers that a torrent was successfully queued
+                    window._scraperTorrentWasQueued = true;
+
                     if (data.cache_status && data.cache_status.is_cached === false) {
                         // Show prompt for uncached item
                         showPopup({
@@ -107,10 +137,11 @@ function addToRealDebrid(magnetLink, torrent) {
             })
             .catch(error => {
                 if (window.DEBUG) console.error('Error:', error);
+                hideLoadingState();
                 showPopup({
                     type: POPUP_TYPES.ERROR,
                     title: 'Error',
-                    message: `Error adding to Real-Debrid: ${error.message}`,
+                    message: `Error adding torrent: ${error.message}`,
                 });
             })
         },
@@ -652,10 +683,17 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
     const mediaQuery = window.matchMedia('(max-width: 1024px)');
     async function handleScreenChange(e) {
         if (e.matches) { // Mobile view
+            const subText = season
+                ? `${title} · S${String(season).padStart(2,'0')}${episode ? 'E'+String(episode).padStart(2,'0') : ''} (${year})`
+                : `${title} (${year})`;
             overlayContent.innerHTML = `
-                <h3>
-                    Torrent Results for ${title} (${year})
-                </h3>`;
+                <div class="tr-dlg-hdr">
+                    <div class="tr-dlg-title">
+                        <div class="tr-dlg-h">Torrent Results</div>
+                        <div class="tr-dlg-sub">${subText}</div>
+                    </div>
+                    <button class="tr-close-btn" onclick="closeOverlay()">✕</button>
+                </div>`;
 
             // Get versions from page dropdown
             let versionsToUse = [];
@@ -667,7 +705,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
             }
 
             // Strip asterisks from version for comparison
-            const cleanVersion = version.replace(/\*/g, '');
+            const cleanVersion = version ? version.replace(/\*/g, '') : '';
 
             // Generate version options HTML
             const versionOptionsHTML = versionsToUse.map(v =>
@@ -749,17 +787,44 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 if (window.DEBUG) console.error('Error fetching symlink folders:', error);
             }
 
+            // Tags dropdown for mobile — Plex mode only
+            let mobileTagsHTML = '';
+            try {
+                const cfgR = await fetch('/settings/api/config');
+                const cfgD = await cfgR.json();
+                const mTags = (cfgD['Tags'] || {})['tags_list'] || [];
+                const mMode = (cfgD['File Management'] || {})['file_collection_management'] || '';
+                if (mMode === 'Plex' && mTags.length > 0) {
+                    const mOpts = mTags.map(t => `<option value="${t}">${t}</option>`).join('');
+                    mobileTagsHTML = `
+                    <div class="tr-filter-row" style="flex-wrap:wrap;gap:6px;">
+                        <span class="tr-filter-label">Tags</span>
+                        ${mTags.map(t => `<span class="torrent-tag-pill" data-tag="${t}" onclick="this.classList.toggle('active');this.style.background=this.classList.contains('active')?'#e8651a':'#333';this.style.color='#fff';" style="padding:3px 10px;border-radius:12px;background:#333;color:#ddd;font-size:11px;cursor:pointer;user-select:none;">${t}</span>`).join('')}
+                    </div>`;
+                }
+            } catch(e) {}
+
             // Create mobile controls section
+            const resultCount = allDisplayItems.length;
             const mobileControls = document.createElement('div');
-            mobileControls.className = 'mobile-torrent-controls';
+            mobileControls.className = 'tr-dlg-filters';
             mobileControls.innerHTML = `
-                <div class="torrent-version-dropdown-wrapper">
-                    <label for="torrent-version-select-mobile">Version:</label>
-                    <select id="torrent-version-select-mobile" class="torrent-version-select">
+                <div class="tr-filter-row">
+                    <span class="tr-filter-label">Version</span>
+                    <select id="torrent-version-select-mobile" class="tr-fsel torrent-version-select">
                         ${versionOptionsHTML}
                     </select>
+                    ${!folderDropdownHTML && !mobileTagsHTML ? `<span class="tr-result-count">${resultCount} results</span>` : ''}
                 </div>
-                ${folderDropdownHTML}
+                ${folderDropdownHTML ? `
+                <div class="tr-filter-row">
+                    <span class="tr-filter-label">Folder</span>
+                    <select id="torrent-folder-select-mobile" class="tr-fsel torrent-folder-select">
+                        ${(() => { const tmp = document.createElement('div'); tmp.innerHTML = folderDropdownHTML; return tmp.querySelector('select')?.innerHTML || ''; })()}
+                    </select>
+                    ${!mobileTagsHTML ? `<span class="tr-result-count">${resultCount} results</span>` : ''}
+                </div>` : ''}
+                ${mobileTagsHTML}
             `;
             overlayContent.appendChild(mobileControls);
 
@@ -777,25 +842,48 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 // Format bitrate for inline display in mobile
                 const bitrateInline = formatBitrateInline(torrent.bitrate);
                 
+                // NZB results get a usenet badge instead of cache status
+                const isNzbCard = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
+
+                // Badge: cached=green check, not-cached/N/A=red minus, else=gray clock
+                const cacheClass = torrent.cached === 'Yes' ? 'cached' :
+                                   torrent.cached === 'No' ? 'not-cached' :
+                                   torrent.cached === 'Not Checked' ? 'not-checked' :
+                                   torrent.cached === 'N/A' ? 'check-unavailable' : 'unknown';
+                const badgeClass = torrent.cached === 'Yes' ? 'badge-cached' :
+                                   (torrent.cached === 'No' || torrent.cached === 'N/A') ? 'badge-na' : 'badge-pending';
+                const badgeIcon  = torrent.cached === 'Yes' ? 'fa-check' :
+                                   (torrent.cached === 'No' || torrent.cached === 'N/A') ? 'fa-xmark' : 'fa-clock';
+                const badgeLabel = torrent.cached === 'Yes' ? 'Cached' :
+                                   torrent.cached === 'No' ? 'Uncached' :
+                                   torrent.cached === 'N/A' ? 'N/A' : 'Not Checked';
+                // Per-provider cache badges
+                const multiCacheBadge = createCacheProviderBadges(torrent) || '';
+                const scoreSpan = !isFilteredOut && torrent.score_breakdown?.total_score
+                    ? `<span class="vdiv"></span><span class="stat s-seeds"><i class="fa-solid fa-arrow-up"></i>&nbsp;${torrent.score_breakdown.total_score}</span>`
+                    : '';
+                const blockedReason = isFilteredOut && torrent.filter_reason
+                    ? `<div class="card-blocked-reason"><i class="fa-solid fa-ban"></i> ${torrent.filter_reason}</div>` : '';
+
                 torResDiv.innerHTML = `
-                    <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
-                    <div class="torresult-info">
-                        <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
-                        <p class="torresult-item">${(torrent.size || 0).toFixed(1)} GB | ${bitrateInline} | ${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</p>
-                        <p class="torresult-item">${torrent.source || 'N/A'}</p>
-                        <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
-                                      torrent.cached === 'No' ? 'not-cached' :
-                                      torrent.cached === 'Not Checked' ? 'not-checked' :
-                                      torrent.cached === 'N/A' ? 'check-unavailable' : 'unknown'}" data-index="${index}">${torrent.cached || 'N/A'}</span>
+                    <div class="card-filename">${torrent.title || torrent.original_title || 'N/A'}</div>
+                    <div class="card-stats">
+                        <span class="stat s-size"><i class="fa-solid fa-hard-drive"></i>&nbsp;${(torrent.size || 0).toFixed(1)} GB</span>
+                        <span class="vdiv"></span>
+                        <span class="stat s-speed"><i class="fa-solid fa-gauge-high"></i>&nbsp;${bitrateInline}</span>
+                        ${scoreSpan}
                     </div>
-                    </button>
-                    ${torrent.cached === 'Yes' ? '<div class="mobile-cache-check">✓</div>' : ''}
-                    <div class="assign-magnet-icon" title="Assign Magnet Link">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-                        </svg>
-                    </div>            
+                    ${blockedReason}
+                    <div class="card-sources">${torrent.source || 'N/A'}</div>
+                    <div class="card-footer">
+                        ${isNzbCard
+                            ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via ${window.USENET_PROVIDER_NAME || "Usenet provider"}">NZB</span>`
+                            : (multiCacheBadge || `<span class="cache-status badge ${badgeClass}" data-index="${index}"><i class="fa-solid ${badgeIcon}"></i> ${badgeLabel}</span>`)
+                        }
+                        <div class="assign-magnet-icon" title="Assign Magnet Link">
+                            <i class="fa-solid fa-link"></i>
+                        </div>
+                    </div>
                 `;
 
                 // Assign Magnet click handler for mobile cards
@@ -811,8 +899,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             prefill_year: year,
                             prefill_version: version,
                         });
-                        if (torrent.magnet) {
-                            assignUrlParams.set('prefill_magnet', torrent.magnet);
+                        const prefillLink = torrent.magnet || torrent.nzb_url || '';
+                        if (prefillLink) {
+                            assignUrlParams.set('prefill_magnet', prefillLink);
                         }
                         // Set selection type based on whether this is an episode or season pack
                         if (season) {
@@ -873,7 +962,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     closeOverlay();
 
                     // Trigger new search with new version
-                    const multi = mediaType === 'tv' ? true : false;
+                    const multi = mediaType === 'tv' && !episode ? true : false;
                     await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, newVersion);
                 });
             }
@@ -897,7 +986,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
             
             modalHeader.innerHTML = `
                 <div class="torrent-modal-title-section">
-                    <h3>Torrent Results for ${title} (${year})</h3>
+                    <h3>Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}</h3>
                     <div class="torrent-stats">
                         <span>${allDisplayItems.length} results</span>
                         <span>Search: ${searchDuration}ms</span>
@@ -933,7 +1022,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
             if (window.DEBUG) console.log('📦 Final versions for dropdown:', versionsToUse, 'Current version:', version);
 
             // Strip asterisks from version for comparison (e.g., "4K Remux*" -> "4K Remux")
-            const cleanVersion = version.replace(/\*/g, '');
+            const cleanVersion = version ? version.replace(/\*/g, '') : '';
 
             // Generate version options HTML
             const versionOptionsHTML = versionsToUse.map(v =>
@@ -1056,6 +1145,23 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 // Continue without folder dropdown if there's an error
             }
 
+            // Tags dropdown — Plex mode only
+            let tagsDropdownHTML = '';
+            try {
+                const cfgResp = await fetch('/settings/api/config');
+                const cfgData = await cfgResp.json();
+                const globalTags = (cfgData['Tags'] || {})['tags_list'] || [];
+                const fileMode = (cfgData['File Management'] || {})['file_collection_management'] || '';
+                if (fileMode === 'Plex' && globalTags.length > 0) {
+                    const opts = globalTags.map(t => `<option value="${t}">${t}</option>`).join('');
+                    tagsDropdownHTML = `
+                        <div class="torrent-tags-dropdown-wrapper" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+                            <span style="font-size:12px;color:#aaa;margin-right:4px;">Tags:</span>
+                            ${globalTags.map(t => `<span class="torrent-tag-pill" data-tag="${t}" onclick="this.classList.toggle('active');this.style.background=this.classList.contains('active')?'#e8651a':'#333';this.style.color='#fff';" style="padding:3px 10px;border-radius:12px;background:#333;color:#ddd;font-size:11px;cursor:pointer;user-select:none;">${t}</span>`).join('')}
+                        </div>`;
+                }
+            } catch(e) {}
+
             filterSection.innerHTML = `
                 <div class="torrent-filter-input-wrapper">
                     ${createSearchIcon()}
@@ -1068,6 +1174,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     </select>
                 </div>
                 ${folderDropdownHTML}
+                ${tagsDropdownHTML}
                 <div class="torrent-filter-toggles">
                     <label class="torrent-filter-checkbox">
                         <input type="checkbox" id="show-filtered-checkbox">
@@ -1093,7 +1200,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                     // Trigger new search with new version
                     // Note: multi value defaults to true for TV shows
-                    const multi = mediaType === 'tv' ? true : false;
+                    const multi = mediaType === 'tv' && !episode ? true : false;
                     await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, newVersion);
                 });
             }
@@ -1126,9 +1233,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                 const assignUrlParams = new URLSearchParams({
                     prefill_id: mediaId, prefill_type: mediaType, prefill_title: title,
-                    prefill_year: year, prefill_magnet: torrent.magnet, prefill_version: version
+                    prefill_year: year, prefill_magnet: torrent.magnet || torrent.nzb_url || '', prefill_version: version
                 });
-                
+
                 if (season) {
                     assignUrlParams.set('prefill_seasons', season);
                     if (episode) {
@@ -1145,8 +1252,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 const qualityBadgesHtml = qualityTags.map(tag => createQualityBadge(tag)).join('');
                 
                 // Use clean title from header, store filename for toggle
-                const ShowInfo = `${season ? `<span class="season-info">S${season.toString().padStart(2, '0')}` : ''}${(torrent.parsed_info.seasons).length > 1 ? ` - ${(torrent.parsed_info.seasons).length}</span>` : `</span>`} ${episode ? `<span class="ds-episode-info"> E${episode.toString().padStart(2, '0')}</span>`: ''}`;
-                const cleanTitle = `${title} (${year})${ShowInfo ? ` ${ShowInfo}` : ''}`;
+                const ShowInfo = `${season ? `<span class="season-info">S${season.toString().padStart(2, '0')}` : ''}${(torrent.parsed_info?.seasons?.length || 0) > 1 ? ` - ${torrent.parsed_info.seasons.length}</span>` : `</span>`} ${episode ? `<span class="ds-episode-info"> E${episode.toString().padStart(2, '0')}</span>`: ''}`;
+                const titleHasYear = year && title.trim().endsWith(`(${year})`);
+                const cleanTitle = `${title}${year && !titleHasYear ? ` (${year})` : ''}${ShowInfo ? ` ${ShowInfo}` : ''}`;
                 const filename = torrent.title || torrent.original_title || 'N/A';
                 
                 // Get score and color class
@@ -1154,9 +1262,12 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 const scoreClass = getScoreColorClass(score);
                 const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (score || 'N/A');
                 
-                // Create cache icon
-                const cacheIconHtml = createCacheIcon(cacheStatus);
-                
+                // NZB results show a usenet badge instead of cache status
+                const isNzbResult = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
+                const cacheIconHtml = isNzbResult
+                    ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via ${window.USENET_PROVIDER_NAME || "Usenet provider"}">NZB</span>`
+                    : (createCacheProviderBadges(torrent) || createCacheIcon(cacheStatus));
+
                 const row = document.createElement('tr');
                 if (isFilteredOut) {
                     row.classList.add('filtered-row');
@@ -1169,7 +1280,18 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             <div class="release-tags">${qualityBadgesHtml}</div>
                         </div>
                     </td>
-                    <td class="text-right">${(torrent.size || 0).toFixed(1)} GB</td>
+                    <td class="text-right">
+                        <div class="size-cell-wrapper">
+                            <div class="size-value">${(torrent.size || 0).toFixed(1)} GB</div>
+                            <button class="folder-icon-btn desktop-only"
+                                    data-magnet="${(torrent.magnet || '').replace(/"/g, '&quot;')}"
+                                    data-title="${(torrent.title || torrent.original_title || '').replace(/"/g, '&quot;')}"
+                                    aria-label="View file list"
+                                    title="${torrent.is_nzb_season_pack ? 'View NZB episode list' : (torrent.nzb_url ? 'View NZB info' : 'View torrent files')}">
+                                ${createFolderIcon()}
+                            </button>
+                        </div>
+                    </td>
                     <td>
                         ${(torrent.source || 'N/A').split(' - ').map(p => `<span class="source-badge">${p.trim()}</span>`).join('')}
                     </td>
@@ -1228,6 +1350,28 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 assignButton.onclick = function() {
                     window.location.href = assignUrl;
                 };
+
+                // Folder icon click handler
+                const folderButton = row.querySelector('.folder-icon-btn');
+                if (folderButton) {
+                    folderButton.onclick = async function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+
+                        const magnet = folderButton.getAttribute('data-magnet');
+                        const torrentTitle = folderButton.getAttribute('data-title');
+
+                        if (torrent.is_nzb_season_pack && torrent.episode_nzb_urls) {
+                            // NZB aggregate pack — show per-episode list
+                            showNzbFileListModal(torrent);
+                        } else if (torrent.nzb_url) {
+                            // Single NZB — show basic info
+                            showNzbFileListModal(torrent);
+                        } else if (magnet) {
+                            await showTorrentFileList(magnet, torrentTitle);
+                        }
+                    };
+                }
             });
             table.appendChild(tbody);
             overlayContent.appendChild(table);
@@ -1302,26 +1446,141 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
             });
             
             } else {
-                // CLASSIC THEME - Original Desktop Table
+                // CLASSIC THEME - Modern Desktop Table
                 overlayContent.innerHTML = '';
-                const header = document.createElement('h3');
-                header.textContent = `Torrent Results for ${title} (${year})`;
-                overlayContent.appendChild(header);
-                
-                const table = document.createElement('table');
-                table.style.width = '100%';
-                table.style.borderCollapse = 'collapse';
 
+                // Modal header with stats
+                const modalHeader = document.createElement('div');
+                modalHeader.className = 'torrent-modal-header';
+                const scrapers = new Set(allDisplayItems.map(t => t.source?.split(' - ')[0]).filter(Boolean));
+                const scraperCount = scrapers.size;
+                modalHeader.innerHTML = `
+                    <div class="torrent-modal-title-section">
+                        <h3>Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}</h3>
+                        <div class="torrent-stats">
+                            <span>${allDisplayItems.length} results</span>
+                            <span>Search: ${searchDuration}ms</span>
+                            <span>${scraperCount} scraper${scraperCount !== 1 ? 's' : ''}</span>
+                        </div>
+                    </div>
+                `;
+                overlayContent.appendChild(modalHeader);
+
+                // Filter section
+                const filterSection = document.createElement('div');
+                filterSection.className = 'torrent-filter-section';
+
+                let versionsToUse = [];
+                const pageVersionSelect = document.getElementById('version-select');
+                if (pageVersionSelect) {
+                    versionsToUse = Array.from(pageVersionSelect.options).map(opt => opt.value);
+                } else if (availableVersions.length > 0) {
+                    versionsToUse = availableVersions;
+                } else {
+                    versionsToUse = [version];
+                }
+                const cleanVersion = version.replace(/\*/g, '');
+                const versionOptionsHTML = versionsToUse.map(v =>
+                    `<option value="${v}" ${v === cleanVersion ? 'selected' : ''}>${v}</option>`
+                ).join('');
+
+                let folderDropdownHTML = '';
+                try {
+                    const folderResponse = await fetch('/scraper/get_symlink_folders');
+                    if (folderResponse.ok) {
+                        const folderData = await folderResponse.json();
+                        const folders = folderData.folders || [];
+                        if (folders.length > 0) {
+                            let selectedFolder = folders[0].name;
+                            const isAnimation = genre_ids && (genre_ids.includes(16) || genre_ids.includes('16'));
+                            const isAnime = isAnimation && mediaType === 'tv';
+                            if (isAnime && folders.find(f => /anime/i.test(f.name))) {
+                                selectedFolder = folders.find(f => /anime/i.test(f.name)).name;
+                            } else if (isAnimation && folders.find(f => /anim/i.test(f.name))) {
+                                selectedFolder = folders.find(f => /anim/i.test(f.name)).name;
+                            } else if (mediaType === 'tv' && folders.find(f => /tv|show|series/i.test(f.name))) {
+                                selectedFolder = folders.find(f => /tv|show|series/i.test(f.name)).name;
+                            } else if (mediaType === 'movie' && folders.find(f => /movie|film/i.test(f.name))) {
+                                selectedFolder = folders.find(f => /movie|film/i.test(f.name)).name;
+                            }
+                            const folderOptionsHTML = folders.map(f =>
+                                `<option value="${f.name}" ${f.name === selectedFolder ? 'selected' : ''}>${f.name}</option>`
+                            ).join('');
+                            folderDropdownHTML = `
+                                <div class="torrent-folder-dropdown-wrapper">
+                                    <label for="torrent-folder-select">Folder:</label>
+                                    <select id="torrent-folder-select" class="torrent-folder-select">
+                                        ${folderOptionsHTML}
+                                    </select>
+                                </div>
+                            `;
+                        }
+                    }
+                } catch(e) { /* folder dropdown optional */ }
+
+                // Tags dropdown — Plex mode only
+                let tagsDropdownHTML3 = '';
+                try {
+                    const cfgR3 = await fetch('/settings/api/config');
+                    const cfgD3 = await cfgR3.json();
+                    const tags3 = (cfgD3['Tags'] || {})['tags_list'] || [];
+                    const mode3 = (cfgD3['File Management'] || {})['file_collection_management'] || '';
+                    if (mode3 === 'Plex' && tags3.length > 0) {
+                        const opts3 = tags3.map(t => `<option value="${t}">${t}</option>`).join('');
+                        tagsDropdownHTML3 = `
+                            <div class="torrent-tags-dropdown-wrapper" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+                                <span style="font-size:12px;color:#aaa;margin-right:4px;">Tags:</span>
+                                ${tags3.map(t => `<span class="torrent-tag-pill" data-tag="${t}" onclick="this.classList.toggle('active');this.style.background=this.classList.contains('active')?'#e8651a':'#333';this.style.color='#fff';" style="padding:3px 10px;border-radius:12px;background:#333;color:#ddd;font-size:11px;cursor:pointer;user-select:none;">${t}</span>`).join('')}
+                            </div>`;
+                    }
+                } catch(e3) {}
+
+                filterSection.innerHTML = `
+                    <div class="torrent-filter-input-wrapper">
+                        ${createSearchIcon()}
+                        <input type="text" class="torrent-filter-input" id="torrent-filter-input" placeholder="Filter results...">
+                    </div>
+                    <div class="torrent-version-dropdown-wrapper">
+                        <label for="torrent-version-select">Version:</label>
+                        <select id="torrent-version-select" class="torrent-version-select">
+                            ${versionOptionsHTML}
+                        </select>
+                    </div>
+                    ${folderDropdownHTML}
+                    ${tagsDropdownHTML3}
+                    <div class="torrent-filter-toggles">
+                        <label class="torrent-filter-checkbox">
+                            <input type="checkbox" id="show-filtered-checkbox">
+                            <span>Show filtered</span>
+                        </label>
+                        <label class="torrent-filter-checkbox">
+                            <input type="checkbox" id="show-filename-checkbox">
+                            <span>Filename</span>
+                        </label>
+                    </div>
+                `;
+                overlayContent.appendChild(filterSection);
+
+                const versionSelectEl = overlayContent.querySelector('#torrent-version-select');
+                if (versionSelectEl) {
+                    versionSelectEl.addEventListener('change', async function(e) {
+                        closeOverlay();
+                        const multi = mediaType === 'tv' && !episode ? true : false;
+                        await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, e.target.value);
+                    });
+                }
+
+                const table = document.createElement('table');
                 const thead = document.createElement('thead');
                 thead.innerHTML = `
                     <tr>
-                        <th style="color: rgb(191 191 190); width: 38%;">Name</th>
-                        <th style="color: rgb(191 191 190); width: 12%; text-align: right;">Size Per File</th>
-                        <th style="color: rgb(191 191 190); width: 10%;">Source</th>
-                        <th style="color: rgb(191 191 190); width: 10%; text-align: right;">Score</th>
-                        <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Cache</th>
-                        <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Add</th>
-                        <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Assign</th>
+                        <th class="sortable" style="width: 40%;">Release</th>
+                        <th class="sortable text-right" style="width: 10%;">Size</th>
+                        <th style="width: 12%;">Scraper</th>
+                        <th class="sortable text-right" style="width: 10%;">Score</th>
+                        <th class="text-center" style="width: 8%;">Cache</th>
+                        <th class="text-center" style="width: 10%;">Add</th>
+                        <th class="text-center" style="width: 10%;">Assign</th>
                     </tr>
                 `;
                 table.appendChild(thead);
@@ -1330,18 +1589,14 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 allDisplayItems.forEach((torrent, index) => {
                     const isFilteredOut = torrent.__isActuallyFilteredOut;
                     const cacheStatus = torrent.cached || 'Unknown';
-                    const cacheStatusClass = cacheStatus === 'Yes' ? 'cached' :
-                                          cacheStatus === 'No' ? 'not-cached' :
-                                          cacheStatus === 'Not Checked' ? 'not-checked' :
-                                          cacheStatus === 'N/A' ? 'check-unavailable' : 'unknown';
-                    
+
                     if (torrent.magnet) {
                         torrent.magnet_link = torrent.magnet;
                     }
 
                     const assignUrlParams = new URLSearchParams({
                         prefill_id: mediaId, prefill_type: mediaType, prefill_title: title,
-                        prefill_year: year, prefill_magnet: torrent.magnet, prefill_version: version
+                        prefill_year: year, prefill_magnet: torrent.magnet || torrent.nzb_url || '', prefill_version: version
                     });
                     if (season) {
                         assignUrlParams.set('prefill_seasons', season);
@@ -1354,40 +1609,91 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     }
                     const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
 
-                    const bitrateTooltip = formatBitrate(torrent.bitrate);
+                    const qualityTags = extractQualityTags(torrent.title || torrent.original_title || '');
+                    const qualityBadgesHtml = qualityTags.map(tag => createQualityBadge(tag)).join('');
+
+                    const ShowInfo = `${season ? `<span class="season-info">S${season.toString().padStart(2, '0')}` : ''}${(torrent.parsed_info?.seasons?.length || 0) > 1 ? ` - ${torrent.parsed_info.seasons.length}</span>` : `</span>`} ${episode ? `<span class="ds-episode-info"> E${episode.toString().padStart(2, '0')}</span>` : ''}`;
+                    const titleHasYear = year && title.trim().endsWith(`(${year})`);
+                    const cleanTitle = `${title}${year && !titleHasYear ? ` (${year})` : ''}${ShowInfo ? ` ${ShowInfo}` : ''}`;
+                    const filename = torrent.title || torrent.original_title || 'N/A';
+
+                    const score = torrent.score_breakdown?.total_score || 0;
+                    const scoreClass = getScoreColorClass(score);
+                    const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (score || 'N/A');
+
+                    const isNzbResult2 = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
+                    const cacheIconHtml = isNzbResult2
+                        ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via ${window.USENET_PROVIDER_NAME || "Usenet provider"}">NZB</span>`
+                        : (createCacheProviderBadges(torrent) || createCacheIcon(cacheStatus));
 
                     const row = document.createElement('tr');
                     if (isFilteredOut) {
-                        row.classList.add('filtered-out-item'); 
+                        row.classList.add('filtered-row');
                     }
 
                     row.innerHTML = `
-                        <td style="font-weight: 600; text-transform: uppercase; color: rgb(191 191 190); word-wrap: break-word; white-space: normal; padding: 10px;">
-                            <div style="display: block; line-height: 1.4; min-height: fit-content;">
-                                ${torrent.title || torrent.original_title || 'N/A'}
+                        <td>
+                            <div class="release-title-wrapper">
+                                <div class="release-title" data-clean-title="${cleanTitle.replace(/"/g, '&quot;')}" data-filename="${filename.replace(/"/g, '&quot;')}">${cleanTitle}</div>
+                                <div class="release-tags">${qualityBadgesHtml}</div>
                             </div>
                         </td>
-                        <td style="color: rgb(191 191 190); text-align: right;" data-bitrate="${bitrateTooltip}">${(torrent.size || 0).toFixed(1)} GB</td>
-                        <td id="scraper-source" style="color: rgb(191 191 190);">
-                            <div class="source-container">
-                                ${(torrent.source || 'N/A').split(' - ').map(part => `<span class="source-badge">${part.trim()}</span>`).join('')}
+                        <td class="text-right">
+                            <div class="size-cell-wrapper">
+                                <div class="size-value">${(torrent.size || 0).toFixed(1)} GB</div>
+                                <button class="folder-icon-btn desktop-only"
+                                        data-magnet="${(torrent.magnet || '').replace(/"/g, '&quot;')}"
+                                        data-title="${(torrent.title || torrent.original_title || '').replace(/"/g, '&quot;')}"
+                                        aria-label="View file list"
+                                        title="${torrent.is_nzb_season_pack ? 'View NZB episode list' : (torrent.nzb_url ? 'View NZB info' : 'View torrent files')}">
+                                    ${createFolderIcon()}
+                                </button>
                             </div>
                         </td>
-                        <td style="color: rgb(191 191 190); text-align: right;" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</td>
-                        <td style="color: rgb(191 191 190); text-align: center;">
-                            <span class="cache-status ${cacheStatusClass}" data-index="${index}">${cacheStatus}</span>
+                        <td>
+                            ${(torrent.source || 'N/A').split(' - ').map(p => `<span class="source-badge">${p.trim()}</span>`).join('')}
                         </td>
-                        <td style="color: rgb(191 191 190); text-align: center;">
-                            <button class="action-button add-button">Add</button>
+                        <td class="text-right">
+                            <span class="score-value ${scoreClass}" ${isFilteredOut ? `title="${torrent.filter_reason || 'Filtered'}"` : ''}>${scoreDisplay}</span>
                         </td>
-                        <td style="color: rgb(191 191 190); text-align: center;">
-                             <button class="action-button assign-button" onclick="window.location.href='${assignUrl}'">Assign</button>
+                        <td class="text-center cache-cell" data-torrent-index="${index}">
+                            <span class="cache-icon-wrapper">${cacheIconHtml}</span>
+                        </td>
+                        <td class="text-center">
+                            <button class="action-button add-button">
+                                ${createDownloadIcon()}
+                                ADD
+                            </button>
+                        </td>
+                        <td class="text-center">
+                            <button class="action-button assign-button">
+                                ${createExternalLinkIcon()}
+                                ASSIGN
+                            </button>
                         </td>
                     `;
                     tbody.appendChild(row);
 
                     const addButton = row.querySelector('.add-button');
                     const assignButton = row.querySelector('.assign-button');
+
+                    // Folder icon for second table
+                    const folderButton2 = row.querySelector('.folder-icon-btn');
+                    if (folderButton2) {
+                        folderButton2.onclick = async function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (torrent.is_nzb_season_pack && torrent.episode_nzb_urls) {
+                                showNzbFileListModal(torrent);
+                            } else if (torrent.nzb_url) {
+                                showNzbFileListModal(torrent);
+                            } else {
+                                const magnet = folderButton2.getAttribute('data-magnet');
+                                const torrentTitle = folderButton2.getAttribute('data-title');
+                                if (magnet) await showTorrentFileList(magnet, torrentTitle);
+                            }
+                        };
+                    }
 
                     if (isFilteredOut) {
                         addButton.onclick = function() {
@@ -1414,7 +1720,6 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                                 tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
                             });
                         };
-
                         assignButton.onclick = function() {
                             window.location.href = assignUrl;
                         };
@@ -1422,6 +1727,46 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 });
                 table.appendChild(tbody);
                 overlayContent.appendChild(table);
+
+                // Filter / filename toggle functionality
+                const filterInput = overlayContent.querySelector('#torrent-filter-input');
+                const showFilteredCheckbox = overlayContent.querySelector('#show-filtered-checkbox');
+                const showFilenameCheckbox = overlayContent.querySelector('#show-filename-checkbox');
+
+                if (showFilenameCheckbox) {
+                    const savedFilenameState = localStorage.getItem('torrentShowFilename') === 'true';
+                    showFilenameCheckbox.checked = savedFilenameState;
+                    if (savedFilenameState) {
+                        tbody.querySelectorAll('tr').forEach(row => {
+                            const titleDiv = row.querySelector('.release-title');
+                            if (titleDiv) titleDiv.textContent = titleDiv.getAttribute('data-filename');
+                        });
+                    }
+                    showFilenameCheckbox.addEventListener('change', function() {
+                        localStorage.setItem('torrentShowFilename', this.checked);
+                        tbody.querySelectorAll('tr').forEach(row => {
+                            const titleDiv = row.querySelector('.release-title');
+                            if (titleDiv) {
+                                titleDiv.textContent = this.checked
+                                    ? titleDiv.getAttribute('data-filename')
+                                    : titleDiv.getAttribute('data-clean-title');
+                            }
+                        });
+                    });
+                }
+
+                function applyFiltersClassic() {
+                    const filterText = filterInput ? filterInput.value.toLowerCase() : '';
+                    const showFiltered = showFilteredCheckbox ? showFilteredCheckbox.checked : true;
+                    tbody.querySelectorAll('tr').forEach(row => {
+                        const isFiltered = row.classList.contains('filtered-row');
+                        const matchesSearch = !filterText || row.textContent.toLowerCase().includes(filterText);
+                        row.style.display = (matchesSearch && (showFiltered || !isFiltered)) ? '' : 'none';
+                    });
+                }
+                if (filterInput) filterInput.addEventListener('input', applyFiltersClassic);
+                if (showFilteredCheckbox) showFilteredCheckbox.addEventListener('change', applyFiltersClassic);
+                applyFiltersClassic();
             }
         }
     }
@@ -1541,7 +1886,7 @@ function setupFilterReasonTooltips() {
     });
     
     // Mobile tooltips
-    const mobileFilteredItems = document.querySelectorAll('.torresult.filtered-out-item .torresult-item:first-of-type');
+    const mobileFilteredItems = document.querySelectorAll('.torresult.filtered-out-item .tr-stats');
     
     mobileFilteredItems.forEach(item => {
         item.addEventListener('mouseenter', function(e) {
@@ -2374,6 +2719,7 @@ function performLiveSearch(searchTerm, updateURL = true) {
 let availableVersions = [];
 let selectedContent = null;
 let scrapeContent = null;
+let _scraperSourceContext = null; // Set to 'recently_aired' when searching from recently aired box
 
 // Fetch available versions
 async function fetchVersions() {
@@ -2394,89 +2740,89 @@ function showVersionModal(content) {
     selectedContent = content;
     const modal = document.getElementById('versionModal');
     const versionCheckboxes = document.getElementById('versionCheckboxes');
-    
-    // Clear existing checkboxes
+
     versionCheckboxes.innerHTML = '';
-    
-    // If this is a TV show, add options for whole show or seasons
-    if (content.mediaType === 'tv') {
-        // Add a heading for show selection
-        const showSelectionHeader = document.createElement('div');
-        showSelectionHeader.className = 'version-section-header';
-        showSelectionHeader.innerHTML = '<h4>Select Request Type:</h4>';
-        versionCheckboxes.appendChild(showSelectionHeader);
-        
-        // Add radio buttons for selection type
-        const selectionTypeContainer = document.createElement('div');
-        selectionTypeContainer.className = 'selection-type-container';
-        selectionTypeContainer.innerHTML = `
-            <div class="selection-type-option">
-                <input type="radio" id="whole-show" name="selection-type" value="whole-show" checked>
-                <label for="whole-show">Whole Show</label>
-            </div>
-            <div class="selection-type-option">
-                <input type="radio" id="specific-seasons" name="selection-type" value="specific-seasons">
-                <label for="specific-seasons">Specific Seasons</label>
-            </div>
-        `;
-        versionCheckboxes.appendChild(selectionTypeContainer);
-        
-        // Container for season selection (initially hidden)
+
+    // Title
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(titleEl);
+
+    // Subtitle pill
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    const isTV = content.mediaType === 'tv';
+    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${content.title}${content.year ? ` (${content.year})` : ''}`;
+    versionCheckboxes.appendChild(subEl);
+
+    // TV show: request type radio rows
+    if (isTV) {
+        const typeLabel = document.createElement('div');
+        typeLabel.className = 'section-label';
+        typeLabel.textContent = 'Select Request Type';
+        versionCheckboxes.appendChild(typeLabel);
+
+        const wholeRow = document.createElement('div');
+        wholeRow.className = 'option-row selected';
+        wholeRow.id = 'opt-whole-show';
+        wholeRow.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">Whole Show</span>`;
+        versionCheckboxes.appendChild(wholeRow);
+
+        const seasonsRow = document.createElement('div');
+        seasonsRow.className = 'option-row';
+        seasonsRow.id = 'opt-specific-seasons';
+        seasonsRow.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">Specific Seasons</span>`;
+        versionCheckboxes.appendChild(seasonsRow);
+
+        // Season container (hidden initially)
         const seasonSelectionContainer = document.createElement('div');
         seasonSelectionContainer.className = 'season-selection-container';
         seasonSelectionContainer.id = 'season-selection-container';
         seasonSelectionContainer.style.display = 'none';
         seasonSelectionContainer.innerHTML = '<p>Loading seasons...</p>';
         versionCheckboxes.appendChild(seasonSelectionContainer);
-        
-        // Add handlers for radio buttons
-        const wholeShowRadio = selectionTypeContainer.querySelector('#whole-show');
-        const specificSeasonsRadio = selectionTypeContainer.querySelector('#specific-seasons');
-        
-        wholeShowRadio.addEventListener('change', function() {
-            if (this.checked) {
-                document.getElementById('season-selection-container').style.display = 'none';
+
+        // Radio row click handlers
+        wholeRow.addEventListener('click', () => {
+            wholeRow.classList.add('selected');
+            seasonsRow.classList.remove('selected');
+            seasonSelectionContainer.style.display = 'none';
+        });
+
+        seasonsRow.addEventListener('click', () => {
+            seasonsRow.classList.add('selected');
+            wholeRow.classList.remove('selected');
+            seasonSelectionContainer.style.display = 'block';
+            if (seasonSelectionContainer.innerHTML === '<p>Loading seasons...</p>') {
+                fetchShowSeasons(content.id);
             }
         });
-        
-        specificSeasonsRadio.addEventListener('change', function() {
-            if (this.checked) {
-                document.getElementById('season-selection-container').style.display = 'block';
-                // Fetch seasons if not already loaded
-                if (document.getElementById('season-selection-container').innerHTML === '<p>Loading seasons...</p>') {
-                    fetchShowSeasons(content.id);
-                }
-            }
-        });
-        
-        // Add a separator
-        const separator = document.createElement('hr');
-        versionCheckboxes.appendChild(separator);
+
+        const divider = document.createElement('div');
+        divider.className = 'vm-divider';
+        versionCheckboxes.appendChild(divider);
     }
-    
-    // Add a heading for version selection
-    const versionHeader = document.createElement('div');
-    versionHeader.className = 'version-section-header';
-    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
-    versionCheckboxes.appendChild(versionHeader);
-    
-    // Create checkboxes for each version
+
+    // Version section label
+    const verLabel = document.createElement('div');
+    verLabel.className = 'section-label';
+    verLabel.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(verLabel);
+
+    // Version option rows (checkboxes)
     availableVersions.forEach(version => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox';
-        div.innerHTML = `
-            <input type="checkbox" id="${version}" name="versions" value="${version}">
-            <label for="${version}">${version}</label>
-        `;
-        versionCheckboxes.appendChild(div);
-        
-        // If there's only one version available, auto-select it
-        if (availableVersions.length === 1) {
-            div.querySelector('input[type="checkbox"]').checked = true;
-        }
+        const row = document.createElement('div');
+        row.className = 'option-row';
+        row.dataset.value = version;
+        row.dataset.type = 'version';
+        row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => row.classList.toggle('checked'));
+        versionCheckboxes.appendChild(row);
+
+        if (availableVersions.length === 1) row.classList.add('checked');
     });
-    
-    // Add modal-open class to body
+
     document.body.classList.add('modal-open');
     modal.style.display = 'flex';
 }
@@ -2502,24 +2848,37 @@ function showScrapeVersionModal(content) {
 
     versionRadios.innerHTML = '';
 
-    availableVersions.forEach((version, index) => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox'; // Reuse class for styling
-        div.innerHTML = `
-            <input type="radio" id="scrape-version-${version}" name="scrape-versions" value="${version}" ${index === 0 ? 'checked' : ''}>
-            <label for="scrape-version-${version}">${version}</label>
-        `;
-        versionRadios.appendChild(div);
-    });
+    // Title
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Scrape Version';
+    versionRadios.appendChild(titleEl);
 
-    // Add a 'No Version' option
-    const noVersionDiv = document.createElement('div');
-    noVersionDiv.className = 'version-checkbox';
-    noVersionDiv.innerHTML = `
-        <input type="radio" id="scrape-version-No Version" name="scrape-versions" value="No Version">
-        <label for="scrape-version-No Version">No Version</label>
-    `;
-    versionRadios.appendChild(noVersionDiv);
+    // Subtitle pill
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    const isTV = content.mediaType === 'tv';
+    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> ${content.title}${content.year ? ` (${content.year})` : ''}`;
+    versionRadios.appendChild(subEl);
+
+    // Section label
+    const labelEl = document.createElement('div');
+    labelEl.className = 'section-label';
+    labelEl.textContent = 'Select Version';
+    versionRadios.appendChild(labelEl);
+
+    const allVersions = [...availableVersions, 'No Version'];
+    allVersions.forEach((version, index) => {
+        const row = document.createElement('div');
+        row.className = 'option-row' + (index === 0 ? ' selected' : '');
+        row.dataset.value = version;
+        row.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => {
+            versionRadios.querySelectorAll('.option-row').forEach(r => r.classList.remove('selected'));
+            row.classList.add('selected');
+        });
+        versionRadios.appendChild(row);
+    });
 
     document.body.classList.add('modal-open');
     modal.style.display = 'flex';
@@ -2527,7 +2886,8 @@ function showScrapeVersionModal(content) {
 
 // New handler for scrape version confirmation
 async function handleScrapeVersionConfirm() {
-    const selectedVersion = document.querySelector('#scrapeVersionRadios input[name="scrape-versions"]:checked')?.value;
+    const selectedRow = document.querySelector('#scrapeVersionRadios .option-row.selected');
+    const selectedVersion = selectedRow ? selectedRow.dataset.value : undefined;
     if (selectedVersion === undefined) {
         displayError('Please select a version.');
         return;
@@ -2544,42 +2904,43 @@ function showVersionModalForSeason(content) {
     selectedContent = content;
     const modal = document.getElementById('versionModal');
     const versionCheckboxes = document.getElementById('versionCheckboxes');
-    
-    // Clear existing checkboxes
+
     versionCheckboxes.innerHTML = '';
-    
-    // Add a heading for the season being requested
-    const seasonHeader = document.createElement('div');
-    seasonHeader.className = 'version-section-header';
-    seasonHeader.innerHTML = `<h4>Requesting: ${content.title} - Season ${content.seasons[0]}</h4>`;
-    versionCheckboxes.appendChild(seasonHeader);
-    
-    // Add a separator
-    const separator = document.createElement('hr');
-    versionCheckboxes.appendChild(separator);
-    
-    // Add a heading for version selection
-    const versionHeader = document.createElement('div');
-    versionHeader.className = 'version-section-header';
-    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
-    versionCheckboxes.appendChild(versionHeader);
-    
-    // Create checkboxes for each version
+
+    // Title
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(titleEl);
+
+    // Subtitle pill
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    subEl.innerHTML = `<i class="fa-solid fa-tv"></i> Requesting: ${content.title} — Season ${content.seasons[0]}`;
+    versionCheckboxes.appendChild(subEl);
+
+    const divider = document.createElement('div');
+    divider.className = 'vm-divider';
+    versionCheckboxes.appendChild(divider);
+
+    // Version section label
+    const verLabel = document.createElement('div');
+    verLabel.className = 'section-label';
+    verLabel.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(verLabel);
+
     availableVersions.forEach(version => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox';
-        div.innerHTML = `
-            <input type="checkbox" id="${version}" name="versions" value="${version}">
-            <label for="${version}">${version}</label>
-        `;
-        versionCheckboxes.appendChild(div);
-        
-        // If there's only one version available, auto-select it
-        if (availableVersions.length === 1) {
-            div.querySelector('input[type="checkbox"]').checked = true;
-        }
+        const row = document.createElement('div');
+        row.className = 'option-row';
+        row.dataset.value = version;
+        row.dataset.type = 'version';
+        row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => row.classList.toggle('checked'));
+        versionCheckboxes.appendChild(row);
+
+        if (availableVersions.length === 1) row.classList.add('checked');
     });
-    
+
     modal.style.display = 'flex';
 }
 
@@ -2598,24 +2959,20 @@ async function fetchShowSeasons(tmdbId) {
         if (window.DEBUG) console.log('Show seasons API response:', data);
         
         if (data.success && data.seasons && data.seasons.length > 0) {
-            // Update the season selection container
             const seasonContainer = document.getElementById('season-selection-container');
             seasonContainer.innerHTML = '<div class="seasons-list"></div>';
             const seasonsList = seasonContainer.querySelector('.seasons-list');
-            
-            // Sort seasons in numerical order
+
             const seasons = data.seasons.sort((a, b) => a - b);
             if (window.DEBUG) console.log(`Found ${seasons.length} seasons:`, seasons);
-            
-            // Create checkbox for each season
+
             seasons.forEach(season => {
-                const seasonDiv = document.createElement('div');
-                seasonDiv.className = 'season-checkbox';
-                seasonDiv.innerHTML = `
-                    <input type="checkbox" id="season-${season}" name="seasons" value="${season}">
-                    <label for="season-${season}">Season ${season}</label>
-                `;
-                seasonsList.appendChild(seasonDiv);
+                const row = document.createElement('div');
+                row.className = 'option-row';
+                row.dataset.value = String(season);
+                row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">Season ${season}</span>`;
+                row.addEventListener('click', () => row.classList.toggle('checked'));
+                seasonsList.appendChild(row);
             });
         } else {
             if (window.DEBUG) console.warn('No seasons found or invalid response format:', data);
@@ -2635,41 +2992,32 @@ async function fetchShowSeasons(tmdbId) {
 
 // Handle version confirmation
 async function handleVersionConfirm() {
-    const versionCheckboxes = document.querySelectorAll('#versionCheckboxes input[name="versions"]:checked');
-    const selectedVersions = Array.from(versionCheckboxes).map(cb => cb.value);
-    
+    const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes .option-row.checked[data-type="version"]'))
+        .map(row => row.dataset.value);
+
     if (selectedVersions.length === 0) {
         displayError('Please select at least one version');
         return;
     }
-    
-    // Check if this is a TV show
+
+    // Check if this is a TV show with the request type selector
     if (selectedContent.mediaType === 'tv') {
-        // Check if the whole-show radio button exists (it won't exist when using showVersionModalForSeason)
-        const wholeShowRadio = document.querySelector('#whole-show');
-        
-        // If the radio buttons exist, process the selection
-        if (wholeShowRadio) {
-            const wholeShowSelected = wholeShowRadio.checked;
-            
+        const wholeShowRow = document.getElementById('opt-whole-show');
+        if (wholeShowRow) {
+            const wholeShowSelected = wholeShowRow.classList.contains('selected');
             if (!wholeShowSelected) {
-                // Get selected seasons
-                const seasonCheckboxes = document.querySelectorAll('#versionCheckboxes input[name="seasons"]:checked');
-                const selectedSeasons = Array.from(seasonCheckboxes).map(cb => parseInt(cb.value));
-                
+                const selectedSeasons = Array.from(document.querySelectorAll('#season-selection-container .option-row.checked'))
+                    .map(row => parseInt(row.dataset.value));
+
                 if (selectedSeasons.length === 0) {
                     displayError('Please select at least one season or choose "Whole Show"');
                     return;
                 }
-                
-                // Add seasons to selectedContent
                 selectedContent.seasons = selectedSeasons;
             }
         }
-        // If radio buttons don't exist, the seasons are already pre-selected in selectedContent
-        // from the showVersionModalForSeason function, so we don't need to do anything
     }
-    
+
     closeVersionModal();
     await requestContent(selectedContent, selectedVersions);
 }
@@ -4044,13 +4392,16 @@ function createResultElement(item, tmdb_api_key_set, isRequester, version, reque
     return searchResDiv;
 }
 
-async function selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, version) {
+async function selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, version, source_context) {
     // Check if user is a requester before making the request
     const isRequesterEl = document.getElementById('is_requester');
     if (isRequesterEl && isRequesterEl.value === 'True') {
         // Display error message for requesters
         return;
     }
+
+    // Store source context so addToRealDebrid can pass it to the backend
+    _scraperSourceContext = source_context || null;
 
     if (!mediaId || mediaId === 'undefined') {
         if (window.DEBUG) console.error("selectMedia called with invalid mediaId:", mediaId);
@@ -4131,19 +4482,27 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
 // Function to check cache status in the background and update the UI
 function checkCacheStatusInBackground(hashes, results) {
     let processedCount = 0;
+    // Count only first 5 non-NZB (debrid) items for cache checking
+    let debridChecked = 0;
+    const MAX_DEBRID_CHECKS = 5;
+    const MAX_PARALLEL_REQUESTS = 2;
     let totalCount = Math.min(5, results.length);
     let processingItems = new Set(); // Track items currently being processed
-    const MAX_PARALLEL_REQUESTS = 1; // Process up to 3 items at once
 
     // Update to handle both magnet links and torrent files
-    function updateCacheStatusUI(index, status) {
+    function updateCacheStatusUI(index, status, cache_providers) {
+        const providerBadgesHtml = cache_providers && Object.keys(cache_providers).length
+            ? createCacheProviderBadges({cache_providers})
+            : null;
+
         // Try new desktop structure first (Tangerine theme)
         const cacheCell = document.querySelector(`.cache-cell[data-torrent-index="${index}"]`);
         if (cacheCell) {
             const wrapper = cacheCell.querySelector('.cache-icon-wrapper');
             if (wrapper) {
-                // Update with new cache icon (Tangerine theme)
-                if (status === 'cached') {
+                if (providerBadgesHtml) {
+                    wrapper.innerHTML = providerBadgesHtml;
+                } else if (status === 'cached') {
                     wrapper.innerHTML = createCacheIcon('Yes');
                 } else if (status === 'not_cached') {
                     wrapper.innerHTML = createCacheIcon('No');
@@ -4154,24 +4513,26 @@ function checkCacheStatusInBackground(hashes, results) {
                 }
             }
         } else {
-            // Fallback to old structure (mobile view or classic theme)
-            const cacheStatusElements = document.querySelectorAll('.cache-status');
-            if (index < cacheStatusElements.length) {
-                const element = cacheStatusElements[index];
-                element.classList.remove('not-checked', 'cached', 'not-cached', 'check-unavailable', 'unknown');
-                
-                if (status === 'cached') {
-                    element.classList.add('cached');
-                    element.textContent = '✓';
-                } else if (status === 'not_cached') {
-                    element.classList.add('not-cached');
-                    element.textContent = '✗';
-                } else if (status === 'check_unavailable') {
-                    element.classList.add('check-unavailable');
-                    element.textContent = 'N/A';
+            // Mobile badge structure
+            const element = document.querySelector(`.cache-status[data-index="${index}"]`);
+            if (element) {
+                if (providerBadgesHtml) {
+                    element.outerHTML = providerBadgesHtml;
                 } else {
-                    element.classList.add('unknown');
-                    element.textContent = '?';
+                    element.classList.remove('badge-cached', 'badge-na', 'badge-pending', 'not-checked', 'cached', 'not-cached', 'check-unavailable', 'unknown');
+                    if (status === 'cached') {
+                        element.classList.add('cached', 'badge-cached');
+                        element.innerHTML = '<i class="fa-solid fa-check"></i> Cached';
+                    } else if (status === 'not_cached') {
+                        element.classList.add('not-cached', 'badge-na');
+                        element.innerHTML = '<i class="fa-solid fa-xmark"></i> Uncached';
+                    } else if (status === 'check_unavailable') {
+                        element.classList.add('check-unavailable', 'badge-na');
+                        element.innerHTML = '<i class="fa-solid fa-xmark"></i> N/A';
+                    } else {
+                        element.classList.add('unknown', 'badge-pending');
+                        element.innerHTML = '<i class="fa-solid fa-clock"></i> Not Checked';
+                    }
                 }
             }
         }
@@ -4195,12 +4556,11 @@ function checkCacheStatusInBackground(hashes, results) {
                 }
             } else {
                 // Fallback to old structure
-                const cacheStatusElements = document.querySelectorAll('.cache-status');
-                if (i < cacheStatusElements.length) {
-                    const element = cacheStatusElements[i];
-                    element.classList.remove('not-checked');
-                    element.classList.add('check-unavailable');
-                    element.textContent = 'N/A';
+                const element = document.querySelector(`.cache-status[data-index="${i}"]`);
+                if (element) {
+                    element.classList.remove('badge-cached', 'badge-na', 'badge-pending', 'not-checked', 'cached', 'not-cached', 'check-unavailable', 'unknown');
+                    element.classList.add('check-unavailable', 'badge-na');
+                    element.innerHTML = '<i class="fa-solid fa-xmark"></i> N/A';
                 }
             }
         }
@@ -4253,11 +4613,24 @@ function checkCacheStatusInBackground(hashes, results) {
         }
 
         const result = results[index];
-        
-        // If the item was filtered out (score is N/A), or its score is inherently null/undefined (displayed as N/A),
-        // or if there's no magnet link or torrent URL, mark cache status as N/A and skip checking.
-        if (result.__isActuallyFilteredOut || 
-            result.score_breakdown?.total_score == null || 
+
+        // NZB items don't need cache checking — skip and extend window to find debrid items
+        const isNzb = result.protocol === 'nzb' || (!!result.nzb_url && !result.magnet_link && !result.torrent_url);
+        if (isNzb) {
+            processingItems.delete(index);
+            // Always extend the window when skipping an NZB so we still check MAX_DEBRID_CHECKS debrid items
+            if (totalCount < results.length) {
+                totalCount = Math.min(totalCount + 1, results.length);
+            }
+            processedCount++;
+            processNextItems();
+            return;
+        }
+        debridChecked++;
+
+        // If the item was filtered out or has no magnet/torrent URL, mark as N/A
+        if (result.__isActuallyFilteredOut ||
+            result.score_breakdown?.total_score == null ||
             (!result.magnet_link && !result.torrent_url)) {
             updateCacheStatusUI(index, 'check_unavailable');
             processingItems.delete(index);
@@ -4290,12 +4663,12 @@ function checkCacheStatusInBackground(hashes, results) {
         })
         .then(data => {
             if (window.DEBUG) console.log(`Cache status for index ${index}:`, data);
-            updateCacheStatusUI(index, data.status);
+            updateCacheStatusUI(index, data.status, data.cache_providers);
             checkCompletion();
         })
         .catch(error => {
             if (window.DEBUG) console.error(`Error checking cache status for index ${index}:`, error);
-            updateCacheStatusUI(index, 'unknown');
+            updateCacheStatusUI(index, 'unknown', null);
             checkCompletion();
         });
     }
@@ -4307,19 +4680,19 @@ function checkCacheStatusInBackground(hashes, results) {
             finalizeCacheCheck();
             return;
         }
-        
+
         // Process new items up to our parallel limit
         for (let i = 0; i < totalCount; i++) {
             // Skip if we're at capacity or this item is already being processed
             if (processingItems.size >= MAX_PARALLEL_REQUESTS || processingItems.has(i)) {
                 continue;
             }
-            
+
             // Skip if this item is already processed
             if (i < processedCount) {
                 continue;
             }
-            
+
             // Process this item
             processingItems.add(i);
             checkItemCacheStatus(i);
@@ -4863,5 +5236,208 @@ async function handleAutoScrape(imdbId, season, episode, version) {
         hideLoadingState();
         if (window.DEBUG) console.error('Auto-scrape failed:', error);
         displayError(`Auto-scrape failed: ${error.message}`);
+    }
+}
+
+/**
+ * Show file list modal for an NZB result (single or aggregate pack)
+ */
+async function showNzbFileListModal(torrent) {
+    const title = torrent.title || torrent.original_title || 'NZB';
+    const metadata = { filename: title, hash: '', status: 'nzb' };
+
+    if (torrent.is_nzb_season_pack && torrent.episode_nzb_urls) {
+        // Aggregate pack — one row per episode using actual filenames and sizes
+        const epNums = Object.keys(torrent.episode_nzb_urls).map(Number).sort((a, b) => a - b);
+        const episodeSizes = torrent.episode_sizes || {};
+        const episodeFilenames = torrent.episode_filenames || {};
+        const files = epNums.map(ep => {
+            const sizeGb = episodeSizes[ep] || 0;
+            const sizeBytes = Math.round(sizeGb * 1024 * 1024 * 1024);
+            const sizeFmt = sizeGb >= 0.1 ? sizeGb.toFixed(2) + ' GB' : (sizeGb * 1024).toFixed(0) + ' MB';
+            const filename = episodeFilenames[ep] || '';
+            return {
+                name: filename || `Episode ${ep}`,
+                path: filename || `Episode ${ep}`,
+                size: sizeBytes,
+                size_formatted: sizeFmt
+            };
+        });
+        displayFileListModal(files, title, files.length, metadata);
+    } else if (torrent.nzb_url) {
+        // Single NZB — fetch and parse from backend
+        Loading.show('Loading NZB file list...', '', true, false);
+        try {
+            const r = await fetch('/scraper/get_nzb_files', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({nzb_url: torrent.nzb_url, title})
+            });
+            const data = await r.json();
+            Loading.hide();
+            if (!data.success) throw new Error(data.error || 'Failed to fetch NZB files');
+            displayFileListModal(data.files, title, data.total_files, data.metadata);
+        } catch (e) {
+            Loading.hide();
+            showPopup({ type: POPUP_TYPES.ERROR, title: 'NZB File List Error', message: e.message });
+        }
+    }
+}
+
+/**
+ * Show file list for a torrent magnet link
+ * @param {string} magnet - Magnet link
+ * @param {string} torrentTitle - Title of the torrent
+ */
+async function showTorrentFileList(magnet, torrentTitle) {
+    // Show loading state
+    Loading.show('Loading file list...', '', true, false);
+
+    try {
+        // Fetch file list from backend
+        const response = await fetch('/scraper/get_torrent_files', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                magnet: magnet,
+                torrent_title: torrentTitle
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to fetch file list');
+        }
+
+        // Close loading message
+        Loading.hide();
+
+        // Display file list modal
+        displayFileListModal(data.files, torrentTitle, data.total_files, data.metadata);
+
+    } catch (error) {
+        Loading.hide();
+        console.error('Error fetching torrent file list:', error);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'File List Error',
+            message: `Could not load file list: ${error.message}`
+        });
+    }
+}
+
+/**
+ * Display file list modal
+ * @param {Array} files - Array of file objects
+ * @param {string} torrentTitle - Title of the torrent
+ * @param {number} totalFiles - Total number of files
+ * @param {Object} metadata - Torrent metadata (id, hash, filename, status)
+ */
+function displayFileListModal(files, torrentTitle, totalFiles, metadata = {}) {
+    // Create a separate modal for file list (don't reuse main overlay)
+    let fileListOverlay = document.getElementById('fileListOverlay');
+
+    if (!fileListOverlay) {
+        fileListOverlay = document.createElement('div');
+        fileListOverlay.id = 'fileListOverlay';
+        fileListOverlay.className = 'file-list-overlay';
+        document.body.appendChild(fileListOverlay);
+    }
+
+    // Map status to simplified display
+    const rawStatus = metadata.status || 'unknown';
+    let displayStatus = 'Unknown';
+    let statusColor = '#6b7280'; // Gray for unknown
+
+    if (rawStatus === 'downloaded') {
+        displayStatus = 'Cached';
+        statusColor = '#10b981'; // Green
+    } else if (rawStatus === 'downloading') {
+        displayStatus = 'Uncached';
+        statusColor = '#3b82f6'; // Blue
+    } else if (rawStatus === 'nzb') {
+        displayStatus = 'Usenet / NZB';
+        statusColor = '#a855f7'; // Purple
+    }
+
+    // Calculate total size from all files
+    const totalBytes = files.reduce((sum, file) => sum + (file.size || 0), 0);
+    const totalGB = (totalBytes / (1024 * 1024 * 1024)).toFixed(2);
+
+    fileListOverlay.innerHTML = `
+        <div class="file-list-modal">
+            <div class="file-list-header">
+                <h3>Torrent Files</h3>
+                <button class="file-list-close" aria-label="Close">&times;</button>
+            </div>
+            <div class="file-list-torrent-title">${metadata.filename || torrentTitle}</div>
+            <div class="file-list-metadata">
+                ${metadata.id ? `<div class="metadata-item"><span class="metadata-label">ID:</span> <span class="metadata-value">${metadata.id}</span></div>` : ''}
+                <div class="metadata-item"><span class="metadata-label">Hash:</span> <span class="metadata-value">${metadata.hash || ''}</span></div>
+                <div class="metadata-item"><span class="metadata-label">Status:</span> <span class="metadata-value" style="color: ${statusColor};">${displayStatus}</span></div>
+                <div class="metadata-item"><span class="metadata-label">Total:</span> <span class="metadata-value">${totalGB} GB</span></div>
+            </div>
+            <div class="file-list-count">Total Files: ${totalFiles}</div>
+            <div class="file-list-content">
+                <table class="file-list-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 70%;">File Name</th>
+                            <th style="width: 30%; text-align: right;">Size</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${files.map((file, index) => `
+                            <tr>
+                                <td class="file-name" title="${(file.path || file.name).replace(/"/g, '&quot;')}">${file.name}</td>
+                                <td class="file-size text-right">${file.size_formatted}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+
+    fileListOverlay.style.display = 'flex';
+    document.body.classList.add('modal-open');
+
+    // Close button handler
+    const closeBtn = fileListOverlay.querySelector('.file-list-close');
+    closeBtn.onclick = () => closeFileListModal();
+
+    // Click outside to close
+    fileListOverlay.onclick = (e) => {
+        if (e.target === fileListOverlay) {
+            closeFileListModal();
+        }
+    };
+
+    // ESC key to close
+    const escHandler = (e) => {
+        if (e.key === 'Escape') {
+            closeFileListModal();
+            document.removeEventListener('keydown', escHandler);
+        }
+    };
+    document.addEventListener('keydown', escHandler);
+}
+
+/**
+ * Close file list modal
+ */
+function closeFileListModal() {
+    const fileListOverlay = document.getElementById('fileListOverlay');
+    if (fileListOverlay) {
+        fileListOverlay.style.display = 'none';
+        document.body.classList.remove('modal-open');
     }
 }

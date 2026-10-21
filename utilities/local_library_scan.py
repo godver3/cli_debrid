@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, Tuple
 import os
 import sys  # Import sys module
 from utilities.settings import get_setting
@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 from datetime import datetime
 import time
+import threading
 from utilities.anidb_functions import format_filename_with_anidb
 from database.database_writing import update_media_item_state, update_media_item
 from utilities.post_processing import handle_state_change
@@ -16,6 +17,31 @@ from database.database_reading import get_all_media_items, get_media_item_by_id,
 from scraper.functions.ptt_parser import parse_with_ptt
 import json # Ensure json is imported
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+# Check MediaInfo availability at module load (optional dependency)
+_MEDIAINFO_AVAILABLE = False
+_MEDIAINFO_CALL_COUNT = 0  # DEBUG: Track how many times MediaInfo is called
+_MEDIAINFO_SUCCESS_COUNT = 0  # DEBUG: Track successful extractions
+_MEDIAINFO_FAIL_COUNT = 0  # DEBUG: Track failed extractions
+
+try:
+    logging.info("[MEDIAINFO_DEBUG] Attempting to import pymediainfo...")
+    from pymediainfo import MediaInfo
+    _MEDIAINFO_AVAILABLE = True
+    logging.info("[MEDIAINFO_DEBUG] ✓ pymediainfo imported successfully")
+    logging.info("[MEDIAINFO] MediaInfo available - will use for accurate resolution extraction")
+
+    # Test MediaInfo works
+    try:
+        test_result = MediaInfo.can_parse()
+        logging.info(f"[MEDIAINFO_DEBUG] MediaInfo.can_parse() = {test_result}")
+    except Exception as test_e:
+        logging.warning(f"[MEDIAINFO_DEBUG] MediaInfo test failed: {test_e}")
+        _MEDIAINFO_AVAILABLE = False
+
+except ImportError as e:
+    logging.info(f"[MEDIAINFO_DEBUG] ✗ pymediainfo import failed: {e}")
+    logging.info(f"[MEDIAINFO] MediaInfo not available ({e}) - will parse resolution from filenames only")
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
@@ -43,6 +69,442 @@ def sanitize_filename(filename: str) -> str:
     # Replace problematic characters with the determined actual_replacement_char
     filename = re.sub(r'[<>|?*:"\'\&/\\]', actual_replacement_char, filename)  # Added slashes and backslashes
     return filename.strip()  # Just trim whitespace, don't mess with dots
+
+
+def extract_resolution_from_filename(filename: str) -> Optional[str]:
+    """
+    Extract resolution from filename using regex patterns.
+    Fast method (~0.001ms per file) with ~95% accuracy for well-named files.
+    Normalizes all formats (4K, UHD, HD, etc.) to standard "p" format (2160p, 1080p, etc.).
+
+    Args:
+        filename: File name to parse (e.g., "Movie.2160p.mkv" or "Movie.4K.mkv")
+
+    Returns:
+        Resolution string like "2160p", "1080p", etc., or None if not found
+    """
+    # Remove file extension for cleaner matching
+    name_without_ext = os.path.splitext(filename)[0]
+
+    # Try multiple patterns in order of reliability
+    # Separators include: . space - _ ( ) [ ]
+    # Supports both "p" (progressive) and "i" (interlaced) formats
+    patterns = [
+        # Pattern 1: Resolution with separator before (flexible after - optional separator or word boundary)
+        # Matches: .1080p. or .1080i. or (1080p) or [1080i] or .1080p AMZN or S04E05.1080i.BluRay
+        r'[\.\s\-_\(\)\[\]](\d{3,4}[pi])(?:[\.\s\-_\(\)\[\]]|$|\b)',
+        # Pattern 2: Resolution at the end (before extension)
+        r'[\.\s\-_\(\)\[\]](\d{3,4}[pi])$',
+        # Pattern 3: Resolution after year
+        r'\d{4}[\.\s\-_\(\)\[\]](\d{3,4}[pi])',
+        # Pattern 4: Resolution at start (after path)
+        r'^(\d{3,4}[pi])[\.\s\-_\(\)\[\]]',
+        # Pattern 5: Alternative formats (4K, 8K, 2K, UHD, HD, FHD)
+        r'[\.\s\-_\(\)\[\]](8K|4K|UHD|2K|QHD|FHD|FULLHD|FULL\.HD)(?:[\.\s\-_\(\)\[\]]|$|\b)',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, name_without_ext, re.IGNORECASE)
+        if match:
+            resolution = match.group(1).lower()
+
+            # Normalize alternative formats to standard "p" format
+            resolution_map = {
+                '8k': '4320p',
+                '4k': '2160p',
+                'uhd': '2160p',
+                '2k': '1440p',
+                'qhd': '1440p',
+                'fhd': '1080p',
+                'fullhd': '1080p',
+                'full.hd': '1080p',
+            }
+
+            # Check if it needs normalization
+            if resolution in resolution_map:
+                return resolution_map[resolution]
+
+            # Validate it's a real resolution (supports both "p" and "i" formats)
+            valid_resolutions = [
+                '4320p', '4320i', '2160p', '2160i', '1440p', '1440i',
+                '1080p', '1080i', '720p', '720i', '576p', '576i',
+                '480p', '480i', '360p', '360i', '240p', '240i'
+            ]
+            if resolution in valid_resolutions:
+                return resolution
+
+    return None
+
+
+def extract_resolution_with_ffprobe(file_path: str) -> Optional[str]:
+    """
+    Extract resolution using ffprobe (faster alternative to MediaInfo).
+    ffprobe is designed for rapid container inspection.
+
+    Args:
+        file_path: Full path to video file
+
+    Returns:
+        Resolution string like "2160p", "1080p", etc., or None if failed
+    """
+    try:
+        import subprocess
+        import json
+        import time
+
+        filename = os.path.basename(file_path)
+        start_time = time.time()
+
+        # Run ffprobe to get video height (fast, targeted query)
+        # Timeout after 3 seconds to prevent slow files from holding up the scan
+        cmd = [
+            'ffprobe',
+            '-v', 'quiet',              # Suppress output
+            '-print_format', 'json',    # JSON output
+            '-show_streams',            # Show stream info
+            '-select_streams', 'v:0',   # First video stream only
+            file_path
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+
+        if result.returncode != 0:
+            return None
+
+        data = json.loads(result.stdout)
+
+        if 'streams' in data and len(data['streams']) > 0:
+            height = data['streams'][0].get('height')
+
+            if height:
+                height = int(height)
+                elapsed = (time.time() - start_time) * 1000
+
+                # Convert pixel height to resolution
+                if height >= 2160:
+                    resolution = "2160p"
+                elif height >= 1440:
+                    resolution = "1440p"
+                elif height >= 1080:
+                    resolution = "1080p"
+                elif height >= 720:
+                    resolution = "720p"
+                elif height >= 576:
+                    resolution = "576p"
+                elif height >= 480:
+                    resolution = "480p"
+                elif height >= 360:
+                    resolution = "360p"
+                elif height >= 240:
+                    resolution = "240p"
+                else:
+                    resolution = "sd"
+
+                logging.info(f"[FFPROBE_DEBUG] ✓ SUCCESS: {filename} → {resolution} ({elapsed:.2f}ms)")
+                return resolution
+
+        return None
+
+    except subprocess.TimeoutExpired:
+        logging.warning(f"[FFPROBE_DEBUG] ⏱️ TIMEOUT: {filename} - exceeded 3 second limit, skipping")
+        return None
+    except Exception as e:
+        logging.error(f"[FFPROBE_DEBUG] ✗ EXCEPTION: {filename} - {type(e).__name__}: {e}")
+        return None
+
+
+def extract_resolution_hybrid(file_path: str) -> Optional[str]:
+    """
+    Hybrid approach: Try path-based regex first (covers filename + parent folder), then ffprobe.
+    Achieves ~100% coverage with minimal ffprobe usage.
+
+    Args:
+        file_path: Full path to video file
+
+    Returns:
+        Resolution string or None
+    """
+    # STEP 1: Single regex pass on last 2 path components (parent folder + filename)
+    # This catches resolution in both filename AND parent folder in one operation
+    # Example: /mount/shows/Show S01 1080p/S01E01.mkv → "Show S01 1080p/S01E01.mkv"
+    path_parts = file_path.split('/')
+    if len(path_parts) >= 2:
+        # Get last 2 parts: parent_folder/filename.ext
+        relevant_path = '/'.join(path_parts[-2:])
+    else:
+        # Fallback to just filename if path is weird
+        relevant_path = os.path.basename(file_path)
+
+    resolution = extract_resolution_from_filename(relevant_path)
+    if resolution:
+        logging.debug(f"[RESOLUTION] ✓ Extracted from path (regex): {resolution}")
+        return resolution
+
+    # STEP 2: Try ffprobe as fallback (for files with no resolution in filename/folder)
+    filename = os.path.basename(file_path)
+    logging.debug(f"[RESOLUTION] Regex failed, trying ffprobe for: {filename}")
+    resolution = extract_resolution_with_ffprobe(file_path)
+    if resolution:
+        logging.info(f"[RESOLUTION] ✓ Extracted via ffprobe fallback: {filename} → {resolution}")
+        return resolution
+
+    # STEP 3: All filesystem methods failed - will use Plex fallback (if enabled)
+    logging.debug(f"[RESOLUTION] ✗ Regex and ffprobe failed for: {relevant_path}")
+    return None
+
+
+def remap_plex_paths_to_mount(items: List[Dict[str, Any]], mount_path: str) -> List[Dict[str, Any]]:
+    """
+    Remap Plex library paths to CLI Debrid mount paths for filesystem checking.
+
+    Strategy: Auto-detect Plex mount point from database paths, then replace with CLI mount
+
+    Examples:
+        Plex:  /debrid/movies/Title.2020.mkv → CLI: /media/mount/movies/Title.2020.mkv
+        Plex:  /zurg/shows/Show.S01E01.mkv → CLI: /media/mount/shows/Show.S01E01.mkv
+        Plex:  /mnt/data/zurg/ufc/UFC.300.mkv → CLI: /media/mount/ufc/UFC.300.mkv
+
+    Works with ANY custom folder structure (movies, shows, ufc, default, anime, etc.)
+
+    Args:
+        items: List of Collected items with Plex paths in location_on_disk
+        mount_path: CLI mount root (e.g., "/media/mount")
+
+    Returns:
+        List of items with location_on_disk pointing to CLI mount paths
+    """
+    from collections import Counter
+
+    remapped_items = []
+    success_count = 0
+    failed_count = 0
+    skipped_count = 0
+
+    # Auto-detect Plex mount point from first 100 paths (already in memory, ~1ms)
+    sample_size = min(100, len(items))
+    first_level_dirs = []
+
+    for item in items[:sample_size]:
+        path = item.get('location_on_disk', '')
+        if path and path.startswith('/'):
+            parts = path.split('/')
+            # Extract first directory: /debrid/... → debrid
+            if len(parts) >= 2 and parts[1]:
+                first_level_dirs.append('/' + parts[1])
+
+    if not first_level_dirs:
+        logging.warning(f"[PATH_REMAP] Could not detect Plex mount point from paths. No valid paths found.")
+        # Mark all as failed
+        for item in items:
+            item_copy = item.copy()
+            item_copy['_remap_failed'] = True
+            remapped_items.append(item_copy)
+        return remapped_items
+
+    # DEBUG: Show sample paths for debugging
+    sample_paths = [item.get('location_on_disk', '') for item in items[:5] if item.get('location_on_disk')]
+    if sample_paths:
+        logging.info(f"[PATH_REMAP_DEBUG] Sample Plex paths (first 5):")
+        for p in sample_paths:
+            logging.info(f"[PATH_REMAP_DEBUG]   {p}")
+
+    # Process EACH item individually - support mixed paths (some /debrid, some /media/mount)
+    logging.info(f"[PATH_REMAP] Processing {len(items)} items individually (mixed paths support)")
+
+    # Detect most common mount point for items that need remapping
+    plex_mount_point = Counter(first_level_dirs).most_common(1)[0][0] if first_level_dirs else None
+    if plex_mount_point:
+        logging.info(f"[PATH_REMAP] Detected source mount: {plex_mount_point} (will remap to {mount_path})")
+
+    # Track statistics
+    reason_counts = {'no_path': 0, 'already_correct': 0, 'remapped': 0, 'wrong_mount': 0, 'not_exists': 0}
+    already_correct_count = 0
+
+    for item in items:
+        item_copy = item.copy()
+        plex_path = item.get('location_on_disk', '')
+
+        if not plex_path:
+            item_copy['_remap_failed'] = True
+            remapped_items.append(item_copy)
+            failed_count += 1
+            reason_counts['no_path'] += 1
+            continue
+
+        # CHECK 1: Does this item's path already point to target mount?
+        if plex_path.startswith(mount_path + '/'):
+            # Path already correct - use as-is
+            if os.path.exists(plex_path):
+                item_copy['_scan_location'] = plex_path
+                success_count += 1
+                already_correct_count += 1
+                reason_counts['already_correct'] += 1
+                if already_correct_count <= 3:
+                    logging.debug(f"[PATH_REMAP] ✓ Already correct: {os.path.basename(plex_path)}")
+            else:
+                item_copy['_remap_failed'] = True
+                failed_count += 1
+                reason_counts['not_exists'] += 1
+            remapped_items.append(item_copy)
+            continue
+
+        # CHECK 2: Item needs remapping - check if it matches detected source mount
+        if not plex_mount_point or not plex_path.startswith(plex_mount_point + '/'):
+            if skipped_count < 5:
+                logging.debug(f"[PATH_REMAP_DEBUG] Skipping - path doesn't match source mount: {plex_path}")
+            item_copy['_remap_failed'] = True
+            remapped_items.append(item_copy)
+            skipped_count += 1
+            reason_counts['wrong_mount'] += 1
+            continue
+
+        # Remap: Replace source mount with target mount
+        # Example: /debrid/movies/... → /media/mount/movies/...
+        cli_path = plex_path.replace(plex_mount_point + '/', mount_path + '/', 1)
+
+        # DEBUG: Log first few remapping attempts
+        if reason_counts['remapped'] < 3:
+            logging.debug(f"[PATH_REMAP_DEBUG] Remapping:")
+            logging.debug(f"[PATH_REMAP_DEBUG]   From: {plex_path}")
+            logging.debug(f"[PATH_REMAP_DEBUG]   To:   {cli_path}")
+
+        # Verify file exists at remapped path
+        if os.path.exists(cli_path):
+            # Store remapped path in TEMPORARY field for scanning only
+            # DO NOT modify location_on_disk - that's for Plex library path
+            item_copy['_scan_location'] = cli_path
+            success_count += 1
+            reason_counts['remapped'] += 1
+            if reason_counts['remapped'] <= 3:
+                logging.info(f"[PATH_REMAP_DEBUG] ✓ Remapped #{reason_counts['remapped']}: {os.path.basename(plex_path)}")
+        else:
+            if failed_count < 3:
+                logging.debug(f"[PATH_REMAP_DEBUG] ✗ File not found: {cli_path}")
+            item_copy['_remap_failed'] = True
+            failed_count += 1
+            reason_counts['not_exists'] += 1
+
+        remapped_items.append(item_copy)
+
+    logging.info(f"[PATH_REMAP] Results: {already_correct_count} already correct, {reason_counts['remapped']} remapped, {failed_count} failed, {skipped_count} skipped")
+    logging.info(f"[PATH_REMAP_DEBUG] Failure reasons: no_path={reason_counts['no_path']}, wrong_mount={reason_counts['wrong_mount']}, not_exists={reason_counts['not_exists']}")
+
+    if success_count == 0 and len(items) > 0:
+        logging.warning(f"[PATH_REMAP] No paths remapped successfully! Check mount path and structure.")
+
+    return remapped_items
+
+
+def _clean_separators_in_string(s: str) -> str:
+    """Clean up orphaned separators after removing template components."""
+    original = s
+    s = re.sub(r'\s*-\s*\(\s*\)', '', s)
+    s = re.sub(r'\(\s*\)', '', s)
+    s = re.sub(r'\s*-\s*\[\s*\]', '', s)
+    s = re.sub(r'\[\s*\]', '', s)
+    s = re.sub(r'\s*-\s*-\s*', ' - ', s)
+    s = re.sub(r'^\s*-\s*', '', s)
+    s = re.sub(r'\s*-\s*$', '', s)
+    s = re.sub(r'\s{2,}', ' ', s)
+    s = s.strip()
+    # A bare "- {value}" placeholder (not wrapped in parens/brackets) that was empty
+    # gets silently dropped by the trailing-dash cleanup above, unlike the optional
+    # "(...)"/"[...]" wrapped components. Log it so a missing template value is
+    # visible instead of just producing an unexpectedly short filename.
+    if s != original and not re.search(r'[()\[\]]', original):
+        logging.warning(f"[SymlinkPath] Dropped an empty template component while cleaning: {original!r} -> {s!r}")
+    return s
+
+
+def truncate_path_components(
+    template: str,
+    template_vars: Dict[str, Any],
+    base_path: str,
+    directory_parts: List[str],
+    extension: str,
+    max_path_length: int = 255
+) -> str:
+    """
+    Truncate filename components to fit within max_path_length.
+
+    Removal priority (lowest first): original_filename, content_source, tmdb_id, resolution, version
+    Then truncates: episode_title, title (aggressively if needed)
+    Never removed: imdb_id, season_number, episode_number, year, season_year
+    """
+    removal_priority = ['original_filename', 'content_source', 'tmdb_id', 'resolution', 'version']
+    truncatable_components = ['episode_title', 'title']
+    working_vars = dict(template_vars)
+
+    def calculate_full_path(filename_part: str) -> str:
+        dir_path = os.path.join(base_path, *directory_parts) if directory_parts else base_path
+        return os.path.join(dir_path, filename_part)
+
+    def format_and_sanitize() -> str:
+        try:
+            formatted = template.format(**working_vars)
+        except KeyError as e:
+            logging.warning(f"[TruncatePath] Missing template variable: {e}")
+            formatted = template
+        formatted = _clean_separators_in_string(formatted)
+        sanitized = sanitize_filename(formatted)
+        if not sanitized.endswith(extension):
+            sanitized += extension
+        return sanitized
+
+    def get_current_length() -> int:
+        return len(calculate_full_path(format_and_sanitize()))
+
+    if get_current_length() <= max_path_length:
+        return format_and_sanitize()
+
+    logging.debug(f"[TruncatePath] Path too long ({get_current_length()} > {max_path_length}), truncating...")
+
+    # Remove components in priority order
+    for component in removal_priority:
+        if component in working_vars and working_vars[component]:
+            original_value = working_vars[component]
+            working_vars[component] = ''
+            current_length = get_current_length()
+            if current_length <= max_path_length:
+                logging.info(f"[TruncatePath] Removed '{component}'. Path now valid ({current_length} chars).")
+                return format_and_sanitize()
+            logging.debug(f"[TruncatePath] Removed '{component}', still too long ({current_length} chars).")
+
+    # Truncate episode_title and title (preserve imdb_id for Plex)
+    for component in truncatable_components:
+        if component in working_vars and working_vars[component]:
+            original_value = str(working_vars[component])
+            if len(original_value) <= 4:
+                continue
+
+            chars_to_remove = get_current_length() - max_path_length + 3
+            if len(original_value) > chars_to_remove:
+                working_vars[component] = original_value[:-(chars_to_remove)] + '...'
+                if get_current_length() <= max_path_length:
+                    logging.info(f"[TruncatePath] Truncated '{component}'. Path now valid.")
+                    return format_and_sanitize()
+
+                # Aggressive truncation
+                while len(working_vars[component]) > 13:
+                    working_vars[component] = working_vars[component][:-4] + '...'
+                    if get_current_length() <= max_path_length:
+                        logging.info(f"[TruncatePath] Truncated '{component}' to '{working_vars[component]}'.")
+                        return format_and_sanitize()
+
+    # Legacy fallback (imdb_id is never removed)
+    sanitized = format_and_sanitize()
+    full_path = calculate_full_path(sanitized)
+    if len(full_path) > max_path_length:
+        excess = len(full_path) - max_path_length
+        filename_without_ext = os.path.splitext(sanitized)[0]
+        if len(filename_without_ext) > excess + 3:
+            sanitized = filename_without_ext[:-(excess + 3)] + "..." + extension
+            logging.warning(f"[TruncatePath] Legacy fallback used: '{sanitized}'")
+        else:
+            logging.error(f"[TruncatePath] Cannot truncate sufficiently: {full_path}")
+
+    return sanitized
+
 
 def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup: bool = False) -> str:
     """Get the full path for the symlink based on settings and metadata."""
@@ -331,14 +793,55 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         imdb_id = item.get('imdb_id', '')
         if imdb_id == 'tt0000000':
             imdb_id = ''
-            
+
+        raw_title = item.get('title', 'Unknown')
+        # sanitize_filename ASCII-encodes and drops anything it can't represent — for a
+        # title that's partly or entirely non-Latin script, that can strip it down to
+        # nothing (or to a short, non-distinguishing fragment — e.g. '怪獣8号' survives
+        # as just "8", 'NARUTO－ナルト－' survives as "NARUTO", which happens to be fine
+        # here but isn't guaranteed to be unique for some other mixed-script title). The
+        # show-level folder template ('{title} ({year})') has no other uniqueness anchor,
+        # so a collapsed or barely-distinguishing title risks two different non-Latin
+        # titled shows released the same year landing in the same directory and silently
+        # interleaving episode files. Fall back to a stable, unique identifier whenever
+        # the title contains any non-Latin script at all, rather than only when nothing
+        # survives — checked via presence of any non-Latin letter (script-agnostic:
+        # Japanese, Korean, Chinese, Hindi, Cyrillic, Arabic, etc. all match), the
+        # same detection used for the TVDB-side fix for this same underlying issue.
+        from utilities.text_utils import has_non_latin_letter
+        effective_title = raw_title
+        if raw_title and raw_title.strip() and has_non_latin_letter(raw_title):
+            effective_title = imdb_id or item.get('tmdb_id', '') or 'unknown'
+            logging.warning(
+                f"[SymlinkPath] Title {raw_title!r} has no ASCII-safe representation — "
+                f"falling back to {effective_title!r} to avoid colliding with other "
+                f"items released in {item.get('year', '')!r}"
+            )
+
+        # filled_by_file is normally the discovered source filename, but can be empty for
+        # some items (e.g. certain debrid discovery paths never set it). Fall back through
+        # the other filename-ish fields we track rather than leaving original_filename
+        # blank, which _clean_separators_in_string silently swallows from templates that
+        # reference it outside of optional "(...)"/"[...]" wrapping.
+        original_filename_source = (
+            item.get('filled_by_file')
+            or item.get('original_filename')
+            or item.get('original_scraped_torrent_title')
+            or ''
+        )
+        if not original_filename_source:
+            logging.warning(
+                f"[SymlinkPath] No filename source found for item {item.get('id', '?')} "
+                f"({item.get('title', 'Unknown')!r}) — original_filename template variable will be empty."
+            )
+
         template_vars = {
-            'title': item.get('title', 'Unknown'),
+            'title': effective_title,
             'year': item.get('year', ''),
             'imdb_id': imdb_id,
             'tmdb_id': item.get('tmdb_id', ''),
             'version': item.get('version', '').strip('*'),  # Remove all asterisks for template placeholder use
-            'original_filename': os.path.splitext(item.get('filled_by_file', ''))[0],
+            'original_filename': os.path.splitext(original_filename_source)[0],
             'content_source': item.get('content_source', ''),
             'resolution': item.get('resolution', '')
         }
@@ -353,7 +856,17 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         else: # episode
             s_num_val = item.get('season_number')
             e_num_val = item.get('episode_number')
-            
+
+            # If DB has season=0/episode=0 (e.g. misnamed season pack grabbed as S01E01),
+            # try to recover the real S##E## from the actual filename.
+            if (not s_num_val or int(s_num_val) == 0) and (not e_num_val or int(e_num_val) == 0):
+                _orig = template_vars.get('original_filename', '')
+                _m = re.search(r'[Ss](\d{1,2})[Ee](\d{1,2})', _orig)
+                if _m:
+                    s_num_val = int(_m.group(1))
+                    e_num_val = int(_m.group(2))
+                    logging.debug(f'[SymlinkPath] Recovered S{s_num_val:02d}E{e_num_val:02d} from original_filename {_orig!r}')
+
             episode_vars = {
                 'season_number': int(s_num_val if s_num_val is not None else 0),
                 'episode_number': int(e_num_val if e_num_val is not None else 0),
@@ -440,25 +953,17 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
             sanitized_template_part = sanitize_filename(formatted_part)
             
             if i == len(path_parts_from_template) - 1: # This is the filename part
-                if not sanitized_template_part.endswith(extension):
-                    sanitized_template_part += extension
-                
-                # Path length check
-                # 'parts' at this point contains: ordered_prefix_parts + any preceding template directory parts
-                current_dir_parts_for_check = os.path.join(final_symlinked_path_root, *parts)
-                potential_full_path = os.path.join(current_dir_parts_for_check, sanitized_template_part)
-                
-                max_path_length = 255 
-                if len(potential_full_path) > max_path_length:
-                    excess = len(potential_full_path) - max_path_length
-                    filename_without_ext = os.path.splitext(sanitized_template_part)[0]
-                    if len(filename_without_ext) > excess + 3: # +3 for "..."
-                        truncated_filename = filename_without_ext[:-(excess + 3)] + "..."
-                        sanitized_template_part = truncated_filename + extension
-                        logging.debug(f"[SymlinkPath] Truncated filename from {len(potential_full_path)} to {len(os.path.join(current_dir_parts_for_check, sanitized_template_part))} due to path length limit.")
-                    else:
-                        logging.warning(f"[SymlinkPath] Filename '{sanitized_template_part}' too short to truncate meaningfully for path length limit. Full path: {potential_full_path}")
-                final_filename = sanitized_template_part
+                # Use the new component-based truncation strategy
+                # This will intelligently remove/truncate components in priority order
+                max_path_length = 255
+                final_filename = truncate_path_components(
+                    template=part_template_segment,
+                    template_vars=template_vars,
+                    base_path=final_symlinked_path_root,
+                    directory_parts=parts,
+                    extension=extension,
+                    max_path_length=max_path_length
+                )
             else: # This is a directory part from the template
                 if sanitized_template_part: # Ensure not empty
                     parts.append(sanitized_template_part)
@@ -615,6 +1120,395 @@ def _find_all_video_files_in_folder(folder_path: str, primary_file: str) -> List
     return video_files
 
 
+def _apply_nzb_naming(source_file: str, item: Dict[str, Any]) -> str:
+    """
+    For NZB items in Plex mode with enable_nzb_naming enabled:
+    Move the downloaded file to a path mirroring the symlink template structure,
+    rooted at original_files_path instead of symlinked_files_path.
+
+    Returns the new source_file path (moved), or original source_file if skipped.
+    """
+    try:
+        # Only NZB items
+        torrent_id = item.get('filled_by_torrent_id', '') or ''
+        if not str(torrent_id).startswith('nzb:'):
+            return source_file
+
+        # Guard: Plex mode + setting enabled
+        if get_setting('File Management', 'file_collection_management', 'Plex') != 'Plex':
+            return source_file
+        if not get_setting('Usenet Provider', 'enable_nzb_naming', False):
+            return source_file
+
+        original_path = get_setting('File Management', 'original_files_path', '')
+        symlinked_path = get_setting('File Management', 'symlinked_files_path', '')
+        if not original_path or not symlinked_path:
+            return source_file
+
+        # Get the structured path that get_symlink_path would produce
+        structured = get_symlink_path(item, source_file, skip_jikan_lookup=False)
+        if not structured:
+            return source_file
+
+        # Strip the symlinked_files_path prefix to get the relative organised path
+        symlinked_path_norm = os.path.normpath(symlinked_path)
+        structured_norm = os.path.normpath(structured)
+        if not structured_norm.startswith(symlinked_path_norm + os.sep):
+            logging.warning(f'[NZBNaming] structured path {structured!r} not under symlinked_path {symlinked_path!r} — skipping rename')
+            return source_file
+
+        rel_path = structured_norm[len(symlinked_path_norm) + 1:]
+        new_path = os.path.join(original_path, rel_path)
+
+        # Already in place
+        if os.path.normpath(source_file) == os.path.normpath(new_path):
+            return source_file
+
+        # Create parent dirs and move
+        os.makedirs(os.path.dirname(new_path), exist_ok=True)
+        if not os.path.exists(new_path):
+            os.rename(source_file, new_path)
+            logging.info(f'[NZBNaming] Moved {os.path.basename(source_file)!r} → {rel_path!r}')
+        else:
+            logging.debug(f'[NZBNaming] Target already exists: {new_path!r} — skipping move')
+
+        # Update item fields so DB and Plex scan use the new path
+        item['filled_by_file'] = os.path.basename(new_path)
+        item['filled_by_title'] = os.path.basename(os.path.dirname(new_path))
+        item['debrid_folder_name'] = os.path.basename(os.path.dirname(new_path))
+        return new_path
+
+    except Exception as _e:
+        logging.warning(f'[NZBNaming] Could not apply NZB naming to {source_file!r}: {_e}')
+        return source_file
+
+
+def _prefer_largest_nzb_source(item: Dict[str, Any], source_folder: str, source_file: str) -> str:
+    """When a folder holds multiple video files, prefer the largest episode match."""
+    # NZB-only: this exists to pick the real file over RAR splits/junk in an NZB job
+    # folder. A debrid torrent's filled_by_file was already chosen deliberately from
+    # the torrent's own file list (adding_queue matcher or manual assign), and
+    # second-guessing it by size swaps in the wrong file - e.g. every movie assigned
+    # from a multi-movie collection pack was symlinked to the pack's largest film.
+    if not str(item.get('filled_by_torrent_id') or '').startswith('nzb:'):
+        return source_file
+    if not source_folder or not os.path.isdir(source_folder):
+        return source_file
+
+    from debrid.common.utils import is_video_file
+    video_files = []
+    for name in os.listdir(source_folder):
+        path = os.path.join(source_folder, name)
+        if os.path.isfile(path) and is_video_file(name):
+            try:
+                video_files.append((name, os.path.getsize(path)))
+            except OSError:
+                pass
+
+    if len(video_files) <= 1:
+        return source_file
+
+    season = episode = None
+    if item.get('type') == 'episode':
+        season = item.get('season_number')
+        episode = item.get('episode_number')
+
+    from debrid.common.utils import pick_best_video_file
+    best = pick_best_video_file(video_files, season=season, episode=episode)
+    if not best:
+        return source_file
+
+    best_name, best_size = best
+    best_path = os.path.join(source_folder, best_name)
+    if os.path.abspath(best_path) == os.path.abspath(source_file):
+        return source_file
+
+    try:
+        current_size = os.path.getsize(source_file)
+    except OSError:
+        current_size = 0
+
+    if best_size <= current_size:
+        return source_file
+
+    logging.info(
+        f"[Symlink] Using largest video candidate {best_name!r} "
+        f"({best_size / (1024 ** 2):.0f} MiB) instead of {os.path.basename(source_file)!r} "
+        f"({current_size / (1024 ** 2):.0f} MiB) for item {item.get('id')}"
+    )
+    item['filled_by_file'] = best_name
+    try:
+        from database.database_writing import update_media_item
+        update_media_item(item['id'], filled_by_file=best_name)
+    except Exception as exc:
+        logging.debug(f"[Symlink] Could not persist filled_by_file for item {item.get('id')}: {exc}")
+    return best_path
+
+
+def _reject_if_nzb_size_too_small(item: Dict[str, Any], source_path: str) -> bool:
+    """Return True when an NZB source is far below its advertised size and was rejected."""
+    torrent_id = str(item.get('filled_by_torrent_id') or '')
+    if not torrent_id.startswith('nzb:'):
+        return False
+
+    try:
+        actual_size = os.path.getsize(source_path)
+    except OSError:
+        return False
+
+    nzb_title = (
+        item.get('original_scraped_torrent_title')
+        or item.get('filled_by_title')
+        or item.get('filled_by_file')
+        or ''
+    )
+    from usenet.nzb_size_validation import individual_nzb_size_mismatch
+    mismatch = individual_nzb_size_mismatch(item, nzb_title, actual_size)
+    if not mismatch:
+        return False
+
+    actual, expected, ratio = mismatch
+    logging.warning(
+        f"[NZB] Source video is only {ratio * 100:.1f}% of advertised size "
+        f"({actual / (1024 ** 2):.1f} MiB vs {expected / (1024 ** 2):.1f} MiB) — "
+        f"rejecting symlink for item {item.get('id')}"
+    )
+    _reject_unplayable_source(item, is_nzb=True)
+    try:
+        from queues.queue_manager import QueueManager
+        QueueManager().move_to_wanted(item, 'Checking')
+    except Exception as exc:
+        logging.error(f"[NZB] Failed to move item {item.get('id')} back to Wanted after size rejection: {exc}")
+    return True
+
+
+def _reject_unplayable_source(item: Dict[str, Any], is_nzb: bool) -> None:
+    """Mark a confirmed-unplayable file's source as not-wanted and revert the item
+    to Wanted so it gets rescraped, mirroring the existing missing-segments/
+    checking-timeout rejection pattern used elsewhere in the queue processing."""
+    try:
+        if not is_nzb:
+            from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+            from debrid.common import extract_hash_from_magnet
+            magnet = item.get('filled_by_magnet', '')
+            hash_value = extract_hash_from_magnet(magnet) if magnet else None
+            if hash_value:
+                add_to_not_wanted(hash_value)
+            # Also blacklist the raw URL itself (mirrors torrent_processor.py's
+            # add_to_not_wanted_urls alongside add_to_not_wanted). Needed because
+            # `magnet` here is frequently an unresolved Jackett indexer redirect
+            # link, not a real magnet: URI — is_magnet_not_wanted's hash-based
+            # comparison can never match that at scrape-filter time (it doesn't
+            # follow redirects), so a re-scrape can pick the exact same broken
+            # torrent again via a different indexer wrapping the same release.
+            # is_url_not_wanted is already checked everywhere is_magnet_not_wanted
+            # is, and both indexer links for the same release carry the same
+            # `file=` query param, so this closes the gap using the matching
+            # mechanism that already exists for it — no changes needed to the
+            # comparison logic itself.
+            if magnet and magnet.startswith('http'):
+                add_to_not_wanted_urls(magnet)
+    except Exception as e:
+        logging.warning(f"[ffprobe] Failed to add unplayable source to not-wanted: {e}")
+
+    # not_wanted only stops a *fresh scrape* from picking this release again -
+    # sibling-reuse (debrid and NZB) picks a candidate straight from a known
+    # torrent_id without ever consulting it, so without this a sibling episode
+    # would keep reusing (and re-failing) this exact torrent for the rest of
+    # the season. See utilities/session_bad_torrents.py.
+    try:
+        from utilities.session_bad_torrents import mark_torrent_unplayable
+        mark_torrent_unplayable(item.get('filled_by_torrent_id'), item.get('filled_by_file'))
+    except Exception as e:
+        logging.warning(f"[ffprobe] Failed to mark torrent as known-unplayable: {e}")
+
+    # Actually remove the dead torrent/NZB job from the debrid service / cli_mount,
+    # not just blacklist it locally - otherwise it sits there forever taking up
+    # space even though nothing will ever reuse it. Skipped if another item still
+    # actively depends on the same torrent_id (a shared season pack where only one
+    # sibling episode's file was bad) - removing it would break that sibling too.
+    try:
+        torrent_id = item.get('filled_by_torrent_id')
+        if torrent_id:
+            from queues.adding_queue import torrent_has_other_active_owner, remove_unwanted_torrent
+            if not torrent_has_other_active_owner(torrent_id, item.get('id')):
+                remove_unwanted_torrent(
+                    torrent_id,
+                    is_nzb=is_nzb,
+                    removal_reason="Removed due to failed ffprobe playability check"
+                )
+            else:
+                logging.info(f"[ffprobe] Torrent {torrent_id} still needed by other episode(s) sharing this pack — not removing")
+    except Exception as e:
+        logging.warning(f"[ffprobe] Failed to remove unplayable torrent from debrid service: {e}")
+
+    if is_nzb:
+        try:
+            from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+            blacklist_and_cleanup_nzb_failure(
+                item,
+                'ffprobe playability check failed',
+                clear_filled_by=True,
+                set_rescrape_title=True,
+            )
+        except Exception as e:
+            logging.warning(f"[ffprobe] Failed NZB failure cleanup: {e}")
+
+    # An episode stuck in forced multi-pack scraping (queues/scraping_queue.py,
+    # any scrape >7 days old) that fails here via ffprobe - rather than the
+    # Adding-queue matching-failure path that normally sets this flag - would
+    # otherwise never get single-episode candidates and could loop on this
+    # rejection indefinitely if the only multi-pack result available keeps
+    # getting filtered out for an unrelated reason.
+    try:
+        from database.database_writing import enable_fallback_to_single_scraper
+        enable_fallback_to_single_scraper(item, reason="ffprobe playability check failed")
+    except Exception as e:
+        logging.warning(f"[ffprobe] Failed to enable single scraper fallback: {e}")
+
+    try:
+        update_media_item_state(item.get('id'), 'Wanted')
+    except Exception as e:
+        logging.error(f"[ffprobe] Failed to revert item {item.get('id')} to Wanted after failed playability check: {e}")
+
+
+def _cleanup_old_symlink(item: Dict[str, Any], item_identifier: str, source_file: str, old_filename: str) -> None:
+    """Remove the old symlink (and notify the media server) after a successful upgrade.
+
+    Only called when Scraping.enable_upgrading_cleanup is enabled — the old torrent/file
+    has already been removed by the caller at this point, this just cleans up the stale
+    symlink that pointed at it.
+    """
+    old_base_path = os.path.dirname(source_file) if source_file else None
+
+    if not (old_base_path and old_filename):
+        logging.warning("[UPGRADE] Could not determine old source path components for symlink removal.")
+        return
+
+    # Construct the hypothetical source path for the old file
+    old_source_for_symlink_path = os.path.join(old_base_path, old_filename)
+
+    # Temporarily modify a copy of the item to represent the OLD file state for get_symlink_path
+    item_for_old_path = item.copy()
+    item_for_old_path['filled_by_file'] = old_filename
+    # Explicitly set the version to the one we are upgrading FROM
+    old_version_str = item.get('upgrading_from_version')
+    if old_version_str:
+        item_for_old_path['version'] = old_version_str
+        logging.info(f"[UPGRADE] Using old version '{old_version_str}' for old symlink path calculation.")
+    else:
+        logging.warning("[UPGRADE] 'upgrading_from_version' not found in item dict. Old symlink path might be incorrect if version changed.")
+        # Keep the current version as a fallback if the old one isn't stored
+
+    old_dest = get_symlink_path(item_for_old_path, old_source_for_symlink_path, skip_jikan_lookup=False)
+
+    if not (old_dest and os.path.lexists(old_dest)):
+        logging.debug(f"[UPGRADE] No old symlink found at {old_dest} (or path couldn't be determined).")
+        return
+
+    try:
+        os.unlink(old_dest)
+        logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
+
+        try:
+            removed_count = remove_verification_by_media_item_id(item['id'])
+            if removed_count > 0:
+                logging.info(f"[UPGRADE] Removed {removed_count} old verification record(s) for media item ID {item['id']}")
+            else:
+                logging.debug(f"[UPGRADE] No existing verification record found to remove for media item ID {item['id']}")
+        except Exception as db_remove_err:
+            logging.error(f"[UPGRADE] Failed to remove old verification record for media item ID {item['id']}: {db_remove_err}")
+
+        # Add the path to the removal verification queue with titles
+        episode_title_for_removal = item.get('episode_title') if item.get('type') == 'episode' else None
+        add_path_for_removal_verification(old_dest, item['title'], episode_title_for_removal)
+        # Wait for media server to detect the removed symlink
+        time.sleep(1)
+
+        # Remove the old file from Plex or Emby/Jellyfin
+        media_server_type = 'none'
+        if get_setting('Debug', 'emby_jellyfin_url', default=False):
+            media_server_type = 'emby_jellyfin'
+        elif get_setting('File Management', 'plex_url_for_symlink', default=False):
+            media_server_type = 'plex'
+
+        if media_server_type != 'none':
+            try:
+                episode_title = item.get('episode_title') if item.get('type') == 'episode' else None
+                if media_server_type == 'emby_jellyfin':
+                    from utilities.emby_functions import remove_file_from_emby
+                    remove_file_from_emby(item['title'], old_dest, episode_title)
+                elif media_server_type == 'plex':
+                    from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
+                    success = remove_file_from_plex(item['title'], old_dest, episode_title)
+                    # If direct removal failed (possibly 400 error), try scan & empty trash as fallback
+                    if not success:
+                        logging.warning(f"[UPGRADE] Direct Plex removal failed for '{item['title']}'. Trying scan & empty trash...")
+                        try:
+                            # Determine section type based on item type
+                            section_type = 'movie' if item.get('type') == 'movie' else 'show'
+                            scan_paths = [os.path.dirname(old_dest)] if old_dest else None
+                            scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
+                            logging.info(f"[UPGRADE] Triggered library scan and trash empty for '{item['title']}' (section_type={section_type}).")
+                        except Exception as scan_err:
+                            logging.warning(f"[UPGRADE] Scan & empty trash also failed for '{item['title']}': {scan_err}")
+            except Exception as media_server_remove_err:
+                 logging.error(f"[UPGRADE] Failed removing old file {old_dest} from {media_server_type}: {media_server_remove_err}")
+
+    except Exception as e:
+        logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
+
+
+def _folder_match_key(name: str) -> str:
+    """Case- and punctuation-insensitive key for comparing a stored folder name
+    with the real one on the mount (only letters and digits survive)."""
+    return ''.join(ch for ch in (name or '').casefold() if ch.isalnum())
+
+
+# Listing the mount root (often 10k+ entries over a FUSE mount) for every
+# missing file on every Checking tick was the expensive part of the folder-
+# name fallback. Each root's listing is indexed by match key and reused for
+# a few seconds, shorter than the Checking interval, so every tick still
+# sees a fresh listing but all items in one tick share it.
+_ROOT_INDEX_TTL = 20.0
+_root_index_lock = threading.Lock()
+_root_index_cache: Dict[str, Tuple[float, Dict[str, List[str]]]] = {}
+
+
+def _root_folder_index(root: str) -> Dict[str, List[str]]:
+    """Map _folder_match_key -> real entry names for one directory. Raises OSError."""
+    now = time.monotonic()
+    with _root_index_lock:
+        cached = _root_index_cache.get(root)
+        if cached and now - cached[0] < _ROOT_INDEX_TTL:
+            return cached[1]
+    index: Dict[str, List[str]] = {}
+    for entry in os.listdir(root):
+        index.setdefault(_folder_match_key(entry), []).append(entry)
+    with _root_index_lock:
+        _root_index_cache[root] = (now, index)
+    return index
+
+
+def _find_file_in_folder_tree(base_folder: str, filename: str, max_depth: int = 6) -> Optional[str]:
+    """Search base_folder and its subdirectories (bounded depth) for an exact
+    filename match. Some releases (especially large multi-series/'saga' packs)
+    nest actual episode files several folders below the torrent's own root
+    folder instead of directly inside it."""
+    base_depth = base_folder.rstrip(os.sep).count(os.sep)
+    try:
+        for root, dirs, files in os.walk(base_folder):
+            current_depth = root.rstrip(os.sep).count(os.sep) - base_depth
+            if current_depth >= max_depth:
+                dirs[:] = []
+                continue
+            if filename in files:
+                return os.path.join(root, filename)
+    except OSError as error:
+        logging.warning(f"Nested file search failed under '{base_folder}': {error}")
+    return None
+
+
 def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False, on_success_callback: Optional[Callable[[str], None]] = None, skip_multifile_scan: bool = False) -> bool:
     """
     Check if the local file for the item exists and create symlink if needed.
@@ -648,13 +1542,25 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             filled_by_title = item.get('filled_by_title', '')
             original_torrent_title = item.get('original_scraped_torrent_title', '')
             real_debrid_original_title = item.get('real_debrid_original_title', '')
+            debrid_folder_name = item.get('debrid_folder_name', '')
             current_filename = item['filled_by_file'] # The actual file we are looking for
 
             found_file = False
             source_file = None # Initialize source_file
             source_folder = None # Track the folder where the file was found
 
-            # --- Check Order: Original Torrent Title -> Filled By Title ---
+            # --- Check Order: Exact provider folder -> Original Torrent Title -> Filled By Title ---
+
+            # 0. Check exact provider folder name persisted from the debrid API.
+            if debrid_folder_name and not found_file:
+                potential_folder = os.path.join(original_path, debrid_folder_name)
+                potential_path = os.path.join(potential_folder, current_filename)
+                logging.debug(f"Attempt 0: Checking path using debrid_folder_name: {potential_path}")
+                if os.path.exists(potential_path):
+                    source_file = potential_path
+                    source_folder = potential_folder
+                    found_file = True
+                    logging.info(f"Found file using debrid_folder_name: {source_file}")
 
             # 1. Check original_scraped_torrent_title (raw)
             if original_torrent_title:
@@ -738,6 +1644,147 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                      found_file = True
                      logging.info(f"Found file directly under original_files_path: {source_file}")
 
+            # 8. Check filename-as-folder pattern (single-file torrent on Real-Debrid).
+            # RD presents single-file torrents as: original_path/{file.mkv}/{file.mkv}
+            # None of the title-based attempts above catch this because the folder name
+            # includes the file extension, while stored titles typically do not.
+            if not found_file:
+                potential_folder = os.path.join(original_path, current_filename)
+                potential_path = os.path.join(potential_folder, current_filename)
+                logging.debug(f"Attempt 8: Checking filename-as-folder (RD single-file pattern): {potential_path}")
+                if os.path.exists(potential_path):
+                    source_file = potential_path
+                    source_folder = potential_folder
+                    found_file = True
+                    logging.info(f"Found file using filename-as-folder pattern: {source_file}")
+
+            # 8.5. COMPAT: large "complete series" packs often nest the actual
+            # episode files several folders deep (grouped by story arc/saga/disc,
+            # e.g. "<Torrent>/1a. TV Series/01. The SAIYAN Saga/S01E001....mkv")
+            # instead of directly inside the torrent's own root folder. None of
+            # the direct-child checks above account for that extra nesting, so
+            # do one bounded recursive search inside each already-identified
+            # candidate folder before falling back to a full extended scan of
+            # the entire library.
+            if not found_file:
+                candidate_names = []
+                for name in (
+                    debrid_folder_name,
+                    original_torrent_title,
+                    os.path.splitext(original_torrent_title)[0] if original_torrent_title else '',
+                    real_debrid_original_title,
+                    os.path.splitext(real_debrid_original_title)[0] if real_debrid_original_title else '',
+                    filled_by_title,
+                    os.path.splitext(filled_by_title)[0] if filled_by_title else '',
+                ):
+                    if name and name not in candidate_names:
+                        candidate_names.append(name)
+                for name in candidate_names:
+                    candidate_folder = os.path.join(original_path, name)
+                    if not os.path.isdir(candidate_folder):
+                        continue
+                    nested_path = _find_file_in_folder_tree(candidate_folder, current_filename)
+                    if nested_path:
+                        source_file = nested_path
+                        source_folder = os.path.dirname(nested_path)
+                        found_file = True
+                        logging.info(f"Found file via nested search inside '{name}': {source_file}")
+                        break
+
+            # 8.6. The stored folder name can differ from the real one on the mount only
+            # by characters the mount layer dropped or changed (e.g. every '&' stripped
+            # from "[Anime Time] Jujutsu Kaisen (Season 1 & 2 + ...)" while the debrid
+            # API still reports it - godver3/cli_debrid#515). One listing of the mount
+            # root, compared with case and punctuation ignored, finds it; the real name
+            # is written back so the next lookup hits attempt 0 directly instead of
+            # never resolving until someone edits the DB by hand.
+            if not found_file and candidate_names:
+                wanted_keys = {_folder_match_key(n) for n in candidate_names} - {''}
+                try:
+                    root_index = _root_folder_index(original_path) if wanted_keys else {}
+                except OSError as list_err:
+                    logging.warning(f"Could not list '{original_path}' for folder-name matching: {list_err}")
+                    root_index = {}
+                root_entries = [name for key in wanted_keys for name in root_index.get(key, ())]
+                for folder_name in root_entries:
+                    if folder_name in candidate_names:
+                        continue
+                    candidate_folder = os.path.join(original_path, folder_name)
+                    if not os.path.isdir(candidate_folder):
+                        continue
+                    direct_path = os.path.join(candidate_folder, current_filename)
+                    matched_path = (direct_path if os.path.exists(direct_path)
+                                    else _find_file_in_folder_tree(candidate_folder, current_filename))
+                    if not matched_path:
+                        continue
+                    source_file = matched_path
+                    source_folder = os.path.dirname(matched_path)
+                    found_file = True
+                    logging.info(f"Found file via normalized folder-name match '{folder_name}': {source_file}")
+                    item['debrid_folder_name'] = folder_name
+                    if item.get('id'):
+                        try:
+                            update_media_item(item['id'], debrid_folder_name=folder_name)
+                        except Exception as persist_err:
+                            logging.debug(f"Could not persist corrected debrid_folder_name for item {item.get('id')}: {persist_err}")
+                    break
+
+            # 8.7. Debrid naming renamed the file itself. For a single-file entry cli_mount
+            # renames the file to "<new name><ext>" along with the entry, but the folder only
+            # follows when cli_mount's folder naming is file-name based - with "Original
+            # name" it stays as is. filled_by_file still holds the original debrid filename,
+            # so look for the renamed file in every candidate folder and adopt its name.
+            if not found_file and candidate_names:
+                _ext = os.path.splitext(current_filename)[1]
+                renamed_filenames = []
+                for stem in (filled_by_title, debrid_folder_name):
+                    if not stem or not _ext:
+                        continue
+                    renamed = stem if stem.lower().endswith(_ext.lower()) else stem + _ext
+                    if renamed != current_filename and renamed not in renamed_filenames:
+                        renamed_filenames.append(renamed)
+                for renamed in renamed_filenames:
+                    for name in candidate_names:
+                        candidate_path = os.path.join(original_path, name, renamed)
+                        if os.path.exists(candidate_path):
+                            source_file = candidate_path
+                            source_folder = os.path.dirname(candidate_path)
+                            found_file = True
+                            break
+                    if found_file:
+                        logging.info(f"Found debrid-renamed file '{renamed}' (was '{current_filename}'): {source_file}")
+                        current_filename = renamed
+                        item['filled_by_file'] = renamed
+                        if item.get('id'):
+                            try:
+                                update_media_item(item['id'], filled_by_file=renamed)
+                            except Exception as persist_err:
+                                logging.debug(f"Could not persist renamed filled_by_file for item {item.get('id')}: {persist_err}")
+                        break
+
+            # 9. Extended search: scan original_path subdirectories for the file.
+            # Only runs when extended_search=True (activated after 900s in checking queue)
+            # and all named-folder attempts have failed.
+            if not found_file and extended_search:
+                logging.info(f"Extended search: scanning '{original_path}' for '{current_filename}'")
+                try:
+                    for folder_name in os.listdir(original_path):
+                        candidate_folder = os.path.join(original_path, folder_name)
+                        if not os.path.isdir(candidate_folder):
+                            continue
+                        candidate_path = os.path.join(candidate_folder, current_filename)
+                        if os.path.exists(candidate_path):
+                            source_file = candidate_path
+                            source_folder = candidate_folder
+                            found_file = True
+                            logging.info(f"Extended search found file in folder '{folder_name}': {source_file}")
+                            break
+                        # Deliberately no recursive _find_file_in_folder_tree() here: this loop
+                        # visits every torrent folder on the mount, and a depth-6 walk of each one
+                        # over a FUSE/rclone mount is thousands of directory listings per item per
+                        # tick. Nested lookup is scoped to the item's own candidate folders (8.5).
+                except Exception as ext_err:
+                    logging.warning(f"Extended search failed: {ext_err}")
 
             # --- Handling not found after all checks ---
             if not found_file:
@@ -748,6 +1795,62 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 logging.warning(f"File '{current_filename}' not found in any checked location")
                 return False
             
+            # For NZB items in Plex mode with NZB naming enabled: move file to organised structure
+            source_file = _apply_nzb_naming(source_file, item)
+
+            if source_folder:
+                source_file = _prefer_largest_nzb_source(item, source_folder, source_file)
+            if _reject_if_nzb_size_too_small(item, source_file):
+                return False
+
+            # Optional playability verification, gated by protocol-specific toggles
+            # (off by default). Only meaningful here in Symlinked/Local mode, which
+            # is the only mode that reaches this function with a real source_file.
+            _torrent_id_for_probe = str(item.get('filled_by_torrent_id', '') or '')
+            _is_nzb_for_probe = _torrent_id_for_probe.startswith('nzb:')
+            _probe_section = 'Usenet Provider' if _is_nzb_for_probe else 'Debrid Provider'
+            _probe_key = 'ffprobe_all_nzbs' if _is_nzb_for_probe else 'ffprobe_all_debrid_additions'
+            # An item that's an active playback-repair replacement candidate
+            # (NZB-only — there's no debrid equivalent of VerifyReplacement)
+            # already gets ffprobed by cli_mount's own VerifyReplacement
+            # before it's accepted, on a code path that's synchronized with
+            # when the old file's cleanup can proceed. Running ffprobe_all_nzbs
+            # here too would be a second, independent, uncoordinated check on
+            # the exact same file — skip it and let VerifyReplacement be the
+            # sole authority for replacement candidates specifically.
+            _skip_probe_for_replacement = False
+            if _is_nzb_for_probe:
+                try:
+                    from database.nzb_playback_repair import has_pending_playback_repair
+                    if has_pending_playback_repair(item.get('id')):
+                        _skip_probe_for_replacement = True
+                        logging.info(
+                            f"[ffprobe] Skipping {_probe_key} for '{source_file}' — active playback-repair "
+                            f"replacement candidate, already verified by cli_mount's own check"
+                        )
+                except Exception:
+                    pass
+            if get_setting(_probe_section, _probe_key, False) and not _skip_probe_for_replacement:
+                logging.info(f"[ffprobe] Running playability check ({_probe_key}) on '{source_file}'")
+                from usenet.repair_engine import _verify_file_readable
+                if _verify_file_readable(source_file):
+                    logging.info(f"[ffprobe] Playability check passed for '{source_file}'")
+                else:
+                    logging.warning(f"[ffprobe] Playability check FAILED for '{source_file}' — rejecting and reverting to Wanted")
+                    _reject_unplayable_source(item, _is_nzb_for_probe)
+                    # _reject_unplayable_source only updates the DB row - without also
+                    # moving the item out of the in-memory CheckingQueue, the DB says
+                    # Wanted while the queue still holds it with its stale filled_by_*
+                    # fields, until the next queue refresh reconciles them. The Plex-mode
+                    # equivalent (run_program.py's _ffprobe_gate_or_reject) already does
+                    # this; mirror it here for parity.
+                    try:
+                        from queues.queue_manager import QueueManager
+                        QueueManager().move_to_wanted(item, 'Checking')
+                    except Exception as e_wanted:
+                        logging.error(f"[ffprobe] Failed to move item {item.get('id')} back to Wanted after failed probe: {e_wanted}")
+                    return False
+
             # Get destination path based on settings (using the found source_file)
             dest_file = get_symlink_path(item, source_file, skip_jikan_lookup=False)
             if not dest_file:
@@ -794,31 +1897,48 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 item_title = item.get('title') # For logging
                 logging.info(f"[UPGRADE] Processing confirmed upgrade for {item_identifier}")
 
+                upgrading_cleanup_enabled = get_setting("Scraping", "enable_upgrading_cleanup", default=False)
+
                 # --- Start: Torrent/File Removal Logic ---
-                removal_successful = False
                 old_torrent_id = item.get('upgrading_from_torrent_id')
                 old_filename = item.get('upgrading_from') # Filename of the file being replaced
 
-                if old_torrent_id:
-                    logging.info(f"[UPGRADE] Attempting to remove old torrent {old_torrent_id} via debrid API.")
-                    try:
-                        from debrid import get_debrid_provider
-                        debrid_provider = get_debrid_provider()
-                        # Assuming remove_torrent returns True/False or raises Exception
-                        debrid_provider.remove_torrent(
-                            old_torrent_id,
-                            removal_reason="Removed old torrent after successful upgrade"
-                        )
-                        removal_successful = True # Assume success if no exception
-                        logging.info(f"[UPGRADE] Successfully initiated removal of old torrent {old_torrent_id} via debrid API.")
-                    except Exception as remove_err:
-                        # Check if it's a 404 (Not Found), which might mean it was already deleted
-                        if '404' in str(remove_err):
-                             logging.warning(f"[UPGRADE] Old torrent {old_torrent_id} not found on debrid (likely already removed). Proceeding.")
-                             removal_successful = True # Treat as success
-                        else:
-                            logging.error(f"[UPGRADE] Failed to remove old torrent {old_torrent_id} via debrid API: {remove_err}")
+                if not upgrading_cleanup_enabled:
+                    logging.info(f"[UPGRADE] Scraping.enable_upgrading_cleanup is disabled — keeping old file/torrent for {item_identifier} and skipping removal.")
+                    removal_successful = True
+                elif old_torrent_id:
+                    removal_successful = False
+                    if str(old_torrent_id).startswith('nzb:'):
+                        # NZB jobs are managed by cli_mount, not debrid — skip debrid removal
+                        logging.debug(f"[UPGRADE] Old torrent {old_torrent_id} is an NZB job — skipping debrid removal")
+                        removal_successful = True
+                    else:
+                        logging.info(f"[UPGRADE] Attempting to remove old torrent {old_torrent_id} via debrid API.")
+                        try:
+                            from debrid import get_debrid_provider, ProviderUnavailableError
+                            debrid_provider = get_debrid_provider()
+                            if not debrid_provider:
+                                logging.debug(f"[UPGRADE] No debrid provider configured — skipping torrent removal for {old_torrent_id}")
+                                removal_successful = True
+                            else:
+                                debrid_provider.remove_torrent(
+                                    old_torrent_id,
+                                    removal_reason="Removed old torrent after successful upgrade"
+                                )
+                                removal_successful = True
+                                logging.info(f"[UPGRADE] Successfully initiated removal of old torrent {old_torrent_id} via debrid API.")
+                        except ProviderUnavailableError:
+                            logging.debug(f"[UPGRADE] Debrid provider unavailable — skipping torrent removal for {old_torrent_id}")
+                            removal_successful = True
+                        except Exception as remove_err:
+                            # Check if it's a 404 (Not Found), which might mean it was already deleted
+                            if '404' in str(remove_err):
+                                logging.warning(f"[UPGRADE] Old torrent {old_torrent_id} not found on debrid (likely already removed). Proceeding.")
+                                removal_successful = True
+                            else:
+                                logging.error(f"[UPGRADE] Failed to remove old torrent {old_torrent_id} via debrid API: {remove_err}")
                 else:
+                    removal_successful = False
                     old_file_path_from_item = item.get('original_path_for_symlink') # Get path from item dict
                     logging.warning(f"[UPGRADE] Old torrent ID is missing for item {item['id']}. Attempting local file deletion using item's original path: '{old_file_path_from_item}'")
                     # Directly use the path from the item dict
@@ -827,10 +1947,31 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             os.remove(old_file_path_from_item)
                             removal_successful = True # Assume success if os.remove doesn't raise error
                             logging.info(f"[UPGRADE] Successfully removed old local file: {old_file_path_from_item}")
+                            # Also remove subtitle files with same stem (e.g. Movie.en.srt, Movie.srt)
+                            _SUBTITLE_EXTS = {'.srt', '.ass', '.ssa', '.sub', '.idx', '.vtt', '.sup', '.pgs'}
+                            _old_dir = os.path.dirname(old_file_path_from_item)
+                            _old_stem = os.path.splitext(os.path.basename(old_file_path_from_item))[0]
+                            try:
+                                for _f in os.listdir(_old_dir):
+                                    _fpath = os.path.join(_old_dir, _f)
+                                    _fname_no_ext, _fext = os.path.splitext(_f)
+                                    # Match exact stem or stem.language (e.g. Movie.en)
+                                    if (_fext.lower() in _SUBTITLE_EXTS and
+                                            (_fname_no_ext == _old_stem or
+                                             _fname_no_ext.startswith(_old_stem + '.'))):
+                                        os.remove(_fpath)
+                                        logging.info(f"[UPGRADE] Removed subtitle file: {_fpath}")
+                            except Exception as _sub_err:
+                                logging.debug(f"[UPGRADE] Subtitle cleanup error: {_sub_err}")
                             # Optionally, check if the file is truly gone
                             if os.path.exists(old_file_path_from_item):
                                 logging.warning(f"[UPGRADE] Local file {old_file_path_from_item} still exists after os.remove attempt.")
                                 removal_successful = False
+                        except IsADirectoryError:
+                            # Zurg mounts files as virtual directories under __all__; os.remove() can't
+                            # delete them. The underlying torrent will be cleaned up separately via RD.
+                            logging.warning(f"[UPGRADE] Old path '{old_file_path_from_item}' is a directory (likely Zurg mount). Cannot remove via os.remove — treating as success to unblock upgrade.")
+                            removal_successful = True
                         except OSError as delete_err:
                             logging.error(f"[UPGRADE] Failed to delete old local file {old_file_path_from_item}: {delete_err}")
                     elif not old_file_path_from_item:
@@ -844,90 +1985,11 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 # Only proceed if removal was successful or deemed unnecessary
                 if removal_successful:
                     logging.info("[UPGRADE] Old file/torrent removal successful or not needed, proceeding with symlink cleanup/creation.")
-                    # Remove old symlink if it exists
-                    # Use the old file's name to get the old symlink path
 
-                    # Determine the source path of the OLD file to find its corresponding symlink
-                    # We need the original base path where the old file *would* have been downloaded.
-                    # Using the new file's directory might be the best guess if they are typically co-located.
-                    old_base_path = os.path.dirname(source_file) if source_file else None
-
-                    if old_base_path and old_filename:
-                        # Construct the hypothetical source path for the old file
-                        old_source_for_symlink_path = os.path.join(old_base_path, old_filename)
-
-                        # Temporarily modify a copy of the item to represent the OLD file state for get_symlink_path
-                        item_for_old_path = item.copy()
-                        item_for_old_path['filled_by_file'] = old_filename
-                        # Explicitly set the version to the one we are upgrading FROM
-                        old_version_str = item.get('upgrading_from_version')
-                        if old_version_str:
-                            item_for_old_path['version'] = old_version_str
-                            logging.info(f"[UPGRADE] Using old version '{old_version_str}' for old symlink path calculation.")
-                        else:
-                            logging.warning("[UPGRADE] 'upgrading_from_version' not found in item dict. Old symlink path might be incorrect if version changed.")
-                            # Keep the current version as a fallback if the old one isn't stored
-
-                        old_dest = get_symlink_path(item_for_old_path, old_source_for_symlink_path, skip_jikan_lookup=False)
-
-                        if old_dest and os.path.lexists(old_dest):
-                            try:
-                                os.unlink(old_dest)
-                                logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
-
-                                # --- EDIT: Remove old verification entry ---
-                                try:
-                                    removed_count = remove_verification_by_media_item_id(item['id'])
-                                    if removed_count > 0:
-                                        logging.info(f"[UPGRADE] Removed {removed_count} old verification record(s) for media item ID {item['id']}")
-                                    else:
-                                        logging.debug(f"[UPGRADE] No existing verification record found to remove for media item ID {item['id']}")
-                                except Exception as db_remove_err:
-                                    logging.error(f"[UPGRADE] Failed to remove old verification record for media item ID {item['id']}: {db_remove_err}")
-                                # --- END EDIT ---
-
-                                # Add the path to the removal verification queue with titles
-                                episode_title_for_removal = item.get('episode_title') if item.get('type') == 'episode' else None
-                                add_path_for_removal_verification(old_dest, item['title'], episode_title_for_removal)
-                                # Wait for media server to detect the removed symlink
-                                time.sleep(1)
-
-                                # Remove the old file from Plex or Emby/Jellyfin
-                                media_server_type = 'none'
-                                if get_setting('Debug', 'emby_jellyfin_url', default=False):
-                                    media_server_type = 'emby_jellyfin'
-                                elif get_setting('File Management', 'plex_url_for_symlink', default=False):
-                                    media_server_type = 'plex'
-
-                                if media_server_type != 'none':
-                                    try:
-                                        episode_title = item.get('episode_title') if item.get('type') == 'episode' else None
-                                        if media_server_type == 'emby_jellyfin':
-                                            from utilities.emby_functions import remove_file_from_emby
-                                            remove_file_from_emby(item['title'], old_dest, episode_title)
-                                        elif media_server_type == 'plex':
-                                            from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
-                                            success = remove_file_from_plex(item['title'], old_dest, episode_title)
-                                            # If direct removal failed (possibly 400 error), try scan & empty trash as fallback
-                                            if not success:
-                                                logging.warning(f"[UPGRADE] Direct Plex removal failed for '{item['title']}'. Trying scan & empty trash...")
-                                                try:
-                                                    # Determine section type based on item type
-                                                    section_type = 'movie' if item.get('type') == 'movie' else 'show'
-                                                    scan_paths = [os.path.dirname(old_dest)] if old_dest else None
-                                                    scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
-                                                    logging.info(f"[UPGRADE] Triggered library scan and trash empty for '{item['title']}' (section_type={section_type}).")
-                                                except Exception as scan_err:
-                                                    logging.warning(f"[UPGRADE] Scan & empty trash also failed for '{item['title']}': {scan_err}")
-                                    except Exception as media_server_remove_err:
-                                         logging.error(f"[UPGRADE] Failed removing old file {old_dest} from {media_server_type}: {media_server_remove_err}")
-
-                            except Exception as e:
-                                logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
-                        else:
-                            logging.debug(f"[UPGRADE] No old symlink found at {old_dest} (or path couldn't be determined).")
+                    if not upgrading_cleanup_enabled:
+                        logging.info(f"[UPGRADE] Scraping.enable_upgrading_cleanup is disabled — keeping old symlink in place for {item_identifier}.")
                     else:
-                         logging.warning("[UPGRADE] Could not determine old source path components for symlink removal.")
+                        _cleanup_old_symlink(item, item_identifier, source_file, old_filename)
 
                     # Note: Symlink creation moved outside the upgrade block to run unconditionally
 
@@ -937,7 +1999,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     # We need to signal failure back up the call stack if necessary
                     return False # Indicate failure
 
-            # --- Unconditionally attempt to create/replace the symlink --- 
+            # --- Unconditionally attempt to create/replace the symlink ---
             # This runs for both upgrades (after cleanup) and non-upgrades
             logging.info(f"Attempting to create/replace symlink: {source_file} -> {dest_file}")
             success = create_symlink(source_file, dest_file, item.get('id'), skip_verification=False)
@@ -957,10 +2019,17 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 current_time = datetime.now()
                 
                 # Prepare update values
+                # original_collected_at is meant to be the item's first-ever collection
+                # time (matches the COALESCE(original_collected_at, ...) pattern used in
+                # database/collected_items.py's Plex-mode collection path) — preserve it
+                # across repair-driven re-collections instead of overwriting it every
+                # time, otherwise a repair looks identical to a first-time collection to
+                # both the notification gate below and notifications.py's own dedup-by-
+                # original_collected_at logic.
                 update_values = {
                         'location_on_disk': dest_file,
                     'collected_at': current_time,
-                    'original_collected_at': current_time,
+                    'original_collected_at': item.get('original_collected_at') or current_time,
                     'original_path_for_symlink': source_file,
                     'state': new_state,
                     'filled_by_title': item.get('filled_by_title'),
@@ -982,12 +2051,28 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     elif new_state == 'Upgrading':
                         handle_state_change(dict(updated_item))
 
+                # Cleanup of any old manual_replace=1 entry for this media (debrid/usenet
+                # torrent, symlink, original mount file, media server entry, DB row) is
+                # handled centrally by handle_state_change() -> replace_cleanup_after_collect()
+                # (utilities/post_processing.py), called just above when new_state is
+                # Collected/Upgrading. This used to be duplicated here with its own
+                # incomplete version (debrid+Plex only, no direct symlink/file unlink) -
+                # removed to avoid two independent implementations of the same cleanup
+                # drifting out of sync again.
+
                 # Add notification for all collections (including previously collected)
                 # Check the item's state *before* this function's update.
                 previous_state = item.get('state')
 
                 if not item.get('upgrading_from'): # This indicates a regular collection, where new_state is 'Collected'
-                    if previous_state != 'Collected':
+                    # previous_state alone doesn't catch a repair-driven re-collection: NZBRepair/
+                    # torrent-replace flows intentionally bounce the item out of 'Collected' (into
+                    # 'Adding'/'Upgrading') before resubmitting, so previous_state != 'Collected' is
+                    # true on every repair attempt too, not just the first-ever collection. Gate on
+                    # original_collected_at as well — it's preserved (not overwritten) once first set,
+                    # so its presence means this item has genuinely been collected before, regardless
+                    # of what state it was bounced through for the repair.
+                    if previous_state != 'Collected' and not item.get('original_collected_at'):
                         from database.database_writing import add_to_collected_notifications
                         notification_item = item.copy()
                         notification_item.update(update_values)
@@ -996,7 +2081,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         add_to_collected_notifications(notification_item)
                         logging.info(f"Added collection notification for item: {item_identifier}")
                     else:
-                        logging.info(f"Item {item_identifier} was already 'Collected'. Skipping redundant collection notification.")
+                        logging.info(f"Item {item_identifier} was already collected previously (previous_state={previous_state!r}, original_collected_at={item.get('original_collected_at')!r}). Skipping redundant collection notification.")
                 # Add notification for upgrades
                 elif item.get('upgrading_from'): # This indicates an upgrade, notification_item['new_state'] will be 'Upgraded'
                     # An item is 'Upgraded' from a previous version. Its state before this specific upgrade
@@ -1023,7 +2108,6 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         on_success_callback(relative_path_to_remove)
                     except Exception as cb_err:
                         logging.error(f"Error executing on_success_callback for {relative_path_to_remove}: {cb_err}")
-                # --- END EDIT ---
 
                 # --- MULTIFILE SUPPORT FOR SYMLINK MODE ---
                 # For both movies and episodes, scan the source folder for additional video files and create
@@ -1042,6 +2126,12 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
 
                             for additional_source_file in additional_files:
                                 additional_filename = os.path.basename(additional_source_file)
+
+                                # For movies, only the primary file (already symlinked above) should be
+                                # tracked. Skip all additional files — trailers, samples, extras, etc.
+                                if item_type != 'episode':
+                                    logging.debug(f"[MultiFile] Skipping additional file for movie: {additional_filename}")
+                                    continue
 
                                 # For episodes, verify this is the same episode (alternate version), not a different episode
                                 if item_type == 'episode':
@@ -1124,33 +2214,36 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                     try:
                                         # First, check if there's an existing entry for this movie/episode that's blacklisted or ghostlisted
                                         # This prevents creating duplicate entries when a blacklisted version already exists
+                                        # (media_items has no plain 'blacklisted' boolean column — blacklisted-ness is
+                                        # represented by blacklisted_date being set, same convention used in
+                                        # queues/blacklisted_queue.py and routes/debug_routes.py)
                                         if item_type == 'episode':
                                             existing_movie_check = conn.execute('''
-                                                SELECT id, state, blacklisted, ghostlisted
+                                                SELECT id, state, blacklisted_date, ghostlisted
                                                 FROM media_items
                                                 WHERE imdb_id = ? AND type = ? AND version = ?
                                                 AND season_number = ? AND episode_number = ?
-                                                AND (blacklisted = 1 OR ghostlisted = 1)
+                                                AND (blacklisted_date IS NOT NULL OR ghostlisted = 1)
                                                 LIMIT 1
                                             ''', (item.get('imdb_id'), item_type, item.get('version'),
                                                   item.get('season_number'), item.get('episode_number'))).fetchone()
                                         else:  # movie
                                             existing_movie_check = conn.execute('''
-                                                SELECT id, state, blacklisted, ghostlisted
+                                                SELECT id, state, blacklisted_date, ghostlisted
                                                 FROM media_items
                                                 WHERE imdb_id = ? AND type = ? AND version = ?
-                                                AND (blacklisted = 1 OR ghostlisted = 1)
+                                                AND (blacklisted_date IS NOT NULL OR ghostlisted = 1)
                                                 LIMIT 1
                                             ''', (item.get('imdb_id'), item_type, item.get('version'))).fetchone()
 
                                         if existing_movie_check:
-                                            logging.info(f"[MultiFile] Skipping additional file {additional_filename} - found existing blacklisted/ghostlisted entry (ID: {existing_movie_check['id']}, blacklisted: {existing_movie_check['blacklisted']}, ghostlisted: {existing_movie_check['ghostlisted']})")
+                                            logging.info(f"[MultiFile] Skipping additional file {additional_filename} - found existing blacklisted/ghostlisted entry (ID: {existing_movie_check['id']}, blacklisted_date: {existing_movie_check['blacklisted_date']}, ghostlisted: {existing_movie_check['ghostlisted']})")
                                             conn.close()
                                             continue
 
                                         # Check if this specific file already exists in the database
                                         cursor = conn.execute(
-                                            'SELECT id, blacklisted, ghostlisted FROM media_items WHERE filled_by_file = ? AND type = ?',
+                                            'SELECT id, blacklisted_date, ghostlisted FROM media_items WHERE filled_by_file = ? AND type = ?',
                                             (additional_filename, item_type)
                                         )
                                         existing = cursor.fetchone()
@@ -1158,7 +2251,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
 
                                         if existing:
                                             # Check if the existing entry is blacklisted or ghostlisted
-                                            if existing['blacklisted'] == 1 or existing['ghostlisted'] == 1:
+                                            if existing['blacklisted_date'] is not None or existing['ghostlisted'] == 1:
                                                 logging.info(f"[MultiFile] Skipping update for {additional_filename} - existing entry (ID: {existing['id']}) is blacklisted/ghostlisted")
                                                 conn.close()
                                                 continue
@@ -1190,9 +2283,9 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                                     item.get('release_date'),
                                                     new_state,
                                                     'episode',
-                                                    item.get('season_number'),
-                                                    item.get('episode_number'),
-                                                    item.get('episode_title'),
+                                                    additional_item.get('season_number'),
+                                                    additional_item.get('episode_number'),
+                                                    additional_item.get('episode_title'),
                                                     current_time,
                                                     item.get('version'),
                                                     current_time,
@@ -1271,57 +2364,127 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
     
     return False
 
-def local_library_scan(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def local_library_scan(items: List[Dict[str, Any]], extract_resolution: bool = True) -> Dict[str, Dict[str, Any]]:
     """
     Scan local library for specific items' files when Symlinked/Local is enabled.
     This is used as an alternative to Plex scanning when working with symlinked files.
 
-    Gets file size for backfill by reading from filesystem directly (fast, no Plex API calls).
+    Extracts from filesystem:
+    - size_gb: File size in GB (always)
+    - resolution: Video resolution like "2160p", "1080p" (optional)
+    - location: File path
 
     Args:
         items: List of items to scan for (from database)
+        extract_resolution: Whether to extract resolution (default: True)
 
     Returns:
-        Dict mapping item IDs to their found file information with size_gb
+        Dict mapping item IDs to their found file information with size_gb and resolution
     """
     results = {}
     scanned_count = 0
     size_found_count = 0
+    resolution_found_count = 0
 
+    import time
+    scan_start_time = time.time()
+
+    logging.info(f"[LOCAL_LIBRARY_SCAN_DEBUG] ========== STARTING SCAN ==========")
     logging.info(f"[LOCAL_LIBRARY_SCAN] Starting scan of {len(items)} items from database")
+    if extract_resolution:
+        logging.info(f"[LOCAL_LIBRARY_SCAN] Resolution extraction: regex (primary) → ffprobe (fallback) → Plex API (per-item fallback)")
+        logging.info(f"[LOCAL_LIBRARY_SCAN] Expected coverage: ~99.6% via regex (instant), ~0.4% via ffprobe (1-3 sec/file)")
 
-    for item in items:
+    for idx, item in enumerate(items):
+        # Log progress every 1000 items
+        if (idx + 1) % 1000 == 0:
+            elapsed = time.time() - scan_start_time
+            rate = (idx + 1) / elapsed if elapsed > 0 else 0
+            logging.info(f"[LOCAL_LIBRARY_SCAN_DEBUG] Progress: {idx + 1}/{len(items)} items ({rate:.1f} items/sec)")
         item_id = item.get('id')
         if not item_id:
             continue
 
-        location = item.get('location_on_disk')
+        # Use _scan_location if available (from path remapping), otherwise location_on_disk
+        location = item.get('_scan_location') or item.get('location_on_disk')
         if not location:
-            logging.debug(f"[LOCAL_LIBRARY_SCAN] Item {item_id} has no location_on_disk, skipping")
+            logging.debug(f"[LOCAL_LIBRARY_SCAN] Item {item_id} has no location, skipping")
             continue
 
         scanned_count += 1
 
-        # Check if file exists and get size
+        # Check if file exists and get data
         if os.path.exists(location):
             try:
+                # ALWAYS extract size (fast)
                 size_bytes = os.path.getsize(location)
                 size_gb = round(size_bytes / (1024**3), 2) if size_bytes else None
 
                 if size_gb is not None:
-                    # Add size to item data
-                    item_with_size = item.copy()
-                    item_with_size['size_gb'] = size_gb
-                    item_with_size['location'] = location
-                    results[item_id] = item_with_size
+                    item_with_data = item.copy()
+                    item_with_data['size_gb'] = size_gb
+                    item_with_data['location'] = item.get('location_on_disk') or location
                     size_found_count += 1
-                    logging.debug(f"[LOCAL_LIBRARY_SCAN] Item {item_id}: {size_gb}GB")
+
+                    # OPTIONALLY extract resolution
+                    if extract_resolution:
+                        resolution = extract_resolution_hybrid(location)
+                        if resolution:
+                            item_with_data['resolution'] = resolution
+                            resolution_found_count += 1
+                            logging.debug(f"[LOCAL_LIBRARY_SCAN] Item {item_id}: {size_gb}GB, {resolution}")
+                        else:
+                            # Leave resolution as-is (don't overwrite with None)
+                            logging.debug(f"[LOCAL_LIBRARY_SCAN] Item {item_id}: {size_gb}GB, resolution not detected")
+                    else:
+                        logging.debug(f"[LOCAL_LIBRARY_SCAN] Item {item_id}: {size_gb}GB")
+
+                    # Remove temporary scan location field - don't write to database
+                    item_with_data.pop('_scan_location', None)
+                    item_with_data.pop('_remap_failed', None)
+
+                    results[item_id] = item_with_data
+
             except OSError as e:
-                logging.warning(f"[LOCAL_LIBRARY_SCAN] Could not get size for {location}: {e}")
+                logging.warning(f"[LOCAL_LIBRARY_SCAN] Could not process {location}: {e}")
         else:
             logging.debug(f"[LOCAL_LIBRARY_SCAN] File not found: {location}")
 
-    logging.info(f"[LOCAL_LIBRARY_SCAN] Scanned {scanned_count} items, found size for {size_found_count}")
+    # Calculate scan statistics
+    scan_duration = time.time() - scan_start_time
+    items_per_sec = scanned_count / scan_duration if scan_duration > 0 else 0
+
+    logging.info(f"[LOCAL_LIBRARY_SCAN_DEBUG] ========== SCAN COMPLETE ==========")
+    logging.info(f"[LOCAL_LIBRARY_SCAN_DEBUG] Total scan time: {scan_duration:.2f} seconds")
+    logging.info(f"[LOCAL_LIBRARY_SCAN_DEBUG] Processing rate: {items_per_sec:.1f} items/second")
+
+    # Calculate scan statistics
+    scan_duration = time.time() - scan_start_time
+    items_per_sec = scanned_count / scan_duration if scan_duration > 0 else 0
+
+    logging.info(f"[LOCAL_LIBRARY_SCAN_DEBUG] ========== SCAN COMPLETE ==========")
+    logging.info(f"[LOCAL_LIBRARY_SCAN_DEBUG] Total scan time: {scan_duration:.2f} seconds")
+    logging.info(f"[LOCAL_LIBRARY_SCAN_DEBUG] Processing rate: {items_per_sec:.1f} items/second")
+
+    if extract_resolution:
+        logging.info(f"[LOCAL_LIBRARY_SCAN] Scanned {scanned_count} items, found size for {size_found_count}, resolution for {resolution_found_count}")
+
+        # MediaInfo statistics
+        if _MEDIAINFO_AVAILABLE:
+            success_rate = (_MEDIAINFO_SUCCESS_COUNT / _MEDIAINFO_CALL_COUNT * 100) if _MEDIAINFO_CALL_COUNT > 0 else 0
+            logging.info(f"[MEDIAINFO_DEBUG] ========== MEDIAINFO STATISTICS ==========")
+            logging.info(f"[MEDIAINFO_DEBUG] Total MediaInfo calls: {_MEDIAINFO_CALL_COUNT}")
+            logging.info(f"[MEDIAINFO_DEBUG] Successful extractions: {_MEDIAINFO_SUCCESS_COUNT} ({success_rate:.1f}%)")
+            logging.info(f"[MEDIAINFO_DEBUG] Failed extractions: {_MEDIAINFO_FAIL_COUNT}")
+
+            if _MEDIAINFO_CALL_COUNT > 0:
+                avg_time_per_call = (scan_duration / _MEDIAINFO_CALL_COUNT) * 1000  # in ms
+                logging.info(f"[MEDIAINFO_DEBUG] Average time per MediaInfo call: {avg_time_per_call:.2f}ms")
+
+            logging.info(f"[MEDIAINFO_DEBUG] ==========================================")
+    else:
+        logging.info(f"[LOCAL_LIBRARY_SCAN] Scanned {scanned_count} items, found size for {size_found_count}")
+
     return results
 
 def recent_local_library_scan(items: List[Dict[str, Any]], max_files: int = 500) -> Dict[str, Dict[str, Any]]:
@@ -1565,6 +2728,7 @@ def _find_source_file_in_base(item: Dict[str, Any], base_search_path: str, filen
     logging.debug(f"[_find_source_file_in_base] Searching for '{filename_only}' under '{base_search_path}' for item ID {item.get('id')}")
 
     possible_folder_names = [
+        item.get('debrid_folder_name', ''),
         item.get('original_scraped_torrent_title', ''),
         item.get('real_debrid_original_title', ''),
         item.get('filled_by_title', ''),
@@ -1602,11 +2766,13 @@ def _find_source_file_in_base(item: Dict[str, Any], base_search_path: str, filen
 
 def resync_symlinks_with_new_settings(
     old_original_files_path_setting: Optional[str] = None,
-    new_original_files_path_setting: Optional[str] = None
+    new_original_files_path_setting: Optional[str] = None,
+    item_ids: Optional[List[int]] = None
 ):
     """
     Resynchronizes all existing symlinks based on the current application settings.
     Attempts to locate source files and align DB with current settings if possible.
+    item_ids limits it to those items (e.g. a show whose episodes were renumbered).
     """
     logging.info("Starting symlink resynchronization process.")
 
@@ -1627,6 +2793,9 @@ def resync_symlinks_with_new_settings(
                 unique_items.append(item)
                 seen_ids.add(item['id'])
         collected_items = unique_items
+        if item_ids is not None:
+            wanted_ids = set(item_ids)
+            collected_items = [item for item in collected_items if item['id'] in wanted_ids]
 
     except Exception as e:
         logging.error(f"Failed to retrieve media items for symlink resync: {e}", exc_info=True)
@@ -1781,9 +2950,26 @@ def resync_symlinks_with_new_settings(
             norm_new_symlink = os.path.normpath(new_symlink_destination)
 
             if norm_db_symlink != norm_new_symlink:
+                old_parent = os.path.dirname(db_symlink_location) if db_symlink_location else None
+                new_parent = os.path.dirname(new_symlink_destination)
+
                 if db_symlink_location and os.path.lexists(db_symlink_location):
                     if os.path.islink(db_symlink_location): os.unlink(db_symlink_location)
-                
+
+                # Move any subtitle sidecar files from old folder to new folder
+                subtitle_extensions = {'.srt', '.ass', '.sub', '.ssa', '.vtt', '.idx', '.sup'}
+                if old_parent and old_parent != new_parent and os.path.exists(old_parent):
+                    try:
+                        os.makedirs(new_parent, exist_ok=True)
+                        for fname in os.listdir(old_parent):
+                            if os.path.splitext(fname)[1].lower() in subtitle_extensions:
+                                src = os.path.join(old_parent, fname)
+                                dst = os.path.join(new_parent, fname)
+                                shutil.move(src, dst)
+                                logging.info(f"[RESYNC] Moved subtitle sidecar: {src} -> {dst}")
+                    except Exception as e:
+                        logging.warning(f"[RESYNC] Error moving subtitle files from {old_parent} to {new_parent}: {e}")
+
                 symlink_created = create_symlink(actual_source_file_to_use, new_symlink_destination, item_id, skip_verification=True)
                 if symlink_created:
                     try:

@@ -779,6 +779,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // --- START EDIT: Reconnect Task Monitor when page becomes visible ---
 document.addEventListener('visibilitychange', () => {
+    // A hidden tab doesn't need live task updates. Closing its stream frees a
+    // server thread and one of the browser's ~6 connections per host; the
+    // branch below reopens it when the tab is shown again.
+    if (document.visibilityState === 'hidden') {
+        if (eventSource) {
+            eventSource.close();
+        }
+        return;
+    }
     if (document.visibilityState === 'visible') {
         try {
             // If the task monitor was disabled due to a connectivity failure OR

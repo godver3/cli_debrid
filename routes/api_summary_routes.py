@@ -127,8 +127,10 @@ def api_summary():
 
 def get_latest_api_calls(limit=100):
     calls = []
+    from collections import deque
     with open(API_LOG_FILE, 'r') as log_file:
-        for line in reversed(list(log_file)):
+        lines = deque(log_file, maxlen=limit * 10)
+    for line in reversed(list(lines)):
             # Update parsing logic to match the actual log format
             parts = line.strip().split(' - ', 2)
             if len(parts) == 3:

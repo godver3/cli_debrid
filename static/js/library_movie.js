@@ -87,6 +87,9 @@ function attachEventListeners() {
     const btnSettings = document.getElementById('btn-settings');
     const btnSearchMovie = document.getElementById('btn-search-movie');
     const btnRequestMovie = document.getElementById('btn-request-movie');
+    const btnFixMatch = document.getElementById('btn-fix-match');
+    const editReleaseDateBtn = document.getElementById('edit-release-date-btn');
+    const refreshReleaseDateBtn = document.getElementById('refresh-release-date-btn');
 
     if (btnGetMissing) {
         btnGetMissing.addEventListener('click', handleGetMissing);
@@ -112,6 +115,25 @@ function attachEventListeners() {
         btnRequestMovie.addEventListener('click', handleRequestMovie);
     }
 
+    if (btnFixMatch) {
+        btnFixMatch.addEventListener('click', handleFixMatch);
+    }
+
+    if (editReleaseDateBtn) {
+        editReleaseDateBtn.addEventListener('click', openReleaseDateOverrideModal);
+    }
+
+    if (refreshReleaseDateBtn) {
+        refreshReleaseDateBtn.addEventListener('click', handleRefreshReleaseDate);
+    }
+
+    document.getElementById('saveReleaseDateOverride')?.addEventListener('click', saveReleaseDateOverride);
+    document.getElementById('clearReleaseDateOverride')?.addEventListener('click', clearReleaseDateOverride);
+    document.getElementById('cancelReleaseDateOverride')?.addEventListener('click', closeReleaseDateOverrideModal);
+    document.getElementById('releaseDateModal')?.addEventListener('click', event => {
+        if (event.target.id === 'releaseDateModal') closeReleaseDateOverrideModal();
+    });
+
     // Close overlay when pressing Escape key
     const overlay = document.getElementById('overlay');
     window.addEventListener('keydown', function(event) {
@@ -119,6 +141,7 @@ function attachEventListeners() {
             if (overlay && overlay.style.display === 'flex') {
                 closeOverlay();
             }
+            closeReleaseDateOverrideModal();
         }
     });
 
@@ -155,6 +178,12 @@ async function loadMovieData() {
 
         if (data.success) {
             movieData = data.movie;
+            // Strip year from title if already embedded (e.g. "Alien (2025)" → "Alien")
+            // so the scraper doesn't receive a double year in the payload
+            if (movieData.year && movieData.title) {
+                movieData.title = movieData.title.replace(new RegExp(`\\s*\\(${movieData.year}\\)$`), '').trim();
+            }
+            movieData.has_pending_replace = data.has_pending_replace || false;
             filesData = data.files;
 
             renderMovieHeader(movieData);
@@ -196,7 +225,8 @@ function renderMovieHeader(movie) {
     if (window.DEBUG) console.log('[Movie Detail] Metadata values - overview:', movie.overview, 'genres:', movie.genres, 'network:', movie.network, 'status:', movie.status);
 
     // Set title with year in parentheses
-    const titleText = movie.title + (movie.year ? ` (${movie.year})` : '');
+    const titleAlreadyHasYear = movie.year && movie.title.trim().endsWith(`(${movie.year})`);
+    const titleText = movie.title + (movie.year && !titleAlreadyHasYear ? ` (${movie.year})` : '');
     const titleEl = document.getElementById('movie-title');
     if (titleEl) {
         titleEl.textContent = titleText;
@@ -238,21 +268,44 @@ function renderMovieHeader(movie) {
         pageBackdrop.style.display = 'block';
     }
 
-    // Set inline metadata for movies
-    const yearText = document.getElementById('movie-year-text');
-    if (yearText && movie.rating) {
-        // Display rating with 1 decimal point and star icon
-        const ratingValue = parseFloat(movie.rating).toFixed(1);
-        yearText.innerHTML = `
-            <span style="display: inline-flex; align-items: center; gap: 0.25rem; vertical-align: bottom;">
-                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="width: 1em; height: 1em; display: block;">
+    // Set rating with star icon in meta section
+    const ratingText = document.getElementById('movie-rating-text');
+    const ratingSeparator = document.getElementById('movie-rating-separator');
+    if (ratingText) {
+        if (movie.rating) {
+            // Display rating with 1 decimal point and star icon
+            const ratingValue = parseFloat(movie.rating).toFixed(1);
+            ratingText.innerHTML = `
+                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="width: 1em; height: 1em; display: inline-block; vertical-align: text-top; margin-right: 0.25rem;">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path>
-                </svg>
-                <span>${ratingValue}</span>
-            </span>
-        `;
-    } else if (yearText) {
-        yearText.textContent = '-';
+                </svg>${ratingValue}
+            `;
+            // Show the separator after rating
+            if (ratingSeparator) {
+                ratingSeparator.style.display = 'inline';
+            }
+        } else {
+            ratingText.style.display = 'none';
+            // Hide the separator if no rating
+            if (ratingSeparator) {
+                ratingSeparator.style.display = 'none';
+            }
+        }
+    }
+
+    // Set certification (check both certification and content_rating fields)
+    const certificationText = document.getElementById('movie-certification-text');
+    const certificationSeparator = document.getElementById('movie-certification-separator');
+    if (certificationText && certificationSeparator) {
+        const cert = movie.certification || movie.content_rating;
+        if (cert) {
+            certificationText.textContent = cert;
+            certificationText.style.display = 'inline';
+            certificationSeparator.style.display = 'inline';
+        } else {
+            certificationText.style.display = 'none';
+            certificationSeparator.style.display = 'none';
+        }
     }
 
     const runtimeText = document.getElementById('movie-runtime-text');
@@ -279,7 +332,7 @@ function renderMovieHeader(movie) {
     // Update details row
     const qualityValue = document.getElementById('quality-value');
     if (qualityValue && movie.version) {
-        qualityValue.textContent = movie.version;
+        qualityValue.textContent = movie.version.replace(/\*/g, '');
     }
 
     const pathValue = document.getElementById('path-value');
@@ -297,6 +350,13 @@ function renderMovieHeader(movie) {
         sizeValue.textContent = `${movie.size.toFixed(2)} GB`;
     } else if (sizeValue) {
         sizeValue.textContent = '-';
+    }
+
+    // Update discover button
+    const discoverBtn = document.getElementById('btn-discover');
+    if (discoverBtn && movie.tmdb_id) {
+        discoverBtn.href = `/discover/details/${movie.tmdb_id}/movie`;
+        discoverBtn.style.display = '';
     }
 
     // Update external links in header
@@ -335,6 +395,10 @@ function renderMovieHeader(movie) {
     const releaseDateEl = document.getElementById('movie-release-date');
     if (releaseDateEl) {
         releaseDateEl.textContent = movie.release_date ? formatDate(movie.release_date) : '-';
+    }
+    const manualReleaseBadge = document.getElementById('movie-release-date-manual');
+    if (manualReleaseBadge) {
+        manualReleaseBadge.style.display = movie.release_date_override ? 'inline-flex' : 'none';
     }
 
     const runtimeEl = document.getElementById('movie-runtime');
@@ -463,37 +527,44 @@ function createFileRow(file, rowNumber, movie) {
     number.textContent = rowNumber;
 
     // Status indicator (green checkmark for Collected, red X for Blacklisted, blue clock for Unreleased, purple magnifying glass for Wanted)
-    const status = document.createElement('div');
-    status.className = 'movie-file-status-icon';
+
     const isCollected = file.state === 'Collected';
     const isUpgrading = file.state === 'Upgrading';
     const isBlacklisted = file.state === 'Blacklisted';
     const isUnreleased = file.state === 'Unreleased';
     const isWanted = file.state === 'Wanted';
+    const isMissingFromPlex = (isCollected || isUpgrading) && !file.ms_item_id;
 
+    let statusIcon = '';
     if (isCollected) {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#4CAF50"><path fill-rule="evenodd" d="M1.875 10c0-4.487 3.638-8.125 8.125-8.125s8.125 3.638 8.125 8.125-3.638 8.125-8.125 8.125S1.875 14.487 1.875 10zm11.133-1.512a.625.625 0 10-1.016-.726l-2.697 3.775-1.42-1.42a.625.625 0 00-.884.883l1.875 1.875a.625.625 0 00.95-.078l3.125-4.375z" clip-rule="evenodd" /></svg>';
+        statusIcon = `<svg class="movie-file-status-icon" width="20" height="20" viewBox="0 0 20 20" fill="#4CAF50"><path fill-rule="evenodd" d="M1.875 10c0-4.487 3.638-8.125 8.125-8.125s8.125 3.638 8.125 8.125-3.638 8.125-8.125 8.125S1.875 14.487 1.875 10zm11.133-1.512a.625.625 0 10-1.016-.726l-2.697 3.775-1.42-1.42a.625.625 0 00-.884.883l1.875 1.875a.625.625 0 00.95-.078l3.125-4.375z" clip-rule="evenodd" /></svg>`;
     } else if (isBlacklisted) {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#ef4444"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm-1.433 5.808a.625.625 0 10-.884.884L9.117 10l-1.434 1.433a.625.625 0 10.884.884L10 10.883l1.433 1.434a.625.625 0 10.884-.884L10.883 10l1.434-1.433a.625.625 0 10-.884-.884L10 9.117l-1.433-1.434z" clip-rule="evenodd" /></svg>';
+        statusIcon = `<svg class="movie-file-status-icon" width="20" height="20" viewBox="0 0 20 20" fill="#ef4444"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm-1.433 5.808a.625.625 0 10-.884.884L9.117 10l-1.434 1.433a.625.625 0 10.884.884L10 10.883l1.433 1.434a.625.625 0 10.884-.884L10.883 10l1.434-1.433a.625.625 0 10-.884-.884L10 9.117l-1.433-1.434z" clip-rule="evenodd" /></svg>`;
     } else if (isUpgrading) {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#60a5fa"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm.442 4.558a.625.625 0 00-.884 0l-2.5 2.5a.625.625 0 10.884.884l1.433-1.434v5.159a.625.625 0 001.25 0V8.383l1.433 1.434a.625.625 0 10.884-.884l-2.5-2.5z" clip-rule="evenodd" /></svg>';
+        statusIcon = `<svg class="movie-file-status-icon" width="20" height="20" viewBox="0 0 20 20" fill="#60a5fa"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm.442 4.558a.625.625 0 00-.884 0l-2.5 2.5a.625.625 0 10.884.884l1.433-1.434v5.159a.625.625 0 001.25 0V8.383l1.433 1.434a.625.625 0 10.884-.884l-2.5-2.5z" clip-rule="evenodd" /></svg>`;
     } else if (isUnreleased) {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#e0e0e0"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zM10 6.875a.625.625 0 01.625.625v3.075l1.9 1.9a.625.625 0 11-.884.884l-2.083-2.083a.625.625 0 01-.183-.442V7.5a.625.625 0 01.625-.625z" clip-rule="evenodd" /></svg>';
+        statusIcon= `<svg class="movie-file-status-icon" width="20" height="20" viewBox="0 0 20 20" fill="#e0e0e0"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zM10 6.875a.625.625 0 01.625.625v3.075l1.9 1.9a.625.625 0 11-.884.884l-2.083-2.083a.625.625 0 01-.183-.442V7.5a.625.625 0 01.625-.625z" clip-rule="evenodd" /></svg>`;
     } else if (isWanted) {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#fbbf24"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm3.567 6.017a.625.625 0 010 .884l-2.5 2.5a.625.625 0 01-.884-.884l1.434-1.434H7.5a.625.625 0 010-1.25h4.117l-1.434-1.434a.625.625 0 01.884-.884l2.5 2.5zm-7.134 4.633a.625.625 0 010-.884l2.5-2.5a.625.625 0 01.884.884l-1.434 1.434H12.5a.625.625 0 010 1.25H8.383l1.434 1.434a.625.625 0 01-.884.884l-2.5-2.5z" clip-rule="evenodd" /></svg>';
+        statusIcon = `<svg class="movie-file-status-icon" width="20" height="20" viewBox="0 0 20 20" fill="#fbbf24"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm3.567 6.017a.625.625 0 010 .884l-2.5 2.5a.625.625 0 01-.884-.884l1.434-1.434H7.5a.625.625 0 010-1.25h4.117l-1.434-1.434a.625.625 0 01.884-.884l2.5 2.5zm-7.134 4.633a.625.625 0 010-.884l2.5-2.5a.625.625 0 01.884.884l-1.434 1.434H12.5a.625.625 0 010 1.25H8.383l1.434 1.434a.625.625 0 01-.884.884l-2.5-2.5z" clip-rule="evenodd" /></svg>`;
     } else {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#666"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm-1.433 5.808a.625.625 0 10-.884.884L9.117 10l-1.434 1.433a.625.625 0 10.884.884L10 10.883l1.433 1.434a.625.625 0 10.884-.884L10.883 10l1.434-1.433a.625.625 0 10-.884-.884L10 9.117l-1.433-1.434z" clip-rule="evenodd" /></svg>';
+        statusIcon = `<svg class="movie-file-status-icon" width="20" height="20" viewBox="0 0 20 20" fill="#666"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm-1.433 5.808a.625.625 0 10-.884.884L9.117 10l-1.434 1.433a.625.625 0 10.884.884L10 10.883l1.433 1.434a.625.625 0 10.884-.884L10.883 10l1.434-1.433a.625.625 0 10-.884-.884L10 9.117l-1.433-1.434z" clip-rule="evenodd" /></svg>`;
     }
+
+    // Create status icon element from SVG string
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = statusIcon.trim();
+    const statusIconElement = tempDiv.firstChild;
 
     // File info section
     const info = document.createElement('div');
     info.className = 'movie-file-info-section';
 
     const fileName = file.basename || file.filename || 'Unknown file';
-    const titleText = movie.title + (movie.year ? ` (${movie.year})` : '');
+    const titleAlreadyHasYearFile = movie.year && movie.title.trim().endsWith(`(${movie.year})`);
+    const titleText = movie.title + (movie.year && !titleAlreadyHasYearFile ? ` (${movie.year})` : '');
     const qualityTags = extractQualityTags(file.basename || file.filename || '');
     const tags = qualityTags.map(tag => createQualityBadge(tag)).join('');
-    const version = file.version || 'Default';
+    const version = (file.version || 'Default').replace(/\*/g, '');
 
     // Determine status label and value
     let statusLabel, statusValue;
@@ -517,8 +588,23 @@ function createFileRow(file, rowNumber, movie) {
             <div class="release-tags">${tags}</div>
         </div>
         <div class="movie-file-meta">
+            ${isMissingFromPlex ? `<span class="episode-broken-badge" title="Collected/Upgrading but missing from Plex (no ms_item_id)">Broken</span>` : ''}
             <span class="file-version">${version}</span>
             ${sizeText ? `<span class="file-version">${sizeText}</span>` : ''}
+            ${(() => {
+                const at = file.ms_audio_track;
+                if (!at) return '';
+                const langs = at.split(',').map(l => l.trim()).filter(Boolean);
+                const label = langs.length > 1 ? `${langs[0]} +${langs.length - 1}` : langs[0];
+                return `<span class="episode-track-badge" title="${langs.join(', ')}"><i class="fa-solid fa-volume-high"></i> ${label}</span>`;
+            })()}
+            ${(() => {
+                const st = file.ms_subtitle_track;
+                if (!st) return '';
+                const langs = st.split(',').map(l => l.trim()).filter(Boolean);
+                const label = langs.length > 1 ? `${langs[0]} +${langs.length - 1}` : langs[0];
+                return `<span class="episode-track-badge" title="${langs.join(', ')}"><i class="fa-solid fa-closed-captioning"></i> ${label}</span>`;
+            })()}
             <span>•</span>
             <span>${statusLabel}: ${statusValue}</span>
         </div>
@@ -566,6 +652,84 @@ function createFileRow(file, rowNumber, movie) {
     // Add move to wanted button (always visible)
     actions.appendChild(wantedBtn);
 
+    // Not-wanted magnet button — only if file has a magnet
+    if (file.filled_by_magnet) {
+        const notWantedBtn = document.createElement('button');
+        notWantedBtn.className = 'file-action-btn not-wanted-magnet-btn';
+        notWantedBtn.title = 'Add magnet to not-wanted list';
+        notWantedBtn.style.cssText = `
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem;
+            background: transparent;
+            border: 1px solid rgba(232, 96, 28, 0.3);
+            border-radius: 0.375rem;
+            color: rgba(232, 96, 28, 0.8);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        `;
+        notWantedBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(270deg)"><path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+        notWantedBtn.addEventListener('mouseenter', () => {
+            notWantedBtn.style.background = 'rgba(232, 96, 28, 0.12)';
+            notWantedBtn.style.borderColor = 'rgba(232, 96, 28, 0.6)';
+        });
+        notWantedBtn.addEventListener('mouseleave', () => {
+            notWantedBtn.style.background = 'transparent';
+            notWantedBtn.style.borderColor = 'rgba(232, 96, 28, 0.3)';
+        });
+        notWantedBtn.addEventListener('click', async () => {
+            notWantedBtn.disabled = true;
+            try {
+                const resp = await fetch('/library/add_not_wanted_magnet', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ item_ids: [file.id] }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    notWantedBtn.style.opacity = '0.4';
+                    notWantedBtn.title = 'Already in not-wanted list';
+                } else {
+                    console.error('Not-wanted error:', data.error);
+                }
+            } catch (e) {
+                console.error('Not-wanted request failed:', e);
+            } finally {
+                notWantedBtn.disabled = false;
+            }
+        });
+        actions.appendChild(notWantedBtn);
+    }
+
+    // Subtitle download button — only for collected files
+    if (file.state === 'Collected') {
+        const downsubBtn = document.createElement('button');
+        downsubBtn.className = 'file-action-btn';
+        downsubBtn.title = 'Download Subtitles';
+        downsubBtn.dataset.fileId = file.id;
+        downsubBtn.style.cssText = `
+            display: flex; align-items: center; justify-content: center;
+            padding: 0.5rem; background: transparent;
+            border: 1px solid rgba(255,255,255,0.2); border-radius: 0.375rem;
+            color: rgba(255,255,255,0.7); cursor: pointer; transition: all 0.2s ease; gap: 2px;
+        `;
+        downsubBtn.innerHTML = `<i class="fa-solid fa-closed-captioning" style="font-size:14px;"></i><i class="fa-solid fa-arrow-down" style="font-size:8px;vertical-align:middle;"></i>`;
+        downsubBtn.addEventListener('click', async () => {
+            downsubBtn.disabled = true;
+            try {
+                const resp = await fetch(`/library/download_subtitles/item/${file.id}`, {method: 'POST'});
+                const result = await resp.json();
+                showPopup({ type: result.success ? window.POPUP_TYPES.SUCCESS : window.POPUP_TYPES.ERROR, message: result.success ? result.message : (result.error || 'Failed'), autoClose: 4000 });
+            } catch(e) {
+                showPopup({ type: window.POPUP_TYPES.ERROR, message: 'Error starting subtitle download', autoClose: 4000 });
+            } finally {
+                downsubBtn.disabled = false;
+            }
+        });
+        actions.appendChild(downsubBtn);
+    }
+
     // Individual file delete button - only for admins
     const hasAdminPermissions = document.getElementById('has_admin_permissions')?.value === 'True';
     if (hasAdminPermissions) {
@@ -609,8 +773,17 @@ function createFileRow(file, rowNumber, movie) {
         actions.appendChild(deleteBtn);
     }
 
+    // Mobile touch: tap the title to show filename as a popup (title= attr doesn't work on touch)
+    const titleEl = info.querySelector('.movie-file-title');
+    if (titleEl) {
+        titleEl.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            showFilenameTouchTooltip(titleEl, fileName);
+        }, { passive: false });
+    }
+
     row.appendChild(number);
-    row.appendChild(status);
+    row.appendChild(statusIconElement);
     row.appendChild(info);
     row.appendChild(actions);
 
@@ -622,7 +795,8 @@ function handleMoveFileToWanted(fileId) {
 
     const data = {
         imdb_id: movieData.imdb_id,
-        tmdb_id: movieData.tmdb_id
+        tmdb_id: movieData.tmdb_id,
+        item_id: fileId
     };
 
     fetch('/statistics/move_to_wanted', {
@@ -653,6 +827,60 @@ function handleMoveFileToWanted(fileId) {
 
 function movieError(message) {
     if (window.DEBUG) console.error('[Movie Detail] Error:', message);
+}
+
+let _filenameTouchTooltip = null;
+let _filenameTouchTimer = null;
+
+function showFilenameTouchTooltip(anchorEl, filename) {
+    // Remove any existing tooltip
+    if (_filenameTouchTooltip) {
+        _filenameTouchTooltip.remove();
+        _filenameTouchTooltip = null;
+    }
+    clearTimeout(_filenameTouchTimer);
+
+    const tooltip = document.createElement('div');
+    tooltip.textContent = filename;
+    tooltip.style.cssText = `
+        position: fixed;
+        bottom: 1.5rem;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(15, 15, 20, 0.95);
+        color: rgba(255,255,255,0.92);
+        font-size: 0.78rem;
+        padding: 0.5rem 0.85rem;
+        border-radius: 0.375rem;
+        border: 1px solid rgba(255,255,255,0.15);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+        max-width: 90vw;
+        word-break: break-all;
+        z-index: 9999;
+        pointer-events: none;
+        text-align: center;
+    `;
+    document.body.appendChild(tooltip);
+    _filenameTouchTooltip = tooltip;
+
+    // Auto-dismiss after 3 seconds
+    _filenameTouchTimer = setTimeout(() => {
+        if (_filenameTouchTooltip) {
+            _filenameTouchTooltip.remove();
+            _filenameTouchTooltip = null;
+        }
+    }, 3000);
+
+    // Dismiss on next touch anywhere
+    const dismiss = () => {
+        clearTimeout(_filenameTouchTimer);
+        if (_filenameTouchTooltip) {
+            _filenameTouchTooltip.remove();
+            _filenameTouchTooltip = null;
+        }
+        document.removeEventListener('touchstart', dismiss);
+    };
+    setTimeout(() => document.addEventListener('touchstart', dismiss, { once: true }), 50);
 }
 
 function alignSidebarWithFiles() {
@@ -712,7 +940,7 @@ function formatDate(dateInput) {
 async function handleSearchMovie() {
     if (!movieData) return;
 
-    const version = movieData.version || 'Default';
+    const version = (movieData.version || 'Default').replace(/\*/g, '');
 
     // Call selectMedia to search for this movie
     // Convert genres string to array if needed for auto-select
@@ -778,7 +1006,7 @@ async function handleFilePacks() {
     if (!movieData) return;
 
     // Use the version from movieData metadata, or 'Default' if not available
-    const version = movieData.version || 'Default';
+    const version = (movieData.version || 'Default').replace(/\*/g, '');
 
     // Get the currently active file tab
     const activeTab = document.querySelector('.file-tab.active');
@@ -801,6 +1029,140 @@ async function handleFilePacks() {
         genres, // genre_ids - pass genres for auto-select
         version
     );
+}
+
+function openReleaseDateOverrideModal() {
+    if (!movieData) return;
+    const modal = document.getElementById('releaseDateModal');
+    const input = document.getElementById('releaseDateOverrideInput');
+    const clearButton = document.getElementById('clearReleaseDateOverride');
+    if (!modal || !input) return;
+
+    input.value = movieData.release_date_override || movieData.release_date || '';
+    if (clearButton) {
+        clearButton.style.display = movieData.release_date_override ? '' : 'none';
+    }
+    modal.style.display = 'flex';
+    input.focus();
+}
+
+function closeReleaseDateOverrideModal() {
+    const modal = document.getElementById('releaseDateModal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function saveReleaseDateOverride() {
+    if (!movieData) return;
+    const input = document.getElementById('releaseDateOverrideInput');
+    const button = document.getElementById('saveReleaseDateOverride');
+    const releaseDate = input?.value || '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(releaseDate)) {
+        moviePopup({type: window.POPUP_TYPES.ERROR, message: 'Choose a valid release date.', autoClose: 4000});
+        return;
+    }
+
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    if (releaseDate <= today && !window.confirm('This date can move eligible versions to Wanted and allow scraping. Continue?')) {
+        return;
+    }
+
+    const mediaId = movieData.imdb_id || movieData.tmdb_id || movieData.id;
+    if (button) button.disabled = true;
+    try {
+        const response = await fetch(`/library/movie/${encodeURIComponent(mediaId)}/release-date-override`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({release_date: releaseDate})
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save release date');
+        closeReleaseDateOverrideModal();
+        await loadMovieData();
+        moviePopup({
+            type: window.POPUP_TYPES.SUCCESS,
+            message: `Manual release date saved for ${data.affected_count} version(s).`,
+            autoClose: 4000
+        });
+    } catch (error) {
+        moviePopup({type: window.POPUP_TYPES.ERROR, message: error.message, autoClose: 5000});
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+async function clearReleaseDateOverride() {
+    if (!movieData || !window.confirm('Remove the manual date and restore the latest provider date?')) return;
+    const button = document.getElementById('clearReleaseDateOverride');
+    const mediaId = movieData.imdb_id || movieData.tmdb_id || movieData.id;
+    if (button) button.disabled = true;
+    try {
+        const response = await fetch(`/library/movie/${encodeURIComponent(mediaId)}/release-date-override`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to restore provider date');
+        closeReleaseDateOverrideModal();
+        await loadMovieData();
+        moviePopup({
+            type: window.POPUP_TYPES.SUCCESS,
+            message: `Provider release date restored: ${data.release_date}.`,
+            autoClose: 4000
+        });
+    } catch (error) {
+        moviePopup({type: window.POPUP_TYPES.ERROR, message: error.message, autoClose: 5000});
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+async function handleRefreshReleaseDate() {
+    if (!movieData) return;
+    const btn = document.getElementById('refresh-release-date-btn');
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<svg class="spin" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>';
+    }
+
+    const mediaId = movieData.imdb_id || movieData.tmdb_id || movieData.id;
+    try {
+        const response = await fetch(`/library/movie/${encodeURIComponent(mediaId)}/refresh-release-date`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to refresh release date');
+        await loadMovieData();
+        moviePopup({
+            type: window.POPUP_TYPES.SUCCESS,
+            message: `Release date refreshed from provider: ${data.release_date}.`,
+            autoClose: 4000
+        });
+    } catch (error) {
+        moviePopup({type: window.POPUP_TYPES.ERROR, message: error.message, autoClose: 5000});
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    }
+}
+
+function handleFixMatch() {
+    if (!movieData) return;
+
+    // The URL carries whichever ID the page was opened with, and that ID is
+    // about to change - reload onto the corrected one rather than a dead URL.
+    window.openFixMatchModal({
+        mediaType: 'movie',
+        title: movieData.title,
+        year: movieData.year,
+        imdbId: movieData.imdb_id,
+        tmdbId: movieData.tmdb_id,
+        onApplied: function(result) {
+            window.location.href = '/library/movie/' + (result.imdb_id || result.tmdb_id);
+        }
+    });
 }
 
 function handleRefreshTMDB() {
@@ -893,38 +1255,101 @@ function showVersionModal(versions) {
         return;
     }
 
-    // Clear existing checkboxes
+    // Build new dialog structure
     versionCheckboxes.innerHTML = '';
 
-    // Add heading
-    const header = document.createElement('div');
-    header.className = 'version-section-header';
-    header.innerHTML = `<h4>Requesting: ${movieData.title}${movieData.year ? ` (${movieData.year})` : ''}</h4>`;
-    versionCheckboxes.appendChild(header);
+    // Title
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(titleEl);
 
-    const separator = document.createElement('hr');
-    versionCheckboxes.appendChild(separator);
+    // Subtitle pill with requesting info
+    const requestTitleHasYear = movieData.year && movieData.title.trim().endsWith(`(${movieData.year})`);
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    subEl.innerHTML = `<i class="fa-solid fa-film"></i> Requesting: ${movieData.title}${movieData.year && !requestTitleHasYear ? ` (${movieData.year})` : ''}`;
+    versionCheckboxes.appendChild(subEl);
 
-    const versionHeader = document.createElement('div');
-    versionHeader.className = 'version-section-header';
-    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
-    versionCheckboxes.appendChild(versionHeader);
+    // Section label
+    const labelEl = document.createElement('div');
+    labelEl.className = 'section-label';
+    labelEl.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(labelEl);
 
-    // Create checkboxes for each version
+    // Create option rows for each version
     versions.forEach(version => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox';
-        div.innerHTML = `
-            <input type="checkbox" id="version-${version}" name="versions" value="${version}">
-            <label for="version-${version}">${version}</label>
-        `;
-        versionCheckboxes.appendChild(div);
+        const row = document.createElement('div');
+        row.className = 'option-row';
+        row.dataset.value = version;
+        row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => row.classList.toggle('checked'));
+        versionCheckboxes.appendChild(row);
 
         // Auto-select if only one version
-        if (versions.length === 1) {
-            div.querySelector('input[type="checkbox"]').checked = true;
-        }
+        if (versions.length === 1) row.classList.add('checked');
     });
+
+    // Folder dropdown — symlink mode only (always movie type here)
+    const folderContainer = document.createElement('div');
+    folderContainer.id = 'request-folder-container';
+    versionCheckboxes.appendChild(folderContainer);
+    (async () => {
+        try {
+            const fRes = await fetch('/scraper/get_symlink_folders');
+            const fData = await fRes.json();
+            if (!fData.enabled || !fData.folders || !fData.folders.length) return;
+            const fs = fData.folder_settings || {};
+            const genreStr = (movieData.genres || '').toLowerCase();
+            const isAnime = genreStr.includes('anime') || genreStr.includes('animation');
+            const isDoc = genreStr.includes('documentary');
+            let autoFolder = (isAnime && fs.enable_separate_anime_folders) ? fs.anime_movies_folder_name
+                : (isDoc && fs.enable_separate_documentary_folders) ? fs.documentary_movies_folder_name
+                : fs.movies_folder_name;
+            const filtered = fData.folders.filter(f => {
+                if (f.is_custom) return true;
+                const n = f.name.toLowerCase();
+                return n.includes('movie') || n === (fs.movies_folder_name||'').toLowerCase();
+            });
+            if (!filtered.length) return;
+            const divEl = document.createElement('div'); divEl.className = 'vm-divider'; folderContainer.appendChild(divEl);
+            const lbl = document.createElement('div'); lbl.className = 'section-label'; lbl.textContent = 'Folder'; folderContainer.appendChild(lbl);
+            const sel = document.createElement('select'); sel.id = 'request-folder-select';
+            sel.style.cssText = 'width:100%;padding:8px 10px;background:#1a1a1a;color:#fff;border:1px solid #333;border-radius:6px;font-size:12px;margin-top:4px;';
+            filtered.forEach(f => { const o = document.createElement('option'); o.value = f.name; o.dataset.isCustom = f.is_custom ? 'true' : 'false'; o.textContent = f.is_custom ? `${f.name} (${fs.movies_folder_name})` : f.name; if (f.name === autoFolder) o.selected = true; sel.appendChild(o); });
+            folderContainer.appendChild(sel);
+        } catch(e) {}
+    })();
+
+    // Tags multi-select — Plex mode only
+    const tagsContainer = document.createElement('div');
+    tagsContainer.id = 'request-tags-container';
+    versionCheckboxes.appendChild(tagsContainer);
+    (async () => {
+        try {
+            const cfgR = await fetch('/settings/api/config');
+            const cfgD = await cfgR.json();
+            const globalTags = (cfgD['Tags'] || {})['tags_list'] || [];
+            const fileMode = (cfgD['File Management'] || {})['file_collection_management'] || '';
+            if (fileMode !== 'Plex' || !globalTags.length) return;
+            const div2 = document.createElement('div'); div2.className = 'vm-divider'; tagsContainer.appendChild(div2);
+            const lbl2 = document.createElement('div'); lbl2.className = 'section-label'; lbl2.textContent = 'Tags'; tagsContainer.appendChild(lbl2);
+            const pillWrap2 = document.createElement('div');
+            pillWrap2.id = 'request-tags-pills';
+            pillWrap2.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;';
+            globalTags.forEach(tag => {
+                const pill = document.createElement('div');
+                pill.className = 'option-row';
+                pill.dataset.value = tag;
+                pill.dataset.type = 'tag';
+                pill.style.cssText = 'padding:5px 14px;border-radius:14px;cursor:pointer;font-size:12px;flex:none;';
+                pill.innerHTML = `<span class="option-label">${tag}</span>`;
+                pill.addEventListener('click', () => pill.classList.toggle('checked'));
+                pillWrap2.appendChild(pill);
+            });
+            tagsContainer.appendChild(pillWrap2);
+        } catch(e) {}
+    })();
 
     // Show modal
     modal.style.display = 'flex';
@@ -934,8 +1359,8 @@ function showVersionModal(versions) {
     const cancelBtn = document.getElementById('cancelVersions');
 
     const handleConfirm = async () => {
-        const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes input[type="checkbox"]:checked'))
-            .map(cb => cb.value);
+        const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes .option-row.checked'))
+            .map(row => row.dataset.value);
 
         if (selectedVersions.length === 0) {
             showPopup({
@@ -944,6 +1369,14 @@ function showVersionModal(versions) {
             });
             return;
         }
+
+        const folderSelect = document.getElementById('request-folder-select');
+        const selectedFolder = folderSelect ? folderSelect.value : null;
+        const selectedFolderIsCustom = folderSelect ? (folderSelect.options[folderSelect.selectedIndex]?.dataset?.isCustom === 'true') : false;
+        if (selectedFolder) { window._requestSelectedFolder = selectedFolder; window._requestSelectedFolderIsCustom = selectedFolderIsCustom; }
+        else { window._requestSelectedFolder = null; window._requestSelectedFolderIsCustom = false; }
+        const _tp4 = document.querySelectorAll('#request-tags-pills .option-row.checked[data-type="tag"]');
+        window._requestSelectedTags = _tp4.length ? Array.from(_tp4).map(p=>p.dataset.value).join(',') : null;
 
         await submitRequest(selectedVersions);
         modal.style.display = 'none';
@@ -978,23 +1411,31 @@ async function submitRequest(selectedVersions) {
     try {
         Loading.show('Requesting movie...');
 
+        const reqBody = {
+            id: movieData.tmdb_id,
+            mediaType: 'movie',
+            title: movieData.title,
+            versions: selectedVersions
+        };
+        if (window._requestSelectedFolder) {
+            reqBody.selected_folder = window._requestSelectedFolder;
+            reqBody.selected_folder_is_custom = window._requestSelectedFolderIsCustom || false;
+        }
+        if (window._requestSelectedTags) {
+            reqBody.selected_tags = window._requestSelectedTags;
+        }
         const response = await fetch('/content/request', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                id: movieData.tmdb_id,
-                mediaType: 'movie',
-                title: movieData.title,
-                versions: selectedVersions
-            })
+            body: JSON.stringify(reqBody)
         });
 
         const data = await response.json();
 
         if (data.success || response.ok) {
-            showPopup({ message: `Successfully requested: ${movieData.title}`, type: POPUP_TYPES.SUCCESS });
+            showPopup({ message: data.message || `Successfully requested: ${movieData.title}`, type: POPUP_TYPES.SUCCESS });
         } else {
             throw new Error(data.error || 'Request failed');
         }
@@ -1034,6 +1475,30 @@ function initializeDeletionHandlers() {
                 deleteFilesBtn.style.display = 'none';
             }
         }
+
+        // Replace movie button
+        const replaceMovieBtn = document.querySelector('.replace-movie-btn');
+        if (replaceMovieBtn) {
+            const hasPendingReplace = movieData && movieData.has_pending_replace;
+            if (hasPendingReplace) {
+                replaceMovieBtn.classList.add('replace-movie-pending');
+                replaceMovieBtn.title = 'Cancel movie replacement';
+                replaceMovieBtn.querySelector('span.action-text').textContent = 'Cancel Replace';
+                replaceMovieBtn.addEventListener('click', handleCancelMovieReplace);
+                // Show pending badge next to files header heading
+                const filesH2 = document.querySelector('.files-header h2, .files-header h3');
+                if (filesH2 && !filesH2.querySelector('.replace-pending-badge')) {
+                    filesH2.insertAdjacentHTML('beforeend', '<span class="replace-pending-badge">Replacement Pending</span>');
+                }
+            } else {
+                replaceMovieBtn.addEventListener('click', handleReplaceMovie);
+            }
+            if (filesData && filesData.length > 0) {
+                replaceMovieBtn.style.display = 'inline-flex';
+            } else {
+                replaceMovieBtn.style.display = 'none';
+            }
+        }
     }
 
     // Individual file delete buttons
@@ -1060,10 +1525,13 @@ async function handleDeleteMovie(event) {
     // Custom deletion with progress tracking
     const action = movieData && movieData.auto_ghostlist_enabled ? 'ghostlist' : 'delete';
     const canUndo = action === 'ghostlist' ? 'Ghostlisted items can be recovered.' : 'This action cannot be undone.';
-    const confirmed = confirm(`This will ${action} ALL videos of "${movieData.title}". ${canUndo}`);
-    if (!confirmed) {
-        return;
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Confirm Deletion',
+        message: `This will ${action} ALL videos of "${movieData.title}". ${canUndo}`,
+        confirmText: action.charAt(0).toUpperCase() + action.slice(1),
+        cancelText: 'Cancel',
+        onConfirm: async function() {
 
     // Simulate progress updates
     const steps = [
@@ -1208,6 +1676,9 @@ async function handleDeleteMovie(event) {
             autoClose: 5000
         });
     }
+
+        } // end onConfirm
+    }); // end showPopup
 }
 
 /**
@@ -1256,22 +1727,28 @@ async function handleDeleteSingleFile(event) {
     }
 
     // Individual file deletion always uses delete (not ghostlist)
-    const confirmed = confirm('Delete this file?\n\nThis action cannot be undone.');
-    if (!confirmed) return;
-
-    await deleteMovieFilesByIds([fileId]);
+    showPopup({
+        type: 'confirm',
+        title: 'Delete File',
+        message: 'Delete this file?\n\nThis action cannot be undone.',
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            await deleteMovieFilesByIds([fileId]);
+        }
+    });
 }
 
 /**
- * Show file selection popup for bulk deletion
+ * Show file selection popup for bulk deletion or replacement
  */
-function showMovieFileSelectionPopup(files, movieTitle) {
+function showMovieFileSelectionPopup(files, movieTitle, actionLabel = 'Delete') {
     return new Promise((resolve) => {
         // Create popup HTML
         const popupHtml = `
             <div class="file-selection-popup-overlay" id="movieFileSelectionPopup">
                 <div class="file-selection-popup">
-                    <h3>Select Files to Delete</h3>
+                    <h3>Select Files to ${actionLabel}</h3>
                     <p class="file-selection-subtitle">${escapeHtml(movieTitle)}</p>
                     <div class="file-selection-list">
                         ${files.map((file, index) => `
@@ -1290,7 +1767,7 @@ function showMovieFileSelectionPopup(files, movieTitle) {
                     </div>
                     <div class="file-selection-actions">
                         <button class="file-selection-btn file-selection-cancel">Cancel</button>
-                        <button class="file-selection-btn file-selection-delete">Delete Selected</button>
+                        <button class="file-selection-btn file-selection-delete">${actionLabel} Selected</button>
                     </div>
                 </div>
             </div>
@@ -1470,31 +1947,45 @@ async function handleDeleteFile(event) {
             }
         } else {
             // Fallback
-            if (!confirm(`Delete all ${videoCount} videos in file ${fileNumber}? This cannot be undone.`)) {
-                return;
-            }
+            showPopup({
+                type: 'confirm',
+                title: 'Delete File',
+                message: `Delete all ${videoCount} videos in file ${fileNumber}? This cannot be undone.`,
+                confirmText: 'Delete',
+                cancelText: 'Cancel',
+                onConfirm: async function() {
+                    try {
+                        const response = await fetch(`/library/delete_file/${imdbId}/${fileNumber}`, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                blacklist: false,
+                                layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache']
+                            })
+                        });
 
-            const response = await fetch(`/library/delete_file/${imdbId}/${fileNumber}`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    blacklist: false,
-                    layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache']
-                })
+                        const result = await response.json();
+
+                        if (result.success) {
+                            moviePopup({
+                                type: window.POPUP_TYPES.SUCCESS,
+                                message: result.message || 'File deleted successfully',
+                                autoClose: 3000
+                            });
+                            setTimeout(() => loadMovieData(), 1500);
+                        } else {
+                            throw new Error(result.error || 'Failed to delete file');
+                        }
+                    } catch (error) {
+                        if (window.DEBUG) console.error('Error deleting file:', error);
+                        moviePopup({
+                            type: window.POPUP_TYPES.ERROR,
+                            message: `Error deleting file: ${error.message}`,
+                            autoClose: 5000
+                        });
+                    }
+                }
             });
-
-            const result = await response.json();
-
-            if (result.success) {
-                moviePopup({
-                    type: window.POPUP_TYPES.SUCCESS,
-                    message: result.message || 'File deleted successfully',
-                    autoClose: 3000
-                });
-                setTimeout(() => loadMovieData(), 1500);
-            } else {
-                throw new Error(result.error || 'Failed to delete file');
-            }
         }
     } catch (error) {
         if (window.DEBUG) console.error('Error deleting file:', error);
@@ -1633,4 +2124,119 @@ function displayCast(cast) {
     }
 
     castSection.style.display = 'block';
+}
+
+/**
+ * Handle Replace Movie button click
+ */
+async function handleReplaceMovie() {
+    if (!movieData) return;
+
+    if (!filesData || filesData.length === 0) {
+        moviePopup({
+            type: window.POPUP_TYPES.ERROR,
+            message: 'No files available to replace',
+            autoClose: 3000
+        });
+        return;
+    }
+
+    // Show file selection popup only when there is more than one file to choose from
+    let selectedFileIds;
+    if (filesData.length === 1) {
+        selectedFileIds = [filesData[0].id];
+    } else {
+        selectedFileIds = await showMovieFileSelectionPopup(filesData, movieData.title, 'Replace');
+        if (!selectedFileIds || selectedFileIds.length === 0) return;
+    }
+
+    // Mark selected files for replacement
+    try {
+        const resp = await fetch('/library/mark_movie_replace', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ file_ids: selectedFileIds })
+        });
+        const data = await resp.json();
+        if (!data.success) {
+            moviePopup({ type: window.POPUP_TYPES.ERROR, message: data.error || 'Failed to mark movie for replacement', autoClose: 4000 });
+            return;
+        }
+    } catch (err) {
+        moviePopup({ type: window.POPUP_TYPES.ERROR, message: 'Failed to mark movie for replacement', autoClose: 4000 });
+        return;
+    }
+
+    // Reload to show the pending badge, then open torrent picker
+    await loadMovieData();
+
+    const version = movieData.version || 'Default';
+    const genres = movieData.genres ?
+        (typeof movieData.genres === 'string' ? movieData.genres.split(',').map(g => g.trim()) : movieData.genres)
+        : [];
+
+    // Watch the overlay: if it is closed without a torrent being queued, auto-cancel the replacement
+    const _overlay = document.getElementById('overlay');
+    if (_overlay) {
+        window._scraperTorrentWasQueued = false;
+        let _overlayWasOpened = false;
+        const _observer = new MutationObserver(async () => {
+            const d = _overlay.style.display;
+            if (d !== 'none' && d !== '') {
+                _overlayWasOpened = true;
+            } else if (_overlayWasOpened && d === 'none') {
+                _observer.disconnect();
+                if (!window._scraperTorrentWasQueued) {
+                    // Scraper closed without selecting a torrent — silently cancel the pending replacement
+                    try {
+                        await fetch('/library/cancel_movie_replace', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ imdb_id: movieData.imdb_id })
+                        });
+                        await loadMovieData();
+                    } catch (e) { /* ignore */ }
+                } else {
+                    window._scraperTorrentWasQueued = false;
+                }
+            }
+        });
+        _observer.observe(_overlay, { attributes: true, attributeFilter: ['style'] });
+    }
+
+    await selectMedia(
+        movieData.tmdb_id || movieData.id,
+        movieData.title,
+        movieData.year || '',
+        'movie',
+        null,
+        null,
+        false,
+        genres,
+        version
+    );
+}
+
+/**
+ * Handle Cancel Movie Replace button click
+ */
+async function handleCancelMovieReplace() {
+    if (!movieData) return;
+
+    try {
+        const resp = await fetch('/library/cancel_movie_replace', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ imdb_id: movieData.imdb_id })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            moviePopup({ type: window.POPUP_TYPES.SUCCESS, message: 'Movie replacement cancelled', autoClose: 3000 });
+            loadMovieData();
+        } else {
+            moviePopup({ type: window.POPUP_TYPES.ERROR, message: data.error || 'Failed to cancel replacement', autoClose: 4000 });
+        }
+    } catch (err) {
+        moviePopup({ type: window.POPUP_TYPES.ERROR, message: 'Failed to cancel replacement', autoClose: 4000 });
+    }
 }
