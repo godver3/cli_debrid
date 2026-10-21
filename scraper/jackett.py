@@ -80,7 +80,7 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
         search_queries = [params]
         logging.info(f"UFC event detected. Using search term: {params}")
     elif content_type.lower() == 'movie':
-        params = f"{title} {year}"
+        params = f"{title} {year or ''}".strip()
         search_queries = [params]
     else:
         params = f"{title}"
@@ -128,7 +128,10 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
         full_url = f"{search_endpoint}&{urlencode(query_params, doseq=True)}"
 
         try:
-            response = api.get(full_url, headers={'accept': 'application/json'})
+            # scraper_timeout's own setting description says "0 to disable" — requests
+            # treats timeout=None (not 0) as no timeout, so 0/falsy must map to None.
+            timeout = get_setting('Scraping', 'scraper_timeout', 30) or None
+            response = api.get(full_url, headers={'accept': 'application/json'}, timeout=timeout)
 
             if response.status_code == 200:
                 data = response.json()
@@ -216,6 +219,7 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
             'title': title,
             'size': size_gb,
             'source': f"{ins_name} - {tracker}",
+            'indexer': tracker if tracker and tracker != 'N/A' else '',
             'magnet': primary_link, # Use the determined primary link
             'seeders': seeders,
             'hash': info_hash, # Start with InfoHash field if present
@@ -262,7 +266,7 @@ def construct_url(settings: Dict[str, Any], title: str, year: int, content_type:
 
     # Build the search query
     if content_type == 'movie':
-        params = f"{title} {year}"
+        params = f"{title} {year or ''}".strip()
     else:
         params = f"{title}"
         if season is not None:
@@ -284,7 +288,10 @@ def construct_url(settings: Dict[str, Any], title: str, year: int, content_type:
     return full_url
 
 def fetch_data(url: str) -> Dict[str, Any]:
-    response = api.get(url, headers={'accept': 'application/json'})
+    # scraper_timeout's own setting description says "0 to disable" — requests
+    # treats timeout=None (not 0) as no timeout, so 0/falsy must map to None.
+    timeout = get_setting('Scraping', 'scraper_timeout', 30) or None
+    response = api.get(url, headers={'accept': 'application/json'}, timeout=timeout)
     #logging.debug(f"Jackett instance '{instance}' API status code: {response.status_code}")
 
     if response.status_code == 200:

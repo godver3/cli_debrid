@@ -7,6 +7,60 @@
 (function() {
     'use strict';
 
+    function buildClassicSeasonResults(data, mediaData, allowSpecials) {
+        mediaData.title = data.title || mediaData.title;
+        mediaData.year = data.year || mediaData.year;
+        mediaData.vote_average = Number(data.vote_average) || mediaData.vote_average;
+        mediaData.genre_ids = Array.isArray(data.genres) && data.genres.length
+            ? data.genres
+            : mediaData.genre_ids;
+        mediaData.backdrop_path = data.backdrop_path || mediaData.backdrop_path;
+        mediaData.overview = data.overview || mediaData.overview;
+
+        return (Array.isArray(data.seasons) ? data.seasons : [])
+            .filter(season => allowSpecials || Number(season.season_number) !== 0)
+            .map(season => ({
+                id: mediaData.media_id,
+                title: mediaData.title,
+                season_id: season.id || season.season_number,
+                season_num: Number(season.season_number),
+                year: mediaData.year,
+                media_type: 'tv',
+                poster_path: season.poster_path || data.poster_path || '',
+                air_date: season.air_date || null,
+                season_overview: season.overview || '',
+                episode_count: Number(season.episode_count) || 0,
+                multi: true
+            }))
+            .filter(season => Number.isInteger(season.season_num))
+            .sort((a, b) => a.season_num - b.season_num);
+    }
+
+    function buildClassicEpisodeResults(data, show) {
+        return (Array.isArray(data.episodes) ? data.episodes : []).map(ep => ({
+            id: show.mediaId,
+            title: show.title,
+            episode_title: ep.name || `Episode ${ep.episode_number}`,
+            season_num: Number(show.season),
+            episode_num: Number(ep.episode_number),
+            year: show.year,
+            media_type: show.mediaType || 'tv',
+            still_path: ep.still_path || '',
+            air_date: ep.air_date || null,
+            vote_average: Number(ep.vote_average) || 0,
+            multi: false
+        }));
+    }
+
+    // Keep the provider response adapters directly testable without a browser.
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = { buildClassicSeasonResults, buildClassicEpisodeResults };
+    }
+
+    if (typeof document === 'undefined') {
+        return;
+    }
+
     // Initialize on DOM load
     document.addEventListener('DOMContentLoaded', function() {
         console.log('🎬 Discover Add Media page loaded');
@@ -35,27 +89,17 @@
             seasonResults.innerHTML = '<div class="loading">Loading seasons...</div>';
         }
 
-        // Fetch seasons
-        const formData = new FormData();
-        formData.append('media_id', mediaData.media_id);
-        formData.append('title', mediaData.title);
-        formData.append('year', mediaData.year);
-        formData.append('media_type', mediaData.media_type);
-        formData.append('multi', 'True');
-        formData.append('version', 'Any');
-        formData.append('allow_specials', allow_specials);
-        if (mediaData.rating) formData.append('rating', mediaData.rating);
-        if (mediaData.vote_average) formData.append('vote_average', mediaData.vote_average);
-        if (mediaData.genre_ids && mediaData.genre_ids.length > 0) {
-            // Convert array to comma-separated string
-            formData.append('genre_ids', mediaData.genre_ids.join(','));
-        }
-
-        fetch('/scraper/select_season', {
-            method: 'POST',
-            body: formData
+        // Reuse the provider-neutral Discover details API. It uses TVDB for
+        // authoritative season structure when configured and TMDB as the
+        // baseline/fallback, so Classic view does not require Trakt.
+        fetch(`/discover/details/${encodeURIComponent(mediaData.media_id)}/tv/data`)
+        .then(async response => {
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || `Could not load show details (${response.status})`);
+            }
+            return data;
         })
-        .then(response => response.json())
         .then(data => {
             if (data.error) {
                 console.error('Error loading season data:', data.error);
@@ -67,8 +111,11 @@
 
             console.log('Season data loaded successfully');
 
-            // Get season results
-            const seasonData = data.episode_results || data.results;
+            // Prefer the provider response over the abbreviated Discover-card
+            // parameters so the Add Media controls use the same metadata shown
+            // by the normal Discover details page.
+            const seasonData = buildClassicSeasonResults(data, mediaData, allow_specials);
+
             if (!seasonData || seasonData.length === 0) {
                 if (seasonResults) {
                     seasonResults.innerHTML = '<div class="error">No season results found</div>';
@@ -135,7 +182,7 @@
         .catch(error => {
             console.error('Error loading media:', error);
             if (seasonResults) {
-                seasonResults.innerHTML = '<div class="error">Failed to load media data</div>';
+                seasonResults.innerHTML = `<div class="error">Error: ${error.message || 'Failed to load media data'}</div>`;
             }
         });
     });
@@ -302,24 +349,14 @@
             episodeResults.innerHTML = '<div class="loading">Loading episodes...</div>';
         }
 
-        const formData = new FormData();
-        formData.append('media_id', mediaId);
-        formData.append('title', title);
-        formData.append('year', year);
-        formData.append('media_type', mediaType);
-        formData.append('season', season);
-        formData.append('multi', multi || 'True');
-        formData.append('version', 'Any');
-        formData.append('allow_specials', allow_specials);
-        if (genre_ids && Array.isArray(genre_ids)) {
-            formData.append('genre_ids', genre_ids.join(','));
-        }
-
-        fetch('/scraper/select_episode', {
-            method: 'POST',
-            body: formData
+        fetch(`/discover/details/${encodeURIComponent(mediaId)}/tv/season/${encodeURIComponent(season)}`)
+        .then(async response => {
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || `Could not load season ${season} (${response.status})`);
+            }
+            return data;
         })
-        .then(response => response.json())
         .then(data => {
             if (data.error) {
                 console.error('Error loading episodes:', data.error);
@@ -329,13 +366,19 @@
                 return;
             }
 
-            const episodes = data.episode_results || [];
+            const episodes = buildClassicEpisodeResults(data, {
+                mediaId,
+                title,
+                year,
+                mediaType,
+                season
+            });
             displayEpisodeResults(episodes, title, year, 'Any', mediaId, mediaType, season, null, genre_ids);
         })
         .catch(error => {
             console.error('Error fetching episodes:', error);
             if (episodeResults) {
-                episodeResults.innerHTML = '<div class="error">Failed to load episodes</div>';
+                episodeResults.innerHTML = `<div class="error">Error: ${error.message || 'Failed to load episodes'}</div>`;
             }
         });
     }
@@ -462,24 +505,37 @@
 
         versionRadios.innerHTML = '';
 
-        availableVersions.forEach((version, index) => {
-            const div = document.createElement('div');
-            div.className = 'version-checkbox';
-            div.innerHTML = `
-                <input type="radio" id="scrape-version-${version}" name="scrape-versions" value="${version}" ${index === 0 ? 'checked' : ''}>
-                <label for="scrape-version-${version}">${version}</label>
-            `;
-            versionRadios.appendChild(div);
-        });
+        // Title
+        const titleEl = document.createElement('div');
+        titleEl.className = 'dialog-title';
+        titleEl.textContent = 'Select Scrape Version';
+        versionRadios.appendChild(titleEl);
 
-        // Add a 'No Version' option
-        const noVersionDiv = document.createElement('div');
-        noVersionDiv.className = 'version-checkbox';
-        noVersionDiv.innerHTML = `
-            <input type="radio" id="scrape-version-No Version" name="scrape-versions" value="No Version">
-            <label for="scrape-version-No Version">No Version</label>
-        `;
-        versionRadios.appendChild(noVersionDiv);
+        // Subtitle pill
+        const subEl = document.createElement('div');
+        subEl.className = 'dialog-sub';
+        const isTV = content.mediaType === 'tv';
+        subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> ${content.title}${content.year ? ` (${content.year})` : ''}`;
+        versionRadios.appendChild(subEl);
+
+        // Section label
+        const labelEl = document.createElement('div');
+        labelEl.className = 'section-label';
+        labelEl.textContent = 'Select Version';
+        versionRadios.appendChild(labelEl);
+
+        const allVersions = [...availableVersions, 'No Version'];
+        allVersions.forEach((version, index) => {
+            const row = document.createElement('div');
+            row.className = 'option-row' + (index === 0 ? ' selected' : '');
+            row.dataset.value = version;
+            row.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">${version}</span>`;
+            row.addEventListener('click', () => {
+                versionRadios.querySelectorAll('.option-row').forEach(r => r.classList.remove('selected'));
+                row.classList.add('selected');
+            });
+            versionRadios.appendChild(row);
+        });
 
         document.body.classList.add('modal-open');
         modal.style.display = 'flex';
@@ -487,7 +543,8 @@
 
     // Handle scrape version confirmation
     async function handleScrapeVersionConfirm() {
-        const selectedVersion = document.querySelector('#scrapeVersionRadios input[name="scrape-versions"]:checked')?.value;
+        const selectedRow = document.querySelector('#scrapeVersionRadios .option-row.selected');
+        const selectedVersion = selectedRow ? selectedRow.dataset.value : undefined;
         if (selectedVersion === undefined) {
             displayError('Please select a version.');
             return;
@@ -511,19 +568,96 @@
         const modal = document.getElementById('versionModal');
         const versionCheckboxes = document.getElementById('versionCheckboxes');
 
-        // Clear existing checkboxes
         versionCheckboxes.innerHTML = '';
 
-        // Create checkboxes for each version
+        // Title
+        const titleEl = document.createElement('div');
+        titleEl.className = 'dialog-title';
+        titleEl.textContent = 'Select Versions';
+        versionCheckboxes.appendChild(titleEl);
+
+        // Subtitle pill
+        const subEl = document.createElement('div');
+        subEl.className = 'dialog-sub';
+        const isTV = content.mediaType === 'tv';
+        subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${content.title}${content.year ? ` (${content.year})` : ''}`;
+        versionCheckboxes.appendChild(subEl);
+
+        // Section label
+        const labelEl = document.createElement('div');
+        labelEl.className = 'section-label';
+        labelEl.textContent = 'Select Versions';
+        versionCheckboxes.appendChild(labelEl);
+
         availableVersions.forEach(version => {
-            const div = document.createElement('div');
-            div.className = 'version-checkbox';
-            div.innerHTML = `
-                <input type="checkbox" id="request-version-${version}" name="versions" value="${version}">
-                <label for="request-version-${version}">${version}</label>
-            `;
-            versionCheckboxes.appendChild(div);
+            const row = document.createElement('div');
+            row.className = 'option-row';
+            row.dataset.value = version;
+            row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">${version}</span>`;
+            row.addEventListener('click', () => row.classList.toggle('checked'));
+            versionCheckboxes.appendChild(row);
         });
+
+        // Folder dropdown — symlink mode only
+        const folderContainer = document.createElement('div');
+        folderContainer.id = 'request-folder-container';
+        versionCheckboxes.appendChild(folderContainer);
+        (async () => {
+            try {
+                const fRes = await fetch('/scraper/get_symlink_folders');
+                const fData = await fRes.json();
+                if (!fData.enabled || !fData.folders || !fData.folders.length) return;
+                const fs = fData.folder_settings || {};
+                const genreList = (content.genre_ids || content.genres || []).map(g => String(g).trim().toLowerCase());
+                const isAnime = genreList.some(g => g.includes('anime') || g.includes('animation') || g === '16');
+                const isDoc = genreList.some(g => g.includes('documentary') || g === '99');
+                const mediaType = content.mediaType === 'movie' ? 'movie' : 'tv';
+                let autoFolder = mediaType === 'movie'
+                    ? ((isAnime && fs.enable_separate_anime_folders) ? fs.anime_movies_folder_name : (isDoc && fs.enable_separate_documentary_folders) ? fs.documentary_movies_folder_name : fs.movies_folder_name)
+                    : ((isAnime && fs.enable_separate_anime_folders) ? fs.anime_tv_shows_folder_name : (isDoc && fs.enable_separate_documentary_folders) ? fs.documentary_tv_shows_folder_name : fs.tv_shows_folder_name);
+                const filtered = fData.folders.filter(f => {
+                    if (f.is_custom) return true;
+                    const n = f.name.toLowerCase();
+                    return mediaType === 'movie' ? (n.includes('movie') || n === (fs.movies_folder_name||'').toLowerCase()) : (n.includes('show') || n.includes('tv') || n === (fs.tv_shows_folder_name||'').toLowerCase());
+                });
+                if (!filtered.length) return;
+                const divEl = document.createElement('div'); divEl.className = 'vm-divider'; folderContainer.appendChild(divEl);
+                const lbl = document.createElement('div'); lbl.className = 'section-label'; lbl.textContent = 'Folder'; folderContainer.appendChild(lbl);
+                const sel = document.createElement('select'); sel.id = 'request-folder-select';
+                sel.style.cssText = 'width:100%;padding:8px 10px;background:#1a1a1a;color:#fff;border:1px solid #333;border-radius:6px;font-size:12px;margin-top:4px;';
+                filtered.forEach(f => { const o = document.createElement('option'); o.value = f.name; o.dataset.isCustom = f.is_custom ? 'true' : 'false'; o.textContent = f.is_custom ? `${f.name} (${mediaType === 'movie' ? fs.movies_folder_name : fs.tv_shows_folder_name})` : f.name; if (f.name === autoFolder) o.selected = true; sel.appendChild(o); });
+
+                folderContainer.appendChild(sel);
+            } catch(e) {}
+        })();
+
+        // Tags multi-select — Plex mode only
+        const tagsContainer = document.createElement('div');
+        tagsContainer.id = 'request-tags-container';
+        versionCheckboxes.appendChild(tagsContainer);
+        (async () => {
+            try {
+                const cfgR = await fetch('/settings/api/config');
+                const cfgD = await cfgR.json();
+                const globalTags = (cfgD['Tags'] || {})['tags_list'] || [];
+                const fileMode = (cfgD['File Management'] || {})['file_collection_management'] || '';
+                if (fileMode !== 'Plex' || !globalTags.length) return;
+                const div2 = document.createElement('div'); div2.className = 'vm-divider'; tagsContainer.appendChild(div2);
+                const lbl2 = document.createElement('div'); lbl2.className = 'section-label'; lbl2.textContent = 'Tags'; tagsContainer.appendChild(lbl2);
+                const pillWrap2 = document.createElement('div');
+                pillWrap2.id = 'request-tags-pills';
+                pillWrap2.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;';
+                globalTags.forEach(tag => {
+                    const pill = document.createElement('div');
+                    pill.className = 'option-row'; pill.dataset.value = tag; pill.dataset.type = 'tag';
+                    pill.style.cssText = 'padding:5px 14px;border-radius:14px;cursor:pointer;font-size:12px;flex:none;';
+                    pill.innerHTML = `<span class="option-label">${tag}</span>`;
+                    pill.addEventListener('click', () => pill.classList.toggle('checked'));
+                    pillWrap2.appendChild(pill);
+                });
+                tagsContainer.appendChild(pillWrap2);
+            } catch(e) {}
+        })();
 
         document.body.classList.add('modal-open');
         modal.style.display = 'flex';
@@ -531,16 +665,22 @@
 
     // Handle version confirm for requests
     async function handleVersionConfirm() {
-        const versionCheckboxes = document.querySelectorAll('#versionCheckboxes input[name="versions"]:checked');
-        const selectedVersions = Array.from(versionCheckboxes).map(cb => cb.value);
+        const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes .option-row.checked'))
+            .map(row => row.dataset.value);
 
         if (selectedVersions.length === 0) {
             displayError('Please select at least one version');
             return;
         }
 
+        const folderSelect = document.getElementById('request-folder-select');
+        const selectedFolder = folderSelect ? folderSelect.value : null;
+        const selectedFolderIsCustom = folderSelect ? (folderSelect.options[folderSelect.selectedIndex]?.dataset?.isCustom === 'true') : false;
+
+        const _tp = document.querySelectorAll('#request-tags-pills .option-row.checked[data-type="tag"]');
+        const selectedTagsH = _tp.length ? Array.from(_tp).map(p=>p.dataset.value).join(',') : null;
         closeVersionModal();
-        await requestContent(selectedContent, selectedVersions);
+        await requestContent(selectedContent, selectedVersions, selectedFolder, selectedFolderIsCustom, selectedTagsH);
     }
 
     // Close version modal
@@ -550,7 +690,7 @@
     }
 
     // Request content from backend
-    async function requestContent(content, selectedVersions) {
+    async function requestContent(content, selectedVersions, selectedFolder = null, selectedFolderIsCustom = false, selectedTags = null) {
         showLoadingState('Requesting content, please wait...');
         try {
             const requestData = {
@@ -569,6 +709,14 @@
             if (content.episodes) {
                 requestData.episodes = content.episodes;
             }
+
+            if (selectedFolder) {
+                requestData.selected_folder = selectedFolder;
+                requestData.selected_folder_is_custom = selectedFolderIsCustom;
+            }
+            const _tp2 = document.querySelectorAll('#request-tags-pills .option-row.checked[data-type="tag"]');
+            const _st2 = Array.from(_tp2).map(p=>p.dataset.value).join(',');
+            if (_st2) requestData.selected_tags = _st2;
 
             const response = await fetch('/content/request', {
                 method: 'POST',
@@ -664,7 +812,12 @@
                 message: message
             });
         } else {
-            alert('Error: ' + message);
+            showPopup({
+                type: 'error',
+                title: 'Error',
+                message: message,
+                autoClose: 5000
+            });
         }
     }
 
@@ -677,7 +830,12 @@
                 message: message
             });
         } else {
-            alert('Success: ' + message);
+            showPopup({
+                type: 'success',
+                title: 'Success',
+                message: message,
+                autoClose: 4000
+            });
         }
     }
 
@@ -796,7 +954,7 @@
         if (isMobile) {
             // MOBILE VIEW - Simple cards
             const header = document.createElement('h3');
-            header.textContent = `Torrent Results for ${title} (${year})`;
+            header.textContent = `Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}`;
             overlayContent.appendChild(header);
 
             if (allDisplayItems.length === 0) {
@@ -854,8 +1012,17 @@
                                         addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
                                     }
                                 });
-                            } else if (confirm(confirmationMessage)) {
-                                addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                            } else {
+                                showPopup({
+                                    type: 'confirm',
+                                    title: 'Add Media',
+                                    message: confirmationMessage,
+                                    confirmText: 'Add',
+                                    cancelText: 'Cancel',
+                                    onConfirm: function() {
+                                        addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                                    }
+                                });
                             }
                         } else {
                             addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
@@ -876,7 +1043,7 @@
             }
             // Fallback to simple display if scraper.js function not available
             const header = document.createElement('h3');
-            header.textContent = `Torrent Results for ${title} (${year})`;
+            header.textContent = `Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}`;
             overlayContent.appendChild(header);
 
             const gridContainer = document.createElement('div');
@@ -926,8 +1093,17 @@
                                     addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
                                 }
                             });
-                        } else if (confirm(confirmationMessage)) {
-                            addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                        } else {
+                            showPopup({
+                                type: 'confirm',
+                                title: 'Add Media',
+                                message: confirmationMessage,
+                                confirmText: 'Add',
+                                cancelText: 'Cancel',
+                                onConfirm: function() {
+                                    addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                                }
+                            });
                         }
                     } else {
                         addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
@@ -940,7 +1116,7 @@
         } else {
             // CLASSIC THEME - Simple grid
             const header = document.createElement('h3');
-            header.textContent = `Torrent Results for ${title} (${year})`;
+            header.textContent = `Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}`;
             overlayContent.appendChild(header);
 
             if (allDisplayItems.length === 0) {
@@ -998,8 +1174,17 @@
                                         addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
                                     }
                                 });
-                            } else if (confirm(confirmationMessage)) {
-                                addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                            } else {
+                                showPopup({
+                                    type: 'confirm',
+                                    title: 'Add Media',
+                                    message: confirmationMessage,
+                                    confirmText: 'Add',
+                                    cancelText: 'Cancel',
+                                    onConfirm: function() {
+                                        addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                                    }
+                                });
                             }
                         } else {
                             addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});

@@ -6,9 +6,9 @@ import json
 import os
 import time
 
-from database.core import get_db_connection
 from database.database_writing import update_media_item_state, add_media_item
 from database.database_reading import get_media_item_by_id, get_item_count_by_state
+from database.core import get_db_connection
 from database.collected_items import add_to_collected_notifications
 from routes.notifications import send_queue_pause_notification, send_queue_resume_notification
 
@@ -90,38 +90,52 @@ class QueueTimer:
                 logging.error(f"Error saving queue timing data: {e}")
                 
     def _prune_old_timing_data(self):
-        """Remove timing data for completed items or items older than 30 days"""
+        """Remove timing data for completed items or items older than 3 days"""
         current_time = datetime.now().timestamp()
-        thirty_days_ago = current_time - (30 * 24 * 60 * 60)
-        
+        three_days_ago = current_time - (3 * 24 * 60 * 60)
+
         # Find items to remove
         items_to_remove = []
         for item_id, queue_data in self.queue_times.items():
             all_completed = True
             has_old_entry = False
-            
+
             for queue_name, times in queue_data.items():
                 entry_time = times[0]
                 exit_time = times[1]
-                
-                # Check if entry is older than 30 days
-                if entry_time and entry_time < thirty_days_ago:
+
+                # Check if entry is older than 3 days
+                if entry_time and entry_time < three_days_ago:
                     has_old_entry = True
-                    
+
                 # If any queue doesn't have an exit time, item is not completed
                 if exit_time is None:
                     all_completed = False
-                    
-            # Remove if completed or all entries are old
+
+            # Remove if completed or any entry is older than 3 days
             if all_completed or has_old_entry:
                 items_to_remove.append(item_id)
-                
+
         # Remove the identified items
         for item_id in items_to_remove:
             del self.queue_times[item_id]
-            
+
         if items_to_remove:
             logging.debug(f"Pruned {len(items_to_remove)} old items from queue timing data")
+
+        # Hard cap: if still over 20k entries after pruning, remove oldest first
+        if len(self.queue_times) > 20000:
+            sorted_ids = sorted(
+                self.queue_times.keys(),
+                key=lambda iid: min(
+                    (t[0] for q in self.queue_times[iid].values() for t in [q] if t[0]),
+                    default=0
+                )
+            )
+            overflow = sorted_ids[:len(self.queue_times) - 20000]
+            for item_id in overflow:
+                del self.queue_times[item_id]
+            logging.info(f"queue_times hard cap: removed {len(overflow)} oldest entries (was over 20k)")
     
     def item_entered_queue(self, item_id, queue_name, item_identifier=None):
         """Record when an item enters a queue"""
@@ -312,7 +326,11 @@ class QueueManager:
         """
         contents = OrderedDict()
         for state, queue in self.queues.items():
-            contents[state] = queue.get_contents()
+            # Checking queue: skip live API calls — SSE stream handles progress separately
+            if state == 'Checking' and hasattr(queue, 'get_contents'):
+                contents[state] = queue.get_contents(raw=True)
+            else:
+                contents[state] = queue.get_contents()
         return contents
 
     @staticmethod
@@ -426,17 +444,26 @@ class QueueManager:
         # Update the queue contents before processing
         self.queues["Scraping"].update()
 
-        # Now process items if any exist
+        # Process up to SCRAPING_BATCH_SIZE items per tick
+        SCRAPING_BATCH_SIZE = 5
         queue_items = self.queues["Scraping"].items
-        if queue_items:
-            item_to_process = queue_items[0] # Peek at the first item
-            # Process the queue safely (catches exceptions, including RateLimitError)
-            result = self._process_queue_safely("Scraping", with_result=True) # process method handles the single item
-            logging.debug(f"Scraping queue process result for one item: {result}")
-            return result # Return True if item was processed, False otherwise
+        if not queue_items:
+            return False
 
-        # Return False if queue was empty after update
-        return False
+        processed = 0
+        for _ in range(min(SCRAPING_BATCH_SIZE, len(queue_items))):
+            if self.paused:
+                break
+            if not self.queues["Scraping"].items:
+                break
+            result = self._process_queue_safely("Scraping", with_result=True)
+            if result:
+                processed += 1
+            else:
+                break  # Stop if an item failed (e.g. rate limit)
+
+        logging.debug(f"Scraping queue processed {processed} item(s) this tick")
+        return processed > 0
 
     def process_adding(self):
         self._process_queue_safely("Adding")
@@ -501,7 +528,10 @@ class QueueManager:
         wake_count = get_wake_count(item['id'])
         logging.debug(f"Wake count before moving to Wanted: {wake_count}")
 
-        updated_item = self._move_item_to_queue(item, from_queue, "Wanted", "Wanted", new_version=new_version, filled_by_title=None, filled_by_magnet=None)
+        updated_item = self._move_item_to_queue(item, from_queue, "Wanted", "Wanted", new_version=new_version,
+                                                filled_by_title=None, filled_by_magnet=None,
+                                                filled_by_torrent_id=None, filled_by_file=None,
+                                                debrid_folder_name=None)
         
         if updated_item:
             # No additional processing needed for Wanted queue itself
@@ -558,6 +588,38 @@ class QueueManager:
         logging.debug(f"Moving item to Scraping: {item_identifier}")
         self._move_item_to_queue(item, from_queue, "Scraping", "Scraping")
 
+        # Send notification for the state change
+        from routes.notifications import send_notifications
+        from routes.settings_routes import get_enabled_notifications_for_category
+        from routes.extensions import app
+        from database.database_reading import get_media_item_by_id
+
+        try:
+            # Get fresh item data from DB
+            db_item = get_media_item_by_id(item['id'])
+            if db_item and not db_item.get('upgrading'):
+                with app.app_context():
+                    response = get_enabled_notifications_for_category('scraping')
+                    if response.json['success']:
+                        enabled_notifications = response.json['enabled_notifications']
+                        if enabled_notifications:
+                            notification_data = {
+                                'id': item['id'],
+                                'title': item.get('title', 'Unknown Title'),
+                                'type': item.get('type', 'unknown'),
+                                'year': item.get('year', ''),
+                                'version': item.get('version', ''),
+                                'season_number': str(item.get('season_number', '')) if item.get('season_number') is not None else None,
+                                'episode_number': str(item.get('episode_number', '')) if item.get('episode_number') is not None else None,
+                                'new_state': 'Scraping',
+                                'is_upgrade': False,
+                                'upgrading_from': None
+                            }
+                            send_notifications([notification_data], enabled_notifications, notification_category='state_change')
+                            logging.debug(f"Sent Scraping notification for item {item['id']}")
+        except Exception as e:
+            logging.error(f"Failed to send Scraping state change notification: {str(e)}")
+
     def move_to_adding(self, item: Dict[str, Any], from_queue: str, filled_by_title: str, scrape_results: List[Dict]):
         item_identifier = self.generate_identifier(item)
 
@@ -581,7 +643,50 @@ class QueueManager:
             scrape_results=scrape_results
         )
 
-    def move_to_checking(self, item: Dict[str, Any], from_queue: str, title: str, link: str, filled_by_file: str, torrent_id: str = None):
+        # Send notification for the state change
+        from routes.notifications import send_notifications
+        from routes.settings_routes import get_enabled_notifications_for_category
+        from routes.extensions import app
+        from database.database_reading import get_media_item_by_id
+
+        try:
+            # Get fresh item data from DB
+            db_item = get_media_item_by_id(item['id'])
+            if db_item and not db_item.get('upgrading'):
+                with app.app_context():
+                    response = get_enabled_notifications_for_category('adding')
+                    if response.json['success']:
+                        enabled_notifications = response.json['enabled_notifications']
+                        if enabled_notifications:
+                            notification_data = {
+                                'id': item['id'],
+                                'title': item.get('title', 'Unknown Title'),
+                                'type': item.get('type', 'unknown'),
+                                'year': item.get('year', ''),
+                                'version': item.get('version', ''),
+                                'season_number': str(item.get('season_number', '')) if item.get('season_number') is not None else None,
+                                'episode_number': str(item.get('episode_number', '')) if item.get('episode_number') is not None else None,
+                                'new_state': 'Adding',
+                                'is_upgrade': False,
+                                'upgrading_from': None
+                            }
+                            send_notifications([notification_data], enabled_notifications, notification_category='state_change')
+                            logging.debug(f"Sent Adding notification for item {item['id']}")
+        except Exception as e:
+            logging.error(f"Failed to send Adding state change notification: {str(e)}")
+
+    def move_to_checking(
+        self,
+        item: Dict[str, Any],
+        from_queue: str,
+        title: str,
+        link: str,
+        filled_by_file: str,
+        torrent_id: str = None,
+        debrid_folder_name: str = None,
+        original_scraped_torrent_title: str = None,
+        debrid_provider: str = None,
+    ):
         item_identifier = self.generate_identifier(item)
 
         # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Checking
@@ -636,6 +741,16 @@ class QueueManager:
             return
         '''
         
+        extra = {}
+        if original_scraped_torrent_title:
+            extra['original_scraped_torrent_title'] = original_scraped_torrent_title
+
+        # Only pass it when we actually know it: update_media_item_state writes any
+        # field present in kwargs, so passing None on a path that did not resolve a
+        # provider would wipe the value a previous Adding pass already recorded.
+        if debrid_provider:
+            extra['debrid_provider'] = debrid_provider
+
         updated_item = self._move_item_to_queue(
             item,
             from_queue if from_queue in ["Adding", "Wanted"] else None,
@@ -644,7 +759,9 @@ class QueueManager:
             filled_by_title=title,
             filled_by_magnet=link,
             filled_by_file=filled_by_file,
-            filled_by_torrent_id=torrent_id
+            filled_by_torrent_id=torrent_id,
+            debrid_folder_name=debrid_folder_name,
+            **extra,
         )
         
         # Copy downloading flag from original item
@@ -916,7 +1033,7 @@ class QueueManager:
             })
             return None
 
-    def move_to_collected(self, item: Dict[str, Any], from_queue: str, skip_notification: bool = False):
+    def move_to_collected(self, item: Dict[str, Any], from_queue: str, skip_notification: bool = False, skip_state_change_hook: bool = False):
         """Move an item to the Collected state after symlink is created."""
         item_identifier = self.generate_identifier(item)
 
@@ -953,9 +1070,55 @@ class QueueManager:
         
         from datetime import datetime
         collected_at = datetime.now()
-        
+
+        # DUPLICATE PREVENTION: Check if another Collected row already exists for this media
+        # This handles the case where two NZBs for the same episode both complete simultaneously
+        _item_type = item.get('type')
+        _imdb_id = item.get('imdb_id')
+        _item_version = (item.get('version') or '').rstrip('*')
+        _dup_id = None
+        if _imdb_id and _item_type:
+            try:
+                from database import get_db_connection as _get_db_conn
+                _conn = _get_db_conn()
+                if _item_type == 'episode':
+                    _sn = item.get('season_number')
+                    _en = item.get('episode_number')
+                    if _sn is not None and _en is not None:
+                        _row = _conn.execute(
+                            "SELECT id FROM media_items WHERE imdb_id=? AND type='episode' "
+                            "AND season_number=? AND episode_number=? AND state='Collected' "
+                            "AND REPLACE(version,'*','')=? AND id!=?",
+                            (_imdb_id, _sn, _en, _item_version, item['id'])
+                        ).fetchone()
+                        _dup_id = _row[0] if _row else None
+                else:
+                    _row = _conn.execute(
+                        "SELECT id FROM media_items WHERE imdb_id=? AND type='movie' "
+                        "AND state='Collected' AND REPLACE(version,'*','')=? AND id!=?",
+                        (_imdb_id, _item_version, item['id'])
+                    ).fetchone()
+                    _dup_id = _row[0] if _row else None
+                _conn.close()
+            except Exception as _e:
+                logging.warning(f"Duplicate check failed for {item_identifier}: {_e}")
+        if _dup_id:
+            logging.warning(
+                f"[DupPrevention] Skipping Collected for {item_identifier} (ID: {item['id']}) — "
+                f"already Collected as ID {_dup_id} (same imdb/season/episode/version). "
+                f"Removing from {from_queue} without creating duplicate."
+            )
+            if from_queue in self.queues:
+                self.queues[from_queue].remove_item(item)
+            return
+
         # Update the item state in the database - no need to add to a queue since Collected is a state, not a queue
-        update_media_item_state(item['id'], 'Collected', collected_at=collected_at)
+        # Write original_filename once at first collection (NULL-guard — never overwrite).
+        # filled_by_file holds the raw provider filename at this point before any CLI renaming.
+        _kwargs = {'collected_at': collected_at}
+        if not item.get('original_filename') and item.get('filled_by_file'):
+            _kwargs['original_filename'] = item['filled_by_file']
+        update_media_item_state(item['id'], 'Collected', skip_state_change_hook=skip_state_change_hook, **_kwargs)
         
         # Get the updated item
         updated_item = get_media_item_by_id(item['id'])
@@ -967,8 +1130,13 @@ class QueueManager:
 
             # Apply Plex labels if configured
             try:
-                from utilities.plex_label_manager import apply_labels_for_item
-                apply_labels_for_item(updated_item)
+                from utilities.plex_label_manager import apply_labels_for_item, is_plex_labels_enabled_anywhere
+
+                # Only process labels if at least one content source has them enabled
+                if is_plex_labels_enabled_anywhere():
+                    apply_labels_for_item(updated_item)
+                else:
+                    logging.debug(f"Plex labels disabled globally, skipping label application for item {item_identifier}")
             except Exception as label_error:
                 logging.error(f"Error applying Plex labels to item {item_identifier}: {label_error}")
             
@@ -988,7 +1156,16 @@ class QueueManager:
             if not skip_notification:
                 updated_item_dict = dict(updated_item)
                 updated_item_dict['is_upgrade'] = False  # Not an upgrade since it's a new collection
-                updated_item_dict['original_collected_at'] = collected_at
+                # Don't stamp 'now' here — this function never persists
+                # original_collected_at, so updated_item_dict already carries
+                # whatever's actually in the DB (None for a genuine first
+                # collection, or the real first-collection time if this item
+                # was collected before, e.g. via a repair). Overwriting it
+                # with collected_at would mislabel a re-collection as a first
+                # collection to any downstream consumer (consolidate_items()
+                # groups notifications by this field; a future notification
+                # gate keyed on it, like the one local_library_scan.py added,
+                # would also be defeated).
                 add_to_collected_notifications(updated_item_dict)
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
@@ -1109,6 +1286,14 @@ class QueueManager:
         media_type = new_item_data_for_db.get('type')
         season = new_item_data_for_db.get('season_number')
         episode = new_item_data_for_db.get('episode_number')
+        # This is called right after blacklisted_queue.py sets the ORIGINAL item
+        # (same imdb/season/episode, different version) to state='Blacklisted' as
+        # part of creating a fallback-version replacement. Matching on state alone
+        # (without version) always found that just-blacklisted original row and
+        # silently killed every fallback-version creation. Only a genuine
+        # permanent ghostlist (any version) or a prior blacklist of this exact
+        # target version should block re-creation.
+        target_version = (new_item_data_for_db.get('version') or '').rstrip('*')
 
         if imdb_id or tmdb_id:
             conn_check = None
@@ -1123,23 +1308,23 @@ class QueueManager:
                         AND type = ?
                         AND season_number = ?
                         AND episode_number = ?
-                        AND (ghostlisted = 1 OR state = 'Blacklisted')
+                        AND (ghostlisted = 1 OR (state = 'Blacklisted' AND RTRIM(COALESCE(version, ''), '*') = ?))
                         LIMIT 1
                     """
-                    result_check = conn_check.execute(query_check, (imdb_id, tmdb_id, media_type, season, episode)).fetchone()
+                    result_check = conn_check.execute(query_check, (imdb_id, tmdb_id, media_type, season, episode, target_version)).fetchone()
                 else:
                     # For movies/shows, check by IMDB/TMDB
                     query_check = """
                         SELECT id FROM media_items
                         WHERE (imdb_id = ? OR tmdb_id = ?)
                         AND type = ?
-                        AND (ghostlisted = 1 OR state = 'Blacklisted')
+                        AND (ghostlisted = 1 OR (state = 'Blacklisted' AND RTRIM(COALESCE(version, ''), '*') = ?))
                         LIMIT 1
                     """
-                    result_check = conn_check.execute(query_check, (imdb_id, tmdb_id, media_type)).fetchone()
+                    result_check = conn_check.execute(query_check, (imdb_id, tmdb_id, media_type, target_version)).fetchone()
 
                 if result_check:
-                    logging.info(f"⛔ Skipping {item_identifier_for_log} - user has ghostlisted/blacklisted this item (ID: {result_check[0]})")
+                    logging.info(f"⛔ Skipping {item_identifier_for_log} - user has ghostlisted this item, or version '{target_version}' is already blacklisted (ID: {result_check[0]})")
                     return False
             except Exception as e_check:
                 logging.error(f"Error checking ghostlisted status for {item_identifier_for_log}: {e_check}")

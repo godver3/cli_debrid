@@ -1,15 +1,134 @@
-<h3>Additional Settings</h3>
-<div class="settings-expand-collapse-buttons">
-    <button type="button" class="settings-expand-all">Expand All</button>
-    <button type="button" class="settings-collapse-all">Collapse All</button>
-</div>
+<script>
+(function() {
+    // ── Accent color ──────────────────────────────────────────────────────────
+    var accentInput = document.getElementById('smart-poster-accent');
+    var accentLabel = document.getElementById('smart-poster-accent-label');
+    var accentClear = document.getElementById('smart-poster-accent-clear');
+    if (accentInput) {
+        // Init display from current input value
+        var initAccent = accentInput.value;
+        if (initAccent && initAccent !== '#000000') {
+            accentInput.style.opacity = '1';
+            if (accentLabel) accentLabel.textContent = initAccent;
+            if (accentClear) accentClear.style.display = 'inline-block';
+        }
+        accentInput.addEventListener('input', function() {
+            this.style.opacity = '1';
+            if (accentLabel) accentLabel.textContent = this.value;
+            if (accentClear) accentClear.style.display = 'inline-block';
+        });
+    }
+    if (accentClear) {
+        accentClear.addEventListener('click', function() {
+            if (accentInput) { accentInput.value = '#000000'; accentInput.style.opacity = '0.4'; }
+            if (accentLabel) accentLabel.textContent = 'Design default';
+            this.style.display = 'none';
+        });
+    }
+
+    // ── Auto-load collections on page init so checkboxes are always in DOM ──
+    fetch('/settings/api/plex-smart-collections')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.success && d.collections && d.collections.length > 0) {
+                renderSmartCollections(d.collections);
+                document.getElementById('smart-collections-list').style.display = 'block';
+            }
+        }).catch(function() {});
+
+    // ── Load collections button ───────────────────────────────────────────────
+    var loadBtn = document.getElementById('load-smart-collections-btn');
+    if (loadBtn) {
+        loadBtn.addEventListener('click', async function() {
+            this.textContent = 'Loading...';
+            this.disabled = true;
+            try {
+                var resp = await fetch('/settings/api/plex-smart-collections');
+                var data = await resp.json();
+                if (data.success) {
+                    renderCollections(data.collections);
+                    document.getElementById('smart-collections-list').style.display = 'block';
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Error: ' + (data.error || 'Failed to load'), autoClose: 5000 });
+                }
+            } catch(e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e, autoClose: 5000 });
+            } finally {
+                this.textContent = 'Reload Collections';
+                this.disabled = false;
+            }
+        });
+    }
+
+    // ── Run Now button ────────────────────────────────────────────────────────
+    var runBtn = document.getElementById('run-smart-collections-btn');
+    if (runBtn) {
+        runBtn.addEventListener('click', async function() {
+            this.textContent = 'Running...';
+            this.disabled = true;
+            try {
+                var resp = await fetch('/settings/api/plex-smart-collections/run', {method:'POST'});
+                var data = await resp.json();
+                showPopup({ type: data.success ? 'success' : 'error', title: data.success ? 'Success' : 'Error', message: data.success ? 'Task started.' : 'Error: ' + data.error, autoClose: data.success ? 4000 : 5000 });
+            } finally {
+                this.textContent = 'Run Now';
+                this.disabled = false;
+            }
+        });
+    }
+
+
+
+    // ── Render collection list ────────────────────────────────────────────────
+    function renderCollections(collections) {
+        var container = document.getElementById('smart-collections-container');
+        if (!container) return;
+        var sections = {};
+        collections.forEach(function(c) {
+            if (!sections[c.section]) sections[c.section] = [];
+            sections[c.section].push(c);
+        });
+        var html = '';
+        Object.keys(sections).forEach(function(section) {
+            html += '<div style="width:100%;margin-top:8px;margin-bottom:2px;color:#888;font-size:0.75em;text-transform:uppercase;">' + section + '</div>';
+            sections[section].forEach(function(c) {
+                html += '<label style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(255,255,255,0.05);border-radius:6px;cursor:pointer;font-size:0.9em;">' +
+                    '<input type="checkbox" class="smart-coll-cb" data-rk="' + c.ratingKey + '" data-title="' + c.title + '" data-section="' + c.section + '" data-type="' + c.type + '"' + (c.enabled ? ' checked' : '') + '>' +
+                    c.title + '</label>';
+            });
+        });
+        container.innerHTML = html;
+    }
+})();
+</script>
+<div class="additional-settings-page">
+    <h2 class="additional-settings-title">Additional Settings</h2>
+    <p class="additional-settings-subtitle">Configure optional features and customizations</p>
+
+    <div class="content-section">
+        <div class="additional-settings-header section-header">
+            <h3 class="additional-settings-settings-title section-title">
+                <span class="title-bar"></span>
+                Settings
+            </h3>
+            <div class="additional-settings-actions action-buttons settings-expand-collapse-buttons">
+                <button type="button" class="additional-settings-btn btn-secondary settings-collapse-all"><i class="fa-solid fa-compress"></i> Collapse All</button>
+                <button type="button" class="additional-settings-btn btn-secondary settings-expand-all"><i class="fa-solid fa-expand"></i> Expand All</button>
+            </div>
+        </div>
+
+        <div class="settings-list">
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "Library Manager" %}
-    <div class="settings-section">
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Plex Smart Collections" and section != "Plex Movie Box Sets" and section != "Tags" and section != "Trakt" and section != "Scrob" %}
+    <div class="settings-section settings-card">
         <div class="settings-section-header">
-            <h4>{{ section }}</h4>
-            <span class="settings-toggle-icon">+</span>
+            <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            <div class="settings-header-left">
+                <h4>{{ section }}</h4>
+            </div>
         </div>
         <div class="settings-section-content">
             {% for key, value in section_data.items() %}
@@ -209,19 +328,98 @@
             {% endif %}
         </div>
     </div>
-    {% elif section == "Queue" %}
-    <div class="settings-section">
-
+    {% elif section == "Trakt" %}
+    <div class="settings-section settings-card">
         <div class="settings-section-header">
-            <h4>{{ section }}</h4>
-            <span class="settings-toggle-icon">+</span>
+            <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            <div class="settings-header-left">
+                <h4>Trakt</h4>
+            </div>
         </div>
+        <div class="settings-section-content">
+            <p class="settings-description">Trakt is an optional integration used for Trakt-based content sources (Watchlist, Lists, Collection) and as a metadata fallback. Please create an application at <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a> if you have not yet done so. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p>
+            <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
+            <br>
+            {% for key, value in section_data.items() %}
+                {% if key != 'tab' %}
+                <div class="settings-form-group">
+                    <label for="trakt-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                    <input type="{% if value.sensitive or (key in ['client_id', 'client_secret'] and environment_mode != 'full') %}password{% else %}{{ value.type }}{% endif %}"
+                           id="trakt-{{ key }}" name="Trakt.{{ key }}"
+                           value="{{ settings.get('Trakt', {}).get(key, '') }}" class="settings-input"
+                           data-section="Trakt" data-key="{{ key }}"
+                           {% if environment_mode != 'full' and key in ['client_id', 'client_secret'] %}readonly disabled{% endif %}>
+                    {% if value.description %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
 
+            <!-- Trakt Authorization -->
+            <div class="settings-subheader">
+                <h5>Authorization</h5>
+            </div>
+            <p class="settings-description">Click the button below to authorize Trakt. You must first have entered your Client ID and Client Secret above (after creating an application).</p>
+            <button id="trakt-auth-btn" class="settings-button">Authorize Trakt</button>
+            <div id="trakt-auth-status" class="trakt-status"></div>
+            <div id="trakt-auth-code" class="trakt-auth-code" style="display: none;">
+                <p>Your authorization code is: <strong id="trakt-code"></strong></p>
+                <p>Please visit <a id="trakt-activate-link" href="https://trakt.tv/activate" target="_blank">https://trakt.tv/activate</a> to enter this code and complete the authorization process.</p>
+            </div>
+        </div>
+    </div>
+    {% elif section == "Scrob" %}
+    <div class="settings-section settings-card">
+        <div class="settings-section-header">
+            <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            <div class="settings-header-left">
+                <h4>Scrob</h4>
+            </div>
+        </div>
+        <div class="settings-section-content">
+            <p class="settings-description">Scrob is an optional self-hosted Trakt alternative (<a href="https://github.com/ellite/scrob" target="_blank">ellite/scrob</a>) used for Scrob-based content sources (Lists, Collection, Special Lists). Enter your instance's base URL and an API key from <b>Settings → Connections → API Key</b> in the Scrob UI. This connection is shared by every Scrob content source below — no need to re-enter it per source.</p>
+            <p class="settings-description">The API key covers everything needed to sync content <i>into</i> cli_debrid. Username and password are optional and only used so cli_debrid can also remove items from Scrob when you delete them from your library — Scrob's API only allows deletions from a logged-in session, not an API key. Leave these blank if you don't need that.</p>
+            {% for key, value in section_data.items() %}
+                {% if key != 'tab' %}
+                <div class="settings-form-group">
+                    <label for="scrob-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                    <input type="{% if value.sensitive %}password{% else %}{{ value.type }}{% endif %}"
+                           id="scrob-{{ key }}" name="Scrob.{{ key }}"
+                           value="{{ settings.get('Scrob', {}).get(key, '') }}" class="settings-input"
+                           data-section="Scrob" data-key="{{ key }}">
+                    {% if value.description %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    {% elif section == "Queue" %}
+    <div class="settings-section settings-card">
+        <div class="settings-section-header">
+            <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            <div class="settings-header-left">
+                <h4>{{ section }}</h4>
+            </div>
+        </div>
         <div class="settings-section-content">
             <div class="settings-form-group">
-                <div class="settings-warning-text" style="background: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 10px; border-radius: 4px; margin-bottom: 15px; display: block !important;">
-                    <i class="fas fa-exclamation-triangle" style="margin-right: 6px;"></i>
-                    Sorting is applied first by <strong>Content Source</strong>, then <strong>Type</strong>, then <strong>Release Date</strong>, then finally <strong>Alphabetical Title</strong>. If any are disabled, sorting will be done within enabled categories.
+                <div class="settings-warning-text">
+                   <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                <div class="info-banner-content">
+             Sorting is applied first by <strong>Content Source</strong>, then <strong>Type</strong>, then <strong>Release Date</strong>, then finally <strong>Alphabetical Title</strong>. If any are disabled, sorting will be done within enabled categories.
+        </div>
+                   
                 </div>
             </div>
 
@@ -390,10 +588,14 @@
         </div>
     </div>
     {% elif section == "Library Manager" %}
-    <div class="settings-section">
+    <div class="settings-section settings-card">
         <div class="settings-section-header">
-            <h4>Library Manager</h4>
-            <span class="settings-toggle-icon">+</span>
+            <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            <div class="settings-header-left">
+                <h4>Library Manager</h4>
+            </div>
         </div>
         <div class="settings-section-content">
             <!-- Auto Ghostlist Deleted -->
@@ -414,10 +616,19 @@
                 <p class="settings-description">Remove items from content sources (Trakt, Overseerr, etc.) during deletion. Enable when ghostlist OFF (prevents re-addition, slower). Disable when ghostlist ON (faster, ghostlist already prevents re-addition).</p>
             </div>
 
+            <!-- Hide Season 0 -->
+            <div class="settings-form-group">
+                <label for="additional-hide_season_zero" class="settings-title">Hide Season 0:</label>
+                <input type="checkbox" id="additional-hide_season_zero" name="Library Manager.hide_season_zero"
+                       data-section="Library Manager" data-key="hide_season_zero"
+                       {% if settings.get('Library Manager', {}).get('hide_season_zero', True) %}checked{% endif %}>
+                <p class="settings-description">Hide Season 0 (Specials) tab and its episodes from the TV show page.</p>
+            </div>
+
             <!-- Clear Cache Button -->
             <div class="settings-form-group">
                 <label class="settings-title">Clear Artwork Cache:</label>
-                <button type="button" id="clear-library-cache-btn" class="settings-button" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                <button type="button" id="clear-library-cache-btn" class="btn btn-danger" style="padding: 8px 16px;">
                     Clear Cache
                 </button>
                 <p class="settings-description">Remove all cached posters and backdrops. Artwork will be re-downloaded from the primary source on next library load.</p>
@@ -427,11 +638,182 @@
     {% endif %}
 {% endfor %}
 
-<!-- Phalanx DB Settings Section -->
-<div class="settings-section">
+<!-- Bazarr Integration Section -->
+<div class="settings-section settings-card">
     <div class="settings-section-header">
-        <h4>Phalanx DB Settings</h4>
-        <span class="settings-toggle-icon">+</span>
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Bazarr Integration</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {% if settings.get('File Management', {}).get('file_collection_management') not in ('Symlinked/Local', 'Plex') %}
+        <!-- Unavailable Warning -->
+        <div class="settings-form-group">
+            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 15px; border-radius: 8px;">
+                <p style="margin: 0; font-weight: bold; color: #ef4444;"><i class="fas fa-exclamation-triangle"></i> Not Available</p>
+                <p style="margin: 10px 0 0 0; color: var(--text-primary);">
+                    Bazarr Integration requires <strong>Symlinked/Local</strong> file collection management mode.
+                </p>
+                <p style="margin: 5px 0 0 0; color: var(--text-secondary); font-size: 0.9em;">
+                    Your current mode is <strong>{{ settings.get('File Management', {}).get('file_collection_management', 'Plex') }}</strong>.
+                    To use Bazarr Integration, change your File Collection Management setting in Required Settings.
+                </p>
+            </div>
+        </div>
+        {% else %}
+        <!-- Enable Spoofing -->
+        <div class="settings-form-group">
+            <label for="bazarr-enabled" class="settings-title">Enable Bazarr Spoofing:</label>
+            <input type="checkbox" id="bazarr-enabled" name="Bazarr Integration.enabled"
+                   data-section="Bazarr Integration" data-key="enabled"
+                   {% if settings.get('Bazarr Integration', {}).get('enabled') %}checked{% endif %}>
+            <p class="settings-description">Enable Radarr/Sonarr API spoofing for Bazarr subtitle integration. When enabled, cli_debrid will expose API endpoints that allow Bazarr to connect as if this were Radarr/Sonarr.</p>
+        </div>
+
+        <!-- API Key with Generate/Copy buttons -->
+        <div class="settings-form-group">
+            <label for="bazarr-api_key" class="settings-title">API Key:</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <input type="password" id="bazarr-api_key" name="Bazarr Integration.api_key"
+                       value="{{ settings.get('Bazarr Integration', {}).get('api_key', '') }}"
+                       class="settings-input" style="flex: 1; min-width: 200px; max-width: 400px;"
+                       data-section="Bazarr Integration" data-key="api_key">
+                <button type="button" id="bazarr-generate-key" class="btn btn-primary" style="padding: 8px 16px; white-space: nowrap;">
+                    Generate
+                </button>
+                <button type="button" id="bazarr-copy-key" class="btn btn-secondary" style="padding: 8px 16px; white-space: nowrap;">
+                    Copy
+                </button>
+                <button type="button" id="bazarr-show-key" class="btn btn-secondary" style="padding: 8px 16px; white-space: nowrap;">
+                    Show
+                </button>
+            </div>
+            <p class="settings-description">API key for Bazarr authentication. Click 'Generate' to create a new key, or enter your own. This key must be used when configuring Bazarr.</p>
+        </div>
+
+        <!-- Service Type -->
+        <div class="settings-form-group">
+            <label for="bazarr-service_type" class="settings-title">Service Type:</label>
+            <select id="bazarr-service_type" name="Bazarr Integration.service_type" class="settings-input"
+                    data-section="Bazarr Integration" data-key="service_type">
+                <option value="auto" {% if settings.get('Bazarr Integration', {}).get('service_type') == 'auto' %}selected{% endif %}>Auto (Both)</option>
+                <option value="radarr" {% if settings.get('Bazarr Integration', {}).get('service_type') == 'radarr' %}selected{% endif %}>Radarr Only</option>
+                <option value="sonarr" {% if settings.get('Bazarr Integration', {}).get('service_type') == 'sonarr' %}selected{% endif %}>Sonarr Only</option>
+            </select>
+            <p class="settings-description">Which service to emulate. 'Auto' exposes both Radarr (movies) and Sonarr (TV) endpoints.</p>
+        </div>
+
+        <!-- Spoofed Version -->
+        <div class="settings-form-group">
+            <label for="bazarr-spoofed_version" class="settings-title">Spoofed Version:</label>
+            <input type="text" id="bazarr-spoofed_version" name="Bazarr Integration.spoofed_version"
+                   value="{{ settings.get('Bazarr Integration', {}).get('spoofed_version', '5.14.0.9383') }}"
+                   class="settings-input"
+                   data-section="Bazarr Integration" data-key="spoofed_version">
+            <p class="settings-description">Version number to report to Bazarr. Change only if Bazarr requires a specific version.</p>
+        </div>
+
+        <!-- Connection Info Box -->
+        <div class="settings-form-group">
+            <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); padding: 15px; border-radius: 8px; margin-top: 10px;">
+                <p style="margin: 0 0 10px 0; font-weight: bold; color: #3b82f6;"><i class="fas fa-info-circle"></i> Bazarr Configuration</p>
+                <p style="margin: 5px 0; font-family: monospace; color: var(--text-primary);">URL: <span id="bazarr-url">http://your-host:5000</span></p>
+                <p style="margin: 5px 0; font-family: monospace; color: var(--text-secondary);">API Key: (copy from above)</p>
+                <p style="margin: 10px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">
+                    In Bazarr, add a new Radarr/Sonarr connection using the URL and API key above.
+                    Bazarr will then be able to discover your collected movies and TV shows.
+                </p>
+            </div>
+        </div>
+
+        {% endif %}
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Bazarr API Key Generation
+    const generateKeyBtn = document.getElementById('bazarr-generate-key');
+    const apiKeyInput = document.getElementById('bazarr-api_key');
+
+    if (generateKeyBtn && apiKeyInput) {
+        generateKeyBtn.addEventListener('click', function() {
+            fetch('/settings/api/bazarr/generate_key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.api_key) {
+                    apiKeyInput.value = data.api_key;
+                    apiKeyInput.type = 'text';
+                    document.getElementById('bazarr-show-key').textContent = 'Hide';
+                    showPopup({ type: 'success', title: 'Success', message: 'New API key generated! Remember to save settings and update your Bazarr configuration.', autoClose: 4000 });
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed to generate API key', autoClose: 5000 });
+                }
+            })
+            .catch(error => {
+                console.error('Error generating API key:', error);
+                showPopup({ type: 'error', title: 'Error', message: 'Error generating API key. Check console for details.', autoClose: 5000 });
+            });
+        });
+    }
+
+    // Copy API Key
+    const copyKeyBtn = document.getElementById('bazarr-copy-key');
+    if (copyKeyBtn && apiKeyInput) {
+        copyKeyBtn.addEventListener('click', function() {
+            const key = apiKeyInput.value;
+            if (key) {
+                navigator.clipboard.writeText(key).then(() => {
+                    const originalText = copyKeyBtn.textContent;
+                    copyKeyBtn.textContent = 'Copied!';
+                    setTimeout(() => { copyKeyBtn.textContent = originalText; }, 2000);
+                }).catch(err => {
+                    console.error('Failed to copy:', err);
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed to copy to clipboard', autoClose: 5000 });
+                });
+            } else {
+                showPopup({ type: 'warning', title: 'Required', message: 'No API key to copy. Generate one first.', autoClose: 4000 });
+            }
+        });
+    }
+
+    // Show/Hide API Key
+    const showKeyBtn = document.getElementById('bazarr-show-key');
+    if (showKeyBtn && apiKeyInput) {
+        showKeyBtn.addEventListener('click', function() {
+            if (apiKeyInput.type === 'password') {
+                apiKeyInput.type = 'text';
+                showKeyBtn.textContent = 'Hide';
+            } else {
+                apiKeyInput.type = 'password';
+                showKeyBtn.textContent = 'Show';
+            }
+        });
+    }
+
+    // Update URL display with actual host
+    const urlSpan = document.getElementById('bazarr-url');
+    if (urlSpan) {
+        urlSpan.textContent = window.location.protocol + '//' + window.location.host;
+    }
+});
+</script>
+
+<!-- Phalanx DB Settings Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Phalanx DB Settings</h4>
+        </div>
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
@@ -448,10 +830,14 @@
 </div>
 
 <!-- Symlink Settings Section -->
-<div class="settings-section">
+<div class="settings-section settings-card">
     <div class="settings-section-header">
-        <h4>Symlink Settings</h4>
-        <span class="settings-toggle-icon">+</span>
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Symlink Settings</h4>
+        </div>
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
@@ -620,6 +1006,22 @@
             <p class="settings-description">Name of the documentary TV shows folder</p>
         </div>
 
+        <div class="settings-form-group">
+            <label for="additional-anime_renaming_using_anidb" class="settings-title">Use AniDB for Anime Renaming:</label>
+            <input type="checkbox" id="additional-anime_renaming_using_anidb" name="Debug.anime_renaming_using_anidb"
+                   data-section="Debug" data-key="anime_renaming_using_anidb"
+                   {% if settings.get('Debug', {}).get('anime_renaming_using_anidb') %}checked{% endif %}>
+            <p class="settings-description">Use AniDB to rename anime episodes instead of Trakt metadata (symlinking only)</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-use_symlinks_on_windows" class="settings-title">Use Symlinks on Windows:</label>
+            <input type="checkbox" id="additional-use_symlinks_on_windows" name="Debug.use_symlinks_on_windows"
+                   data-section="Debug" data-key="use_symlinks_on_windows"
+                   {% if settings.get('Debug', {}).get('use_symlinks_on_windows') %}checked{% endif %}>
+            <p class="settings-description">Allow the use of symlinks on Windows. WARNING: Creating symlinks on Windows requires administrator privileges or Developer Mode to be enabled.</p>
+        </div>
+
         <div class="settings-form-group example-paths-container" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #444;">
             <h5 class="settings-title" style="margin-bottom: 10px;">Example Symlink Paths (Based on Current Settings):</h5>
             
@@ -656,10 +1058,14 @@
 </div>
 
 <!-- Subtitle Settings Section -->
-<div class="settings-section">
+<div class="settings-section settings-card">
     <div class="settings-section-header">
-        <h4>Subtitle Settings</h4>
-        <span class="settings-toggle-icon">+</span>
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Subtitle Settings</h4>
+        </div>
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
@@ -713,14 +1119,26 @@
         <!-- subtitle_providers setting removed - providers are now hardcoded in downsub.sh -->
 
         <!-- user_agent setting removed - user agent is now hardcoded in downsub.sh -->
+
+        <div class="settings-form-group">
+            <label for="additional-probe_for_embedded_subtitles" class="settings-title">Probe for Embedded Subtitles:</label>
+            <input type="checkbox" id="additional-probe_for_embedded_subtitles" name="Subtitle Settings.probe_for_embedded_subtitles"
+                   data-section="Subtitle Settings" data-key="probe_for_embedded_subtitles"
+                   {% if settings.get('Subtitle Settings', {}).get('probe_for_embedded_subtitles') %}checked{% endif %}>
+            <p class="settings-description">Before searching for subtitles, probe the file with ffprobe to detect embedded tracks. If all configured languages are already embedded, the external search (and Bazarr notification) is skipped. Requires ffprobe. Note: probing reads from the debrid mount — ensure your mount is stable before enabling.</p>
+        </div>
     </div>
 </div>
 
 <!-- Custom Post-Processing Settings Section -->
-<div class="settings-section">
+<div class="settings-section settings-card">
     <div class="settings-section-header">
-        <h4>Custom Post-Processing Settings</h4>
-        <span class="settings-toggle-icon">+</span>
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Custom Post-Processing Settings</h4>
+        </div>
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
@@ -751,7 +1169,182 @@
     </div>
 </div>
 
+<!-- AI Assistant Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>AI Assistant</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="ai-enabled" class="settings-title">Enable AI Butler:</label>
+            <input type="checkbox" id="ai-enabled" name="AI Assistant.enabled"
+                   data-section="AI Assistant" data-key="enabled"
+                   {% if settings.get('AI Assistant', {}).get('enabled') %}checked{% endif %}>
+            <p class="settings-description">Enable the AI Butler chat widget on all pages. Requires OpenClaw to be installed and configured. <strong>Works best with a paid AI API</strong> (e.g. OpenAI, Anthropic, Gemini) — free tier models may lack the context window or tool-calling capability needed for reliable responses.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-openclaw_url" class="settings-title">OpenClaw URL:</label>
+            <input type="text" id="ai-openclaw_url" name="AI Assistant.openclaw_url"
+                   value="{{ settings.get('AI Assistant', {}).get('openclaw_url', '') }}"
+                   class="settings-input" placeholder="http://192.168.1.x:18789"
+                   data-section="AI Assistant" data-key="openclaw_url">
+            <p class="settings-description">URL of your OpenClaw instance. OpenClaw handles AI provider selection and session memory.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-openclaw_token" class="settings-title">OpenClaw Token:</label>
+            <input type="password" id="ai-openclaw_token" name="AI Assistant.openclaw_token"
+                   value="{{ settings.get('AI Assistant', {}).get('openclaw_token', '') }}"
+                   class="settings-input" placeholder="Leave blank if no auth configured"
+                   data-section="AI Assistant" data-key="openclaw_token">
+            <p class="settings-description">Bearer token for OpenClaw authentication. Leave blank if OpenClaw has no auth configured.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-agent_id" class="settings-title">Agent ID:</label>
+            <input type="text" id="ai-agent_id" name="AI Assistant.agent_id"
+                   value="{{ settings.get('AI Assistant', {}).get('agent_id', 'main') }}"
+                   class="settings-input" placeholder="main"
+                   data-section="AI Assistant" data-key="agent_id">
+            <p class="settings-description">OpenClaw agent ID to use (default: main).</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-health_notifications" class="settings-title">Health Notifications:</label>
+            <input type="checkbox" id="ai-health_notifications" name="AI Assistant.health_notifications"
+                   {% if settings.get('AI Assistant', {}).get('health_notifications', True) %}checked{% endif %}
+                   data-section="AI Assistant" data-key="health_notifications">
+            <p class="settings-description">Send proactive alerts via your notification channels when the AI Butler detects issues (stuck queues, high blacklist rate, errors, etc.).</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-health_check_interval" class="settings-title">Health Check Interval (seconds):</label>
+            <input type="number" id="ai-health_check_interval" name="AI Assistant.health_check_interval"
+                   value="{{ settings.get('AI Assistant', {}).get('health_check_interval', 900) }}"
+                   class="settings-input" placeholder="900" min="300"
+                   data-section="AI Assistant" data-key="health_check_interval">
+            <p class="settings-description">How often the AI Butler runs background health checks. Minimum 300 (5 minutes). Default 900 (15 minutes).</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-enable_settings_assistant" class="settings-title">Settings Assistant:</label>
+            <input type="checkbox" id="ai-enable_settings_assistant" name="AI Assistant.enable_settings_assistant"
+                   {% if settings.get('AI Assistant', {}).get('enable_settings_assistant', True) %}checked{% endif %}
+                   data-section="AI Assistant" data-key="enable_settings_assistant">
+            <p class="settings-description">Allow the AI to read your full settings schema and suggest or apply configuration changes via the chat. When enabled, the AI can send <code>APPLY_SETTING</code> blocks that let you update settings with a single click, and it is given the list of all writable settings keys. Disabling this means the AI will still answer questions but cannot propose or apply any setting changes — useful if you want a read-only assistant.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-enable_proactive_notifications" class="settings-title">Proactive Notifications:</label>
+            <input type="checkbox" id="ai-enable_proactive_notifications" name="AI Assistant.enable_proactive_notifications"
+                   {% if settings.get('AI Assistant', {}).get('enable_proactive_notifications', True) %}checked{% endif %}
+                   data-section="AI Assistant" data-key="enable_proactive_notifications">
+            <p class="settings-description">Allow the AI Health Monitor to run background checks every few minutes and push plain-English alerts to your notification channels (Telegram, Discord, etc.) when it detects problems such as stuck queues, high blacklist rates, excessive errors, or a large database. Disabling this stops all automatic health checks and alerts — you can still ask the AI about health manually in the chat.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-enable_recommendations" class="settings-title">Content Recommendations:</label>
+            <input type="checkbox" id="ai-enable_recommendations" name="AI Assistant.enable_recommendations"
+                   {% if settings.get('AI Assistant', {}).get('enable_recommendations', True) %}checked{% endif %}
+                   data-section="AI Assistant" data-key="enable_recommendations">
+            <p class="settings-description">Allow the AI to recommend content based on your watch history and collected library, and add items directly to your wanted list via the chat with a single click. When enabled, the AI receives a summary of your recently watched and collected titles for context, and can generate <code>ADD_TO_LIBRARY</code> cards. Disabling this removes watch/library context from the AI prompt and disables the add-to-library action — the AI will still answer general questions but won't know what you have watched.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-enable_habit_tracking" class="settings-title">Habit Learning:</label>
+            <input type="checkbox" id="ai-enable_habit_tracking" name="AI Assistant.enable_habit_tracking"
+                   {% if settings.get('AI Assistant', {}).get('enable_habit_tracking', True) %}checked{% endif %}
+                   data-section="AI Assistant" data-key="enable_habit_tracking">
+            <p class="settings-description">Record significant user actions (running wanted sources, triggering upgrade scans, pausing queues, adding library items) in the background and surface pattern summaries to the AI. With this enabled, the AI can notice that you run a source every morning and suggest automating it, or spot that you frequently remove the same type of item from the blacklist and recommend a settings change. Disabling this stops all habit recording and removes the pattern summary from the AI context — no data is deleted, it just won't be updated or shown to the AI.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-share_full_config" class="settings-title">Share Full Config with AI:</label>
+            <input type="checkbox" id="ai-share_full_config" name="AI Assistant.share_full_config"
+                   {% if settings.get('AI Assistant', {}).get('share_full_config', True) %}checked{% endif %}
+                   data-section="AI Assistant" data-key="share_full_config">
+            <p class="settings-description">When enabled, the AI receives your full configuration (up to 15 000 chars), extended log tails (up to 20 000 chars), upgrade activity history, and recent notification logs — giving it the most complete picture of your setup for accurate diagnostics and suggestions. Secrets (API keys, tokens, passwords) are always redacted regardless of this setting. When disabled, the AI only receives a short config excerpt (2 000 chars) and a brief log tail (3 000 chars), which reduces context sent to the AI provider but may result in less accurate advice.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-plex-labels-enabled" class="settings-title">Plex Labels:</label>
+            <input type="checkbox" id="ai-plex-labels-enabled" name="AI Assistant.plex_labels.enabled"
+                   data-section="AI Assistant" data-key="plex_labels.enabled"
+                   {% if settings.get('AI Assistant', {}).get('plex_labels', {}).get('enabled') %}checked{% endif %}>
+            <p class="settings-description">Apply a Plex label to items added to your library via the AI Butler.</p>
+        </div>
+        <div id="ai-plex-labels-dependent" style="margin-left: 10px; {% if not settings.get('AI Assistant', {}).get('plex_labels', {}).get('enabled') %}display:none;{% endif %}">
+            <div class="settings-form-group">
+                <label for="ai-plex-labels-label_mode" class="settings-title">Label Mode:</label>
+                <select id="ai-plex-labels-label_mode" name="AI Assistant.plex_labels.label_mode"
+                        data-section="AI Assistant" data-key="plex_labels.label_mode"
+                        class="settings-input"
+                        {% if not settings.get('AI Assistant', {}).get('plex_labels', {}).get('enabled') %}disabled{% endif %}>
+                    <option value="fixed" {% if settings.get('AI Assistant', {}).get('plex_labels', {}).get('label_mode', 'fixed') == 'fixed' %}selected{% endif %}>Fixed Label</option>
+                </select>
+                <p class="settings-description">Fixed: apply the same label to all AI Butler additions.</p>
+            </div>
+            <div class="settings-form-group" id="ai-plex-labels-fixed-group">
+                <label for="ai-plex-labels-fixed_label" class="settings-title">Fixed Label:</label>
+                <input type="text" id="ai-plex-labels-fixed_label" name="AI Assistant.plex_labels.fixed_label"
+                       value="{{ settings.get('AI Assistant', {}).get('plex_labels', {}).get('fixed_label', 'AI Butler') }}"
+                       class="settings-input" placeholder="AI Butler"
+                       data-section="AI Assistant" data-key="plex_labels.fixed_label"
+                       {% if not settings.get('AI Assistant', {}).get('plex_labels', {}).get('enabled') %}disabled{% endif %}>
+                <p class="settings-description">Label to apply to all items added via AI Butler. Comma-separated for multiple labels.</p>
+            </div>
+        </div>
+        <div class="settings-form-group">
+            <label class="settings-title">OpenClaw Skill File:</label>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <a href="/api/ai/skill_download" download="cli_debrid_skill.md" class="btn btn-secondary btn-sm">
+                    <i class="fas fa-download"></i> Download SKILL.md
+                </a>
+            </div>
+            <p class="settings-description">Downloads a pre-configured OpenClaw skill file with your URL and API token already filled in. Drop it into <code>~/.openclaw/skills/</code> on your OpenClaw machine, then reload OpenClaw. Your agent will then be able to answer questions about your library from external messengers like Telegram or Discord.</p>
+            <p class="settings-description"><strong>Note:</strong> This skill requires cli_debrid to be publicly accessible — it cannot work via an internal IP only. Exposing cli_debrid publicly means anyone with your token can control it, so <strong>User Management must be enabled</strong> before downloading. For best security, use <strong>OIDC/SSO</strong> (e.g. Authentik) rather than local accounts.</p>
+        </div>
+    </div>
+</div>
+
 <script>
+    (function() {
+        const aiPlexCb = document.getElementById('ai-plex-labels-enabled');
+        const aiPlexDependent = document.getElementById('ai-plex-labels-dependent');
+        if (aiPlexCb && aiPlexDependent) {
+            function toggleAiPlexLabels() {
+                const enabled = aiPlexCb.checked;
+                aiPlexDependent.style.display = enabled ? '' : 'none';
+                aiPlexDependent.querySelectorAll('input, select').forEach(el => el.disabled = !enabled);
+            }
+            aiPlexCb.addEventListener('change', toggleAiPlexLabels);
+        }
+    })();
+</script>
+
+<script>
+    // Persist just the Trakt client_id/client_secret fields before starting
+    // authorization. "Authorize Trakt" used to read whatever was last saved
+    // to disk, ignoring unsaved edits still sitting in these two inputs —
+    // clicking Authorize right after typing new credentials (without first
+    // clicking the page's separate "Save Settings" button) failed with
+    // "Trakt client ID or secret not set" even though the fields were filled in.
+    function saveTraktCredentials() {
+        const clientIdInput = document.getElementById('trakt-client_id');
+        const clientSecretInput = document.getElementById('trakt-client_secret');
+        const clientId = clientIdInput ? clientIdInput.value.trim() : '';
+        const clientSecret = clientSecretInput ? clientSecretInput.value.trim() : '';
+        if (!clientId || !clientSecret) {
+            return Promise.reject(new Error('Enter both a Trakt Client ID and Client Secret first.'));
+        }
+        return fetch('/settings/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ Trakt: { client_id: clientId, client_secret: clientSecret } })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status !== 'success') {
+                    throw new Error(data.message || 'Failed to save Trakt credentials');
+                }
+            });
+    }
+
     function initializeTraktAuthorization() {
     const traktAuthBtn = document.getElementById('trakt-auth-btn');
     const traktAuthStatus = document.getElementById('trakt-auth-status');
@@ -762,10 +1355,14 @@
     if (traktAuthBtn) {
         traktAuthBtn.addEventListener('click', function() {
             traktAuthBtn.disabled = true;
-            traktAuthStatus.textContent = 'Initializing Trakt authorization...';
+            traktAuthStatus.textContent = 'Saving Trakt credentials...';
             traktAuthCode.style.display = 'none';
 
-            fetch('/trakt/trakt_auth', { method: 'POST' })
+            saveTraktCredentials()
+                .then(() => {
+                    traktAuthStatus.textContent = 'Initializing Trakt authorization...';
+                    return fetch('/trakt/trakt_auth', { method: 'POST' });
+                })
                 .then(response => response.json())
                 .then(data => {
                     console.log('Trakt auth response:', data);
@@ -781,7 +1378,7 @@
                 })
                 .catch(error => {
                     console.error('Trakt auth error:', error);
-                    traktAuthStatus.textContent = 'Error: Unable to start authorization process';
+                    traktAuthStatus.textContent = 'Error: ' + (error.message || 'Unable to start authorization process');
                 })
                 .finally(() => {
                     traktAuthBtn.disabled = false;
@@ -1300,27 +1897,671 @@ document.addEventListener('DOMContentLoaded', function() {
     const clearCacheBtn = document.getElementById('clear-library-cache-btn');
     if (clearCacheBtn) {
         clearCacheBtn.addEventListener('click', function() {
-            if (confirm('Are you sure you want to clear the artwork cache? All posters and backdrops will be re-downloaded from the primary source on next library load.')) {
-                fetch('/library/clear_cache', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        alert('Cache cleared successfully! Artwork will be refreshed on next library load.');
-                    } else {
-                        alert('Failed to clear cache: ' + (data.error || 'Unknown error'));
-                    }
-                })
-                .catch(error => {
-                    console.error('Error clearing cache:', error);
-                    alert('Error clearing cache. Check console for details.');
-                });
-            }
+            showPopup({
+                type: 'confirm',
+                title: 'Clear Artwork Cache',
+                message: 'Are you sure you want to clear the artwork cache? All posters and backdrops will be re-downloaded from the primary source on next library load.',
+                confirmText: 'Clear Cache',
+                cancelText: 'Cancel',
+                onConfirm: function() {
+                    fetch('/library/clear_cache', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showPopup({ type: 'success', title: 'Success', message: 'Cache cleared successfully! Artwork will be refreshed on next library load.', autoClose: 4000 });
+                        } else {
+                            showPopup({ type: 'error', title: 'Error', message: 'Failed to clear cache: ' + (data.error || 'Unknown error'), autoClose: 5000 });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error clearing cache:', error);
+                        showPopup({ type: 'error', title: 'Error', message: 'Error clearing cache. Check console for details.', autoClose: 5000 });
+                    });
+                }
+            });
         });
     }
 });
 </script>
+
+
+
+<!-- Plex Smart Collection Posters Section -->
+<div class="settings-section settings-card plex-only-section">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Plex Smart Collection Posters</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+<!-- Plex Smart Collection Posters -->
+<div class="settings-form-group plex-only-section">
+    <p class="settings-description" style="margin-bottom:12px;">Apply a custom poster design to Plex's built-in smart collections (genre, network, language collections, etc). Enable the collections below and configure the shared poster design. The task runs every 24 hours — you can also trigger it manually.</p>
+
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <button type="button" id="load-smart-collections-btn" style="padding:8px 16px;background:var(--accent-color,#e87429);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9em;">Load Collections from Plex</button>
+        <button type="button" id="run-smart-collections-btn" style="padding:8px 16px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#ddd;cursor:pointer;font-size:0.9em;">Run Now</button>
+        <button type="button" id="smartcoll-manage-btn" style="padding:8px 16px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#ddd;cursor:pointer;font-size:0.9em;">Manage Posters</button>
+
+    </div>
+
+    <!-- Smart Collections Manage Posters Modal -->
+    <div id="smartcoll-manage-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9999;align-items:flex-start;justify-content:center;padding-top:60px;box-sizing:border-box;">
+        <div style="background:var(--surface-color,#1e1e1e);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:24px;width:90%;max-width:560px;max-height:80vh;display:flex;flex-direction:column;gap:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+                <h3 style="margin:0;font-size:1rem;font-weight:600;">Smart Collection Posters</h3>
+                <button id="smartcoll-manage-close" style="background:none;border:none;color:var(--text-color,#fff);font-size:1.4rem;cursor:pointer;line-height:1;">&times;</button>
+            </div>
+            <p style="margin:0;font-size:0.82em;color:#aaa;">Force reapply the poster for an individual enabled smart collection immediately.</p>
+            <input id="smartcoll-manage-search" type="text" placeholder="Search collections..." style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.88em;outline:none;">
+            <div id="smartcoll-manage-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;">
+                <span style="color:#aaa;font-size:0.85em;">Loading...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Collection list (loaded dynamically) -->
+    <div id="smart-collections-list" style="display:none;margin-bottom:16px;">
+        <p class="settings-description" style="margin-bottom:8px;">Check collections to apply the shared poster design below:</p>
+        <div id="smart-collections-container" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+    </div>
+
+    <!-- Shared Poster Design (mirrors content source poster section) -->
+    <div id="smart-poster-design-section" style="margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.07);">
+        <label class="settings-title">Poster Design:</label>
+        <p class="settings-description" style="margin-bottom:10px;">Select a custom poster for all enabled smart collections. Leave on "None" to use Plex's default.</p>
+        <div class="plex-collection-poster-picker" data-source-id="__smart__"
+             style="display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scrollbar-width:thin;min-height:380px;">
+            <div class="poster-loading-placeholder" style="color:#888;font-size:0.85em;padding:8px;">Loading designs...</div>
+        </div>
+        <input type="hidden" id="content-sources-__smart__-plex_collection-poster_design" name="Plex Smart Collections.poster_design" data-section="Plex Smart Collections" data-key="poster_design" value="{{ settings.get('Plex Smart Collections', {}).get('poster_design', 0) }}">
+    </div>
+
+    <div class="settings-form-group" style="margin-top:12px;">
+        <label class="settings-title">Poster Accent Color:</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+            {% set _sa = settings.get('Plex Smart Collections', {}).get('poster_accent', '') %}
+            <input type="color" id="smart-poster-accent" name="Plex Smart Collections.poster_accent" data-section="Plex Smart Collections" data-key="poster_accent" value="{{ _sa or '#000000' }}"
+                   style="width:44px;height:36px;border:none;background:none;cursor:pointer;border-radius:6px;{% if not _sa %}opacity:0.4;{% endif %}">
+            <span id="smart-poster-accent-label" style="font-size:0.85em;color:#888;">{{ _sa or 'Design default' }}</span>
+            <button type="button" id="smart-poster-accent-clear"
+                    style="display:{% if _sa %}inline-block{% else %}none{% endif %};font-size:0.75em;padding:3px 8px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:#aaa;cursor:pointer;">
+                Use default
+            </button>
+        </div>
+        <p class="settings-description">Accent color used throughout the poster design. Leave unset to use the layout's default color.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Card Overlay Opacity: <span id="smart-overlay-op-val">60%</span></label>
+        <input type="range" min="0" max="100" step="5" id="smart-overlay-op" name="Plex Smart Collections.poster_overlay_opacity" data-section="Plex Smart Collections" data-key="poster_overlay_opacity" value="{{ settings.get('Plex Smart Collections', {}).get('poster_overlay_opacity', 60) }}"
+               style="width:100%;accent-color:var(--accent-color,#e87429);"
+               oninput="document.getElementById('smart-overlay-op-val').textContent=this.value+'%'">
+        <p class="settings-description">Dark gradient fade at the bottom of each card inside the poster. Higher = darker fade over the card art.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Accent Glow Opacity: <span id="smart-glow-op-val">80%</span></label>
+        <input type="range" min="0" max="100" step="5" id="smart-glow-op" name="Plex Smart Collections.poster_glow_opacity" data-section="Plex Smart Collections" data-key="poster_glow_opacity" value="{{ settings.get('Plex Smart Collections', {}).get('poster_glow_opacity', 80) }}"
+               style="width:100%;accent-color:var(--accent-color,#e87429);"
+               oninput="document.getElementById('smart-glow-op-val').textContent=this.value+'%'">
+        <p class="settings-description">Intensity of the accent color glow around the edges of the poster background.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Accent Glow Radius: <span id="smart-glow-r-val">55</span></label>
+        <input type="range" min="10" max="200" step="5" id="smart-glow-r" name="Plex Smart Collections.poster_glow_radius" data-section="Plex Smart Collections" data-key="poster_glow_radius" value="{{ settings.get('Plex Smart Collections', {}).get('poster_glow_radius', 55) }}"
+               style="width:100%;accent-color:var(--accent-color,#e87429);"
+               oninput="document.getElementById('smart-glow-r-val').textContent=this.value">
+        <p class="settings-description">How far the accent color glow spreads. Default 55. Higher values spread the color across more of the poster.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Eyebrow Text:</label>
+        <input type="text" id="smart-poster-eyebrow" class="settings-input" name="Plex Smart Collections.poster_eyebrow" data-section="Plex Smart Collections" data-key="poster_eyebrow" value="{{ settings.get('Plex Smart Collections', {}).get('poster_eyebrow', '') }}" placeholder="e.g. TOP PICKS">
+        <p class="settings-description">Small text above the collection title on the poster. Leave blank to hide.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Poster Icon:</label>
+        <button type="button" class="plex-collection-icon-picker-btn" data-source-id="__smart__"
+                style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 14px;cursor:pointer;color:#ddd;font-size:0.9em;">
+            <span class="plex-coll-icon-preview" data-source-id="__smart__"
+                  style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;flex-shrink:0;">
+                {% if settings.get('Plex Smart Collections', {}).get('poster_icon') %}
+                <img src="/api/overlays/logos/serve/{{ settings.get('Plex Smart Collections', {}).get('poster_icon') }}"
+                     style="max-width:28px;max-height:28px;object-fit:contain;" alt="">
+                <svg style="margin-left:4px;opacity:0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                {% else %}
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                {% endif %}
+            </span>
+            <span id="smart-icon-label">{% if settings.get('Plex Smart Collections', {}).get('poster_icon') %}{{ settings.get('Plex Smart Collections', {}).get('poster_icon').split('/')[-1] }}{% else %}Choose icon from library{% endif %}</span>
+        </button>
+        <input type="hidden" id="content-sources-__smart__-plex_collection-poster_icon" name="Plex Smart Collections.poster_icon" data-section="Plex Smart Collections" data-key="poster_icon" value="{{ settings.get('Plex Smart Collections', {}).get('poster_icon', '') }}">
+        <p class="settings-description">Icon shown on the poster. Leave blank to use the source default icon.</p>
+    </div>
+</div>
+
+<script>
+(function() {
+    // Init slider display values from saved settings
+    (function() {
+        var ov = document.getElementById('smart-overlay-op');
+        var go = document.getElementById('smart-glow-op');
+        var gr = document.getElementById('smart-glow-r');
+        if (ov) document.getElementById('smart-overlay-op-val').textContent = ov.value + '%';
+        if (go) document.getElementById('smart-glow-op-val').textContent = go.value + '%';
+        if (gr) document.getElementById('smart-glow-r-val').textContent = gr.value;
+    })();
+
+    var ai = document.getElementById('smart-poster-accent');
+    var al = document.getElementById('smart-poster-accent-label');
+    var ac = document.getElementById('smart-poster-accent-clear');
+    if (ai) {
+        if (ai.value && ai.value !== '#000000') {
+            ai.style.opacity = '1';
+            if (al) al.textContent = ai.value;
+            if (ac) ac.style.display = 'inline-block';
+        }
+        ai.addEventListener('input', function() {
+            this.style.opacity = '1';
+            if (al) al.textContent = this.value;
+            if (ac) ac.style.display = 'inline-block';
+        });
+    }
+    if (ac) {
+        ac.addEventListener('click', function() {
+            if (ai) { ai.value = '#000000'; ai.style.opacity = '0.4'; }
+            if (al) al.textContent = 'Design default';
+            this.style.display = 'none';
+        });
+    }
+
+    var lb = document.getElementById('load-smart-collections-btn');
+    if (lb) {
+        lb.addEventListener('click', async function() {
+            this.textContent = 'Loading...'; this.disabled = true;
+            try {
+                var r = await fetch('/settings/api/plex-smart-collections');
+                var d = await r.json();
+                if (d.success) {
+                    renderSmartCollections(d.collections);
+                    document.getElementById('smart-collections-list').style.display = 'block';
+                } else { showPopup({ type: 'error', title: 'Error', message: 'Error: ' + (d.error || 'Failed'), autoClose: 5000 }); }
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e, autoClose: 5000 }); }
+            finally { this.textContent = 'Reload Collections'; this.disabled = false; }
+        });
+    }
+
+    var rb = document.getElementById('run-smart-collections-btn');
+    if (rb) {
+        rb.addEventListener('click', async function() {
+            this.textContent = 'Running...'; this.disabled = true;
+            try {
+                var r = await fetch('/settings/api/plex-smart-collections/run', {method:'POST'});
+                var d = await r.json();
+                showPopup({ type: d.success ? 'success' : 'error', title: d.success ? 'Success' : 'Error', message: d.success ? 'Task started.' : 'Error: ' + d.error, autoClose: d.success ? 4000 : 5000 });
+            } finally { this.textContent = 'Run Now'; this.disabled = false; }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        var ms = document.getElementById('save-settings-button');
+        if (ms) {
+            ms.addEventListener('click', function() {
+                var cols = {};
+                document.querySelectorAll('.smart-coll-cb').forEach(function(cb) {
+                    cols[cb.dataset.rk] = {
+                        enabled: cb.checked,
+                        title: cb.dataset.title,
+                        section: cb.dataset.section,
+                        type: cb.dataset.type
+                    };
+                });
+                if (Object.keys(cols).length > 0) {
+                    fetch('/settings/api/plex-smart-collections', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({collections: cols})
+                    }).catch(function() {});
+                }
+            }, true);
+        }
+    });
+
+    function renderSmartCollections(cols) {
+        var c = document.getElementById('smart-collections-container');
+        if (!c) return;
+        var secs = {};
+        cols.forEach(function(x) {
+            if (!secs[x.section]) secs[x.section] = [];
+            secs[x.section].push(x);
+        });
+        var h = '';
+        Object.keys(secs).forEach(function(s) {
+            h += '<div style="width:100%;margin-top:8px;color:#888;font-size:0.75em;text-transform:uppercase;">' + s + '</div>';
+            secs[s].forEach(function(x) {
+                h += '<label style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(255,255,255,0.05);border-radius:6px;cursor:pointer;font-size:0.9em;">';
+                h += '<input type="checkbox" class="smart-coll-cb"';
+                h += ' data-rk="' + x.ratingKey + '"';
+                h += ' data-title="' + x.title + '"';
+                h += ' data-section="' + x.section + '"';
+                h += ' data-type="' + x.type + '"';
+                if (x.enabled) h += ' checked';
+                h += '>' + x.title + '</label>';
+            });
+        });
+        c.innerHTML = h;
+    }
+})();
+</script>
+    </div>
+</div>
+
+<!-- Plex Movie Box Sets Section -->
+<div class="settings-section settings-card plex-only-section">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Plex Movie Box Sets</h4>
+        </div>
+    </div>
+    <div class="settings-section-content" style="display:none;">
+        <p style="color:#aaa;font-size:0.9em;margin-bottom:15px;">
+            Automatically creates Plex collections for movie box sets using TMDB collection data.
+            Applies TMDB collection posters (or a rendered fallback) and optionally queues missing movies.
+        </p>
+
+        <!-- Enable toggle -->
+        <div class="settings-form-group">
+            <label class="settings-label" for="boxsets-enabled">Enable Plex Movie Box Sets</label>
+            <div class="toggle-switch-wrapper">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="boxsets-enabled"
+                           name="Plex Movie Box Sets.enabled"
+                           data-section="Plex Movie Box Sets" data-key="enabled"
+                           {% if settings.get('Plex Movie Box Sets', {}).get('enabled') %}checked{% endif %}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Dependent controls (shown when enabled) -->
+        <div id="boxsets-dependent-controls" style="{% if not settings.get('Plex Movie Box Sets', {}).get('enabled') %}display:none;{% endif %}">
+
+            <!-- Grab missing movies toggle -->
+            <div class="settings-form-group">
+                <label class="settings-label" for="boxsets-grab-missing">Grab missing movies from box sets</label>
+                <div class="settings-description">Missing movies from box sets will be added to your wanted queue.</div>
+                <div class="toggle-switch-wrapper">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="boxsets-grab-missing"
+                               name="Plex Movie Box Sets.grab_missing"
+                               data-section="Plex Movie Box Sets" data-key="grab_missing"
+                               {% if settings.get('Plex Movie Box Sets', {}).get('grab_missing') %}checked{% endif %}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Version dropdown (shown when grab_missing enabled) -->
+            <div id="boxsets-version-group" class="settings-form-group"
+                 style="{% if not settings.get('Plex Movie Box Sets', {}).get('grab_missing') %}display:none;{% endif %}">
+                <label class="settings-label" for="boxsets-grab-version">Version to use when grabbing missing movies</label>
+                <select id="boxsets-grab-version"
+                        name="Plex Movie Box Sets.grab_version"
+                        data-section="Plex Movie Box Sets" data-key="grab_version"
+                        class="settings-input">
+                    <option value="Default" {% if settings.get('Plex Movie Box Sets', {}).get('grab_version', 'Default') == 'Default' %}selected{% endif %}>Default</option>
+                </select>
+            </div>
+
+            <!-- Collection name pattern -->
+            <div class="settings-form-group">
+                <label class="settings-label" for="boxsets-name-pattern">Collection name pattern</label>
+                <div class="settings-description"><code>{title}</code> is the franchise name (e.g. <em>The Godfather</em>). Examples: <code>{title} Collection</code>, <code>{title} Box Set</code></div>
+                <input type="text" id="boxsets-name-pattern"
+                       name="Plex Movie Box Sets.collection_name_pattern"
+                       data-section="Plex Movie Box Sets" data-key="collection_name_pattern"
+                       class="settings-input"
+                       value="{{ settings.get('Plex Movie Box Sets', {}).get('collection_name_pattern', '{title} Collection') }}"
+                       placeholder="{title} Collection">
+            </div>
+
+            <!-- Minimum movies threshold -->
+            <div class="settings-form-group">
+                <label class="settings-label" for="boxsets-min-movies">Minimum owned movies to create/keep a box set</label>
+                <div class="settings-description">Collections below this threshold will not be created, and existing ones will be automatically removed.</div>
+                <select id="boxsets-min-movies"
+                        name="Plex Movie Box Sets.min_movies"
+                        data-section="Plex Movie Box Sets" data-key="min_movies"
+                        class="settings-select">
+                    <option value="1" {% if settings.get('Plex Movie Box Sets', {}).get('min_movies', 2)|int == 1 %}selected{% endif %}>1</option>
+                    <option value="2" {% if settings.get('Plex Movie Box Sets', {}).get('min_movies', 2)|int == 2 %}selected{% endif %}>2</option>
+                </select>
+            </div>
+
+            <!-- Sort order -->
+            <div class="settings-form-group">
+                <label class="settings-label" for="boxsets-sort-order">Collection sort order</label>
+                <div class="settings-description">How movies are ordered within each box set collection in Plex.</div>
+                <select id="boxsets-sort-order"
+                        name="Plex Movie Box Sets.sort_order"
+                        data-section="Plex Movie Box Sets" data-key="sort_order"
+                        class="settings-select">
+                    {% set _sort = settings.get('Plex Movie Box Sets', {}).get('sort_order', 'release_date_asc') %}
+                    <option value="release_date_asc" {% if _sort == 'release_date_asc' %}selected{% endif %}>Release Date (oldest first)</option>
+                    <option value="title_asc"        {% if _sort == 'title_asc'        %}selected{% endif %}>Title (A → Z)</option>
+                    <option value="custom"           {% if _sort == 'custom'           %}selected{% endif %}>Custom (manual order)</option>
+                </select>
+            </div>
+
+        </div>
+
+        <!-- Status + Run Now -->
+        <div class="settings-form-group" style="margin-top:15px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <button type="button" id="boxsets-run-btn"
+                    class="btn btn-secondary" style="white-space:nowrap;">
+                Run Now
+            </button>
+            <button type="button" id="boxsets-manage-btn"
+                    class="btn btn-secondary" style="white-space:nowrap;">
+                Manage Posters
+            </button>
+            <span id="boxsets-status" style="color:#aaa;font-size:0.85em;"></span>
+        </div>
+
+    </div>
+</div>
+
+<!-- Box Sets Manage Posters Modal -->
+<div id="boxsets-manage-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9999;align-items:flex-start;justify-content:center;padding-top:60px;box-sizing:border-box;">
+    <div style="background:var(--surface-color,#1e1e1e);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:24px;width:90%;max-width:560px;max-height:80vh;display:flex;flex-direction:column;gap:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+            <h3 style="margin:0;font-size:1rem;font-weight:600;">Box Set Posters</h3>
+            <button id="boxsets-manage-close" style="background:none;border:none;color:var(--text-color,#fff);font-size:1.4rem;cursor:pointer;line-height:1;">&times;</button>
+        </div>
+        <p style="margin:0;font-size:0.82em;color:#aaa;">Force a collection to reapply its poster on the next run. This only clears the fingerprint — run the task manually or wait for the scheduled run.</p>
+        <input id="boxsets-manage-search" type="text" placeholder="Search collections..." style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.88em;outline:none;">
+        <div id="boxsets-manage-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;">
+            <span style="color:#aaa;font-size:0.85em;">Loading...</span>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    // Enable/disable dependent controls
+    var enabledCb = document.getElementById('boxsets-enabled');
+    var depControls = document.getElementById('boxsets-dependent-controls');
+    if (enabledCb && depControls) {
+        enabledCb.addEventListener('change', function() {
+            depControls.style.display = this.checked ? '' : 'none';
+        });
+    }
+
+    // Show/hide version dropdown when grab_missing toggled
+    var grabMissingCb = document.getElementById('boxsets-grab-missing');
+    var versionGroup = document.getElementById('boxsets-version-group');
+    if (grabMissingCb && versionGroup) {
+        grabMissingCb.addEventListener('change', function() {
+            versionGroup.style.display = this.checked ? '' : 'none';
+        });
+    }
+
+    // Populate version dropdown from app versions endpoint
+    var versionSelect = document.getElementById('boxsets-grab-version');
+    if (versionSelect) {
+        var savedVersion = '{{ settings.get("Plex Movie Box Sets", {}).get("grab_version", "Default") }}';
+        fetch('/content/versions')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var versions = data.versions || data || [];
+                if (!Array.isArray(versions)) versions = Object.keys(versions);
+                versionSelect.innerHTML = '';
+                versions.forEach(function(v) {
+                    var opt = document.createElement('option');
+                    opt.value = v;
+                    opt.textContent = v;
+                    if (v === savedVersion) opt.selected = true;
+                    versionSelect.appendChild(opt);
+                });
+                if (!versions.includes(savedVersion)) {
+                    var opt = document.createElement('option');
+                    opt.value = savedVersion;
+                    opt.textContent = savedVersion;
+                    opt.selected = true;
+                    versionSelect.insertBefore(opt, versionSelect.firstChild);
+                }
+            })
+            .catch(function() {
+                // Leave Default option if fetch fails
+            });
+    }
+
+    // Fetch and display status
+    function loadBoxSetsStatus() {
+        var statusEl = document.getElementById('boxsets-status');
+        if (!statusEl) return;
+        fetch('/settings/api/plex-boxsets/status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) {
+                    var parts = [];
+                    if (d.last_run) {
+                        var dt = new Date(d.last_run + 'Z');
+                        parts.push('Last run: ' + dt.toLocaleString());
+                    }
+                    if (d.collections_managed > 0) {
+                        parts.push(d.collections_managed + ' collection' + (d.collections_managed !== 1 ? 's' : '') + ' managed');
+                    }
+                    statusEl.textContent = parts.join(' · ') || 'Not yet run';
+                }
+            })
+            .catch(function() {});
+    }
+    loadBoxSetsStatus();
+
+    // Run Now button
+    var runBtn = document.getElementById('boxsets-run-btn');
+    if (runBtn) {
+        runBtn.addEventListener('click', function() {
+            var statusEl = document.getElementById('boxsets-status');
+            runBtn.disabled = true;
+            runBtn.textContent = 'Starting...';
+            fetch('/settings/api/plex-boxsets/run', {method: 'POST'})
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    runBtn.disabled = false;
+                    runBtn.textContent = 'Run Now';
+                    if (statusEl) statusEl.textContent = d.success ? 'Task started — check logs for progress' : ('Error: ' + d.error);
+                })
+                .catch(function(e) {
+                    runBtn.disabled = false;
+                    runBtn.textContent = 'Run Now';
+                    if (statusEl) statusEl.textContent = 'Request failed';
+                });
+        });
+    }
+
+    // Smart Collections — Manage Posters modal
+    (function() {
+        var scBtn    = document.getElementById('smartcoll-manage-btn');
+        var scModal  = document.getElementById('smartcoll-manage-modal');
+        var scClose  = document.getElementById('smartcoll-manage-close');
+        var scList   = document.getElementById('smartcoll-manage-list');
+        var scSearch = document.getElementById('smartcoll-manage-search');
+        var _scColls = [];
+
+        function scRenderRows(filter) {
+            var q = (filter || '').toLowerCase().trim();
+            var filtered = q ? _scColls.filter(function(c) { return c.name.toLowerCase().includes(q); }) : _scColls;
+            scList.innerHTML = '';
+            if (filtered.length === 0) {
+                scList.innerHTML = '<span style="color:#aaa;font-size:0.85em;">' + (q ? 'No collections match.' : 'No enabled collections found. Enable collections and run the task first.') + '</span>';
+                return;
+            }
+            filtered.forEach(function(c) {
+                var row = document.createElement('div');
+                row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;';
+                var name = document.createElement('span');
+                name.textContent = c.name;
+                name.style.cssText = 'font-size:0.88em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                var btn = document.createElement('button');
+                btn.textContent = 'Force reapply';
+                btn.className = 'btn btn-secondary';
+                btn.style.cssText = 'font-size:0.78em;padding:4px 10px;white-space:nowrap;flex-shrink:0;';
+                btn.addEventListener('click', function() {
+                    btn.disabled = true;
+                    btn.textContent = 'Applying...';
+                    fetch('/settings/api/plex-smart-collections/reset-collection', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({collection_id: c.id})
+                    })
+                    .then(function(r) { return r.json(); })
+                    .then(function(res) {
+                        if (res.success) {
+                            btn.textContent = 'Applied ✓';
+                            btn.style.color = '#4caf50';
+                        } else {
+                            btn.disabled = false;
+                            btn.textContent = 'Force reapply';
+                            btn.style.color = '';
+                            showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (res.message || 'Unknown error'), autoClose: 5000 });
+                        }
+                    })
+                    .catch(function() {
+                        btn.disabled = false;
+                        btn.textContent = 'Force reapply';
+                        btn.style.color = '';
+                        showPopup({ type: 'error', title: 'Error', message: 'Request failed — check logs', autoClose: 5000 });
+                    });
+                });
+                row.appendChild(name);
+                row.appendChild(btn);
+                scList.appendChild(row);
+            });
+        }
+
+        function scOpenModal() {
+            scModal.style.display = 'flex';
+            if (scSearch) scSearch.value = '';
+            scList.innerHTML = '<span style="color:#aaa;font-size:0.85em;">Loading...</span>';
+            fetch('/settings/api/plex-smart-collections/status')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    _scColls = (d.success && d.collections) ? d.collections : [];
+                    scRenderRows('');
+                    if (scSearch) scSearch.focus();
+                })
+                .catch(function() {
+                    scList.innerHTML = '<span style="color:#f44336;font-size:0.85em;">Failed to load collections.</span>';
+                });
+        }
+
+        if (scSearch) scSearch.addEventListener('input', function() { scRenderRows(this.value); });
+        if (scBtn)    scBtn.addEventListener('click', scOpenModal);
+        if (scClose)  scClose.addEventListener('click', function() { scModal.style.display = 'none'; });
+        if (scModal)  scModal.addEventListener('click', function(e) { if (e.target === scModal) scModal.style.display = 'none'; });
+    })();
+
+    // Manage Posters modal
+    var manageBtn = document.getElementById('boxsets-manage-btn');
+    var manageModal = document.getElementById('boxsets-manage-modal');
+    var manageClose = document.getElementById('boxsets-manage-close');
+    var manageList = document.getElementById('boxsets-manage-list');
+    var manageSearch = document.getElementById('boxsets-manage-search');
+    var _allCollections = [];
+
+    function renderCollectionRows(filter) {
+        var q = (filter || '').toLowerCase().trim();
+        var filtered = q ? _allCollections.filter(function(c) { return c.name.toLowerCase().includes(q); }) : _allCollections;
+        manageList.innerHTML = '';
+        if (filtered.length === 0) {
+            manageList.innerHTML = '<span style="color:#aaa;font-size:0.85em;">' + (q ? 'No collections match.' : 'No collections found. Run the task first.') + '</span>';
+            return;
+        }
+        filtered.forEach(function(c) {
+            var row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;';
+            var name = document.createElement('span');
+            name.textContent = c.name;
+            name.style.cssText = 'font-size:0.88em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+            var btn = document.createElement('button');
+            btn.textContent = 'Force reapply';
+            btn.className = 'btn btn-secondary';
+            btn.style.cssText = 'font-size:0.78em;padding:4px 10px;white-space:nowrap;flex-shrink:0;';
+            btn.addEventListener('click', function() {
+                btn.disabled = true;
+                btn.textContent = 'Applying...';
+                fetch('/settings/api/plex-boxsets/reset-collection', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({collection_id: c.id})
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    if (res.success) {
+                        btn.textContent = 'Applied ✓';
+                        btn.style.color = '#4caf50';
+                    } else {
+                        btn.disabled = false;
+                        btn.textContent = 'Force reapply';
+                        btn.style.color = '';
+                        btn.title = res.message || 'Unknown error';
+                        showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (res.message || 'Unknown error'), autoClose: 5000 });
+                    }
+                })
+                .catch(function() {
+                    btn.disabled = false;
+                    btn.textContent = 'Force reapply';
+                    btn.style.color = '';
+                    showPopup({ type: 'error', title: 'Error', message: 'Request failed — check logs', autoClose: 5000 });
+                });
+            });
+            row.appendChild(name);
+            row.appendChild(btn);
+            manageList.appendChild(row);
+        });
+    }
+
+    function openManageModal() {
+        manageModal.style.display = 'flex';
+        if (manageSearch) manageSearch.value = '';
+        manageList.innerHTML = '<span style="color:#aaa;font-size:0.85em;">Loading...</span>';
+        fetch('/settings/api/plex-boxsets/status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                _allCollections = (d.success && d.collections) ? d.collections : [];
+                renderCollectionRows('');
+                if (manageSearch) manageSearch.focus();
+            })
+            .catch(function() {
+                manageList.innerHTML = '<span style="color:#f44336;font-size:0.85em;">Failed to load collections.</span>';
+            });
+    }
+
+    if (manageSearch) {
+        manageSearch.addEventListener('input', function() { renderCollectionRows(this.value); });
+    }
+    if (manageBtn) manageBtn.addEventListener('click', openManageModal);
+    if (manageClose) manageClose.addEventListener('click', function() { manageModal.style.display = 'none'; });
+    if (manageModal) manageModal.addEventListener('click', function(e) { if (e.target === manageModal) manageModal.style.display = 'none'; });
+})();
+</script>
+
+        </div>
+    </div>
+</div>

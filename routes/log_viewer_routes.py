@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, jsonify, request, Response, stream_with_context
 from .models import admin_required, onboarding_required
+from .api_tracker import api
 from datetime import datetime
 import os
 from collections import deque
@@ -31,7 +32,8 @@ upload_tasks = {}
 @onboarding_required
 def logs():
     logs = get_recent_logs(1000, level='all')  # Reduced from 500 to 100
-    return render_template('logs.html', logs=logs)
+    climount_available = _get_active_climount_client() is not None
+    return render_template('logs.html', logs=logs, climount_available=climount_available)
 
 @logs_bp.route('/api/logs')
 @admin_required
@@ -58,6 +60,127 @@ def api_logs():
             return jsonify(logs)
     except Exception as e:
         return jsonify({'error': 'An error occurred while fetching logs'}), 500
+
+_climount_client_cache = {'client': None, 'expires': 0.0}
+_CLIMOUNT_CLIENT_CACHE_TTL = 10  # seconds; the cli_mount log tab polls every 2s
+
+
+def _get_active_climount_client():
+    """Return a connected CliMountClient if cli_mount is the enabled Usenet provider, else None.
+
+    Cached briefly since the cli_mount log tab polls this on a 2s interval and
+    each build previously did two full settings.json reads (one here, one in
+    CliMountClient.__init__) for values that don't change mid-session.
+    """
+    now = time.monotonic()
+    if now < _climount_client_cache['expires']:
+        return _climount_client_cache['client']
+    try:
+        from utilities.settings import get_setting
+        cfg = get_setting('Usenet Provider') or {}
+        if not cfg.get('enabled') or cfg.get('provider', 'climount') != 'climount':
+            client = None
+        else:
+            from usenet.climount_client import CliMountClient
+            candidate = CliMountClient()
+            client = candidate if candidate.is_enabled() else None
+    except Exception as e:
+        logging.error(f"Error building cli_mount client: {e}")
+        client = None
+    _climount_client_cache['client'] = client
+    _climount_client_cache['expires'] = now + _CLIMOUNT_CLIENT_CACHE_TTL
+    return client
+
+
+@logs_bp.route('/api/climount/logs')
+@admin_required
+def api_climount_logs():
+    client = _get_active_climount_client()
+    if not client:
+        return jsonify({'error': 'cli_mount is not enabled/configured as the Usenet provider'}), 400
+
+    lines = request.args.get('lines', default=1000, type=int)
+    level = request.args.get('level', default='all').lower()
+
+    params = {'lines': lines}
+    if level != 'all':
+        params['level'] = level
+
+    try:
+        r = api.get(f'{client.base_url}/api/logs', headers=client._headers(), params=params, timeout=15)
+        r.raise_for_status()
+        resp = jsonify(r.json())
+    except Exception as e:
+        logging.error(f"Error fetching cli_mount logs: {e}")
+        resp = jsonify({'error': f'Failed to fetch cli_mount logs: {e}'})
+        resp.status_code = 502
+
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
+@logs_bp.route('/api/climount/logs/share', methods=['POST'])
+@admin_required
+def share_climount_logs():
+    client = _get_active_climount_client()
+    if not client:
+        return jsonify({'error': 'cli_mount is not enabled/configured as the Usenet provider'}), 400
+
+    task_id = str(uuid.uuid4())
+    upload_tasks[task_id] = {
+        'status': 'collecting',
+        'progress': 10,
+        'url': None,
+        'error': None,
+        'message': 'Asking cli_mount to collect & upload its logs...',
+        'timestamp': time.time()
+    }
+
+    threading.Thread(
+        target=process_climount_log_upload,
+        args=(task_id, client),
+        daemon=True
+    ).start()
+
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'message': 'cli_mount log upload started in background'
+    })
+
+
+def process_climount_log_upload(task_id, client):
+    """Background task: ask cli_mount to collect+gzip+upload its own logs."""
+    try:
+        upload_tasks[task_id].update({'status': 'uploading_to_pastebin', 'progress': 50,
+                                       'message': 'Uploading cli_mount logs to paste.c-net.org...'})
+        r = api.post(f'{client.base_url}/api/logs/share', headers=client._headers(), timeout=310)
+        r.raise_for_status()
+        data = r.json()
+        url = data.get('url')
+        if not url:
+            raise Exception('cli_mount did not return a share URL')
+
+        logging.info(f"Task {task_id}: cli_mount logs uploaded: {url}")
+        upload_tasks[task_id].update({
+            'status': 'completed',
+            'progress': 100,
+            'url': url,
+            'message': f"cli_mount logs uploaded successfully: {url.split('/')[-1]}"
+        })
+    except Exception as e:
+        logging.error(f"Task {task_id}: Failed to share cli_mount logs: {e}")
+        upload_tasks[task_id].update({
+            'status': 'failed',
+            'error': f'cli_mount log upload failed: {e}',
+            'progress': upload_tasks[task_id].get('progress', 10),
+            'message': 'Failed: cli_mount upload error.'
+        })
+
+    upload_tasks[task_id]['timestamp'] = time.time()
+
 
 @logs_bp.route('/api/logs/share', methods=['POST'])
 @admin_required
@@ -136,12 +259,44 @@ def process_log_upload(task_id):
         
         upload_tasks[task_id].update({'progress': 20, 'message': 'Preparing for compression...'})
         logging.info(f"Task {task_id}: Collected {len(logs)} log entries for upload.")
-        
-        log_content = '\n'.join(logs)
-        
+
+        try:
+            from utilities.ai_context import get_diagnostic_settings_snapshot
+            settings_snapshot = get_diagnostic_settings_snapshot()
+        except Exception as e:
+            logging.warning(f"Task {task_id}: Failed to build settings snapshot for log upload: {e}")
+            settings_snapshot = '(settings snapshot unavailable)'
+
+        # Belt-and-suspenders: RedactingFormatter scrubs new log lines as
+        # they're written, but rotated files predating that change (or a
+        # build without it yet) still have secrets in cleartext on disk.
+        # scrub() is built to run per formatted line (that's its normal call
+        # site, once per record); applying it to a single ~hundreds-of-MB
+        # string assembled from up to 1.5M lines instead means every one of
+        # its regex passes has to scan that entire blob, which can take long
+        # enough to hold up the whole app (this task runs on a background
+        # thread, but CPython regex matching doesn't release the GIL).
+        # Scrubbing each line individually keeps every regex call bounded to
+        # a single line's length, same as the live logging path already does
+        # continuously with no perf issue.
+        try:
+            from utilities.log_redaction import scrub
+            logs = [scrub(line) for line in logs]
+            settings_snapshot = scrub(settings_snapshot)
+        except Exception as e:
+            logging.warning(f"Task {task_id}: Log redaction scrub unavailable, uploading unscrubbed: {e}")
+
+        log_content = (
+            "=== Diagnostic settings snapshot (sensitive values redacted) ===\n"
+            f"{settings_snapshot}\n"
+            "=== End settings snapshot ===\n\n"
+            + '\n'.join(logs)
+        )
+
         upload_tasks[task_id].update({'status': 'compressing', 'progress': 30, 'message': 'Compressing logs...'})
         compressed_buffer = io.BytesIO()
-        with gzip.GzipFile(fileobj=compressed_buffer, mode='wb', compresslevel=9) as gz:
+        # Level 6: ~40% faster than 9 on a 280 MB log for a ~4% larger upload.
+        with gzip.GzipFile(fileobj=compressed_buffer, mode='wb', compresslevel=6) as gz:
             gz.write(log_content.encode('utf-8'))
         compressed_data = compressed_buffer.getvalue()
         compressed_size_kb = len(compressed_data) / 1024
@@ -322,6 +477,46 @@ def get_all_logs_for_upload(max_lines=1500000):
 
     return final_lines
 
+def _tail_lines(path, max_lines, block_size=65536):
+    """Return the last ``max_lines`` lines of a text file, like
+    ``deque(open(path), maxlen=max_lines)`` but reading only the tail: the
+    live viewer polls a log of up to 50 MB twice a second."""
+    if max_lines <= 0:
+        return []
+    with open(path, 'rb') as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        data = b''
+        # One extra newline guarantees max_lines complete lines after the
+        # (possibly partial) first line is dropped.
+        while pos > 0 and data.count(b'\n') <= max_lines:
+            step = min(block_size, pos)
+            pos -= step
+            f.seek(pos)
+            data = f.read(step) + data
+    lines = data.splitlines(keepends=True)
+    if pos > 0 and lines:
+        lines = lines[1:]  # starts mid-line
+    result = []
+    for line in lines[-max_lines:]:
+        text = line.decode('utf-8', errors='replace')
+        # Universal newlines, as text-mode iteration does
+        if text.endswith('\r\n'):
+            text = text[:-2] + '\n'
+        elif text.endswith('\r'):
+            text = text[:-1] + '\n'
+        result.append(text)
+    return result
+
+
+def _file_signature(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
 def get_recent_logs(n, since='', level='all'):
     """Get recent logs for the live viewer"""
     # Get logs directory from environment variable with fallback
@@ -337,9 +532,8 @@ def get_recent_logs(n, since='', level='all'):
         buffer_multiplier = 5 if level != 'all' else 1
         max_lines = n * buffer_multiplier
 
-        with open(log_path, 'r', encoding='utf-8') as f:
-            lines = deque(f, maxlen=max_lines)
-        
+        lines = _tail_lines(log_path, max_lines)
+
         current_log = None
         for line in lines:
             line = line.strip()
@@ -434,6 +628,8 @@ def stream_logs():
     def generate():
         last_timestamp = request.args.get('since', '')
         level = request.args.get('level', 'all').lower()
+        lines = request.args.get('lines', default=1000, type=int)
+        lines = max(100, min(lines, 5000))  # clamp to valid range
         # Increase polling interval to 500ms (was 50ms) to reduce CPU usage
         # 500ms is still responsive enough for log viewing while being 10x more efficient
         interval = 0.5
@@ -448,21 +644,31 @@ def stream_logs():
         # Pre-initialize json encoder for performance
         json_encoder = json.JSONEncoder()
 
+        # An unchanged debug.log (same inode, size, mtime) has nothing new,
+        # so the tick skips reading and parsing it.
+        log_path = os.path.join(os.environ.get('USER_LOGS', '/user/logs'), 'debug.log')
+        last_signature = None
+
         while True:
             try:
                 start_time = time.time()
 
-                # On first connection, get all logs up to MAX_LOGS
+                # On first connection, get all logs up to requested lines
+                signature = _file_signature(log_path)
                 if first_batch:
-                    logs = get_recent_logs(1000, level=level)
+                    logs = get_recent_logs(lines, level=level)
                     first_batch = False
+                    last_signature = signature
                     # Populate seen_log_hashes with initial logs
                     for log in logs:
                         log_hash = hash((log['timestamp'], log['message'][:100]))
                         seen_log_hashes.add(log_hash)
+                elif signature is not None and signature == last_signature:
+                    logs = []
                 else:
+                    last_signature = signature
                     # After first batch, only get new logs since last timestamp
-                    raw_logs = get_recent_logs(1000, since=last_timestamp, level=level)
+                    raw_logs = get_recent_logs(lines, since=last_timestamp, level=level)
 
                     # Filter out duplicates using seen_log_hashes
                     logs = []

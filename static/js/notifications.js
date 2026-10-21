@@ -16,6 +16,9 @@ export function showPopup(options) {
         title,
         confirmText = 'Confirm',
         cancelText = 'Cancel',
+        extraButtonText,  // Optional 3rd action button, shown between Confirm and Cancel
+        onExtra,
+        suppressEscapeAction = false,  // If true, Escape just closes the popup instead of triggering Cancel
         inputPlaceholder,
         dropdownOptions,
         formHtml,  // New option for custom form HTML
@@ -64,6 +67,7 @@ export function showPopup(options) {
         content += `
             <div class="popup-buttons">
                 <button id="popupConfirm">${confirmText}</button>
+                ${extraButtonText ? `<button id="popupExtra">${extraButtonText}</button>` : ''}
                 <button id="popupCancel">${cancelText}</button>
             </div>
         `;
@@ -132,6 +136,10 @@ export function showPopup(options) {
         }
         .universal-popup #popupConfirm {
             background-color: #4CAF50;
+            color: white;
+        }
+        .universal-popup #popupExtra {
+            background-color: #2196F3;
             color: white;
         }
         .universal-popup #popupCancel, .universal-popup #popupClose {
@@ -224,6 +232,10 @@ export function showPopup(options) {
                 }
             }
         } else if (event.key === 'Escape') {
+            if (suppressEscapeAction) {
+                closePopup();
+                return;
+            }
             const cancelButton = popup.querySelector('#popupCancel');
             if (cancelButton) {
                 cancelButton.click();
@@ -266,6 +278,14 @@ export function showPopup(options) {
         if (cancelButton) {
             cancelButton.addEventListener('click', () => {
                 if (onCancel) onCancel();
+                closePopup();
+            });
+        }
+
+        const extraButton = popup.querySelector('#popupExtra');
+        if (extraButton) {
+            extraButton.addEventListener('click', () => {
+                if (onExtra) onExtra();
                 closePopup();
             });
         }

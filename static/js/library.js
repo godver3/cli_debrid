@@ -24,6 +24,7 @@ window.libraryState = {
     statusFilter: 'collected',
     duplicatesStateFilter: 'all',
     typeFilter: 'all',
+    resolutionFilter: 'all',
     sortBy: 'title_asc',
     totalCount: 0,
     currentView: localStorage.getItem('libraryView') || 'grid', // Remember last view
@@ -32,7 +33,7 @@ window.libraryState = {
 
 // DOM elements
 let mediaGrid, loadingIndicator, emptyState, resultsInfo;
-let searchInput, statusFilter, duplicatesStateFilter, typeFilter, sortSelect, refreshBtn, searchClearBtn;
+let searchInput, statusFilter, duplicatesStateFilter, typeFilter, resolutionFilter, sortSelect, refreshBtn, searchClearBtn;
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
@@ -67,6 +68,7 @@ function initializeElements() {
     statusFilter = document.getElementById('status-filter');
     duplicatesStateFilter = document.getElementById('duplicates-state-filter');
     typeFilter = document.getElementById('type-filter');
+    resolutionFilter = document.getElementById('resolution-filter');
     sortSelect = document.getElementById('sort-select');
     refreshBtn = document.getElementById('refresh-btn');
     searchClearBtn = document.getElementById('search-clear-btn');
@@ -81,6 +83,7 @@ function initializeElements() {
     const savedFilters = {
         statusFilter: localStorage.getItem('libraryStatusFilter'),
         typeFilter: localStorage.getItem('libraryTypeFilter'),
+        resolutionFilter: localStorage.getItem('libraryResolutionFilter'),
         sortBy: localStorage.getItem('librarySortBy'),
         searchTerm: localStorage.getItem('librarySearchTerm'),
         duplicatesStateFilter: localStorage.getItem('libraryDuplicatesStateFilter')
@@ -105,6 +108,14 @@ function initializeElements() {
         libraryState.typeFilter = savedFilters.typeFilter;
     } else {
         libraryState.typeFilter = typeFilter.value;
+    }
+
+    // Resolution filter
+    if (savedFilters.resolutionFilter) {
+        resolutionFilter.value = savedFilters.resolutionFilter;
+        libraryState.resolutionFilter = savedFilters.resolutionFilter;
+    } else {
+        libraryState.resolutionFilter = resolutionFilter.value;
     }
 
     // Update sort options based on status filter (before restoring sort value)
@@ -191,6 +202,7 @@ function attachEventListeners() {
         duplicatesStateFilter.addEventListener('change', handleDuplicatesStateChange);
     }
     typeFilter.addEventListener('change', handleFilterChange);
+    resolutionFilter.addEventListener('change', handleFilterChange);
     sortSelect.addEventListener('change', handleFilterChange);
 
     // Refresh button
@@ -254,11 +266,13 @@ function handleDuplicatesStateChange() {
 function handleFilterChange() {
     libraryState.statusFilter = statusFilter.value;
     libraryState.typeFilter = typeFilter.value;
+    libraryState.resolutionFilter = resolutionFilter.value;
     libraryState.sortBy = sortSelect.value;
 
     // Save filter values to localStorage
     localStorage.setItem('libraryStatusFilter', libraryState.statusFilter);
     localStorage.setItem('libraryTypeFilter', libraryState.typeFilter);
+    localStorage.setItem('libraryResolutionFilter', libraryState.resolutionFilter);
     localStorage.setItem('librarySortBy', libraryState.sortBy);
 
     resetAndReload();
@@ -457,6 +471,7 @@ async function fetchItems(isReset = false) {
         status: libraryState.statusFilter,
         duplicates_state: libraryState.duplicatesStateFilter,
         media_type: libraryState.typeFilter,
+        resolution: libraryState.resolutionFilter,
         sort: libraryState.sortBy
     });
 
@@ -477,7 +492,10 @@ async function fetchItems(isReset = false) {
         if (data.success) {
             // Update state
             libraryState.hasMore = data.has_more;
-            libraryState.totalCount = data.total;
+            // total is provided on first page (offset=0) and on the last page; preserve it across subsequent pages
+            if (data.total !== null && data.total !== undefined) {
+                libraryState.totalCount = data.total;
+            }
 
             // Render items
             if (data.items && data.items.length > 0) {
@@ -547,10 +565,10 @@ function createListItem(item) {
         // Plex image - use Plex proxy endpoint
         const plexPath = item.poster_path.substring(5);
         posterUrl = `/library/plex_image${plexPath}`;
-    } else if (item.poster_path && item.poster_path.startsWith('/')) {
+    } else if (item.poster_path && item.poster_path.startsWith('/') && !item.poster_path.startsWith('/static/')) {
         // TMDB image - use TMDB proxy endpoint
         posterUrl = `/scraper/tmdb_image/w92${item.poster_path}`; // Smaller size for list view
-    } else if (item.poster_path) {
+    } else if (item.poster_path && !item.poster_path.startsWith('/static/')) {
         // Full URL or other format - use as-is
         posterUrl = item.poster_path;
     } else if (item.tmdb_id) {
@@ -673,10 +691,10 @@ function createGridCard(item) {
         // Plex image - use Plex proxy endpoint
         const plexPath = item.poster_path.substring(5); // Remove 'plex:' prefix
         posterUrl = `/library/plex_image${plexPath}`;
-    } else if (item.poster_path && item.poster_path.startsWith('/')) {
-        // TMDB image - use TMDB proxy endpoint
-        posterUrl = `/scraper/tmdb_image/w300${item.poster_path}`;
-    } else if (item.poster_path) {
+    } else if (item.poster_path && item.poster_path.startsWith('/') && !item.poster_path.startsWith('/static/')) {
+        // TMDB image - use TMDB proxy endpoint (w185 matches 160px card width)
+        posterUrl = `/scraper/tmdb_image/w185${item.poster_path}`;
+    } else if (item.poster_path && !item.poster_path.startsWith('/static/')) {
         // Full URL or other format - use as-is
         posterUrl = item.poster_path;
     } else if (item.tmdb_id) {
@@ -1018,50 +1036,75 @@ function formatFileSize(bytes) {
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + units[i];
 }
 
-// Fetch missing poster from TMDB on-demand using TMDB ID
-async function fetchMissingPoster(tmdbId, mediaType, card) {
-    try {
-        const response = await fetch(`/library/fetch_poster/${tmdbId}/${mediaType}`);
-        const data = await response.json();
-
-        if (data.success && data.poster_path) {
-            // Update the poster image - handle both grid view (.media-poster img) and list view (.list-col-poster img)
-            // Also handle case where 'card' is already the img element itself
-            const img = card.tagName === 'IMG' ? card :
-                        (card.querySelector('.media-poster img') ||
-                         card.querySelector('.list-col-poster img'));
-            if (img) {
-                img.src = `/scraper/tmdb_image/w300${data.poster_path}`;
-                img.classList.remove('placeholder');
-            }
+// Concurrency-limited queue for on-demand poster fetches (prevents flooding TMDB API)
+const _posterFetchQueue = {
+    queue: [],
+    running: 0,
+    maxConcurrent: 5,
+    add(fn) {
+        this.queue.push(fn);
+        this._run();
+    },
+    _run() {
+        while (this.running < this.maxConcurrent && this.queue.length > 0) {
+            const fn = this.queue.shift();
+            this.running++;
+            fn().finally(() => {
+                this.running--;
+                this._run();
+            });
         }
-    } catch (error) {
-        console.debug(`Could not fetch poster for ${tmdbId}:`, error);
-        // Silent fail - placeholder already shown
     }
+};
+
+// Fetch missing poster from TMDB on-demand using TMDB ID
+function fetchMissingPoster(tmdbId, mediaType, card) {
+    _posterFetchQueue.add(async () => {
+        try {
+            const response = await fetch(`/library/fetch_poster/${tmdbId}/${mediaType}`);
+            const data = await response.json();
+
+            if (data.success && data.poster_path) {
+                // Update the poster image - handle both grid view (.media-poster img) and list view (.list-col-poster img)
+                // Also handle case where 'card' is already the img element itself
+                const img = card.tagName === 'IMG' ? card :
+                            (card.querySelector('.media-poster img') ||
+                             card.querySelector('.list-col-poster img'));
+                if (img) {
+                    img.src = `/scraper/tmdb_image/w185${data.poster_path}`;
+                    img.classList.remove('placeholder');
+                }
+            }
+        } catch (error) {
+            console.debug(`Could not fetch poster for ${tmdbId}:`, error);
+            // Silent fail - placeholder already shown
+        }
+    });
 }
 
 // Fetch missing poster from TMDB on-demand using IMDB ID (fallback when no TMDB ID)
-async function fetchMissingPosterByImdb(imdbId, mediaType, card) {
-    try {
-        const response = await fetch(`/library/fetch_poster_imdb/${imdbId}/${mediaType}`);
-        const data = await response.json();
+function fetchMissingPosterByImdb(imdbId, mediaType, card) {
+    _posterFetchQueue.add(async () => {
+        try {
+            const response = await fetch(`/library/fetch_poster_imdb/${imdbId}/${mediaType}`);
+            const data = await response.json();
 
-        if (data.success && data.poster_path) {
-            // Update the poster image - handle both grid view (.media-poster img) and list view (.list-col-poster img)
-            // Also handle case where 'card' is already the img element itself
-            const img = card.tagName === 'IMG' ? card :
-                        (card.querySelector('.media-poster img') ||
-                         card.querySelector('.list-col-poster img'));
-            if (img) {
-                img.src = `/scraper/tmdb_image/w300${data.poster_path}`;
-                img.classList.remove('placeholder');
+            if (data.success && data.poster_path) {
+                // Update the poster image - handle both grid view (.media-poster img) and list view (.list-col-poster img)
+                // Also handle case where 'card' is already the img element itself
+                const img = card.tagName === 'IMG' ? card :
+                            (card.querySelector('.media-poster img') ||
+                             card.querySelector('.list-col-poster img'));
+                if (img) {
+                    img.src = `/scraper/tmdb_image/w185${data.poster_path}`;
+                    img.classList.remove('placeholder');
+                }
             }
+        } catch (error) {
+            console.debug(`Could not fetch poster for IMDB ${imdbId}:`, error);
+            // Silent fail - placeholder already shown
         }
-    } catch (error) {
-        console.debug(`Could not fetch poster for IMDB ${imdbId}:`, error);
-        // Silent fail - placeholder already shown
-    }
+    });
 }
 
 function handleCardClick(item) {
@@ -1130,28 +1173,33 @@ async function refreshItemMetadata(item) {
 }
 
 async function deleteItem(item) {
-    if (!confirm(`Delete "${item.title}"? This will remove it from the library.`)) {
-        return;
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Item',
+        message: `Delete "${item.title}"? This will remove it from the library.`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            try {
+                if (window.DeletionCommon) {
+                    // Use deletion common if available
+                    const result = await window.DeletionCommon.executeDelete([item.id], {
+                        layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache']
+                    });
 
-    try {
-        if (window.DeletionCommon) {
-            // Use deletion common if available
-            const result = await window.DeletionCommon.executeDelete([item.id], {
-                layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache']
-            });
-
-            if (result && result.success) {
-                showSuccess(`Successfully deleted "${item.title}"`);
-                resetAndReload();
+                    if (result && result.success) {
+                        showSuccess(`Successfully deleted "${item.title}"`);
+                        resetAndReload();
+                    }
+                } else {
+                    showError('Deletion system not available');
+                }
+            } catch (error) {
+                console.error('Error deleting item:', error);
+                showError(`Error deleting "${item.title}"`);
             }
-        } else {
-            showError('Deletion system not available');
         }
-    } catch (error) {
-        console.error('Error deleting item:', error);
-        showError(`Error deleting "${item.title}"`);
-    }
+    });
 }
 
 function showSuccess(message) {
@@ -1161,10 +1209,14 @@ function showSuccess(message) {
 
 function updateResultsInfo() {
     const displayedCount = libraryState.offset;
-    const totalText = libraryState.totalCount > 0
-        ? `Showing ${displayedCount} of ${libraryState.totalCount} items`
-        : 'Loading...';
-
+    let totalText;
+    if (libraryState.totalCount > 0) {
+        totalText = `Showing ${displayedCount}/${libraryState.totalCount} items`;
+    } else if (displayedCount > 0) {
+        totalText = `Showing ${displayedCount} items`;
+    } else {
+        totalText = 'Loading...';
+    }
     resultsInfo.textContent = totalText;
 }
 
@@ -1553,10 +1605,13 @@ async function deleteSelectedItems() {
     const itemWord = itemsToDelete.length === 1 ? 'item' : 'items';
     const action = libraryState.autoGhostlistEnabled ? 'ghostlist' : 'delete';
     const canUndo = libraryState.autoGhostlistEnabled ? 'Ghostlisted items can be recovered.' : 'This action cannot be undone.';
-    const confirmed = confirm(`This will ${action} ${itemsToDelete.length} ${itemWord}. ${canUndo}`);
-    if (!confirmed) {
-        return;
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Confirm Deletion',
+        message: `This will ${action} ${itemsToDelete.length} ${itemWord}. ${canUndo}`,
+        confirmText: action.charAt(0).toUpperCase() + action.slice(1),
+        cancelText: 'Cancel',
+        onConfirm: async function() {
 
     // Show loading using shared deletion loading with progress tracking
     const deletionTitle = itemsToDelete.length === 1 ? itemsToDelete[0].title : `${itemsToDelete.length} ${itemWord}`;
@@ -1571,15 +1626,25 @@ async function deleteSelectedItems() {
     let completedCount = 0;
     const totalCount = itemsToDelete.length;
 
+    const allLayers = ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache', 'content_source'];
+    const layersWithoutPlex = allLayers.filter(l => l !== 'media_server');
+
+    const doDelete = async (item, layers) => {
+        const endpoint = item.type === 'movie'
+            ? `/library/delete_movie/${item.imdb_id}`
+            : `/library/delete_show/${item.imdb_id}`;
+        const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ blacklist: false, layers })
+        });
+        return await resp.json();
+    };
+
     try {
-        // Delete all items in parallel (not one by one)
+        // Phase 1: Delete all items in parallel with full layers
         const deletePromises = itemsToDelete.map(async (item, index) => {
             try {
-                const endpoint = item.type === 'movie'
-                    ? `/library/delete_movie/${item.imdb_id}`
-                    : `/library/delete_show/${item.imdb_id}`;
-
-                // Update progress before starting
                 const progress = Math.round((completedCount / totalCount) * 100);
                 window.updateDeletionLoading(
                     `Processing ${item.title}...`,
@@ -1587,27 +1652,20 @@ async function deleteSelectedItems() {
                     `${completedCount} of ${totalCount} completed`
                 );
 
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        blacklist: false,
-                        layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache', 'content_source']
-                    })
-                });
-
-                const result = await response.json();
+                const result = await doDelete(item, allLayers);
 
                 completedCount++;
                 const newProgress = Math.round((completedCount / totalCount) * 100);
                 window.updateDeletionLoading(
-                    `Completed ${item.title}`,
+                    result.plex_not_found ? `Not in Plex: ${item.title}` : `Completed ${item.title}`,
                     newProgress,
                     `${completedCount} of ${totalCount} completed`
                 );
 
                 if (result && result.success) {
                     return { success: true, item, result };
+                } else if (result && result.plex_not_found) {
+                    return { success: false, plexNotFound: true, item, result };
                 } else {
                     return { success: false, item, error: result.error || 'Unknown error', result };
                 }
@@ -1623,11 +1681,88 @@ async function deleteSelectedItems() {
             }
         });
 
-        // Wait for all deletions to complete
+        // Wait for all Phase 1 deletions to complete
         const results = await Promise.all(deletePromises);
 
-        // Count successes and failures
-        results.forEach(r => {
+        console.log('[DELETE] Phase 1 results:', JSON.stringify(results.map(r => ({success: r.success, plexNotFound: r.plexNotFound, title: r.item && r.item.title, error: r.error}))));
+
+        // Separate plex-not-found items from normal results
+        const plexNotFoundItems = results.filter(r => r.plexNotFound);
+        const normalResults = results.filter(r => !r.plexNotFound);
+
+        console.log('[DELETE] plexNotFoundItems:', plexNotFoundItems.length, 'normalResults:', normalResults.length);
+
+        // Phase 2: If any items were not found in Plex, prompt user once for all of them
+        if (plexNotFoundItems.length > 0) {
+            window.hideDeletionLoading();
+
+            console.log('[DELETE] Phase 2: showing CONFIRM popup, window.showPopup:', typeof window.showPopup, 'window.POPUP_TYPES:', window.POPUP_TYPES);
+
+            const titles = plexNotFoundItems.map(r => `<strong>${r.item.title}</strong>`).join('<br>');
+            const itemWord = plexNotFoundItems.length === 1 ? 'item' : 'items';
+            const confirmed = await new Promise((resolve) => {
+                if (window.POPUP_TYPES && window.showPopup) {
+                    window.showPopup({
+                        type: window.POPUP_TYPES.CONFIRM,
+                        title: `${plexNotFoundItems.length} ${itemWord} not found in Plex`,
+                        message: `The following ${itemWord} were not found in Plex (already removed):<br><br>${titles}<br><br>Continue removing from database, debrid/usenet and other layers?`,
+                        confirmText: 'Continue',
+                        cancelText: 'Cancel',
+                        onConfirm: () => { console.log('[DELETE] User clicked Continue'); resolve(true); },
+                        onCancel: () => { console.log('[DELETE] User clicked Cancel'); resolve(false); }
+                    });
+                    console.log('[DELETE] showPopup called, waiting for user...');
+                } else {
+                    console.log('[DELETE] Falling back to showPopup confirm dialog');
+                    const titleList = plexNotFoundItems.map(r => r.item.title).join(', ');
+                    showPopup({
+                        type: 'confirm',
+                        title: 'Not Found in Plex',
+                        message: `"${titleList}" not found in Plex. Continue removing from database and other layers?`,
+                        confirmText: 'Continue',
+                        cancelText: 'Cancel',
+                        onConfirm: () => resolve(true),
+                        onCancel: () => resolve(false)
+                    });
+                }
+            });
+            console.log('[DELETE] Phase 2 confirmed:', confirmed);
+
+            if (confirmed) {
+                window.showDeletionLoading(deletionTitle, null);
+                // Re-run deletions without media_server layer for these items
+                const retryPromises = plexNotFoundItems.map(async (r) => {
+                    try {
+                        window.updateDeletionLoading(
+                            `Processing ${r.item.title}...`,
+                            Math.round((completedCount / totalCount) * 100),
+                            `${completedCount} of ${totalCount} completed`
+                        );
+                        const retryResult = await doDelete(r.item, layersWithoutPlex);
+                        completedCount++;
+                        if (retryResult && retryResult.success) {
+                            return { success: true, item: r.item, result: retryResult };
+                        } else {
+                            return { success: false, item: r.item, error: retryResult.error || 'Unknown error', result: retryResult };
+                        }
+                    } catch (error) {
+                        completedCount++;
+                        return { success: false, item: r.item, error: error.message };
+                    }
+                });
+                const retryResults = await Promise.all(retryPromises);
+                normalResults.push(...retryResults);
+            } else {
+                // User cancelled — treat as failed
+                plexNotFoundItems.forEach(r => {
+                    normalResults.push({ success: false, item: r.item, error: 'Cancelled — not found in Plex', result: r.result });
+                });
+                window.showDeletionLoading(deletionTitle, null);
+            }
+        }
+
+        // Count successes and failures across all results
+        normalResults.forEach(r => {
             if (r.success) {
                 successCount++;
                 deletionResults.push(r);
@@ -1731,7 +1866,7 @@ async function deleteSelectedItems() {
                         } else if (layer.includes('Filesystem')) {
                             reportLines.push('✓ Removed files from filesystem');
                         } else if (layer.includes('Debrid')) {
-                            reportLines.push('✓ Removed from debrid provider');
+                            reportLines.push('✓ Removed from debrid/usenet provider');
                         } else if (layer.includes('Symlinks')) {
                             reportLines.push('✓ Removed symlinks');
                         } else if (layer.includes('Cache')) {
@@ -1756,7 +1891,7 @@ async function deleteSelectedItems() {
                         // } else if (source.startsWith('MDBList_')) {
                         //     sourceName = source.replace('MDBList_', '').replace(/_/g, ' ');
                         } else if (source === 'Overseerr') {
-                            sourceName = 'Overseerr';
+                            sourceName = 'Seerr';
                         }
                         reportLines.push(`✓ Removed from ${sourceName}`);
                     });
@@ -1800,24 +1935,31 @@ async function deleteSelectedItems() {
                 }
             }, 100);
         } else {
-            alert(message);
-            exitSelectionMode();
-            window.location.reload();
+            showPopup({
+                type: successCount > 0 ? 'success' : 'error',
+                title: successCount > 0 ? 'Success' : 'Error',
+                message: message,
+                autoClose: false,
+                onConfirm: () => {
+                    exitSelectionMode();
+                    window.location.reload();
+                }
+            });
         }
 
     } catch (error) {
         window.hideDeletionLoading();
         console.error('Error deleting items:', error);
-        if (window.POPUP_TYPES && window.showPopup) {
-            window.showPopup({
-                type: window.POPUP_TYPES.ERROR,
-                message: `Error deleting items: ${error.message}`,
-                autoClose: 5000
-            });
-        } else {
-            alert(`Error deleting items: ${error.message}`);
-        }
+        showPopup({
+            type: 'error',
+            title: 'Error',
+            message: `Error deleting items: ${error.message}`,
+            autoClose: 5000
+        });
     }
+
+        } // end onConfirm
+    }); // end showPopup
 }
 
 // Keyboard shortcuts

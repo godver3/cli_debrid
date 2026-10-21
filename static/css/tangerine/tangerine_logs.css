@@ -6,62 +6,154 @@
     .log-container {
         width: 100%;
         height: calc(100vh - 95px);
-        /* width: 95vw; */
-        /* max-width: 1200px; */
-        /* height: calc(100vh - 200px); */
-        /* margin: 20px auto; */
         overflow: hidden;
         display: flex;
         flex-direction: column;
-        background-color: #0f0700;
+        background-color: #111;
         position: relative;
     }
 
     .log-controls {
-        padding: 5px 25px;
-        background-color: #141414;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 7px 14px;
+        background-color: #1a1a1a;
+        border-bottom: 1px solid #2d2d2d;
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         white-space: nowrap;
         flex-wrap: nowrap;
+        flex-shrink: 0;
     }
 
-    #log-level-filter {
-        padding: 0.75rem 1rem;
-        background: rgba(255, 255, 255, 0.05);
+    #log-level-filter,
+    #log-lines-select {
+        padding: 0 9px;
+        height: 30px;
+        background: #222;
         color: #e0e0e0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        transition: all 0.3s ease;
+        border: 1px solid #3d3d3d;
+        border-radius: 4px;
+        font-size: 12px;
+        font-family: 'JetBrains Mono', monospace;
+        outline: none;
+        transition: border-color .15s;
+        cursor: pointer;
     }
 
     #log-level-filter:focus,
-    #log-level-filter:hover {
-        outline: none;
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(255, 107, 53, 0.5);
-        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+    #log-level-filter:hover,
+    #log-lines-select:focus,
+    #log-lines-select:hover {
+        border-color: #e8601c;
     }
 
     #log-search {
-        padding: 0.75rem 1rem;
-        background: rgba(255, 255, 255, 0.05);
+        padding: 0 9px;
+        height: 30px;
+        background: #222;
         color: #e0e0e0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        transition: all 0.3s ease;
+        border: 1px solid #3d3d3d;
+        border-radius: 4px;
+        font-size: 12px;
+        font-family: 'JetBrains Mono', monospace;
+        outline: none;
+        transition: border-color .15s;
         min-width: 200px;
     }
 
+    #log-search::placeholder { color: #555; }
+
     #log-search:focus,
     #log-search:hover {
-        outline: none;
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(255, 107, 53, 0.5);
-        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+        border-color: #e8601c;
     }
+
+    /* ── Chip filter bar (tangerine) ─────────────────────────────────── */
+    .log-filter-chips {
+        display: none;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 12px;
+        background: rgba(255, 255, 255, 0.02);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        box-sizing: border-box;
+        overflow: visible;
+    }
+
+    .log-chip {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        padding: 2px 9px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--chip-color, #aaa);
+        font-size: 0.73em;
+        font-family: monospace;
+        cursor: pointer;
+        transition: opacity 0.15s;
+        white-space: nowrap;
+        line-height: 1.6;
+        flex-shrink: 0;
+    }
+
+    .log-chip:hover { opacity: 0.75; }
+
+    .log-chip-disabled {
+        opacity: 0.3;
+        text-decoration: line-through;
+    }
+
+    .log-chip-more {
+        --chip-color: #777;
+        font-family: sans-serif;
+        letter-spacing: 0.02em;
+        border-style: dashed;
+    }
+
+    .log-chip-more-wrapper {
+        position: relative;
+        flex-shrink: 0;
+    }
+
+    .log-chip-dropdown {
+        position: fixed;
+        z-index: 9999;
+        background: #1a1a24;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        padding: 4px;
+        min-width: 200px;
+        max-height: 320px;
+        overflow-y: auto;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+    }
+
+    .log-chip-dropdown-item {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        padding: 4px 10px;
+        border-radius: 4px;
+        border: none;
+        background: transparent;
+        color: var(--chip-color, #bbb);
+        font-size: 0.76em;
+        font-family: monospace;
+        cursor: pointer;
+        text-align: left;
+        white-space: nowrap;
+        transition: background 0.1s;
+    }
+
+    .log-chip-dropdown-item:hover { background: rgba(255, 107, 53, 0.1); }
+    .log-chip-dropdown-item.log-chip-disabled { opacity: 0.3; text-decoration: line-through; }
+    /* ── End chip filter ─────────────────────────────────────────────── */
 
     #log-entries {
         flex-grow: 1;
@@ -127,42 +219,38 @@
     }
 
     /* Custom scrollbar styles for log entries */
-    #log-entries::-webkit-scrollbar {
-        width: 12px;
-    }
-
-    #log-entries::-webkit-scrollbar-track {
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 10px;
-    }
-
-    #log-entries::-webkit-scrollbar-thumb {
-        background: #666;
-        border-radius: 10px;
-    }
-
-    #log-entries::-webkit-scrollbar-thumb:hover {
-        background: #888;
-    }
+    #log-entries::-webkit-scrollbar { width: 6px; }
+    #log-entries::-webkit-scrollbar-track { background: #1a1a1a; }
+    #log-entries::-webkit-scrollbar-thumb { background: #3d3d3d; border-radius: 3px; }
+    #log-entries::-webkit-scrollbar-thumb:hover { background: #e8601c; }
 
     /* For Firefox */
     #log-entries {
         scrollbar-width: thin;
-        scrollbar-color: #666 #333;
+        scrollbar-color: #3d3d3d #1a1a1a;
+    }
+
+    #climount-last-polled {
+        font-size: 11px;
+        color: #9ca3af;
+        white-space: nowrap;
+        font-family: 'Inter', sans-serif;
     }
 
     #pause-indicator {
-        position: absolute;
-        top: 5px;
-        right: 10%;
-        background-color: rgba(255, 255, 255, 0.05);
-        color: #e0e0e0;
-        padding: 5px 10px;
-        border-radius: 10px;
-        font-size: 0.9em;
+        /* position: absolute;
+        top: 46px;
+        right: 14px; */
+        background: #1a1a1a;
+        border: 1px solid #3d3d3d;
+        color: #f59e0b;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-family: 'JetBrains Mono', monospace;
         display: none;
         z-index: 10;
-        opacity: 0.7;
+        opacity: 0.9;
         animation: flash-opacity 2s ease-in-out infinite;
     }
 
@@ -186,29 +274,73 @@
         font-size: 0.3em;
     }
 
-    #share-logs-btn {
-        padding: 0.75rem 1rem;
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-        color: white;
-        border: none;
-        border-radius: 12px;
+    .log-source-tabs {
+        display: flex;
+        gap: 4px;
+        padding: 8px 10px 0;
+    }
+
+    .log-source-tab {
+        padding: 6px 14px;
+        background: transparent;
+        color: #9ca3af;
+        border: 1px solid transparent;
+        border-radius: 4px 4px 0 0;
         cursor: pointer;
-        transition: all 0.3s ease;
-        min-width: 120px;
+        font-size: 12px;
+        font-weight: 500;
+        font-family: 'Inter', sans-serif;
+        transition: all .15s;
+    }
+
+    .log-source-tab:hover {
+        color: #f97316;
+        border-color: #c2500f;
+    }
+
+    .log-source-tab.active {
+        color: #f97316;
+        border-color: #c2500f;
+        background: #c2500f22;
+    }
+
+    .share-button-group {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .share-item {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+    }
+
+    #share-logs-btn, #share-climount-logs-btn, #share-both-logs-btn {
+        padding: 0 14px;
+        height: 30px;
+        background: transparent;
+        color: #f97316;
+        border: 1px solid #c2500f;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all .15s;
+        min-width: 100px;
         position: relative;
-        font-weight: 600;
+        font-size: 12px;
+        font-weight: 500;
+        font-family: 'Inter', sans-serif;
+        white-space: nowrap;
     }
 
-    #share-logs-btn:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 24px rgba(255, 107, 53, 0.3);
+    #share-logs-btn:hover, #share-climount-logs-btn:hover, #share-both-logs-btn:hover {
+        background: #c2500f22;
+        border-color: #f97316;
     }
 
-    #share-logs-btn:disabled {
-        background: rgba(255, 255, 255, 0.1);
+    #share-logs-btn:disabled, #share-climount-logs-btn:disabled, #share-both-logs-btn:disabled {
+        opacity: .5;
         cursor: not-allowed;
-        transform: none;
-        box-shadow: none;
     }
 
     .share-progress {
@@ -220,42 +352,43 @@
         transition: width 0.3s ease-in-out;
     }
 
-    #share-url {
-        color: #3498db;
+    .share-result-url {
+        color: #60a5fa;
         text-decoration: none;
-        font-family: monospace;
-        padding: 5px 10px;
-        background-color: #2c3e50;
-        border-radius: 10px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        padding: 4px 10px;
+        background: #1e40af22;
+        border: 1px solid #1e40af;
+        border-radius: 4px;
         display: none;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 300px;
+        max-width: 200px;
     }
 
-    #share-url:hover {
-        background-color: #34495e;
+    .share-result-url:hover {
+        background: #1e40af44;
         text-decoration: underline;
     }
 
-    #copy-url-btn {
+    .copy-url-btn {
         background: none;
         border: none;
-        color: #3498db;
+        color: #60a5fa;
         cursor: pointer;
-        padding: 5px;
+        padding: 4px;
         display: none;
-        transition: color 0.2s;
+        transition: color .15s;
+        line-height: 1;
     }
 
-    #copy-url-btn:hover {
-        color: #2980b9;
-    }
+    .copy-url-btn:hover { color: #93c5fd; }
 
-    #copy-url-btn svg {
-        width: 16px;
-        height: 16px;
+    .copy-url-btn svg {
+        width: 15px;
+        height: 15px;
         vertical-align: middle;
     }
 
@@ -308,120 +441,35 @@
         opacity: 0.9;  /* Slightly reduce opacity to differentiate from level indicator */
     }
 
-    /* Add styles for the goto search container */
-    .goto-container {
-        display: flex;
-        gap: 5px;
-    }
-
-    .goto-btn {
-        padding: 0.75rem 1rem;
-        background: rgba(255, 255, 255, 0.05);
-        color: #e0e0e0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        cursor: pointer;
-        font-size: 14px;
-        transition: all 0.3s ease;
-    }
-
-    .goto-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-
-    .goto-btn:not(:disabled):hover {
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(255, 107, 53, 0.5);
-        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
-    }
-
-    .goto-nav-buttons {
-        display: flex;
-        gap: 2px;
-    }
-
-    .goto-nav-button {
-        padding: 0.75rem;
-        background: rgba(255, 255, 255, 0.05);
-        color: #e0e0e0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        cursor: pointer;
-        transition: all 0.3s ease;
-    }
-
-    .goto-nav-button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-
-    .goto-nav-button:not(:disabled):hover {
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(255, 107, 53, 0.5);
-        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
-    }
-
-    .match-count {
-        color: #888;
-        font-size: 0.8em;
-        padding: 0 5px;
-        min-width: 45px;  /* Ensure consistent width for count */
-        text-align: left;
-    }
-
     /* Update the existing search box style */
     #log-search {
         min-width: 200px;
     }
 
-    /* Add styles for highlighted matches */
-    .highlight-match {
-        background-color: rgba(255, 255, 0, 0.2);
-        outline: 2px solid rgba(255, 255, 0, 0.3);
-    }
-
-    #goto-search {
-        padding: 0.75rem 1rem;
-        background: rgba(255, 255, 255, 0.05);
-        color: #e0e0e0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        transition: all 0.3s ease;
-        width: 250px;
-    }
-
-    #goto-search:focus,
-    #goto-search:hover {
-        outline: none;
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(255, 107, 53, 0.5);
-        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
-    }
-
     /* Add styles for the bottom button */
     .bottom-button {
-        position: absolute;
-        top: 5px;
-        right: 90px;
-        padding: 5px 10px;
-        background-color: rgba(255, 255, 255, 0.05);
+        /* position: absolute;
+        top: 46px;
+        right: 160px; */
+        padding: 4px 12px;
+        background: #1a1a1a;
         color: #e0e0e0;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: 10px;
+        border: 1px solid #3d3d3d;
+        border-radius: 4px;
+        font-size: 11px;
+        font-family: 'JetBrains Mono', monospace;
         cursor: pointer;
         z-index: 100;
-        display: none;  /* Hidden by default, shown when not at bottom */
+        display: none;
+        transition: border-color .15s;
     }
 
     .bottom-button:hover {
-        background-color: rgba(255, 255, 255, 0.08);
+        border-color: #e8601c;
+        color: #e8601c;
     }
 
-    /* Show bottom button when not at bottom */
-    .bottom-button.visible {
-        display: block;
-    }
+    .bottom-button.visible { display: block; }
     /* Mobile-specific adjustments */
     @media screen and (max-width: 768px) {
         .log-container {
@@ -430,6 +478,7 @@
             /* Default adjusted height for mobile browser UI */
             height: calc(100vh - 100px); 
             border-radius: 0;
+            bottom: 50px;
         }
 
         /* Override height if running as standalone PWA or fullscreen */
@@ -443,6 +492,7 @@
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
+            padding-top: 53px;
         }
 
         #log-level-filter,
@@ -452,40 +502,9 @@
             margin-right: 0 !important;
         }
 
-        .match-count {
-            font-size: 0.9em;
-            margin-top: 5px;
-        }
-
-        .bottom-button {
-            position: absolute !important;
-            left: 50%;
-            transform: translateX(-50%);
-            margin-top: 120px;
-            width: 90px;
-        }
-
-        #pause-indicator {
-            top: 124px !important;
-            right: 10px !important;
-        }
-
-        #goto-container {
-            width: 100%;
-        }
-
         /* --- START EDIT: Adjust height when task monitor overlay is visible --- */
         body.has-bottom-overlay .log-container {
             height: calc(100vh - 100px); /* existing offset + overlay */
-        }
-        .goto-btn {
-            padding: 0.55rem .4rem;
-        }
-        #goto-search {
-            width: auto;
-        }
-        .goto-container {
-            flex-flow: wrap;
         }
     }
 

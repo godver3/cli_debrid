@@ -1,3 +1,4 @@
+import html
 import logging
 import re
 from typing import Dict, Any
@@ -15,6 +16,8 @@ _SWAT_PATTERN = re.compile(r'S\.W\.A\.T\.?|S\s+W\s+A\s+T', re.IGNORECASE)
 _PUNCTUATION_PATTERN = re.compile(r"[':()\[\]{}]")
 _SPACE_PATTERN = re.compile(r'[\s_]+')
 _MULTI_PERIOD_PATTERN = re.compile(r'\.+')
+_BARE_039S_PATTERN = re.compile(r'\b039\s+s\b')
+_BARE_039_PATTERN = re.compile(r'\s+039\s+')
 
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
@@ -105,10 +108,15 @@ def normalize_title(title: str) -> str:
     standardizing the format, and removing non-English letters while keeping accented English letters and '&'.
     Uses caching to avoid re-processing the same title multiple times.
     """
-    # Quick replacement of common HTML entities
+    # Decode HTML entities (handles &#039; → ', &amp; → &, etc.)
+    title = html.unescape(title)
+    # Also handle bare numeric remnants from partially-stripped entities (e.g. " 039 s" from &#039;s)
+    title = _BARE_039S_PATTERN.sub("'s", title)
+    title = _BARE_039_PATTERN.sub("'", title)
+    # Legacy explicit replacements as fallback
     if '&' in title:
         title = title.replace('&039;', "'").replace('&039s', "'s").replace('&#39;', "'")
-    
+
     # Convert superscript and subscript unicode digits to normal digits to improve matching (e.g., '²' -> '2')
     supersub_digit_map = str.maketrans({
         '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4',

@@ -274,7 +274,7 @@ def _check_preferred_rp(patterns_weights, fields_to_check: list, is_bonus: bool)
                 break 
     return score_change #, breakdown
 
-def _calculate_match_score(filename: str, ptt_data: dict, version_name: str, version_config: dict) -> float:
+def _calculate_match_score(filename: str, ptt_data: dict, version_name: str, version_config: dict, is_nzb: bool = False) -> float:
     """
     Calculates a score based on how well PTT-parsed data matches the scraping version_config,
     using logic adapted from filter_results.py and rank_results.py.
@@ -302,7 +302,13 @@ def _calculate_match_score(filename: str, ptt_data: dict, version_name: str, ver
         f"{ptt_data.get('group','')}"
     )
     for term_obj in version_config.get("filter_out", []):
-        term = str(term_obj) 
+        # Honor the per-term source scope (both|nzb|debrid) exactly like
+        # filter_results.py, so a term scoped to the other protocol doesn't affect
+        # version assignment. Default 'both' → unchanged for existing configs.
+        _src = term_obj.get('source', 'both') if isinstance(term_obj, dict) else 'both'
+        if (_src == 'nzb' and not is_nzb) or (_src == 'debrid' and is_nzb):
+            continue
+        term = term_obj['pattern'] if isinstance(term_obj, dict) else str(term_obj)
         if smart_search(term, combined_text_for_filter_out):
             term_display = (term[:15] + '...') if len(term) > 18 else term
             details = f"DQ: filter_out '{term_display}'"
@@ -324,19 +330,27 @@ def _calculate_match_score(filename: str, ptt_data: dict, version_name: str, ver
     filter_in_terms = version_config.get("filter_in", [])
     if filter_in_terms: 
         found_mandatory_filter_in = False
+        _applicable_filter_in = 0  # filter_in terms that apply to THIS protocol
         matched_filter_in_term_for_log = ""
         for term_obj in filter_in_terms:
-            term = str(term_obj)
+            _src = term_obj.get('source', 'both') if isinstance(term_obj, dict) else 'both'
+            if (_src == 'nzb' and not is_nzb) or (_src == 'debrid' and is_nzb):
+                continue  # term scoped to the other protocol — mirror filter_results
+            _applicable_filter_in += 1
+            term = term_obj['pattern'] if isinstance(term_obj, dict) else str(term_obj)
             if any(smart_search(term, field_val) for field_val in ptt_matchable_fields_str):
                 found_mandatory_filter_in = True
                 matched_filter_in_term_for_log = term # For logging
                 break
-        
-        if not found_mandatory_filter_in:
+
+        # Only DQ when there WERE filter_in terms applicable to this protocol and
+        # none matched. If every filter_in term was scoped to the other protocol,
+        # this version has no mandatory filter_in here → don't DQ (mirror filter_results).
+        if _applicable_filter_in > 0 and not found_mandatory_filter_in:
             details = "DQ: Missing filter_in"
             logging.debug(f"{filename_display:<80} | {version_name_display:<20} | {details:<45}")
             return -float('inf')
-        else:
+        elif found_mandatory_filter_in:
             score += 20 # Base bonus for passing mandatory filter_in
             
             # Calculate special bonus based on highest preferred_filter_in score
@@ -448,11 +462,15 @@ def _calculate_match_score(filename: str, ptt_data: dict, version_name: str, ver
     
     return score
 
-def parse_filename_for_version(filename: str) -> str:
+def parse_filename_for_version(filename: str, is_nzb: bool = False) -> str:
     """
-    Dynamically parses a filename using PTT and then determines its best matching 
+    Dynamically parses a filename using PTT and then determines its best matching
     "Scraping" version by scoring it against all configured scraping versions.
     Excludes generic version names '1080p' and '2160p' from being matched.
+
+    `is_nzb` lets callers that know the result protocol apply per-term filter
+    source-scoping (both|nzb|debrid) consistently with filter_results. Callers
+    that don't know the protocol leave the safe default (False / treat as 'both').
     """
     scraping_versions_config = get_setting('Scraping', 'versions', {})
     default_rp_version = get_default_version()
@@ -493,7 +511,7 @@ def parse_filename_for_version(filename: str) -> str:
             logging.warning(f"Skipping invalid version config for '{version_name}'. Expected dict, got {type(version_config)}")
             continue
         
-        current_score = _calculate_match_score(filename, ptt_data, version_name, version_config)
+        current_score = _calculate_match_score(filename, ptt_data, version_name, version_config, is_nzb=is_nzb)
         
         if current_score > highest_score:
             highest_score = current_score

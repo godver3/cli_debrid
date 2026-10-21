@@ -31,6 +31,11 @@ _v = {
         'direct_cache': b'gAAAAABpWFBI5LpjoXHHD0M88gTWFJJWWF11I1WnE_R9QSKqdGH-SyKWb_T5GRqQdSRnsmckU2Tj34jDtXD_19qECoTcRaWI5A==',
         'bulk_cache': b'gAAAAABpWFBI-B0QZv1rn7ieePQt1aF2oEz82kz8xtXWFuTWotjEcgDNTi5SObW4gkTZC-Syosv-FpdZKcsfFp4uA6EJkfpBsQ==',
         'supports_uncached': b'gAAAAABpWFBICGPRNPbZGs_xgeF8eq78USs8nSgoZtkwbHN9lfQx-qI7Elm94EKrUFWoYNwu9x2dhNGZJ_PAu9T3FJds2QMHqg=='
+    },
+    'DebridLinkProvider': {
+        'direct_cache': b'gAAAAABp1uWzUVemW8M8_0dMLkFLFytdPotJi6GqdihpDzfRZRGYEJpenT2FTkEIcPlN66PZBXERteecqyNsX9VovtregDy-PQ==',
+        'bulk_cache': b'gAAAAABp1uWz-pnCgILVEiDNYo0LbN8Eq-VkChkXxUdxFdQWVNJVC9sgKNp-U5U9_mBz4eHfzCOeftkDcQm0emCUlNzcuRWdcg==',
+        'supports_uncached': b'gAAAAABp1uWzdQBR1rXuVu9VL3bSC9k7YfOY_2Qz0E9l1PkeY-kmq-LQ74LTZazg51NgHhBac0uv_-bJHlSjnhZpvv43kF1YdQ=='
     }
 }
 

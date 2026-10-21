@@ -11,6 +11,36 @@ import json
 import platform
 from utilities.settings import get_setting
 
+_IS_WINDOWS = sys.platform == 'win32'
+
+
+def _open_files(process):
+    # On Windows psutil's open_files() inspects every handle, ~100 ms each when its
+    # helper thread times out, while holding the GIL: the whole process froze for
+    # ~2 minutes per call and threads then couldn't start or exit. Skip it there.
+    if _IS_WINDOWS:
+        return []
+    return process.open_files()
+
+
+def _open_handles(process):
+    """Windows only: total handle count (files, registry keys, threads, ...), else None.
+
+    Reported separately from the open-files count: it is not a file count.
+    """
+    if not _IS_WINDOWS:
+        return None
+    try:
+        return process.num_handles()
+    except Exception:
+        return None
+
+
+def _open_files_text(open_files, handles):
+    if handles is not None:
+        return f"not collected on Windows ({handles} handles of all types)"
+    return str(len(open_files))
+
 class PerformanceMonitor:
     """Monitor system performance metrics"""
     _instance = None
@@ -234,8 +264,8 @@ class PerformanceMonitor:
         try:
             process = psutil.Process(os.getpid())
             
-            # Get memory maps
-            memory_maps = process.memory_maps(grouped=True)
+            # Get memory maps (walks the whole address space on Windows; too heavy every minute)
+            memory_maps = [] if _IS_WINDOWS else process.memory_maps(grouped=True)
             anon_maps = [m for m in memory_maps if not m.path]
             file_maps = [m for m in memory_maps if m.path]
             
@@ -244,7 +274,8 @@ class PerformanceMonitor:
             total_file = sum(int(m.rss) for m in file_maps)
             
             # Get open files
-            open_files = process.open_files()
+            open_files = _open_files(process)
+            open_handles = _open_handles(process)
             file_sizes = defaultdict(int)
             for f in open_files:
                 try:
@@ -285,7 +316,8 @@ class PerformanceMonitor:
                     'open_files': {
                         'count': len(open_files),
                         'total_size': sum(file_sizes.values()),
-                        'files': [{'path': k, 'size': v} for k, v in file_sizes.items()]
+                        'files': [{'path': k, 'size': v} for k, v in file_sizes.items()],
+                        **({'open_handles': open_handles} if open_handles is not None else {}),
                     },
                     'network': {
                         'total_connections': len(connections),
@@ -327,7 +359,7 @@ Threads:
                 len(anon_maps),
                 self._format_size(total_file),
                 len(file_maps),
-                len(open_files),
+                _open_files_text(open_files, open_handles),
                 self._format_size(sum(file_sizes.values())),
                 len(connections),
                 dict(conn_states),
@@ -365,7 +397,8 @@ No memory growth data available""")
         """Log information about open file descriptors"""
         try:
             process = psutil.Process(os.getpid())
-            open_files = process.open_files()
+            open_files = _open_files(process)
+            open_handles = _open_handles(process)
             open_connections = process.connections()
             
             file_types = defaultdict(int)
@@ -385,7 +418,7 @@ No memory growth data available""")
 
 🌐 Network Connections: {}
    By Status: {}""".format(
-                len(open_files),
+                _open_files_text(open_files, open_handles),
                 ', '.join(f"{ext}: {count}" for ext, count in file_types.items()),
                 len(open_connections),
                 ', '.join(f"{status}: {count}" for status, count in conn_status.items()) if conn_status else "None"
@@ -397,6 +430,7 @@ No memory growth data available""")
                 "type": "file_descriptors",
                 "metrics": {
                     "open_files_count": len(open_files),
+                    **({"open_handles": open_handles} if open_handles is not None else {}),
                     "file_types": {ext: count for ext, count in file_types.items()},
                     "network_connections_count": len(open_connections),
                     "connection_statuses": {str(status): count for status, count in conn_status.items()}

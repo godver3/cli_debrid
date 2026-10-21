@@ -3,7 +3,8 @@
 {% block title %}Manual Magnet Assignment{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/manual_assignment.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_manual_assignment.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_manual_assignment.css') }}">
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module">
 const notificationsUrl = "{{ url_for('static', filename='js/notifications.js') }}";
@@ -38,45 +39,32 @@ document.addEventListener('DOMContentLoaded', function() {
             Loading.hide();
 
             if (response.ok && data.success) {
-                if (showPopup) {
-                    showPopup({
-                        type: POPUP_TYPES.SUCCESS,
-                        title: 'Assignment Successful',
-                        message: data.message || `Successfully assigned ${data.added_count || 0} item(s).`,
-                        autoClose: 4000,
-                        onConfirm: () => { window.location.href = "{{ url_for('magnet.assign_magnet') }}"; }
-                    });
-                    setTimeout(() => { window.location.href = "{{ url_for('magnet.assign_magnet') }}"; }, 4000);
-                } else {
-                    alert(data.message || 'Assignment Successful!');
-                    window.location.href = "{{ url_for('magnet.assign_magnet') }}";
-                }
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Assignment Successful',
+                    message: data.message || `Successfully assigned ${data.added_count || 0} item(s).`,
+                    autoClose: 4000,
+                    onConfirm: () => { window.location.href = "{{ url_for('discover.index') }}"; }
+                });
+                setTimeout(() => { window.location.href = "{{ url_for('discover.index') }}"; }, 4000);
             } else {
-                if (showPopup) {
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        title: 'Assignment Failed',
-                        message: data.error || 'An error occurred during assignment.',
-                        autoClose: 5000
-                    });
-                } else {
-                    alert("Error: " + (data.error || 'Assignment failed.'));
-                }
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Assignment Failed',
+                    message: data.error || 'An error occurred during assignment.',
+                    autoClose: 5000
+                });
                 submitButton.disabled = false; // Re-enable button on failure
             }
         } catch (error) {
             Loading.hide();
             console.error('Error submitting assignment:', error);
-            if (showPopup) {
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    title: 'Submission Error',
-                    message: 'A network or unexpected error occurred.',
-                    autoClose: 5000
-                });
-            } else {
-                alert('An unexpected network error occurred.');
-            }
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Submission Error',
+                message: 'A network or unexpected error occurred.',
+                autoClose: 5000
+            });
             submitButton.disabled = false; // Re-enable button on error
         }
     });
@@ -95,6 +83,17 @@ document.addEventListener('DOMContentLoaded', function() {
         <input type="hidden" name="torrent_filename" value="{{ torrent_filename }}">
         <input type="hidden" name="torrent_id" value="{{ torrent_id }}">
         <input type="hidden" name="version" value="{{ version }}">
+        <input type="hidden" name="episode_order" value="{{ episode_order or '' }}">
+
+        {% set library_count = target_items|selectattr('in_library')|list|length %}
+        <label class="replace-existing-option">
+            <input type="checkbox" name="replace_existing" value="1" checked>
+            Replace {{ 'episodes' if target_items and target_items[0].type == 'episode' else 'items' }} already in the library
+            <span class="replace-existing-hint">
+                {% if library_count %}{{ library_count }} of these {{ 'is' if library_count == 1 else 'are' }} already in your library as {{ version }}.
+                {% endif %}The old file is removed once the new one is collected. Untick to keep both.
+            </span>
+        </label>
 
         <div class="assignment-grid">
             <div class="assignment-header">Media Item</div>
@@ -104,8 +103,9 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="media-item-info">
                 <strong>{{ item.title }}</strong> ({{ item.year }})
                 {% if item.type == 'episode' %}
-                    <br><em>S{{ "%02d"|format(item.season_number) }}E{{ "%02d"|format(item.episode_number) }} - {{ item.episode_title }}</em>
+                    <br><em>S{{ "%02d"|format(item.season_number) }}E{{ "%02d"|format(item.episode_number) }}{% if item.absolute_number and item.season_number != 1 %} (#{{ item.absolute_number }}){% endif %} - {{ item.episode_title }}</em>
                 {% endif %}
+                {% if item.in_library %}<span class="in-library-badge" title="Already in your library as {{ version }}">In library</span>{% endif %}
             </div>
             <div class="file-selector">
                 <select name="{{ item.item_key }}" class="form-control">

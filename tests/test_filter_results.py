@@ -362,11 +362,14 @@ class TestFilterResultsAnimeXEM(unittest.TestCase):
                     'codec': 'H.264',
                     'group': 'SubsPlease',
                     'seasons': [2],
-                    'episodes': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],  # All episodes
+                    # What PTT returns for "S02.Complete": the season, no episode list.
+                    # (With an explicit episode list containing E05 this would be a
+                    # multi-episode release, which single mode accepts.)
+                    'episodes': [],
                     'season_episode_info': {
                         'season_pack': 'S2',
                         'seasons': [2],
-                        'episodes': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+                        'episodes': []
                     }
                 }
             )

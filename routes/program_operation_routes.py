@@ -29,6 +29,7 @@ import pytz
 from datetime import datetime, timedelta
 import json
 from content_checkers.trakt import is_refresh_token_expired
+from utilities.jellyfin_auth import jellyfin_auth_headers
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -191,11 +192,52 @@ def signal_handler(signum, frame):
 
 def run_server():
     from routes.extensions import app
-    
+    from werkzeug.serving import make_server, WSGIRequestHandler
+
     # Get port from environment variable or use default
     port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+
+    class WebSocketAwareHandler(WSGIRequestHandler):
+        """Threaded Werkzeug handler that supports SignalR WebSocket upgrades.
+
+        SignalR WebSocket sessions are handled here directly (not via Flask) so
+        app before_request / session middleware cannot block the 101 handshake.
+        """
+
+        protocol_version = "HTTP/1.1"
+
+        def make_environ(self):
+            environ = super().make_environ()
+            environ['werkzeug.socket'] = self.connection
+            return environ
+
+        def run_wsgi(self):
+            upgrade = (self.headers.get('Upgrade') or '').lower().strip()
+            path = (self.path or '').split('?', 1)[0]
+            if upgrade == 'websocket' and path in ('/signalr/messages', '/signalr'):
+                self.environ = environ = self.make_environ()
+                try:
+                    from routes.bazarr_spoofing_routes import run_signalr_websocket_session
+                    run_signalr_websocket_session(environ)
+                except (BrokenPipeError, ConnectionError, ConnectionResetError):
+                    pass
+                except Exception as e:
+                    logging.error(f"[SignalR] WebSocket handler error: {e}", exc_info=True)
+                return
+            return super().run_wsgi()
+
     try:
-        app.run(debug=True, use_reloader=False, host='0.0.0.0', port=port, threaded=True)
+        # Use make_server (not app.run) so we control the request handler and
+        # avoid the Flask debugger wrapper interfering with Upgrade requests.
+        logging.info(f"Starting Werkzeug threaded server with WebSocket support on 0.0.0.0:{port}")
+        server = make_server(
+            '0.0.0.0',
+            port,
+            app,
+            threaded=True,
+            request_handler=WebSocketAwareHandler,
+        )
+        server.serve_forever()
     except Exception as e:
         logging.error(f"Error running server: {str(e)}")
         cleanup_port(port)
@@ -251,9 +293,6 @@ def check_service_connectivity():
     if get_setting('File Management', 'file_collection_management') == 'Plex':
         plex_url = get_setting('Plex', 'url')
         plex_token = get_setting('Plex', 'token')
-    metadata_battery_url_from_settings = get_setting('Metadata Battery', 'url') # Get the full URL
-    # battery_port is no longer strictly needed here if metadata_battery_url_from_settings is complete
-    
     # Get debrid provider settings
     debrid_provider = get_setting('Debrid Provider', 'provider')
     debrid_api_key = get_setting('Debrid Provider', 'api_key')
@@ -322,7 +361,7 @@ def check_service_connectivity():
                 system_info_url = f"{jellyfin_url}System/Info"
                 
                 headers = {
-                    'X-Emby-Token': jellyfin_token,
+                    **jellyfin_auth_headers(jellyfin_token),
                     'Accept': 'application/json'
                 }
                 
@@ -435,177 +474,47 @@ def check_service_connectivity():
             services_reachable = False
             failed_services_details.append({"service": "Plex", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
 
-    # Check Debrid Provider connectivity using provider interface
-    try:
-        from debrid import get_debrid_provider
-        provider = get_debrid_provider()
-        if hasattr(provider, 'check_connectivity'):
-            ok, error_detail = provider.check_connectivity()
-            if not ok:
-                services_reachable = False
-                failed_services_details.append(error_detail or {"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": "Connectivity check failed"})
-        else:
-            logging.info("Provider does not implement connectivity check; skipping provider connectivity validation.")
-
-        # Verify subscription days remaining > 0
-        try:
-            subscription_info = None
-            if hasattr(provider, 'get_subscription_status'):
-                subscription_info = provider.get_subscription_status()
-            if subscription_info is not None:
-                days_remaining = subscription_info.get('days_remaining')
-                premium = subscription_info.get('premium')
-                expiration = subscription_info.get('expiration')
-                logging.info(f"Debrid subscription status: days_remaining={days_remaining}, premium={premium}, expiration={expiration}")
-                if days_remaining is None or not isinstance(days_remaining, (int, float)) or days_remaining <= 0:
-                    services_reachable = False
-                    failed_services_details.append({
-                        "service": "Debrid Subscription",
-                        "type": "SUBSCRIPTION_EXPIRED",
-                        "message": f"Debrid subscription expired or invalid. days_remaining={days_remaining}, premium={premium}, expiration={expiration}"
-                    })
-            else:
-                logging.warning("Debrid subscription status unavailable from provider; skipping days remaining check")
-        except Exception as sub_err:
-            logging.error(f"Error checking Debrid subscription status: {sub_err}")
-            services_reachable = False
-            failed_services_details.append({
-                "service": "Debrid Subscription",
-                "type": "SUBSCRIPTION_CHECK_ERROR",
-                "message": str(sub_err)
-            })
-    except Exception as e:
-        logging.error(f"Failed to perform provider connectivity check: {e}")
+    # Acquisition backends are alternatives; shared prerequisites above are not.
+    from utilities.acquisition_health import check_acquisition_providers
+    acquisition_ok, provider_failures = check_acquisition_providers(get_setting)
+    if not acquisition_ok:
         services_reachable = False
-        failed_services_details.append({"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
+        failed_services_details.extend(provider_failures)
+    # Check Trakt authorization — only if the user has actually configured Trakt.
+    # Trakt is an optional integration; an unconfigured or unauthorized Trakt
+    # account must never block program start or pause the running queues.
+    trakt_client_id = get_setting('Trakt', 'client_id')
+    trakt_client_secret = get_setting('Trakt', 'client_secret')
 
-    # Check Metadata Battery connectivity and Trakt authorization
-    try:
-        # Log the URL being used
-        
-        # The metadata_battery_url_from_settings should be complete (host and port)
-        # No need to reconstruct it.
-        if not metadata_battery_url_from_settings:
-            logging.error("Metadata Battery URL not configured in settings")
-            raise RequestException("Metadata Battery URL not configured in settings.")
+    if trakt_client_id and trakt_client_secret:
+        try:
+            from cli_battery.app.direct_api import DirectAPI
+            result = DirectAPI.check_trakt_auth()
+            trakt_status = result.get('status')
 
-        # Log the exact request being made
-        request_url = f"{metadata_battery_url_from_settings}/check_trakt_auth"
-        
-        # Log request timing
-        import time
-        request_start = time.time()
-        
-        response = api.get(request_url, timeout=5)
-        
-        request_duration = time.time() - request_start
-        
-        # Log response details
-        try:
-            response_text = response.text
-        except Exception as e:
-            logging.error(f"Error reading response body: {e}")
-        
-        response.raise_for_status()
-        
-        # Parse JSON response
-        try:
-            response_json = response.json()
-            trakt_status = response_json.get('status')
-        except Exception as e:
-            logging.error(f"Error parsing JSON response: {e}")
-            trakt_status = None
-        
-        if trakt_status != 'authorized':
-            logging.warning("Metadata Battery is reachable, but Trakt is not authorized.")
-            
-            # Attempt automatic re-authentication
-            auto_reauth_success = attempt_trakt_auto_reauth()
-            if auto_reauth_success:
-                logging.info("Automatic Trakt re-authentication successful. Re-checking authorization...")
-                # Re-check the authorization status
-                try:
-                    recheck_start = time.time()
-                    response = api.get(request_url, timeout=5)
-                    recheck_duration = time.time() - recheck_start
-                    
-                    response.raise_for_status()
-                    trakt_status = response.json().get('status')
-                    
+            if trakt_status != 'authorized':
+                logging.warning("Trakt is configured, but not authorized.")
+
+                # Attempt automatic re-authentication
+                auto_reauth_success = attempt_trakt_auto_reauth()
+                if auto_reauth_success:
+                    logging.info("Automatic Trakt re-authentication successful. Re-checking authorization...")
+                    result = DirectAPI.check_trakt_auth()
+                    trakt_status = result.get('status')
+
                     if trakt_status == 'authorized':
                         logging.info("Trakt authorization restored after automatic re-authentication.")
                     else:
-                        logging.warning("Trakt still not authorized after automatic re-authentication attempt.")
-                        services_reachable = False
-                        failed_services_details.append({
-                            "service": "Trakt",
-                            "type": "UNAUTHORIZED",
-                            "message": "Trakt not authorized via Metadata Battery after auto-reauth attempt. Manual re-authorization is required. Please re-authorize Trakt in the settings UI."
-                        })
-                except Exception as recheck_error:
-                    logging.error(f"Error re-checking Trakt authorization after auto-reauth: {recheck_error}")
-                    if hasattr(recheck_error, 'response') and recheck_error.response is not None:
-                        logging.error(f"Re-check error response status: {recheck_error.response.status_code}")
-                        logging.error(f"Re-check error response text: {recheck_error.response.text}")
-                    services_reachable = False
-                    failed_services_details.append({
-                        "service": "Trakt",
-                        "type": "UNAUTHORIZED",
-                        "message": "Trakt not authorized via Metadata Battery after auto-reauth attempt. Manual re-authorization is required. Please re-authorize Trakt in the settings UI."
-                    })
-            else:
-                logging.warning("Automatic Trakt re-authentication failed.")
-                services_reachable = False
-                
-                # Check if the failure was due to expired refresh token
-                error_message = "Trakt not authorized via Metadata Battery. Automatic re-authentication failed. Manual re-authorization is required. Please re-authorize Trakt in the settings UI."
-                
-                if is_refresh_token_expired():
-                    error_message = "Trakt refresh token has expired. Manual re-authentication is required. Please re-authorize Trakt in the settings UI."
-                
-                failed_services_details.append({
-                    "service": "Trakt",
-                    "type": "UNAUTHORIZED",
-                    "message": error_message
-                })
-            
-    except RequestException as e:
-        logging.error("=== METADATA BATTERY REQUEST EXCEPTION ===")
-        logging.error(f"Exception type: {type(e).__name__}")
-        logging.error(f"Exception message: {str(e)}")
-        
-        if hasattr(e, 'response') and e.response is not None:
-            logging.error(f"Response status code: {e.response.status_code}")
-            logging.error(f"Response reason: {e.response.reason}")
-            logging.error(f"Response URL: {e.response.url}")
-            logging.error(f"Response headers: {dict(e.response.headers)}")
-            logging.error(f"Response content: {e.response.text}")
-            
-            # Log additional response details
-            try:
-                logging.error(f"Response encoding: {e.response.encoding}")
-                logging.error(f"Response apparent encoding: {e.response.apparent_encoding}")
-            except Exception as enc_error:
-                logging.error(f"Error getting response encoding: {enc_error}")
-        else:
-            logging.error("No response object in exception")
-            logging.error(f"Exception args: {e.args}")
-        
-        services_reachable = False
-        status_code = e.response.status_code if hasattr(e, 'response') and e.response is not None else None
-        failed_services_details.append({"service": "Metadata Battery", "type": "CONNECTION_ERROR", "status_code": status_code, "message": str(e)})
-        
-    except Exception as e:
-        logging.error("=== METADATA BATTERY UNEXPECTED EXCEPTION ===")
-        logging.error(f"Unexpected exception type: {type(e).__name__}")
-        logging.error(f"Unexpected exception message: {str(e)}")
-        import traceback
-        logging.error(f"Traceback: {traceback.format_exc()}")
-        
-        services_reachable = False
-        failed_services_details.append({"service": "Metadata Battery", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
-    
-    return services_reachable, failed_services_details
+                        logging.warning("Trakt still not authorized after automatic re-authentication attempt. Continuing without Trakt.")
+                else:
+                    logging.warning("Automatic Trakt re-authentication failed. Continuing without Trakt.")
+
+        except Exception as e:
+            logging.error(f"Error checking Trakt auth via battery (non-fatal, Trakt is optional): {e}")
+    else:
+        logging.debug("Trakt is not configured; skipping Trakt authorization check.")
+
+    return services_reachable and not failed_services_details, failed_services_details
 
 def attempt_trakt_auto_reauth():
     """
@@ -643,7 +552,7 @@ def attempt_trakt_auto_reauth():
         logging.error(f"Error during automatic Trakt re-authentication: {str(e)}", exc_info=True)
         return False
 
-# --- START EDIT: New internal function for program start logic ---
+# New internal function for program start logic
 def _execute_start_program(skip_connectivity_check: bool = False, is_restart: bool = False):
     """
     Core logic to start the program.
@@ -696,8 +605,19 @@ def _execute_start_program(skip_connectivity_check: bool = False, is_restart: bo
             elif not hasattr(runner_instance, 'scheduler') or runner_instance.scheduler is None: # Explicitly set to None by stop_program
                 needs_listener_setup = True
                 logging.info(f"[_execute_start_program] Reason for listener setup: runner.scheduler is missing or None for runner (ID: {id(runner_instance)}).")
-            # If scheduler exists but isn't running (shouldn't happen if set to None on stop, but good check)
-            elif hasattr(runner_instance, 'scheduler') and runner_instance.scheduler is not None and not runner_instance.scheduler.running:
+            # If scheduler exists, was previously started, but isn't running now, treat
+            # it as a zombie (shouldn't happen if set to None on stop, but good check).
+            # Gated on _scheduler_started_once: scheduler.running is False both before
+            # the very first start AND after a real crash - without that gate, the
+            # freshly __init__-created scheduler on every process boot (which hasn't
+            # been started yet at this point - that happens later, in
+            # ProgramRunner.start()) looked identical to a zombie and got discarded and
+            # rebuilt from scratch (with the wrong timezone, since the rebuild path
+            # here reads a different setting than __init__ does) before it ever got to
+            # run once. See godver3/cli_debrid startup-performance investigation.
+            elif (hasattr(runner_instance, 'scheduler') and runner_instance.scheduler is not None
+                  and not runner_instance.scheduler.running
+                  and getattr(runner_instance, '_scheduler_started_once', False)):
                  needs_listener_setup = True
                  logging.info(f"[_execute_start_program] Reason for listener setup: runner.scheduler exists but is not running for runner (ID: {id(runner_instance)}). Attempting to clear it.")
                  # Attempt to shut down and nullify this zombie scheduler
@@ -758,12 +678,11 @@ def _execute_start_program(skip_connectivity_check: bool = False, is_restart: bo
     finally:
         if _program_op_lock.locked(): # Ensure it was acquired by this thread before releasing
              _program_op_lock.release()
-# --- END EDIT ---
 
 @program_operation_bp.route('/api/start_program', methods=['POST'])
 @admin_required # This decorator remains for HTTP API calls
 def start_program():
-    # --- START EDIT: Delegate to the new internal function ---
+    # Delegate to the new internal function
     logging.info("--- /api/start_program HTTP endpoint called, delegating to _execute_start_program ---")
     # _execute_start_program uses current_app.program_runner which is set up in main.py
     # The Flask app context is active here.
@@ -792,8 +711,15 @@ def start_program():
         # but for start_program, most errors imply a server-side issue or conflict.
 
     logging.info(f"--- /api/start_program HTTP endpoint returning jsonify(result) with status {http_status_code} ---")
+    if result.get('status') != 'error':
+        try:
+            from flask_login import current_user as _cu
+            from utilities.ai_habits import track_action
+            _uid = _cu.username if _cu.is_authenticated else 'system'
+            track_action('program_start' if not is_restart else 'program_restart', user_id=_uid)
+        except Exception:
+            pass
     return jsonify(result), http_status_code
-    # --- END EDIT ---
 
 def stop_program():
     if not _program_op_lock.acquire(blocking=False):
@@ -886,6 +812,14 @@ def stop_program_route():
         # Other errors could be 500 if critical, but stop tends to succeed or be a conflict.
     
     logging.info(f"--- /api/stop_program HTTP endpoint returning: {result} with status {http_status_code} ---")
+    if result.get('status') != 'error':
+        try:
+            from flask_login import current_user as _cu
+            from utilities.ai_habits import track_action
+            _uid = _cu.username if _cu.is_authenticated else 'system'
+            track_action('program_stop', user_id=_uid)
+        except Exception:
+            pass
     return jsonify(result), http_status_code
 
 @program_operation_bp.route('/api/update_program_state', methods=['POST'])
@@ -939,17 +873,21 @@ def check_program_conditions():
     required_settings = [
         ('Plex', 'url'),
         ('Plex', 'token'),
-        ('Debrid Provider', 'provider'),
-        ('Debrid Provider', 'api_key'),
         ('Metadata Battery', 'url')
     ]
-    
+
     missing_fields = []
     for category, key in required_settings:
         value = get_setting(category, key)
         if not value:
             missing_fields.append(f"{category}.{key}")
-    
+
+    # Require at least one of: Debrid Provider OR Usenet Provider (cli_mount)
+    debrid_ok = bool(get_setting('Debrid Provider', 'provider') and get_setting('Debrid Provider', 'api_key'))
+    usenet_ok = bool(get_setting('Usenet Provider', 'enabled') and get_setting('Usenet Provider', 'url'))
+    if not debrid_ok and not usenet_ok:
+        missing_fields.append("Debrid Provider or Usenet Provider")
+
     required_settings_complete = len(missing_fields) == 0
 
     return jsonify({
@@ -968,7 +906,8 @@ def get_task_timings():
         # If not running, return empty or maybe load saved toggles/intervals?
         # Let's return empty for now, UI can handle loading saved states.
         return jsonify(success=False, error="Program is not running", tasks={
-            'queues': {}, 'content_sources': {}, 'system_tasks': {}
+            'queues': {}, 'content_sources': {}, 'system_tasks': {},
+            'library_tasks': {}, 'metadata_tasks': {}, 'feature_tasks': {}
         })
 
     # Load custom intervals (now expects seconds)
@@ -981,10 +920,57 @@ def get_task_timings():
         except Exception as e:
             logging.error(f"Error loading saved task intervals (seconds) from {intervals_file_path}: {e}")
 
+    # Tasks explicitly assigned to Library, Metadata, or Feature tabs
+    _LIBRARY_TASKS = {
+        'task_verify_plex_removals',
+        'task_check_trakt_early_releases',
+        'task_refresh_library_size_cache',
+        'task_check_plex_files',
+        'task_plex_full_scan',
+        'task_verify_symlinked_files',
+        'task_get_plex_watch_history',
+        'task_run_library_maintenance',
+        'task_analyze_media_files',
+        'task_manual_plex_full_scan',
+        'task_sync_library_metadata',
+        'task_backfill_plex_guids',
+        'task_backfill_plex_ms_item_id',
+        'task_sync_cli_mount_changes',
+        'task_repair_broken_nzbs',
+        'task_repair_broken_debrids',
+        'task_scan_mount_for_external_adds',
+    }
+    _METADATA_TASKS = {
+        'task_refresh_release_dates',
+        'task_sync_episode_metadata',
+        'task_update_show_ids',
+        'task_update_show_titles',
+        'task_update_movie_ids',
+        'task_update_movie_titles',
+        'task_update_tv_show_status',
+        'task_cleanup_title_year_suffixes',
+    }
+    _FEATURE_TASKS = {
+        'task_overlay_sync',
+        'task_overlay_cleanup',
+        'task_sync_plex_labels',
+        'task_process_bulk_subtitles',
+        'task_backup_debrid',
+        'task_cleanup_debrid',
+        'task_upgrade_hub_scan',
+        'task_upgrade_hub_auto_queue',
+        'task_plex_smart_collection_posters',
+        'task_plex_movie_boxsets',
+        'task_backfill_nzb_torrent_ids',
+    }
+
     tasks_data = {
         'queues': {},
         'content_sources': {},
-        'system_tasks': {}
+        'system_tasks': {},
+        'library_tasks': {},
+        'metadata_tasks': {},
+        'feature_tasks': {},
     }
     job_infos = {}
 
@@ -1074,19 +1060,21 @@ def get_task_timings():
              source_key = normalized_name[5:-7] # Extract potential source key
              is_content_source = False
              if content_sources_map:
-                 # Check against actual content source keys
-                 # Need to handle potential spaces vs underscores if display name was complex
                  simple_key_match = source_key in content_sources_map
-                 # More robust check might involve comparing display names if simple key fails
                  if simple_key_match:
                       is_content_source = True
 
              if is_content_source:
                  tasks_data['content_sources'][normalized_name] = task_info
              else:
-                  # If it looks like a source but isn't in the map, treat as system? Or log warning?
-                 logging.warning(f"Task '{normalized_name}' looks like a content source but key '{source_key}' not found in content_sources map. Categorizing as system.")
+                 logging.debug(f"Task '{normalized_name}' looks like a content source but key '{source_key}' not found in content_sources map. Categorizing as system.")
                  tasks_data['system_tasks'][normalized_name] = task_info
+        elif normalized_name in _LIBRARY_TASKS:
+            tasks_data['library_tasks'][normalized_name] = task_info
+        elif normalized_name in _METADATA_TASKS:
+            tasks_data['metadata_tasks'][normalized_name] = task_info
+        elif normalized_name in _FEATURE_TASKS:
+            tasks_data['feature_tasks'][normalized_name] = task_info
         else:
             tasks_data['system_tasks'][normalized_name] = task_info
 
@@ -1147,6 +1135,9 @@ def enable_task():
             return jsonify({'success': False, 'error': 'Program is not running'})
         
         program_runner.enable_task(task_name)
+        _persisted, _persist_err = _persist_task_toggles_from_runner(program_runner)
+        if not _persisted:
+            logging.warning(f"Enabled task '{task_name}' live, but failed to persist toggle state: {_persist_err}")
         return jsonify({'success': True, 'message': f'Successfully enabled task: {task_name}'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -1164,110 +1155,96 @@ def disable_task():
             return jsonify({'success': False, 'error': 'Program is not running'})
         
         program_runner.disable_task(task_name)
+        _persisted, _persist_err = _persist_task_toggles_from_runner(program_runner)
+        if not _persisted:
+            logging.warning(f"Disabled task '{task_name}' live, but failed to persist toggle state: {_persist_err}")
         return jsonify({'success': True, 'message': f'Successfully disabled task: {task_name}'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+def _persist_task_toggles_from_runner(runner):
+    """Write ProgramRunner's live enabled_tasks state to task_toggles.json.
+
+    Shared by the explicit 'Save' button on the Task Manager page and by the
+    individual enable_task/disable_task toggle endpoints. Flipping a single
+    switch used to only pause/resume the in-memory scheduler job -- nothing
+    wrote it to disk until a separate Save click. Any subsequent settings
+    save (which restarts ProgramRunner) then rebuilt enabled_tasks from the
+    stale on-disk file, silently re-enabling a source the user had "disabled"
+    minutes earlier. Persisting on every toggle closes that gap.
+
+    Returns (success: bool, error: str | None).
+    """
+    MIGRATION_VERSION_KEY = "_migration_version"
+
+    if not (hasattr(runner, 'task_intervals') and hasattr(runner, 'enabled_tasks')):
+        return False, 'ProgramRunner instance is missing necessary attributes (task_intervals or enabled_tasks).'
+
+    # Construct live_task_states from ProgramRunner
+    live_task_states = {}
+    for task_name in runner.task_intervals.keys():
+        # Ensure we use the same normalized name that would be stored/checked
+        normalized_name = runner._normalize_task_name(task_name)
+        live_task_states[normalized_name] = normalized_name in runner.enabled_tasks
+
+    # Save the full live state for all known tasks.
+    # Diff-based saving caused a bug: after one correct restart with a disabled task,
+    # the snapshot no longer contained that task (since it was already excluded by the
+    # toggle-aware init logic), so subsequent saves dropped the 'false' entry, causing
+    # the task to re-enable on the next restart.
+    # Saving the full state is safe: stale tasks are excluded because we only iterate
+    # runner.task_intervals.keys() above, and the file format is unchanged.
+    data_to_save = live_task_states.copy()
+
+    # Get the file path
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
+
+    migration_version = None
+
+    # Read existing file to preserve metadata (like _migration_version)
+    if os.path.exists(toggles_file_path):
+        try:
+            with open(toggles_file_path, 'r') as f:
+                current_data_from_file = json.load(f)
+                if isinstance(current_data_from_file, dict) and MIGRATION_VERSION_KEY in current_data_from_file:
+                    migration_version = current_data_from_file[MIGRATION_VERSION_KEY]
+        except (json.JSONDecodeError, OSError) as e:
+            logging.warning(f"Could not read existing task toggles file to preserve metadata: {e}")
+
+    # Preserve the migration version marker
+    if migration_version is not None:
+        data_to_save[MIGRATION_VERSION_KEY] = migration_version
+
+    # Save the combined data to JSON file
+    try:
+        os.makedirs(os.path.dirname(toggles_file_path), exist_ok=True)
+        with open(toggles_file_path, 'w') as f:
+            json.dump(data_to_save, f, indent=4)
+        logging.info(f"Live task toggle states saved to {toggles_file_path}")
+        return True, None
+    except OSError as e:
+        logging.error(f"Error writing task toggles file: {str(e)}")
+        return False, f"Failed to write file: {str(e)}"
+
 
 @program_operation_bp.route('/save_task_toggles', methods=['POST'])
 @admin_required
 def save_task_toggles():
     """Save the current state of task toggles to a JSON file, based on ProgramRunner's live state."""
-    MIGRATION_VERSION_KEY = "_migration_version"
     runner = get_program_runner()
 
     if not runner:
         return jsonify({'success': False, 'error': 'ProgramRunner not available. Cannot determine live task states.'}), 500
 
+    if not (hasattr(runner, 'task_intervals') and hasattr(runner, 'enabled_tasks')):
+        return jsonify({'success': False, 'error': 'ProgramRunner instance is missing necessary attributes (task_intervals or enabled_tasks).'}), 500
+
     try:
-        # Construct live_task_states from ProgramRunner
-        live_task_states = {}
-        if hasattr(runner, 'task_intervals') and hasattr(runner, 'enabled_tasks'):
-            all_defined_tasks = runner.task_intervals.keys()
-            for task_name in all_defined_tasks:
-                # Ensure we use the same normalized name that would be stored/checked
-                normalized_name = runner._normalize_task_name(task_name) 
-                live_task_states[normalized_name] = normalized_name in runner.enabled_tasks
-        else:
-            return jsonify({'success': False, 'error': 'ProgramRunner instance is missing necessary attributes (task_intervals or enabled_tasks).'}), 500
-
-        # Prefer the default-enabled snapshot captured before user overrides were applied
-        baseline_enabled_set = set()
-        if hasattr(runner, 'default_enabled_tasks_snapshot'):
-            baseline_enabled_set = runner.default_enabled_tasks_snapshot
-        else:
-            baseline_enabled_set = getattr(runner, 'initial_enabled_tasks_snapshot', set())
-
-        diff_task_states = {}
-        for task_name, is_enabled_live in live_task_states.items():
-            was_enabled_initially = task_name in baseline_enabled_set
-            if was_enabled_initially != is_enabled_live:
-                diff_task_states[task_name] = is_enabled_live
-        # --- END EDIT ---
-
-        # Get the file path
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
-        
-        current_data_from_file = {}
-        migration_version = None
-
-        # Read existing file to preserve metadata (like _migration_version)
-        if os.path.exists(toggles_file_path):
-            try:
-                with open(toggles_file_path, 'r') as f:
-                    current_data_from_file = json.load(f)
-                    if isinstance(current_data_from_file, dict) and MIGRATION_VERSION_KEY in current_data_from_file:
-                        migration_version = current_data_from_file[MIGRATION_VERSION_KEY]
-            except (json.JSONDecodeError, OSError) as e:
-                logging.warning(f"Could not read existing task toggles file to preserve metadata: {e}")
-                # Proceed with saving new state, potentially losing metadata if file was corrupt
-
-        # --- START EDIT: Build new save payload based on diffs only ---
-        # We now persist ONLY the latest differences so that stale keys are removed.
-        data_to_save = diff_task_states.copy()
-
-        # Preserve the migration version marker
-        if migration_version is not None:
-            data_to_save[MIGRATION_VERSION_KEY] = migration_version
-        # --- END EDIT ---
-
-        # Save the combined data to JSON file
-        try:
-            os.makedirs(os.path.dirname(toggles_file_path), exist_ok=True)
-            with open(toggles_file_path, 'w') as f:
-                json.dump(data_to_save, f, indent=4)
-            logging.info(f"Live task toggle states saved to {toggles_file_path}")
-            
-            # Also update the main config file to reflect the current runtime state
-            try:
-                from utilities.settings import get_all_settings, save_config
-                config = get_all_settings()
-                content_sources = config.get('Content Sources', {})
-                config_updated = False
-                
-                for source, data in content_sources.items():
-                    task_name = f'task_{source}_wanted'
-                    normalized_name = runner._normalize_task_name(task_name)
-                    current_enabled = normalized_name in runner.enabled_tasks
-                    
-                    if data.get('enabled') != current_enabled:
-                        data['enabled'] = current_enabled
-                        config_updated = True
-                        logging.info(f"Updated config for {source}: enabled = {current_enabled} (to match runtime state)")
-                
-                if config_updated:
-                    save_config(config)
-                    logging.info("Updated content source enabled states in config file to match runtime state")
-                    
-            except Exception as config_error:
-                logging.error(f"Failed to update config file with runtime enabled states: {config_error}")
-                # Don't fail the entire operation if config update fails
-                
+        success, error = _persist_task_toggles_from_runner(runner)
+        if success:
             return jsonify({'success': True, 'message': 'Task toggle states saved successfully based on live program state.'})
-        except OSError as e:
-             logging.error(f"Error writing task toggles file: {str(e)}")
-             return jsonify({'success': False, 'error': f"Failed to write file: {str(e)}"})
-
+        return jsonify({'success': False, 'error': error})
     except Exception as e:
         logging.error(f"Error saving task toggles: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)})
@@ -1297,19 +1274,18 @@ def load_task_toggles():
         logging.error(f"Error loading task toggles: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
 
-# --- START EDIT: Helper function for interval file path ---
+# Helper function for interval file path
 def _get_task_intervals_file_path():
     """Gets the absolute path for the task_intervals.json file."""
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
     return os.path.join(db_content_dir, 'task_intervals.json')
-# --- END EDIT ---
 
 def _get_task_toggles_file_path():
     """Gets the absolute path for the task_toggles.json file."""
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
     return os.path.join(db_content_dir, 'task_toggles.json')
 
-# --- START EDIT: Add routes for saving/loading custom intervals ---
+# Add routes for saving/loading custom intervals
 @program_operation_bp.route('/save_task_intervals', methods=['POST'])
 @admin_required
 def save_task_intervals():
@@ -1428,7 +1404,7 @@ def load_task_intervals():
 
     return jsonify(success=True, task_intervals=saved_intervals_seconds) # Return seconds
 
-# --- START EDIT: Modify reset_all_task_settings endpoint ---
+# Modify reset_all_task_settings endpoint
 @program_operation_bp.route('/api/reset_all_task_settings', methods=['POST'])
 @admin_required
 def reset_all_task_settings():
@@ -1474,9 +1450,8 @@ def reset_all_task_settings():
     except Exception as e:
         logging.error(f"Critical error in reset_all_task_settings: {str(e)}", exc_info=True)
         return jsonify({'status': 'error', 'message': f"An unexpected critical error occurred during reset: {str(e)}"}), 500
-# --- END EDIT ---
 
-# --- START EDIT: Define the missing helper function ---
+# Define the missing helper function
 def _format_task_display_name(task_name, queue_map, content_sources_map):
     """Formats the internal task name into a user-friendly display name."""
     
@@ -1495,7 +1470,7 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
         source_key = task_name[5:-7] # Extract potential key 'My_Overseerr' etc.
         
         # Try to find a matching entry in the content_sources_map
-        # --- START EDIT: Prioritize configured display_name ---
+        # Prioritize configured display_name
         if content_sources_map and source_key in content_sources_map:
             source_config = content_sources_map[source_key]
             # Check if the source config has a non-empty 'display_name' field
@@ -1508,10 +1483,9 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
                 display_name = source_key.replace('_', ' ').strip()
                 # Basic capitalization (capitalize first letter of each word)
                 return ' '.join(word.capitalize() for word in display_name.split())
-        # --- END EDIT ---
         else:
             # Fallback if key not found in map (shouldn't happen often if maps are synced)
-             logging.warning(f"Could not find source key '{source_key}' in content_sources_map for display name formatting.")
+             logging.debug(f"Could not find source key '{source_key}' in content_sources_map for display name formatting.")
              # Fallback to generic formatting
              display_name = source_key.replace('_', ' ').strip()
              return ' '.join(word.capitalize() for word in display_name.split()) + " (Source)"
@@ -1519,10 +1493,269 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
 
     # Handle other system tasks (usually start with 'task_')
     if task_name.startswith('task_'):
+        _TASK_DISPLAY_OVERRIDES = {
+            'task_sync_cli_mount_changes': 'Sync cli_mount Changes',
+        }
+        if task_name in _TASK_DISPLAY_OVERRIDES:
+            return _TASK_DISPLAY_OVERRIDES[task_name]
         display_name = task_name[5:].replace('_', ' ').strip() # Remove prefix, replace underscores
          # Capitalize first letter of each word
         return ' '.join(word.capitalize() for word in display_name.split())
 
     # Default fallback if no rule matches (should be rare)
     return task_name.replace('_', ' ').capitalize()
-# --- END EDIT ---
+
+
+# ---------------------------------------------------------------------------
+# NzbDAV setup helper — backs the in-app "Test connection & ensure categories"
+# button (Settings → Usenet Provider and onboarding). NzbDAV exposes:
+#   GET  /api?mode=version            reachability (no key needed)
+#   GET  /api?mode=get_cats&apikey=   the SAB category list cli-debrid sees
+#   POST /api/get-config              read config  (form field config-keys)
+#   POST /api/update-config           write config (form field config=JSON);
+#                                     applied live via ConfigManager — no restart
+# The config API is reachable without the SAB key when NzbDAV runs with
+# DISABLE_FRONTEND_AUTH=true (the documented cli-debrid setup). If it is gated by
+# the frontend login we report that categories must be added in the NzbDAV UI.
+# ---------------------------------------------------------------------------
+
+# Categories cli-debrid's title heuristic routes grabs into; these must exist in
+# NzbDAV or submits are rejected (items loop in "Wanted"). Mirrors nzbdav_migrate.py.
+# Fallback only — the live list is derived from usenet.nzbdav_client (the same
+# source the submit-router and repair scope use), see _nzbdav_required_categories.
+NZBDAV_REQUIRED_CATEGORIES = ['movies', 'shows', 'movies_1080p', 'shows_1080p', '__unplayable__']
+NZBDAV_RECOMMENDED_CATEGORIES = ['music']
+
+
+def _nzbdav_base_url(raw):
+    """Normalise a user-entered NzbDAV URL to its API root (no trailing slash, no /api)."""
+    url = (raw or '').strip().rstrip('/')
+    if url.endswith('/api'):
+        url = url[:-4].rstrip('/')
+    return url
+
+
+def _nzbdav_required_categories(download_folder=''):
+    """Categories cli-debrid needs on the NzbDAV instance.
+
+    Derived from the SAME source as the submit-router and repair scope
+    (usenet.nzbdav_client.managed_categories + the optional category map), so the
+    setup helper can never tell the user to create a set that disagrees with what
+    cli-debrid actually uploads to — the historical cause of invisible items.
+    """
+    try:
+        from usenet.nzbdav_client import _parse_category_map, managed_categories
+        cat_map = _parse_category_map(get_setting('Usenet Provider', 'nzbdav_category_map', ''))
+        cats = sorted(managed_categories(cat_map))
+    except Exception:
+        cats = list(NZBDAV_REQUIRED_CATEGORIES)
+    df = (download_folder or '').strip()
+    if df and df not in cats:
+        cats.append(df)
+    return cats
+
+
+def _nzbdav_get_categories_via_config(base_url, timeout=10):
+    """Read api.categories through NzbDAV's config API.
+    Returns (categories_list | None, config_api_reachable_bool)."""
+    import requests
+    try:
+        r = requests.post(f"{base_url}/api/get-config",
+                          files={'config-keys': (None, 'api.categories')}, timeout=timeout)
+        if r.status_code != 200:
+            return None, False
+        data = r.json()
+        if not data.get('status'):
+            return None, False
+        for item in data.get('configItems', []):
+            if item.get('configName') == 'api.categories':
+                return [c.strip() for c in (item.get('configValue') or '').split(',') if c.strip()], True
+        return [], True
+    except (RequestException, ValueError):
+        return None, False
+
+
+@program_operation_bp.route('/api/nzbdav/check', methods=['POST'])
+@admin_required
+def nzbdav_check():
+    """Probe an NzbDAV instance for the in-app setup helper: reachability, version,
+    SAB key validity, and which categories cli-debrid needs are missing."""
+    import requests
+    payload = request.get_json(silent=True) or request.form
+    url = _nzbdav_base_url(payload.get('url') or get_setting('Usenet Provider', 'url', ''))
+    token = (payload.get('api_token') or get_setting('Usenet Provider', 'api_token', '') or '').strip()
+    download_folder = payload.get('download_folder') or get_setting('Usenet Provider', 'download_folder', '')
+    required = _nzbdav_required_categories(download_folder)
+
+    result = {'url': url, 'reachable': False, 'version': None, 'key_valid': None,
+              'categories_present': [], 'categories_missing': [], 'recommended_missing': [],
+              'can_autofix': False, 'required': required,
+              'recommended': NZBDAV_RECOMMENDED_CATEGORIES}
+    if not url:
+        return jsonify({'success': False, 'error': 'No NzbDAV URL provided.'}), 400
+
+    # 1) reachability + version (SAB mode=version, no key needed)
+    try:
+        r = requests.get(f"{url}/api", params={'mode': 'version'}, timeout=10)
+        if r.status_code == 200:
+            try:
+                result['version'] = r.json().get('version')
+            except ValueError:
+                result['version'] = None
+            result['reachable'] = True
+    except RequestException as e:
+        return jsonify({'success': False, 'error': f'Cannot reach NzbDAV at {url}: {e}', 'result': result}), 200
+
+    if not result['reachable']:
+        return jsonify({'success': False,
+                        'error': f'NzbDAV at {url} did not respond to mode=version.',
+                        'result': result}), 200
+
+    # 2) categories cli-debrid sees via SAB get_cats (uses the key) + key validity
+    present = None
+    try:
+        r = requests.get(f"{url}/api", params={'mode': 'get_cats', 'apikey': token}, timeout=10)
+        if r.status_code == 200:
+            cats = (r.json() or {}).get('categories')
+            if isinstance(cats, list):
+                present = [c if isinstance(c, str) else c.get('name', '') for c in cats]
+                result['key_valid'] = True
+            else:
+                result['key_valid'] = False
+        else:
+            result['key_valid'] = False
+    except (RequestException, ValueError):
+        result['key_valid'] = False
+
+    # Config API gives the authoritative list and tells us whether auto-fix is possible
+    cfg_cats, cfg_reachable = _nzbdav_get_categories_via_config(url)
+    result['can_autofix'] = cfg_reachable
+    if present is None and cfg_cats is not None:
+        present = cfg_cats
+
+    present = present or []
+    result['categories_present'] = present
+    result['categories_missing'] = [c for c in required if c not in present]
+    result['recommended_missing'] = [c for c in NZBDAV_RECOMMENDED_CATEGORIES if c not in present]
+    return jsonify({'success': True, 'result': result}), 200
+
+
+@program_operation_bp.route('/api/nzbdav/ensure_categories', methods=['POST'])
+@admin_required
+def nzbdav_ensure_categories():
+    """Create any missing cli-debrid categories in NzbDAV via its config API
+    (read api.categories, append the missing ones, write back). Applied live."""
+    import requests
+    payload = request.get_json(silent=True) or request.form
+    url = _nzbdav_base_url(payload.get('url') or get_setting('Usenet Provider', 'url', ''))
+    download_folder = payload.get('download_folder') or get_setting('Usenet Provider', 'download_folder', '')
+    include_recommended = str(payload.get('include_recommended', 'true')).lower() in ('1', 'true', 'yes', 'on')
+    required = _nzbdav_required_categories(download_folder)
+    if include_recommended:
+        required = required + [c for c in NZBDAV_RECOMMENDED_CATEGORIES if c not in required]
+
+    if not url:
+        return jsonify({'success': False, 'error': 'No NzbDAV URL provided.'}), 400
+
+    current, reachable = _nzbdav_get_categories_via_config(url)
+    if not reachable or current is None:
+        return jsonify({'success': False,
+                        'error': "NzbDAV config API not reachable. If NzbDAV runs with frontend "
+                                 "authentication enabled, add the categories manually in "
+                                 "NzbDAV → Settings → Categories, or set DISABLE_FRONTEND_AUTH=true."}), 200
+
+    to_add = [c for c in required if c not in current]
+    if not to_add:
+        return jsonify({'success': True, 'created': [], 'all_present': True, 'categories': current}), 200
+
+    new_list = current + to_add
+    try:
+        r = requests.post(f"{url}/api/update-config",
+                          files={'config': (None, json.dumps({'api.categories': ','.join(new_list)}))},
+                          timeout=15)
+        if r.status_code != 200 or not (r.json() or {}).get('status', False):
+            return jsonify({'success': False,
+                            'error': f'update-config failed: HTTP {r.status_code} {r.text[:200]}'}), 200
+    except (RequestException, ValueError) as e:
+        return jsonify({'success': False, 'error': f'update-config error: {e}'}), 200
+
+    verify, _ = _nzbdav_get_categories_via_config(url)
+    verify = verify or new_list
+    still_missing = [c for c in required if c not in verify]
+    return jsonify({'success': len(still_missing) == 0, 'created': to_add,
+                    'all_present': len(still_missing) == 0, 'still_missing': still_missing,
+                    'categories': verify}), 200
+
+
+# ---------------------------------------------------------------------------
+# Provider transfer — migrate downloads between usenet backends (Debug -> Library)
+# Engine lives in utilities/provider_transfer.py (HTTP/mounted-path, no docker).
+# ---------------------------------------------------------------------------
+
+@program_operation_bp.route('/api/provider_transfer/config', methods=['GET'])
+@admin_required
+def provider_transfer_config():
+    """The configured Usenet Provider, used to prefill the transfer UI (it lives
+    in Debug -> Library where the settings context isn't available)."""
+    data_path = get_setting('Usenet Provider', 'data_path', '') or '/climount_data'
+    return jsonify({
+        'provider': get_setting('Usenet Provider', 'provider', '') or '',
+        'url': get_setting('Usenet Provider', 'url', '') or '',
+        'token': get_setting('Usenet Provider', 'api_token', '') or '',
+        'data_path': data_path,
+        'nzb_path_guess': data_path.rstrip('/') + '/usenet/nzbs',
+    }), 200
+
+
+@program_operation_bp.route('/api/provider_transfer/list', methods=['POST'])
+@admin_required
+def provider_transfer_list():
+    """Preview the source: how many items are transferable + a sample of names."""
+    from utilities import provider_transfer
+    p = request.get_json(silent=True) or request.form
+    items, err = provider_transfer.list_source_items(
+        p.get('direction', ''), p.get('source_url', ''), p.get('source_token', ''),
+        p.get('source_nzb_path', ''))
+    if err:
+        return jsonify({'success': False, 'error': err}), 200
+    return jsonify({'success': True, 'count': len(items),
+                    'sample': [it['name'] for it in items[:50]]}), 200
+
+
+@program_operation_bp.route('/api/provider_transfer/start', methods=['POST'])
+@admin_required
+def provider_transfer_start():
+    """Kick off a background transfer job. Returns a job_id to poll."""
+    from utilities import provider_transfer
+    p = request.get_json(silent=True) or request.form
+    if p.get('direction') not in ('climount_to_nzbdav', 'nzbdav_to_climount'):
+        return jsonify({'success': False, 'error': 'invalid direction'}), 400
+    if not (p.get('target_url') or '').strip():
+        return jsonify({'success': False, 'error': 'target URL required'}), 400
+    job_id = provider_transfer.start_job({
+        'direction': p.get('direction'),
+        'source_url': p.get('source_url', ''), 'source_token': p.get('source_token', ''),
+        'source_nzb_path': p.get('source_nzb_path', ''),
+        'target_url': p.get('target_url', ''), 'target_token': p.get('target_token', ''),
+        'target_category': p.get('target_category', ''),
+        'skip_existing': p.get('skip_existing', True),
+        'max_queue': p.get('max_queue', 3), 'limit': p.get('limit', 0),
+    })
+    return jsonify({'success': True, 'job_id': job_id}), 202
+
+
+@program_operation_bp.route('/api/provider_transfer/status/<job_id>', methods=['GET'])
+@admin_required
+def provider_transfer_status(job_id):
+    from utilities import provider_transfer
+    st = provider_transfer.get_status(job_id)
+    if not st:
+        return jsonify({'success': False, 'error': 'unknown job'}), 404
+    return jsonify({'success': True, 'status': st}), 200
+
+
+@program_operation_bp.route('/api/provider_transfer/cancel/<job_id>', methods=['POST'])
+@admin_required
+def provider_transfer_cancel(job_id):
+    from utilities import provider_transfer
+    return jsonify({'success': provider_transfer.cancel_job(job_id)}), 200

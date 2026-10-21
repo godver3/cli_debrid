@@ -2,19 +2,42 @@
 {% block title %}Queues{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/queues.css') }}">
+<!-- v9 -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_queues.css') }}">
 <!-- Add Font Awesome if not already included in base.html -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+<script>
+(function(){
+    var theme = localStorage.getItem('selectedTheme') || 'tangerine';
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = '/static/css/tangerine/tangerine_queues.css?v=10';
+    link.id = 'theme-tangerine-queues';
+    link.setAttribute('data-theme-css', 'tangerine');
+    if (theme === 'tangerine') {
+        document.head.appendChild(link);
+    }
+})();
+</script>
 {% endblock %}
 
 {% block content %}
 <div class="container">
-    <h2>Queues</h2>
+    <h1>Queues</h1>
     <!-- Processing statistics -->
     <div id="processing-stats" class="processing-stats" style="display:none; margin-bottom: 15px;">
         <strong>Items per Hour:</strong> <span id="stats-items-per-hour">N/A</span>
         &nbsp;|&nbsp;
         <strong>Estimated Remaining Scrape Time:</strong> <span id="stats-remaining-time">N/A</span>
+        &nbsp;|&nbsp;
+        <strong>Queue Workers:</strong>
+        <select id="queue-workers-select" style="background:#1e1e1e;color:#ccc;border:1px solid #444;border-radius:4px;padding:1px 4px;font-size:12px;">
+            <option value="1">1 (Slow machine)</option>
+            <option value="2" selected>2 (Default)</option>
+            <option value="3">3 (Fast machine)</option>
+        </select>
+        <button id="queue-workers-save-btn" onclick="saveQueueWorkers()" style="background:#e8601c;color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;margin-left:4px;">Save</button>
+        <span id="queue-workers-status" style="font-size:11px;color:#888;margin-left:4px;"></span>
     </div>
     <!-- Subtle connection status notification -->
     <div id="connection-status" class="connection-status"></div>
@@ -107,6 +130,7 @@
     }
 
     function toggleQueue(element) {
+        if (event && event.target && event.target.closest('.filename-toggle')) return;
         const queueItems = element.nextElementSibling;
         const isExpanded = queueItems.style.display !== 'none';
         queueItems.style.display = isExpanded ? 'none' : 'block';
@@ -129,13 +153,16 @@
 
     window.toggleQueue = toggleQueue;
 
-    function toggleFilenames(event) {
+    function toggleFilenames(event, toggleEl) {
+        console.log('[TOGGLE] toggleFilenames called', {event, toggleEl, filenameToggleState});
         event.stopPropagation();
         filenameToggleState = !filenameToggleState;
         localStorage.setItem('filenameToggleState', filenameToggleState);
-        const toggle = event.currentTarget;
-        toggle.classList.toggle('active', filenameToggleState);
+        const toggle = toggleEl || event.target.closest('.filename-toggle');
+        console.log('[TOGGLE] toggle element:', toggle, 'new state:', filenameToggleState);
+        if (toggle) toggle.classList.toggle('active', filenameToggleState);
         updateFilenameVisibility();
+        console.log('[TOGGLE] done, filename-content elements:', document.querySelectorAll('.filename-content').length);
     }
 
     window.toggleFilenames = toggleFilenames;
@@ -214,16 +241,71 @@
         if (queueName === 'Checking') {
             return generateCheckingItems(items);
         }
-        
-        // Use document fragment for better performance
-        const htmlChunks = [];
-        
-        // Process items in batches to avoid blocking the main thread
-        for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            htmlChunks.push(generateSingleItem(item, queueName));
+
+        // For Wanted queue: merge duplicate entries (same title/year/type/season/episode/version)
+        // that differ only by content_source — show combined "Source A, Source B" instead of
+        // two identical rows. Backend keeps separate DB rows intentionally; display collapses them.
+        let displayItems = items;
+        if (queueName === 'Wanted') {
+            const seen = new Map();
+            for (const item of items) {
+                const key = [
+                    item.title || '', item.year || '', item.type || '',
+                    item.season_number || '', item.episode_number || '',
+                    item.version || ''
+                ].join('|');
+                if (seen.has(key)) {
+                    const existing = seen.get(key);
+                    const existingSrc = existing.content_source_display || existing.content_source || '';
+                    const newSrc = item.content_source_display || item.content_source || '';
+                    if (newSrc && newSrc !== 'Unknown' && !existingSrc.split(', ').includes(newSrc)) {
+                        existing.content_source_display = existingSrc ? `${existingSrc}, ${newSrc}` : newSrc;
+                        existing.content_source = existing.content_source_display;
+                    }
+                } else {
+                    // Clone so we don't mutate the original data
+                    seen.set(key, Object.assign({}, item));
+                }
+            }
+            displayItems = Array.from(seen.values());
         }
-        
+
+        // For Adding queue: split active items from those waiting on a download in cli_mount
+        if (queueName === 'Adding') {
+            const activeItems = displayItems.filter(item => item.display_state !== 'Downloading');
+            const downloadingItems = displayItems.filter(item => item.display_state === 'Downloading');
+            let html = '';
+            if (activeItems.length > 0) {
+                html += activeItems.map(item => generateSingleItem(item, queueName)).join('');
+            }
+            if (downloadingItems.length > 0) {
+                html += '<div class="checking-group"><h5>Downloading</h5>';
+                // Group by torrent_id so season packs show as one entry
+                const grouped = {};
+                downloadingItems.forEach(item => {
+                    const tid = item.filled_by_torrent_id || 'unknown';
+                    if (!grouped[tid]) grouped[tid] = [];
+                    grouped[tid].push(item);
+                });
+                Object.entries(grouped).forEach(([tid, groupItems]) => {
+                    if (groupItems.length > 1) {
+                        html += `<div class="download-group">`;
+                        html += groupItems.map(item => generateSingleItem(item, queueName)).join('');
+                        html += `</div>`;
+                    } else {
+                        html += generateSingleItem(groupItems[0], queueName);
+                    }
+                });
+                html += '</div>';
+            }
+            return html;
+        }
+
+        const htmlChunks = [];
+        for (let i = 0; i < displayItems.length; i++) {
+            htmlChunks.push(generateSingleItem(displayItems[i], queueName));
+        }
+
         return htmlChunks.join('');
     }
 
@@ -296,7 +378,7 @@
         }
 
         if (queueName === 'Sleeping') {
-            itemContent += ` - Wake Count: ${item.wake_count !== undefined ? item.wake_count : 'N/A'}`;
+            itemContent += `<span class="item-separator"> - </span><span class="item-wake-count"><span class="item-label">Wake Count:</span> ${item.wake_count !== undefined ? item.wake_count : 'N/A'}</span>`;
         }
 
         if (queueName === 'Wanted' && item.formatted_scrape_time) {
@@ -331,6 +413,11 @@
         // Add Content Source inline for Wanted, Scraping, Adding, Pre-Release, Checking
         if (['Wanted', 'Scraping', 'Adding', 'Pre_release', 'Checking'].includes(queueName) && item.content_source && item.content_source !== 'Unknown') {
             itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
+        }
+        // Add Provider for Adding queue
+        if (queueName === 'Adding' && item.provider_display) {
+            const providerLabel = (item.filled_by_torrent_id && item.filled_by_torrent_id.startsWith('nzb:')) ? 'Indexer:' : 'Provider:';
+            itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${item.provider_display}</span>`;
         }
 
         itemContent += processingIndicator;
@@ -394,6 +481,16 @@
         return content;
     }
 
+    function formatDuration(seconds) {
+        if (!seconds || seconds < 0) return null;
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = seconds % 60;
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+    }
+
     function generateCheckingItem(item, showProgress = true) {
         const isProcessing = item.is_processing || false; 
         const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
@@ -414,12 +511,24 @@
         `;
 
         if (item.filled_by_file) {
-            itemContent += `<span class="item-separator"> - </span><span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}"><span class="item-label">File:</span> ${item.filled_by_file}</span>`;
+            itemContent += `<span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}"><span class="item-separator"> - </span><span class="item-label">File:</span> <span class="item-checking-file">${item.filled_by_file}</span></span>`;
         }
 
         // Add Content Source inline for Checking queue items
         if (item.content_source && item.content_source !== 'Unknown') {
             itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
+        }
+        // Add Provider for Checking queue
+        if (item.provider_display) {
+            const providerLabel = (item.filled_by_torrent_id && item.filled_by_torrent_id.startsWith('nzb:')) ? 'Indexer:' : 'Provider:';
+            itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${item.provider_display}</span>`;
+        }
+
+        // Time in queue
+        const tiqStr = formatDuration(item.time_in_queue);
+        if (tiqStr) {
+            const tickStr = item.plex_tick ? ` · ${item.plex_tick}/4 ticks` : '';
+            itemContent += `<span class="item-separator"> - </span><span class="item-checking-tiq" style="font-size: smaller; color: var(--text-muted, #888);"><span class="item-label">In queue:</span> ${tiqStr}${tickStr}</span>`;
         }
 
         // Show progress bar for items that are downloading, unknown, or don't have a state set
@@ -569,13 +678,18 @@
         
         if (data.program_status === "Running") {
             console.log('[PERF] Program status: Running');
-            
-            if (initializationStatus) {
-                initializationStatus.style.display = 'none';
-            }
-            const progressContainer = document.getElementById('progress-container');
-            if (progressContainer) {
-                progressContainer.style.display = 'none';
+
+            if (data.initialization_status) {
+                // Startup sync still running in the background: banner above the queues
+                updateInitializationStatus(data.initialization_status);
+            } else {
+                if (initializationStatus) {
+                    initializationStatus.style.display = 'none';
+                }
+                const progressContainer = document.getElementById('progress-container');
+                if (progressContainer) {
+                    progressContainer.style.display = 'none';
+                }
             }
             queueContents.style.display = 'flex';
             
@@ -677,7 +791,7 @@
                     queueDiv.innerHTML = `
                         <div class="queue-title" onclick="${isCountOnlyQueue ? 'return false;' : 'toggleQueue(this);'}">
                             <span>${displayQueueName.replace(/_/g, ' ')}</span>
-                            ${backendQueueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
+                            ${backendQueueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event, this)"><i class="fas fa-file"></i></span>` : ''}
                             <span class="queue-count">${totalItems} items</span>
                         </div>
                         <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
@@ -1011,6 +1125,33 @@
     }
 
     // Use it in your setup
+    // Initialize queue workers select from server-rendered value
+    (function() {
+        const sel = document.getElementById('queue-workers-select');
+        if (sel) sel.value = '{{ queue_pool_workers }}';
+    })();
+
+    window.saveQueueWorkers = async function saveQueueWorkers() {
+        const btn = document.getElementById('queue-workers-save-btn');
+        const status = document.getElementById('queue-workers-status');
+        const val = parseInt(document.getElementById('queue-workers-select').value);
+        btn.disabled = true;
+        status.textContent = 'Saving…';
+        try {
+            const r = await fetch('/queues/api/queue_workers', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({'workers': val})
+            });
+            const d = await r.json();
+            status.textContent = d.success ? `✓ Saved — restart to apply` : '✗ Failed: ' + (d.error || '');
+        } catch(e) {
+            status.textContent = '✗ Error';
+        }
+        btn.disabled = false;
+        setTimeout(() => { status.textContent = ''; }, 4000);
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
         console.log('DOMContentLoaded event fired');
         

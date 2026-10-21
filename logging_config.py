@@ -1,6 +1,7 @@
 import logging
 import logging.handlers
 from utilities.settings import get_setting
+from utilities.log_redaction import RedactingFormatter, scrub
 import psutil
 import os
 import time
@@ -182,8 +183,10 @@ class JSONFormatter(logging.Formatter):
             log_record['exception'] = self.formatException(record.exc_info)
         if record.stack_info:
             log_record['stack_info'] = self.formatStack(record.stack_info)
-            
-        return json.dumps(log_record)
+
+        # Scrub the serialised form: dict messages are merged in wholesale
+        # above, so credentials can arrive through any of these fields.
+        return scrub(json.dumps(log_record))
 
 def setup_debug_logging(log_dir):
     # Debug file handler with immediate flush
@@ -212,14 +215,14 @@ def setup_debug_logging(log_dir):
     debug_handler.addFilter(APSchedulerDebugNoiseFilter())
     debug_handler.addFilter(APSchedulerMaxInstancesWarningFilter())
     
-    formatter = logging.Formatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(message)s')
+    formatter = RedactingFormatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(message)s')
     debug_handler.setFormatter(formatter)
     logging.getLogger().addHandler(debug_handler)
 
 def setup_info_logging(log_dir):
     # Add console handler for info logs
     console_handler = DynamicConsoleHandler()
-    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+    console_handler.setFormatter(RedactingFormatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
     
     # Add filters to exclude unwanted messages
     console_handler.addFilter(lambda record: not record.name.startswith(('urllib3', 'requests', 'charset_normalizer')))
@@ -244,7 +247,7 @@ def setup_queue_logging(log_dir):
 
 def setup_performance_logging(log_dir):
     # Performance file handler with immediate flush
-    performance_formatter = logging.Formatter('%(message)s')
+    performance_formatter = RedactingFormatter('%(message)s')
     performance_handler = logging.handlers.RotatingFileHandler(
         os.path.join(log_dir, 'performance.log'), 
         maxBytes=10*1024*1024, # Limit to 10MB
@@ -295,9 +298,11 @@ def setup_logging():
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     
-    # Configure root logger
+    # Configure root logger. Its level is set to the configured level below,
+    # once the handlers exist: a DEBUG root built a LogRecord and ran every
+    # filter for each logging.debug() call only for the handlers to drop it.
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)  # Set to DEBUG to see all debug messages
+    root_logger.setLevel(logging.DEBUG)
     
     # Clear any existing handlers
     root_logger.handlers.clear()
@@ -309,6 +314,9 @@ def setup_logging():
     setup_queue_logging(log_dir)
     setup_performance_logging(log_dir)
     setup_item_tracker_logging(log_dir)
+
+    handler_levels = [h.level for h in root_logger.handlers if h.level > logging.NOTSET]
+    root_logger.setLevel(min(handler_levels) if handler_levels else logging.DEBUG)
     
     # Start performance monitoring after logging is set up
     start_performance_monitoring()

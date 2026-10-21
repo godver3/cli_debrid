@@ -1,6 +1,7 @@
 from flask import jsonify, request, render_template, session, Blueprint
 import copy
 import logging
+from usenet import get_usenet_provider_display_name as _usenet_pname
 from debrid import get_debrid_provider
 # Provider-agnostic: avoid direct Real-Debrid import
 from .models import user_required, onboarding_required, admin_required, scraper_permission_required, scraper_view_access_required
@@ -11,6 +12,7 @@ from utilities.web_scraper import get_media_details
 from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
 from utilities.web_scraper import search_trakt
+from utilities.local_library_scan import extract_resolution_from_filename
 from queues.torrent_processor import TorrentProcessor
 from queues.media_matcher import MediaMatcher
 from typing import Dict, Any, Tuple
@@ -23,6 +25,7 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 from database.torrent_tracking import record_torrent_addition, get_torrent_history, update_torrent_tracking
 from flask_login import current_user
+from .utils import is_user_system_enabled
 import asyncio
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 import re
@@ -166,6 +169,24 @@ def _download_and_get_hash(url: str) -> str:
     except Exception as e:
         raise Exception(f"Failed to process torrent URL: {str(e)}")
 
+def _record_manual_grab(item_id, kind, release_title, info_hash=None):
+    """Scraper stats: log a grab made from the web UI. The UI posts the chosen
+    result's source fields alongside the add request; never raises."""
+    try:
+        from flask import has_request_context
+        from database.scraper_grabs import record_grab
+        from database.database_reading import get_media_item_by_id
+        result = {}
+        if has_request_context():
+            result = {k: request.form.get(k) for k in ('source', 'scraper_type', 'scraper_instance', 'indexer')
+                      if request.form.get(k)}
+        item = get_media_item_by_id(item_id) or {'id': item_id}
+        record_grab(item, result, trigger='manual', kind=kind,
+                    release_title=release_title, info_hash=info_hash)
+    except Exception as e:
+        logging.debug(f"[ScraperStats] manual grab not recorded for item {item_id}: {e}")
+
+
 @scraper_bp.route('/add_to_debrid', methods=['POST'])
 @user_required
 @scraper_permission_required
@@ -181,27 +202,45 @@ def add_torrent_to_debrid():
         version_from_form = request.form.get('version') # Renamed to avoid conflict
         tmdb_id = request.form.get('tmdb_id')
         original_scraped_torrent_title = request.form.get('original_scraped_torrent_title')
-        selected_folder = request.form.get('selected_folder')  # Get user-selected folder for symlink mode
-        selected_folder_is_custom = request.form.get('selected_folder_is_custom') == 'true'  # Check if it's a custom folder
-        # --- START EDIT: Get current_score from form data ---
+        source_context = request.form.get('source_context')  # e.g. 'recently_aired'
+        # Get file management mode to check if we should process folder selection
+        file_management_mode = get_setting('File Management', 'file_collection_management', 'Plex')
+
+        # Only get folder selection data if in symlink mode
+        selected_folder = None
+        selected_folder_is_custom = False
+        if file_management_mode == 'Symlinked/Local':
+            selected_folder = request.form.get('selected_folder')  # Get user-selected folder for symlink mode
+            selected_folder_is_custom = request.form.get('selected_folder_is_custom') == 'true'  # Check if it's a custom folder
+
+        # Get tags selection — Plex mode only, NZB naming embeds tags in job title
+        selected_tags = None
+        if file_management_mode == 'Plex':
+            _tags_raw = request.form.get('selected_tags', '').strip()
+            if _tags_raw:
+                selected_tags = _tags_raw
+
+        # Get current_score from form data
         current_score_str = request.form.get('current_score', '0') # Default to '0'
         try:
             current_score = float(current_score_str)
         except (ValueError, TypeError):
             logging.warning(f"Invalid current_score value received: '{current_score_str}'. Defaulting to 0.")
             current_score = 0.0
-        # --- END EDIT ---
 
         logging.info(f"Adding {title} ({year}) to debrid provider")
-        logging.info(f"========== FOLDER SELECTION DEBUG ==========")
-        logging.info(f"selected_folder: {selected_folder}")
-        logging.info(f"selected_folder_is_custom: {selected_folder_is_custom}")
-        logging.info(f"============================================")
-        if selected_folder:
-            folder_type = "custom" if selected_folder_is_custom else "standard"
-            logging.info(f"✅ User selected folder: {selected_folder} (type: {folder_type})")
-        else:
-            logging.info(f"⚠️ No folder selected - will use genre-based auto-detection")
+
+        # Only log folder selection details if in symlink mode
+        if file_management_mode == 'Symlinked/Local':
+            logging.info(f"========== FOLDER SELECTION DEBUG ==========")
+            logging.info(f"selected_folder: {selected_folder}")
+            logging.info(f"selected_folder_is_custom: {selected_folder_is_custom}")
+            logging.info(f"============================================")
+            if selected_folder:
+                folder_type = "custom" if selected_folder_is_custom else "standard"
+                logging.info(f"✅ User selected folder: {selected_folder} (type: {folder_type})")
+            else:
+                logging.info(f"⚠️ No folder selected - will use genre-based auto-detection")
 
         # Determine the final version for the item
         final_version_for_item = version_from_form
@@ -235,6 +274,55 @@ def add_torrent_to_debrid():
         except (ValueError, TypeError):
             episode_number = None
             
+        # NZB / Usenet path — route to cli_mount instead of debrid
+        protocol = request.form.get('protocol', '').lower()
+        nzb_url = request.form.get('nzb_url', '')
+        episode_nzb_urls_raw = request.form.get('episode_nzb_urls', '')
+        fallback_nzb_urls_raw = request.form.get('fallback_nzb_urls', '')
+        episode_filenames_raw = request.form.get('episode_filenames', '')
+        pack_waterfall_level_raw = request.form.get('pack_waterfall_level', '')
+        if protocol == 'nzb' or (nzb_url and not magnet_link) or episode_nzb_urls_raw:
+            # Virtual season pack — per-episode NZB URLs
+            if episode_nzb_urls_raw:
+                try:
+                    episode_nzb_urls = {int(k): v for k, v in json.loads(episode_nzb_urls_raw).items()}
+                    fallback_nzb_urls = {int(k): v for k, v in json.loads(fallback_nzb_urls_raw).items()} if fallback_nzb_urls_raw else {}
+                    episode_filenames_ui = {int(k): v for k, v in json.loads(episode_filenames_raw).items()} if episode_filenames_raw else {}
+                except Exception:
+                    episode_nzb_urls = {}
+                    fallback_nzb_urls = {}
+                    episode_filenames_ui = {}
+                if episode_nzb_urls:
+                    try:
+                        pack_waterfall_level = int(pack_waterfall_level_raw) if pack_waterfall_level_raw else None
+                    except (ValueError, TypeError):
+                        pack_waterfall_level = None
+                    return _add_nzb_pack_to_usenet(
+                        episode_nzb_urls=episode_nzb_urls,
+                        fallback_nzb_urls=fallback_nzb_urls,
+                        title=title, year=year, media_type=media_type,
+                        season=season_number,
+                        version=final_version_for_item, tmdb_id=tmdb_id,
+                        original_scraped_torrent_title=original_scraped_torrent_title,
+                        episode_filenames=episode_filenames_ui,
+                        genres=genres, current_score=current_score,
+                        selected_folder=selected_folder,
+                        selected_folder_is_custom=selected_folder_is_custom,
+                        selected_tags=selected_tags,
+                        waterfall_level=pack_waterfall_level,
+                    )
+            return _add_nzb_to_usenet(
+                nzb_url=nzb_url or magnet_link,
+                title=title, year=year, media_type=media_type,
+                season=season_number, episode=episode_number,
+                version=final_version_for_item, tmdb_id=tmdb_id,
+                original_scraped_torrent_title=original_scraped_torrent_title,
+                genres=genres, current_score=current_score,
+                selected_folder=selected_folder,
+                selected_folder_is_custom=selected_folder_is_custom,
+                selected_tags=selected_tags,
+            )
+
         if not magnet_link:
             return jsonify({'error': 'No magnet link or URL provided'}), 400
 
@@ -293,18 +381,38 @@ def add_torrent_to_debrid():
                         logging.warning(f"Failed to delete temp file {temp_file}: {e_del}")
                 return jsonify({'error': error_message}), 400
 
-        # Add magnet/torrent to debrid provider
-        debrid_provider = get_debrid_provider()
+        # Add magnet/torrent to debrid provider — try each provider in order
+        from debrid import get_debrid_providers
+        from debrid.base import ProviderUnavailableError
+        providers = get_debrid_providers()
+        torrent_id = None
+        # None on a usenet-only setup; the add loop below simply won't run and we
+        # return the "failed to add torrent" error.
+        debrid_provider = providers[0] if providers else None  # will be updated to whichever succeeds
+        last_error = None
+        for _prov in providers:
+            try:
+                _id = _prov.add_torrent(actual_magnet_to_add, temp_file)
+                if _id:
+                    torrent_id = _id
+                    debrid_provider = _prov
+                    logging.info(f"[{_prov.PROVIDER_NAME}] Torrent added: {torrent_id}")
+                    break
+            except ProviderUnavailableError as _pue:
+                last_error = str(_pue)
+                if '451' in last_error:
+                    logging.warning(f"[{_prov.PROVIDER_NAME}] 451 DMCA — trying next provider")
+                    continue
+                logging.error(f"[{_prov.PROVIDER_NAME}] ProviderUnavailableError: {last_error}")
+                continue
+            except Exception as _ex:
+                last_error = str(_ex)
+                logging.error(f"[{_prov.PROVIDER_NAME}] Error: {last_error}")
+                continue
         try:
-            # Use 'actual_magnet_to_add' which could be the original magnet, 
-            # the redirected magnet, or None if a temp_file was successfully created.
-            # The debrid_provider.add_torrent method should prioritize temp_file if provided.
-            torrent_id = debrid_provider.add_torrent(actual_magnet_to_add, temp_file)
-            logging.info(f"Torrent result: {torrent_id}")
-            
             if not torrent_id:
-                error_message = "Failed to add torrent to debrid provider"
-                logging.error(error_message)
+                error_message = f"Failed to add torrent to any provider. Last error: {last_error}"
+                logging.error(f"Error in add_torrent_to_debrid: {last_error}")
                 return jsonify({'error': error_message}), 500
 
             # Extract torrent hash from magnet link or torrent file
@@ -337,7 +445,8 @@ def add_torrent_to_debrid():
                     'tmdb_id': tmdb_id,
                     'genres': genres,
                     'selected_folder': selected_folder,  # Include user-selected folder for symlink mode
-                    'selected_folder_is_custom': selected_folder_is_custom  # Flag for custom vs standard folders
+                    'selected_folder_is_custom': selected_folder_is_custom,  # Flag for custom vs standard folders
+                    'tags': selected_tags  # Plex mode NZB folder routing
                 }
 
                 # If there's a recent entry, update it instead of creating new one
@@ -417,10 +526,26 @@ def add_torrent_to_debrid():
             logging.error(error_message)
             return jsonify({'error': error_message}), 500
 
-        # Process the content
+        # Process the content — if files are empty (provider hasn't resolved yet),
+        # retry a few times before giving up. Debrid-Link in particular can return
+        # an empty files list immediately after add while it's still resolving the magnet.
         processor = ContentProcessor()
         success, message = processor.process_content(torrent_info)
-        
+
+        if not success and 'No files found' in message:
+            for _retry in range(4):
+                import time as _time
+                _time.sleep(3)
+                try:
+                    torrent_info = debrid_provider.get_torrent_info(torrent_id)
+                except Exception:
+                    pass
+                if torrent_info and torrent_info.get('files'):
+                    success, message = processor.process_content(torrent_info)
+                    if success:
+                        logging.info(f"Torrent files resolved on retry {_retry + 1}")
+                        break
+
         if not success:
             logging.error(f"Failed to process torrent content: {message}")
             return jsonify({'error': message}), 400
@@ -506,6 +631,14 @@ def add_torrent_to_debrid():
                 filled_by_file = os.path.basename(largest_file['path'])
                 # Get the torrent title from torrent_info's filename
                 filled_by_title = torrent_info.get('filename', '') or os.path.basename(os.path.dirname(largest_file['path']))
+                debrid_folder_name = torrent_info.get('debrid_folder_name') or filled_by_title
+
+                # Extract resolution from torrent title
+                resolution = extract_resolution_from_filename(original_scraped_torrent_title) if original_scraped_torrent_title else None
+                if not resolution:
+                    # Fallback: try extracting from the actual file name
+                    resolution = extract_resolution_from_filename(filled_by_file)
+                logging.info(f"Extracted resolution for {title}: {resolution}")
 
                 # Create media item
                 item = {
@@ -513,6 +646,7 @@ def add_torrent_to_debrid():
                     'year': year,
                     'type': 'episode' if media_type in ['tv', 'show'] else 'movie',
                     'version': final_version_for_item, # Use the determined version
+                    'resolution': resolution,
                     'tmdb_id': tmdb_id,
                     'imdb_id': imdb_id,
                     'state': 'Checking',
@@ -525,9 +659,12 @@ def add_torrent_to_debrid():
                     'genres': json.dumps(genres),  # JSON encode the genres list
                     'current_score': current_score,
                     'real_debrid_original_title': torrent_info.get('original_filename'),
-                    'content_source': 'content_requestor',
+                    'debrid_folder_name': debrid_folder_name,
+                    'content_source': 'content_requester',
+                    'content_source_detail': current_user.username if (is_user_system_enabled() and current_user.is_authenticated) else 'CD-Discover',
                     'selected_folder': selected_folder,  # User-selected folder from dropdown
-                    'selected_folder_is_custom': selected_folder_is_custom  # Flag for custom vs standard folders
+                    'selected_folder_is_custom': selected_folder_is_custom,  # Flag for custom vs standard folders
+                    'tags': selected_tags  # Plex mode NZB folder routing
                 }
 
                 # Add TV show specific fields if this is a TV show
@@ -544,15 +681,14 @@ def add_torrent_to_debrid():
                     # Get metadata for all episodes in the season
                     metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
                     if metadata and metadata.get('seasons'):
-                        # --- START EDIT: Use integer season_number as key ---
+                        # Use integer season_number as key
                         season_data = metadata['seasons'].get(season_number, {}) # Use integer season_number directly
-                        # --- END EDIT ---
                         episodes = season_data.get('episodes', {})
                         
                         # Create a MediaMatcher instance
                         media_matcher = MediaMatcher()
                         
-                        # --- START EDIT: Pre-parse files ---
+                        # Pre-parse files
                         # Pre-parse all files from the torrent info once
                         parsed_files = []
                         torrent_files = torrent_info.get('files', [])
@@ -560,7 +696,7 @@ def add_torrent_to_debrid():
                             parsed_info = media_matcher._parse_file_info(file_dict)
                             if parsed_info:
                                 parsed_files.append(parsed_info)
-                        
+
                         if not parsed_files:
                             logging.warning(f"No valid video files found in torrent for season pack processing for {title} S{season_number}.")
                             # Decide if we should return an error or just continue
@@ -570,7 +706,6 @@ def add_torrent_to_debrid():
                                 'message': 'Successfully added torrent, but no valid video files found for season pack processing.',
                                 'cache_status': cache_status
                             })
-                        # --- END EDIT ---
 
                         # For each episode in the season
                         for episode_num_str, episode_data in episodes.items(): # Renamed episode_num to avoid clash
@@ -581,7 +716,7 @@ def add_torrent_to_debrid():
                                 episode_item['episode_number'] = episode_num
                                 episode_item['current_score'] = current_score # Use the score passed for the pack
                                 episode_item['type'] = 'episode' # Ensure type is set for matching
-                                # Note: content_source inherited from item which already has 'content_requestor'
+                                # Note: content_source inherited from item which already has 'content_requester'
                                 
                                 # Get episode-specific release date and title
                                 first_aired = episode_data.get('first_aired')
@@ -589,7 +724,7 @@ def add_torrent_to_debrid():
                                 
                                 if first_aired:
                                     try:
-                                        # --- START EDIT: Use iso8601.parse_date for robust parsing ---
+                                        # Use iso8601.parse_date for robust parsing
                                         first_aired_utc = iso8601.parse_date(first_aired)
                                         # Ensure it's timezone-aware (iso8601.parse_date might already return aware)
                                         if first_aired_utc.tzinfo is None or first_aired_utc.tzinfo.utcoffset(first_aired_utc) is None:
@@ -601,23 +736,51 @@ def add_torrent_to_debrid():
                                         # Format the local date as string
                                         episode_item['release_date'] = local_dt.strftime("%Y-%m-%d")
                                     except (ValueError, iso8601.ParseError) as e:
-                                        # --- END EDIT ---
                                         episode_item['release_date'] = 'Unknown'
                                         logging.warning(f"Could not parse release date for S{season_number}E{episode_num}, value was: '{first_aired}'. Error: {e}")
                                 
-                                # --- START EDIT: Find matching file using find_best_match_from_parsed ---
+                                # Find matching file using find_best_match_from_parsed
                                 # Find matching file for this episode from the pre-parsed list
                                 match_result = media_matcher.find_best_match_from_parsed(parsed_files, episode_item)
                                 
                                 if match_result:
                                     matching_filepath_basename, _ = match_result # Unpack the tuple
+
+                                    matched_file_dict = next(
+                                        (
+                                            file_dict for file_dict in torrent_files
+                                            if os.path.basename(file_dict.get('path', '')) == matching_filepath_basename
+                                        ),
+                                        None
+                                    )
+
                                     episode_item['filled_by_file'] = matching_filepath_basename # Use the basename
-                                    
+
+                                    if matched_file_dict:
+                                        matched_path = matched_file_dict.get('path', '')
+                                        matched_folder_name = os.path.basename(os.path.dirname(matched_path))
+                                        if matched_folder_name:
+                                            episode_item['filled_by_title'] = matched_folder_name
+                                            episode_item['debrid_folder_name'] = matched_folder_name
+                                        logging.info(
+                                            f"Season pack exact match for {title} S{season_number}E{episode_item.get('episode_number')}: "
+                                            f"folder='{episode_item.get('debrid_folder_name')}', "
+                                            f"file='{episode_item.get('filled_by_file')}'"
+                                        )
+                                    else:
+                                        logging.warning(
+                                            f"Matched basename '{matching_filepath_basename}' for {title} "
+                                            f"S{season_number}E{episode_item.get('episode_number')} but could not resolve original torrent path."
+                                        )
+
                                     # Add episode to database
                                     from database import add_media_item
                                     episode_id = add_media_item(episode_item, user_initiated=True)
                                     if episode_id:
                                         episode_item['id'] = episode_id
+                                        _record_manual_grab(episode_id, 'torrent',
+                                                            original_scraped_torrent_title or filled_by_title,
+                                                            info_hash=torrent_hash)
                                         # Add to checking queue
                                         from queues.checking_queue import CheckingQueue
                                         checking_queue = CheckingQueue()
@@ -626,12 +789,94 @@ def add_torrent_to_debrid():
                                          logging.error(f"Failed to add episode S{season_number}E{episode_num} to database.")
                                 else:
                                     logging.warning(f"No matching file found for episode S{season_number}E{episode_num} in parsed files.")
-                                # --- END EDIT ---
                             except Exception as e:
                                 logging.error(f"Error processing episode {title} S{season_number}E{episode_num}: {str(e)}", exc_info=True)
                                 continue
                     else:
                          logging.warning(f"No metadata or no 'seasons' key found in metadata for TMDB ID {tmdb_id} during season pack processing for {title} S{season_number}.") # Enhanced log
+
+                    # Debrid File Naming: rename the season pack folder in cli_mount DFS
+                    # The single rename covers all episodes since they share the same torrent.
+                    if torrent_hash:
+                        try:
+                            from utilities.settings import get_setting as _dbn_gs_sp
+                            if _dbn_gs_sp('Debrid Provider', 'enable_debrid_naming', False):
+                                _dbn_orig_sp = original_scraped_torrent_title or filled_by_title
+                                _dbn_title_sp = _build_debrid_title(
+                                    title=title,
+                                    year=year,
+                                    imdb_id=imdb_id,
+                                    version=final_version_for_item,
+                                    original_scraped_torrent_title=_dbn_orig_sp,
+                                    media_type='tv',
+                                    season=season_number,
+                                    episode=None,
+                                    episode_title=None,
+                                    tags=selected_tags or None,
+                                    content_source_display_name=None,
+                                )
+                                if _dbn_title_sp and _dbn_title_sp != _dbn_orig_sp:
+                                    import threading as _dbn_t_sp
+                                    _dbn_h_sp = torrent_hash
+                                    _dbn_n_sp = _dbn_title_sp
+                                    _dbn_provider_id_sp = torrent_id  # RD provider ID for DB lookup
+                                    def _do_rename_sp(h, name, provider_id=None):
+                                        import time as _t
+                                        try:
+                                            from usenet import get_usenet_client
+                                            _dc_sp = get_usenet_client()
+                                            if not hasattr(_dc_sp, 'rename_nzb_with_status'):
+                                                return  # active usenet provider (e.g. nzbdav) has no rename semantics
+                                            # cli_mount only registers an entry as queryable-by-hash after its
+                                            # own periodic sync (default ~10 min) — a 404 in the first several
+                                            # attempts is expected, not proof the entry is gone. Only treat 404
+                                            # as final once it's persisted for that long (20 attempts x 30s).
+                                            _consecutive_404_sp = 0
+                                            for _a in range(100):
+                                                _renamed_sp, _not_found_sp = _dc_sp.rename_nzb_with_status(h, name)
+                                                if _not_found_sp:
+                                                    _consecutive_404_sp += 1
+                                                    if _consecutive_404_sp >= 20:
+                                                        logging.warning(f'[DebridNaming] {h!r} not found in cli_mount (404) for {_consecutive_404_sp} consecutive attempts — giving up (season pack)')
+                                                        return
+                                                else:
+                                                    _consecutive_404_sp = 0
+                                                if _renamed_sp:
+                                                    logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} (season pack)')
+                                                    # Register cli_debrid IDs — match via magnet infohash
+                                                    # (filled_by_torrent_id stores the RD provider ID, not the infohash)
+                                                    try:
+                                                        import os as _os_sp
+                                                        from database.core import get_db_connection as _gdb_sp
+                                                        _VIDEO_EXTS_SP = {'.mkv','.mp4','.avi','.mov','.wmv','.m4v','.ts'}
+                                                        with _gdb_sp() as _dbc_sp:
+                                                            # Use provider_id (RD torrent ID) for lookup — more reliable
+                                                            # than infohash since filled_by_magnet may be NULL at rename time
+                                                            _lookup = provider_id or h
+                                                            _sibs_sp = _dbc_sp.execute(
+                                                                "SELECT id, filled_by_file FROM media_items "
+                                                                "WHERE (filled_by_torrent_id=? OR filled_by_magnet LIKE ?) "
+                                                                "AND state IN ('Checking','Collected','Upgrading')",
+                                                                (_lookup, f'%{h}%')
+                                                            ).fetchall()
+                                                            _cli_ids_sp = {
+                                                                s[1]: s[0] for s in _sibs_sp
+                                                                if s[1] and _os_sp.path.splitext(s[1])[1].lower() in _VIDEO_EXTS_SP
+                                                            }
+                                                            if _cli_ids_sp:
+                                                                _dc_sp.register_cli_ids(h, _cli_ids_sp)
+                                                                logging.info(f'[DebridNaming] Registered {len(_cli_ids_sp)} cli_debrid IDs for {h!r} (season pack)')
+                                                                _dc_sp.push_tags_for_item(h, next(iter(_cli_ids_sp.values())))
+                                                    except Exception as _reg_sp:
+                                                        logging.debug(f'[DebridNaming] cli_ids registration error (season pack): {_reg_sp}')
+                                                    return
+                                                _t.sleep(30)
+                                            logging.warning(f'[DebridNaming] Could not rename {h!r} after 100 attempts (season pack)')
+                                        except Exception as _e_sp:
+                                            logging.debug(f'[DebridNaming] Rename error (season pack): {_e_sp}')
+                                    _dbn_t_sp.Thread(target=_do_rename_sp, args=(_dbn_h_sp, _dbn_n_sp, _dbn_provider_id_sp), daemon=True).start()
+                        except Exception as _dbn_ex_sp:
+                            logging.debug(f'[DebridNaming] Setup error (season pack): {_dbn_ex_sp}')
 
                     return jsonify({
                         'success': True,
@@ -640,20 +885,145 @@ def add_torrent_to_debrid():
                     })
                 else:
                     # For single episodes or movies, proceed as normal
-                    from database import add_media_item
+                    from database import add_media_item, get_db_connection
 
-                    item_id = add_media_item(item, user_initiated=True)
-                    if not item_id:
-                        raise Exception("Failed to add item to database")
-                    
-                    # Add the database ID to the item
-                    item['id'] = item_id
-                    
+                    # When coming from recently_aired, find the existing DB entry and update it
+                    # instead of creating a new one — this fixes a missed item without duplicating
+                    if source_context == 'recently_aired' and media_type in ['tv', 'show'] and season_number is not None and episode_number is not None:
+                        from datetime import datetime as _dt
+                        _conn = get_db_connection()
+                        try:
+                            _row = _conn.execute(
+                                '''SELECT id, version FROM media_items
+                                   WHERE type = 'episode'
+                                   AND (imdb_id = ? OR tmdb_id = ?)
+                                   AND season_number = ? AND episode_number = ?
+                                   ORDER BY CASE state
+                                       WHEN 'Sleeping' THEN 1
+                                       WHEN 'Blacklisted' THEN 2
+                                       WHEN 'Wanted' THEN 3
+                                       ELSE 4
+                                   END
+                                   LIMIT 1''',
+                                (item.get('imdb_id'), item.get('tmdb_id'), season_number, episode_number)
+                            ).fetchone()
+                            if _row:
+                                existing_id = _row['id']
+                                logging.info(f"recently_aired fix: updating existing item id={existing_id} (version={_row['version']}) instead of inserting new")
+                                _conn.execute(
+                                    '''UPDATE media_items SET
+                                        state = 'Checking',
+                                        filled_by_magnet = ?,
+                                        filled_by_torrent_id = ?,
+                                        filled_by_title = ?,
+                                        filled_by_file = ?,
+                                        original_scraped_torrent_title = ?,
+                                        debrid_folder_name = ?,
+                                        current_score = ?,
+                                        ghostlisted = 0,
+                                        blacklisted_date = NULL,
+                                        sleep_cycles = 0,
+                                        last_updated = ?
+                                       WHERE id = ?''',
+                                    (actual_magnet_to_add, torrent_id, item.get('filled_by_title'),
+                                     item.get('filled_by_file'), original_scraped_torrent_title,
+                                     item.get('debrid_folder_name'),
+                                     current_score, _dt.now(), existing_id)
+                                )
+                                _conn.commit()
+                                item['id'] = existing_id
+                                item['version'] = _row['version']
+                            else:
+                                logging.info(f"recently_aired fix: no existing item found, inserting new")
+                                item_id = add_media_item(item, user_initiated=True)
+                                if not item_id:
+                                    raise Exception("Failed to add item to database")
+                                item['id'] = item_id
+                        finally:
+                            _conn.close()
+                    else:
+                        item_id = add_media_item(item, user_initiated=True)
+                        if not item_id:
+                            raise Exception("Failed to add item to database")
+                        item['id'] = item_id
+
+                    _record_manual_grab(item['id'], 'torrent',
+                                        original_scraped_torrent_title or filled_by_title,
+                                        info_hash=torrent_hash)
+
                     # Add item to checking queue
                     from queues.checking_queue import CheckingQueue
                     checking_queue = CheckingQueue()
                     checking_queue.add_item(item)
                     logging.info(f"Added item to checking queue: {item}")
+
+                    # Debrid File Naming: rename cli_mount DFS folder using structured CLI name
+                    if torrent_hash:
+                        try:
+                            from utilities.settings import get_setting as _dbn_gs2
+                            if _dbn_gs2('Debrid Provider', 'enable_debrid_naming', False):
+                                _dbn_media2 = item.get('type', '')
+                                _dbn_mt2 = 'tv' if _dbn_media2 == 'episode' else _dbn_media2
+                                _dbn_season2 = item.get('season_number')
+                                _dbn_ep2 = item.get('episode_number')
+                                _dbn_orig2 = original_scraped_torrent_title or filled_by_title
+                                _dbn_title2 = _build_debrid_title(
+                                    title=item.get('title', ''),
+                                    year=item.get('year', ''),
+                                    imdb_id=item.get('imdb_id'),
+                                    version=item.get('version', ''),
+                                    original_scraped_torrent_title=_dbn_orig2,
+                                    media_type=_dbn_mt2,
+                                    season=_dbn_season2,
+                                    episode=_dbn_ep2,
+                                    episode_title=item.get('episode_title'),
+                                    tags=item.get('tags') or None,
+                                    content_source_display_name=item.get('content_source_detail') or item.get('content_source'),
+                                )
+                                if _dbn_title2 and _dbn_title2 != _dbn_orig2:
+                                    import threading as _dbn_t2
+                                    _dbn_h2, _dbn_n2 = torrent_hash, _dbn_title2
+                                    _dbn_item_id2 = item.get('id')
+                                    def _do_rename2(h, name, item_id):
+                                        import time as _t
+                                        try:
+                                            from usenet import get_usenet_client
+                                            _dc2 = get_usenet_client()
+                                            if not hasattr(_dc2, 'rename_nzb_with_status'):
+                                                return  # active usenet provider (e.g. nzbdav) has no rename semantics
+                                            # cli_mount only registers an entry as queryable-by-hash after its
+                                            # own periodic sync (default ~10 min) — a 404 in the first several
+                                            # attempts is expected, not proof the entry is gone. Only treat 404
+                                            # as final once it's persisted for that long (20 attempts x 30s).
+                                            _consecutive_404_2 = 0
+                                            for _a2 in range(100):
+                                                _renamed2, _not_found2 = _dc2.rename_nzb_with_status(h, name)
+                                                if _not_found2:
+                                                    _consecutive_404_2 += 1
+                                                    if _consecutive_404_2 >= 20:
+                                                        logging.warning(f'[DebridNaming] {h!r} not found in cli_mount (404) for {_consecutive_404_2} consecutive attempts — giving up (manual add)')
+                                                        return
+                                                else:
+                                                    _consecutive_404_2 = 0
+                                                if _renamed2:
+                                                    logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} (manual add, attempt {_a2+1} of 100)')
+                                                    if item_id:
+                                                        try:
+                                                            from database.database_writing import update_media_item as _umi
+                                                            _umi(item_id, debrid_folder_name=name)
+                                                        except Exception as _db_err:
+                                                            logging.debug(f'[DebridNaming] DB update failed (manual add): {_db_err}')
+                                                        _dc2.register_cli_ids_for_item(h, item_id)
+                                                        _dc2.push_tags_for_item(h, item_id)
+                                                    return
+                                                _t.sleep(30)
+                                            logging.warning(f'[DebridNaming] Could not rename {h!r} after 100 attempts (manual add)')
+                                        except Exception as _e2:
+                                            logging.debug(f'[DebridNaming] Rename error (manual add): {_e2}')
+                                    _dbn_t2.Thread(target=_do_rename2, args=(_dbn_h2, _dbn_n2, _dbn_item_id2), daemon=True).start()
+                        except Exception as _dbn_ex2:
+                            logging.debug(f'[DebridNaming] Setup error (manual add): {_dbn_ex2}')
+
             except Exception as e:
                 logging.error(f"Failed to add item to checking queue: {e}")
                 # Don't return error since the main operation succeeded
@@ -1375,7 +1745,7 @@ def select_media():
         
         logging.info(f"Select media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
         
-        # --- START EDIT: Store imdb_id in session ---
+        # Store imdb_id in session
         if media_id:
             try:
                 from metadata.metadata import get_imdb_id_if_missing
@@ -1392,7 +1762,6 @@ def select_media():
                     logging.warning(f"Could not resolve imdb_id for tmdb_id {media_id} with media_type {api_media_type}. Cache check might be affected.")
             except (ValueError, TypeError) as e:
                 logging.error(f"Error resolving imdb_id from tmdb_id '{media_id}': {e}")
-        # --- END EDIT ---
 
         logging.info(f"Cache check settings: skip_cache_check={skip_cache_check}, background_check={background_check}")
         logging.debug(f"[select_media_route] Calling process_media_selection for '{title}'.")
@@ -1463,6 +1832,62 @@ def select_media():
             logging.info(f"select_media: PRE-JSONIFY filtered_out_results_list is NOT a list. Value: {str(filtered_out_results_list)[:500]}")
         # --- END DEBUGGING LOGS ---
 
+        # NZB season aggregate — run per-episode searches, filter+score, prepend virtual packs
+        if multi and season and not episode and media_type in ('tv', 'show'):
+            try:
+                from scraper.newznab import scrape_newznab_season_aggregate
+                from metadata.metadata import get_episode_count_for_seasons
+                from scraper.functions.filter_results import filter_results as _filter_results
+                from scraper.functions.rank_results import rank_result_key as _rank_result_key
+                _all_scrapers = get_setting('Scrapers') or {}
+                _nzb_scrapers = [
+                    (sid, cfg) for sid, cfg in _all_scrapers.items()
+                    if isinstance(cfg, dict) and cfg.get('type') == 'Newznab'
+                    and cfg.get('enabled') and cfg.get('url') and cfg.get('api_key', '').strip()
+                ]
+                if _nzb_scrapers:
+                    _imdb_id = session.get('last_selected_imdb_id') or ''
+                    _ep_count = get_episode_count_for_seasons(_imdb_id, [season]) if _imdb_id else 0
+                    if _ep_count > 0:
+                        _virtual_packs = scrape_newznab_season_aggregate(
+                            scrapers=_nzb_scrapers,
+                            imdb_id=_imdb_id,
+                            title=title,
+                            year=int(year) if year else 0,
+                            season=season,
+                            episode_count=_ep_count,
+                        )
+                        if _virtual_packs:
+                            # Load version settings for filter+score
+                            _scraping_versions = get_setting('Scraping', 'versions', {})
+                            _ver = (version or 'Default').strip('*')
+                            _version_settings = _scraping_versions.get(_ver, {}) or {
+                                'enable_hdr': True, 'max_resolution': '2160p', 'resolution_wanted': '<=',
+                            }
+                            _year_int = int(year) if year else 0
+                            # Filter — title similarity, resolution, filter_in/out
+                            _filtered, _filtered_out = _filter_results(
+                                _virtual_packs, str(media_id), title, _year_int,
+                                'episode', season, None, True, _version_settings,
+                                runtime=0, episode_count=_ep_count,
+                                season_episode_counts={season: _ep_count},
+                                genres=genres,
+                                imdb_id=_imdb_id,
+                            )
+                            # Don't add filtered-out NZB packs to filtered_out_results_list
+                            # — they would appear as hidden "filtered" rows in the UI
+                            if _filtered:
+                                logging.info(f'[select_media] Adding {len(_filtered)} scored NZB virtual packs to results')
+                                # Merge with normal results and sort together by score
+                                _all = passed_results + _filtered
+                                _all.sort(key=lambda x: _rank_result_key(
+                                    x, _all, title, _year_int, season, None,
+                                    True, 'episode', _version_settings,
+                                ))
+                                passed_results = _all
+            except Exception as _agg_err:
+                logging.warning(f'[select_media] NZB season aggregate failed: {_agg_err}', exc_info=True)
+
         # Return the results
         logging.debug(f"[select_media_route] Returning JSON for '{title}': passed_results={len(passed_results)}, filtered_out_results_list={len(filtered_out_results_list if filtered_out_results_list else [])}")
         return jsonify({
@@ -1472,6 +1897,790 @@ def select_media():
     except Exception as e:
         logging.error(f"Error in select_media: {str(e)}", exc_info=True)
         return jsonify({'error': 'An error occurred while processing your request'}), 500
+
+def _get_content_source_display_name(content_source_id):
+    """Resolve content source ID to its display_name from settings config."""
+    if not content_source_id:
+        return None
+    try:
+        from utilities.settings import get_setting as _gs2
+        sources = _gs2('Content Sources', None, {})
+        if not sources:
+            from utilities.settings import load_config as _lc
+            cfg = _lc()
+            sources = cfg.get('Content Sources', {})
+        source_cfg = sources.get(content_source_id, {})
+        return source_cfg.get('display_name', '').strip() or None
+    except Exception:
+        return None
+
+
+def _build_nzb_title(title, year, imdb_id, version, original_scraped_torrent_title,
+                     media_type=None, season=None, episode=None, episode_title=None,
+                     pack_original=None, tags=None, content_source_display_name=None):
+    """
+    Build a structured NZB job title when 'Enable NZB File Naming' is on.
+    This becomes both the cli_mount folder name and filename.
+    Falls back to original_scraped_torrent_title if setting is off or data missing.
+
+    pack_original: if provided, used for the (original) bracket instead of
+                   original_scraped_torrent_title. Used by NZB aggregate packs so
+                   the bracket always shows the pack quality tags regardless of
+                   per-episode filename availability.
+    """
+    from utilities.settings import get_setting as _gs
+    if not _gs('Usenet Provider', 'enable_nzb_naming', False):
+        return original_scraped_torrent_title
+
+    import re as _re
+    # Sanitize components for use in filenames
+    def _san(s):
+        return _re.sub(r'[\\/*?:"<>|]', '', str(s or '')).strip()
+
+    _title = _san(title)
+    _year = _san(year)
+    _imdb = _san(imdb_id) if imdb_id else ''
+    # Version toggle
+    _include_version = _gs('Usenet Provider', 'include_version_in_nzb_naming', True)
+    _version = _san(version).strip('*') if (version and _include_version) else ''
+    # Content source toggle
+    _include_cs = _gs('Usenet Provider', 'include_content_source_in_nzb_naming', False)
+    _cs_part = _san(content_source_display_name) if (_include_cs and content_source_display_name) else ''
+    # (original) bracket uses pack_original when provided, else original_scraped_torrent_title
+    _orig_full = _san(pack_original or original_scraped_torrent_title or '')
+    # Strip redundant prefix — pass 1: year-based, pass 2: resolution-based for episodes.
+    _orig = _orig_full
+    if _orig_full and _year:
+        _strip_pat = _re.compile(
+            r'^.*?[\s.]' + _re.escape(str(_year)) + r'[\s.]+',
+            _re.IGNORECASE
+        )
+        _stripped = _strip_pat.sub('', _orig_full).strip(' .')
+        if _stripped and _stripped != _orig_full:
+            _orig = _stripped
+    if _orig == _orig_full and _orig_full:
+        _ep_strip = _re.compile(r'^.*?((?:2160|1080|720)[pP][\s.])', _re.IGNORECASE)
+        _em = _ep_strip.match(_orig_full)
+        if _em:
+            _orig = _orig_full[_em.start(1):].strip(' .')
+    # Tags are no longer embedded in the title — they're pushed to cli_mount
+    # directly via CliMountClient.push_tags() instead. Kept as a no-op var so
+    # the _assemble(...) call sites below don't need to change.
+    _tags_part = ''
+
+    is_episode = media_type in ('tv', 'show', 'episode') and season is not None and episode is not None
+
+    # NZB name is used as both folder AND filename: folder/folder.nzb
+    # Full path = folder + '/' + folder + '.nzb' = 2*folder + 5
+    # Keep full path <= 240: folder <= (240-5)/2 = 117
+    _MAX_TITLE = 117
+
+    def _assemble(*p):
+        return ' - '.join(x for x in p if x)
+
+    if is_episode:
+        _ep_title = _san(episode_title or '')
+        base = _assemble(f'{_title} ({_year})', f'S{int(season):02d}E{int(episode):02d}')
+        _imdb_part = f'{{imdb-{_imdb}}}' if _imdb else ''
+
+        # Try full title first: base - ep_title - imdb - tags - version - cs - (orig)
+        full = _assemble(base, _ep_title, _imdb_part, _tags_part, _version, _cs_part, f'({_orig})' if _orig else '')
+        if len(full) <= _MAX_TITLE:
+            return full
+
+        # Drop episode title
+        without_ep = _assemble(base, _imdb_part, _tags_part, _version, _cs_part, f'({_orig})' if _orig else '')
+        if len(without_ep) <= _MAX_TITLE:
+            return without_ep
+
+        # Drop content source
+        without_cs = _assemble(base, _imdb_part, _tags_part, _version, f'({_orig})' if _orig else '')
+        if len(without_cs) <= _MAX_TITLE:
+            return without_cs
+
+        # Truncate (original) to fit — always keep it, just shorter. Drop
+        # tags/version from fixed_part first if even that alone leaves no room,
+        # so imdb_part (the field cli_debrid uses to re-match this entry later)
+        # is the last thing ever dropped, never the first.
+        if _orig:
+            for fixed_part in (
+                _assemble(base, _imdb_part, _tags_part, _version),
+                _assemble(base, _imdb_part, _version),
+                _assemble(base, _imdb_part),
+            ):
+                # " - (" prefix (4 chars) + ")" suffix (1 char) = 5 chars overhead
+                available = _MAX_TITLE - len(fixed_part) - 5
+                if available > 10:
+                    truncated_orig = _orig[:available]
+                    return f'{fixed_part} - ({truncated_orig})'
+
+        # Last resort: no (original), but imdb is still present.
+        without_orig = _assemble(base, _imdb_part)
+        if len(without_orig) <= _MAX_TITLE:
+            return without_orig
+        return base[:_MAX_TITLE]
+    else:
+        _season_part = f'S{int(season):02d}' if season is not None else ''
+        base = _assemble(f'{_title} ({_year})', _season_part)
+        _imdb_str = f'{{imdb-{_imdb}}}' if _imdb else ''
+        _orig_part = f'({_orig})' if _orig else ''
+
+        # imdb_id must never be the thing dropped to fit _MAX_TITLE — it is the
+        # only field cli_debrid uses to re-match this entry later (see
+        # repair_engine.py Strategy 4). Drop content-source, tags, then version
+        # first; only then truncate — and finally drop — the (original) bracket,
+        # which is decorative. This mirrors the episode branch above, which
+        # already protects imdb_part the same way.
+        for attempt in [
+            _assemble(base, _imdb_str, _tags_part, _version, _cs_part, _orig_part),
+            _assemble(base, _imdb_str, _tags_part, _version, _orig_part),
+            _assemble(base, _imdb_str, _version, _orig_part),
+            _assemble(base, _imdb_str, _orig_part),
+        ]:
+            if len(attempt) <= _MAX_TITLE:
+                return attempt
+
+        # Truncate (original) to fit — always keep it, just shorter.
+        if _orig:
+            fixed_part = _assemble(base, _imdb_str)
+            # " - (" prefix (4 chars) + ")" suffix (1 char) = 5 chars overhead
+            available = _MAX_TITLE - len(fixed_part) - 5
+            if available > 10:
+                truncated_orig = _orig[:available]
+                return f'{fixed_part} - ({truncated_orig})'
+
+        # Last resort: no (original), but imdb is still present.
+        without_orig = _assemble(base, _imdb_str)
+        if len(without_orig) <= _MAX_TITLE:
+            return without_orig
+        return base[:_MAX_TITLE]
+
+
+def _build_debrid_title(title, year, imdb_id, version, original_scraped_torrent_title,
+                        media_type=None, season=None, episode=None, episode_title=None,
+                        tags=None, content_source_display_name=None):
+    """
+    Build a structured debrid folder name when 'Enable Debrid File Naming' is on.
+    This becomes the cli_mount DFS mount folder/file name for the debrid torrent.
+    Completely separate from _build_nzb_title — reads Debrid Provider settings only.
+    Falls back to original_scraped_torrent_title if setting is off or data missing.
+    Tags are pushed to cli_mount directly via CliMountClient.push_tags(), not embedded here.
+    """
+    from utilities.settings import get_setting as _gs
+    if not _gs('Debrid Provider', 'enable_debrid_naming', False):
+        return original_scraped_torrent_title
+
+    import re as _re
+
+    def _san(s):
+        return _re.sub(r'[\\/*?:"<>|]', '', str(s or '')).strip()
+
+    _title = _san(title)
+    _year = _san(year)
+    _imdb = _san(imdb_id) if imdb_id else ''
+    _include_version = _gs('Debrid Provider', 'include_version_in_debrid_naming', True)
+    _version = _san(version).strip('*') if (version and _include_version) else ''
+    _include_cs = _gs('Debrid Provider', 'include_content_source_in_debrid_naming', False)
+    _cs_part = _san(content_source_display_name) if (_include_cs and content_source_display_name) else ''
+    _orig_full = _san(original_scraped_torrent_title or '')
+    # Strip redundant prefix from the original torrent name so only quality tags remain.
+    # Pass 1: strip everything up to and including the year (movies/shows with year).
+    # Pass 2: strip SxxExx + optional episode title (episode filenames without year).
+    _orig = _orig_full
+    if _orig_full and _year:
+        _strip_pat = _re.compile(
+            r'^.*?[\s.]' + _re.escape(str(_year)) + r'[\s.]+',
+            _re.IGNORECASE
+        )
+        _stripped = _strip_pat.sub('', _orig_full).strip(' .')
+        if _stripped and _stripped != _orig_full:
+            _orig = _stripped
+    if _orig == _orig_full and _orig_full:
+        # No year found — try stripping everything up to resolution/quality tag.
+        # Handles episode filenames like "Show S10E04 Title 1080p TrueHD..." → "1080p TrueHD..."
+        _ep_strip = _re.compile(r'^.*?((?:2160|1080|720)[pP][\s.])', _re.IGNORECASE)
+        _em = _ep_strip.match(_orig_full)
+        if _em:
+            _orig = _orig_full[_em.start(1):].strip(' .')
+    # Tags are no longer embedded in the title — they're pushed to cli_mount
+    # directly via CliMountClient.push_tags() instead. Kept as a no-op var so
+    # the _assemble(...) call sites below don't need to change.
+    _tags_part = ''
+
+    is_episode = media_type in ('tv', 'show', 'episode') and season is not None and episode is not None
+
+    # Debrid folder name is used as both folder AND filename: folder/folder.mkv
+    # Full path = folder + '/' + folder + '.mkv' = 2*folder + 5
+    # Keep full path <= 240: folder <= (240-5)/2 = 117
+    _MAX_TITLE = 117
+
+    def _assemble(*p):
+        return ' - '.join(x for x in p if x)
+
+    # (original) is mandatory — drop cs/version/tags before dropping it
+    _orig_part = f'({_orig})' if _orig else ''
+
+    if is_episode:
+        _ep_title = _san(episode_title or '')
+        base = _assemble(f'{_title} ({_year})', f'S{int(season):02d}E{int(episode):02d}')
+        _imdb_part = f'{{imdb-{_imdb}}}' if _imdb else ''
+
+        # imdb_id must never be the thing dropped to fit _MAX_TITLE — it is the
+        # only field cli_debrid uses to re-match this entry later (see
+        # repair_engine.py Strategy 4). Drop ep_title/cs/tags/version first;
+        # only then truncate — and finally drop — the (original) bracket,
+        # which is decorative.
+        for attempt in [
+            _assemble(base, _ep_title, _imdb_part, _tags_part, _version, _cs_part, _orig_part),
+            _assemble(base, _imdb_part, _tags_part, _version, _cs_part, _orig_part),
+            _assemble(base, _imdb_part, _tags_part, _version, _orig_part),
+            _assemble(base, _imdb_part, _orig_part),
+        ]:
+            if len(attempt) <= _MAX_TITLE:
+                return attempt
+
+        # Truncate (original) to fit — always keep it, just shorter.
+        if _orig:
+            fixed_part = _assemble(base, _imdb_part)
+            # " - (" prefix (4 chars) + ")" suffix (1 char) = 5 chars overhead
+            available = _MAX_TITLE - len(fixed_part) - 5
+            if available > 10:
+                truncated_orig = _orig[:available]
+                return f'{fixed_part} - ({truncated_orig})'
+
+        # Last resort: no (original), but imdb is still present.
+        without_orig = _assemble(base, _imdb_part)
+        if len(without_orig) <= _MAX_TITLE:
+            return without_orig
+        return base[:_MAX_TITLE]
+    else:
+        _season_part = f'S{int(season):02d}' if season is not None else ''
+        base = _assemble(f'{_title} ({_year})', _season_part)
+        _imdb_str = f'{{imdb-{_imdb}}}' if _imdb else ''
+
+        # imdb_id must never be the thing dropped to fit _MAX_TITLE — it is the
+        # only field cli_debrid uses to re-match this entry later (see
+        # repair_engine.py Strategy 4). Drop content-source and tags first;
+        # only then truncate — and finally drop — the (original) bracket,
+        # which is decorative.
+        for attempt in [
+            _assemble(base, _imdb_str, _tags_part, _version, _cs_part, _orig_part),
+            _assemble(base, _imdb_str, _tags_part, _version, _orig_part),
+            _assemble(base, _imdb_str, _version, _orig_part),
+            _assemble(base, _imdb_str, _orig_part),
+        ]:
+            if len(attempt) <= _MAX_TITLE:
+                return attempt
+
+        # Truncate (original) to fit — always keep it, just shorter.
+        if _orig:
+            fixed_part = _assemble(base, _imdb_str)
+            # " - (" prefix (4 chars) + ")" suffix (1 char) = 5 chars overhead
+            available = _MAX_TITLE - len(fixed_part) - 5
+            if available > 10:
+                truncated_orig = _orig[:available]
+                return f'{fixed_part} - ({truncated_orig})'
+
+        # Last resort: no (original), but imdb is still present.
+        without_orig = _assemble(base, _imdb_str)
+        if len(without_orig) <= _MAX_TITLE:
+            return without_orig
+        return base[:_MAX_TITLE]
+
+
+def _submit_single_episode_nzb(client, nzb_url, ep_label, is_anime=False, media_type='',
+                                tags=None, tags_exclusive=False):
+    """Fetch + submit one episode NZB.
+    Returns (job_id, nzb_text, missing_segments) where missing_segments=True means
+    cli_mount's server couldn't find the articles (abort pack, don't blacklist)."""
+    from routes.api_tracker import api as _nzb_api
+    from database.not_wanted_magnets import is_nzb_segment_not_wanted
+    nzb_text = None
+    try:
+        r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
+        if r.status_code != 200 or '<nzb' not in r.text.lower():
+            logging.warning(f'[NZBPack] {ep_label}: bad NZB response (status={r.status_code})')
+            return None, None, False
+        nzb_text = r.text
+        if is_nzb_segment_not_wanted(nzb_text):
+            logging.info(f'[NZBPack] {ep_label}: segment in not-wanted list, skipping')
+            return None, None, False
+        job_id = client.add_nzb_content(nzb_content=nzb_text, title=ep_label,
+                                        is_anime=is_anime, media_type=media_type,
+                                        tags=tags, tags_exclusive=tags_exclusive)
+        if not job_id and client.last_missing_segments:
+            logging.warning(f'[NZBPack] {ep_label}: cli_mount server missing segments — aborting pack (NZB not blacklisted)')
+            return None, None, True
+        return job_id, nzb_text, False
+    except Exception as e:
+        logging.warning(f'[NZBPack] {ep_label}: submit error: {e}')
+        return None, None, False
+
+
+def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, media_type,
+                             season, version, tmdb_id, original_scraped_torrent_title=None,
+                             episode_filenames=None,
+                             genres=None, current_score=0.0,
+                             selected_folder=None, selected_folder_is_custom=False,
+                             selected_tags=None,
+                             existing_items=None,
+                             waterfall_level=None):
+    """Submit a virtual NZB season pack — one NZB per episode with health-check + retry.
+
+    existing_items: optional dict {ep_num: item_dict} of existing DB items to reuse instead of
+                    creating new ones. When provided, those items are updated in-place (state →
+                    Adding) preserving their IDs and history. Used by scraping_queue batch path.
+
+    waterfall_level: the group-matching level scrape_newznab_season_aggregate used to build this
+                    pack (1 = same release group for every episode; 2/3 = episodes may come from
+                    different groups merged under a looser key). Only level 1 guarantees that an
+                    expired episode's retention issue applies to the rest of the pack — None
+                    (unknown) is treated the same as level 1 for safety.
+    """
+    from usenet import get_usenet_client, reset_usenet_client
+    from database.not_wanted_magnets import add_to_not_wanted_nzb_segment, extract_nzb_segment_id
+    from metadata.metadata import get_metadata, get_release_date
+    from database.database_writing import add_media_item, update_media_item_state, update_media_item
+
+    reset_usenet_client()
+    client = get_usenet_client()
+    if not client.is_enabled():
+        return jsonify({'error': f'Usenet provider ({_usenet_pname()}) is not enabled.'}), 503
+
+    # Resolve metadata once
+    imdb_id = None
+    episode_titles = {}
+    episode_imdb_ids = {}
+    try:
+        meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+        imdb_id = meta.get('imdb_id')
+        # Fallback: resolve imdb_id directly if get_metadata didn't return it
+        if not imdb_id and tmdb_id:
+            try:
+                from metadata.metadata import get_imdb_id_if_missing
+                _api_type = 'show' if media_type in ('tv', 'show') else media_type
+                imdb_id = get_imdb_id_if_missing({'tmdb_id': int(tmdb_id), 'media_type': _api_type})
+            except Exception as _ie:
+                logging.warning(f'[NZBPack] imdb_id fallback failed: {_ie}')
+        # Episode titles and IMDb IDs via DirectAPI (has full season data)
+        if imdb_id:
+            try:
+                from metadata.metadata import DirectAPI
+                show_meta, _ = DirectAPI.get_show_metadata(imdb_id)
+                season_data = (show_meta.get('seasons') or {}).get(str(season), {}) or \
+                              (show_meta.get('seasons') or {}).get(season, {})
+                episode_titles = {int(k): v.get('title', f'Episode {k}')
+                                 for k, v in (season_data.get('episodes') or {}).items()}
+                episode_imdb_ids = {int(k): v['imdb_id']
+                                    for k, v in (season_data.get('episodes') or {}).items()
+                                    if v.get('imdb_id')}
+            except Exception:
+                pass
+    except Exception as _me:
+        logging.warning(f'[NZBPack] Metadata fetch failed: {_me}')
+
+    if not imdb_id:
+        logging.warning(f'[NZBPack] Could not resolve imdb_id for tmdb_id={tmdb_id} — replace cleanup will not fire')
+
+    # Pre-load existing cli_mount NZB names to skip already-submitted episodes
+    _existing_nzb_names = set()
+    try:
+        from routes.api_tracker import api as _dcy_check_api
+        from utilities.settings import get_setting as _gs2
+        _dcy_url2 = _gs2('Usenet Provider', 'url', default='').rstrip('/')
+        _dcy_token2 = _gs2('Usenet Provider', 'api_token', default='')
+        _dh2 = {'Authorization': f'Bearer {_dcy_token2}'} if _dcy_token2 else {}
+        _pg2 = 1
+        while True:
+            _tr2 = _dcy_check_api.get(f'{_dcy_url2}/api/browse/nzbs',
+                                       params={'page': _pg2, 'limit': 100},
+                                       headers=_dh2, timeout=10)
+            if _tr2.status_code != 200:
+                break
+            _td2 = _tr2.json()
+            _entries2 = _td2.get('entries', _td2) if isinstance(_td2, dict) else _td2
+            if not _entries2:
+                break
+            for _n2 in _entries2:
+                _name2 = _n2.get('name') or _n2.get('title') or _n2.get('filename') or ''
+                if _name2:
+                    _existing_nzb_names.add(_name2.strip())
+            _total2 = _td2.get('total_pages', 1) if isinstance(_td2, dict) else 1
+            if _pg2 >= _total2:
+                break
+            _pg2 += 1
+        logging.info(f'[NZBPack] Loaded {len(_existing_nzb_names)} existing cli_mount NZBs for dedup check')
+    except Exception as _de2:
+        logging.warning(f'[NZBPack] Could not load existing cli_mount NZBs: {_de2}')
+
+    # Pre-load already-collected episodes to avoid duplicates
+    # Exclude episodes marked manual_replace=1 — those are intentional replacements
+    _collected_eps = set()
+    if imdb_id:
+        try:
+            from database import get_db_connection as _get_db
+            _conn = _get_db()
+            _rows = _conn.execute(
+                "SELECT episode_number FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' AND state IN ('Collected','Upgrading') AND (manual_replace IS NULL OR manual_replace=0)",
+                (imdb_id, season)
+            ).fetchall()
+            _collected_eps = {r[0] for r in _rows}
+            _conn.close()
+            if _collected_eps:
+                logging.info(f'[NZBPack] Skipping already-collected episodes (no replace flag): {sorted(_collected_eps)}')
+        except Exception as _ce:
+            logging.warning(f'[NZBPack] Could not check collected episodes: {_ce}')
+
+    submitted = []
+    failed_eps = []
+    pack_expired = False  # set True when missing segments detected — abort remaining episodes
+
+    for ep_num in sorted(episode_nzb_urls.keys()):
+        if pack_expired:
+            failed_eps.append(ep_num)
+            continue
+
+        if ep_num in _collected_eps:
+            logging.info(f'[NZBPack] Skipping S{season:02d}E{ep_num:02d} — already Collected')
+            continue
+
+        import re as _re_label
+        # Aggregate pack display title — always has quality tags, used for (original) bracket
+        _pack_orig = _re_label.sub(r'\s*\[NZB Pack[^\]]*\]', '', original_scraped_torrent_title or title).strip()
+
+        # Per-episode raw filename — used only for the cli_mount job name (has SxxExx)
+        _ep_raw = (episode_filenames or {}).get(ep_num, '') or ''
+        _ep_raw_clean = _re_label.sub(r'\.(mkv|mp4|avi|m4v|nfo|nzb)$', '', _ep_raw, flags=_re_label.IGNORECASE).strip()
+        if not _ep_raw_clean:
+            _ep_raw_clean = _pack_orig  # fallback job name still has quality tags
+
+        ep_label = _build_nzb_title(
+            title=title, year=year, imdb_id=imdb_id,
+            version=version, original_scraped_torrent_title=f'{_ep_raw_clean}-[NZB Pack]',
+            media_type='episode', season=season, episode=ep_num,
+            episode_title=episode_titles.get(ep_num),
+            pack_original=f'{_pack_orig}-[NZB Pack]',
+            tags=selected_tags or None,
+        ) or f'{_ep_raw_clean}-[NZB Pack]'
+        primary_url = episode_nzb_urls[ep_num]
+        fallbacks = fallback_nzb_urls.get(ep_num, [])
+
+        job_id = None
+        nzb_text = None
+
+        _is_anime = any('anime' in (g or '').lower() for g in (genres or []))
+        # Try primary then fallbacks
+        for url in [primary_url] + fallbacks:
+            if not url:
+                continue
+            job_id, nzb_text, expired = _submit_single_episode_nzb(
+                client, url, ep_label, is_anime=_is_anime, media_type='episode',
+                tags=selected_tags, tags_exclusive=False)
+            if expired:
+                # Missing segments on this URL — no point trying more fallbacks from same release.
+                # Only abort the rest of the pack when every episode came from the same release
+                # group (waterfall level 1) — otherwise a different episode's release may have
+                # entirely different retention and shouldn't be given up on.
+                if waterfall_level is None or waterfall_level == 1:
+                    pack_expired = True
+                break
+            if not job_id:
+                continue
+
+            # Health check
+            try:
+                health = client.check_entry_health(ep_label)
+                if health == 'broken':
+                    logging.warning(f'[NZBPack] {ep_label}: broken — removing and trying next')
+                    # Add to not-wanted (guid-based, works at scrape time)
+                    try:
+                        from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid
+                        _add_guid(primary_url)
+                    except Exception:
+                        pass
+                    # Delete from cli_mount
+                    try:
+                        from routes.api_tracker import api as _del_api
+                        from utilities.settings import get_setting as _gs
+                        _dcy_url = _gs('Usenet Provider', 'url', default='').rstrip('/')
+                        _dcy_token = _gs('Usenet Provider', 'api_token', default='')
+                        _dh = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+                        _pg = 1
+                        _real_hash = None
+                        while not _real_hash:
+                            _tr = _del_api.get(f'{_dcy_url}/api/torrents',
+                                               params={'page': _pg, 'limit': 50},
+                                               headers=_dh, timeout=10)
+                            if _tr.status_code != 200:
+                                break
+                            _td = _tr.json()
+                            for _t in _td.get('torrents', []):
+                                if _t.get('name', '').strip() == ep_label:
+                                    _real_hash = _t.get('info_hash', '')
+                                    break
+                            if _real_hash or not _td.get('has_next'):
+                                break
+                            _pg += 1
+                        if _real_hash:
+                            _del_api.delete(f'{_dcy_url}/api/torrents',
+                                            headers=_dh, params={'hashes': _real_hash}, timeout=10)
+                    except Exception as _de:
+                        logging.warning(f'[NZBPack] Could not delete broken entry: {_de}')
+                    job_id = None
+                    nzb_text = None
+                    continue  # try next fallback
+                else:
+                    logging.info(f'[NZBPack] {ep_label}: health={health or "inconclusive"} — keeping')
+            except Exception as _he:
+                logging.debug(f'[NZBPack] {ep_label}: health check error: {_he} — keeping')
+
+            break  # submitted and passed (or inconclusive)
+
+        if job_id:
+            submitted.append((ep_num, job_id))
+            # Create queue item for this episode
+            try:
+                checking_id = f"nzb:{job_id}" if not str(job_id).startswith('nzb:') else str(job_id)
+                # ep_label is what was submitted to cli_mount — adding_queue uses
+                # filled_by_file to look up the entry, so it must match exactly
+                # Reuse existing item if provided (scraping_queue batch path)
+                # otherwise create a new item (scraper UI path)
+                existing_item = (existing_items or {}).get(ep_num)
+                if existing_item:
+                    item_id = existing_item['id']
+                    update_media_item_state(item_id, 'Adding')
+                else:
+                    ep_item = {
+                        'title': title, 'year': year, 'type': 'episode',
+                        'version': version, 'tmdb_id': tmdb_id, 'imdb_id': imdb_id,
+                        'season_number': season, 'episode_number': ep_num,
+                        'episode_title': episode_titles.get(ep_num, f'Episode {ep_num}'),
+                        'release_date': 'Unknown',
+                        'genres': json.dumps(genres or []),
+                        'current_score': current_score,
+                        'original_scraped_torrent_title': ep_label,
+                        'content_source': 'content_requester',
+                        'selected_folder': selected_folder,
+                        'selected_folder_is_custom': selected_folder_is_custom,
+                        'tags': selected_tags,
+                    }
+                    item_id = add_media_item(ep_item)
+                if item_id:
+                    update_media_item_state(item_id, 'Adding')
+                    _ep_seg_id = ''
+                    if nzb_text:
+                        try:
+                            from database.not_wanted_magnets import extract_nzb_segment_id as _ext_seg
+                            _ep_seg_id = _ext_seg(nzb_text)
+                        except Exception:
+                            pass
+                    _ep_seg_kwargs = {'nzb_segment_id': _ep_seg_id} if _ep_seg_id else {}
+                    update_media_item(item_id,
+                        filled_by_torrent_id=checking_id,
+                        filled_by_file=ep_label,
+                        filled_by_magnet=primary_url,
+                        original_scraped_torrent_title=ep_label,
+                        **_ep_seg_kwargs,
+                    )
+                    _record_manual_grab(item_id, 'nzb', ep_label)
+            except Exception as _qe:
+                logging.warning(f'[NZBPack] Queue tracking failed for {ep_label}: {_qe}')
+        else:
+            failed_eps.append(ep_num)
+            logging.warning(f'[NZBPack] {ep_label}: all URLs exhausted — episode will need normal queue fill')
+
+    ep_total = len(episode_nzb_urls)
+    if pack_expired:
+        msg = f'Pack aborted — missing segments detected (Usenet retention exceeded). {len(submitted)}/{ep_total} episodes submitted before abort.'
+    else:
+        msg = f'{len(submitted)}/{ep_total} episodes submitted to {_usenet_pname()}.'
+    if failed_eps and not pack_expired:
+        msg += f' Episodes {failed_eps} not found — will be filled by normal queue.'
+
+    logging.info(f'[NZBPack] {title} S{season:02d}: {msg}')
+    return jsonify({
+        'success': True,
+        'message': msg,
+        'submitted': len(submitted),
+        'failed_episodes': failed_eps,
+        'provider': 'cli_mount',
+    })
+
+
+def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, version, tmdb_id,
+                       original_scraped_torrent_title=None, genres=None, current_score=0.0,
+                       selected_folder=None, selected_folder_is_custom=False, selected_tags=None):
+    """Submit an NZB URL to the configured Usenet provider and track it through the queue like a debrid add."""
+    from usenet import get_usenet_client, reset_usenet_client
+    from metadata.metadata import get_metadata, get_release_date
+    reset_usenet_client()
+    client = get_usenet_client()
+
+    if not client.is_enabled():
+        return jsonify({'error': f'Usenet provider ({_usenet_pname()}) is not enabled. Configure it in Required Settings.'}), 503
+
+    if not nzb_url:
+        return jsonify({'error': 'No NZB URL provided'}), 400
+
+    # Pre-fetch NZB XML to check not-wanted list before submitting
+    from routes.api_tracker import api as _nzb_api
+    from database.not_wanted_magnets import is_nzb_segment_not_wanted as _is_not_wanted
+    _nzb_xml = None
+    try:
+        _nr = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
+        if _nr.status_code == 200 and '<nzb' in _nr.text.lower():
+            _nzb_xml = _nr.text
+    except Exception:
+        pass
+
+    if _nzb_xml and _is_not_wanted(_nzb_xml):
+        logging.info(f'[NZB] Skipping {title!r} — segment ID in not-wanted list (previously broken)')
+        return jsonify({'error': f'This NZB is known broken and has been blacklisted: {title}'}), 400
+
+    logging.info(f'[NZB] Submitting to {_usenet_pname()}: {title} ({year})')
+
+    # Build job title — uses structured naming template when enabled
+    _imdb_id_for_title = None
+    _ep_title = None
+    if tmdb_id:
+        try:
+            _title_meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+            _imdb_id_for_title = _title_meta.get('imdb_id')
+            if media_type in ('tv', 'show') and season is not None and episode is not None:
+                _s = ((_title_meta.get('seasons') or {}).get(season) or
+                      (_title_meta.get('seasons') or {}).get(str(season)) or {})
+                _ep_title = ((_s.get('episodes') or {}).get(episode) or
+                             (_s.get('episodes') or {}).get(str(episode)) or {}).get('title')
+        except Exception:
+            pass
+    _job_title = _build_nzb_title(
+        title=title, year=year, imdb_id=_imdb_id_for_title,
+        version=version, original_scraped_torrent_title=original_scraped_torrent_title,
+        media_type=media_type, season=season, episode=episode, episode_title=_ep_title,
+        tags=selected_tags or None,
+    )
+
+    _is_anime = any('anime' in (g or '').lower() for g in (genres or []))
+    _submit_title = str(_job_title or title or '')
+    # Submit — use pre-fetched content directly if available to avoid double-fetch
+    if _nzb_xml:
+        job_id = client.add_nzb_content(nzb_content=_nzb_xml, title=_submit_title,
+                                        is_anime=_is_anime, media_type=media_type or '',
+                                        tags=selected_tags, tags_exclusive=False)
+        if not job_id and client.last_missing_segments:
+            logging.warning(f'[NZB] cli_mount server missing segments for {title!r}')
+        elif job_id:
+            logging.info(f'[NZB] Submitted via content upload: {title}')
+    else:
+        job_id = client.add_nzb(nzb_url=nzb_url, title=_submit_title,
+                                is_anime=_is_anime, media_type=media_type or '',
+                                tags=selected_tags, tags_exclusive=False)
+
+    if not job_id:
+        return jsonify({'error': f'Failed to submit NZB to {_usenet_pname()}'}), 500
+
+    logging.info(f'[NZB] Submitted successfully, job_id={job_id}')
+
+    # --- Queue tracking: create media item and move through queue like debrid ---
+    try:
+        nzb_title = _job_title or original_scraped_torrent_title or title or ''
+        checking_id = f"nzb:{job_id}" if not str(job_id).startswith('nzb:') else str(job_id)
+
+        # Get metadata
+        imdb_id = None
+        release_date = 'Unknown'
+        if tmdb_id:
+            try:
+                meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+                imdb_id = meta.get('imdb_id')
+                if media_type not in ['tv', 'show']:
+                    release_date = get_release_date(meta, imdb_id) or 'Unknown'
+            except Exception as _me:
+                logging.warning(f'[NZB] Could not fetch metadata for queue tracking: {_me}')
+
+        item_type = 'episode' if media_type in ['tv', 'show'] else 'movie'
+        resolution = extract_resolution_from_filename(nzb_title) if nzb_title else None
+
+        base_item = {
+            'title': title,
+            'year': year,
+            'type': item_type,
+            'version': version,
+            'resolution': resolution,
+            'tmdb_id': tmdb_id,
+            'imdb_id': imdb_id,
+            'release_date': release_date,
+            'genres': json.dumps(genres or []),
+            'current_score': current_score,
+            'original_scraped_torrent_title': nzb_title,
+            'content_source': 'content_requester',
+            'selected_folder': selected_folder,
+            'selected_folder_is_custom': selected_folder_is_custom,
+            'tags': selected_tags,
+        }
+
+        from queues.queue_manager import QueueManager
+        from database.database_writing import add_media_item
+        queue_manager = QueueManager()
+
+        from database.database_reading import get_media_item_by_id
+        from database.database_writing import update_media_item_state, update_media_item
+
+        # Extract segment ID from NZB XML already fetched above (zero extra HTTP call)
+        _nzb_seg_id = ''
+        if _nzb_xml:
+            try:
+                from database.not_wanted_magnets import extract_nzb_segment_id as _ext_seg2
+                _nzb_seg_id = _ext_seg2(_nzb_xml)
+            except Exception:
+                pass
+
+        def _place_nzb_in_adding(item_id_to_place):
+            """Put a freshly-created item into Adding state with NZB fields set for health-check polling."""
+            update_media_item_state(item_id_to_place, 'Adding')
+            _place_seg_kwargs = {'nzb_segment_id': _nzb_seg_id} if _nzb_seg_id else {}
+            update_media_item(item_id_to_place,
+                filled_by_torrent_id=checking_id,
+                filled_by_file=nzb_title,
+                filled_by_magnet=nzb_url,
+                original_scraped_torrent_title=nzb_title,
+                **_place_seg_kwargs,
+            )
+            _record_manual_grab(item_id_to_place, 'nzb', nzb_title)
+            logging.info(f'[NZB] Item {item_id_to_place} placed in Adding queue for health check (checking_id={checking_id})')
+
+        if item_type == 'episode' and season is not None and episode is None:
+            # Season pack — create items per episode
+            try:
+                meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+                season_data = (meta.get('seasons') or {}).get(season, {})
+                episodes = season_data.get('episodes', {})
+                for ep_num_str, ep_data in episodes.items():
+                    ep_item = base_item.copy()
+                    ep_item.update({'season_number': season, 'episode_number': int(ep_num_str),
+                                    'episode_title': ep_data.get('title', f'Episode {ep_num_str}')})
+                    item_id = add_media_item(ep_item)
+                    if item_id:
+                        _place_nzb_in_adding(item_id)
+            except Exception as _spe:
+                logging.warning(f'[NZB] Season pack queue tracking failed: {_spe}')
+        else:
+            if item_type == 'episode':
+                base_item.update({'season_number': season, 'episode_number': episode})
+            item_id = add_media_item(base_item)
+            if item_id:
+                _place_nzb_in_adding(item_id)
+    except Exception as _qe:
+        logging.error(f'[NZB] Queue tracking failed for {title}: {_qe}', exc_info=True)
+        # Don't fail the response — NZB was submitted successfully to cli_mount
+
+    return jsonify({
+        'success': True,
+        'message': f'NZB submitted to {_usenet_pname()} (job: {job_id}). Tracking through queue.',
+        'job_id': job_id,
+        'provider': 'cli_mount',
+    })
+
 
 @scraper_bp.route('/add_torrent', methods=['POST'])
 @user_required
@@ -1489,6 +2698,56 @@ def add_torrent():
     else:
         return render_template('scraper.html', error="Invalid torrent selection")
     
+@scraper_bp.route('/api/search', methods=['GET'])
+@user_required
+def api_battery_search():
+    """Search using battery DirectAPI — same source the scraper uses internally."""
+    from cli_battery.app.direct_api import DirectAPI
+    query = request.args.get('query', '').strip()
+    if not query:
+        return jsonify({'results': [], 'error': 'No query provided'}), 400
+    try:
+        results, source = DirectAPI.search_media(query)
+        # TVDB ranks e.g. Parasite (2019) outside its top 50 for "Parasite", so
+        # when the query ends in a year ("Parasite 2019" / "Parasite (2019)")
+        # also search the title filtered to that year and list those first.
+        # The plain search stays in so "Blade Runner 2049" still works.
+        year_match = re.match(r'^(.+?)\s*\(?((?:19|20)\d{2})\)?$', query)
+        if year_match:
+            base_title = year_match.group(1).strip()
+            year_results, year_source = DirectAPI.search_media(
+                base_title, year=int(year_match.group(2)))
+            if year_results:
+                # Exact title matches first (TVDB puts "Paradise ..." above Parasite)
+                year_results.sort(key=lambda r: base_title.lower() not in (
+                    (r.get('title') or '').lower(), (r.get('original_title') or '').lower()))
+                seen = set()
+                merged = []
+                for r in year_results + (results or []):
+                    key = (r.get('type'), r.get('imdb_id') or r.get('tmdb_id') or r.get('title'), r.get('year'))
+                    if key not in seen:
+                        seen.add(key)
+                        merged.append(r)
+                results, source = merged, source or year_source
+        if not results:
+            return jsonify({'results': []})
+        normalized = []
+        for r in results:
+            normalized.append({
+                'id': r.get('tmdb_id'),
+                'tmdb_id': r.get('tmdb_id'),
+                'imdb_id': r.get('imdb_id'),
+                'title': r.get('title'),
+                'original_title': r.get('original_title'),
+                'year': r.get('year'),
+                'media_type': 'tv' if r.get('type') == 'show' else r.get('type', 'movie'),
+            })
+        return jsonify({'results': normalized, 'source': source})
+    except Exception as e:
+        logging.error(f"Battery search error: {e}", exc_info=True)
+        return jsonify({'results': [], 'error': str(e)}), 500
+
+
 @scraper_bp.route('/scraper_tester', methods=['GET', 'POST'])
 @admin_required
 @onboarding_required
@@ -1831,52 +3090,54 @@ def get_tv_details(tmdb_id):
 @scraper_bp.route('/tmdb_image/<path:image_path>')
 def tmdb_image_proxy(image_path):
     import requests
-    from flask import Response, make_response, request
-    from datetime import datetime, timedelta
+    from flask import Response, make_response
 
-    # Log if this is a fresh request or from browser cache
-    if_none_match = request.headers.get('If-None-Match')
-    if_modified_since = request.headers.get('If-Modified-Since')
-    
-    if if_none_match or if_modified_since:
-        logging.info(f"Browser requesting image with cache validation: {image_path}")
-    else:
-        logging.info(f"Fresh image request from browser: {image_path}")
+    # Sanitize path to prevent directory traversal
+    safe_path = image_path.replace('..', '').lstrip('/')
 
-    # Construct TMDB URL
-    tmdb_url = f'https://image.tmdb.org/t/p/{image_path}'
-    
+    # Check server-side disk cache first — serves any user/browser without re-fetching from TMDB
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    cache_file = os.path.join(db_content_dir, 'image_cache', safe_path)
+
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'rb') as f:
+                image_data = f.read()
+            ext = os.path.splitext(cache_file)[1].lower()
+            content_type = 'image/png' if ext == '.png' else 'image/jpeg'
+            resp = Response(image_data, content_type=content_type)
+            resp.headers['Cache-Control'] = 'public, max-age=604800'
+            return resp
+        except Exception as e:
+            logging.warning(f"Image cache read error for {safe_path}: {e}")
+            # Fall through to TMDB fetch
+
+    # Cache miss — fetch from TMDB CDN
+    tmdb_url = f'https://image.tmdb.org/t/p/{safe_path}'
+
     try:
-        # Get the image from TMDB
-        response = requests.get(tmdb_url, stream=True)
+        response = requests.get(tmdb_url, timeout=10)
         response.raise_for_status()
-        
-        # Create Flask response with the image content
-        proxy_response = Response(
-            response.iter_content(chunk_size=8192),
-            content_type=response.headers['Content-Type']
-        )
 
-        # Set cache control headers - only cache if web caching is enabled in settings
-        config = load_config()
-        enable_caching = config.get('UI Settings', {}).get('enable_caching', False)
+        image_data = response.content
+        content_type = response.headers.get('Content-Type', 'image/jpeg')
 
-        if enable_caching:
-            proxy_response.headers['Cache-Control'] = 'public, max-age=604800'  # 7 days in seconds
-            proxy_response.headers['Expires'] = (datetime.utcnow() + timedelta(days=7)).strftime('%a, %d %b %Y %H:%M:%S GMT')
-            # Add ETag for cache validation
-            proxy_response.headers['ETag'] = response.headers.get('ETag', '')
-        else:
-            proxy_response.headers['Cache-Control'] = 'no-cache'
-        
-        # Log successful image fetch
-        logging.info(f"Successfully fetched and cached image from TMDB: {image_path}")
-        
+        # Save to disk cache for future requests
+        try:
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            with open(cache_file, 'wb') as f:
+                f.write(image_data)
+        except Exception as e:
+            logging.warning(f"Could not write image cache for {safe_path}: {e}")
+
+        proxy_response = Response(image_data, content_type=content_type)
+        proxy_response.headers['Cache-Control'] = 'public, max-age=604800'
         return proxy_response
-        
+
     except requests.RequestException as e:
-        logging.error(f"Error proxying TMDB image: {e}")
+        logging.error(f"Error proxying TMDB image {safe_path}: {e}")
         return make_response('Image not found', 404)
+
 
 @scraper_bp.route('/check_cache_status', methods=['POST'])
 @user_required
@@ -1895,7 +3156,7 @@ def check_cache_status():
             magnet_link = data.get('magnet_link')
             torrent_url = data.get('torrent_url')
             
-            # --- START EDIT: Get imdb_id from request and extract title ---
+            # Get imdb_id from request and extract title
             imdb_id = data.get('imdb_id')
             if not imdb_id:
                 imdb_id = session.get('last_selected_imdb_id')
@@ -1921,88 +3182,58 @@ def check_cache_status():
                 if btih_match:
                     torrent_hash = btih_match.group(1).lower()
                     
-                    # Check PhalanxDB immediately using the hash
-                    if _phalanx_cache_manager and torrent_hash:
-                        try:
-                            cache_status = _phalanx_cache_manager.get_cache_status(torrent_hash)
-                            logging.debug(f"Found cache status in PhalanxDB for hash {torrent_hash}: {cache_status}")
-                            # If found in PhalanxDB, return early (assuming PhalanxDB is reliable)
-                            if cache_status is not None:
-                                return jsonify({'status': 'cached' if cache_status.get('is_cached') else 'not_cached', 'index': index}), 200
-                        except Exception as e:
-                            logging.error(f"Error checking PhalanxDB cache: {str(e)}")
-                
-                # Handle HTTP URLs - only extract file hash if we need to
+                # Handle HTTP URLs - extract file hash for later PhalanxDB update only
                 if magnet_link.startswith('http'):
                     file_param = magnet_link.split('&file=')[-1] if '&file=' in magnet_link else None
                     if file_param:
-                        # Generate hash of the file name
                         file_hash = f"FILE_HASH_{hashlib.sha1(file_param.encode()).hexdigest()}"
-                        
-                        # Check if this file hash is already cached
-                        # Add check for cache_manager being None
-                        if cache_manager: 
-                            cache_status = cache_manager.get_cache_status(file_hash)
-                            if cache_status is not None:
-                                logging.debug(f"File hash {file_hash} found in cache with status: {cache_status}")
-                                return jsonify({'status': 'cached' if cache_status.get('is_cached') else 'not_cached', 'index': index}), 200
-            
+
             elif torrent_url:
-                # Try to get hash from torrent URL
                 try:
                     torrent_hash = _download_and_get_hash(torrent_url)
-                    
-                    # Check PhalanxDB immediately using the hash
-                    if _phalanx_cache_manager and torrent_hash:
-                        try:
-                            cache_status = _phalanx_cache_manager.get_cache_status(torrent_hash)
-                            logging.debug(f"Found cache status in PhalanxDB for torrent hash {torrent_hash}: {cache_status}")
-                            # If found in PhalanxDB, return early
-                            if cache_status is not None:
-                                return jsonify({'status': 'cached' if cache_status.get('is_cached') else 'not_cached', 'index': index}), 200
-                        except Exception as e:
-                            logging.error(f"Error checking PhalanxDB cache: {str(e)}")
                 except Exception as e:
                     logging.warning(f"Could not extract hash from torrent URL: {e}")
             
-            # If we reach here, we need to check with the debrid provider
-            # Get the debrid provider
-            debrid_provider = get_debrid_provider()
-            
-            # Create a torrent processor with the debrid provider
-            torrent_processor = TorrentProcessor(debrid_provider)
-            
-            # Check cache status based on what we have
+            # Check all providers: RD uses PhalanxDB, others use direct API
+            from debrid import get_debrid_providers
+            all_providers = get_debrid_providers()
+            cache_providers = {}
             is_cached = None
-            if magnet_link:
-                logging.debug(f"Checking cache status for magnet link at index {index}")
-                is_cached = torrent_processor.check_cache(magnet_link, remove_cached=True, item=item_for_check)
-                
-                # Update PhalanxDB with new cache status if enabled
-                if cache_manager and torrent_hash: # Check cache_manager is not None
-                    try:
-                        cache_manager.update_cache_status(torrent_hash, bool(is_cached))
-                        logging.debug(f"Updated PhalanxDB cache status for hash {torrent_hash}: {bool(is_cached)}")
-                    except Exception as e:
-                        logging.error(f"Error updating PhalanxDB cache: {str(e)}")
-                
-                # Update cache status for file hash if it was a URL
-                if cache_manager and file_hash: # Check cache_manager is not None
-                    cache_manager.update_cache_status(file_hash, bool(is_cached))
-                    logging.debug(f"Updated cache status for file hash {file_hash}: {bool(is_cached)}")
-                    
-            elif torrent_url:
-                logging.info(f"Checking cache status for torrent URL at index {index}")
-                is_cached = torrent_processor.check_cache_for_url(torrent_url, remove_cached=True, item=item_for_check)
-                
-                # Update PhalanxDB with new cache status if enabled
-                if cache_manager and torrent_hash: # Check cache_manager is not None
-                    try:
-                        cache_manager.update_cache_status(torrent_hash, bool(is_cached))
-                        logging.debug(f"Updated PhalanxDB cache status for torrent hash {torrent_hash}: {bool(is_cached)}")
-                    except Exception as e:
-                        logging.error(f"Error updating PhalanxDB cache: {str(e)}")
-            
+
+            for prov in all_providers:
+                prov_result = None
+                try:
+                    if prov.PROVIDER_NAME == 'Real-Debrid':
+                        # RD has no direct cache check API — use PhalanxDB
+                        if _phalanx_cache_manager and torrent_hash:
+                            rd_status = _phalanx_cache_manager.get_cache_status(torrent_hash)
+                            prov_result = rd_status.get('is_cached') if rd_status is not None else None
+                        prov_status = 'Yes' if prov_result is True else ('No' if prov_result is False else 'N/A')
+                    else:
+                        prov_processor = TorrentProcessor(prov)
+                        if magnet_link:
+                            prov_result = prov_processor.check_cache(magnet_link, remove_cached=True, item=None)
+                        elif torrent_url:
+                            prov_result = prov_processor.check_cache_for_url(torrent_url, remove_cached=True, item=None)
+                        prov_status = 'Yes' if prov_result is True else ('No' if prov_result is False else 'N/A')
+                except Exception as _pe:
+                    logging.warning(f"[{prov.PROVIDER_NAME}] cache check error: {_pe}")
+                    prov_status = 'Error'
+                cache_providers[prov.PROVIDER_NAME] = prov_status
+                if prov_result is True and is_cached is not True:
+                    is_cached = True
+                elif prov_result is False and is_cached is None:
+                    is_cached = False
+
+            # Update PhalanxDB with primary result
+            if cache_manager and torrent_hash:
+                try:
+                    cache_manager.update_cache_status(torrent_hash, bool(is_cached))
+                except Exception as e:
+                    logging.error(f"Error updating PhalanxDB cache: {str(e)}")
+            if cache_manager and file_hash:
+                cache_manager.update_cache_status(file_hash, bool(is_cached))
+
             # Convert result to the expected format
             if is_cached is True:
                 status = 'cached'
@@ -2010,9 +3241,9 @@ def check_cache_status():
                 status = 'not_cached'
             else:
                 status = 'check_unavailable'
-                
-            logging.debug(f"Returning cache status for index {index}: {status}")
-            return jsonify({'status': status, 'index': index}), 200
+
+            logging.debug(f"Returning cache status for index {index}: {status} providers={cache_providers}")
+            return jsonify({'status': status, 'index': index, 'cache_providers': cache_providers}), 200
             
         # Handle multiple hashes (legacy approach)
         hashes = data.get('hashes', [])
@@ -2511,10 +3742,14 @@ def get_symlink_folders():
 
         # Add standard folders (always include if enabled in settings)
         for folder_name in standard_folders:
+            folder_name_lower = folder_name.lower()
             all_folders.append({
                 'name': folder_name,
                 'is_custom': False,
-                'exists': folder_name in existing_folder_names
+                'exists': folder_name in existing_folder_names,
+                # Add media type permissions based on folder name (for mobile view filtering)
+                'allowed_for_movies': 'movie' in folder_name_lower,
+                'allowed_for_tv_shows': 'show' in folder_name_lower or 'tv' in folder_name_lower
             })
 
         # Add ALL custom folders from content source settings (regardless of existence)
@@ -2522,7 +3757,10 @@ def get_symlink_folders():
             all_folders.append({
                 'name': folder_name,
                 'is_custom': True,
-                'exists': folder_name in existing_folder_names
+                'exists': folder_name in existing_folder_names,
+                # Custom folders work for both movies and TV shows (they have subfolders)
+                'allowed_for_movies': True,
+                'allowed_for_tv_shows': True
             })
 
         return jsonify({
@@ -2534,3 +3772,268 @@ def get_symlink_folders():
     except Exception as e:
         logging.error(f"Error getting symlink folders: {str(e)}", exc_info=True)
         return jsonify({'error': str(e), 'enabled': False}), 500
+
+
+@scraper_bp.route('/get_nzb_files', methods=['POST'])
+@user_required
+@scraper_permission_required
+def get_nzb_files():
+    """Fetch an NZB URL and return its file list parsed from the XML."""
+    try:
+        import xml.etree.ElementTree as ET
+        from routes.api_tracker import api as _nzb_api
+
+        data = request.json or {}
+        nzb_url = data.get('nzb_url', '')
+        if not nzb_url:
+            return jsonify({'success': False, 'error': 'No NZB URL provided'}), 400
+
+        r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
+        if r.status_code != 200 or '<nzb' not in r.text.lower():
+            return jsonify({'success': False, 'error': f'Failed to fetch NZB (status {r.status_code})'}), 400
+
+        root = ET.fromstring(r.text)
+        ns = {'nzb': 'http://www.newzbin.com/DTD/2003/nzb'}
+
+        # Try with and without namespace
+        files_el = root.findall('.//file') or root.findall('.//nzb:file', ns)
+
+        files = []
+        for f in files_el:
+            subject = f.get('subject', '')
+            # Extract filename from subject (yEnc format: "filename (part/total)")
+            import re as _re
+            m = _re.search(r'"([^"]+)"', subject)
+            name = m.group(1) if m else subject[:80]
+            # Skip par2 files
+            if name.lower().endswith('.par2') or '.par2.' in name.lower():
+                continue
+            # Sum segment sizes
+            size_bytes = sum(int(seg.get('bytes', 0)) for seg in f.findall('.//segment') or f.findall('.//nzb:segment', ns))
+            size_gb = size_bytes / (1024 ** 3)
+            if size_gb >= 0.1:
+                size_fmt = f'{size_gb:.2f} GB'
+            else:
+                size_fmt = f'{size_bytes / (1024 ** 2):.1f} MB'
+            files.append({'name': name, 'path': name, 'size': size_bytes, 'size_formatted': size_fmt})
+
+        files.sort(key=lambda x: x['name'])
+        return jsonify({'success': True, 'files': files, 'total_files': len(files),
+                        'metadata': {'filename': data.get('title', ''), 'hash': '', 'status': 'nzb'}})
+    except Exception as e:
+        logging.error(f'get_nzb_files error: {e}', exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@scraper_bp.route('/get_torrent_files', methods=['POST'])
+@user_required
+@scraper_permission_required
+def get_torrent_files():
+    """
+    Get file list from a torrent magnet link.
+    Extracts hash from magnet and queries debrid provider for file information.
+
+    Request JSON:
+        - magnet: Magnet link
+        - torrent_title: Title of torrent (for logging)
+
+    Returns:
+        - success: Boolean
+        - files: List of file objects with name, size, size_formatted, path
+        - total_files: Total number of files
+        - torrent_hash: Hash extracted from magnet
+        - method: How files were retrieved ('instant_availability' or 'cached' or 'error')
+        - error: Error message if failed
+    """
+    try:
+        data = request.json
+        magnet = data.get('magnet', '')
+        torrent_title = data.get('torrent_title', 'Unknown')
+
+        if not magnet:
+            return jsonify({'success': False, 'error': 'No magnet link provided'}), 400
+
+        # Extract hash from magnet link
+        from debrid.common import extract_hash_from_magnet
+        torrent_hash = extract_hash_from_magnet(magnet)
+
+        if not torrent_hash:
+            logging.warning(f"Could not extract hash from magnet for '{torrent_title}'")
+            return jsonify({'success': False, 'error': 'Invalid magnet link - could not extract hash'}), 400
+
+        logging.info(f"Getting file list for torrent: '{torrent_title}' (hash: {torrent_hash[:16]}...)")
+
+        # Check cache first (15 minute TTL)
+        cache_key = f"torrent_files_{torrent_hash}"
+        cached_data = get_from_cache(cache_key)
+        if cached_data:
+            logging.info(f"Returning cached file list for {torrent_hash[:16]}...")
+            cached_data['cached'] = True
+            return jsonify(cached_data)
+
+        # Get debrid provider
+        debrid_provider = get_debrid_provider()
+
+        files_list = []
+        method = 'unknown'
+        torrent_info = None  # Store torrent info for metadata
+
+        # Method 1: Try instant availability (preferred - doesn't add torrent)
+        try:
+            if hasattr(debrid_provider, 'is_cached'):
+                logging.debug(f"Checking instant availability for {torrent_hash[:16]}...")
+
+                # For Real-Debrid, is_cached can return file info
+                cache_result = debrid_provider.is_cached(magnet)
+
+                # If cached, try to get file info from provider
+                if cache_result:
+                    logging.debug(f"Torrent is cached, attempting to get file list...")
+
+                    # Try to get torrent info if it exists in user's account
+                    if hasattr(debrid_provider, 'get_all_torrents'):
+                        try:
+                            all_torrents = debrid_provider.get_all_torrents()
+                            matching_torrent = None
+
+                            for torrent in all_torrents:
+                                if torrent.get('hash', '').lower() == torrent_hash.lower():
+                                    matching_torrent = torrent
+                                    break
+
+                            if matching_torrent:
+                                torrent_id = matching_torrent.get('id')
+                                if torrent_id and hasattr(debrid_provider, 'get_torrent_info'):
+                                    torrent_info_temp = debrid_provider.get_torrent_info(torrent_id)
+                                    if torrent_info_temp and 'files' in torrent_info_temp:
+                                        files_list = torrent_info_temp.get('files', [])
+                                        torrent_info = torrent_info_temp  # Store for metadata
+                                        method = 'existing_torrent'
+                                        logging.info(f"Retrieved {len(files_list)} files from existing torrent")
+                        except Exception as e:
+                            logging.debug(f"Could not retrieve from existing torrents: {e}")
+        except Exception as e:
+            logging.debug(f"Instant availability check failed: {e}")
+
+        # Method 2: Add torrent temporarily to get file list (fallback)
+        if not files_list:
+            logging.info(f"Adding torrent temporarily to retrieve file list...")
+            try:
+                # Resolve HTTP URLs to actual magnet links (for Jackett, etc.)
+                from debrid.common.torrent import resolve_to_magnet
+                actual_magnet = magnet
+                if magnet.startswith('http'):
+                    logging.info(f"Resolving HTTP URL to magnet link...")
+                    resolved = resolve_to_magnet(magnet)
+                    if resolved:
+                        actual_magnet = resolved
+                        logging.info(f"Resolved to magnet link: {resolved[:60]}...")
+                    else:
+                        raise Exception("Failed to resolve HTTP URL to magnet link")
+
+                # Use get_torrent_file_list if available — it handles polling for slow providers
+                if hasattr(debrid_provider, 'get_torrent_file_list'):
+                    result = debrid_provider.get_torrent_file_list(actual_magnet)
+                    if result:
+                        files_list, _fname, _tid = result
+                        method = 'temporary_add'
+                        logging.info(f"Retrieved {len(files_list)} files via get_torrent_file_list")
+                else:
+                    # Fallback: raw add + poll
+                    torrent_id = None
+                    try:
+                        torrent_id = debrid_provider.add_torrent(actual_magnet)
+                        if not torrent_id:
+                            raise Exception("Failed to add torrent - no ID returned")
+                        time.sleep(3)
+                        if hasattr(debrid_provider, 'get_torrent_info'):
+                            torrent_info_temp = debrid_provider.get_torrent_info(torrent_id)
+                            if torrent_info_temp:
+                                files_list = torrent_info_temp.get('files', [])
+                                torrent_info = torrent_info_temp
+                                method = 'temporary_add'
+                                logging.info(f"Retrieved {len(files_list)} files from temporarily added torrent")
+                    finally:
+                        if torrent_id and hasattr(debrid_provider, 'remove_torrent'):
+                            try:
+                                debrid_provider.remove_torrent(torrent_id, "Temporary file list retrieval")
+                            except Exception:
+                                pass
+
+            except Exception as e:
+                logging.error(f"Error adding torrent temporarily: {e}")
+                return jsonify({
+                    'success': False,
+                    'error': f'Could not retrieve file list: {str(e)}'
+                }), 500
+
+        # Process and format file list
+        if not files_list:
+            return jsonify({
+                'success': False,
+                'error': 'No files found in torrent'
+            }), 404
+
+        # Ensure files_list is a list
+        if isinstance(files_list, dict):
+            files_list = list(files_list.values())
+
+        # Format file sizes and prepare response
+        def format_file_size(bytes_size):
+            """Format bytes to human-readable size"""
+            try:
+                bytes_size = float(bytes_size)
+            except (ValueError, TypeError):
+                return "0 B"
+
+            for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+                if bytes_size < 1024.0:
+                    return f"{bytes_size:.2f} {unit}"
+                bytes_size /= 1024.0
+            return f"{bytes_size:.2f} PB"
+
+        formatted_files = []
+        for file_info in files_list:
+            # Handle different provider formats
+            file_name = file_info.get('path') or file_info.get('name') or 'Unknown'
+            file_size = file_info.get('bytes') or file_info.get('size') or 0
+
+            formatted_files.append({
+                'name': os.path.basename(file_name),
+                'path': file_name,
+                'size': file_size,
+                'size_formatted': format_file_size(file_size)
+            })
+
+        # Sort by size (largest first)
+        formatted_files.sort(key=lambda x: x['size'], reverse=True)
+
+        # Extract metadata from torrent_info if available
+        torrent_metadata = {
+            'id': torrent_info.get('id') if torrent_info else None,
+            'hash': torrent_info.get('hash') if torrent_info else torrent_hash,
+            'filename': torrent_info.get('filename') if torrent_info else torrent_title,
+            'status': torrent_info.get('status') if torrent_info else 'unknown'
+        }
+
+        response_data = {
+            'success': True,
+            'files': formatted_files,
+            'total_files': len(formatted_files),
+            'torrent_hash': torrent_hash,
+            'method': method,
+            'metadata': torrent_metadata
+        }
+
+        # Cache the result for 15 minutes
+        set_in_cache(cache_key, response_data, ttl_seconds=900)
+
+        logging.info(f"Successfully retrieved {len(formatted_files)} files for '{torrent_title}'")
+        return jsonify(response_data)
+
+    except Exception as e:
+        logging.error(f"Error getting torrent files: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': f'Internal error: {str(e)}'
+        }), 500

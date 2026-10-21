@@ -14,8 +14,49 @@ from .prowlarr import scrape_prowlarr_instance
 from .torrentio import scrape_torrentio_instance
 from .zilean import scrape_zilean_instance
 from .old_nyaa import scrape_nyaa_instance as scrape_old_nyaa_instance
+from .newznab import scrape_newznab_instance
 from utilities.settings import get_setting
 import re
+import threading
+
+# --- Scraper circuit-breaker: skip repeatedly-timing-out scrapers for a backoff window ---
+# Keyed by scraper instance name. Thread-safe via a single lock.
+_scraper_circuit: dict = {}  # {instance: {'timeouts': int, 'window_start': float, 'backoff_until': float}}
+_scraper_circuit_lock = threading.Lock()
+_CIRCUIT_TIMEOUT_THRESHOLD = 3   # consecutive timeouts before backoff
+_CIRCUIT_WINDOW_SECONDS = 120    # window in which timeouts are counted
+_CIRCUIT_BACKOFF_SECONDS = 600   # backoff duration (10 min) once threshold reached
+
+
+def _circuit_record_timeout(instance: str) -> None:
+    """Record a timeout for a scraper instance and apply backoff if threshold hit."""
+    now = time.time()
+    with _scraper_circuit_lock:
+        state = _scraper_circuit.setdefault(instance, {'timeouts': 0, 'window_start': now, 'backoff_until': 0})
+        if now - state['window_start'] > _CIRCUIT_WINDOW_SECONDS:
+            state['timeouts'] = 1
+            state['window_start'] = now
+        else:
+            state['timeouts'] += 1
+        if state['timeouts'] >= _CIRCUIT_TIMEOUT_THRESHOLD and state['backoff_until'] <= now:
+            state['backoff_until'] = now + _CIRCUIT_BACKOFF_SECONDS
+            logging.warning(
+                f"[CircuitBreaker] Scraper '{instance}' hit {state['timeouts']} timeouts in "
+                f"{_CIRCUIT_WINDOW_SECONDS}s — backing off for {_CIRCUIT_BACKOFF_SECONDS}s"
+            )
+
+
+def _circuit_is_open(instance: str) -> bool:
+    """Return True if the scraper is currently in backoff (should be skipped)."""
+    now = time.time()
+    with _scraper_circuit_lock:
+        state = _scraper_circuit.get(instance)
+        if state and state.get('backoff_until', 0) > now:
+            remaining = int(state['backoff_until'] - now)
+            logging.info(f"[CircuitBreaker] Skipping '{instance}' — in backoff for {remaining}s more")
+            return True
+    return False
+
 
 class ScraperManager:
     def __init__(self, config: Dict[str, Any]):
@@ -29,7 +70,8 @@ class ScraperManager:
             'Torrentio': scrape_torrentio_instance,
             'Zilean': scrape_zilean_instance,
             'Nyaa': scrape_nyaa,
-            'OldNyaa': scrape_old_nyaa_instance
+            'OldNyaa': scrape_old_nyaa_instance,
+            'Newznab': scrape_newznab_instance,
         }
 
     def get_scraper_settings(self, scraper_type):
@@ -46,7 +88,9 @@ class ScraperManager:
                 logging.info(f"Found {scraper_type} settings in instance {instance}")
                 return settings
                 
-        logging.warning(f"No settings found for scraper type: {scraper_type}")
+        # OldNyaa is a legacy scraper — not expected to be configured, suppress warning
+        if scraper_type != 'OldNyaa':
+            logging.warning(f"No settings found for scraper type: {scraper_type}")
         return {}
 
     def scrape_all(
@@ -249,12 +293,21 @@ class ScraperManager:
                          common_args["tmdb_id"] = tmdb_id
                          # AIOStreams supports both IMDB and TMDB IDs
                          # Will use TMDB as fallback when IMDB is not available
+                    elif scraper_type == 'Newznab':
+                         common_args["tmdb_id"] = tmdb_id
                     # Add more elif for other scrapers if they need specific args
 
                     results = self.scrapers[scraper_type](**common_args)
 
                 scraper_call_duration = time.time() - scraper_call_start_time
                 logging.info(f"Scraper {instance} ({scraper_type}) call took {scraper_call_duration:.2f}s, found {len(results)} results.")
+                # Scraper stats (database/scraper_grabs.py): record which configured
+                # scraper produced each result. setdefault keeps any value the scraper
+                # set itself (e.g. Newznab aggregate packs pick their main instance).
+                for r in results or []:
+                    if isinstance(r, dict):
+                        r.setdefault('scraper_type', scraper_type)
+                        r.setdefault('scraper_instance', instance)
                 return instance, scraper_type, results
             except Exception as e:
                 if scraper_call_start_time > 0: # Check if timing started
@@ -402,11 +455,15 @@ class ScraperManager:
             # Skip Nyaa for non-anime content
             if scraper_type in ['Nyaa', 'OldNyaa'] and not is_anime:
                 continue
-                
+
             # Skip anime scrapers if we already tried them above
             if is_anime and is_episode and scraper_type in ['Nyaa', 'OldNyaa']:
                 continue
-                
+
+            # Circuit-breaker: skip scrapers that are in backoff due to repeated timeouts
+            if _circuit_is_open(instance):
+                continue
+
             scraper_tasks.append((instance, scraper_type, current_settings))
         
         # Run all scrapers in parallel using ThreadPoolExecutor without blocking on shutdown
@@ -443,6 +500,7 @@ class ScraperManager:
                         if self.use_timeout:
                             logging.error(
                                 f"Individual scraper '{inst}' timed out after {self.scraper_timeout} seconds")
+                        _circuit_record_timeout(inst)
                         if inst not in instance_summary:
                             instance_summary[inst] = {'type': stype, 'count': 'Timed Out'}
                     except Exception as e:
@@ -456,6 +514,7 @@ class ScraperManager:
                         f"Cancelled {len(not_done)} scrapers that exceeded the {self.batch_timeout} second timeout")
                     for future in not_done:
                         inst, stype = future_instance_map.get(future, ('Unknown', 'Unknown'))
+                        _circuit_record_timeout(inst)
                         if inst not in instance_summary:
                             instance_summary[inst] = {'type': stype, 'count': 'Cancelled (Timeout)'}
 

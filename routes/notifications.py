@@ -135,14 +135,25 @@ def format_notification_content(notifications, notification_type, notification_c
         'queue_start': "▶️",
         'queue_stop': "⏹️",
         'upgrade_failed': "❌",
-        'blacklisted': "🚫" # New emoji for blacklisted
+        'collected': "✅",
+        'downloading': "📥",
+        'checking': "🔎",
+        'upgrading': "🔧",
+        'upgraded': "✨",
+        'blacklisted': "🚫",
+        'wanted': "🎯",
+        'scraping': "🔍",
+        'adding': "➕",
+        'sleeping': "😴",
+        'unreleased': "📅",
+        'pending_uncached': "⏳"
     }
 
     # Get content source display names mapping once for efficiency
     content_source_display_names = get_content_source_display_names()
 
     # For system notifications (stop/crash/start/pause/resume), we'll use a different format
-    if notification_category in ['program_stop', 'program_crash', 'program_start', 'queue_pause', 'queue_resume', 'queue_start', 'queue_stop', 'upgrade_failed']:
+    if notification_category in ['program_stop', 'program_crash', 'program_start', 'queue_pause', 'queue_resume', 'queue_start', 'queue_stop', 'upgrade_failed', 'program_info']:
         emoji = EMOJIS.get(notification_category, "ℹ️")
         if notification_category == 'upgrade_failed':
             # Special formatting for failed upgrades
@@ -151,6 +162,8 @@ def format_notification_content(notifications, notification_type, notification_c
                 year = notifications.get('year', '')
                 reason = notifications.get('reason', 'Unknown reason')
                 return f"{emoji} **Upgrade Failed**\nTitle: {title} ({year})\nReason: {reason}"
+        if notification_category == 'program_info':
+            return f"{emoji} {notifications}"
         return f"{emoji} **cli_debrid {notification_category.replace('_', ' ').title()}**\n{notifications}"
 
     # --- START: Deduplicate notifications within this batch ---
@@ -183,10 +196,9 @@ def format_notification_content(notifications, notification_type, notification_c
         # If notifications is not a list (e.g., single system message), keep it as is
         unique_notifications = notifications
 
-    # --- START EDIT: Use the deduplicated list from now on ---
+    # Use the deduplicated list from now on
     if not unique_notifications:
          return "" # Return empty string if no unique notifications left
-    # --- END EDIT ---
 
     def format_state_suffix(state, is_upgrade=False):
         """Return the appropriate suffix based on state"""
@@ -212,17 +224,29 @@ def format_notification_content(notifications, notification_type, notification_c
         
         # Choose prefix based on state and upgrade status
         if new_state == 'Downloading':
-            prefix = "⬇️"  # Download emoji for downloading state
+            prefix = EMOJIS['downloading']
         elif new_state == 'Checking':
-            prefix = EMOJIS['show'] if media_type == 'episode' else EMOJIS['movie']
+            prefix = EMOJIS['checking']
         elif new_state == 'Upgrading':
-            prefix = EMOJIS['movie'] if media_type == 'movie' else EMOJIS['show']
+            prefix = EMOJIS['upgrading']
         elif new_state == 'Upgraded':
-            prefix = EMOJIS['upgrade']
+            prefix = EMOJIS['upgraded']
         elif new_state == 'Collected':
-            prefix = EMOJIS['new']
-        elif new_state == 'Blacklisted': # New case for Blacklisted
+            prefix = EMOJIS['collected']
+        elif new_state == 'Blacklisted':
             prefix = EMOJIS['blacklisted']
+        elif new_state == 'Wanted':
+            prefix = EMOJIS['wanted']
+        elif new_state == 'Scraping':
+            prefix = EMOJIS['scraping']
+        elif new_state == 'Adding':
+            prefix = EMOJIS['adding']
+        elif new_state == 'Sleeping':
+            prefix = EMOJIS['sleeping']
+        elif new_state == 'Unreleased':
+            prefix = EMOJIS['unreleased']
+        elif new_state == 'Pending Uncached':
+            prefix = EMOJIS['pending_uncached']
         else:
             prefix = EMOJIS['show'] if media_type == 'episode' else EMOJIS['movie']
         
@@ -270,7 +294,7 @@ def format_notification_content(notifications, notification_type, notification_c
     # Group items by show/movie
     grouped_items = {}
     for item in unique_notifications:
-        # --- START EDIT: Check for Checking state during an upgrade ---
+        # Check for Checking state during an upgrade
         # If the state is 'Checking' but 'upgrading_from' is present, treat it as 'Upgrading' for formatting.
         original_state = item.get('new_state', '') # Keep original state for logging
         effective_state = original_state
@@ -278,13 +302,11 @@ def format_notification_content(notifications, notification_type, notification_c
             effective_state = 'Upgrading'
             # Optionally, ensure is_upgrade is also True if not already set, though it should be
             # item['is_upgrade'] = True
-        # --- END EDIT ---
 
         # Group by title, type, year, and the *effective* state for better batching
         # --- EDIT: Add version to the grouping key ---
         version_key_part = item.get('version', '').strip('*') # Get version for key explicitly
         key = (item.get('title'), item.get('type'), item.get('year'), effective_state, item.get('is_upgrade', False), version_key_part)
-        # --- END EDIT ---
         if key not in grouped_items:
             grouped_items[key] = []
         # Store the original item, but we'll use the effective_state when formatting
@@ -296,7 +318,6 @@ def format_notification_content(notifications, notification_type, notification_c
     # Process each group
     # --- EDIT: Update the key unpacking to include version ---
     for (title, type_, year, state, is_upgrade, version), items in sorted(grouped_items.items()):
-    # --- END EDIT ---
         # Log details about the group being processed
         group_key_for_log = (title, type_, year, state, is_upgrade, version)
         # Create a representative item for the group
@@ -305,7 +326,6 @@ def format_notification_content(notifications, notification_type, notification_c
         # --- EDIT: Use the effective state for formatting ---
         # Ensure the representative item uses the effective state determined during grouping
         group_item['new_state'] = state # 'state' here comes from the group key (effective_state)
-        # --- END EDIT ---
 
         # Add the title line only once per group using the (potentially modified) group_item
         formatted_title_line = format_title(group_item) # Get the formatted title
@@ -355,7 +375,6 @@ def format_notification_content(notifications, notification_type, notification_c
                     if episode_line:
                         # Pass the effective state to format_state_suffix
                         content.append(f"{episode_line} {format_state_suffix(effective_episode_state, item.get('is_upgrade', False))}")
-                    # --- END EDIT ---
             # --- END: Truncate episode notifications ---
         else:
             # For movies, just add the state suffix (using the effective state) to the title line
@@ -532,7 +551,8 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
         # Handle system operation notifications
         if notification_category in ['program_crash', 'program_stop', 'program_start',
                                    'queue_pause', 'queue_resume', 'queue_start', 'queue_stop',
-                                   'scraping_error', 'content_error', 'database_error']:
+                                   'scraping_error', 'content_error', 'database_error',
+                                   'program_info']:
 
             # --- RESTORED DICTIONARIES ---
             title = {
@@ -591,7 +611,7 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
             if isinstance(notifications, dict):
                 title = "Upgrade Failed"
                 message = f"Failed to upgrade {notifications.get('title', 'Unknown')} ({notifications.get('year', '')}): {notifications.get('reason', 'Unknown reason')}"
-                if not store_notification(title, message, 'error', link="/debug/torrent_tracking"):
+                if not store_notification(title, message, 'error', link="/debrid_manager/?tab=history"):
                     storage_successful = False
             else:
                  logging.warning(f"Received upgrade_failed notification with non-dict data: {notifications}")
@@ -646,10 +666,34 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                         notification_title = "Content Upgraded"
                         final_message = f"Successfully upgraded {base_message}"
                         notif_type = 'success'
-                    elif new_state == 'Blacklisted': # New case for Blacklisted
+                    elif new_state == 'Blacklisted':
                         notification_title = "Item Blacklisted"
                         final_message = f"Item has been blacklisted: {base_message}"
-                        notif_type = 'warning' # Or 'info'
+                        notif_type = 'warning'
+                    elif new_state == 'Wanted':
+                        notification_title = "Item Wanted"
+                        final_message = f"Item added to wanted list: {base_message}"
+                        notif_type = 'info'
+                    elif new_state == 'Scraping':
+                        notification_title = "Scraping for Content"
+                        final_message = f"Scraping torrents for {base_message}"
+                        notif_type = 'info'
+                    elif new_state == 'Adding':
+                        notification_title = "Adding Content"
+                        final_message = f"Adding {base_message} to debrid service"
+                        notif_type = 'info'
+                    elif new_state == 'Sleeping':
+                        notification_title = "Content Sleeping"
+                        final_message = f"Item moved to sleep: {base_message}"
+                        notif_type = 'info'
+                    elif new_state == 'Unreleased':
+                        notification_title = "Content Unreleased"
+                        final_message = f"Item not yet released: {base_message}"
+                        notif_type = 'info'
+                    elif new_state == 'Pending Uncached':
+                        notification_title = "Pending Uncached"
+                        final_message = f"Item waiting for cache: {base_message}"
+                        notif_type = 'info'
                     else: # Default Collected
                         notification_title = "New Content Available"
                         if notification.get('is_upgrade'):
@@ -672,7 +716,7 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                         final_message += "\n" + "\n".join(source_info)
                     # --- END RESTORED LOGIC ---
 
-                    if not store_notification(notification_title, final_message, notif_type, link="/debug/torrent_tracking"):
+                    if not store_notification(notification_title, final_message, notif_type, link="/debrid_manager/?tab=history"):
                         storage_successful = False
                         # break # Optional: stop on first failure
 
@@ -770,9 +814,20 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                     item_category = 'downloading'
                 elif state == 'Checking':
                     item_category = 'checking'
-                elif state == 'Blacklisted': # New case for Blacklisted
+                elif state == 'Blacklisted':
                     item_category = 'blacklisted'
-                # Add elif for other states if they map to specific notify_on keys
+                elif state == 'Wanted':
+                    item_category = 'wanted'
+                elif state == 'Scraping':
+                    item_category = 'scraping'
+                elif state == 'Adding':
+                    item_category = 'adding'
+                elif state == 'Sleeping':
+                    item_category = 'sleeping'
+                elif state == 'Unreleased':
+                    item_category = 'unreleased'
+                elif state == 'Pending Uncached':
+                    item_category = 'pending_uncached'
 
                 # Check if the target is enabled for this specific item's category
                 item_category_enabled = notify_on.get(item_category, True) # Default to True if key missing
@@ -1122,20 +1177,25 @@ def send_email_notification(smtp_config, content, notification_category):
         'program_stop': "Program Stopped",
         'program_start': "Program Started",
         'queue_pause': "Queue Paused",
-        'queue_resume': "Queue Resumed", # Corrected: was "Queue Resumed"
+        'queue_resume': "Queue Resumed",
         'queue_start': "Queue Started",
         'queue_stop': "Queue Stopped",
         'upgrade_failed': "Upgrade Failed",
-        'collected': "Media Notification", # Generic for various content states
-        'downloading': "Downloading Content", # Using title from storage logic
-        'checking': "Checking Content",     # Using title from storage logic
-        'upgrading': "Upgrading Content",   # Using title from storage logic
-        'upgraded': "Content Upgraded",      # Using title from storage logic
+        'collected': "Media Notification",
+        'downloading': "Downloading Content",
+        'checking': "Checking Content",
+        'upgrading': "Upgrading Content",
+        'upgraded': "Content Upgraded",
         'scraping_error': "Scraping Error",
         'content_error': "Content Error",
         'database_error': "Database Error",
-        'blacklisted': "Item Blacklisted" # New subject for blacklisted
-        # Add other categories as needed
+        'blacklisted': "Item Blacklisted",
+        'wanted': "Item Wanted",
+        'scraping': "Scraping for Content",
+        'adding': "Adding Content",
+        'sleeping': "Content Sleeping",
+        'unreleased': "Content Unreleased",
+        'pending_uncached': "Pending Uncached"
     }
     # Default subject if category not in map or None
     subject = subject_map.get(notification_category, "Media Notification") # Keep default

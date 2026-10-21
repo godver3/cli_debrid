@@ -34,6 +34,13 @@ CURATED_LISTS = {
         'description': 'Most popular movies on MDBList',
         'category': 'mdblist'
     },
+    'mdblist_popular_shows_top50': {
+        'name': 'Most Popular Shows [top-50]',
+        'list_id': 'linaspurinis/most-popular-shows-top-50',
+        'icon': 'mdblist',
+        'description': 'Top 50 most popular shows on MDBList',
+        'category': 'mdblist'
+    },
     'mdblist_trending_movies': {
         'name': 'Trending Movies',
         'list_id': 'linaspurinis/trending-movies-list',
@@ -564,6 +571,21 @@ def search_mdblist(query, limit=20):
         return {'error': f'Search failed: {str(e)}', 'items': []}
 
 
+def get_mdblist_username():
+    """Fetch the MDBList username for the current API key via api.mdblist.com."""
+    api_key = get_mdblist_api_key()
+    if not api_key:
+        return None
+    try:
+        response = requests.get(f"https://api.mdblist.com/user/?apikey={api_key}", timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return data.get('username') or data.get('name')
+    except Exception as e:
+        logging.error(f"MDBList get username error: {e}")
+        return None
+
+
 def get_user_lists(username=None):
     """
     Fetch user's custom MDBList lists
@@ -588,19 +610,29 @@ def get_user_lists(username=None):
 
         data = response.json()
 
-        lists = []
+        # Resolve username once to build fetch URLs
+        mdb_username = username or get_mdblist_username()
+
+        # Deduplicate by slug — API returns one entry per mediatype for mixed lists.
+        # Merge them: keep the name/slug, sum item counts.
+        seen = {}
         for lst in data if isinstance(data, list) else data.get('lists', []):
-            lists.append({
-                'id': lst.get('id'),
-                'name': lst.get('name'),
-                'slug': lst.get('slug'),
-                'items_count': lst.get('items', 0),
-                'description': lst.get('description', ''),
-            })
+            slug = lst.get('slug', '')
+            if slug not in seen:
+                seen[slug] = {
+                    'id': lst.get('id'),
+                    'name': lst.get('name'),
+                    'slug': slug,
+                    'items_count': lst.get('items', 0),
+                    'description': lst.get('description', ''),
+                    'username': mdb_username,
+                }
+            else:
+                seen[slug]['items_count'] += lst.get('items', 0)
 
         return {
             'success': True,
-            'lists': lists
+            'lists': list(seen.values())
         }
 
     except requests.exceptions.RequestException as e:
@@ -608,54 +640,60 @@ def get_user_lists(username=None):
         return {'error': f'Failed to fetch user lists: {str(e)}', 'lists': []}
 
 
-def fetch_custom_list_items(list_id, limit=50):
+def fetch_custom_list_items(list_id, limit=100, username=None, slug=None):
     """
-    Fetch items from a custom MDBList list by ID
-
-    Args:
-        list_id: The MDBList list ID
-        limit: Maximum items to return
-
-    Returns:
-        Dict with list items
+    Fetch items from a personal MDBList list using mdblist.com/lists/{username}/{slug}/json.
+    Requires username and slug — both are stored in the index cache by get_user_lists().
     """
     api_key = get_mdblist_api_key()
     if not api_key:
         return {'error': 'MDBList API key not configured', 'items': []}
 
-    # Check cache first
     cache_key = _get_cache_key('custom_list', list_id=list_id, limit=limit)
     cached = _get_from_cache(cache_key)
-    if cached:
+    if cached and cached.get('items'):
         return cached
 
+    if not username:
+        username = get_mdblist_username()
+    if not username:
+        return {'error': 'Could not determine MDBList username', 'items': []}
+    if not slug:
+        slug = str(list_id)
+
     try:
-        url = f"{MDBLIST_API_BASE}/?apikey={api_key}&l={list_id}&limit={limit}"
-
+        url = f"https://mdblist.com/lists/{username}/{slug}/json?apikey={api_key}"
+        logging.info(f"MDBList personal list fetch: {url}")
         response = requests.get(url, timeout=15)
+        logging.info(f"MDBList personal list {list_id}: HTTP {response.status_code}")
         response.raise_for_status()
-
         data = response.json()
+        if isinstance(data, dict):
+            raw_items = data.get('items', data.get('results', []))
+        else:
+            raw_items = data if isinstance(data, list) else []
+        logging.info(f"MDBList personal list {list_id}: raw_count={len(raw_items)}")
 
         items = []
-        for item in data if isinstance(data, list) else data.get('items', data.get('results', [])):
-            processed_item = {
-                'tmdb_id': item.get('tmdb_id') or item.get('id'),
-                'imdb_id': item.get('imdb_id'),
+        for item in raw_items:
+            media_type = item.get('mediatype', item.get('type', 'movie')).lower()
+            ids = item.get('ids', {})
+            tmdb_id = item.get('tmdb_id') or ids.get('tmdb') or item.get('id')
+            imdb_id = item.get('imdb_id') or ids.get('imdb')
+            processed = {
+                'tmdb_id': tmdb_id,
+                'imdb_id': imdb_id,
                 'title': item.get('title') or item.get('name'),
-                'year': item.get('year'),
-                'media_type': 'movie' if item.get('mediatype', item.get('type', 'movie')) == 'movie' else 'tv',
+                'year': item.get('release_year') or item.get('year'),
+                'media_type': 'movie' if media_type == 'movie' else 'tv',
                 'rank': item.get('rank', len(items) + 1),
             }
-            if processed_item['tmdb_id']:
-                items.append(processed_item)
+            if processed['tmdb_id']:
+                items.append(processed)
 
-        result = {
-            'success': True,
-            'items': items[:limit]
-        }
-
-        _set_in_cache(cache_key, result)
+        result = {'success': True, 'items': items[:limit]}
+        if items:
+            _set_in_cache(cache_key, result)
         return result
 
     except requests.exceptions.RequestException as e:

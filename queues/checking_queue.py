@@ -75,18 +75,36 @@ class CheckingQueue:
             cls._instance.items = []
             cls._instance.checking_queue_times = {}
             cls._instance.progress_checks = {}
-            cls._instance.debrid_provider = get_debrid_provider()
+            cls._instance.debrid_provider = get_debrid_provider()  # May be None for usenet-only setups
             cls._instance.uncached_torrents = {}  # Dict of {torrent_hash: {last_check_time, item_ids[]}}
             cls._instance.unknown_strikes = {} # Tracks consecutive unknown states for torrents
+            # COMPAT: a single "missing" poll from the debrid provider used to
+            # condemn the torrent's magnet forever via handle_missing_torrent.
+            # Under heavy concurrent load (large packs, many simultaneous
+            # adds/checks) TorBox has been observed to return a transient
+            # false-negative for a torrent that is actually fine, permanently
+            # blacklisting a perfectly good release. Require a few consecutive
+            # misses before treating it as real, mirroring unknown_strikes.
+            cls._instance.missing_strikes = {} # Tracks consecutive 'missing' polls for torrents
+            cls._instance._torrent_providers = {}  # torrent_id -> provider name that holds it
+            cls._instance._rediscovery_exhausted = set()  # probed the whole chain, nobody had it
         return cls._instance
 
     def __init__(self):
         # __init__ will be called every time, but instance is already created
         self.items = []
-        self.debrid_provider = get_debrid_provider()
+        self.debrid_provider = get_debrid_provider()  # May be None for usenet-only setups
         self.checking_times = {}
         self.last_check_time = datetime.now()
         self.last_report_time = datetime.now()
+        self._nzb_missing_counts = {}  # tracks consecutive not-found polls per torrent_id
+        self._nzb_plex_scan_triggered = set()  # torrent_ids that have already had Plex scan fired
+        # Survives item removal: handle_missing_torrent and handle_stalled_torrent both
+        # drop items from self.items before they are done talking to the provider.
+        if not hasattr(self, '_torrent_providers'):
+            self._torrent_providers = {}
+        if not hasattr(self, '_rediscovery_exhausted'):
+            self._rediscovery_exhausted = set()
 
     def update(self):
         from database import get_all_media_items
@@ -113,14 +131,24 @@ class CheckingQueue:
             logging.debug(f"New torrent IDs added: {added_torrents}")
         if removed_torrents:
             logging.debug(f"Torrent IDs no longer present: {removed_torrents}")
+            for _tid in removed_torrents:
+                self._nzb_missing_counts.pop(_tid, None)
         
         # Initialize checking times for new items
         for item in self.items:
             if item['id'] not in self.checking_queue_times:
                 self.checking_queue_times[item['id']] = time.time()
                 logging.debug(f"Initialized checking time for item {item['id']} with torrent ID {item.get('filled_by_torrent_id')}")
+            self._remember_provider(item)
 
-    def get_contents(self):
+        for _tid in removed_torrents:
+            self._torrent_providers.pop(_tid, None)
+            self._rediscovery_exhausted.discard(_tid)
+
+    def get_contents(self, raw=False):
+        # raw=True: skip live API calls, return items as-is (for page render, not SSE stream)
+        if raw:
+            return list(self.items)
         # Add progress and state information to each item
         items_with_info = []
         items_to_remove = []
@@ -194,7 +222,29 @@ class CheckingQueue:
             return
         
         logging.info(f"Found {len(items)} items for missing torrent {torrent_id}")
-        
+
+        # NZB jobs — add NZB URL to not-wanted then move items back to Wanted
+        if str(torrent_id).startswith('nzb:'):
+            logging.info(f"[NZB] cli_mount job {torrent_id} failed/missing. Adding to not-wanted and moving {len(items)} item(s) back to Wanted.")
+            from queues.queue_manager import QueueManager
+            from database.database_writing import update_media_item_state
+            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nzb_guid
+            qm = QueueManager()
+            for item in items:
+                try:
+                    _nzb_url = item.get('filled_by_magnet', '')
+                    if _nzb_url:
+                        _add_nzb_guid(_nzb_url)
+                    if item.get('ghostlisted'):
+                        logging.warning(f"[NZB] Item {item['id']} is ghostlisted — setting Blacklisted instead of Wanted")
+                        update_media_item_state(item['id'], 'Blacklisted')
+                        self.remove_item(item)
+                    else:
+                        qm.move_to_wanted(item, "Checking")
+                except Exception as _e:
+                    logging.error(f"[NZB] Could not move item back to Wanted: {_e}")
+            return
+
         # Get the magnet link from the first item
         magnets_to_add = []
         for item in items:
@@ -220,7 +270,7 @@ class CheckingQueue:
                     try:
                         hash_value = extract_hash_from_magnet(magnet)
                         add_to_not_wanted(hash_value)
-                    except:
+                    except Exception:
                         # If extract_hash_from_magnet is not available in debrid.common
                         import re
                         hash_match = re.search(r'btih:([a-zA-Z0-9]+)', magnet)
@@ -311,8 +361,415 @@ class CheckingQueue:
             del self.unknown_strikes[torrent_id]
             logging.debug(f"Cleared unknown strikes for missing torrent {torrent_id}")
 
-    @timed_lru_cache(seconds=60)
+    def _remove_abandoned_nzb_job(self, torrent_id: str, abandoned_items: list) -> None:
+        """Remove an NZB job the Checking queue is giving up on from the usenet provider.
+
+        The debrid branch of the same timeout removes its torrent; the NZB branch
+        used to leave the job behind. Every abandoned attempt then stayed on the
+        mount, and in Plex mode (Plex scans the whole mount) each one showed up as
+        another copy of the episode, while resubmitting the same release got a
+        "(1)" name. Skipped when any other item still uses the job (a season pack
+        shared with already-collected episodes), or when that can't be verified.
+        """
+        job_hash = str(torrent_id)[4:] if str(torrent_id).startswith('nzb:') else ''
+        if not job_hash:
+            return
+        abandoned_ids = {i.get('id') for i in abandoned_items}
+        try:
+            from database import get_db_connection
+            conn = get_db_connection()
+            try:
+                rows = conn.execute(
+                    "SELECT id FROM media_items WHERE filled_by_torrent_id = ? "
+                    "AND state IN ('Collected','Upgrading','Checking','Adding')",
+                    (torrent_id,),
+                ).fetchall()
+            finally:
+                conn.close()
+        except Exception as e:
+            logging.warning(f"[NZB] Could not check other users of {torrent_id} — leaving the job in place: {e}")
+            return
+        if any(r[0] not in abandoned_ids for r in rows):
+            logging.info(f"[NZB] Leaving timed-out job {torrent_id} in place — still used by another item")
+            return
+        entry_name = next((i.get('filled_by_title') or i.get('original_scraped_torrent_title') or ''
+                           for i in abandoned_items), '')
+        try:
+            from usenet import get_usenet_client
+            client = get_usenet_client()
+            if client and client.is_enabled() and client.remove_nzb(job_hash, entry_name):
+                logging.info(f"[NZB] Removed timed-out job {torrent_id} from the usenet provider")
+        except Exception as e:
+            logging.warning(f"[NZB] Failed to remove timed-out job {torrent_id}: {e}")
+
+    def _resolve_nzb_file_info(self, torrent_id: str, items: list) -> None:
+        """
+        When an NZB download completes, query cli_mount to find the actual folder and
+        video filename, then update all items with the correct filled_by_file,
+        filled_by_title, debrid_folder_name, and original_scraped_torrent_title
+        so that symlink creation and Plex file checks work identically to debrid adds.
+        """
+        from usenet import get_usenet_client
+        from database.database_writing import update_media_item
+
+        if not items:
+            return
+
+        # Use the NZB title stored as filled_by_title to search usenet provider
+        sample_item = items[0]
+        job_name = sample_item.get('filled_by_title') or sample_item.get('original_scraped_torrent_title') or ''
+        if not job_name:
+            # Fallback: look up the job name directly from usenet provider using the job_id
+            try:
+                _job_id_raw = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
+                _status = get_usenet_client().get_job_status(_job_id_raw)
+                if _status:
+                    job_name = _status.get('name') or _status.get('raw', {}).get('name') or ''
+                    if job_name:
+                        logging.info(f'[NZB] Resolved job_name from usenet provider for {torrent_id}: {job_name!r}')
+            except Exception:
+                pass
+        if not job_name:
+            logging.warning(f'[NZB] Cannot resolve file info for {torrent_id}: no job_name')
+            return
+
+        # Strip virtual pack label and common appended suffixes
+        import re as _re_strip
+        job_name = _re_strip.sub(r'\s*\[NZB Pack[^\]]*\]', '', job_name).strip()
+        job_name = _re_strip.sub(r'[-_\s]+AsRequested$', '', job_name, flags=_re_strip.IGNORECASE).strip()
+
+        # Skip if already resolved (filled_by_file has a video extension)
+        import os as _os
+        _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
+        if _os.path.splitext(sample_item.get('filled_by_file') or '')[1].lower() in _VIDEO_EXTS:
+            logging.debug(f'[NZB] {torrent_id} already has video filename, skipping resolve')
+            return
+
+        try:
+            client = get_usenet_client()
+            is_pack = len(items) > 1  # Multiple items share same torrent_id = aggregate pack
+
+            if is_pack:
+                # Aggregate pack — get all files and match each item to its episode file
+                result = client.get_nzb_folder_all_files(job_name)
+                if not result:
+                    logging.warning(f'[NZB] Could not find cli_mount folder for pack {job_name!r}')
+                    return
+                folder_name, video_files = result
+                if not video_files:
+                    logging.warning(f'[NZB] Found folder {folder_name!r} but no video files for pack {torrent_id}')
+                    video_files = []
+
+                # Single-file pack with multiple episodes — can't serve individual episodes.
+                # Add NZB URL to not-wanted and send all items back to Wanted.
+                if len(video_files) == 1 and len(items) > 1:
+                    logging.warning(f'[NZB] Pack {torrent_id} has only 1 file but {len(items)} episodes — single-file pack, sending back to Wanted')
+                    from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nw
+                    from queues.queue_manager import QueueManager as _QM
+                    _qm = _QM()
+                    for _item in items:
+                        try:
+                            _url = _item.get('filled_by_magnet', '')
+                            if _url:
+                                _add_nw(_url)
+                        except Exception:
+                            pass
+                        try:
+                            _qm.move_to_wanted(_item, 'Checking')
+                        except Exception:
+                            pass
+                    return
+
+                import re as _re_ep
+                for item in items:
+                    ep = item.get('episode_number')
+                    season = item.get('season_number')
+                    orig_scraped = item.get('original_scraped_torrent_title') or job_name
+                    matched_file = None
+                    file_result = client.get_nzb_file_info(
+                        job_name, season=season, episode=ep,
+                    )
+                    if file_result:
+                        resolved_folder, matched_file = file_result[0], file_result[1]
+                        if resolved_folder:
+                            folder_name = resolved_folder
+                    if not matched_file and video_files:
+                        matched_file = video_files[0]
+                    if not matched_file:
+                        matched_file = folder_name
+
+                    update_fields = {
+                        'filled_by_file': matched_file,
+                        'filled_by_title': folder_name,
+                        'debrid_folder_name': folder_name,
+                        'location_basename': folder_name,
+                        'original_scraped_torrent_title': orig_scraped,
+                        'real_debrid_original_title': orig_scraped,
+                    }
+                    # If DB has season=0/episode=0 (misnamed pack), recover from actual filename
+                    if (not season or int(season) == 0) and (not ep or int(ep) == 0):
+                        _m = _re_ep.search(r'[Ss](\d{1,2})[Ee](\d{1,2})', matched_file)
+                        if _m:
+                            update_fields['season_number'] = int(_m.group(1))
+                            update_fields['episode_number'] = int(_m.group(2))
+                            item['season_number'] = update_fields['season_number']
+                            item['episode_number'] = update_fields['episode_number']
+                            logging.info(f'[NZB] Recovered S{update_fields["season_number"]:02d}E{update_fields["episode_number"]:02d} from filename {matched_file!r} for item {item["id"]}')
+
+                    update_media_item(item['id'], **update_fields)
+                    item['filled_by_file'] = matched_file
+                    item['filled_by_title'] = folder_name
+                    item['debrid_folder_name'] = folder_name
+                    item['location_basename'] = folder_name
+                    item['original_scraped_torrent_title'] = orig_scraped
+                    item['real_debrid_original_title'] = orig_scraped
+                    logging.info(f'[NZB] Pack item {item["id"]} S{(item.get("season_number") or 0):02d}E{(item.get("episode_number") or 0):02d} → {matched_file!r}')
+            else:
+                # Single NZB — pass season/episode for accurate file matching
+                _ep_season = sample_item.get('season_number')
+                _ep_episode = sample_item.get('episode_number')
+                result = client.get_nzb_file_info(job_name, season=_ep_season, episode=_ep_episode)
+                if not result:
+                    logging.warning(f'[NZB] Could not find cli_mount folder for job {job_name!r}')
+                    return
+                folder_name, video_file = result
+                if not video_file:
+                    logging.warning(f'[NZB] Found folder {folder_name!r} but no video file inside for {torrent_id}')
+                    video_file = folder_name
+                logging.info(f'[NZB] Resolved: folder={folder_name!r} file={video_file!r} for {torrent_id}')
+
+                for item in items:
+                    orig_scraped = item.get('original_scraped_torrent_title') or job_name
+                    update_fields = {
+                        'filled_by_file': video_file,
+                        'filled_by_title': folder_name,
+                        'debrid_folder_name': folder_name,
+                        'location_basename': folder_name,
+                        'original_scraped_torrent_title': orig_scraped,
+                        'real_debrid_original_title': orig_scraped,
+                    }
+                    # If DB has season=0/episode=0 (misnamed pack), recover from actual filename
+                    _s = item.get('season_number')
+                    _e = item.get('episode_number')
+                    if (not _s or int(_s) == 0) and (not _e or int(_e) == 0):
+                        import re as _re_single
+                        _m = _re_single.search(r'[Ss](\d{1,2})[Ee](\d{1,2})', video_file)
+                        if _m:
+                            update_fields['season_number'] = int(_m.group(1))
+                            update_fields['episode_number'] = int(_m.group(2))
+                            item['season_number'] = update_fields['season_number']
+                            item['episode_number'] = update_fields['episode_number']
+                            logging.info(f'[NZB] Recovered S{update_fields["season_number"]:02d}E{update_fields["episode_number"]:02d} from filename {video_file!r} for item {item["id"]}')
+
+                    update_media_item(item['id'], **update_fields)
+                    item['filled_by_file'] = video_file
+                    item['filled_by_title'] = folder_name
+                    item['debrid_folder_name'] = folder_name
+                    item['location_basename'] = folder_name
+                    item['original_scraped_torrent_title'] = orig_scraped
+                    item['real_debrid_original_title'] = orig_scraped
+                    logging.info(f'[NZB] Updated item {item["id"]} with resolved file info')
+
+        except Exception as exc:
+            logging.error(f'[NZB] _resolve_nzb_file_info error for {torrent_id}: {exc}', exc_info=True)
+
+    @timed_lru_cache(seconds=15)
     @with_timeout(45)  # 45 second timeout for the entire progress check
+    def _get_nzb_progress(self, torrent_id: str) -> Union[int, str, None]:
+        """Poll usenet provider for progress of an NZB job. torrent_id format: 'nzb:<job_id>'"""
+        from usenet import get_usenet_client, reset_usenet_client
+        reset_usenet_client()
+        client = get_usenet_client()
+        job_id = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
+        try:
+            status = client.get_job_status(job_id)
+            if not status:
+                # Job not found in cli_mount — track consecutive misses
+                # After 3 consecutive misses declare it missing so handle_missing_torrent fires
+                _count = self._nzb_missing_counts.get(torrent_id, 0) + 1
+                if _count >= 3:
+                    logging.warning(f'[NZB] Job {job_id} not found in cli_mount after {_count} checks — declaring missing')
+                    self._nzb_missing_counts.pop(torrent_id, None)
+                    return PROGRESS_RESULT_MISSING
+                self._nzb_missing_counts[torrent_id] = _count
+                logging.debug(f'[NZB] Job {job_id} not found in cli_mount (miss {_count}/3)')
+                return None
+            # Job found — clear any miss counter
+            self._nzb_missing_counts.pop(torrent_id, None)
+            raw = status.get('raw', {})
+            state = str(raw.get('state', status.get('state', 'unknown'))).lower()
+            inner_status = str(raw.get('status', '')).lower()
+            # cli_mount progress is 0.0–1.0
+            raw_progress = raw.get('progress', status.get('progress', 0))
+            progress_pct = int(float(raw_progress) * 100)
+            is_complete = raw.get('is_complete', False)
+
+            # Fully complete: is_complete=True OR state is pausedUP/completed with status=downloaded
+            if is_complete or inner_status == 'downloaded' and state in ('pausedup', 'completed', 'seeding'):
+                logging.info(f"[NZB] cli_mount job {job_id} complete (state={state} is_complete={is_complete})")
+                return 100
+            # Downloaded segments, still assembling — treat as 99% so we keep polling
+            if inner_status == 'downloaded' and progress_pct >= 100:
+                return 99
+            # Failed
+            if state in ('error', 'failed', 'bad') or raw.get('bad'):
+                logging.warning(f"[NZB] cli_mount job {job_id} failed (state={state})")
+                return PROGRESS_RESULT_MISSING
+            # Not found in queue — may have completed and been cleaned up
+            if status.get('state') == 'completed':
+                return 100
+            # Actively downloading
+            if progress_pct > 0:
+                return max(1, min(99, progress_pct))
+            return None  # queued/unknown — retry later
+        except Exception as e:
+            logging.error(f"[NZB] Error polling cli_mount for job {job_id}: {e}")
+            return None
+
+    def _remember_provider(self, item: Dict[str, Any]) -> None:
+        """Record which provider holds this item's torrent, if the item says."""
+        torrent_id = item.get('filled_by_torrent_id')
+        name = item.get('debrid_provider')
+        if torrent_id and name:
+            self._torrent_providers[torrent_id] = name
+
+    def _recorded_provider_name(self, torrent_id: str) -> Optional[str]:
+        """The provider name recorded for this torrent, or None if unknown.
+
+        Reads the memo first, then the item rows, promoting whatever it finds
+        into the memo. Separate from _provider_for_torrent so a caller can tell
+        'we know this is on AllDebrid' from 'we are guessing at the primary' --
+        the rediscovery probe must only run for the latter.
+        """
+        if not torrent_id:
+            return None
+        name = self._torrent_providers.get(torrent_id)
+        if name:
+            return name
+        # A season-pack torrent creates several Checking-queue items sharing one
+        # torrent_id. Keep checking siblings instead of stopping at the first
+        # match — an item added before this column existed (or through a queue
+        # that doesn't stamp it) sits alongside one that does carry the name.
+        for item in self.items:
+            if item.get('filled_by_torrent_id') == torrent_id:
+                name = item.get('debrid_provider')
+                if name:
+                    self._torrent_providers[torrent_id] = name
+                    return name
+        return None
+
+    def _provider_for_torrent(self, torrent_id: str):
+        """Return the debrid provider that actually holds this torrent.
+
+        With a fallback provider chain configured, a torrent can be added to any
+        provider in the chain, but its id is only meaningful to that one. Polling
+        the primary for a torrent AllDebrid holds returns 404, which
+        get_torrent_progress reports as PROGRESS_RESULT_MISSING and
+        handle_missing_torrent then treats as a dead torrent: it blacklists the
+        magnet and sends the item back to Wanted, which regrabs the next release
+        and repeats -- one release burned per cycle.
+
+        Falls back to the primary provider when the item predates the
+        debrid_provider column or names a provider no longer in the chain, which
+        is the old behaviour and no worse than it was.
+        """
+        default = self.debrid_provider
+        name = self._recorded_provider_name(torrent_id)
+        if not name:
+            return default
+
+        from debrid import get_provider_by_name
+        provider = get_provider_by_name(name)
+        if provider is None:
+            logging.warning(
+                f"Torrent {torrent_id} was added to '{name}', which is no longer in the "
+                f"provider chain. Falling back to the primary provider; if this torrent "
+                f"reports missing, that is why."
+            )
+            return default
+        return provider
+
+    @staticmethod
+    def _looks_like_not_found(status_result) -> bool:
+        """True when the provider is telling us the torrent does not exist.
+
+        Covers both the clean NOT_FOUND status and the 404 that some providers
+        bury in the message of a generic error status.
+        """
+        if status_result is None:
+            return False
+        if status_result.status == TorrentFetchStatus.NOT_FOUND:
+            return True
+        return bool(
+            status_result.message and "404" in status_result.message
+            and status_result.status in (
+                TorrentFetchStatus.CLIENT_ERROR,
+                TorrentFetchStatus.SERVER_ERROR,
+                TorrentFetchStatus.PROVIDER_HANDLED_ERROR,
+                TorrentFetchStatus.UNKNOWN_ERROR,
+                TorrentFetchStatus.REQUEST_ERROR,
+            )
+        )
+
+    def _rediscover_provider(self, torrent_id: str):
+        """Find which provider in the chain actually knows this torrent.
+
+        Only for torrents with no recorded provider: rows written before the
+        debrid_provider column existed, so a 404 from the primary is genuinely
+        ambiguous -- the torrent may be dead, or it may be sitting on a fallback
+        under an id the primary has never heard of. Probing the rest of the chain
+        tells the two apart instead of assuming the worst and regrabbing.
+
+        A positive answer is memoised and persisted. A negative one goes in a
+        separate set rather than into the routing map -- writing the primary's
+        name in there would turn 'we asked everyone once and nobody had it' into
+        'this torrent lives on the primary', which is a routing claim this
+        function has no grounds to make and which would survive a later, correct
+        stamp.
+        """
+        from debrid import get_debrid_providers
+
+        if torrent_id in self._rediscovery_exhausted:
+            return None
+
+        providers = get_debrid_providers()
+        if len(providers) < 2:
+            return None
+
+        for provider in providers:
+            if provider is self.debrid_provider:
+                continue  # already asked, that is why we are here
+            try:
+                result = provider.get_torrent_info_with_status(torrent_id)
+            except Exception as e:
+                logging.debug(f"[{provider.PROVIDER_NAME}] rediscovery probe failed for {torrent_id}: {e}")
+                continue
+            if result.status == TorrentFetchStatus.OK:
+                logging.info(
+                    f"Torrent {torrent_id} was not found on {self.debrid_provider.PROVIDER_NAME} but "
+                    f"is live on {provider.PROVIDER_NAME}. Recording that and polling it from now on."
+                )
+                self._torrent_providers[torrent_id] = provider.PROVIDER_NAME
+                self._persist_provider(torrent_id, provider.PROVIDER_NAME)
+                return result
+
+        # Nobody has it. Remember only that, so the whole chain is not re-probed
+        # on every pass of the queue.
+        self._rediscovery_exhausted.add(torrent_id)
+        return None
+
+    def _persist_provider(self, torrent_id: str, provider_name: str) -> None:
+        """Write a rediscovered provider back onto every item on that torrent, so
+        the answer survives a restart."""
+        try:
+            from database.database_writing import update_media_item
+            for item in self.items:
+                if item.get('filled_by_torrent_id') == torrent_id:
+                    item['debrid_provider'] = provider_name
+                    update_media_item(item['id'], debrid_provider=provider_name)
+        except Exception as e:
+            logging.warning(f"Could not persist debrid_provider for torrent {torrent_id}: {e}")
+
     def get_torrent_progress(self, torrent_id: str) -> Union[int, str, None]:
         """
         Get the current progress percentage for a torrent or a status string.
@@ -322,11 +779,33 @@ class CheckingQueue:
             - None: If there's a temporary issue (e.g., rate limit, other recoverable error),
                     or if progress cannot be determined for other reasons that warrant a retry.
         """
+        # Route NZB jobs to cli_mount instead of debrid provider
+        if str(torrent_id).startswith('nzb:'):
+            return self._get_nzb_progress(torrent_id)
+
         try:
-            status_result = self.debrid_provider.get_torrent_info_with_status(torrent_id)
+            known_provider = self._recorded_provider_name(torrent_id) is not None
+            status_result = self._provider_for_torrent(torrent_id).get_torrent_info_with_status(torrent_id)
+
+            # A 404 from a provider we only guessed at is ambiguous. Ask the rest of
+            # the chain before declaring the torrent missing -- handle_missing_torrent
+            # blacklists the magnet and regrabs, so a wrong answer here costs a release.
+            if not known_provider and self._looks_like_not_found(status_result):
+                rediscovered = self._rediscover_provider(torrent_id)
+                if rediscovered is not None:
+                    status_result = rediscovered
 
             if status_result.status == TorrentFetchStatus.OK:
-                return status_result.data.get('progress', 0) if status_result.data else 0
+                if isinstance(status_result.data, dict):
+                    progress = status_result.data.get('progress', 0)
+                    rd_status = status_result.data.get('status', '')
+                    # If RD says it's actively downloading but progress hasn't ticked up yet,
+                    # return a small non-zero value so get_torrent_state treats it as 'downloading'
+                    # rather than 'unknown' (which accumulates strikes and prematurely stalls it).
+                    if progress == 0 and rd_status == 'downloading':
+                        return 0.1
+                    return progress
+                return 0
             elif status_result.status == TorrentFetchStatus.NOT_FOUND:
                 logging.info(f"Torrent {torrent_id} confirmed NOT FOUND (404) by provider.")
                 return PROGRESS_RESULT_MISSING
@@ -348,7 +827,9 @@ class CheckingQueue:
             elif status_result.status in [
                 TorrentFetchStatus.RATE_LIMITED,
                 TorrentFetchStatus.PROVIDER_HANDLED_ERROR, # Error logged by provider, treat as temp
-                TorrentFetchStatus.SERVER_ERROR, # Often temporary
+                TorrentFetchStatus.SERVER_ERROR, # Often temporary (5xx)
+                TorrentFetchStatus.CLIENT_ERROR, # Other 4xx errors, treat as temp
+                TorrentFetchStatus.UNKNOWN_ERROR, # Non-HTTP or unparseable errors, treat as temp
                 TorrentFetchStatus.REQUEST_ERROR # Network issues, often temporary
             ]:
                 logging.warning(
@@ -378,6 +859,19 @@ class CheckingQueue:
             progress_or_status = self.get_torrent_progress(torrent_id)
 
             if progress_or_status == PROGRESS_RESULT_MISSING:
+                # Only the authoritative process() pass may count strikes or condemn the
+                # torrent. get_contents() (the Checking queue UI, polled every few seconds)
+                # calls this with increment_strikes=False; letting it count would burn the
+                # whole strike budget in seconds whenever the queue page is open.
+                if not increment_strikes:
+                    return 'unknown'
+                max_missing_strikes = get_setting('Debug', 'max_missing_strikes', default=3)
+                self.missing_strikes[torrent_id] = self.missing_strikes.get(torrent_id, 0) + 1
+                strikes = self.missing_strikes[torrent_id]
+                if strikes < max_missing_strikes:
+                    logging.warning(f"Torrent {torrent_id} reported missing by provider (strike {strikes}/{max_missing_strikes}); a transient provider hiccup can look identical to a real removal, so waiting for confirmation before blacklisting its magnet.")
+                    return 'unknown'
+                self.missing_strikes.pop(torrent_id, None)
                 logging.info(f"Torrent {torrent_id} is missing. Handling via handle_missing_torrent.")
                 if torrent_id in self.unknown_strikes: 
                     del self.unknown_strikes[torrent_id]
@@ -398,6 +892,7 @@ class CheckingQueue:
 
             elif isinstance(progress_or_status, (int, float)):
                 current_progress = progress_or_status
+                self.missing_strikes.pop(torrent_id, None)
 
                 if int(current_progress) == 100:
                     if torrent_id in self.unknown_strikes: 
@@ -580,6 +1075,9 @@ class CheckingQueue:
 
     def check_uncached_torrents(self, phalanx_db_manager):
         """Periodically check if uncached torrents have become cached"""
+        from utilities.acquisition_health import provider_available
+        if not provider_available(self.debrid_provider):
+            return
         current_time = time.time()
         cache_check_interval = get_setting('Debug', 'cache_check_interval', default=900)  # 15 minutes default
         
@@ -664,6 +1162,7 @@ class CheckingQueue:
             if torrent_id in self.unknown_strikes:
                 del self.unknown_strikes[torrent_id]
                 logging.debug(f"Cleaned up unknown strikes for torrent {torrent_id} as it has no more associated items.")
+            self.missing_strikes.pop(torrent_id, None)
         
         # Also clean up any uncached torrent tracking if this was the last item
         try:
@@ -782,12 +1281,22 @@ class CheckingQueue:
             if not current_items_for_torrent: # Should not happen due to pre-filtering but good check
                 logging.debug(f"Torrent {torrent_id} has no items left after filtering, skipping.")
                 continue
+            from utilities.acquisition_health import provider_available, usenet_available
+            backend_ok = (usenet_available() if str(torrent_id).startswith('nzb:')
+                          else provider_available(self._provider_for_torrent(torrent_id)))
+            if not backend_ok:
+                # Connectivity is not a missing/stalled torrent. Keep the job,
+                # strikes and request intact, and do not age its progress timer
+                # while a healthy alternative continues independently.
+                if torrent_id in self.progress_checks:
+                    self.progress_checks[torrent_id]['last_check'] = current_time
+                continue
             try:
                 logging.debug(f"Processing torrent {torrent_id} with {len(current_items_for_torrent)} associated items")
                 
                 # Call get_torrent_state with increment_strikes=True (default) for authoritative check
-                torrent_overall_state = self.get_torrent_state(torrent_id) 
-                
+                torrent_overall_state = self.get_torrent_state(torrent_id)
+
                 if torrent_overall_state == 'missing' or torrent_overall_state == 'stalled':
                     logging.info(f"Torrent {torrent_id} handled as '{torrent_overall_state}' by get_torrent_state. Items should have been processed.")
                     # Items are moved/removed by handle_missing_torrent or handle_stalled_torrent called within get_torrent_state.
@@ -824,6 +1333,153 @@ class CheckingQueue:
                 logging.debug(f"Torrent {torrent_id} - Current progress: {current_progress}%, Last progress: {last_progress}%, Time since last check: {current_time - last_check}s")
                 
                 if int(current_progress) == 100:
+                    # --- NZB: resolve actual folder/file names from cli_mount before symlink/Plex checks ---
+                    if str(torrent_id).startswith('nzb:'):
+                        # Guard: if no filled_by_file on any item in this group, we have nothing
+                        # to look up in cli_mount — add to not-wanted and send back to Wanted.
+                        _any_file = any(i.get('filled_by_file') for i in current_items_for_torrent)
+                        if not _any_file:
+                            logging.warning(f'[NZB] {torrent_id} has no filled_by_file on any item — adding to not-wanted and moving group back to Wanted')
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nzb_guid_f
+                            for _item in list(current_items_for_torrent):
+                                try:
+                                    _nzb_url = _item.get('filled_by_magnet', '')
+                                    if _nzb_url:
+                                        _add_nzb_guid_f(_nzb_url)
+                                except Exception:
+                                    pass
+                                if self.contains_item_id(_item['id']):
+                                    queue_manager.move_to_wanted(_item, 'Checking')
+                            continue
+                        # Version-scoped grouping: a real season pack always shares one version
+                        # across its episodes. If items sharing this torrent_id span more than
+                        # one version, that indicates a stale/corrupted shared job id (e.g. from
+                        # a since-fixed dedup bug) rather than a genuine pack — resolving them
+                        # together would collapse two different versions onto the same file.
+                        # Only process the subset matching the first item's version this pass;
+                        # other-version items are left for a later pass once their own torrent_id
+                        # is corrected (e.g. by a fresh scrape/resubmission).
+                        def _norm_ver(_v):
+                            return (_v or 'Default').rstrip('*')
+                        _group_ver = _norm_ver(current_items_for_torrent[0].get('version'))
+                        if any(_norm_ver(_i.get('version')) != _group_ver for _i in current_items_for_torrent):
+                            logging.warning(
+                                f'[NZB] Torrent {torrent_id} has items spanning multiple versions '
+                                f'({sorted(set(_norm_ver(_i.get("version")) for _i in current_items_for_torrent))}) — '
+                                f'processing only version {_group_ver!r} this pass to avoid cross-version collapse'
+                            )
+                            current_items_for_torrent = [
+                                _i for _i in current_items_for_torrent if _norm_ver(_i.get('version')) == _group_ver
+                            ]
+                        self._resolve_nzb_file_info(torrent_id, current_items_for_torrent)
+                        # Reload items from DB so updated fields are visible to symlink/plex checks
+                        from database import get_all_media_items
+                        current_items_for_torrent = [
+                            dict(item) for item in get_all_media_items(state='Checking')
+                            if item.get('filled_by_torrent_id') == torrent_id
+                            and _norm_ver(item.get('version')) == _group_ver
+                        ]
+                        # If resolve still hasn't found the file after multiple attempts, move back to Wanted
+                        import os as _os
+                        _sample = current_items_for_torrent[0] if current_items_for_torrent else {}
+                        _fbf = _sample.get('filled_by_file') or ''
+                        _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
+                        if _fbf and _os.path.splitext(_fbf)[1].lower() not in _VIDEO_EXTS:
+                            # filled_by_file has no video extension — resolve hasn't succeeded
+                            if torrent_id not in self.progress_checks:
+                                self.progress_checks[torrent_id] = {'last_check': current_time, 'last_progress': 100, 'nzb_resolve_failures': 0}
+                            self.progress_checks[torrent_id]['nzb_resolve_failures'] = self.progress_checks[torrent_id].get('nzb_resolve_failures', 0) + 1
+                            failures = self.progress_checks[torrent_id]['nzb_resolve_failures']
+                            logging.warning(f'[NZB] {torrent_id} resolve failure #{failures} — folder not found in cli_mount')
+                            if failures >= 5:
+                                logging.warning(f'[NZB] {torrent_id} failed to resolve after {failures} attempts — adding to not-wanted and moving back to Wanted')
+                                self.progress_checks[torrent_id]['nzb_resolve_failures'] = 0
+                                from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nzb_guid_r
+                                for item_to_move in list(current_items_for_torrent):
+                                    if self.contains_item_id(item_to_move['id']):
+                                        try:
+                                            _nzb_url = item_to_move.get('filled_by_magnet', '')
+                                            if _nzb_url:
+                                                _add_nzb_guid_r(_nzb_url)
+                                        except Exception:
+                                            pass
+                                        # If ghostlisted, can't move to Wanted — set Blacklisted and remove from queue
+                                        if item_to_move.get('ghostlisted'):
+                                            logging.warning(f'[NZB] {torrent_id} item {item_to_move["id"]} is ghostlisted — setting Blacklisted and removing from Checking')
+                                            from database.database_writing import update_media_item_state
+                                            update_media_item_state(item_to_move['id'], 'Blacklisted')
+                                            self.remove_item(item_to_move)
+                                        else:
+                                            queue_manager.move_to_wanted(item_to_move, 'Checking')
+                                continue
+                        elif _fbf:
+                            # Resolve succeeded — register cli_debrid IDs with cli_mount now
+                            # that all episodes have their filenames. Covers ALL modes.
+                            try:
+                                import re as _re_ih2
+                                _cli_ids2 = {}
+                                # Query ALL siblings by torrent_id across all states
+                                # (Checking, Collected, Upgrading) — season pack episodes
+                                # move to Collected one-by-one, so current_items_for_torrent
+                                # only has the episode currently in Checking.
+                                try:
+                                    from database import get_media_items_by_torrent_id as _by_tid2
+                                    _all_sibs2 = [
+                                        i for i in _by_tid2(torrent_id, columns=['id', 'filled_by_file'])
+                                        if i.get('filled_by_file')
+                                    ]
+                                except Exception:
+                                    _all_sibs2 = current_items_for_torrent
+                                for _item2 in _all_sibs2:
+                                    _fbf2 = (_item2.get('filled_by_file') or '').strip()
+                                    _iid2 = _item2.get('id')
+                                    if _fbf2 and _iid2:
+                                        _cli_ids2[_fbf2] = _iid2
+                                if _cli_ids2:
+                                    _tid2 = str(torrent_id)
+                                    _ih2 = _tid2[4:] if _tid2.startswith('nzb:') else ''
+                                    if not _ih2:
+                                        _mag2 = current_items_for_torrent[0].get('filled_by_magnet') or ''
+                                        _m2 = _re_ih2.search(r'urn:btih:([0-9a-fA-F]{40})', _mag2, _re_ih2.IGNORECASE)
+                                        if _m2:
+                                            _ih2 = _m2.group(1).lower()
+                                    if _ih2:
+                                        try:
+                                            from usenet.climount_client import get_climount_client as _get_dc2
+                                            _dc2 = _get_dc2()
+                                            if _dc2 and _dc2.is_enabled():
+                                                _dc2.register_cli_ids(_ih2, _cli_ids2)
+                                                logging.info(f'[CheckingQueue] Registered {len(_cli_ids2)} cli_debrid IDs for {_ih2}')
+                                                _dc2.push_tags_for_item(_ih2, next(iter(_cli_ids2.values())))
+                                        except Exception as _r2:
+                                            logging.debug(f'[CheckingQueue] cli_ids registration error: {_r2}')
+                            except Exception as _r2e:
+                                logging.debug(f'[CheckingQueue] cli_ids build error: {_r2e}')
+
+                            # Trigger targeted Plex scan once per item, async
+                            if torrent_id not in self._nzb_plex_scan_triggered:
+                                self._nzb_plex_scan_triggered.add(torrent_id)
+                                _scan_mount = get_setting('Plex', 'mounted_file_location', '').rstrip('') or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/')
+                                _scan_folder = _sample.get('debrid_folder_name') or _sample.get('filled_by_title') or ''
+                                _scan_itype = _sample.get('type', 'movie')
+                                if _scan_mount and _scan_folder:
+                                    import threading as _threading
+                                    def _do_plex_scan(_mount, _folder, _itype):
+                                        try:
+                                            # Flat (Zurg: <mount>/<job>/) and nested
+                                            # (NzbDAV: <mount>/<cat>/<job>/) — see
+                                            # usenet.mount_layout.resolve_nzb_job_dir.
+                                            from usenet.mount_layout import resolve_nzb_job_dir
+                                            _candidate = resolve_nzb_job_dir(_mount, _folder)
+                                            if _candidate:
+                                                plex_update_item({'full_path': _candidate, 'location_on_disk': _candidate, 'type': _itype})
+                                                logging.info(f'[NZB] Triggered Plex scan for {_candidate!r}')
+                                                return
+                                            logging.debug(f'[NZB] Folder {_folder!r} not found under {_mount!r} for Plex scan')
+                                        except Exception as _pe:
+                                            logging.debug(f'[NZB] Plex scan failed: {_pe}')
+                                    _threading.Thread(target=_do_plex_scan, args=(_scan_mount, _scan_folder, _scan_itype), daemon=True).start()
+
                     # --- Restored Symlinked/Local processing logic ---
                     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
                         items_to_scan = []
@@ -868,7 +1524,28 @@ class CheckingQueue:
                                             if directory:
                                                 # Store item type with directory for proper section matching
                                                 item_type = updated_item_data.get('type', 'episode')  # Default to episode for shows
-                                                directories_to_scan[directory] = item_type
+
+                                                # If this item was ffprobe-verified (playability check enabled
+                                                # for its protocol), scan its directory immediately instead of
+                                                # waiting for the batched scan at the end of this torrent
+                                                # group - a confirmed-playable file should show up in Plex
+                                                # right away. Leaves the batched path below completely
+                                                # untouched for every item where the setting is off.
+                                                _torrent_id_for_scan = str(updated_item_data.get('filled_by_torrent_id', '') or '')
+                                                _is_nzb_for_scan = _torrent_id_for_scan.startswith('nzb:')
+                                                _ffprobe_scan_section = 'Usenet Provider' if _is_nzb_for_scan else 'Debrid Provider'
+                                                _ffprobe_scan_key = 'ffprobe_all_nzbs' if _is_nzb_for_scan else 'ffprobe_all_debrid_additions'
+                                                if get_setting(_ffprobe_scan_section, _ffprobe_scan_key, False):
+                                                    try:
+                                                        if use_jellyfin:
+                                                            emby_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
+                                                        elif use_plex:
+                                                            plex_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
+                                                        logging.info(f"[ffprobe] Triggered immediate media server scan for verified directory: {directory}")
+                                                    except Exception as _ffprobe_scan_err:
+                                                        logging.warning(f"[ffprobe] Immediate scan failed for {directory}: {_ffprobe_scan_err}")
+                                                else:
+                                                    directories_to_scan[directory] = item_type
 
                                 conn = get_db_connection()
                                 cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_in_torrent_group['id'],))
@@ -880,20 +1557,28 @@ class CheckingQueue:
                                     logging.info(f"Item {item_in_torrent_group['id']} is marked for upgrading, keeping in Upgrading state after local check.")
                                 elif current_item_state == 'Collected':
                                     logging.info(f"Item {item_in_torrent_group['id']} state confirmed as Collected after local check.")
-                                    queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True)
+                                    # check_local_file_for_item() above already ran handle_state_change()
+                                    # for this exact state transition (via local_library_scan.py); avoid
+                                    # re-running CineSync/subtitles/custom-script a second time here.
+                                    queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True, skip_state_change_hook=True)
                                     # Sync labels now that item is detected in Plex
                                     try:
-                                        from utilities.plex_label_manager import sync_labels_to_plex_for_item
-                                        sync_labels_to_plex_for_item(item_in_torrent_group['id'])
+                                        from utilities.plex_label_manager import sync_labels_to_plex_for_item, is_plex_labels_enabled_anywhere
+                                        if is_plex_labels_enabled_anywhere():
+                                            sync_labels_to_plex_for_item(item_in_torrent_group['id'])
                                     except Exception as e:
                                         logging.error(f"Error syncing labels for item {item_in_torrent_group['id']}: {e}")
                                 elif current_item_state:
                                     logging.warning(f"Item {item_in_torrent_group['id']} processed locally but state is '{current_item_state}'. Moving to Collected.")
-                                    queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True)
+                                    # check_local_file_for_item() above already ran handle_state_change()
+                                    # for this exact state transition (via local_library_scan.py); avoid
+                                    # re-running CineSync/subtitles/custom-script a second time here.
+                                    queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True, skip_state_change_hook=True)
                                     # Sync labels now that item is detected in Plex
                                     try:
-                                        from utilities.plex_label_manager import sync_labels_to_plex_for_item
-                                        sync_labels_to_plex_for_item(item_in_torrent_group['id'])
+                                        from utilities.plex_label_manager import sync_labels_to_plex_for_item, is_plex_labels_enabled_anywhere
+                                        if is_plex_labels_enabled_anywhere():
+                                            sync_labels_to_plex_for_item(item_in_torrent_group['id'])
                                     except Exception as e:
                                         logging.error(f"Error syncing labels for item {item_in_torrent_group['id']}: {e}")
                                 else:
@@ -917,6 +1602,47 @@ class CheckingQueue:
 
                         if items_to_scan:
                             logging.info("Full library scan disabled for now")
+
+                        # Register cli_debrid IDs with cli_mount — one call per torrent group
+                        # Maps each episode filename to its media_items.id for direct sync lookups
+                        try:
+                            import re as _re_ih
+                            _cli_ids = {}
+                            # Include all siblings across all states (Checking+Collected+Upgrading)
+                            # since season pack episodes move to Collected one-by-one.
+                            _sample = current_items_for_torrent[0] if current_items_for_torrent else {}
+                            _tid_all = str(_sample.get('filled_by_torrent_id') or '')
+                            try:
+                                from database import get_media_items_by_torrent_id as _by_tid
+                                _all_sibs = [
+                                    i for i in _by_tid(_tid_all, columns=['id', 'filled_by_file'])
+                                    if i.get('filled_by_file')
+                                ] if _tid_all else current_items_for_torrent
+                            except Exception:
+                                _all_sibs = current_items_for_torrent
+                            for _item in _all_sibs:
+                                _fbf = (_item.get('filled_by_file') or '').strip()
+                                _iid = _item.get('id')
+                                if _fbf and _iid:
+                                    _cli_ids[_fbf] = _iid
+                            if _cli_ids:
+                                _tid = str(_sample.get('filled_by_torrent_id') or '')
+                                _infohash = ''
+                                if _tid.startswith('nzb:'):
+                                    _infohash = _tid[4:]
+                                else:
+                                    _mag = _sample.get('filled_by_magnet') or ''
+                                    _m = _re_ih.search(r'urn:btih:([0-9a-fA-F]{40})', _mag, _re_ih.IGNORECASE)
+                                    if _m:
+                                        _infohash = _m.group(1).lower()
+                                if _infohash:
+                                    from usenet.climount_client import get_climount_client as _get_dc
+                                    _dc = _get_dc()
+                                    if _dc and _dc.is_enabled():
+                                        _dc.register_cli_ids(_infohash, _cli_ids)
+                                        _dc.push_tags_for_item(_infohash, next(iter(_cli_ids.values())))
+                        except Exception as _cli_reg_err:
+                            logging.debug(f'[CheckingQueue] cli_ids registration error: {_cli_reg_err}')
                     # --- End of restored Symlinked/Local processing logic ---
 
                     oldest_item_time = min((self.checking_queue_times.get(item['id'], current_time) for item in current_items_for_torrent), default=current_time)
@@ -926,20 +1652,29 @@ class CheckingQueue:
                     logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds (dynamic limit: {checking_queue_limit} seconds for {len(current_items_for_torrent)} items)")
                     
                     if time_in_queue > checking_queue_limit:
-                        logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)")
-                        try:
-                            self.debrid_provider.remove_torrent(
-                                torrent_id,
-                                removal_reason=f"Content not found in checking queue after {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)"
-                            )
-                        except Exception as e:
-                            logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
-                        # Move all items for this torrent back to Wanted
-                        # Make a copy of current_items_for_torrent for iteration, as move_to_wanted modifies self.items
+                        if str(torrent_id).startswith('nzb:'):
+                            logging.info(f"NZB {torrent_id} content not found within {checking_queue_limit}s — adding to not-wanted and moving back to Wanted")
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nzb_guid_t
+                            for _item_nw in current_items_for_torrent:
+                                try:
+                                    _nzb_url = _item_nw.get('filled_by_magnet', '')
+                                    if _nzb_url:
+                                        _add_nzb_guid_t(_nzb_url)
+                                except Exception:
+                                    pass
+                            self._remove_abandoned_nzb_job(torrent_id, current_items_for_torrent)
+                        else:
+                            logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)")
+                            try:
+                                self._provider_for_torrent(torrent_id).remove_torrent(
+                                    torrent_id,
+                                    removal_reason=f"Content not found in checking queue after {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)"
+                                )
+                            except Exception as e:
+                                logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
                         for item_to_move in list(current_items_for_torrent):
-                            if self.contains_item_id(item_to_move['id']): # Check if item is still in the main queue
+                            if self.contains_item_id(item_to_move['id']):
                                 queue_manager.move_to_wanted(item_to_move, "Checking")
-                        # items_to_remove.extend(current_items_for_torrent) # Items are moved by move_to_wanted, which calls remove_item
                         continue
 
                 # Skip remaining checks if the torrent is completed
@@ -949,14 +1684,17 @@ class CheckingQueue:
                 if current_time - last_check >= 300:  # 5 minutes
                     if current_progress == last_progress:
                         logging.info(f"No progress for torrent {torrent_id} in 5 minutes. Handling failed upgrade/download.")
-                        try:
-                            self.debrid_provider.remove_torrent(
-                                torrent_id,
-                                removal_reason=f"No download progress after 5 minutes (stalled at {current_progress}%)"
-                            )
-                            logging.info(f"Removed failed torrent {torrent_id} from debrid service")
-                        except Exception as e:
-                            logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
+                        if str(torrent_id).startswith('nzb:'):
+                            logging.info(f"NZB {torrent_id} stalled — skipping debrid removal")
+                        else:
+                            try:
+                                self._provider_for_torrent(torrent_id).remove_torrent(
+                                    torrent_id,
+                                    removal_reason=f"No download progress after 5 minutes (stalled at {current_progress}%)"
+                                )
+                                logging.info(f"Removed failed torrent {torrent_id} from debrid service")
+                            except Exception as e:
+                                logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
 
                         # Add upgrade check here
                         upgrading_queue = None # Initialize for potential use
@@ -1166,6 +1904,35 @@ class CheckingQueue:
         # Iterate over a copy of self.items for safety if handlers modify it.
         items_for_stalled_torrent = [item for item in list(self.items) if item.get('filled_by_torrent_id') == torrent_id]
 
+        # Debrid season-pack sibling reuse means a sibling episode can already be Collected
+        # on this same torrent_id while another sibling is still stuck stalling in this
+        # queue - such a sibling has left self.items entirely, so it's invisible to the
+        # in-memory check above. Removing the torrent here would silently break that
+        # already-Collected episode's playback. Check the DB for any such episode first.
+        if not str(torrent_id).startswith('nzb:'):
+            try:
+                from database import get_db_connection as _gdb_stall
+                _known_ids = {i['id'] for i in items_for_stalled_torrent}
+                _conn = _gdb_stall()
+                try:
+                    _placeholders = ','.join('?' * len(_known_ids)) if _known_ids else 'NULL'
+                    _other = _conn.execute(
+                        f"SELECT 1 FROM media_items WHERE filled_by_torrent_id=? "
+                        f"AND state IN ('Collected','Upgrading') "
+                        f"AND id NOT IN ({_placeholders}) LIMIT 1",
+                        (torrent_id, *_known_ids)
+                    ).fetchone()
+                finally:
+                    _conn.close()
+                if _other:
+                    logging.info(f"Torrent {torrent_id} has a Collected/Upgrading sibling outside this queue's stalled check — not removing, only handling the items stalled here")
+                    for item_to_move in items_for_stalled_torrent:
+                        if self.contains_item_id(item_to_move['id']):
+                            queue_manager.move_to_wanted(item_to_move, "Checking")
+                    return
+            except Exception as e:
+                logging.warning(f"Could not check for Collected siblings of torrent {torrent_id}: {e} — proceeding with normal stalled handling")
+
         if not items_for_stalled_torrent:
             logging.warning(f"No items found for stalled torrent {torrent_id} at the moment of handling.")
             # Clean up strike counter if it exists, as there are no items to process
@@ -1179,7 +1946,7 @@ class CheckingQueue:
         # Attempt to remove torrent from debrid provider
         try:
             logging.info(f"Attempting to remove torrent {torrent_id} from debrid service due to: {reason}")
-            self.debrid_provider.remove_torrent(torrent_id, removal_reason=f"Stalled/Failed: {reason}")
+            self._provider_for_torrent(torrent_id).remove_torrent(torrent_id, removal_reason=f"Stalled/Failed: {reason}")
             logging.info(f"Successfully removed torrent {torrent_id} from debrid service.")
         except requests.exceptions.HTTPError as e:
             if hasattr(e, 'response') and e.response is not None:

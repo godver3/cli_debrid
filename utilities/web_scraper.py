@@ -384,6 +384,57 @@ async def _fetch_media_meta_async(session: aiohttp.ClientSession, tmdb_id: str, 
     return (poster_url_val, overview, genres, vote_average, backdrop_path_val)
 
 
+def _search_tmdb_only(search_term: str, tmdb_api_key: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Title search against TMDB directly (movies + TV), no Trakt involved.
+
+    Used as a fallback when Trakt isn't configured. Returns results in the
+    same shape search_trakt() produces (media_type/id/title/year/posterPath/
+    backdropPath), so callers don't need to know which backend answered.
+    TMDB has no combined movie+show search endpoint, so this queries both.
+    """
+    results: List[Dict[str, Any]] = []
+    for media_type, endpoint in (('movie', 'movie'), ('show', 'tv')):
+        try:
+            url = f"https://api.themoviedb.org/3/search/{endpoint}?api_key={tmdb_api_key}&query={api.utils.quote(search_term)}&page=1&language=en-US"
+            if year:
+                url += f"&year={year}" if media_type == 'movie' else f"&first_air_date_year={year}"
+            response = api.get(url, timeout=15)
+            response.raise_for_status()
+            for item in response.json().get('results', []):
+                title = item.get('title') if media_type == 'movie' else item.get('name')
+                date_str = item.get('release_date') if media_type == 'movie' else item.get('first_air_date')
+                if not title or not date_str:
+                    continue
+                try:
+                    item_year = int(date_str[:4])
+                except (ValueError, TypeError):
+                    continue
+                results.append({
+                    'media_type': media_type,
+                    'id': str(item.get('id')),
+                    'title': title,
+                    'year': item_year,
+                    # Full URL, like the Trakt path's get_media_meta posters:
+                    # callers use it as an <img src> as is
+                    'posterPath': f"https://image.tmdb.org/t/p/w500{item['poster_path']}" if item.get('poster_path') else None,
+                    'backdropPath': item.get('backdrop_path'),
+                    'votes': item.get('vote_count', 0),
+                })
+        except Exception as exc:
+            logging.warning(f"TMDB-only search failed for media_type={media_type}: {exc}")
+
+    results.sort(
+        key=lambda r: (
+            r['title'].lower() == search_term.lower(),
+            (r['year'] == year) if year else False,
+            fuzz.ratio(search_term.lower(), r['title'].lower()),
+            r.get('votes', 0),
+        ),
+        reverse=True,
+    )
+    return results[:100]
+
+
 def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     # PHASE 1: Check cache first
     cached_results = _search_cache.get(search_term, year)
@@ -395,7 +446,17 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
     has_tmdb = bool(tmdb_api_key)
 
     if not trakt_client_id:
-        logging.error("Trakt Client ID not set. Please configure in settings.")
+        if has_tmdb:
+            # Trakt is optional (only needed for watchlist-type content sources) but
+            # this search path hard-depended on it with no fallback, so title search
+            # (e.g. the manual magnet-assign screen) silently returned nothing for
+            # anyone who only configured TMDB - a very common setup. TMDB alone can
+            # answer a title search directly.
+            logging.info("Trakt Client ID not set - falling back to TMDB-only search.")
+            results = _search_tmdb_only(search_term, tmdb_api_key, year)
+            _search_cache.set(search_term, results, year)
+            return results
+        logging.error("Trakt Client ID not set and no TMDB API key configured either - cannot search.")
         return []
 
     headers = {
@@ -778,26 +839,40 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         return cached_media_meta
 
     # Use the correct endpoints for TV shows and movies
-    if media_type == 'tv' or media_type == 'show':
+    _is_tv = media_type in ('tv', 'show')
+    if _is_tv:
         details_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
+        images_url  = f"https://api.themoviedb.org/3/tv/{tmdb_id}/images?api_key={tmdb_api_key}&include_image_language=en,null"
     else:
         details_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
-    
+        images_url  = f"https://api.themoviedb.org/3/movie/{tmdb_id}/images?api_key={tmdb_api_key}&include_image_language=en,null"
+
     try:
-        # Fetch details
-        details_response = api.get(details_url)
+        # Fetch details (overview, genres, ratings, backdrop)
+        details_response = api.get(details_url, timeout=15)
         details_response.raise_for_status()
         details_data = details_response.json()
 
-        # DISABLED: asyncio.run() creates event loop accumulation
-        # async def fetch_poster_url():
-        #     async with aiohttp.ClientSession() as session:
-        #         return await get_poster_url(session, tmdb_id, media_type)
-        # poster_url = asyncio.run(fetch_poster_url())
-
-        # Fallback: construct poster URL synchronously
+        # Fetch English-only posters from the images endpoint.
+        # Prefer iso_639_1='en' posters — these have baked-in title text and are
+        # the standard library poster. Only fall back to null-language posters if
+        # no English results exist (e.g. non-English original content with no EN poster).
         poster_url = None
-        if details_data.get('poster_path'):
+        try:
+            images_response = api.get(images_url, timeout=15)
+            images_response.raise_for_status()
+            all_posters = images_response.json().get('posters', [])
+            # Prefer English posters; fall back to all results only if none found
+            en_posters = [p for p in all_posters if p.get('iso_639_1') == 'en']
+            posters = en_posters if en_posters else all_posters
+            if posters:
+                posters.sort(key=lambda p: p.get('vote_average', 0), reverse=True)
+                poster_url = f"https://image.tmdb.org/t/p/w500{posters[0]['file_path']}"
+        except Exception as _img_err:
+            logging.debug(f"TMDB images endpoint failed for {media_type} {tmdb_id}: {_img_err}")
+
+        # Fallback to the details poster_path if the images endpoint returned nothing
+        if not poster_url and details_data.get('poster_path'):
             poster_url = f"https://image.tmdb.org/t/p/w500{details_data['poster_path']}"
         
         overview = details_data.get('overview', '')
@@ -819,11 +894,13 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         status_code = getattr(getattr(e, 'response', None), 'status_code', None)
         if status_code == 404:
             logging.warning(f"TMDb details not found (404) for {media_type} {tmdb_id}: {e}")
+        elif status_code == 429:
+            logging.warning(f"TMDb rate limit hit for {media_type} {tmdb_id}")
         else:
-            logging.error(f"Error fetching media meta from TMDb: {e}")
+            logging.warning(f"TMDb HTTP error for {media_type} {tmdb_id}: {e}")
         return None
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error fetching media meta from TMDb: {e}")
+    except (api.exceptions.RequestException, ValueError) as e:
+        logging.warning(f"TMDb request failed for {media_type} {tmdb_id}: {e}")
         return None
     
 def overseerr_tvshow(title: str, year: Optional[int] = None, media_id: Optional[int] = None, season: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -897,6 +974,60 @@ async def fetch_poster_url(tmdb_id, media_type):
     async with aiohttp.ClientSession() as session:
         return await get_poster_url(session, tmdb_id, media_type)
 
+
+def _search_tmdb_only_fast(search_term: str, tmdb_api_key: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Title search against TMDB directly, matching search_trakt_fast()'s output
+    shape. Used as a fallback when Trakt isn't configured.
+
+    TMDB's search response already includes poster/backdrop/overview/vote_average/
+    genre_ids directly, so unlike search_trakt_fast() this needs no per-item
+    details lookup at all.
+    """
+    results: List[Dict[str, Any]] = []
+    for media_type, endpoint in (('movie', 'movie'), ('show', 'tv')):
+        try:
+            url = f"https://api.themoviedb.org/3/search/{endpoint}?api_key={tmdb_api_key}&query={api.utils.quote(search_term)}&page=1&language=en-US"
+            if year:
+                url += f"&year={year}" if media_type == 'movie' else f"&first_air_date_year={year}"
+            response = api.get(url, timeout=10)
+            response.raise_for_status()
+            for item in response.json().get('results', []):
+                title = item.get('title') if media_type == 'movie' else item.get('name')
+                date_str = item.get('release_date') if media_type == 'movie' else item.get('first_air_date')
+                poster_path = item.get('poster_path')
+                if not title or not date_str or not poster_path:
+                    continue
+                try:
+                    item_year = int(date_str[:4])
+                except (ValueError, TypeError):
+                    continue
+                overview = item.get('overview', '')
+                results.append({
+                    'id': str(item.get('id')),
+                    'title': title,
+                    'year': item_year,
+                    'media_type': media_type,
+                    'poster_path': poster_path,
+                    'overview': overview,
+                    'show_overview': overview,
+                    # TMDB's search endpoint returns numeric genre_ids, not names, and
+                    # search_trakt_fast()'s consumers expect names here (it resolves
+                    # them via a per-item TMDB details call this fallback intentionally
+                    # skips for speed) - leave empty rather than showing raw numbers.
+                    'genre_ids': [],
+                    'rating': item.get('vote_average', 0),
+                    'vote_average': item.get('vote_average', 0),
+                    'backdrop_path': item.get('backdrop_path') or '',
+                    'votes': item.get('vote_count', 0),
+                    'imdb_id': '',
+                })
+        except Exception as exc:
+            logging.warning(f"TMDB-only fast search failed for media_type={media_type}: {exc}")
+
+    results.sort(key=lambda r: r.get('vote_average', 0) or 0, reverse=True)
+    return results[:100]
+
+
 def search_trakt_fast(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     """
     PHASE 2.2: Fast Trakt search with lightweight TMDB poster fetching.
@@ -912,7 +1043,12 @@ def search_trakt_fast(search_term: str, year: Optional[int] = None) -> List[Dict
     trakt_client_id = get_setting('Trakt', 'client_id')
     tmdb_api_key = get_setting('TMDB', 'api_key')
     if not trakt_client_id:
-        logging.error("Trakt Client ID not set.")
+        if tmdb_api_key:
+            logging.info("Trakt Client ID not set - falling back to TMDB-only fast search.")
+            results = _search_tmdb_only_fast(search_term, tmdb_api_key, year)
+            _search_cache.set(fast_search_term, results, year)
+            return results
+        logging.error("Trakt Client ID not set and no TMDB API key configured either - cannot search.")
         return []
 
     headers = {
@@ -1749,20 +1885,28 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                 # No hash extraction needed for torrent URLs, but include them in results
                 processed_passed_results.append(result)
                 logging.info(f"Added torrent URL result: {result['title']}")
+            # Pass through NZB results — no magnet/hash needed, nzb_url carries the link
+            elif result.get('protocol') == 'nzb' or result.get('nzb_url'):
+                processed_passed_results.append(result)
 
-    # Get the debrid provider and check its capabilities
-    debrid_provider = get_debrid_provider()
-    supports_cache_check = debrid_provider.supports_direct_cache_check
-    supports_bulk_check = debrid_provider.supports_bulk_cache_checking
-    
+    # Get all configured debrid providers (primary + fallbacks)
+    from debrid import get_debrid_providers
+    all_providers = get_debrid_providers()
+    # usenet-only setup: no debrid provider. Use None + capability flags off so the
+    # cache-check blocks below (all gated on supports_cache_check) are skipped.
+    debrid_provider = all_providers[0] if all_providers else None  # primary — capability flags / legacy paths
+    supports_cache_check = debrid_provider.supports_direct_cache_check if debrid_provider else False
+    supports_bulk_check = debrid_provider.supports_bulk_cache_checking if debrid_provider else False
+
     # Determine behavior from provider capability flags
     is_real_debrid = getattr(debrid_provider, 'supports_direct_cache_check', False)
-    
-    logging.info(f"Debrid provider: supports_cache_check={supports_cache_check}, supports_bulk_check={supports_bulk_check}, is_real_debrid={is_real_debrid}")
+
+    logging.info(f"Debrid provider chain: {[p.PROVIDER_NAME for p in all_providers]} — supports_cache_check={supports_cache_check}, supports_bulk_check={supports_bulk_check}")
 
     # Initialize all cache statuses as 'Not Checked'
     for result in processed_passed_results:
         result['cached'] = 'Not Checked'
+        result['cache_providers'] = {}  # per-provider: {provider_name: 'Yes'/'No'/'Error'}
         
         # Ensure both magnet and magnet_link are set (for UI and cache checking)
         if 'magnet' in result and not 'magnet_link' in result:
@@ -1790,6 +1934,8 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                 logging.info(f"Magnet link result: {result.get('title', 'Unknown')} (Link: {result['magnet_link'][:40]}...)")
             except (TypeError, KeyError) as e:
                 logging.warning(f"Error logging magnet link result: {e}")
+        elif result.get('protocol') == 'nzb' or result.get('nzb_url'):
+            logging.info(f"NZB result: {result.get('title', 'Unknown')} (source: {result.get('source', 'Unknown')})")
         else:
             try:
                 logging.warning(f"Result without magnet or torrent URL: {result.get('title', 'Unknown')}")
@@ -1810,61 +1956,56 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
         
         if supports_cache_check:
             try:
-                if supports_bulk_check:
-                    # If provider supports bulk checking, check all hashes at once
-                    cache_status = debrid_provider.is_cached(hashes_to_check)
-                    if isinstance(cache_status, bool):
-                        # If we got a single boolean back, convert to dict
-                        cache_status = {hash_value: cache_status for hash_value in hashes_to_check}
-                    
-                    # Update results with cache status
-                    for result in processed_passed_results:
-                        hash_value = result.get('hash')
-                        if hash_value and hash_value in cache_status:
-                            is_cached = cache_status[hash_value]
-                            result['cached'] = 'Yes' if is_cached else 'No'
-                else:
-                    # Check hashes in parallel for providers that don't support bulk checking
-                    from concurrent.futures import ThreadPoolExecutor, as_completed
+                from concurrent.futures import ThreadPoolExecutor, as_completed
 
-                    # Collect hashes to check (limit to 5)
-                    results_to_check = [r for r in processed_passed_results if r.get('hash')][:5]
+                def _check_hash_for_provider(prov, hash_value):
+                    """Check a single hash against a single provider. Returns ('Yes'/'No'/'Error')."""
+                    try:
+                        if prov.supports_bulk_cache_checking:
+                            status = prov.is_cached([hash_value])
+                            if isinstance(status, dict):
+                                val = status.get(hash_value)
+                                return 'Yes' if val else ('No' if val is False else 'Error')
+                            return 'Yes' if status else 'No'
+                        else:
+                            val = prov.is_cached(hash_value)
+                            return 'Yes' if val else 'No'
+                    except Exception as _e:
+                        logging.warning(f"[{prov.PROVIDER_NAME}] cache check error for {hash_value}: {_e}")
+                        return 'Error'
 
-                    # Parallel cache checking function
-                    def check_single_hash(result_with_hash):
-                        result, hash_value = result_with_hash
+                results_to_check = [r for r in processed_passed_results if r.get('hash')][:5]
+
+                # Check all results × all providers in parallel
+                futures = {}
+                with ThreadPoolExecutor(max_workers=min(len(results_to_check) * len(all_providers), 10)) as executor:
+                    for result in results_to_check:
+                        h = result.get('hash')
+                        for prov in all_providers:
+                            fut = executor.submit(_check_hash_for_provider, prov, h)
+                            futures[fut] = (result, prov)
+
+                    for fut in as_completed(futures):
+                        result, prov = futures[fut]
                         try:
-                            is_cached = debrid_provider.is_cached(hash_value)
-                            return (result, 'Yes' if is_cached else 'No')
-                        except Exception as e:
-                            logging.error(f"Error checking individual cache status for {hash_value}: {e}")
-                            return (result, 'Error')
+                            status = fut.result()
+                            result['cache_providers'][prov.PROVIDER_NAME] = status
+                            # Overall cached = Yes if any provider says Yes
+                            if status == 'Yes' and result['cached'] != 'Yes':
+                                result['cached'] = 'Yes'
+                            elif result['cached'] == 'Not Checked' and status == 'No':
+                                result['cached'] = 'No'
+                        except Exception as _e:
+                            logging.error(f"Error in parallel provider cache check: {_e}")
+                            result['cache_providers'][prov.PROVIDER_NAME] = 'Error'
 
-                    # Execute checks in parallel (max 5 workers for 5 hashes)
-                    with ThreadPoolExecutor(max_workers=5) as executor:
-                        # Submit all cache checks concurrently
-                        future_to_result = {
-                            executor.submit(check_single_hash, (result, result.get('hash'))): result
-                            for result in results_to_check
-                        }
-
-                        # Collect results as they complete
-                        for future in as_completed(future_to_result):
-                            try:
-                                result, cached_status = future.result()
-                                result['cached'] = cached_status
-                            except Exception as e:
-                                logging.error(f"Error in parallel cache check: {e}")
-                                future_to_result[future]['cached'] = 'Error'
-                
                 # Mark all remaining results as N/A
                 for result in processed_passed_results:
                     if result['cached'] == 'Not Checked':
                         result['cached'] = 'N/A'
-                        
+
             except Exception as e:
                 logging.error(f"Error checking cache status: {e}")
-                # Fall back to N/A on error
                 for result in processed_passed_results:
                     if result['cached'] == 'Not Checked':
                         result['cached'] = 'N/A'
@@ -1894,7 +2035,8 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                         )
                         
                         result['cached'] = 'Yes' if cache_result else 'No'
-                        
+                        result['cache_providers'][debrid_provider.PROVIDER_NAME] = result['cached']
+
                         # Try to find the torrent ID using the hash
                         torrent_id = debrid_provider._all_torrent_ids.get(hash_value)
                         if torrent_id:
@@ -1903,6 +2045,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                     except Exception as e:
                         logging.error(f"Error checking cache for hash {hash_value}: {str(e)}")
                         result['cached'] = 'Error'
+                        result['cache_providers'][debrid_provider.PROVIDER_NAME] = 'Error'
                 
                 # Remove all torrents after checking (even if they're cached)
                 for torrent_id in torrent_ids_to_remove:
@@ -1983,7 +2126,12 @@ def process_torrent_selection(torrent_index: int, torrent_results: List[Dict[str
         if magnet_link:
             logging.info(f"Selected torrent: {selected_torrent}")
             logging.info(f"Magnet link: {magnet_link}")
-            debrid_provider = get_debrid_provider()
+            try:
+                debrid_provider = get_debrid_provider()
+            except Exception:
+                debrid_provider = None
+            if not debrid_provider:
+                return {"success": False, "message": "No debrid provider configured"}
             result = debrid_provider.add_to_debrid(magnet_link)
             if result:
                 logging.info(f"Torrent result: {result}")

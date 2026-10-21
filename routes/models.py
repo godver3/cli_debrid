@@ -1,4 +1,4 @@
-from flask import redirect, url_for
+from flask import redirect, url_for, request
 from functools import wraps, lru_cache
 from flask_login import current_user, login_required
 from .utils import is_user_system_enabled
@@ -26,16 +26,31 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def _check_api_token():
+    """Return True if a valid api_token is present in ?token= or Authorization header."""
+    from routes.auth_routes import User
+    token = request.args.get('token', '') or ''
+    if not token:
+        auth = request.headers.get('Authorization', '')
+        if auth.startswith('Bearer '):
+            token = auth[7:]
+    if not token:
+        return False
+    return User.query.filter_by(api_token=token).first() is not None
+
 def user_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not is_user_system_enabled():
             _rate_limited_log_debug("User system disabled, allowing access")
             return f(*args, **kwargs)
-        if not current_user.is_authenticated:
-            _rate_limited_log_debug("User not authenticated, redirecting to login")
-            return redirect(url_for('auth.login'))
-        return f(*args, **kwargs)
+        if current_user.is_authenticated:
+            return f(*args, **kwargs)
+        # Allow API token auth for non-browser clients (homepage widgets, OpenClaw, etc.)
+        if _check_api_token():
+            return f(*args, **kwargs)
+        _rate_limited_log_debug("User not authenticated, redirecting to login")
+        return redirect(url_for('auth.login'))
     return decorated_function
 
 def onboarding_required(f):

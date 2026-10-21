@@ -1,9 +1,19 @@
 from .core import get_db_connection, row_to_dict, normalize_string, get_existing_airtime
 import logging
+import time as _time
+
+# Suppress repeated "unmatched Plex item" warnings for the same filename (1 hour)
+_unmatched_warned: dict = {}
+_UNMATCHED_SUPPRESS_SECS = 3600
+
+# Serialize concurrent calls to add_collected_items — prevents "database is locked"
+# when multiple tasks (reconciliation, Plex check, content source) call simultaneously
+import threading
+_add_collected_lock = threading.Lock()
 import os
 from datetime import datetime, timezone, timedelta
 import json
-from .database_writing import add_to_collected_notifications, update_media_item_state
+from .database_writing import add_to_collected_notifications, update_media_item_state, RESET_COLLECTION_STATE_SQL
 from utilities.reverse_parser import parser_approximation
 from utilities.settings import get_setting
 from typing import Dict, Any, List, Optional
@@ -117,6 +127,11 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
         backfill: True when updating file sizes/metadata for existing items
         data_source: Source of the data ('plex' or 'filesystem')
     """
+    with _add_collected_lock:
+        return _add_collected_items_impl(media_items_batch, recent=recent, backfill=backfill, data_source=data_source)
+
+
+def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, data_source='plex'):
     from datetime import datetime, timedelta
     from utilities.settings import get_setting
     from queues.upgrading_queue import log_successful_upgrade
@@ -180,7 +195,8 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                 query = f'''
                     SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version,
                            filled_by_file, collected_at, release_date, upgrading_from, content_source,
-                           location_on_disk, location_basename, ghostlisted
+                           location_on_disk, location_basename, ghostlisted,
+                           upgrading_from_torrent_id, resolution
                     FROM media_items
                     WHERE filled_by_file IN ({placeholders})
                        OR upgrading_from IN ({placeholders})
@@ -227,6 +243,31 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                 if location_on_disk_full:
                     existing_file_map[location_on_disk_full] = dict_row
 
+        # For NZB items in Checking/Adding state, the filename in DB may be a UUID
+        # that doesn't match the real Plex filename. Build an imdb-keyed set of
+        # in-flight items so Plex scan doesn't insert duplicates for them.
+        if recent:
+            _inflight_keys = set()  # (imdb_id, type, season, episode) for items in Checking/Adding
+            _batch_imdb_ids = {item.get('imdb_id') for item in media_items_batch if item.get('imdb_id')}
+            if _batch_imdb_ids:
+                _ph = ','.join('?' * len(_batch_imdb_ids))
+                _inflight_rows = conn.execute(
+                    f"SELECT imdb_id, type, season_number, episode_number, version, state FROM media_items "
+                    f"WHERE imdb_id IN ({_ph}) AND state IN ('Checking','Adding','Collected','Upgrading')",
+                    list(_batch_imdb_ids)
+                ).fetchall()
+                for _r in _inflight_rows:
+                    if _r['state'] in ('Checking', 'Adding', 'Upgrading'):
+                        # Block same episode regardless of version — it's actively being processed
+                        _inflight_keys.add((_r['imdb_id'], _r['type'], _r['season_number'], _r['episode_number'], None))
+                    else:
+                        # Collected: block same episode+version combo to prevent duplicates
+                        # but allow different versions (legitimate multi-version collection)
+                        _ver = (_r['version'] or '').rstrip('*')  # strip asterisk for comparison
+                        _inflight_keys.add((_r['imdb_id'], _r['type'], _r['season_number'], _r['episode_number'], _ver))
+        else:
+            _inflight_keys = set()
+
         filtered_out_files = set()
         filtered_media_items_batch = []
         for item in media_items_batch:
@@ -244,13 +285,32 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                     is_filename_collected = filename and filename in existing_collected_files
                     is_upgrading_from = filename and filename in upgrading_from_files
 
+                    # If filename is collected but the full path differs (or location_on_disk is NULL),
+                    # this may be a stale/missing location_on_disk from an upgrade that completed
+                    # without updating the path (e.g. task_check_plex_files tick/time fallback).
+                    # Allow it through so the else branch in the processing loop can update location_on_disk.
+                    if is_filename_collected and not is_full_path_collected:
+                        db_item = existing_file_map.get(filename)
+                        if db_item:
+                            db_location = db_item.get('location_on_disk') or ''
+                            if not db_location or db_location != location:
+                                logging.debug(f"[Collection Filter] Allowing '{location}' - location_on_disk missing or mismatch (upgrade stale path), current='{db_location}'")
+                                is_filename_collected = False
+
+                    # Check if in-flight (Checking/Adding) by imdb_id to catch NzbDAV UUID filenames
+                    _item_imdb = item.get('imdb_id')
+                    _item_type = item.get('type')
+                    _item_season = item.get('season_number')
+                    _item_episode = item.get('episode_number')
+                    is_inflight = bool(_item_imdb and (_item_imdb, _item_type, _item_season, _item_episode) in _inflight_keys)
+
                     # If full path is NOT collected AND (filename is NOT collected OR filename not set)
                     # then include this location
-                    if not is_full_path_collected and not is_filename_collected and not is_upgrading_from:
+                    if not is_full_path_collected and not is_filename_collected and not is_upgrading_from and not is_inflight:
                         new_locations.append(location)
                     else:
                         filtered_out_files.add(location)  # Track full path, not just filename
-                        logging.debug(f"[Collection Filter] Skipping '{location}' - full_path_collected={is_full_path_collected}, filename_collected={is_filename_collected}, upgrading_from={is_upgrading_from}")
+                        logging.debug(f"[Collection Filter] Skipping '{location}' - full_path_collected={is_full_path_collected}, filename_collected={is_filename_collected}, upgrading_from={is_upgrading_from}, inflight={is_inflight}")
                 else:
                     new_locations.append(location)
 
@@ -407,10 +467,83 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                 tmdb_id = item.get('tmdb_id') or None
                 normalized_title = normalize_string(item.get('title', 'Unknown'))
                 item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
+                # For episodes, ms_item_id should be the show's ratingKey (grandparentRatingKey),
+                # not the individual episode's ratingKey. Working shows have all episodes share
+                # the same ms_item_id = show ratingKey, which is what get_show_seasons() expects.
+                if item_type == 'episode':
+                    plex_ms_item_id = item.get('grandparentRatingKey') or item.get('ratingKey')
+                else:
+                    plex_ms_item_id = item.get('ratingKey')
 
                 if imdb_id is None and tmdb_id is None:
-                    logging.warning(f"Skipping unmatched Plex item: {item.get('title', 'Unknown')} from location(s): {plex_locations}")
+                    _key = str(plex_locations)
+                    _now = _time.time()
+                    if _now - _unmatched_warned.get(_key, 0) > _UNMATCHED_SUPPRESS_SECS:
+                        logging.warning(f"Skipping unmatched Plex item: {item.get('title', 'Unknown')} from location(s): {plex_locations}")
+                        _unmatched_warned[_key] = _now
+                        # Attempt Plex GUID fix-match for this unmatched item.
+                        # Look up the DB item by filename, then apply the GUID fast-path.
+                        _plex_rating_key = str(plex_ms_item_id) if plex_ms_item_id else None
+                        if _plex_rating_key and plex_locations:
+                            try:
+                                _filename = os.path.basename(plex_locations[0])
+                                _db_conn = conn
+                                _db_row = _db_conn.execute(
+                                    "SELECT id, title, year, imdb_id, tmdb_id, type, season_number, episode_number FROM media_items "
+                                    "WHERE (filled_by_file LIKE ? OR location_on_disk LIKE ?) "
+                                    "AND state IN ('Checking', 'Collected') LIMIT 1",
+                                    (f'%{_filename}%', f'%{_filename}%')
+                                ).fetchone()
+                                if _db_row and _db_row['tmdb_id']:
+                                    _imdb_id = _db_row['imdb_id']
+                                    # If imdb_id missing, try to resolve via battery tmdb→imdb mapping
+                                    if not _imdb_id and _db_row['tmdb_id']:
+                                        try:
+                                            from cli_battery.app.direct_api import DirectAPI
+                                            _resolved, _ = DirectAPI.tmdb_to_imdb(
+                                                str(_db_row['tmdb_id']),
+                                                media_type='show' if _db_row['type'] == 'episode' else 'movie'
+                                            )
+                                            if _resolved:
+                                                _imdb_id = _resolved
+                                        except Exception:
+                                            pass
+                                    _media_type = 'show' if _db_row['type'] == 'episode' else 'movie'
+                                    _season = _db_row['season_number'] if _db_row['type'] == 'episode' else None
+                                    _episode = _db_row['episode_number'] if _db_row['type'] == 'episode' else None
+                                    logging.info(
+                                        f"[PlexGUID] Unmatched Plex item '{item.get('title')}' — "
+                                        f"attempting fix-match via GUID for DB item '{_db_row['title']}' "
+                                        f"(imdb={_imdb_id}, ratingKey={_plex_rating_key})"
+                                    )
+                                    import threading as _fmt_thread
+                                    def _run_fix_match(_title, _year, _tmdb, _rk, _imdb, _mtype, _s, _ep):
+                                        try:
+                                            from utilities.plex_matching_functions import force_match_with_tmdb
+                                            force_match_with_tmdb(
+                                                _title, _year, _tmdb, _rk,
+                                                imdb_id=_imdb, media_type=_mtype,
+                                                season=_s, episode=_ep,
+                                            )
+                                        except Exception as _e:
+                                            logging.debug(f"[PlexGUID] Background fix-match failed: {_e}")
+                                    _fmt_thread.Thread(
+                                        target=_run_fix_match,
+                                        args=(_db_row['title'],
+                                              str(_db_row['year']) if _db_row['year'] else None,
+                                              str(_db_row['tmdb_id']),
+                                              _plex_rating_key, _imdb_id,
+                                              _media_type, _season, _episode),
+                                        daemon=True
+                                    ).start()
+                            except Exception as _guid_fix_err:
+                                logging.debug(f"[PlexGUID] Fix-match attempt failed for unmatched item: {_guid_fix_err}")
                     continue
+
+                # Items tagged by plex_functions with their source library.
+                # Secondary libraries share physical files with the primary library —
+                # don't let them overwrite location_on_disk or ms_item_id on existing rows.
+                is_primary_library = item.get('_plex_library_primary', True)
 
                 # Iterate through each file path provided by Plex for this media item
                 for current_plex_location in plex_locations:
@@ -439,6 +572,15 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                         existing_db_item = existing_file_map[lookup_key]
                         db_item_id = existing_db_item['id']
                         logging.debug(f"[Collection Debug] Found existing DB item ID {db_item_id} for lookup_key '{lookup_key}', state: {existing_db_item['state']}")
+
+                        # Skip if this Plex entry is the OLD pre-upgrade file. After an upgrade,
+                        # both the old file (upgrading_from) and new file (filled_by_file) can appear
+                        # in Plex simultaneously. Processing the old file would set location_on_disk
+                        # back to the stale path, undoing the new file's correct update.
+                        _upgrading_from = existing_db_item.get('upgrading_from')
+                        if _upgrading_from and filename == os.path.basename(_upgrading_from):
+                            logging.info(f"[Collection] Skipping stale pre-upgrade Plex entry '{filename}' for DB item {db_item_id} (upgrading_from match, new file is '{existing_db_item.get('filled_by_file')}')")
+                            continue
 
                         is_this_db_item_checking = existing_db_item['state'] == 'Checking'
                         # other_checking_items_exist = checking_items_count > 0 and (not is_this_db_item_checking or checking_items_count > 1)
@@ -494,42 +636,218 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                             # This 'is_upgrade' flag is primarily for cleanup/notification logic, separate from setting the state
                             is_upgrade = existing_db_item.get('collected_at') is not None 
 
-                            if is_upgrade and get_setting("Scraping", "enable_upgrading_cleanup", default=False):
+                            if is_upgrade and existing_db_item.get('upgrading_from'):
                                 upgrade_item = {
                                     'type': existing_db_item['type'],
                                     'title': existing_db_item['title'],
                                     'imdb_id': existing_db_item['imdb_id'],
                                     'upgrading_from': existing_db_item['upgrading_from'],
-                                    'filled_by_torrent_id': existing_db_item.get('filled_by_torrent_id'),
+                                    # Use upgrading_from_torrent_id (old torrent) not filled_by_torrent_id (new torrent)
+                                    'filled_by_torrent_id': existing_db_item.get('upgrading_from_torrent_id'),
                                     'version': existing_db_item['version'],
                                     'season_number': existing_db_item.get('season_number'),
                                     'episode_number': existing_db_item.get('episode_number'),
                                     'filled_by_file': existing_db_item.get('filled_by_file'),
-                                    'resolution': existing_db_item.get('resolution')  # Preserve old resolution for reference
+                                    'resolution': existing_db_item.get('resolution'),
+                                    # Full path to old file/symlink on disk (used for symlink mode cleanup)
+                                    'location_on_disk': existing_db_item.get('location_on_disk'),
                                 }
-                                
+
                                 if upgrade_item['filled_by_file'] != upgrade_item['upgrading_from']:
-                                    conn.execute('''
-                                        UPDATE media_items
-                                        SET upgraded = 1
-                                        WHERE id = ?
-                                    ''', (db_item_id,))
-                                    
-                                    remove_original_item_from_plex(upgrade_item)
-                                    remove_original_item_from_account(upgrade_item)
-                                    remove_original_item_from_results(upgrade_item, media_items_batch)
+                                    if get_setting("Scraping", "enable_upgrading_cleanup", default=False):
+                                        conn.execute('''
+                                            UPDATE media_items
+                                            SET upgraded = 1
+                                            WHERE id = ?
+                                        ''', (db_item_id,))
+
+                                        remove_original_item_from_plex(upgrade_item)
+                                        remove_original_item_from_account(upgrade_item)
+                                        remove_original_item_from_results(upgrade_item, media_items_batch)
+
+                                    # Log success regardless of cleanup setting
                                     log_successful_upgrade(upgrade_item)
                                 
                             existing_collected_at = existing_db_item.get('collected_at') or collected_at
+
+                            # Health page replacement cleanup: if the file location is changing
+                            # (new replacement file vs old bad file), remove the old Plex entry.
+                            # This is separate from the upgrade path — no upgrading_from needed.
+                            _old_location = existing_db_item.get('location_on_disk') or ''
+                            _new_location_check = current_plex_location or ''
+                            if (is_primary_library
+                                    and _old_location
+                                    and _new_location_check
+                                    and _old_location != _new_location_check
+                                    and existing_db_item.get('collected_at') is not None
+                                    and not existing_db_item.get('upgrading_from')):  # not already an upgrade
+                                try:
+                                    _removal_item = {
+                                        'type': existing_db_item['type'],
+                                        'title': existing_db_item['title'],
+                                        'imdb_id': existing_db_item.get('imdb_id'),
+                                        'upgrading_from': existing_db_item.get('filled_by_file', ''),
+                                        'filled_by_torrent_id': existing_db_item.get('filled_by_torrent_id'),
+                                        'version': existing_db_item.get('version'),
+                                        'season_number': existing_db_item.get('season_number'),
+                                        'episode_number': existing_db_item.get('episode_number'),
+                                        'filled_by_file': existing_db_item.get('filled_by_file'),
+                                        'resolution': existing_db_item.get('resolution'),
+                                        'location_on_disk': _old_location,
+                                    }
+                                    logging.info(f"[Collection] Replacement detected for {db_item_id} — removing old Plex entry at {_old_location!r}")
+                                    remove_original_item_from_plex(_removal_item)
+                                except Exception as _rep_cleanup_err:
+                                    logging.debug(f"[Collection] Replacement Plex cleanup failed for {db_item_id}: {_rep_cleanup_err}")
+
+                            # Secondary libraries share physical files — don't overwrite
+                            # location_on_disk or ms_item_id that belong to the primary library.
+                            if is_primary_library or not existing_db_item.get('location_on_disk'):
+                                new_location = current_plex_location
+                                new_ms_item_id = plex_ms_item_id
+                            else:
+                                new_location = existing_db_item.get('location_on_disk')
+                                new_ms_item_id = existing_db_item.get('ms_item_id')
 
                             conn.execute('''
                                 UPDATE media_items
                                 SET state = ?, last_updated = ?, collected_at = ?,
                                     original_collected_at = COALESCE(original_collected_at, ?),
-                                    location_on_disk = ?, upgraded = ?, resolution = ?, size = ?
+                                    location_on_disk = ?, upgraded = ?,
+                                    resolution = COALESCE(?, resolution),
+                                    size = COALESCE(?, size),
+                                    ms_item_id = COALESCE(?, ms_item_id),
+                                    scrape_results = NULL
                                 WHERE id = ?
                             ''', (new_state, datetime.now(), collected_at, existing_collected_at,
-                                  current_plex_location, is_upgrade, item.get('resolution'), item.get('size_gb'), db_item_id))
+                                  new_location, is_upgrade, item.get('resolution'), item.get('size_gb'),
+                                  new_ms_item_id, db_item_id))
+
+                            # If the Plex episode has a local:// guid (episode-level mismatch),
+                            # schedule a GUID fix-match in background — show is matched but
+                            # episode metadata is unresolved.
+                            _ep_guid_str = str(item.get('guid') or '')
+                            if _ep_guid_str.startswith('local://') and existing_db_item.get('type') == 'episode':
+                                try:
+                                    _fix_imdb  = existing_db_item.get('imdb_id')
+                                    _fix_tmdb  = existing_db_item.get('tmdb_id')
+                                    _fix_s     = existing_db_item.get('season_number')
+                                    _fix_ep    = existing_db_item.get('episode_number')
+                                    _fix_rk    = str(item.get('ratingKey') or '')
+                                    _fix_show_rk = str(item.get('grandparentRatingKey') or _fix_rk)
+                                    if (_fix_imdb or _fix_tmdb) and _fix_rk:
+                                        # Check if show uses absolute numbering (anime) via battery
+                                        _ci_is_absolute = False
+                                        try:
+                                            from cli_battery.app.database import Session as _BatSession, Item as _BatItem, Season as _BatSeason, Episode as _BatEp
+                                            from sqlalchemy.orm import selectinload as _sil
+                                            with _BatSession() as _bs:
+                                                _bi = _bs.query(_BatItem).filter_by(imdb_id=_fix_imdb).first() if _fix_imdb else None
+                                                if _bi:
+                                                    _abs_check = _bs.query(_BatEp).join(_BatSeason).filter(
+                                                        _BatSeason.item_id == _bi.id,
+                                                        _BatEp.absolute_episode > 0
+                                                    ).first()
+                                                    _ci_is_absolute = _abs_check is not None
+                                        except Exception:
+                                            pass
+
+                                        if not _ci_is_absolute:
+                                            # Regular show — use show-level fix via force_match_with_tmdb
+                                            logging.info(
+                                                f"[PlexGUID] Episode {db_item_id} regular show local:// guid "
+                                                f"— scheduling show-level fix-match (ratingKey={_fix_show_rk})"
+                                            )
+                                            import threading as _ci_thread
+                                            def _ci_show_fix(_rk, _title, _year, _tmdb, _imdb, _s, _ep):
+                                                try:
+                                                    from utilities.plex_matching_functions import force_match_with_tmdb
+                                                    force_match_with_tmdb(
+                                                        _title,
+                                                        str(_year) if _year else None,
+                                                        str(_tmdb) if _tmdb else '0',
+                                                        _rk,
+                                                        imdb_id=_imdb,
+                                                        media_type='show',
+                                                        season=_s,
+                                                        episode=_ep,
+                                                    )
+                                                except Exception as _fe:
+                                                    logging.debug(f"[PlexGUID] Show fix-match failed: {_fe}")
+                                            _ci_thread.Thread(
+                                                target=_ci_show_fix,
+                                                args=(_fix_show_rk, existing_db_item.get('title', ''),
+                                                      existing_db_item.get('year'), _fix_tmdb, _fix_imdb,
+                                                      _fix_s, _fix_ep),
+                                                daemon=True
+                                            ).start()
+                                        else:
+                                            logging.info(
+                                                f"[PlexGUID] Episode {db_item_id} absolute show local:// guid "
+                                                f"— scheduling episode fix-match (ratingKey={_fix_rk}, "
+                                                f"S{_fix_s}E{_fix_ep})"
+                                            )
+
+                                        import threading as _ci_thread
+                                        def _ci_fix(_rk, _title, _year, _tmdb, _imdb, _s, _ep):
+                                            try:
+                                                from cli_battery.app.direct_api import DirectAPI
+                                                from utilities.settings import get_setting as _gs
+                                                from plexapi.server import PlexServer as _PS
+                                                _gu = _gs('Plex', 'url', '').rstrip('/')
+                                                _gt = _gs('Plex', 'token', '')
+                                                if not _gu or not _gt:
+                                                    return
+                                                _gplex = _PS(_gu, _gt, timeout=30)
+                                                _gitem = _gplex.fetchItem(int(_rk))
+                                                _gr = DirectAPI.get_plex_guid(_imdb, 'show', season=_s, episode=_ep) if _imdb else None
+                                                _ep_guid  = (_gr or {}).get('episode_guid')
+                                                _s_guid   = (_gr or {}).get('season_guid')
+                                                _sh_guid  = (_gr or {}).get('show_guid')
+                                                if _ep_guid:
+                                                    _full_guid = f'plex://episode/{_ep_guid}'
+                                                    _gname = f'{_title} S{_s:02d}E{_ep:02d}'
+                                                elif _s_guid:
+                                                    _full_guid = f'plex://season/{_s_guid}'
+                                                    _gname = f'{_title} Season {_s}'
+                                                elif _sh_guid:
+                                                    _full_guid = f'plex://show/{_sh_guid}'
+                                                    _gname = _title
+                                                else:
+                                                    logging.debug(f"[PlexGUID] No GUID for {_imdb} S{_s}E{_ep}")
+                                                    return
+                                                logging.info(f"[PlexGUID] Applying {_full_guid} to ratingKey={_rk}")
+                                                import time as _t
+                                                import requests as _req2
+                                                from urllib.parse import quote as _uq2
+
+                                                _match_url2 = (
+                                                    f"{_gu}/library/metadata/{_rk}/match"
+                                                    f"?guid={_uq2(_full_guid)}&name={_uq2(_gname)}"
+                                                    f"&X-Plex-Token={_gt}"
+                                                )
+                                                _resp2 = _req2.put(_match_url2, timeout=15)
+                                                _t.sleep(2)
+                                                _req2.put(f"{_gu}/library/metadata/{_rk}/refresh?X-Plex-Token={_gt}", timeout=15)
+                                                _t.sleep(4)
+                                                _gitem.reload()
+                                                _new_guid = str(getattr(_gitem, 'guid', ''))
+                                                if not _new_guid.startswith('local://'):
+                                                    logging.info(f"[PlexGUID] Episode fix SUCCESS '{_title}' S{_s}E{_ep} → {_new_guid}")
+                                                else:
+                                                    logging.warning(f"[PlexGUID] Episode fix failed (HTTP {_resp2.status_code}) '{_title}' S{_s}E{_ep} still local://")
+                                            except Exception as _fe:
+                                                logging.debug(f"[PlexGUID] Episode fix failed: {_fe}")
+                                        if _ci_is_absolute:
+                                            _ci_thread.Thread(
+                                                target=_ci_fix,
+                                                args=(_fix_rk, existing_db_item.get('title', ''),
+                                                      existing_db_item.get('year'), _fix_tmdb, _fix_imdb,
+                                                      _fix_s, _fix_ep),
+                                                daemon=True
+                                            ).start()
+                                except Exception as _guid_err:
+                                    logging.debug(f"[PlexGUID] Fix scheduling failed: {_guid_err}")
 
                             # Queue items for post-processing AFTER transaction commits
                             # This prevents database lock issues when post-processing tries to write to DB
@@ -556,6 +874,39 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                 # start_notification_time = time.time()
                                 add_to_collected_notifications(updated_item_dict)
                                 # logging.debug(f"add_to_collected_notifications for item {db_item_id} took {time.time() - start_notification_time:.4f} seconds.")
+
+                                # Notify Bazarr via SignalR if integration is enabled.
+                                # If probe_for_embedded_subtitles is on and all configured
+                                # languages are already in the file, skip the notification
+                                # so Bazarr doesn't redundantly search for them.
+                                try:
+                                    from routes.bazarr_signalr import notify_media_collected
+                                    _skip_bazarr = False
+                                    try:
+                                        from utilities.settings import get_setting
+                                        if get_setting('Subtitle Settings', 'probe_for_embedded_subtitles', False):
+                                            _loc = updated_item_dict.get('location_on_disk')
+                                            if _loc:
+                                                from utilities.downsub import get_embedded_subtitle_languages, expand_languages
+                                                from utilities.config.downsub_config import config as _sub_cfg
+                                                _sub_cfg.reload()
+                                                _wanted_langs = {
+                                                    lang.alpha3
+                                                    for lang in expand_languages(_sub_cfg.SUBTITLE_LANGUAGES)
+                                                }
+                                                if _wanted_langs:
+                                                    import os as _os
+                                                    _real = _os.path.realpath(_loc) if _os.path.islink(_loc) else _loc
+                                                    _embedded = get_embedded_subtitle_languages(_real)
+                                                    if _wanted_langs and _wanted_langs.issubset(_embedded):
+                                                        logging.info(f"Bazarr notification skipped — all configured subtitle languages already embedded in {_loc}")
+                                                        _skip_bazarr = True
+                                    except Exception as _probe_err:
+                                        logging.debug(f"Embedded subtitle probe for Bazarr check failed: {_probe_err}")
+                                    if not _skip_bazarr:
+                                        notify_media_collected(updated_item_dict, item.get('type', 'movie'))
+                                except Exception as bazarr_err:
+                                    logging.debug(f"Bazarr SignalR notification skipped: {bazarr_err}")
                             else:
                                 logging.warning(f"Could not fetch updated item with ID {db_item_id} after update for notification.")
                         else:
@@ -574,14 +925,20 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                             if backfill and (existing_size is None or existing_size == 0):
                                 logging.info(f"[Backfill Debug] Item {db_item_id}: existing_size={existing_size}, new_size={new_size}, new_resolution={new_resolution}")
 
+                            # For secondary libraries, don't let a different path trigger a location update —
+                            # only allow location change if this is the primary library or location is unset.
+                            effective_location = current_plex_location if (is_primary_library or not existing_location) else existing_location
+                            location_changed = (existing_location != effective_location)
+
                             # Update if any Plex-sourced field is missing or location changed
                             should_update = (
-                                existing_location != current_plex_location or
+                                location_changed or
                                 ((existing_size is None or existing_size == 0) and new_size is not None and new_size > 0) or
                                 (existing_resolution is None and new_resolution is not None) or
                                 (not existing_imdb_id and imdb_id) or
                                 (not existing_tmdb_id and tmdb_id) or
-                                (existing_collected_at is None and collected_at is not None)
+                                (existing_collected_at is None and collected_at is not None) or
+                                (not existing_db_item.get('ms_item_id') and item.get('ratingKey'))
                             )
 
                             if should_update:
@@ -595,14 +952,15 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                 conn.execute('''
                                     UPDATE media_items
                                     SET location_on_disk = ?,
-                                        resolution = COALESCE(resolution, ?),
-                                        size = CASE WHEN size IS NULL OR size = 0 THEN ? ELSE size END,
+                                        resolution = COALESCE(?, resolution),
+                                        size = COALESCE(?, size),
                                         imdb_id = COALESCE(NULLIF(imdb_id, ''), ?),
                                         tmdb_id = COALESCE(NULLIF(tmdb_id, ''), ?),
                                         collected_at = COALESCE(collected_at, ?),
-                                        last_updated = ?
+                                        last_updated = ?,
+                                        ms_item_id = COALESCE(NULLIF(ms_item_id, ''), ?)
                                     WHERE id = ?
-                                ''', (current_plex_location, new_resolution, new_size, imdb_id, tmdb_id, collected_at, datetime.now(), db_item_id))
+                                ''', (effective_location, new_resolution, new_size, imdb_id, tmdb_id, collected_at, datetime.now(), plex_ms_item_id, db_item_id))
 
                     else:
                         # --- NEW ITEM INSERT ---
@@ -611,7 +969,7 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                             f"Plex item {item_identifier} (location: {current_plex_location}, filename: {filename}) not found in existing_file_map. "
                             f"Proceeding to insert as new DB entry."
                         )
-                        
+
                         # Check if there are any items in 'Checking' state with matching identifiers
                         if checking_items_count > 0:
                             # Get the first checking item to use its version
@@ -712,15 +1070,44 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                 logging.info(f"⛔ Skipping {item_identifier} - item has been watched (watch history)")
                                 continue
 
+                        # Final dedup guard: block insert if same imdb+season+episode+version already
+                        # exists in Collected, Adding, or Checking. Plex scans can race ahead of the
+                        # queue — a file appears on the mount while the item is still in Adding/Checking,
+                        # and without this guard a duplicate Collected row gets inserted.
+                        _clean_ver = (version or '').rstrip('*')
+                        logging.debug(f"[CollectedItems] dedup guard: imdb={imdb_id} tmdb={tmdb_id} type={item_type} s={item.get('season_number')} e={item.get('episode_number')} ver={_clean_ver!r}")
+                        _dup_check = None
+                        _id_col, _id_val = ('imdb_id', imdb_id) if imdb_id else ('tmdb_id', tmdb_id)
+                        if _id_val:
+                            if item_type == 'movie':
+                                _dup_check = conn.execute(
+                                    f"SELECT id, state FROM media_items WHERE {_id_col}=? AND type='movie' "
+                                    "AND state IN ('Collected','Adding','Checking') "
+                                    "AND REPLACE(version,'*','')=?",
+                                    (_id_val, _clean_ver)
+                                ).fetchone()
+                            else:
+                                _dup_check = conn.execute(
+                                    f"SELECT id, state FROM media_items WHERE {_id_col}=? AND type='episode' "
+                                    "AND season_number=? AND episode_number=? "
+                                    "AND state IN ('Collected','Adding','Checking') "
+                                    "AND REPLACE(version,'*','')=?",
+                                    (_id_val, item.get('season_number'), item.get('episode_number'), _clean_ver)
+                                ).fetchone()
+                        if _dup_check:
+                            logging.info(f"[CollectedItems] Skipping duplicate insert for {item_identifier} "
+                                         f"(version={version}) — already exists as id={_dup_check[0]} state={_dup_check[1]}")
+                            continue
+
                         if item_type == 'movie':
                             conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, physical_release_date, size)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, physical_release_date, size, ms_item_id)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'movie',
-                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('physical_release_date'), item.get('size_gb')
+                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('physical_release_date'), item.get('size_gb'), plex_ms_item_id
                             ))
                         else:
                             if imdb_id not in airtime_cache:
@@ -731,18 +1118,52 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                     airtime_cache[imdb_id] = '19:00'
                             
                             airtime = airtime_cache[imdb_id]
-                            conn.execute('''
+
+                            # Inherit NZB fields from a Collected sibling of the same season pack.
+                            # Prevents new Plex-inserted episodes from re-entering the pipeline
+                            # and submitting duplicate NZB jobs to cli_mount.
+                            _sibling_torrent_id = None
+                            _sibling_magnet = None
+                            _sibling_orig_title = None
+                            _sibling_dfn = None
+                            try:
+                                _sib = conn.execute(
+                                    "SELECT filled_by_torrent_id, filled_by_magnet, original_scraped_torrent_title, debrid_folder_name "
+                                    "FROM media_items "
+                                    "WHERE imdb_id=? AND season_number=? AND type='episode' AND state='Collected' "
+                                    "AND filled_by_torrent_id IS NOT NULL LIMIT 1",
+                                    (imdb_id, item['season_number'])
+                                ).fetchone()
+                                if _sib:
+                                    _sibling_torrent_id = _sib['filled_by_torrent_id']
+                                    _sibling_magnet = _sib['filled_by_magnet']
+                                    _sibling_orig_title = _sib['original_scraped_torrent_title']
+                                    _sibling_dfn = _sib['debrid_folder_name']
+                                    logging.debug(f"[CollectedItems] Inheriting NZB fields from sibling for {item_identifier}")
+                            except Exception:
+                                pass
+
+                            cursor = conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, size)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, size, ms_item_id, filled_by_torrent_id, filled_by_magnet, original_scraped_torrent_title, debrid_folder_name)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'episode',
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('size_gb')
+                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('size_gb'), plex_ms_item_id,
+                                _sibling_torrent_id, _sibling_magnet, _sibling_orig_title, _sibling_dfn
                             ))
                         # logging.debug(f"Inserting new item {item_identifier} (from Plex file: {filename}, location: {current_plex_location}) took {time.time() - start_insert_time:.4f} seconds.")
                         logging.info(f"Added new item {item_identifier} (file: {filename}) to collection.")
+
+                        # Queue newly-inserted items for post-processing (e.g. custom script, overlays)
+                        # The UPDATE path does this at line ~541; INSERT path was previously missing it.
+                        new_item_id = cursor.lastrowid
+                        if new_item_id:
+                            new_item_row = conn.execute('SELECT * FROM media_items WHERE id = ?', (new_item_id,)).fetchone()
+                            if new_item_row:
+                                items_for_post_processing.append(dict(new_item_row))
 
 
             except Exception as e:
@@ -833,14 +1254,14 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                     conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
                                 else:
                                     logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {file_to_log}). No other matching version found. Moving to 'Wanted'.")
-                                    conn.execute('''
+                                    conn.execute(f'''
                                         UPDATE media_items
                                         SET state = 'Wanted',
                                             filled_by_file = NULL,
                                             filled_by_title = NULL,
                                             filled_by_magnet = NULL,
                                             filled_by_torrent_id = NULL,
-                                            collected_at = NULL,
+                                            {RESET_COLLECTION_STATE_SQL},
                                             last_updated = ?,
                                             version = TRIM(version, '*')
                                         WHERE id = ?
@@ -989,9 +1410,9 @@ def plex_collection_disabled(media_items_batch: List[Dict[str, Any]]) -> bool:
             
             if item.get('type') == 'episode':
                 query = f'''
-                    SELECT id FROM media_items 
+                    SELECT id FROM media_items
                     WHERE ({id_query})
-                    AND version = ? 
+                    AND REPLACE(version, '*', '') = REPLACE(?, '*', '')
                     AND state = 'Collected'
                     AND type = 'episode'
                     AND season_number = ?
@@ -1001,9 +1422,9 @@ def plex_collection_disabled(media_items_batch: List[Dict[str, Any]]) -> bool:
             else:
                 # Movie case
                 query = f'''
-                    SELECT id FROM media_items 
+                    SELECT id FROM media_items
                     WHERE ({id_query})
-                    AND version = ? 
+                    AND REPLACE(version, '*', '') = REPLACE(?, '*', '')
                     AND state = 'Collected'
                     AND type = 'movie'
                 '''
@@ -1129,27 +1550,75 @@ def generate_identifier(item: Dict[str, Any]) -> str:
         
         return f"{item.get('title')} S{season}E{episode}"
 
-def remove_original_item_from_plex(item: Dict[str, Any]):
-    from utilities.plex_functions import remove_file_from_plex
+def remove_original_item_from_plex(item: Dict[str, Any]) -> bool:
+    """Remove the old file from the media server and disk.
 
+    Uses DeletionManager.remove_from_media_server so Plex, Jellyfin, and the
+    scan+trash fallback are all handled automatically.
+
+    For symlink mode the symlink is also deleted directly from disk first so
+    that Plex's 'Allow media deletion' permission is not a hard requirement.
+
+    Returns True if the media-server removal succeeded.
+    """
     item_identifier = f"{item['type']}_{item['title']}_{item['imdb_id']}"
     original_file_path = item.get('upgrading_from')
-    original_title = item.get('title')
 
-    if original_file_path and original_title:
-        success = remove_file_from_plex(original_title, original_file_path)
-        if not success:
-            logging.error(f"Failed to remove file from Plex: {item_identifier}")
-    else:
-        logging.warning(f"No file path or title found for item: {item_identifier}")
+    if not original_file_path or not item.get('title'):
+        logging.warning(f"[Cleanup] No file path or title for: {item_identifier}")
+        return False
+
+    # Construct a minimal item dict targeting the OLD file so DeletionManager
+    # removes the right entry — not the new (current) version.
+    old_item = {
+        'title':          item['title'],
+        'type':           item['type'],
+        'imdb_id':        item.get('imdb_id'),
+        'season_number':  item.get('season_number'),
+        'episode_number': item.get('episode_number'),
+        # DeletionManager checks location_on_disk first, then filled_by_file
+        'location_on_disk': item.get('location_on_disk'),
+        'filled_by_file':   original_file_path,
+    }
+
+    try:
+        from utilities.deletion_manager import DeletionManager
+        dm = DeletionManager()
+
+        # Symlink mode: delete the symlink from disk directly first —
+        # independent of Plex's 'Allow media deletion' permission.
+        if dm.using_symlinks:
+            symlink_path = item.get('location_on_disk') or ''
+            if symlink_path and os.path.islink(symlink_path):
+                try:
+                    os.unlink(symlink_path)
+                    logging.info(f"[Cleanup] Deleted old symlink: {symlink_path}")
+                except Exception as e:
+                    logging.error(f"[Cleanup] Failed to delete symlink {symlink_path}: {e}")
+            elif symlink_path:
+                logging.warning(f"[Cleanup] Old symlink not found on disk: {symlink_path}")
+
+        # Remove from media server (Plex / Jellyfin) — has scan+trash fallback built in
+        result = dm.remove_from_media_server(old_item)
+        if not result.get('success'):
+            logging.error(f"[Cleanup] Media server removal failed for {item_identifier}: {result.get('error')}")
+        return result.get('success', False)
+
+    except Exception as e:
+        logging.error(f"[Cleanup] remove_original_item_from_plex failed for {item_identifier}: {e}", exc_info=True)
+        return False
+
 
 def remove_original_item_from_account(item: Dict[str, Any]):
+    """Remove the old torrent from the debrid account."""
     from queues.adding_queue import AddingQueue
     original_torrent_id = item.get('filled_by_torrent_id')
 
     if original_torrent_id:
         adding_queue = AddingQueue()
         adding_queue.remove_unwanted_torrent(original_torrent_id)
+    else:
+        logging.warning(f"[Cleanup] No torrent ID to remove for: {item.get('title', 'unknown')}")
 
 def remove_original_item_from_results(item: Dict[str, Any], media_items_batch: List[Dict[str, Any]]):
     try:

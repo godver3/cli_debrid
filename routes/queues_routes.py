@@ -5,11 +5,11 @@ from queues.queue_manager import QueueManager
 import logging
 from .program_operation_routes import get_program_status
 from queues.initialization import get_initialization_status
-from cli_battery.app.limiter import limiter
+from queues.run_program import is_initial_sync_running
 from utilities.settings import get_setting
 import json
 import time
-from database.database_reading import get_all_media_items, get_item_count_by_state
+from database.database_reading import get_all_media_items, get_item_count_by_state, get_item_counts_by_states
 
 # Add rate limiting and caching improvements to prevent bombarding Real-Debrid API
 import time
@@ -26,6 +26,79 @@ _torrent_status_rate_limiter = {
     'min_interval': 30,  # Minimum 30 seconds between checks for the same torrent
     'lock': threading.Lock()
 }
+
+def _get_provider_display(item: dict) -> str:
+    """Return a short provider label for Adding/Checking queue items.
+    NZB items: scraper name (NZBGeek, althub, etc.)
+    Debrid items: provider name (Real-Debrid, Torbox, Debrid-Link, etc.)
+    """
+    torrent_id = item.get('filled_by_torrent_id', '') or ''
+    if str(torrent_id).startswith('nzb:'):
+        # NZB — extract indexer name from scrape_results
+        try:
+            import re as _re
+            raw = item.get('scrape_results') or '[]'
+            results = json.loads(raw) if isinstance(raw, str) else (raw or [])
+            title = item.get('original_scraped_torrent_title', '') or item.get('filled_by_file', '')
+
+            def _extract_indexer(r):
+                # 'source' field is like "NZBGeek_1" or "althub_1"
+                source = r.get('source', '')
+                if source:
+                    cleaned = _re.sub(r'_\d+$', '', source)
+                    if cleaned and not cleaned.isdigit():
+                        return cleaned
+                # scraper_type is the indexer name e.g. "althub", "NZBGeek"
+                scraper_type = r.get('scraper_type', '')
+                if scraper_type and scraper_type not in ('Newznab', 'newznab') and not scraper_type.isdigit():
+                    return scraper_type
+                return ''
+
+            # Use first NZB result's indexer (all NZB results in a pack come from same indexer search)
+            for r in results:
+                if r.get('protocol') == 'nzb':
+                    name = _extract_indexer(r)
+                    if name:
+                        return name
+        except Exception:
+            pass
+        return 'Usenet'
+    elif torrent_id and torrent_id != 'Unknown':
+        # Debrid — return configured provider name
+        try:
+            from debrid import get_debrid_provider
+            provider = get_debrid_provider()
+            name = type(provider).__name__.replace('Provider', '').replace('Client', '')
+            # Map class name to friendly name
+            _names = {
+                'RealDebrid': 'Real-Debrid',
+                'AllDebrid': 'AllDebrid',
+                'Torbox': 'Torbox',
+                'Premiumize': 'Premiumize',
+                'DebridLink': 'Debrid-Link',
+            }
+            return _names.get(name, name)
+        except Exception:
+            pass
+    return ''
+
+
+def _initialization_status_payload() -> Optional[Dict]:
+    """The startup sync's progress for the Queues page, or None."""
+    status = get_initialization_status()
+    if not status:
+        return None
+    return {
+        'current_step': status.get('current_step', ''),
+        'total_steps': status.get('total_steps', 4),
+        'current_step_number': status.get('current_step_number', 0),
+        'progress_value': status.get('progress_value', 0),
+        'substep_details': status.get('substep_details', ''),
+        'error_details': status.get('error_details', None),
+        'is_substep': status.get('is_substep', False),
+        'current_phase': status.get('current_phase', None)
+    }
+
 
 def get_torrent_status_check_interval():
     """Get the minimum interval between torrent status checks from settings"""
@@ -63,29 +136,18 @@ def get_queue_contents_with_progressive_fallback(queue_manager, max_time=20):
             elif hasattr(queue, '__len__'):
                 count = len(queue)
             else:
-                # For database-backed queues, try to get count with timeout protection
+                # For database-backed queues, use a non-blocking read so a locked DB
+                # (e.g. add_collected_items holding BEGIN IMMEDIATE) never stalls the page load
                 if queue_name in ['Wanted', 'Blacklisted', 'Unreleased']:
-                    count_start = time.time()
-                    from database.database_reading import get_item_count_by_state
-                    count = get_item_count_by_state(queue_name)
-                    count_time = time.time() - count_start
-
-                    # Log timing for debugging
-                    if count_time > 0.1:  # Log queries that take more than 100ms
-                        logging.debug(f"[QUEUE_ROUTES] Count query for {queue_name} took {count_time:.3f}s (result: {count})")
-
-                    # If a single count query takes too long, skip database counts entirely
-                    if count_time > 1.0:  # More than 1 second for one count
-                        logging.warning(f"[QUEUE_ROUTES] Count query for {queue_name} took {count_time:.3f}s, skipping remaining database counts")
-                        # Return what we have so far and mark as minimal
-                        for remaining_queue in ['Wanted', 'Blacklisted', 'Unreleased']:
-                            if remaining_queue not in quick_summary:
-                                quick_summary[remaining_queue] = {'count': 0, 'loaded': False, 'items': []}
-                        # Convert to expected format - empty lists for all queues
-                        minimal_result = {}
-                        for queue_name in quick_summary.keys():
-                            minimal_result[queue_name] = []
-                        return minimal_result, "minimal"
+                    try:
+                        import sqlite3 as _sqlite3, os as _os
+                        _db_path = _os.path.join(_os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'media_items.db')
+                        _rc = _sqlite3.connect(_db_path, timeout=0)
+                        _rc.row_factory = _sqlite3.Row
+                        count = _rc.execute("SELECT COUNT(*) FROM media_items WHERE state=?", (queue_name,)).fetchone()[0]
+                        _rc.close()
+                    except Exception:
+                        count = 0
                 else:
                     count = 0
 
@@ -123,13 +185,17 @@ def get_queue_contents_with_progressive_fallback(queue_manager, max_time=20):
                 continue
 
             # Get full contents for in-memory queues
-            items = queue.get_contents()
+            # Checking queue: skip live API calls on page render — SSE stream handles live progress
+            if queue_name == 'Checking' and hasattr(queue, 'get_contents'):
+                items = queue.get_contents(raw=True)
+            else:
+                items = queue.get_contents()
             quick_summary[queue_name]['items'] = items
             quick_summary[queue_name]['loaded'] = True
 
             queue_time = time.time() - queue_start
-            if queue_time > 2.0:  # Log slow queues
-                logging.debug(f"[QUEUE_ROUTES] Queue {queue_name} took {queue_time:.3f}s ({len(items)} items)")
+            if queue_time > 0.5:
+                logging.info(f"[QUEUE_ROUTES] Queue {queue_name} took {queue_time:.3f}s ({len(items)} items)")
 
             # Check if we're approaching the time limit
             elapsed = time.time() - start_time
@@ -145,7 +211,7 @@ def get_queue_contents_with_progressive_fallback(queue_manager, max_time=20):
     full_load_time = time.time() - full_load_start
     total_time = time.time() - start_time
 
-    logging.debug(f"[QUEUE_ROUTES] Full queue loading took {full_load_time:.3f}s (total: {total_time:.3f}s)")
+    logging.info(f"[QUEUE_ROUTES] Full queue loading took {full_load_time:.3f}s (total: {total_time:.3f}s)")
 
     # Convert to the expected format for compatibility
     final_result = {}
@@ -195,7 +261,13 @@ def can_check_torrent_status(torrent_id: str) -> bool:
         last_check = _torrent_status_rate_limiter['last_check'][torrent_id]
         min_interval = get_torrent_status_check_interval()
         current_time = time.time()
-        
+
+        if last_check == 0.0:
+            # Never checked — register now but skip this cycle so the first SSE
+            # cycle doesn't make N simultaneous API calls and stall for 30s.
+            _torrent_status_rate_limiter['last_check'][torrent_id] = current_time
+            return False
+
         if current_time - last_check >= min_interval:
             _torrent_status_rate_limiter['last_check'][torrent_id] = current_time
             return True
@@ -207,14 +279,11 @@ def get_torrent_status_with_rate_limiting(torrent_id: str, queue_manager) -> Dic
     cached_status = get_cached_torrent_status(torrent_id, queue_manager)
     if cached_status:
         return cached_status
-    
-    # Check rate limiting
+
+    # Check rate limiting — on cache miss with no rate limit token, return defaults
+    # immediately rather than making a live API call. This prevents the first SSE
+    # cycle from making N simultaneous API calls and stalling for 30s.
     if not can_check_torrent_status(torrent_id):
-        # Return cached data even if expired, or default values
-        if cached_status:
-            logging.debug(f"Rate limited torrent status check for {torrent_id}, using cached data")
-            return cached_status
-        logging.debug(f"Rate limited torrent status check for {torrent_id}, using default values")
         return {'progress': 0, 'state': 'unknown'}
     
     try:
@@ -259,6 +328,24 @@ def get_rate_limiting_stats() -> Dict:
 queues_bp = Blueprint('queues', __name__)
 queue_manager = QueueManager()
 
+
+@queues_bp.route('/api/queue_workers', methods=['POST'])
+@onboarding_required
+def save_queue_workers():
+    """Save queue_pool_workers setting and reinitialize only the APScheduler — no full restart."""
+    try:
+        data = request.get_json(silent=True) or {}
+        workers = int(data.get('workers', 2))
+        workers = max(1, min(3, workers))
+
+        from utilities.settings import set_setting
+        set_setting('Queue', 'queue_pool_workers', workers)
+        logging.info(f'[QueueWorkers] queue_pool_workers saved as {workers} — takes effect on next restart')
+        return jsonify(success=True, workers=workers, message=f'Queue workers set to {workers}. Takes effect on next restart.')
+    except Exception as e:
+        logging.error(f'[QueueWorkers] Error: {e}')
+        return jsonify(success=False, error=str(e))
+
 # Cache settings to avoid repeated database/file reads
 _settings_cache = {}
 _cache_timestamp = 0
@@ -269,11 +356,16 @@ _items_per_hour_cache = {
     'value': None,
     'timestamp': 0
 }
-ITEMS_PER_HOUR_CACHE_DURATION = 30  # 5 minutes
+ITEMS_PER_HOUR_CACHE_DURATION = 300  # 5 minutes
 
-def init_limiter(app):
-    """Initialize the rate limiter with the Flask app"""
-    limiter.init_app(app)
+# Columns fetched from DB for queue display — avoids SELECT * on a wide table
+QUEUE_DISPLAY_COLUMNS = [
+    'id', 'imdb_id', 'tmdb_id', 'title', 'year', 'type', 'state', 'version',
+    'season_number', 'episode_number', 'release_date', 'physical_release_date',
+    'airtime', 'content_source', 'content_source_detail', 'filled_by_file', 'filled_by_torrent_id',
+    'wake_count', 'collected_at', 'last_updated', 'final_check_add_timestamp',
+    'force_priority', 'ghostlisted'
+]
 
 def consolidate_items(items, limit=None):
     # Add timing for performance monitoring
@@ -421,29 +513,22 @@ def index():
                 item['upgrades_found'] = item.get('upgrades_found', 0)
         elif queue_name == 'Checking':
             for item in items:
-                # Skip if item is not a dictionary
                 if not isinstance(item, dict):
-                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
                     continue
-
                 item['time_added'] = item.get('time_added', datetime.now())
                 item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
                 item['filled_by_torrent_id'] = item.get('filled_by_torrent_id', 'Unknown')
+                # Don't make live API calls on page render — SSE stream populates progress
                 item['progress'] = item.get('progress', 0)
                 item['state'] = item.get('state', 'unknown')
-                # Use the cached progress information instead of making direct API calls
-                if item.get('filled_by_torrent_id') and item['filled_by_torrent_id'] != 'Unknown':
-                    # Use rate-limited function to prevent API bombardment
-                    status_data = get_torrent_status_with_rate_limiting(item['filled_by_torrent_id'], queue_manager)
-                    item['progress'] = status_data['progress']
-                    item['state'] = status_data['state']
         elif queue_name == 'Sleeping':
             for item in items:
                 # Skip if item is not a dictionary
                 if not isinstance(item, dict):
                     logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
                     continue
-                item['wake_count'] = queue_manager.get_wake_count(item['id'])
+                if 'wake_count' not in item or item['wake_count'] is None:
+                    item['wake_count'] = queue_manager.get_wake_count(item['id'])
         elif queue_name == 'Pending Uncached':
             for item in items:
                 # Skip if item is not a dictionary
@@ -497,13 +582,32 @@ def index():
                 if item.get('content_source'):
                     source_config = content_sources.get(item['content_source'], {})
                     display_name = source_config.get('display_name', item['content_source'])
-                    item['content_source_display'] = display_name
+                    item['content_source_display'] = item.get('content_source_detail') or display_name
+                if queue_name in ['Adding', 'Checking']:
+                    item['provider_display'] = _get_provider_display(item)
+                if queue_name == 'Adding':
+                    _tid = str(item.get('filled_by_torrent_id', ''))
+                    if _tid.startswith('nzb:'):
+                        _lu = item.get('last_updated')
+                        _is_dl = False
+                        if _lu:
+                            try:
+                                from datetime import datetime as _dt_ui
+                                _lu_dt = _dt_ui.fromisoformat(str(_lu).replace('Z', '+00:00').split('+')[0])
+                                if (_dt_ui.now() - _lu_dt).total_seconds() >= 60:
+                                    _is_dl = True
+                            except Exception:
+                                pass
+                        if _is_dl:
+                            item['display_state'] = 'Downloading'
     display_names_time = time.time() - display_names_start
     logging.debug(f"[QUEUE_ROUTES] Display names processing took {display_names_time:.3f}s")
 
     template_start = time.time()
     upgrading_queue = queue_contents.get('Upgrading', [])
-    response = render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue, program_status=program_status)
+    from utilities.settings import get_setting as _qs
+    _queue_pool_workers = int(_qs('Queue', 'queue_pool_workers', 2))
+    response = render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue, program_status=program_status, queue_pool_workers=_queue_pool_workers)
     template_time = time.time() - template_start
     logging.debug(f"[QUEUE_ROUTES] Template rendering took {template_time:.3f}s")
     
@@ -514,7 +618,6 @@ def index():
 
 @queues_bp.route('/api/queue_contents')
 @user_required
-@limiter.limit("1 per 5 seconds")
 def api_queue_contents():
     # --- Performance logging ---
     start_time = time.time()
@@ -542,20 +645,10 @@ def api_queue_contents():
     
     # Get initialization status
     initialization_status = None
-    if program_status == 'Starting':
+    # The startup sync runs in the background while the program is Running
+    if program_status == 'Starting' or (program_status == 'Running' and is_initial_sync_running()):
         status_start = time.time()
-        status = get_initialization_status()
-        if status:
-            initialization_status = {
-                'current_step': status.get('current_step', ''),
-                'total_steps': status.get('total_steps', 4),
-                'current_step_number': status.get('current_step_number', 0),
-                'progress_value': status.get('progress_value', 0),
-                'substep_details': status.get('substep_details', ''),
-                'error_details': status.get('error_details', None),
-                'is_substep': status.get('is_substep', False),
-                'current_phase': status.get('current_phase', None)
-            }
+        initialization_status = _initialization_status_payload()
         status_time = time.time() - status_start
         logging.debug(f"[QUEUE_ROUTES] get_initialization_status() took {status_time:.3f}s")
     
@@ -679,7 +772,24 @@ def api_queue_contents():
                 if item.get('content_source'):
                     source_config = content_sources.get(item['content_source'], {})
                     display_name = source_config.get('display_name', item['content_source'])
-                    item['content_source_display'] = display_name
+                    item['content_source_display'] = item.get('content_source_detail') or display_name
+                if queue_name in ['Adding', 'Checking']:
+                    item['provider_display'] = _get_provider_display(item)
+                if queue_name == 'Adding':
+                    _tid = str(item.get('filled_by_torrent_id', ''))
+                    if _tid.startswith('nzb:'):
+                        _lu = item.get('last_updated')
+                        _is_dl = False
+                        if _lu:
+                            try:
+                                from datetime import datetime as _dt_ui2
+                                _lu_dt2 = _dt_ui2.fromisoformat(str(_lu).replace('Z', '+00:00').split('+')[0])
+                                if (_dt_ui2.now() - _lu_dt2).total_seconds() >= 60:
+                                    _is_dl = True
+                            except Exception:
+                                pass
+                        if _is_dl:
+                            item['display_state'] = 'Downloading'
     display_names_time = time.time() - display_names_start
     logging.debug(f"[QUEUE_ROUTES] API display names processing took {display_names_time:.3f}s")
 
@@ -771,6 +881,24 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
             item['filled_by_torrent_id'] = item.get('filled_by_torrent_id', 'Unknown')
             item['progress'] = item.get('progress', 0)
             item['state'] = item.get('state', 'unknown')
+            # Time in queue from CheckingQueue's in-memory tracking
+            checking_q = queue_manager.queues.get('Checking')
+            if checking_q:
+                entered = checking_q.checking_queue_times.get(item['id'])
+                item['time_in_queue'] = round(time.time() - entered) if entered else None
+            else:
+                item['time_in_queue'] = None
+            # Plex scan tick count
+            try:
+                import queues.run_program as _rp
+                runner = _rp.program_runner
+                if runner and hasattr(runner, 'plex_scan_tick_counts'):
+                    cache_key = f"{item.get('filled_by_title', '')}:{item.get('filled_by_file', '')}"
+                    item['plex_tick'] = runner.plex_scan_tick_counts.get(cache_key, 0)
+                else:
+                    item['plex_tick'] = 0
+            except Exception:
+                item['plex_tick'] = 0
             if item.get('filled_by_torrent_id') and item['filled_by_torrent_id'] != 'Unknown':
                 # Use rate-limited function to prevent API bombardment
                 status_data = get_torrent_status_with_rate_limiting(item['filled_by_torrent_id'], queue_manager)
@@ -815,8 +943,11 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
             content_sources = process_item_for_response._content_sources_cache
             source_config = content_sources.get(item['content_source'], {})
             display_name = source_config.get('display_name', item['content_source'])
-            item['content_source_display'] = display_name
-        
+            item['content_source_display'] = item.get('content_source_detail') or display_name
+
+        if queue_name in ['Adding', 'Checking']:
+            item['provider_display'] = _get_provider_display(item)
+
         # Optimize JSON serialization - only process problematic fields
         datetime_fields = ['final_check_display_time', 'time_added', 'last_updated']
         for key, value in item.items():
@@ -848,13 +979,20 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
             'error': str(e)
         }
 
-def compute_scrape_time_cached(item):
-    """Optimized scrape time calculation with caching"""
+# Module-level cache for scrape time computation results.
+# Invalidated as a whole every SCRAPE_TIME_CACHE_DURATION seconds so that
+# setting changes (offsets, alt strategy, etc.) are picked up promptly.
+_scrape_time_cache: dict = {}
+_scrape_time_cache_ts: float = 0.0
+SCRAPE_TIME_CACHE_DURATION = 30  # seconds
+
+
+def _compute_scrape_time(item):
+    """Core scrape time computation (no caching). Called by compute_scrape_time_cached."""
     try:
-        # Use cached settings
         use_alt = get_cached_setting('Debug', 'use_alternate_scrape_time_strategy', False)
         anchor_str = get_cached_setting('Debug', 'alternate_scrape_time_24h', '00:00')
-        
+
         now = datetime.now()
         release_date_str = item.get('release_date')
         airtime_str = item.get('airtime')
@@ -877,41 +1015,36 @@ def compute_scrape_time_cached(item):
                 anchor_time = datetime.strptime(anchor_str, '%H:%M').time()
             except Exception:
                 anchor_time = datetime.strptime('00:00', '%H:%M').time()
-            
-            # Calculate the anchor datetime for today and tomorrow
+
             today_anchor = now.replace(hour=anchor_time.hour, minute=anchor_time.minute, second=0, microsecond=0)
             if now < today_anchor:
                 next_anchor = today_anchor
             else:
                 next_anchor = today_anchor + timedelta(days=1)
-            
-            # Item's anchor datetime
+
             item_release_date = datetime.strptime(effective_release_date_str, '%Y-%m-%d').date()
             item_anchor_dt = datetime.combine(item_release_date, anchor_time)
-            
-            # If item's anchor is in the future, show that
+
             if item_anchor_dt > now:
                 return item_anchor_dt.strftime('%Y-%m-%d %I:%M %p') + ' (Alt Scrape Time)'
             else:
                 return next_anchor.strftime('%Y-%m-%d %I:%M %p') + ' (Alt Scrape Time)'
-                
+
         elif effective_release_date_str:
-            # Parse effective date
             release_date = datetime.strptime(effective_release_date_str, '%Y-%m-%d').date()
             if airtime_str:
-                try: 
+                try:
                     airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
                 except ValueError:
-                    try: 
+                    try:
                         airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                    except ValueError: 
+                    except ValueError:
                         airtime = datetime.strptime("00:00", '%H:%M').time()
-            else: 
+            else:
                 airtime = datetime.strptime("00:00", '%H:%M').time()
-            
+
             release_datetime = datetime.combine(release_date, airtime)
 
-            # If a movie has no specific airtime, shift the base release time to the start of the next day.
             if item_type == 'movie' and not airtime_str:
                 release_datetime += timedelta(days=1)
 
@@ -920,25 +1053,55 @@ def compute_scrape_time_cached(item):
             offset_hours = 0.0
             if item_type == 'movie':
                 movie_offset_setting = get_cached_setting("Queue", "movie_airtime_offset", "0")
-                try: 
+                try:
                     offset_hours = float(movie_offset_setting)
-                except (ValueError, TypeError): 
+                except (ValueError, TypeError):
                     pass
             elif item_type == 'episode':
                 episode_offset_setting = get_cached_setting("Queue", "episode_airtime_offset", "0")
-                try: 
+                try:
                     offset_hours = float(episode_offset_setting)
-                except (ValueError, TypeError): 
+                except (ValueError, TypeError):
                     pass
-                    
+
             effective_scrape_time = release_datetime + timedelta(hours=offset_hours)
             return effective_scrape_time.strftime('%Y-%m-%d %I:%M %p')
-            
+
     except Exception as e:
         logging.warning(f"Could not calculate scrape time for Wanted item {item.get('id')}: {e}")
         return "Error Calculating"
-        
+
     return "Unknown"
+
+
+def compute_scrape_time_cached(item):
+    """Optimized scrape time calculation with per-key caching.
+
+    Cache is keyed by the 5-tuple of fields that affect the result and is
+    fully invalidated every SCRAPE_TIME_CACHE_DURATION seconds so that
+    settings changes are reflected without a restart.
+    """
+    global _scrape_time_cache, _scrape_time_cache_ts
+
+    current_ts = time.time()
+    if current_ts - _scrape_time_cache_ts > SCRAPE_TIME_CACHE_DURATION:
+        _scrape_time_cache.clear()
+        _scrape_time_cache_ts = current_ts
+
+    cache_key = (
+        item.get('release_date'),
+        item.get('airtime'),
+        item.get('version'),
+        item.get('type'),
+        item.get('physical_release_date'),
+    )
+
+    if cache_key in _scrape_time_cache:
+        return _scrape_time_cache[cache_key]
+
+    result = _compute_scrape_time(item)
+    _scrape_time_cache[cache_key] = result
+    return result
 
 @queues_bp.route('/api/rate-limiting-stats')
 @user_required
@@ -1011,18 +1174,7 @@ def queue_stream():
                     initialization_status = None
                     if program_status == "Starting":
                         init_status_start = time.time()
-                        status = get_initialization_status()
-                        if status:
-                            initialization_status = {
-                                'current_step': status.get('current_step', ''),
-                                'total_steps': status.get('total_steps', 4),
-                                'current_step_number': status.get('current_step_number', 0),
-                                'progress_value': status.get('progress_value', 0),
-                                'substep_details': status.get('substep_details', ''),
-                                'error_details': status.get('error_details', None),
-                                'is_substep': status.get('is_substep', False),
-                                'current_phase': status.get('current_phase', None)
-                            }
+                        initialization_status = _initialization_status_payload()
                         init_status_time = time.time() - init_status_start
                         logging.debug(f"[QUEUE_STREAM] get_initialization_status() took {init_status_time:.3f}s")
                         yield f"data: {json.dumps({'program_status': 'Starting', 'initialization_status': initialization_status})}\n\n"
@@ -1093,44 +1245,40 @@ def queue_stream():
                     in_memory_time = time.time() - in_memory_start
                     logging.debug(f"[QUEUE_STREAM] In-memory queue processing took {in_memory_time:.3f}s")
 
-                    # Process count-only queues (Blacklisted and Unreleased)
+                    # Batch all state COUNT queries into a single DB connection
+                    count_batch_start = time.time()
+                    all_db_states = list(COUNT_ONLY_QUEUES) + list(DB_FETCH_QUEUES)
+                    try:
+                        db_counts = get_item_counts_by_states(all_db_states)
+                    except Exception as count_err:
+                        logging.error(f"[QUEUE_STREAM] Batch count query failed: {count_err}")
+                        db_counts = {s: 0 for s in all_db_states}
+                    count_batch_time = time.time() - count_batch_start
+                    logging.debug(f"[QUEUE_STREAM] Batch count query took {count_batch_time:.3f}s")
+
+                    # Process count-only queues (Blacklisted, Unreleased, Collected)
                     count_only_start = time.time()
                     for queue_name in COUNT_ONLY_QUEUES:
-                        try:
-                            count_start = time.time()
-                            total_count = get_item_count_by_state(queue_name)
-                            queue_counts[queue_name] = total_count
-                            # No items sent for count-only queues
-                            final_contents[queue_name] = []
-                            count_time = time.time() - count_start
-                            if count_time > 0.1:
-                                logging.debug(f"[QUEUE_STREAM] get_item_count_by_state for '{queue_name}' took {count_time:.3f}s")
-                        except Exception as db_err:
-                            logging.error(f"Error fetching count for queue '{queue_name}': {db_err}")
-                            final_contents[queue_name] = []
-                            queue_counts[queue_name] = 0
-                    
+                        queue_counts[queue_name] = db_counts.get(queue_name, 0)
+                        final_contents[queue_name] = []
+
                     count_only_time = time.time() - count_only_start
                     logging.debug(f"[QUEUE_STREAM] Count-only queue processing took {count_only_time:.3f}s")
-                    
+
                     # Process database-backed queues (only Wanted and Final_Check now)
                     db_start = time.time()
                     for queue_name in DB_FETCH_QUEUES:
                         qp_start = time.time()
                         try:
-                            count_query_start = time.time()
-                            total_count = get_item_count_by_state(queue_name)
+                            total_count = db_counts.get(queue_name, 0)
                             queue_counts[queue_name] = total_count
                             hidden_count = max(0, total_count - ITEMS_LIMIT)
                             if hidden_count > 0:
                                 hidden_counts[queue_name] = hidden_count
-                            count_query_time = time.time() - count_query_start
-                            if count_query_time > 0.1:
-                                logging.debug(f"[QUEUE_STREAM] get_item_count_by_state for '{queue_name}' took {count_query_time:.3f}s")
 
                             # We use page=1 because the stream always shows the top of the queue.
                             query_start = time.time()
-                            limited_items_raw = get_all_media_items(state=queue_name, limit=ITEMS_LIMIT)
+                            limited_items_raw = get_all_media_items(state=queue_name, limit=ITEMS_LIMIT, columns=QUEUE_DISPLAY_COLUMNS)
                             limited_items = [dict(item) for item in limited_items_raw]
                             query_time = time.time() - query_start
                             if query_time > 0.1:
@@ -1183,7 +1331,9 @@ def queue_stream():
                         "currently_processing_upgrade_id": currently_processing_upgrade_id,
                         "items_per_hour": items_per_hour,
                         "remaining_scrape_time": remaining_scrape_time,
-                        "items_remaining": items_remaining
+                        "items_remaining": items_remaining,
+                        # The startup sync runs in the background while Running
+                        "initialization_status": _initialization_status_payload() if is_initial_sync_running() else None,
                     }
 
                     # Performance optimization: Only send if data has changed
@@ -1318,8 +1468,23 @@ def _format_remaining_time(hours_float: float) -> str:
 # ---------------------------------------------------------------------------
 # Helper: count Wanted items whose *computed* scrape time has passed
 # ---------------------------------------------------------------------------
+_ready_wanted_cache: dict = {'value': 0, 'timestamp': 0}
+READY_WANTED_CACHE_DURATION = 60  # seconds
+
+
 def get_ready_wanted_items_count() -> int:
-    """Return number of Wanted-queue entries that are ready to be scraped."""
+    """Return number of Wanted-queue entries that are ready to be scraped.
+
+    Result is cached for READY_WANTED_CACHE_DURATION seconds to avoid
+    iterating all Wanted items on every SSE cycle (every 2.5–5 s).
+    """
+    global _ready_wanted_cache
+    current_ts = time.time()
+
+    if (_ready_wanted_cache['timestamp'] > 0 and
+            current_ts - _ready_wanted_cache['timestamp'] < READY_WANTED_CACHE_DURATION):
+        return _ready_wanted_cache['value']
+
     try:
         count_start = time.time()
         from database.database_reading import get_all_media_items  # Lazy import
@@ -1357,6 +1522,7 @@ def get_ready_wanted_items_count() -> int:
         if query_time > 0.1 or total_time > 0.2:
             logging.debug(f"[QUEUE_ROUTES] get_ready_wanted_items_count took {total_time:.3f}s (query: {query_time:.3f}s, found {ready_count} ready items)")
 
+        _ready_wanted_cache.update({'value': ready_count, 'timestamp': current_ts})
         return ready_count
     except Exception as e:
         logging.error(f"Error counting ready Wanted items: {e}")

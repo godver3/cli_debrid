@@ -429,6 +429,78 @@ h6 {
     font-family: monospace;
 }
 
+/* Memory Snapshot button */
+#memory-snapshot-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: linear-gradient(135deg, #1565c0 0%, #1976d2 100%);
+    border: none;
+    border-radius: 10px;
+    color: #fff;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+#memory-snapshot-btn:hover {
+    opacity: 0.85;
+}
+
+#memory-snapshot-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#memory-snapshot-btn i {
+    font-size: 1rem;
+}
+
+#memory-snapshot-download-btn,
+#memory-snapshot-close-btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    color: #ccc;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+#memory-snapshot-download-btn:hover,
+#memory-snapshot-close-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+}
+
+/* Trim Memory button styles */
+#trim-memory-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: linear-gradient(135deg, #00695c 0%, #00897b 100%);
+    border: none;
+    border-radius: 10px;
+    color: #fff;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+#trim-memory-btn:hover {
+    opacity: 0.85;
+}
+
+#trim-memory-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#trim-memory-btn i {
+    font-size: 1rem;
+}
+
 /* Export button styles */
 #export-btn {
     padding: 0.5rem 1rem;

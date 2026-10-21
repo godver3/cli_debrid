@@ -205,7 +205,9 @@ def browse_videos(media_type='movies', letter=None):
     if media_type == 'tv':
         for show in sorted_videos.values():
             for season in show['seasons'].values():
-                season.sort(key=lambda x: x['episode_number'])
+                # episode_number can be NULL in the DB, so treat None as last
+                # instead of comparing it directly against an int.
+                season.sort(key=lambda x: x['episode_number'] if x.get('episode_number') is not None else 999)
             # Sort seasons by number
             show['seasons'] = dict(sorted(show['seasons'].items()))
     

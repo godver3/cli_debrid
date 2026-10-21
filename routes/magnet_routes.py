@@ -1,14 +1,18 @@
 from flask import Blueprint, request, render_template, flash, redirect, url_for, jsonify, session
+import threading as _threading
+_assignment_store = {}  # token -> assignment data, avoids session size/race issues
+_assignment_store_lock = _threading.Lock()
 from debrid import get_debrid_provider
-from database.database_writing import add_media_item, update_media_item_torrent_id
+from database.database_writing import add_media_item, replace_collected_item
 from .models import admin_required
 from queues.config_manager import load_config
 from queues.checking_queue import CheckingQueue
 from datetime import datetime, timezone
 from queues.media_matcher import MediaMatcher
 import logging
+from usenet import get_usenet_provider_display_name as _usenet_pname
 from cli_battery.app.direct_api import DirectAPI
-from cli_battery.app.trakt_metadata import TraktMetadata
+from cli_battery.app import trakt_client
 import os
 import re
 from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
@@ -47,14 +51,16 @@ async def _fetch_media_details_for_assigner(id_value: str, id_kind: str, content
 
     try:
         if id_kind == 'imdb':
-            # Try movie first, then tv for IMDb ID
-            metadata_result = get_metadata(imdb_id=id_value, item_media_type='movie')
-            if metadata_result and metadata_result.get('tmdb_id'): # Check if tmdb_id exists
-                determined_media_type = 'movie'
+            # Use hint if provided, otherwise try movie first then tv
+            first_type = 'tv' if content_type_hint in ('tv', 'show') else 'movie'
+            second_type = 'movie' if first_type == 'tv' else 'tv'
+            metadata_result = get_metadata(imdb_id=id_value, item_media_type=first_type)
+            if metadata_result and metadata_result.get('tmdb_id'):
+                determined_media_type = first_type
             else:
-                metadata_result = get_metadata(imdb_id=id_value, item_media_type='tv')
+                metadata_result = get_metadata(imdb_id=id_value, item_media_type=second_type)
                 if metadata_result and metadata_result.get('tmdb_id'):
-                    determined_media_type = 'tv'
+                    determined_media_type = second_type
         elif id_kind == 'tmdb':
             try:
                 tmdb_id_int = int(id_value)
@@ -125,9 +131,12 @@ async def _fetch_media_details_for_assigner(id_value: str, id_kind: str, content
                 get_media_meta, tmdb_id_from_meta, determined_media_type
             )
 
+            backdrop_path_final = None
             if media_meta_tuple:
-                poster_path_from_meta, _, _, _, _ = media_meta_tuple
+                poster_path_from_meta, _, _, _, backdrop_path_from_meta = media_meta_tuple
                 poster_path_final = poster_path_from_meta # This is a relative TMDB path
+                if backdrop_path_from_meta and has_tmdb:
+                    backdrop_path_final = f"/scraper/tmdb_image/w780{backdrop_path_from_meta}"
 
             # Construct full poster path using proxy or use placeholder
             if poster_path_final and poster_path_final != "static/images/placeholder.png":
@@ -147,8 +156,9 @@ async def _fetch_media_details_for_assigner(id_value: str, id_kind: str, content
                 'id': tmdb_id_from_meta,
                 'title': title,
                 'year': year,
-                'posterPath': poster_path_final, # Camel case for the template
-                'mediaType': 'show' if determined_media_type == 'tv' else 'movie' # 'movie' or 'show'
+                'posterPath': poster_path_final,
+                'backdropPath': backdrop_path_final,
+                'mediaType': 'show' if determined_media_type == 'tv' else 'movie'
             }
             results.append(formatted_result)
         else:
@@ -218,6 +228,140 @@ def get_versions():
     # Return list of version keys
     return jsonify(list(version_terms.keys()))
 
+def _requested_episode_order(raw):
+    """A valid episode order id from the form, or None."""
+    raw = (raw or '').strip()
+    if raw == 'default' or raw.startswith('tvdb:') or raw.startswith('tmdb_group:'):
+        return raw
+    return None
+
+
+def _saved_episode_order(imdb_id):
+    from cli_battery.app.episode_order import show_episode_order
+    return show_episode_order(imdb_id) or 'default'
+
+
+def _library_episode_rows(imdb_id):
+    from database import get_db_connection
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM media_items WHERE imdb_id = ? AND type = 'episode'",
+                           (imdb_id,)).fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
+
+def _order_change_blocked(imdb_id, requested_order):
+    """Why `requested_order` can't be set from here, or None.
+
+    A show already in the library has to switch order from its show page,
+    which moves and renames the existing episodes; here it can only be set
+    before anything is added.
+    """
+    if not requested_order or requested_order == _saved_episode_order(imdb_id):
+        return None
+    rows = _library_episode_rows(imdb_id)
+    if rows:
+        return (f'This show already has {rows} episode(s) in the library in another episode order. '
+                f'Change its order from the show page (Show options) first, then assign.')
+    return None
+
+
+def _mark_items_in_library(target_items, imdb_id, version):
+    """Flag items already Collected in this version (in_library), which the
+    "Replace episodes already in the library" option would replace."""
+    if not imdb_id or not target_items:
+        return
+    version = (version or '').rstrip('*')
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                "SELECT type, season_number, episode_number FROM media_items WHERE imdb_id = ? "
+                "AND state = 'Collected' AND (ghostlisted = 0 OR ghostlisted IS NULL) "
+                "AND RTRIM(COALESCE(version, ''), '*') = ?", (imdb_id, version)).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        logging.warning(f"Could not read library items for {imdb_id}: {e}")
+        return
+    have = {(r['type'], r['season_number'] if r['type'] == 'episode' else None,
+             r['episode_number'] if r['type'] == 'episode' else None) for r in rows}
+    for item in target_items:
+        episode = item.get('type') == 'episode'
+        item['in_library'] = (item.get('type'), item.get('season_number') if episode else None,
+                              item.get('episode_number') if episode else None) in have
+
+
+def _seasons_for_order(imdb_id, order):
+    """Seasons/episodes (specials included) in `order`; None if unavailable."""
+    from cli_battery.app.episode_order import fetch_seasons_for_order
+    try:
+        return fetch_seasons_for_order(imdb_id, order)
+    except Exception as e:
+        logging.error(f"Fetching episode order {order} for {imdb_id} failed: {e}", exc_info=True)
+        return None
+
+
+def _save_episode_order(imdb_id, tmdb_id, order):
+    """Set the order on a show that has no library episodes yet."""
+    from database.show_overrides import set_show_override
+    from utilities.episode_order_change import _reset_battery_seasons
+    set_show_override(imdb_id, tmdb_id=tmdb_id, episode_order=None if order == 'default' else order)
+    _reset_battery_seasons(imdb_id)
+    _season_cache.clear()  # season counts cached in the old order
+    logging.info(f"Manual assign: episode order for {imdb_id} set to {order}")
+
+
+def _sync_plex_order_for_new_show(imdb_id, order):
+    """Set Plex's ordering for a show whose order was just picked here. The
+    show is usually not in Plex yet, so this mostly returns a reminder."""
+    try:
+        from utilities.episode_order_change import _plex_ordering_for, sync_plex_ordering
+        candidates = _plex_ordering_for(order)
+        if not candidates:
+            return "Plex has no matching episode ordering; set the show's ordering in Plex by hand."
+        note = sync_plex_ordering(imdb_id, candidates, [])
+        if note.startswith('Show not found in Plex'):
+            return "Once the show appears in Plex, set its episode ordering there to match."
+        return note
+    except Exception as e:
+        logging.warning(f"Plex ordering for {imdb_id} after manual assign failed: {e}")
+        return None
+
+
+@magnet_bp.route('/episode_orders')
+@admin_required
+def episode_orders():
+    """The episode orders a show can use, for the assign page's picker."""
+    tmdb_id = request.args.get('tmdb_id')
+    if not tmdb_id:
+        return jsonify({'success': False, 'error': 'tmdb_id is required'}), 400
+    try:
+        from metadata.metadata import get_imdb_id_if_missing
+        from cli_battery.app.episode_order import list_episode_orders
+        from utilities.episode_order_change import _plex_ordering_for
+        imdb_id = get_imdb_id_if_missing({'tmdb_id': int(tmdb_id), 'media_type': 'show'})
+        if not imdb_id:
+            return jsonify({'success': False, 'error': 'No IMDb ID for this show'}), 404
+        orders = list_episode_orders(imdb_id, tmdb_id)
+        for order in orders:
+            # Plex can follow TVDB's aired/DVD/absolute orders, not TMDB episode groups
+            order['plex_supported'] = _plex_ordering_for(order['id']) is not None
+        return jsonify({
+            'success': True,
+            'imdb_id': imdb_id,
+            'current': _saved_episode_order(imdb_id),
+            'library_episodes': _library_episode_rows(imdb_id),
+            'orders': orders,
+        })
+    except Exception as e:
+        logging.error(f"Listing episode orders for TMDB {tmdb_id} failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Could not list episode orders'}), 500
+
+
 @magnet_bp.route('/get_season_data')
 def get_season_data():
     """
@@ -227,12 +371,13 @@ def get_season_data():
     tmdb_id = request.args.get('tmdb_id')
     allow_specials_str = request.args.get('allow_specials', 'true').lower()
     allow_specials = allow_specials_str == 'true'
+    order = _requested_episode_order(request.args.get('order'))
 
     if not tmdb_id:
         return jsonify({'error': 'tmdb_id is required'}), 400
 
     # PHASE 1.1: Check cache first
-    cache_key = f"season_data:{tmdb_id}:{allow_specials}"
+    cache_key = f"season_data:{tmdb_id}:{allow_specials}:{order or ''}"
     cached_data = _season_cache.get_by_key(cache_key)
     if cached_data is not None:
         logging.info(f"Season data cache HIT for TMDB ID {tmdb_id} (allow_specials={allow_specials})")
@@ -251,12 +396,26 @@ def get_season_data():
             logging.info(f"Generated dummy IMDb ID: {dummy_imdb_id} for TMDB ID {tmdb_id}")
             imdb_id = dummy_imdb_id
 
+        # An order picked on the page that isn't the show's saved one: list
+        # the seasons as that order numbers them.
+        if order and order != _saved_episode_order(imdb_id):
+            ordered = _seasons_for_order(imdb_id, order)
+            if not ordered:
+                return jsonify({"error": f"Could not fetch the episode list for order {order}"}), 404
+            formatted_seasons = {str(sn): len((sd or {}).get('episodes') or {}) for sn, sd in sorted(ordered.items())
+                                 if allow_specials or sn != 0}
+            _season_cache.set_by_key(cache_key, formatted_seasons)
+            return jsonify(formatted_seasons)
+
         # Now we should have an IMDb ID. Let's try to fetch season data.
         try:
             # First, try to get seasons from the battery, which is faster.
+            # Not just 'battery': a show the battery hasn't stored yet comes back
+            # from its metadata client ('tvdb'/'trakt'), which is just as good and
+            # the Trakt-only fallback below fails without Trakt auth.
             seasons_data, source = DirectAPI.get_show_seasons(imdb_id)
-            if seasons_data and source == 'battery':
-                logging.info(f"Successfully fetched season data from battery for IMDb ID: {imdb_id}")
+            if seasons_data:
+                logging.info(f"Successfully fetched season data from {source} for IMDb ID: {imdb_id}")
                 # Convert battery format to expected object format for frontend
                 formatted_seasons = {}
                 for season_num, season_data in seasons_data.items():
@@ -348,12 +507,18 @@ def assign_magnet():
                 # Convert search results to template-expected format
                 formatted_search_results = []
                 for result in search_results:
+                    raw_backdrop = result.get('backdropPath', '')
+                    if raw_backdrop:
+                        backdrop_final = f"https://image.tmdb.org/t/p/w780{raw_backdrop}"
+                    else:
+                        backdrop_final = None
                     formatted_result = {
                         'id': result.get('id'),
                         'title': result.get('title'),
                         'year': result.get('year'),
                         'posterPath': result.get('posterPath'),
-                        'mediaType': result.get('media_type', 'movie')  # Convert media_type to mediaType for template
+                        'backdropPath': backdrop_final,
+                        'mediaType': result.get('media_type', 'movie')
                     }
                     formatted_search_results.append(formatted_result)
                 search_results = formatted_search_results
@@ -498,6 +663,7 @@ def prepare_manual_assignment():
     selected_seasons = request.form.get('selected_seasons', '').split(',') if request.form.get('selected_seasons') else []
     season = request.form.get('season')
     episode = request.form.get('episode')
+    requested_order = _requested_episode_order(request.form.get('episode_order')) if media_type in ['tv', 'show'] else None
     
     # Check for torrent file upload
     torrent_file = request.files.get('torrent_file')
@@ -510,15 +676,116 @@ def prepare_manual_assignment():
     # Validate that either magnet link or torrent file is provided, but not both
     if not magnet_link and not torrent_file:
         return jsonify({'success': False, 'error': 'Please provide either a magnet link or a torrent file'}), 400
-    
+
     if magnet_link and torrent_file:
         return jsonify({'success': False, 'error': 'Please provide either a magnet link OR a torrent file, not both'}), 400
+
+    # Detect NZB by file extension (.nzb) or HTTP URL (anything not magnet: and not .torrent)
+    is_nzb_file = torrent_file and torrent_file.filename.lower().endswith('.nzb')
+    is_nzb_url = (magnet_link and not magnet_link.startswith('magnet:')
+                  and magnet_link.startswith('http')
+                  and not magnet_link.lower().endswith('.torrent'))
+
+    if is_nzb_url or is_nzb_file:
+        from routes.scraper_routes import _add_nzb_to_usenet
+        from usenet import get_usenet_client, reset_usenet_client, get_usenet_provider_display_name
+        if requested_order and tmdb_id:
+            # The season/episode were picked in this order's numbering: save it
+            # on the show first (there's no file-matching step for NZBs).
+            from metadata.metadata import get_imdb_id_if_missing
+            order_imdb_id = get_imdb_id_if_missing({'tmdb_id': int(tmdb_id), 'media_type': 'show'})
+            if order_imdb_id and requested_order != _saved_episode_order(order_imdb_id):
+                blocked = _order_change_blocked(order_imdb_id, requested_order)
+                if blocked:
+                    return jsonify({'success': False, 'error': blocked}), 409
+                _save_episode_order(order_imdb_id, tmdb_id, requested_order)
+        try:
+            season_num = int(season) if season and season.lower() != 'null' else None
+        except (ValueError, TypeError):
+            season_num = None
+        try:
+            episode_num = int(episode) if episode and episode.lower() != 'null' else None
+        except (ValueError, TypeError):
+            episode_num = None
+
+        try:
+            if is_nzb_file:
+                # Upload .nzb file content directly to the configured Usenet provider, then track in queue
+                reset_usenet_client()
+                client = get_usenet_client()
+                if not client.is_enabled():
+                    return jsonify({'success': False, 'error': f'Usenet provider ({get_usenet_provider_display_name()}) is not enabled'}), 503
+                nzb_content = torrent_file.read().decode('utf-8', errors='replace')
+                job_id = client.add_nzb_content(nzb_content=nzb_content, title=torrent_file.filename)
+                if not job_id:
+                    return jsonify({'success': False, 'error': f'Failed to submit NZB to {get_usenet_provider_display_name()}'}), 500
+                # Track in queue directly — NZB already submitted, skip re-submission
+                from database.database_writing import add_media_item
+                from database.database_reading import get_media_item_by_id
+                from metadata.metadata import get_metadata, get_release_date
+                from queues.queue_manager import QueueManager
+                import json as _json
+                checking_id = f"nzb:{job_id}"
+                nzb_title = torrent_file.filename
+                item_type = 'episode' if media_type in ['tv', 'show'] else 'movie'
+                imdb_id = None
+                release_date = 'Unknown'
+                if tmdb_id:
+                    try:
+                        meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+                        imdb_id = meta.get('imdb_id')
+                        if item_type == 'movie':
+                            release_date = get_release_date(meta, imdb_id) or 'Unknown'
+                    except Exception:
+                        pass
+                base_item = {
+                    'title': title, 'year': year, 'type': item_type,
+                    'version': version, 'tmdb_id': tmdb_id, 'imdb_id': imdb_id,
+                    'release_date': release_date, 'genres': _json.dumps([]),
+                    'original_scraped_torrent_title': nzb_title,
+                    'content_source': 'content_requester',
+                }
+                if item_type == 'episode':
+                    base_item.update({'season_number': season_num, 'episode_number': episode_num})
+                item_id = add_media_item(base_item)
+                if item_id:
+                    from database.database_writing import update_media_item_state, update_media_item as _umi
+                    _umi(item_id,
+                        filled_by_torrent_id=checking_id,
+                        filled_by_file=nzb_title,
+                        original_scraped_torrent_title=nzb_title,
+                    )
+                    update_media_item_state(item_id, 'Adding')
+                    logging.info(f'[NZB] Item {item_id} placed in Adding queue for health check (checking_id={checking_id})')
+                _nzb_redirect = f'/library/show/{tmdb_id}' if tmdb_id else '/library'
+                return jsonify({'success': True, 'message': f'NZB file submitted to {_usenet_pname()} (job: {job_id}). Tracking through queue.',
+                                'job_id': job_id, 'provider': 'cli_mount', 'redirect_url': _nzb_redirect})
+            else:
+                # NZB URL — use full _add_nzb_to_usenet flow then add redirect_url
+                _nzb_resp = _add_nzb_to_usenet(
+                    nzb_url=magnet_link,
+                    title=title, year=year, media_type=media_type,
+                    season=season_num, episode=episode_num,
+                    version=version, tmdb_id=tmdb_id,
+                )
+                # Inject redirect_url into the response so the assign page can navigate
+                try:
+                    _nzb_data = _nzb_resp.get_json()
+                    if _nzb_data and _nzb_data.get('success'):
+                        _nzb_data['redirect_url'] = f'/library/show/{tmdb_id}' if tmdb_id else '/library'
+                        return jsonify(_nzb_data)
+                except Exception:
+                    pass
+                return _nzb_resp
+        except Exception as _ne:
+            logging.error(f"NZB handling failed: {_ne}", exc_info=True)
+            return jsonify({'success': False, 'error': str(_ne)}), 500
 
     try:
         # Handle torrent file upload if provided
         temp_file_path = None
         actual_magnet_link = magnet_link
-        
+
         if torrent_file:
             # Save uploaded torrent file to temporary location
             import tempfile
@@ -665,28 +932,79 @@ def prepare_manual_assignment():
                 logging.info(f"Created minimal metadata with dummy IMDb ID {dummy_imdb_id} for TMDB ID {tmdb_id} (fallback)")
         
         # Fetch TV show season data if needed
+        alt_seasons_data = None
+        episode_order = None
         if media_type in ['tv', 'show']:
-            try:
-                # --- MODIFICATION: Use TraktMetadata and pass flag ---
-                trakt_metadata = TraktMetadata()
-                # Pass include_specials=True here
-                seasons_data, source = trakt_metadata.get_show_seasons_and_episodes(metadata.get('imdb_id'), include_specials=True)
-                logging.debug(f"Fetched seasons data (incl specials) from {source} for {metadata.get('imdb_id')} in prepare_manual_assignment")
-                # --- END MODIFICATION ---
-                
-                if seasons_data:
-                    metadata['seasons'] = {}
-                    # Convert integer keys from Trakt to string keys for internal use
-                    for season_num, season_info in seasons_data.items():
-                        metadata['seasons'][season_num] = {
-                            'episodes': season_info.get('episodes', {}),
-                            'episode_count': len(season_info.get('episodes', {}))
-                        }
-                else:
-                     logging.warning(f"No season data fetched from Trakt for {metadata.get('imdb_id')}")
-            except Exception as e:
-                # Log but don't necessarily fail, maybe proceed without detailed episode titles
-                logging.error(f"Error fetching season data from Trakt (non-critical): {str(e)}")
+            # Which season numbers this request actually needs covered, so the
+            # fallback can trigger not just when Trakt returns nothing at all, but
+            # also when it returns data that's simply missing the requested season
+            # (e.g. a recently-aired season Trakt hasn't indexed yet).
+            if selection_type == 'seasons':
+                needed_seasons = {int(s) for s in selected_seasons if s.strip().isdigit()}
+            elif selection_type != 'all' and season and season.strip().isdigit():
+                needed_seasons = {int(season)}
+            else:
+                needed_seasons = set()
+
+            def _covers_needed_seasons(data):
+                if not data:
+                    return False
+                if not needed_seasons:
+                    return True
+                return needed_seasons.issubset({int(k) for k in data.keys()})
+
+            seasons_data, source = None, None
+            show_imdb_id = metadata.get('imdb_id')
+            blocked = _order_change_blocked(show_imdb_id, requested_order)
+            if blocked:
+                return jsonify({'success': False, 'error': blocked}), 409
+            episode_order = requested_order or _saved_episode_order(show_imdb_id)
+            if episode_order != 'default':
+                # Number the items the way the chosen order does; the default
+                # order is kept to read packs that use aired numbering.
+                seasons_data = _seasons_for_order(show_imdb_id, episode_order)
+                if not seasons_data:
+                    return jsonify({'success': False, 'error': f'Could not fetch the episode list for episode order {episode_order}.'}), 503
+                alt_seasons_data = _seasons_for_order(show_imdb_id, 'default')
+                source = episode_order
+            else:
+                try:
+                    seasons_data, source = trakt_client.get_show_seasons_and_episodes(show_imdb_id, include_specials=True)
+                    logging.debug(f"Fetched seasons data (incl specials) from {source} for {show_imdb_id} in prepare_manual_assignment")
+                except Exception as e:
+                    # Log but don't necessarily fail, maybe proceed without detailed episode titles
+                    logging.error(f"Error fetching season data from Trakt (non-critical): {str(e)}")
+
+            if episode_order == 'default' and not _covers_needed_seasons(seasons_data):
+                # Trakt unset/unauthorized/rate-limited, or simply missing the
+                # requested season: fall back to TVDB (or Trakt again via the same
+                # client) through the shared metadata provider used elsewhere in the
+                # app, so manual-assign for TV doesn't hard-depend on a direct,
+                # unfallbacked Trakt call or Trakt's current season coverage.
+                try:
+                    from cli_battery.app.direct_api import DirectAPI
+                    fallback_seasons_data, source = DirectAPI.get_show_seasons(metadata.get('imdb_id'))
+                    logging.info(f"Trakt missing needed season data; used fallback provider '{source}' for {metadata.get('imdb_id')} in prepare_manual_assignment")
+                    if fallback_seasons_data:
+                        # Merge rather than replace, so seasons Trakt did have (with
+                        # richer episode titles) aren't discarded in favor of a
+                        # thinner fallback response.
+                        merged = dict(seasons_data or {})
+                        merged.update(fallback_seasons_data)
+                        seasons_data = merged
+                except Exception as fallback_e:
+                    logging.error(f"Fallback season fetch (TVDB/TMDB) also failed for {metadata.get('imdb_id')}: {fallback_e}")
+
+            if seasons_data:
+                metadata['seasons'] = {}
+                # Convert integer keys to string keys for internal use
+                for season_num, season_info in seasons_data.items():
+                    metadata['seasons'][season_num] = {
+                        'episodes': season_info.get('episodes', {}),
+                        'episode_count': len(season_info.get('episodes', {}))
+                    }
+            else:
+                logging.warning(f"No season data fetched from any provider for {metadata.get('imdb_id')}")
 
         # --- ADD LOGGING HERE ---
         logging.debug(f"Metadata seasons before creating items: {json.dumps(metadata.get('seasons', {}), indent=2)}")
@@ -732,6 +1050,7 @@ def prepare_manual_assignment():
                 return (item.get('season_number', 999), item.get('episode_number', 999))
 
         target_items.sort(key=sort_key)
+        _mark_items_in_library(target_items, metadata.get('imdb_id'), version)
         logging.debug(f"Sorted target_items: {[item.get('item_key', 'N/A') for item in target_items]}")
         # --- END SORT ---
 
@@ -769,22 +1088,60 @@ def prepare_manual_assignment():
 
         assignment_count = 0
 
+        # Absolute numbers files state next to their own season ("S13E01 (0422)")
+        # outrank the S/E: a file naming another episode's absolute isn't this one
+        from utilities.manual_assign_episodes import (absolute_numbers, explicit_absolute_conflicts,
+                                                      file_explicit_absolute)
+        show_absolute_numbers = {}
+        if media_type in ['tv', 'show']:
+            for f_info in parsed_video_files:
+                f_info['explicit_absolute'] = file_explicit_absolute(
+                    f_info['parsed'], f_info['original'].get('filename'), metadata.get('seasons'))
+            if any(f_info['explicit_absolute'] for f_info in parsed_video_files):
+                show_absolute_numbers = absolute_numbers(metadata.get('seasons'))
+        # Show in another episode order: "S15E01" files are aired S15E01, which may
+        # be another episode than the show's S15E01 (Phase 1b places them by ID)
+        aired_order_map = None
+        if alt_seasons_data:
+            from scraper.functions.episode_order_mapping import OrderMapping
+            aired_order_map = OrderMapping(metadata.get('seasons'), alt_seasons_data)
+
         # --- Phase 1: S/E Matching and Movie Matching ---
         logging.info("Phase 1: Attempting S/E and Movie matching...")
+        _media_matcher = MediaMatcher()
         for item in target_items:
             if item['assigned']: # Skip if already assigned (e.g., by movie logic below?)
                 continue
 
             item_type = item.get('type')
 
-            # --- Movie Logic: Assign largest file ---
+            # --- Movie Logic: Assign title-matched (else largest) file ---
             if item_type == 'movie':
                 if video_files: # Ensure there are video files to check
                     # Find the largest *unused* video file
                     unused_parsed_files = [f for f in parsed_video_files if not f['used']]
                     if unused_parsed_files:
-                        # Find original file dict corresponding to largest unused parsed file
-                        largest_parsed_file_info = max(unused_parsed_files, key=lambda f: f['original'].get('bytes', 0))
+                        # A multi-movie pack (e.g. a franchise box-set with several
+                        # films as separate files) bundles unrelated movies together -
+                        # picking the largest unused file unconditionally assigns
+                        # whichever film happens to be biggest to every movie item,
+                        # regardless of which one was actually requested. Prefer
+                        # files whose parsed title+year match this item; only fall
+                        # back to plain largest-file-wins when nothing matches (e.g.
+                        # a single-file torrent whose release name doesn't
+                        # fuzzy-match cleanly), preserving prior behavior there.
+                        title_matched_files = [
+                            f for f in unused_parsed_files
+                            if _media_matcher.match_movie(f['parsed'], item, f['original'].get('filename', ''))
+                        ]
+                        match_candidates = title_matched_files or unused_parsed_files
+                        if not title_matched_files:
+                            logging.warning(
+                                f"[Phase 1] No file title-matched movie '{item.get('title')}' ({item.get('year')}) "
+                                f"among {len(unused_parsed_files)} unused file(s) - falling back to largest unused file"
+                            )
+                        # Find original file dict corresponding to largest matching (or unused) parsed file
+                        largest_parsed_file_info = max(match_candidates, key=lambda f: f['original'].get('bytes', 0))
                         largest_filename = largest_parsed_file_info['original'].get('filename')
                         if largest_filename:
                              item['suggested_file_path'] = largest_filename
@@ -811,7 +1168,15 @@ def prepare_manual_assignment():
                     continue
 
                 # Iterate through UNUSED parsed files
+                item_absolute_numbers = show_absolute_numbers.get((item_season, item_episode))
                 for file_info in [f for f in parsed_video_files if not f['used']]:
+                    if explicit_absolute_conflicts(item_absolute_numbers, file_info.get('explicit_absolute')):
+                        continue
+                    if aired_order_map is not None and not file_info.get('explicit_absolute'):
+                        aired = aired_order_map.aired_positions(file_info['parsed'].get('seasons') or [],
+                                                                file_info['parsed'].get('episodes') or [])
+                        if aired and aired_order_map.aired_of(item_season, item_episode) not in aired:
+                            continue
                     parsed = file_info['parsed']
                     match = False
                     parsed_seasons = parsed.get('seasons', [])
@@ -851,6 +1216,14 @@ def prepare_manual_assignment():
                  logging.warning(f"[Phase 1] Skipping assignment for unrecognized item type: {item_type} for item key {item.get('item_key')}")
 
         logging.info(f"Phase 1 Complete. Assigned {assignment_count} items based on S/E or Movie logic.")
+
+        # --- Phase 1b: absolute episode numbers (anime packs) ---
+        if media_type in ['tv', 'show']:
+            from utilities.manual_assign_episodes import match_absolute_files
+            absolute_count = match_absolute_files(target_items, parsed_video_files,
+                                                  metadata.get('seasons'), alt_seasons_data)
+            assignment_count += absolute_count
+            logging.info(f"Phase 1b Complete. Assigned {absolute_count} items by absolute episode number.")
 
         # --- Phase 2: Title Matching Fallback (File-Centric) ---
         logging.info("Phase 2: Attempting Title matching for remaining items...")
@@ -941,19 +1314,22 @@ def prepare_manual_assignment():
 
         logging.info(f"Completed automatic assignment attempt. Suggested assignments for {assignment_count} out of {len(target_items)} items.")
 
-        # **MODIFICATION**: Store data in session instead of rendering template directly
-        session['manual_assignment_data'] = {
-            'target_items': target_items,
-            'video_files': video_files,
-            'magnet_link': actual_magnet_link,  # Use the actual magnet link (could be None for torrent files)
-            'torrent_filename': torrent_filename,
-            'torrent_id': torrent_id,
-            'version': version,
-            'is_torrent_file': torrent_file is not None  # Flag to indicate if this was a torrent file upload
-        }
-        
-        # **MODIFICATION**: Return success JSON pointing to the new GET route
-        return jsonify({'success': True, 'redirect_url': url_for('magnet.show_manual_assignment')})
+        import uuid as _uuid
+        token = str(_uuid.uuid4())
+        with _assignment_store_lock:
+            _assignment_store[token] = {
+                'target_items': target_items,
+                'video_files': video_files,
+                'magnet_link': actual_magnet_link,
+                'torrent_filename': torrent_filename,
+                'torrent_id': torrent_id,
+                'version': version,
+                'is_torrent_file': torrent_file is not None,
+                # Saved on the show when the assignment is confirmed
+                'episode_order': requested_order if requested_order and episode_order
+                                 and requested_order != _saved_episode_order(metadata.get('imdb_id')) else '',
+            }
+        return jsonify({'success': True, 'redirect_url': url_for('magnet.show_manual_assignment', token=token)})
 
     except Exception as e:
         # Catch-all for unexpected errors
@@ -965,14 +1341,17 @@ def prepare_manual_assignment():
 @magnet_bp.route('/show_manual_assignment', methods=['GET'])
 @admin_required
 def show_manual_assignment():
-    """Display the manual assignment page using data stored in the session."""
-    assignment_data = session.pop('manual_assignment_data', None) # Get and remove data from session
+    """Display the manual assignment page using data stored in the server-side store."""
+    token = request.args.get('token')
+    assignment_data = None
+    if token:
+        with _assignment_store_lock:
+            assignment_data = _assignment_store.pop(token, None)
 
     if not assignment_data:
         flash('No assignment data found. Please start the process again.', 'warning')
         return redirect(url_for('magnet.assign_magnet'))
 
-    # Render the template with the retrieved data
     return render_template('manual_assignment.html', **assignment_data)
 
 @magnet_bp.route('/confirm_manual_assignment', methods=['POST'])
@@ -989,9 +1368,32 @@ def confirm_manual_assignment():
         initial_torrent_id = assignments.pop('torrent_id', [None])[0]
         version = assignments.pop('version', [None])[0]
         is_torrent_file = assignments.pop('is_torrent_file', [False])[0]
+        requested_order = _requested_episode_order(assignments.pop('episode_order', [''])[0])
+        # "Replace episodes already in the library": a Collected row in this version
+        # is pointed at the new file instead of getting a second copy next to it
+        replace_existing = assignments.pop('replace_existing', [''])[0] in ('1', 'on', 'true')
 
         if not all([torrent_filename, initial_torrent_id, version]):
              return jsonify({'success': False, 'error': 'Missing essential torrent information in submission.'}), 400
+
+        # An episode order picked on the assign page: save it on the show before
+        # any episode is added, so the items, the battery's seasons and later
+        # scrapes all use it. Only allowed while the show has no episodes yet.
+        order_imdb_id = None
+        order_plex_note = None
+        if requested_order:
+            order_tmdb_id = next((k.split('_')[1] for k in assignments if k.startswith('ep_') and len(k.split('_')) >= 3), None)
+            if order_tmdb_id:
+                from metadata.metadata import get_imdb_id_if_missing
+                order_imdb_id = get_imdb_id_if_missing({'tmdb_id': int(order_tmdb_id), 'media_type': 'show'})
+            if order_imdb_id:
+                blocked = _order_change_blocked(order_imdb_id, requested_order)
+                if blocked:
+                    return jsonify({'success': False, 'error': blocked}), 409
+                if requested_order != _saved_episode_order(order_imdb_id):
+                    _save_episode_order(order_imdb_id, order_tmdb_id, requested_order)
+                else:
+                    order_imdb_id = None
 
         # Extract torrent hash
         torrent_hash = None
@@ -1005,10 +1407,103 @@ def confirm_manual_assignment():
             # We'll use the torrent ID as a fallback for tracking purposes
             logging.info(f"Using torrent ID {initial_torrent_id} as hash for torrent file tracking")
             torrent_hash = f"torrent_file_{initial_torrent_id}"
-        
+
+        # De-dupe: if this exact submission (same hash, same target item(s)) was
+        # already confirmed moments ago, don't re-add the magnet or recreate items
+        # again — a retried/duplicate POST (double-click, page retry after the
+        # earlier missing-torrent bug, etc.) would otherwise add another permanent
+        # torrent and duplicate DB rows every time. Scoped to the same tmdb_id, not
+        # just the same hash: a multi-movie collection magnet (e.g. a franchise
+        # box-set) is legitimately re-assigned multiple times for different target
+        # movies in quick succession, each a separate Assign flow sharing one
+        # magnet — that must not trip this guard. Only guards against near-immediate
+        # re-submission of the exact same item; a legitimate re-assignment of the
+        # same hash+item later on (e.g. after deletion) is unaffected.
+        if torrent_hash and not is_torrent_file:
+            from database.torrent_tracking import get_torrent_history
+            current_tmdb_ids = set()
+            for item_key in assignments.keys():
+                parts = item_key.split('_')
+                if len(parts) >= 2:
+                    current_tmdb_ids.add(parts[1])
+            try:
+                history = get_torrent_history(torrent_hash)
+            except Exception:
+                history = []
+            for record in history:
+                if record['trigger_source'] != 'manual_assign_confirm':
+                    continue
+                try:
+                    prior_item_data = json.loads(record['item_data']) if record['item_data'] else {}
+                except (ValueError, TypeError):
+                    prior_item_data = {}
+                prior_tmdb_id = str(prior_item_data.get('tmdb_id') or '')
+                if prior_tmdb_id and current_tmdb_ids and prior_tmdb_id not in current_tmdb_ids:
+                    # Same magnet, different target item (e.g. a different movie from
+                    # the same collection pack) - not a duplicate submission.
+                    continue
+                try:
+                    record_time = datetime.fromisoformat(str(record['timestamp']))
+                    if (datetime.now() - record_time).total_seconds() < 120:
+                        # Only block if that prior assignment's items are still actually
+                        # present - if the user deleted them (e.g. to redo a bad
+                        # assignment) there's nothing left to duplicate, so a fresh
+                        # confirm within the window must be allowed to go through
+                        # regardless of how recently the deleted attempt was.
+                        prior_torrent_id = prior_item_data.get('torrent_id')
+                        still_present = True
+                        if prior_torrent_id and prior_tmdb_id:
+                            try:
+                                from database import get_db_connection as _gdb_dedupe
+                                _conn_dedupe = _gdb_dedupe()
+                                try:
+                                    still_present = bool(_conn_dedupe.execute(
+                                        "SELECT 1 FROM media_items WHERE filled_by_torrent_id = ? AND tmdb_id = ? LIMIT 1",
+                                        (prior_torrent_id, prior_tmdb_id)
+                                    ).fetchone())
+                                finally:
+                                    _conn_dedupe.close()
+                            except Exception as _presence_err:
+                                logging.warning(f"Dedup presence check failed for torrent_id={prior_torrent_id!r}, assuming still present: {_presence_err}")
+                                still_present = True
+                        if not still_present:
+                            logging.info(f"Prior manual assignment for hash {torrent_hash} tmdb_id={prior_tmdb_id!r} was deleted - allowing re-assignment despite recent timestamp.")
+                            continue
+                        logging.warning(f"Duplicate manual assignment submission detected for hash {torrent_hash} tmdb_id={prior_tmdb_id!r} ({(datetime.now() - record_time).total_seconds():.0f}s after prior confirm); ignoring re-submission.")
+                        return jsonify({'success': False, 'error': 'This torrent was already assigned moments ago. Refresh the page before assigning again.'}), 409
+                except (ValueError, TypeError):
+                    continue
+
+        # initial_torrent_id came from get_torrent_file_list's disposable preview add,
+        # which is deleted from the debrid service immediately after listing files
+        # (see get_torrent_file_list's finally block). Re-add the magnet for real BEFORE
+        # creating any DB items, so items are never created pointing at an already-deleted
+        # torrent ID (which the checking queue would then report as missing/404 and reset
+        # to Wanted).
+        final_torrent_id = initial_torrent_id
+        if magnet_link:
+            try:
+                logging.info(f"Adding permanent magnet torrent to debrid service for manual assignment: {magnet_link[:60]}...")
+                debrid_provider = get_debrid_provider()
+                readd_result_id = debrid_provider.add_torrent(magnet_link)
+                if readd_result_id:
+                    final_torrent_id = readd_result_id
+                    logging.info(f"Successfully added permanent magnet torrent with ID: {final_torrent_id}")
+                else:
+                    logging.error(f"Failed to add permanent magnet torrent for manual assignment: {magnet_link[:60]}...")
+                    return jsonify({'success': False, 'error': 'Failed to add torrent to debrid service. It may already be added, or the debrid provider rejected it.'}), 503
+            except Exception as readd_error:
+                logging.error(f"Error adding permanent magnet torrent for manual assignment: {readd_error}", exc_info=True)
+                return jsonify({'success': False, 'error': f'Failed to add torrent to debrid service: {readd_error}'}), 503
+        # else: torrent-file uploads have no magnet to re-add; the file was already
+        # added for real (not a disposable preview) in prepare_manual_assignment,
+        # so initial_torrent_id is already permanent for that path.
+
         added_items_count = 0
+        replaced_items_count = 0
         failed_items_count = 0
         processed_items_info = [] # To store info for notifications
+        _ordered_seasons_cache = {}  # imdb_id -> seasons in the show's episode order
         successfully_added_items = [] # Store IDs of added items
         representative_tracking_item_data = None # Store data for tracking update
 
@@ -1096,7 +1591,7 @@ def confirm_manual_assignment():
                 if item_type == 'movie':
                     # Use magnet_link if available, otherwise use None for torrent files
                     item_magnet_link = magnet_link if magnet_link else None
-                    item_data = create_movie_item(metadata, title, year, version, initial_torrent_id, item_magnet_link)
+                    item_data = create_movie_item(metadata, title, year, version, final_torrent_id, item_magnet_link)
                 elif item_type == 'ep':
                     # Expecting format like 's01e13' in parts[2]
                     if len(parts) < 3:
@@ -1119,30 +1614,53 @@ def confirm_manual_assignment():
                          failed_items_count += 1
                          continue
 
-                    # Re-fetch season data if necessary
-                    if 'seasons' not in metadata:
+                    # A non-default episode order: titles and air dates come
+                    # from that order's episode list, never Trakt's numbering.
+                    show_order = _saved_episode_order(metadata.get('imdb_id'))
+                    if show_order != 'default':
+                        ordered = _ordered_seasons_cache.get(metadata.get('imdb_id'))
+                        if ordered is None:
+                            ordered = _seasons_for_order(metadata.get('imdb_id'), show_order) or {}
+                            _ordered_seasons_cache[metadata.get('imdb_id')] = ordered
+                        if ordered:
+                            metadata['seasons'] = {sn: {'episodes': si.get('episodes', {}), 'episode_count': len(si.get('episodes', {}))}
+                                                   for sn, si in ordered.items()}
+
+                    # Re-fetch season data if necessary — also re-fetch (rather than
+                    # trust an existing but incomplete 'seasons' dict) when the
+                    # specific season this item needs isn't covered yet.
+                    if 'seasons' not in metadata or season_number not in metadata.get('seasons', {}):
+                        seasons_data, source = None, None
                         try:
-                            # --- MODIFICATION: Use TraktMetadata and pass flag ---
-                            trakt_metadata = TraktMetadata()
-                            # Pass include_specials=True here
-                            seasons_data, source = trakt_metadata.get_show_seasons_and_episodes(metadata.get('imdb_id'), include_specials=True)
+                            seasons_data, source = trakt_client.get_show_seasons_and_episodes(metadata.get('imdb_id'), include_specials=True)
                             logging.debug(f"Fetched seasons data (incl specials) from {source} for {metadata.get('imdb_id')} in confirm_manual_assignment")
-                            # --- END MODIFICATION ---
-                            
-                            if seasons_data:
-                                metadata['seasons'] = {}
-                                # Convert integer keys from Trakt to string keys
-                                for sn, si in seasons_data.items():
-                                    metadata['seasons'][sn] = {'episodes': si.get('episodes', {}), 'episode_count': len(si.get('episodes', {}))}
-                            else:
-                                logging.warning(f"No season data fetched from Trakt for {metadata.get('imdb_id')} in confirmation step")
                         except Exception as e:
                              logging.warning(f"Could not re-fetch season data from Trakt for {item_key}: {e}")
                              # Proceed cautiously without detailed episode info
-                    
+
+                        if not seasons_data or season_number not in seasons_data:
+                            try:
+                                from cli_battery.app.direct_api import DirectAPI
+                                fallback_seasons_data, source = DirectAPI.get_show_seasons(metadata.get('imdb_id'))
+                                logging.info(f"Trakt missing needed season data; used fallback provider '{source}' for {metadata.get('imdb_id')} in confirm_manual_assignment")
+                                if fallback_seasons_data:
+                                    merged = dict(seasons_data or {})
+                                    merged.update(fallback_seasons_data)
+                                    seasons_data = merged
+                            except Exception as fallback_e:
+                                logging.warning(f"Fallback season fetch also failed for {item_key}: {fallback_e}")
+
+                        if seasons_data:
+                            metadata['seasons'] = {}
+                            # Convert integer keys to string keys
+                            for sn, si in seasons_data.items():
+                                metadata['seasons'][sn] = {'episodes': si.get('episodes', {}), 'episode_count': len(si.get('episodes', {}))}
+                        else:
+                            logging.warning(f"No season data fetched from any provider for {metadata.get('imdb_id')} in confirmation step")
+
                     # Use magnet_link if available, otherwise use None for torrent files
                     item_magnet_link = magnet_link if magnet_link else None
-                    item_data = create_episode_item(metadata, title, year, version, initial_torrent_id, item_magnet_link, season_number, episode_number)
+                    item_data = create_episode_item(metadata, title, year, version, final_torrent_id, item_magnet_link, season_number, episode_number)
                 else:
                     logging.warning(f"Unrecognized item key format: {item_key}")
                     failed_items_count += 1
@@ -1157,7 +1675,11 @@ def confirm_manual_assignment():
                     'series_title', 'season', 'episode', 'series_year', 'media_type', '_matcher_data', 'item_key'
                 ]}
                 
-                item_id = add_media_item(db_item, user_initiated=True)
+                item_id = replace_collected_item(db_item) if replace_existing else None
+                if item_id:
+                    replaced_items_count += 1
+                else:
+                    item_id = add_media_item(db_item, user_initiated=True)
                 if item_id:
                     added_items_count += 1
                     successfully_added_items.append(item_id)
@@ -1176,16 +1698,16 @@ def confirm_manual_assignment():
                         'content_source': db_item.get('content_source'),
                         'content_source_detail': db_item.get('content_source_detail')
                     })
-                    logging.info(f"Successfully added item {item_key} with file {selected_filename}, initial torrent ID: {initial_torrent_id}")
-                    
+                    logging.info(f"Successfully added item {item_key} with file {selected_filename}, torrent ID: {final_torrent_id}")
+
                     # Prepare data for torrent tracking (only need one representative item)
                     if representative_tracking_item_data is None:
                         representative_tracking_item_data = {
-                            'title': db_item.get('title'), 'year': db_item.get('year'), 
+                            'title': db_item.get('title'), 'year': db_item.get('year'),
                             'media_type': db_item.get('type'), 'version': db_item.get('version'),
                             'tmdb_id': db_item.get('tmdb_id'), 'imdb_id': db_item.get('imdb_id'),
                             'filled_by_title': torrent_filename, 'filled_by_file': selected_filename, # Use filename here too
-                            'torrent_id': initial_torrent_id
+                            'torrent_id': final_torrent_id
                         }
                         if db_item.get('type') == 'episode':
                             representative_tracking_item_data.update({'season_number': db_item.get('season_number'), 'episode_number': db_item.get('episode_number')})
@@ -1198,41 +1720,11 @@ def confirm_manual_assignment():
                 logging.error(f"Error processing assignment for {item_key}: {item_error}", exc_info=True)
                 failed_items_count += 1
 
-        # If items were successfully added, re-add the torrent and update tracking/DB
-        final_torrent_id = initial_torrent_id
+        # final_torrent_id was already established (and the magnet already added for
+        # real) before item creation above, so items already carry the correct ID.
+        # Only torrent tracking remains to be recorded here.
         if added_items_count > 0:
-            try:
-                if magnet_link:
-                    logging.info(f"Re-adding magnet torrent to debrid service after successful manual assignment: {magnet_link[:60]}...")
-                    debrid_provider = get_debrid_provider() # Get provider instance
-                    # Re-add the magnet torrent. The add_torrent method should handle file selection.
-                    readd_result_id = debrid_provider.add_torrent(magnet_link)
-                    if readd_result_id:
-                        final_torrent_id = readd_result_id
-                        logging.info(f"Successfully re-added magnet torrent with final ID: {final_torrent_id}")
-                        
-                        # Check if the final ID is different from the initial ID
-                        if final_torrent_id != initial_torrent_id:
-                            logging.info(f"Torrent ID changed from {initial_torrent_id} to {final_torrent_id}. Updating {len(successfully_added_items)} database items.")
-                            for item_id in successfully_added_items:
-                                update_media_item_torrent_id(item_id, final_torrent_id)
-                        else:
-                            logging.info(f"Torrent ID {final_torrent_id} remains the same, no DB update needed.")
-                    else:
-                        logging.warning(f"Failed to re-add magnet torrent {magnet_link[:60]}... It might already exist or an error occurred. Using initial ID: {initial_torrent_id}")
-                else:
-                    # For torrent files, we can't re-add since we don't have the original file
-                    # The torrent should already be in the debrid service from the initial upload
-                    logging.info(f"Using existing torrent ID {initial_torrent_id} for torrent file (no re-add needed)")
-                    final_torrent_id = initial_torrent_id
-            except Exception as readd_error:
-                # Log the error but don't fail the overall success response
-                if magnet_link:
-                    logging.error(f"Error re-adding magnet torrent {magnet_link[:60]} after confirmation: {readd_error}", exc_info=True)
-                else:
-                    logging.error(f"Error handling torrent file re-add after confirmation: {readd_error}", exc_info=True)
-
-            # Now, update torrent tracking with the final ID
+            # Update torrent tracking with the final ID
             if torrent_hash and representative_tracking_item_data:
                 # Update the torrent_id in the tracking data
                 representative_tracking_item_data['torrent_id'] = final_torrent_id
@@ -1267,10 +1759,20 @@ def confirm_manual_assignment():
             except Exception as notify_error:
                 logging.error(f"Failed to send notifications after manual assignment: {notify_error}")
 
+        if order_imdb_id and added_items_count > 0:
+            order_plex_note = _sync_plex_order_for_new_show(order_imdb_id, requested_order)
+
         if added_items_count > 0:
             message = f'Successfully assigned {added_items_count} item(s).' 
+            if replaced_items_count:
+                message += (f' {replaced_items_count} of them replaced what was already in the library; '
+                            f'the old files are removed once the new ones are collected.')
             if failed_items_count > 0:
                  message += f' Failed to assign {failed_items_count} item(s).' 
+            if order_imdb_id:
+                message += ' Episode order saved on the show.'
+                if order_plex_note:
+                    message += f' {order_plex_note}'
             return jsonify({'success': True, 'message': message, 'added_count': added_items_count, 'failed_count': failed_items_count})
         elif failed_items_count > 0:
             return jsonify({'success': False, 'error': f'Failed to assign {failed_items_count} item(s). Check logs.', 'added_count': 0, 'failed_count': failed_items_count}), 500
@@ -1363,8 +1865,18 @@ def create_episode_item(metadata, title, year, version, torrent_id, magnet_link,
 
     if first_aired_str:
         try:
-            # Parse the UTC datetime string (expecting format like 2023-10-26T18:00:00.000Z)
-            first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+            # Parse the UTC datetime string — Trakt sends "2023-10-26T18:00:00.000Z"
+            # (fractional seconds + Z), Scrob sends "2022-04-09T14:00:00" (no
+            # fractional seconds, no Z) — try both instead of assuming one source's
+            # format.
+            for _fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S"):
+                try:
+                    first_aired_utc = datetime.strptime(first_aired_str, _fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                raise ValueError(f"time data {first_aired_str!r} does not match any known first_aired format")
             first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
 
             # Convert UTC to local timezone using the helper

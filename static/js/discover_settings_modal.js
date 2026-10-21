@@ -7,24 +7,13 @@
 (function() {
     'use strict';
 
-    // Load theme-specific CSS dynamically
+    // Ensure the modal stylesheet is present (base.html normally links it).
     function loadThemeCSS() {
-        const getCurrentTheme = () => localStorage.getItem('theme') || 'default';
-        const theme = getCurrentTheme();
-        const cssFile = theme === 'tangerine' 
-            ? 'css/tangerine/tangerine_discover_settings_modal.css' 
-            : 'css/discover_settings_modal.css';
-        
-        // Check if the link already exists
-        const existingLink = document.querySelector(`link[href*="discover_settings_modal.css"]`);
-        if (!existingLink) {
+        if (!document.querySelector('link[href*="tangerine_discover_settings_modal.css"]')) {
             const link = document.createElement('link');
             link.rel = 'stylesheet';
-            link.href = `/static/${cssFile}`;
+            link.href = '/static/css/tangerine/tangerine_discover_settings_modal.css';
             document.head.appendChild(link);
-        } else {
-            // Update existing link
-            existingLink.href = `/static/${cssFile}`;
         }
     }
 
@@ -32,7 +21,7 @@
     loadThemeCSS();
 
     let modal, overlay, closeBtn, cancelBtn, saveBtn;
-    let hideNoRatingInput, hideNoPosterInput, onlyShowMissingInput, discoverEpisodeViewSelect;
+    let hideNoRatingInput, hideNoPosterInput, onlyShowMissingInput, discoverEpisodeViewSelect, hideSpecialsInput;
     let currentSettings = null;
 
     // Initialize elements after DOM is ready
@@ -52,6 +41,7 @@
         hideNoPosterInput = document.getElementById('discoverHideNoPoster');
         onlyShowMissingInput = document.getElementById('discoverOnlyShowMissing');
         discoverEpisodeViewSelect = document.getElementById('discoverEpisodeView');
+        hideSpecialsInput = document.getElementById('discoverHideSpecials');
 
         return true;
     }
@@ -93,6 +83,11 @@
 
             if (discoverEpisodeViewSelect) {
                 discoverEpisodeViewSelect.value = discoverSettings.tv_show_episode_view || 'discover';
+            }
+
+            if (hideSpecialsInput) {
+                // Default true — matches the previous hardcoded behaviour
+                hideSpecialsInput.checked = discoverSettings.hide_specials !== false;
             }
 
             // Show modal
@@ -142,6 +137,9 @@
             updatedSettings['Discover Settings'].hide_no_poster = hideNoPosterInput.checked;
             updatedSettings['Discover Settings'].only_show_missing = onlyShowMissingInput.checked;
             updatedSettings['Discover Settings'].tv_show_episode_view = discoverEpisodeViewSelect.value;
+            if (hideSpecialsInput) {
+                updatedSettings['Discover Settings'].hide_specials = hideSpecialsInput.checked;
+            }
 
             // Send to same API endpoint as settings page
             const response = await fetch('/settings/api/settings', {

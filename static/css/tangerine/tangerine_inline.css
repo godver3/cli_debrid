@@ -202,6 +202,44 @@
         font-size: 14px;
     }
 
+    .sso-divider {
+        display: flex;
+        align-items: center;
+        margin: 15px 0;
+        color: #9a7a5a;
+        font-size: 13px;
+    }
+    .sso-divider::before,
+    .sso-divider::after {
+        content: '';
+        flex: 1;
+        border-top: 1px solid #c8a882;
+    }
+    .sso-divider span {
+        padding: 0 10px;
+    }
+    .btn-sso {
+        display: block;
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #c8a882;
+        border-radius: 8px;
+        background-color: #f5ede3;
+        color: #6b4c2a;
+        font-size: 15px;
+        text-align: center;
+        text-decoration: none;
+        cursor: pointer;
+        transition: background-color 0.2s;
+        box-sizing: border-box;
+        margin-bottom: 10px;
+    }
+    .btn-sso:hover {
+        background-color: #e8d5b8;
+        color: #4a2e0a;
+        text-decoration: none;
+    }
+
     .flash-message {
         max-width: 300px;
         margin: 10px auto;
@@ -491,6 +529,33 @@
         padding: 20px;
         background-color: var(--card-bg);
         border-radius: 12px;
+        border: 1px solid var(--border-color, rgba(255,255,255,0.08));
+        border-left: 3px solid #e5a00d;
+    }
+
+    .plex-auth-section h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-primary, #e2e8f0);
+        margin: 0 0 4px 0;
+    }
+
+    .plex-auth-section .settings-description {
+        font-size: 0.8rem;
+        color: var(--text-muted, #64748b);
+        margin: 0 0 16px 0;
+    }
+
+    #plex-auth-failure-note {
+        margin-top: 12px;
+        font-size: 0.8rem;
+        color: #e5a00d;
+        font-style: normal;
+    }
+
+    #plex-auth-failure-note em {
+        font-style: normal;
+        color: #e5a00d;
     }
     
     .plex-auth-btn {

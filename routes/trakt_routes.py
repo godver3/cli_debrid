@@ -91,10 +91,17 @@ def trakt_auth_status():
                 'status': 'authorized', 
                 'battery_push_status': 'success' if success else 'failed'
             })
-        elif response.status_code == 400:
+        elif response.status_code in (400, 429) or response.status_code >= 500:
+            # 400 = pending (user hasn't entered the code yet); 429 = polling
+            # too fast ("slow_down"); 5xx = a transient hiccup on Trakt's end.
+            # None of these mean the device code is actually invalid, so keep
+            # polling instead of ending the flow and forcing the user to
+            # restart it over one bad response.
             return jsonify({'status': 'pending'})
         else:
-            return jsonify({'status': 'error', 'message': response.text}), response.status_code
+            # Terminal per Trakt's device-auth docs: 404 not found, 409
+            # already used, 410 expired, 418 denied by the user.
+            return jsonify({'status': 'error', 'message': response.text or f'Trakt returned HTTP {response.status_code}'}), response.status_code
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -154,15 +161,9 @@ def update_trakt_config(key, value):
 
 def push_trakt_auth_to_battery_core():
     try:
+        from cli_battery.app.direct_api import DirectAPI
+
         trakt_config = get_trakt_config()
-        battery_url = get_setting('Metadata Battery', 'url')
-
-        logging.info(f"Battery URL from settings: {battery_url}")
-
-        if not battery_url:
-            logging.error("Battery URL not set in settings")
-            return False, 'Battery URL not set in settings'
-
         auth_data = {
             'CLIENT_ID': trakt_config.get('CLIENT_ID'),
             'CLIENT_SECRET': trakt_config.get('CLIENT_SECRET'),
@@ -171,26 +172,18 @@ def push_trakt_auth_to_battery_core():
             'OAUTH_EXPIRES_AT': trakt_config.get('OAUTH_EXPIRES_AT')
         }
 
-        logging.info(f"Attempting to push Trakt auth to battery at URL: {battery_url}")
-        try:
-            response = api.post(f"{battery_url}/receive_trakt_auth", json=auth_data)
-            logging.info(f"Response status code: {response.status_code}")
-            logging.info(f"Response content: {response.text}")
-        except Exception as request_error:
-            logging.error(f"Request to battery failed: {str(request_error)}")
-            logging.error(f"Request exception type: {type(request_error).__name__}")
-            logging.error(f"Request exception details: {traceback.format_exc()}")
-            return False, f'Request to battery failed: {str(request_error)}'
-        
-        if response.status_code == 200:
+        logging.info("Pushing Trakt auth to battery via DirectAPI...")
+        result = DirectAPI.receive_trakt_auth(auth_data)
+
+        if result.get('status') == 'success':
             logging.info("Successfully pushed Trakt auth to battery")
-            return True, 'Trakt auth pushed to battery successfully'
+            return True, result.get('message', 'Trakt auth pushed to battery successfully')
         else:
-            logging.error(f"Failed to push Trakt auth to battery. Status code: {response.status_code}, Response: {response.text}")
-            return False, f'Failed to push Trakt auth to battery: {response.text}'
+            msg = result.get('message', 'Unknown error')
+            logging.error(f"Failed to push Trakt auth to battery: {msg}")
+            return False, f'Failed to push Trakt auth to battery: {msg}'
     except Exception as e:
         logging.error(f"Error pushing Trakt auth to battery: {str(e)}")
-        logging.error(f"Exception type: {type(e).__name__}")
         logging.error(f"Exception traceback: {traceback.format_exc()}")
         return False, str(e)
 

@@ -1,7 +1,4 @@
-// Loading overlay styles are now defined in theme-specific CSS files:
-// - Classic theme: static/css/settings.css
-// - Tangerine theme: static/css/tangerine/tangerine_settings.css
-// This ensures the loading overlay matches the selected theme
+// Loading overlay styles live in static/css/tangerine/tangerine_settings.css.
 
 // Global loading object
 const Loading = {
@@ -29,19 +26,23 @@ const Loading = {
                     <div class="loading-progress-bar-container">
                         <div class="loading-progress-bar"></div>
                     </div>
-                    <div class="spinner"></div>
-                    <div class="loading-message">
-                        <p>Processing command in background...</p>
-                        <div class="loading-progress" style="display: none; margin-top: 8px; color: #888; font-size: 0.9em;">0%</div>
-                        <pre class="loading-details" style="text-align: left; margin-top: 10px; white-space: pre-wrap; color: #ccc;"></pre>
+                    <div class="loading-inner">
+                        <div class="loading-title-row">
+                            <i class="fas fa-circle-notch fa-spin loading-spin-icon"></i>
+                            <div class="loading-message">Processing command in background...</div>
+                        </div>
+                        <div class="loading-details"></div>
+                        <div class="loading-progress" style="display:none;">0%</div>
+                        <div class="loading-button-row">
+                            <button class="close-loading">Continue in background</button>
+                        </div>
                     </div>
-                    <button class="close-loading">Continue in background</button>
                 </div>
             `;
             document.body.appendChild(this.element);
 
             // Store reference to message elements
-            this.messageElement = this.element.querySelector('.loading-message p');
+            this.messageElement = this.element.querySelector('.loading-message');
             this.detailsElement = this.element.querySelector('.loading-details');
             this.progressElement = this.element.querySelector('.loading-progress');
             this.progressBarElement = this.element.querySelector('.loading-progress-bar');
@@ -116,10 +117,7 @@ const Loading = {
                     // Update display
                     this.progressElement.textContent = `${Math.round(this.currentProgress)}%`;
 
-                    // Update progress bar width
-                    if (this.progressBarElement) {
-                        this.progressBarElement.style.width = `${this.currentProgress}%`;
-                    }
+                    // Progress bar uses CSS pulse animation — no manual width update needed
 
                     // Color coding based on progress
                     if (this.currentProgress < 50) {
@@ -172,8 +170,8 @@ const Loading = {
 
     show: function(message, details, hideCloseButton, hideProgress) {
         this.init();
-        if (message && this.messageElement) {
-            this.messageElement.textContent = message;
+        if (this.messageElement) {
+            this.messageElement.textContent = message || 'Processing command in background...';
         }
         if (details && this.detailsElement) {
             this.detailsElement.textContent = details;

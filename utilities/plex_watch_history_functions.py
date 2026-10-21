@@ -4,7 +4,7 @@ import sqlite3
 import logging
 from plexapi.server import PlexServer
 from utilities.settings import get_setting
-from cli_battery.app.trakt_metadata import TraktMetadata
+from cli_battery.app import trakt_client
 from datetime import datetime, timedelta
 import requests
 
@@ -15,7 +15,6 @@ async def get_watch_history_from_plex():
     Returns a dictionary with counts of processed movies and episodes.
     """
     try:
-        trakt = TraktMetadata()
         processed = {
             'movies': 0,
             'episodes': 0,
@@ -95,7 +94,7 @@ async def get_watch_history_from_plex():
             current_batch.append(item)
             
             if len(current_batch) >= batch_size or i == total_items:
-                batch_results = await process_watch_history_items(cursor, current_batch, trakt, 'account', processed)
+                batch_results = await process_watch_history_items(cursor, current_batch, trakt_client, 'account', processed)
                 if batch_results:
                     cursor.executemany('''
                         INSERT OR REPLACE INTO watch_history 
@@ -129,7 +128,7 @@ async def get_watch_history_from_plex():
                         current_batch.append(video)
                         
                         if len(current_batch) >= batch_size or i == total_movies:
-                            batch_results = await process_watch_history_items(cursor, current_batch, trakt, 'server', processed)
+                            batch_results = await process_watch_history_items(cursor, current_batch, trakt_client, 'server', processed)
                             if batch_results:
                                 cursor.executemany('''
                                     INSERT OR REPLACE INTO watch_history 
@@ -157,7 +156,7 @@ async def get_watch_history_from_plex():
                                 current_batch.append(episode)
                                 
                                 if len(current_batch) >= batch_size:
-                                    batch_results = await process_watch_history_items(cursor, current_batch, trakt, 'server', processed)
+                                    batch_results = await process_watch_history_items(cursor, current_batch, trakt_client, 'server', processed)
                                     if batch_results:
                                         cursor.executemany('''
                                             INSERT OR REPLACE INTO watch_history 
@@ -174,7 +173,7 @@ async def get_watch_history_from_plex():
                 
                 # Process any remaining episodes in the last batch
                 if current_batch:
-                    batch_results = await process_watch_history_items(cursor, current_batch, trakt, 'server', processed)
+                    batch_results = await process_watch_history_items(cursor, current_batch, trakt_client, 'server', processed)
                     if batch_results:
                         cursor.executemany('''
                             INSERT OR REPLACE INTO watch_history 
@@ -204,7 +203,7 @@ async def get_watch_history_from_plex():
 
 
 
-async def find_imdb_id(cursor, item_info, title, trakt):
+async def find_imdb_id(cursor, item_info, title, trakt_client):
     """Helper function to find IMDb ID from database cache or Trakt"""
     media_type = item_info['type']
     
@@ -241,10 +240,10 @@ async def find_imdb_id(cursor, item_info, title, trakt):
                         search_year = int(year_part)
                         title = title_parts[0].strip()
             
-            url = f"{trakt.base_url}/search/movie?query={title}"
+            url = f"{trakt_client.TRAKT_BASE_URL}/search/movie?query={title}"
             if search_year:
                 url += f"&years={search_year}"
-            response = trakt._make_request(url)
+            response = trakt_client._make_request(url)
             if response and response.status_code == 200:
                 results = response.json()
                 if results:
@@ -252,8 +251,8 @@ async def find_imdb_id(cursor, item_info, title, trakt):
         else:
             show_title = item_info['grandparentTitle']
             if show_title:
-                url = f"{trakt.base_url}/search/show?query={show_title}"
-                response = trakt._make_request(url)
+                url = f"{trakt_client.TRAKT_BASE_URL}/search/show?query={show_title}"
+                response = trakt_client._make_request(url)
                 if response and response.status_code == 200:
                     results = response.json()
                     if results:
@@ -394,7 +393,7 @@ def insert_or_update_episode(cursor, title, watched_at, media_id, imdb_id, tmdb_
         logging.error(f"Error preparing episode '{title}': {str(e)}")
         return None
 
-async def process_watch_history_items(cursor, items, trakt, source, processed):
+async def process_watch_history_items(cursor, items, trakt_client, source, processed):
     """Process a batch of watch history items at once"""
     try:
         # Separate movies and episodes
@@ -571,7 +570,7 @@ async def process_watch_history_items(cursor, items, trakt, source, processed):
                             except Exception as e:
                                 logging.warning(f"Failed to get show via grandparentRatingKey for '{show_title}': {str(e)}")
                         else:
-                            logging.warning(f"No grandparentKey or grandparentRatingKey available for '{show_title}'")
+                            logging.debug(f"No grandparentKey or grandparentRatingKey available for '{show_title}', will try Trakt lookup")
                 except Exception as e:
                     logging.warning(f"Failed to get show IDs for '{show_title}': {str(e)}", exc_info=True)
                 
@@ -579,7 +578,7 @@ async def process_watch_history_items(cursor, items, trakt, source, processed):
                 if not imdb_id:
                     #logging.info(f"No IMDb ID found from Plex, trying Trakt lookup for show: {show_title}")
                     try:
-                        imdb_id = await find_imdb_id(cursor, {'type': 'episode', 'grandparentTitle': show_title}, show_title, trakt)
+                        imdb_id = await find_imdb_id(cursor, {'type': 'episode', 'grandparentTitle': show_title}, show_title, trakt_client)
                         if imdb_id:
                             #logging.info(f"Found show IMDb ID via Trakt: {imdb_id}")
                             pass

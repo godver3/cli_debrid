@@ -1,14 +1,51 @@
 from flask import Blueprint, jsonify, request, render_template
+from flask_login import current_user
 from .models import user_required, onboarding_required
+from .utils import is_user_system_enabled
 from utilities.web_scraper import search_trakt, parse_search_term, get_available_versions
 from cli_battery.app.direct_api import DirectAPI
-from queues.config_manager import load_config
 from database.wanted_items import add_wanted_items
 import logging
 import re
 from utilities.settings import load_config
 
 content_requestor_bp = Blueprint('content', __name__)
+
+
+def _can_set_episode_order():
+    """Picking a show's episode order is an admin action, like Show options."""
+    if not is_user_system_enabled():
+        return True
+    return current_user.is_authenticated and getattr(current_user, 'role', None) == 'admin'
+
+
+def _apply_requested_episode_order(imdb_id, tmdb_id, raw_order):
+    """Set the episode order a show was requested in, before its episodes are added.
+
+    Returns (error, http_status, plex_note). Only a show with no library
+    episodes can be set here; one already in the library changes order from
+    its show page, which moves and renames what is there.
+    """
+    from routes.magnet_routes import (
+        _requested_episode_order, _saved_episode_order, _library_episode_rows,
+        _seasons_for_order, _save_episode_order, _sync_plex_order_for_new_show,
+    )
+    order = _requested_episode_order(raw_order)
+    if not order:
+        return f'Unknown episode order: {raw_order}', 400, None
+    if order == _saved_episode_order(imdb_id):
+        return None, None, None
+    if not _can_set_episode_order():
+        return "Only an admin can change a show's episode order", 403, None
+    rows = _library_episode_rows(imdb_id)
+    if rows:
+        return (f'This show already has {rows} episode(s) in the library in another episode order. '
+                f'Change its order from the show page (Show options) first, then request it.'), 409, None
+    if order != 'default' and not _seasons_for_order(imdb_id, order):
+        return 'Could not load that episode order for this show', 502, None
+    _save_episode_order(imdb_id, tmdb_id, order)
+    logging.info(f"Content request: episode order for {imdb_id} set to {order}")
+    return None, None, _sync_plex_order_for_new_show(imdb_id, order)
 
 @content_requestor_bp.route('/')
 @user_required
@@ -62,13 +99,18 @@ def request_content():
         media_type = data.get('mediaType', '').lower()
         selected_versions = data.get('versions', [])  # Get selected versions as a list
         selected_seasons = data.get('seasons', [])  # Get selected seasons if provided
-        
+        selected_folder = data.get('selected_folder')  # Custom folder for symlink mode
+        selected_folder_is_custom = data.get('selected_folder_is_custom', False)
+        selected_tags = data.get('selected_tags') or None  # Tags for Plex mode NZB routing
+
         # Convert selected versions to dictionary format
         versions = {version: True for version in selected_versions}
-                  
+
         logging.info(f"Received versions: {versions}")
         if selected_seasons:
             logging.info(f"Received seasons: {selected_seasons}")
+        if selected_folder:
+            logging.info(f"Received folder: {selected_folder} (custom={selected_folder_is_custom})")
 
         # Convert TMDB ID to IMDB ID with media type hint
         if media_type == 'movie':
@@ -100,6 +142,15 @@ def request_content():
             else:
                 logging.info(f"No IMDB ID found for UFC content with TMDB ID {tmdb_id}, proceeding with Jackett scraper(s)")
             
+        # A show requested in another episode order (Dragon Ball Kai in DVD order):
+        # set it before the seasons and episodes below are read in that numbering.
+        order_plex_note = None
+        if media_type == 'tv' and imdb_id and data.get('episode_order'):
+            order_error, order_status, order_plex_note = _apply_requested_episode_order(
+                imdb_id, tmdb_id, data.get('episode_order'))
+            if order_error:
+                return jsonify({'error': order_error}), order_status
+
         # If media_type is 'tv' and no specific seasons are selected (i.e., "whole show"),
         # fetch all available seasons.
         if media_type == 'tv' and not selected_seasons and imdb_id:
@@ -172,27 +223,98 @@ def request_content():
             
         # Process metadata
         processed_items = process_metadata([wanted_item])
-        if not processed_items:
-            # Handle cases where process_metadata returns None or an empty dict
-            logging.warning(f"process_metadata returned empty or None for TMDB ID {tmdb_id}. Content might already exist or is invalid.")
-            return jsonify({'error': 'Content already requested or already exists in library.'}), 400
-            
-        # Combine movies and episodes from processed items
-        all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+
+        # If metadata is missing or empty, auto-refresh battery and retry once — for both movies and TV shows.
+        # This handles the case where the item has never been in the library (no library page to refresh from).
+        all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) if processed_items else []
+        if not all_items and imdb_id:
+            logging.info(f"No items from process_metadata for {imdb_id} — forcing TMDB mapping refresh and battery refresh, then retrying.")
+            try:
+                # Step 1: Force-refresh the TMDB→IMDB mapping in case it was stale/wrong.
+                # This clears the cached entry and re-fetches from Trakt API.
+                refresh_media_type = 'movie' if media_type == 'movie' else 'show'
+                refreshed_imdb_id, refresh_source = DirectAPI.force_refresh_tmdb_mapping(tmdb_id, media_type=refresh_media_type)
+                if refreshed_imdb_id and refreshed_imdb_id != imdb_id:
+                    logging.info(f"TMDB mapping refreshed: {imdb_id} → {refreshed_imdb_id} (source: {refresh_source}). Updating wanted item.")
+                    imdb_id = refreshed_imdb_id
+                    wanted_item['imdb_id'] = imdb_id
+                elif refreshed_imdb_id:
+                    logging.info(f"TMDB mapping refresh confirmed same IMDB ID: {imdb_id}")
+                else:
+                    logging.warning(f"TMDB mapping refresh returned no IMDB ID for TMDB {tmdb_id}, keeping {imdb_id}")
+
+                # Step 2: Force-refresh battery metadata for the (possibly corrected) IMDB ID.
+                DirectAPI.force_refresh_metadata(imdb_id)
+                processed_items = process_metadata([wanted_item])
+                if processed_items:
+                    all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+            except Exception as e_refresh:
+                logging.warning(f"Auto-refresh failed for {imdb_id}: {e_refresh}")
+
         if not all_items:
-            logging.warning(f"No processable items found after metadata processing for TMDB ID {tmdb_id}. Content might already exist.")
-            # Return a more specific message indicating the item might already exist or was filtered
-            return jsonify({'error': 'Content already requested or already exists in library.'}), 400
+            logging.warning(f"No processable items found after metadata processing for TMDB ID {tmdb_id}.")
+            return jsonify({'error': 'Could not retrieve metadata for this title. Please try again in a moment.'}), 400
             
-        # Add content source to all items
+        # Add content source to all items.
+        # When user system is enabled, record the requesting user's username as the detail
+        # so each user's requests get their own Plex label. Falls back to 'CD-Discover'.
+        if is_user_system_enabled() and current_user.is_authenticated:
+            source_detail = current_user.username
+        else:
+            source_detail = 'CD-Discover'
         for item in all_items:
-            item['content_source'] = 'content_requestor'
-            
+            item['content_source'] = 'content_requester'
+            item['content_source_detail'] = source_detail
+            if selected_folder:
+                item['selected_folder'] = selected_folder
+                item['selected_folder_is_custom'] = selected_folder_is_custom
+            if selected_tags:
+                item['tags'] = selected_tags
+
         # Pass versions dictionary to add_wanted_items
-        add_wanted_items(all_items, versions)
-        
-        logging.info(f"Content request processed: TMDB ID {tmdb_id} -> IMDB ID {imdb_id} ({media_type}) with versions {versions}")
-        return jsonify({'success': True, 'item': wanted_item})
+        items_added = add_wanted_items(all_items, versions)
+
+        # If nothing was added for a TV show, the battery may have stale/incomplete episode data.
+        # Force-refresh and retry once to pick up any missing episodes.
+        if items_added == 0 and media_type == 'tv' and imdb_id:
+            logging.info(f"No new items added for TV show {imdb_id} (battery may be stale) — forcing refresh and retrying.")
+            try:
+                DirectAPI.force_refresh_metadata(imdb_id)
+                processed_items = process_metadata([wanted_item])
+                if processed_items:
+                    all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                    for item in all_items:
+                        item['content_source'] = 'content_requester'
+                        item['content_source_detail'] = source_detail
+                        if selected_folder:
+                            item['selected_folder'] = selected_folder
+                            item['selected_folder_is_custom'] = selected_folder_is_custom
+                        if selected_tags:
+                            item['tags'] = selected_tags
+                    items_added = add_wanted_items(all_items, versions)
+                    logging.info(f"After refresh, added {items_added} items for {imdb_id}")
+            except Exception as e_refresh:
+                logging.warning(f"Post-add refresh failed for {imdb_id}: {e_refresh}")
+
+        logging.info(f"Content request processed: TMDB ID {tmdb_id} -> IMDB ID {imdb_id} ({media_type}) with versions {versions}, items added: {items_added}")
+        try:
+            from utilities.ai_habits import track_action
+            _uid = current_user.username if is_user_system_enabled() and current_user.is_authenticated else 'system'
+            _detail = f"{data.get('title', '')} ({data.get('year', '')}) [{media_type}]"
+            track_action('library_add_manual', detail=_detail, user_id=_uid)
+        except Exception:
+            pass
+        if items_added == 0:
+            return jsonify({
+                'success': True,
+                'item': wanted_item,
+                'items_added': 0,
+                'message': f"Already have {data.get('title', 'this title')} in the requested version(s)"
+            })
+        response = {'success': True, 'item': wanted_item, 'items_added': items_added}
+        if order_plex_note:
+            response['message'] = f"Requested {data.get('title') or 'the show'}. {order_plex_note}"
+        return jsonify(response)
         
     except Exception as e:
         logging.error(f"Error processing content request: {str(e)}")
@@ -230,7 +352,22 @@ def get_show_seasons():
         if not imdb_id:
             logging.error(f"Could not convert TMDB ID {tmdb_id} to IMDB ID")
             return jsonify({'error': f'Could not convert TMDB ID {tmdb_id} to IMDB ID'}), 400
-            
+
+        # Seasons in an episode order picked on the request dialog (read-only:
+        # nothing is saved until the show is requested in that order). Without
+        # one, the battery's seasons below are already in the show's own order.
+        raw_order = request.args.get('order')
+        if raw_order:
+            from routes.magnet_routes import _requested_episode_order, _seasons_for_order
+            order = _requested_episode_order(raw_order)
+            ordered = _seasons_for_order(imdb_id, order) if order else None
+            if not ordered:
+                return jsonify({'error': 'Could not load that episode order for this show'}), 502
+            season_numbers = sorted(int(s) for s in ordered if str(s).isdigit() and int(s) > 0)
+            counts = {s: (ordered.get(s) or {}).get('episode_count') or len((ordered.get(s) or {}).get('episodes') or {})
+                      for s in season_numbers}
+            return jsonify({'success': True, 'seasons': season_numbers, 'episode_counts': counts, 'order': order})
+
         # Get show seasons from API
         logging.info(f"Fetching seasons for show with IMDB ID {imdb_id}")
         try:

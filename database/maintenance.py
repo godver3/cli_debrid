@@ -50,16 +50,15 @@ def update_show_ids():
                 if not metadata:
                     logging.warning(f"No metadata found in API for show {show_title} (imdb_id: {show_imdb_id})")
                     # Try searching Trakt directly
-                    from cli_battery.app.trakt_metadata import TraktMetadata
-                    trakt = TraktMetadata()
-                    
+                    from cli_battery.app import trakt_client
+
                     sanitized_title = show_title
                     if '(' in show_title:
                         sanitized_title = show_title[:show_title.rfind('(')].strip()
-                    
+
                     logging.info(f"Searching Trakt for show '{sanitized_title}'{f' ({show_year})' if show_year else ''}")
-                    url = f"{trakt.base_url}/search/show?query={sanitized_title}"
-                    response = trakt._make_request(url)
+                    url = f"{trakt_client.TRAKT_BASE_URL}/search/show?query={sanitized_title}"
+                    response = trakt_client._make_request(url)
                     
                     if response and response.status_code == 200:
                         results = response.json()
@@ -332,16 +331,15 @@ def update_movie_ids():
                 if not metadata:
                     logging.warning(f"No metadata found in API for movie {movie_title} (imdb_id: {movie_imdb_id})")
                     # Try searching Trakt directly
-                    from cli_battery.app.trakt_metadata import TraktMetadata
-                    trakt = TraktMetadata()
-                    
+                    from cli_battery.app import trakt_client
+
                     sanitized_title = movie_title
                     if '(' in movie_title:
                         sanitized_title = movie_title[:movie_title.rfind('(')].strip()
-                    
+
                     logging.info(f"Searching Trakt for movie '{sanitized_title}'{f' ({movie_year})' if movie_year else ''}")
-                    url = f"{trakt.base_url}/search/movie?query={sanitized_title}"
-                    response = trakt._make_request(url)
+                    url = f"{trakt_client.TRAKT_BASE_URL}/search/movie?query={sanitized_title}"
+                    response = trakt_client._make_request(url)
                     
                     if response and response.status_code == 200:
                         results = response.json()
@@ -565,6 +563,60 @@ def update_movie_titles():
         cursor.close()
         conn.close()
 
+def cleanup_title_year_suffixes():
+    """
+    Database year-in-title cleanup.
+    Finds titles like 'Show Name (2023)' and strips the trailing year,
+    saving the original in title_aliases.
+    """
+    import sqlite3
+    import re
+    import json
+    import os
+
+    _year_pattern = re.compile(r'^(.+?)\s*\(\d{4}\)\s*$')
+
+    logging.info("[TitleCleanup] Starting database year-in-title cleanup")
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    db_path = os.path.join(db_content_dir, 'media_items.db')
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT id, title, title_aliases FROM media_items WHERE title LIKE '%(%)%'")
+        rows = cursor.fetchall()
+        updated = 0
+        for row in rows:
+            title = row['title'] or ''
+            m = _year_pattern.match(title)
+            if not m:
+                continue
+            clean_title = m.group(1).strip()
+            if not clean_title:
+                continue
+            aliases = []
+            if row['title_aliases']:
+                try:
+                    aliases = json.loads(row['title_aliases'])
+                except (json.JSONDecodeError, TypeError):
+                    aliases = []
+            if title not in aliases:
+                aliases.append(title)
+            cursor.execute(
+                "UPDATE media_items SET title = ?, title_aliases = ? WHERE id = ?",
+                (clean_title, json.dumps(aliases), row['id'])
+            )
+            updated += 1
+        conn.commit()
+        logging.info(f"[TitleCleanup] Done — cleaned {updated} title(s)")
+    except Exception as e:
+        logging.error(f"[TitleCleanup] Error: {e}", exc_info=True)
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def run_plex_library_maintenance():
     """
     Run maintenance tasks specific to Plex library management.
@@ -692,7 +744,25 @@ def run_plex_library_maintenance():
                     # If we can't resolve the path, skip this item
                     continue
                 
-                if not os.path.exists(full_path):
+                _missing = not os.path.exists(full_path)
+                if _missing and str(filled_by_torrent_id or '').startswith('nzb:'):
+                    # nzbdav safety net (READ-ONLY existence check — can only turn
+                    # 'missing' -> 'present', never cause a delete/re-grab). This
+                    # maintenance base is Plex.mounted_file_location, but nzbdav files
+                    # live on the Usenet Provider mount. Before declaring a Collected
+                    # nzb: item missing, also look on the usenet mount — otherwise an
+                    # nzbdav-only box left at the debrid default would wrongly re-grab
+                    # / DB-remove good items. Debrid/climount items skip this branch.
+                    _u_mount = (get_setting('Usenet Provider', 'mounted_file_location', '') or '').rstrip('/')
+                    if _u_mount.endswith('/__all__'):
+                        _u_mount = _u_mount[:-len('/__all__')]
+                    if _u_mount:
+                        try:
+                            if os.path.exists(os.path.join(_u_mount, location_on_disk)):
+                                _missing = False
+                        except Exception:
+                            pass
+                if _missing:
                     logging.warning(f"File not found for {title}: {full_path}")
                     missing_files.append({
                         'id': item_id,
@@ -1345,11 +1415,28 @@ def sync_episode_metadata():
                     if 'episodes' in season_data and isinstance(season_data['episodes'], dict):
                         for episode_number, episode_data in season_data['episodes'].items():
                             episode_title = episode_data.get('title', f"Episode {episode_number}")
+                            first_aired = episode_data.get('first_aired')
+
+                            # Extract date and time from first_aired (format: "2026-02-14 04:00:00" or "2026-02-14T04:00:00")
+                            release_date = None
+                            airtime = None
+                            if first_aired:
+                                try:
+                                    # Handle both space and T separator formats
+                                    first_aired_str = str(first_aired).replace('T', ' ')
+                                    if ' ' in first_aired_str:
+                                        date_part, time_part = first_aired_str.split(' ', 1)
+                                        release_date = date_part[:10]  # YYYY-MM-DD
+                                        airtime = time_part[:5]  # HH:MM
+                                    else:
+                                        release_date = first_aired_str[:10]
+                                except Exception as e:
+                                    logging.warning(f"Could not parse first_aired '{first_aired}' for {show_title} S{season_number}E{episode_number}: {e}")
 
                             if episode_title and season_number is not None and episode_number is not None:
-                                # Check if episode exists and if title is different
+                                # Check if episode exists
                                 cursor.execute("""
-                                    SELECT id, episode_title
+                                    SELECT id, episode_title, release_date, airtime
                                     FROM media_items
                                     WHERE imdb_id = ?
                                       AND type = 'episode'
@@ -1362,17 +1449,38 @@ def sync_episode_metadata():
                                 existing = cursor.fetchone()
                                 if existing:
                                     current_title = existing['episode_title']
+                                    current_release_date = existing['release_date']
+                                    current_airtime = existing['airtime']
 
-                                    # Only update if title changed
+                                    # Check if any field needs updating
+                                    needs_update = False
+                                    updates = []
+
                                     if current_title != episode_title:
+                                        needs_update = True
+                                        updates.append(f"title: '{current_title}' -> '{episode_title}'")
+
+                                    if release_date and (not current_release_date or current_release_date == 'Unknown'):
+                                        needs_update = True
+                                        updates.append(f"release_date: '{current_release_date}' -> '{release_date}'")
+
+                                    if airtime and current_airtime != airtime:
+                                        needs_update = True
+                                        updates.append(f"airtime: '{current_airtime}' -> '{airtime}'")
+
+                                    if needs_update:
                                         cursor.execute("""
                                             UPDATE media_items
                                             SET episode_title = ?,
+                                                release_date = COALESCE(?, release_date),
+                                                airtime = COALESCE(?, airtime),
                                                 metadata_updated = ?,
                                                 last_updated = ?
                                             WHERE id = ?
                                         """, (
                                             episode_title,
+                                            release_date,
+                                            airtime,
                                             datetime.now(),
                                             datetime.now(),
                                             existing['id']
@@ -1380,7 +1488,7 @@ def sync_episode_metadata():
 
                                         if cursor.rowcount > 0:
                                             show_updates += 1
-                                            logging.info(f"  Updated S{season_number:02d}E{episode_number:02d}: '{current_title}' -> '{episode_title}'")
+                                            logging.info(f"  Updated S{season_number:02d}E{episode_number:02d}: {', '.join(updates)}")
 
                 if show_updates > 0:
                     logging.info(f"Updated {show_updates} episode titles for '{show_title}' from {source}")

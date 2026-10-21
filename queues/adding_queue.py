@@ -14,19 +14,240 @@ from utilities.settings import get_setting
 from .torrent_processor import TorrentProcessor
 from .media_matcher import MediaMatcher
 from database.torrent_tracking import update_adding_error
+from database.scraper_grabs import record_grab, mark_current_grab, queue_grab_trigger
+
+
+def accepts_uncached_now(item: Dict[str, Any], item_identifier: str) -> bool:
+    """Whether the Adding queue takes uncached torrents for this item on its first pass:
+    released within accept_uncached_within_hours, or uncached_content_handling Full.
+    Hybrid mode's cached-then-uncached second pass is separate (hybrid_mode)."""
+    accept_uncached_within_hours = int(get_setting('Scraping', 'accept_uncached_within_hours', 0))
+    accept_uncached = False
+    # Determine if we should accept uncached based on recency
+    logging.info(f"Accepting uncached within {accept_uncached_within_hours} hours")
+    if accept_uncached_within_hours > 0:
+        release_date_str = item.get('release_date')
+        airtime_str = item.get('airtime')
+        release_datetime = None
+        if release_date_str and release_date_str != 'Unknown':
+            try:
+                release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                if airtime_str:
+                    try:
+                        try:
+                            airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
+                        except ValueError:
+                            airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                    except ValueError:
+                        airtime = datetime.strptime("00:00", '%H:%M').time()
+                else:
+                    airtime = datetime.strptime("00:00", '%H:%M').time()
+                release_datetime = datetime.combine(release_date, airtime)
+                # Apply offset based on type
+                offset_hours = 0.0
+                if item.get('type') == 'movie':
+                    offset_setting = get_setting("Queue", "movie_airtime_offset", "19")
+                    try:
+                        offset_hours = float(offset_setting)
+                    except (ValueError, TypeError):
+                        offset_hours = 19.0
+                elif item.get('type') == 'episode':
+                    offset_setting = get_setting("Queue", "episode_airtime_offset", "0")
+                    try:
+                        offset_hours = float(offset_setting)
+                    except (ValueError, TypeError):
+                        offset_hours = 0.0
+                release_datetime += timedelta(hours=offset_hours)
+                now = datetime.now()
+                hours_since_release = (now - release_datetime).total_seconds() / 3600.0
+                logging.info(f"Hours since release: {hours_since_release}")
+                if 0 <= hours_since_release <= accept_uncached_within_hours:
+                    logging.info(f"Accepting uncached release for {item_identifier} because it was released within the last {accept_uncached_within_hours} hours")
+                    accept_uncached = True
+            except Exception:
+                pass
+    # If not set by recency, use normal uncached_content_handling
+    if not accept_uncached:
+        if get_setting('Scraping', 'uncached_content_handling', 'None') == 'None':
+            accept_uncached = False
+        elif get_setting('Scraping', 'uncached_content_handling') == 'Full':
+            accept_uncached = True
+        else: # Hybrid mode is the default if not None or Full
+            accept_uncached = False # Start with cached only for hybrid
+    return accept_uncached
+
+
+def torrent_has_other_active_owner(torrent_id: str, exclude_item_id) -> bool:
+    """True if another media_items row still actively depends on this torrent_id.
+
+    Debrid season-pack sibling reuse (torrent_processor.py's _check_sibling_debrid_pack)
+    means multiple episodes can now legitimately share the same torrent_id — something
+    that never happened before that fix, since every debrid torrent used to belong to
+    exactly one item. Callers that remove a torrent from the debrid service in response
+    to *this* item's own failure (no matching files, filter match, failed playability
+    check, etc.) must check this first: removing a still-needed shared pack breaks every
+    sibling relying on it, even though only one of them actually failed.
+    """
+    if not torrent_id or str(torrent_id).startswith('nzb:'):
+        return False
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM media_items WHERE filled_by_torrent_id=? AND id!=? "
+                "AND state IN ('Adding','Checking','Collected','Upgrading') LIMIT 1",
+                (torrent_id, exclude_item_id)
+            ).fetchone()
+        finally:
+            conn.close()
+        return row is not None
+    except Exception as e:
+        logging.warning(f"Could not check for other owners of torrent {torrent_id}: {e} — assuming shared, skipping removal to be safe")
+        return True
+
+
+def cancel_superseded_nzb_job(
+    item: Dict[str, Any],
+    new_checking_id: str,
+    downloading_job_ids: Optional[set] = None,
+) -> None:
+    """Cancel a prior cli_mount NZB job when this item is about to bind a different one.
+
+    Prevents orphan jobs when the Adding queue cycles scrape results faster than the
+    NZB health-check task tracks a single filled_by_torrent_id.
+    """
+    prev = str(item.get('filled_by_torrent_id') or '')
+    new_id = str(new_checking_id or '')
+    item_id = item.get('id')
+    if not prev.startswith('nzb:') or not new_id.startswith('nzb:') or prev == new_id:
+        return
+    prev_job = prev[4:]
+    if not prev_job:
+        return
+    try:
+        from utilities.nzb_failure_cleanup import blacklist_and_cleanup_nzb_failure
+        blacklist_and_cleanup_nzb_failure(
+            item,
+            f'Superseded by new NZB submission ({new_id})',
+            clear_filled_by=False,
+            set_rescrape_title=True,
+        )
+    except Exception as e:
+        logging.debug(f'[NZB] Could not blacklist superseded job for item {item_id}: {e}')
+    if not torrent_has_other_active_owner(prev, item_id):
+        remove_unwanted_torrent(
+            prev,
+            is_nzb=True,
+            removal_reason=f'Superseded by new NZB submission ({new_id}) for item {item_id}',
+        )
+    else:
+        logging.info(f'[NZB] Keeping superseded job {prev_job} — other item(s) still reference it')
+    if downloading_job_ids is not None:
+        downloading_job_ids.discard(prev_job)
+
+
+def remove_unwanted_torrent(torrent_id: str, is_nzb: bool = False, debrid_provider=None, removal_reason: str = "Removed due to unwanted media item"):
+    """
+    Remove an unwanted torrent from the debrid service and track the removal.
+
+    Args:
+        torrent_id: ID of the torrent to remove. May be an 'nzb:'-prefixed or bare
+            cli_mount job ID rather than a real debrid torrent ID — pass is_nzb=True
+            (or use the 'nzb:' prefix) so it's routed to cli_mount instead of the
+            debrid provider.
+        is_nzb: True if torrent_id identifies a cli_mount NZB job, not a debrid torrent.
+        debrid_provider: Provider instance to use; fetched fresh via get_debrid_provider()
+            if not supplied (callers that already hold one, e.g. AddingQueue, should pass
+            it to avoid a redundant re-init).
+    """
+    if not torrent_id:
+        logging.warning("Attempted to remove torrent with empty ID")
+        return
+
+    # NZB job IDs are never valid debrid torrent IDs — calling
+    # get_torrent_info/remove_torrent on one 404s against the debrid provider.
+    # Cancel the Usenet provider job instead.
+    if is_nzb or str(torrent_id).startswith('nzb:'):
+        job_hash = torrent_id[4:] if str(torrent_id).startswith('nzb:') else torrent_id
+        try:
+            from usenet import get_usenet_client
+            get_usenet_client().remove_nzb(job_hash)
+            logging.info(f"Cancelled unwanted NZB job {job_hash}")
+        except Exception as e:
+            logging.warning(f"Could not cancel NZB job {job_hash}: {e}")
+        return
+
+    if debrid_provider is None:
+        debrid_provider = get_debrid_provider()
+
+    hash_value = None # Initialize hash_value
+    try:
+        # Get torrent info before removal to record hash
+        try:
+            info = debrid_provider.get_torrent_info(torrent_id)
+            if info:
+                hash_value = info.get('hash', '').lower()
+                if hash_value:
+                    from database.not_wanted_magnets import add_to_not_wanted
+                    try:
+                        add_to_not_wanted(hash_value)
+                        logging.info(f"Added hash {hash_value} to not wanted list")
+                    except Exception as e:
+                        logging.error(f"Failed to add to not wanted list: {str(e)}")
+        except Exception as e:
+            logging.warning(f"Could not get torrent info before removal: {str(e)}")
+
+        # Remove the torrent with a descriptive reason
+        debrid_provider.remove_torrent(
+            torrent_id,
+            removal_reason=removal_reason
+        )
+        logging.info(f"Successfully removed unwanted torrent {torrent_id}")
+
+        # Update tracking record with adding error (use hash if available)
+        if hash_value:
+            try:
+                update_adding_error(hash_value)
+            except Exception as e:
+                logging.debug(f"Failed to update tracking record for adding error: {str(e)}")
+        else:
+             logging.warning(f"Could not update adding error count as hash was not found for torrent {torrent_id}")
+
+    except Exception as e:
+        logging.error(f"Failed to remove unwanted torrent {torrent_id}: {str(e)}", exc_info=True)
+
+
+def chosen_result_score_fields(chosen_result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """current_score and resolution to store for the release an item was filled with.
+
+    Only keys with a value are returned, so a missing score never overwrites one.
+    """
+    if not chosen_result:
+        return {}
+    fields = {}
+    score = (chosen_result.get('score_breakdown') or {}).get('total_score')
+    if score is not None:
+        fields['current_score'] = score
+    if chosen_result.get('resolution'):
+        fields['resolution'] = chosen_result['resolution']
+    return fields
+
 
 class AddingQueue:
     """Manages the queue of items being added to the debrid service"""
     
     def __init__(self):
         """Initialize the queue manager"""
-        self.debrid_provider = get_debrid_provider()
+        self.debrid_provider = get_debrid_provider()  # May be None for usenet-only setups
         self.torrent_processor = TorrentProcessor(self.debrid_provider)
         self.media_matcher = MediaMatcher(relaxed_matching=get_setting('Matching', 'relaxed_matching', False))
         self.items: List[Dict] = []
         self.last_process_time = {}
-        # logging.info("Initialized AddingQueue")
-        
+        self._nzb_submitted_ids: set = set()  # IDs submitted to cli_mount; guards concurrent process() calls
+        self._adding_ticks: dict = {}  # item_id → tick count in Adding; at 3 → not-wanted + Wanted
+        self._nzb_downloading_job_ids: set = set()  # job IDs confirmed actively downloading; skip in Adding loop
+
     def reinitialize_provider(self):
         """Reinitialize the debrid provider and processors"""
         self.debrid_provider = get_debrid_provider()
@@ -46,6 +267,16 @@ class AddingQueue:
             logging.info(f"Added items to queue during update: {added}")
         if removed:
             logging.info(f"Removed items from queue during update: {removed}")
+            self._nzb_submitted_ids -= removed
+            for _rid in removed:
+                self._adding_ticks.pop(_rid, None)
+            # Clean up downloading set: remove job IDs no longer referenced by any remaining item
+            _active_job_ids = {
+                str(item.get('filled_by_torrent_id', ''))[4:]
+                for item in self.items
+                if str(item.get('filled_by_torrent_id', '')).startswith('nzb:')
+            }
+            self._nzb_downloading_job_ids &= _active_job_ids
         if len(self.items) > 0:
             logging.debug(f"Queue now contains {len(self.items)} items")
         
@@ -74,58 +305,25 @@ class AddingQueue:
             self.items = [i for i in self.items if i['id'] != item_id]
             if len(self.items) < old_len:
                 logging.info(f"Removed item {item_id} from queue")
+                self._nzb_submitted_ids.discard(item_id)
+                self._adding_ticks.pop(item_id, None)
             else:
                 logging.debug(f"Attempted to remove item {item_id} but it was not in queue")
         else:
             logging.error("Attempted to remove item without ID from queue")
         
-    def remove_unwanted_torrent(self, torrent_id: str):
-        """
-        Remove an unwanted torrent from the debrid service and track the removal
-        
-        Args:
-            torrent_id: ID of the torrent to remove
-        """
-        if not torrent_id:
-            logging.warning("Attempted to remove torrent with empty ID")
-            return
-            
-        hash_value = None # Initialize hash_value
-        try:
-            # Get torrent info before removal to record hash
-            try:
-                info = self.debrid_provider.get_torrent_info(torrent_id)
-                if info:
-                    hash_value = info.get('hash', '').lower()
-                    if hash_value:
-                        from database.not_wanted_magnets import add_to_not_wanted
-                        try:
-                            add_to_not_wanted(hash_value)
-                            logging.info(f"Added hash {hash_value} to not wanted list")
-                        except Exception as e:
-                            logging.error(f"Failed to add to not wanted list: {str(e)}")
-            except Exception as e:
-                logging.warning(f"Could not get torrent info before removal: {str(e)}")
-                
-            # Remove the torrent with a descriptive reason
-            self.debrid_provider.remove_torrent(
-                torrent_id,
-                removal_reason="Removed due to no matching files for media item"
-            )
-            logging.info(f"Successfully removed unwanted torrent {torrent_id}")
-            
-            # Update tracking record with adding error (use hash if available)
-            if hash_value:
-                try:
-                    update_adding_error(hash_value)
-                except Exception as e:
-                    logging.error(f"Failed to update tracking record for adding error: {str(e)}")
-            else:
-                 logging.warning(f"Could not update adding error count as hash was not found for torrent {torrent_id}")
-            
-        except Exception as e:
-            logging.error(f"Failed to remove unwanted torrent {torrent_id}: {str(e)}", exc_info=True)
-                
+    def _torrent_has_other_active_owner(self, torrent_id: str, exclude_item_id) -> bool:
+        return torrent_has_other_active_owner(torrent_id, exclude_item_id)
+
+    def remove_unwanted_torrent(self, torrent_id: str, is_nzb: bool = False):
+        """Remove an unwanted torrent from the debrid service and track the removal."""
+        remove_unwanted_torrent(
+            torrent_id,
+            is_nzb=is_nzb,
+            debrid_provider=self.debrid_provider,
+            removal_reason="Removed due to no matching files for media item"
+        )
+
     def process(self, queue_manager: Any, ignore_upgrade_lock: bool = False) -> bool:
         """
         Process items in the queue
@@ -139,8 +337,12 @@ class AddingQueue:
         """
         if not self.items:
             return False
-        
+
         from database import update_media_item, get_all_media_items, get_media_item_by_id
+
+        # NZB health checks are handled by task_nzb_health_check (separate scheduled task)
+        # so the Adding queue tick is free to process debrid items without blocking.
+
 
         success = False
         items_to_process = []
@@ -160,6 +362,11 @@ class AddingQueue:
                  logging.debug(f"[{item_identifier_log}] Skipping processing for item {item_id} - locked by upgrade process.")
                  continue
 
+             # Skip items whose NZB job is confirmed actively downloading — health check owns them
+             _tid = str(item.get('filled_by_torrent_id', ''))
+             if _tid.startswith('nzb:') and _tid[4:] in self._nzb_downloading_job_ids:
+                 continue
+
              items_to_process.append(item)
 
         if not items_to_process:
@@ -168,7 +375,7 @@ class AddingQueue:
 
         logging.info(f"Adding Queue - Starting processing of {len(items_to_process)} available items")
             
-        # --- START EDIT: Get Wanted Queue items ONCE before the loop ---
+        # Get Wanted Queue items ONCE before the loop
         wanted_items = []
         scraping_items = []
         try:
@@ -184,14 +391,12 @@ class AddingQueue:
                  logging.warning("Scraping queue not found in QueueManager.")
         except Exception as e:
             logging.error(f"Error getting Wanted/Scraping queue contents: {e}")
-        # --- END EDIT ---
 
-        # --- START EDIT: Fetch setting from Queue section ---
+        # Fetch setting from Queue section
         try:
             delay_seconds = float(get_setting('Queue', 'item_process_delay_seconds', 0.0))
         except (ValueError, TypeError):
             delay_seconds = 0.0
-        # --- END EDIT ---
 
         for item in items_to_process:
             item_identifier = f"{item.get('title')} ({item.get('type')})"
@@ -199,8 +404,83 @@ class AddingQueue:
             if not item_id:
                 logging.warning(f"Skipping item without ID in AddingQueue: {item.get('title')}")
                 continue
+
+            # Skip NZB items already submitted to cli_mount — handled by health check loop above.
+            # Tick counter only increments for items NOT yet submitted (no nzb: torrent_id).
+            if str(item.get('filled_by_torrent_id', '')).startswith('nzb:'):
+                logging.debug(f"Skipping item {item_id} — already submitted as NZB, awaiting health check")
+                continue
+
+            # --- Timeout: items with no torrent_id AND no scrape_results stuck in Adding → Wanted ---
+            # Only fires for truly empty items (nothing to try). Items WITH scrape_results
+            # are allowed to cycle through them naturally → _handle_failed_item → Sleeping/Blacklisted.
+            # Uses last_updated timestamp so the check survives app restarts.
+            self._adding_ticks[item_id] = self._adding_ticks.get(item_id, 0) + 1
+            _has_scrape_results = bool(item.get('scrape_results'))
+            _is_timed_out = False
+            if not _has_scrape_results:
+                _last_updated = item.get('last_updated')
+                if _last_updated:
+                    try:
+                        from datetime import datetime as _dt
+                        _lu = _dt.fromisoformat(str(_last_updated).replace('Z', '+00:00').split('+')[0])
+                        _age_minutes = (_dt.now() - _lu).total_seconds() / 60
+                        if _age_minutes > 2:
+                            _is_timed_out = True
+                    except Exception:
+                        pass
+                if not _is_timed_out and self._adding_ticks[item_id] >= 15:
+                    _is_timed_out = True
+            if _is_timed_out:
+                logging.warning(f"[AddingQueue] Item {item_id} ({item_identifier}) timed out in Adding (no torrent_id) — adding NZB URL to not-wanted and moving to Wanted")
+                try:
+                    nzb_url = item.get('filled_by_magnet', '')
+                    if nzb_url:
+                        from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nw_tick
+                        _add_nw_tick(nzb_url)
+                        logging.info(f"[AddingQueue] Added {nzb_url[:60]}... to not-wanted")
+                except Exception:
+                    pass
+                self._adding_ticks.pop(item_id, None)
+                queue_manager.move_to_wanted(item, 'Adding')
+                continue
+
+            # If item has no torrent_id and is an episode already Collected under any
+            # entry with same imdb+season+episode+version, restore to Collected directly.
+            if not item.get('filled_by_torrent_id') and item.get('type') == 'episode' and item.get('episode_number') is not None:
+                try:
+                    from database import get_db_connection as _gdb_aq
+                    _conn_aq = _gdb_aq()
+                    try:
+                        _cnt_aq = _conn_aq.execute(
+                            "SELECT COUNT(*) FROM media_items "
+                            "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                            "AND version=? AND type='episode' AND state='Collected'",
+                            (item.get('imdb_id'), item.get('season_number'),
+                             item.get('episode_number'), item.get('version'))
+                        ).fetchone()[0]
+                    finally:
+                        _conn_aq.close()
+                    if _cnt_aq:
+                        logging.info(f"Item {item_id} ({item.get('title')} S{item.get('season_number')}E{item.get('episode_number')}) already Collected under different entry — restoring state")
+                        from database.database_writing import update_media_item_state
+                        update_media_item_state(item_id, 'Collected')
+                        self.remove_item(item)
+                        continue
+                except Exception:
+                    pass
+            # Guard against concurrent process() calls: also check the shared submitted set.
+            # If the item is in the submitted set but has no torrent_id, it was reset — clear it.
+            if item_id in self._nzb_submitted_ids:
+                if not str(item.get('filled_by_torrent_id', '')).startswith('nzb:'):
+                    logging.debug(f"Item {item_id} in submitted set but has no nzb torrent_id — clearing stale entry")
+                    self._nzb_submitted_ids.discard(item_id)
+                else:
+                    logging.debug(f"Skipping item {item_id} — in submitted set, awaiting health check")
+                    continue
             logging.info(f"Processing item {item_id}: {item_identifier}")
             processed_this_item = False # Flag for applying delay
+            _nzb_attempt_made = False  # Flag: NZB item was attempted this tick
 
             try:
                 # --- Load scrape_results ---
@@ -223,6 +503,15 @@ class AddingQueue:
                     self._handle_failed_item(item, "No results found", queue_manager)
                     continue
 
+                from debrid import get_debrid_providers
+                from utilities.acquisition_health import usable_results, log_deferred
+                # Keep the durable candidate list intact. An unavailable
+                # backend is not a dead release or an acquisition failure.
+                results = usable_results(results, get_debrid_providers())
+                if not results:
+                    log_deferred(item_identifier, 'every release needs an acquisition backend that is unavailable')
+                    continue
+
                 logging.info(f"Found {len(results)} scrape results for {item_identifier}")
 
                 # Add original_scraped_torrent_title to results if missing (important for later matching)
@@ -231,59 +520,12 @@ class AddingQueue:
                          result['original_scraped_torrent_title'] = result.get('original_title')
 
                 # --- Select Torrent (cached/uncached logic) ---
-                accept_uncached_within_hours = int(get_setting('Scraping', 'accept_uncached_within_hours', 0))
-                accept_uncached = False
-                # Determine if we should accept uncached based on recency
-                logging.info(f"Accepting uncached within {accept_uncached_within_hours} hours")
-                if accept_uncached_within_hours > 0:
-                    release_date_str = item.get('release_date')
-                    airtime_str = item.get('airtime')
-                    release_datetime = None
-                    if release_date_str and release_date_str != 'Unknown':
-                        try:
-                            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-                            if airtime_str:
-                                try:
-                                    try:
-                                        airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
-                                    except ValueError:
-                                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                                except ValueError:
-                                    airtime = datetime.strptime("00:00", '%H:%M').time()
-                            else:
-                                airtime = datetime.strptime("00:00", '%H:%M').time()
-                            release_datetime = datetime.combine(release_date, airtime)
-                            # Apply offset based on type
-                            offset_hours = 0.0
-                            if item.get('type') == 'movie':
-                                offset_setting = get_setting("Queue", "movie_airtime_offset", "19")
-                                try:
-                                    offset_hours = float(offset_setting)
-                                except (ValueError, TypeError):
-                                    offset_hours = 19.0
-                            elif item.get('type') == 'episode':
-                                offset_setting = get_setting("Queue", "episode_airtime_offset", "0")
-                                try:
-                                    offset_hours = float(offset_setting)
-                                except (ValueError, TypeError):
-                                    offset_hours = 0.0
-                            release_datetime += timedelta(hours=offset_hours)
-                            now = datetime.now()
-                            hours_since_release = (now - release_datetime).total_seconds() / 3600.0
-                            logging.info(f"Hours since release: {hours_since_release}")
-                            if 0 <= hours_since_release <= accept_uncached_within_hours:
-                                logging.info(f"Accepting uncached release for {item_identifier} because it was released within the last {accept_uncached_within_hours} hours")
-                                accept_uncached = True
-                        except Exception:
-                            pass
-                # If not set by recency, use normal uncached_content_handling
-                if not accept_uncached:
-                    if get_setting('Scraping', 'uncached_content_handling', 'None') == 'None':
-                        accept_uncached = False
-                    elif get_setting('Scraping', 'uncached_content_handling') == 'Full':
-                        accept_uncached = True
-                    else: # Hybrid mode is the default if not None or Full
-                        accept_uncached = False # Start with cached only for hybrid
+                accept_uncached = accepts_uncached_now(item, item_identifier)
+
+                # Mark if this is an NZB item — one attempt per tick to keep queue flowing
+                _first_res = results[0] if results else {}
+                if isinstance(_first_res, dict) and (_first_res.get('protocol') == 'nzb' or _first_res.get('nzb_url')):
+                    _nzb_attempt_made = True
 
                 # Now returns torrent_info, magnet, and chosen_result_info
                 torrent_info, magnet, chosen_result_info = self._process_results_with_mode(
@@ -306,12 +548,50 @@ class AddingQueue:
 
                 # Use torrent_info and magnet for the check, chosen_result_info is handled later
                 if (not torrent_info or not magnet): # Check again after potential uncached attempt
+                    _all_candidates = item.get('scrape_results', [])
+                    if isinstance(_all_candidates, str):
+                        _all_candidates = json.loads(_all_candidates)
+                    if any(r not in usable_results(_all_candidates, get_debrid_providers())
+                           for r in _all_candidates):
+                        # A healthy candidate can fail without exhausting the
+                        # preserved candidates of an unavailable alternative.
+                        log_deferred(item_identifier, 'remaining releases need an acquisition backend that is unavailable')
+                        continue
                     logging.error(f"No valid torrent info or magnet found for {item_identifier} after checking cache/uncached modes.")
                     if torrent_info and torrent_info.get('id'):
                        item['torrent_id'] = torrent_info.get('id')
                     elif chosen_result_info:
                         pass
-                    self._handle_failed_item(item, "No valid results found after cache/uncached processing", queue_manager)
+                    # NZB item: if results remain, stay in Adding and retry next tick.
+                    # Re-read from item dict since process_results may have popped result[0].
+                    _remaining_sr = item.get('scrape_results', [])
+                    if isinstance(_remaining_sr, str):
+                        try:
+                            import json as _json_aq2
+                            _remaining_sr = _json_aq2.loads(_remaining_sr)
+                        except Exception:
+                            _remaining_sr = []
+                    _is_nzb_item = any(
+                        (r.get('protocol') == 'nzb' or r.get('nzb_url'))
+                        for r in _remaining_sr
+                    ) if _remaining_sr else False
+                    if _is_nzb_item:
+                        logging.info(f"[AddingQueue] NZB attempt failed for {item_identifier}, {len(_remaining_sr)} result(s) remaining — retrying next tick")
+                        # Rotate to end so other items aren't starved by one slow NZB
+                        try:
+                            self.items.remove(item)
+                            self.items.append(item)
+                        except Exception:
+                            pass
+                        continue
+                    # All NZB candidates exhausted — distinguish missing-segments (expired usenet)
+                    # from general failure so _handle_failed_item can route to Sleeping instead of Blacklist
+                    _nzb_exhausted_error = (
+                        "NZB exhausted: all candidates had missing segments (expired usenet)"
+                        if item.get('_nzb_all_missing_segments')
+                        else "No valid results found after cache/uncached processing"
+                    )
+                    self._handle_failed_item(item, _nzb_exhausted_error, queue_manager)
                     continue
 
                 # --- Apply filename filters ---
@@ -320,6 +600,50 @@ class AddingQueue:
                 if filename_filter_out_list:
                     filters = [f.strip().lower() for f in filename_filter_out_list.split(',') if f.strip()]
 
+                _is_nzb_result = bool(torrent_info.get('_is_nzb'))
+
+                def _suppress_filtered_result(reason: str):
+                    """Mark this exact release as not-wanted so re-scraping won't re-select it,
+                    and cancel any cli_mount job already submitted for it."""
+                    if _is_nzb_result:
+                        _guid = ''
+                        if chosen_result_info:
+                            _guid = (chosen_result_info.get('parsed_info', {}) or {}).get('guid') or ''
+                        _nzb_url = _guid or torrent_info.get('_nzb_url', '')
+                        if _nzb_url:
+                            try:
+                                from database.not_wanted_magnets import add_to_not_wanted_nzb_guid
+                                add_to_not_wanted_nzb_guid(_nzb_url)
+                                logging.info(f"Added NZB guid for {_nzb_url} to not-wanted list ({reason})")
+                            except Exception as _e:
+                                logging.warning(f"Could not add NZB guid to not-wanted list: {_e}")
+                        else:
+                            logging.warning(f"Could not determine NZB guid/URL to suppress rejected result ({reason})")
+                        _seg_id = torrent_info.get('_nzb_segment_id', '')
+                        if _seg_id:
+                            try:
+                                from database.not_wanted_magnets import add_to_not_wanted_nzb_segment
+                                add_to_not_wanted_nzb_segment(_seg_id)
+                            except Exception as _e:
+                                logging.warning(f"Could not add NZB segment to not-wanted list: {_e}")
+                        _job_id = torrent_info.get('id', '')
+                        if _job_id:
+                            try:
+                                from usenet import get_usenet_client
+                                get_usenet_client().remove_nzb(_job_id)
+                                logging.info(f"Cancelled rejected NZB job {_job_id} ({reason})")
+                            except Exception as _e:
+                                logging.warning(f"Could not cancel rejected NZB job {_job_id}: {_e}")
+                    else:
+                        _hash = (torrent_info.get('hash') or '').lower()
+                        if _hash:
+                            try:
+                                from database.not_wanted_magnets import add_to_not_wanted
+                                add_to_not_wanted(_hash)
+                                logging.info(f"Added hash {_hash} to not-wanted list ({reason})")
+                            except Exception as _e:
+                                logging.warning(f"Could not add hash to not-wanted list: {_e}")
+
                 # 1. Filter torrent's original_filename
                 original_torrent_filename = torrent_info.get('original_filename')
                 if original_torrent_filename and filters:
@@ -327,7 +651,8 @@ class AddingQueue:
                     if any(filter_term in original_torrent_filename_lower for filter_term in filters):
                         logging.warning(f"Torrent's original_filename '{original_torrent_filename}' matches filter list: {filters}. Rejecting entire torrent.")
                         item['torrent_id'] = torrent_info.get('id')
-                        self._handle_failed_item(item, f"Torrent's original name '{original_torrent_filename}' matched filter-out list", queue_manager)
+                        _suppress_filtered_result("filename filter match")
+                        self._handle_failed_item(item, f"Torrent's original name '{original_torrent_filename}' matched filter-out list", queue_manager, is_nzb=_is_nzb_result)
                         processed_this_item = True
                         continue
 
@@ -335,19 +660,67 @@ class AddingQueue:
                 potential_torrent_title_from_info = torrent_info.get('title')
                 if not potential_torrent_title_from_info and chosen_result_info:
                     potential_torrent_title_from_info = chosen_result_info.get('title')
-                
+
                 if potential_torrent_title_from_info and filters:
                     potential_torrent_title_lower = potential_torrent_title_from_info.lower()
                     if any(filter_term in potential_torrent_title_lower for filter_term in filters):
                         logging.warning(f"Torrent's determined title '{potential_torrent_title_from_info}' matches filter list: {filters}. Rejecting torrent.")
                         item['torrent_id'] = torrent_info.get('id')
-                        self._handle_failed_item(item, f"Torrent's title '{potential_torrent_title_from_info}' matched filter-out list", queue_manager)
+                        _suppress_filtered_result("title filter match")
+                        self._handle_failed_item(item, f"Torrent's title '{potential_torrent_title_from_info}' matched filter-out list", queue_manager, is_nzb=_is_nzb_result)
                         processed_this_item = True
                         continue
 
                 # If we reach here, original_filename and potential_torrent_title are acceptable.
                 # The original_torrent_filename variable already holds the vetted name for 'real_debrid_original_title'.
                 # The logic later that determines 'torrent_title' for move_to_checking will use the vetted title parts.
+
+                # --- NZB / Usenet result — poll cli_mount until complete, health check, then move to Checking ---
+                if torrent_info.get('_is_nzb'):
+                    job_id = torrent_info.get('id', '')
+                    nzb_title = torrent_info.get('filename', item_identifier)
+                    nzb_url = torrent_info.get('_nzb_url', '')
+                    nzb_original_title = torrent_info.get('original_title') or nzb_title
+                    nzb_segment_id = torrent_info.get('_nzb_segment_id', '')
+                    checking_id = f"nzb:{job_id}" if job_id and not str(job_id).startswith('nzb:') else str(job_id)
+
+                    cancel_superseded_nzb_job(
+                        item,
+                        checking_id,
+                        downloading_job_ids=self._nzb_downloading_job_ids,
+                    )
+
+                    # Store the checking_id on the item so we can poll it next tick
+                    from database.database_writing import update_media_item
+                    _seg_id_kwargs = {'nzb_segment_id': nzb_segment_id} if nzb_segment_id else {}
+                    # The torrent path writes score/resolution further down, but NZB items
+                    # `continue` before reaching it, so every queue-added NZB item used to be
+                    # saved with score 0 and no resolution.
+                    _nzb_score_kwargs = chosen_result_score_fields(chosen_result_info)
+                    update_media_item(item['id'],
+                        filled_by_torrent_id=checking_id,
+                        filled_by_file=nzb_title,
+                        filled_by_title=nzb_title,
+                        filled_by_magnet=nzb_url,
+                        original_scraped_torrent_title=nzb_original_title,
+                        **_seg_id_kwargs,
+                        **_nzb_score_kwargs,
+                    )
+                    item.update(_nzb_score_kwargs)
+                    # Update in-memory dict so next Adding tick skips this item (line 206 check)
+                    item['filled_by_torrent_id'] = checking_id
+                    item['filled_by_file'] = nzb_title
+                    item['filled_by_title'] = nzb_title
+                    item['filled_by_magnet'] = nzb_url
+                    item['nzb_segment_id'] = nzb_segment_id
+                    # Keep segment ID in memory on the item dict for health check failure handling
+                    item['_nzb_segment_id'] = nzb_segment_id
+                    self._nzb_submitted_ids.add(item['id'])
+                    record_grab(item, chosen_result_info, kind='nzb', release_title=nzb_original_title,
+                                trigger=queue_grab_trigger(item))
+                    logging.info(f"[NZB] Item '{item_identifier}' submitted to cli_mount (checking_id={checking_id}). Staying in Adding for health check.")
+                    processed_this_item = True
+                    continue
 
                 # --- Process Files (Parse Once) ---
                 raw_files = torrent_info.get('files', [])
@@ -461,6 +834,7 @@ class AddingQueue:
                     continue
 
                 matched_file_basename = match_result[0] # Now contains basename
+                debrid_folder_name = torrent_info.get('debrid_folder_name') or torrent_title
                 logging.info(f"Best matching file (basename) for {item_identifier}: {matched_file_basename}")
 
 
@@ -471,9 +845,13 @@ class AddingQueue:
                     from_queue="Adding",
                     title=torrent_title, # This title has now been effectively filtered
                     link=magnet,
-                    filled_by_file=matched_file_basename, 
-                    torrent_id=torrent_info.get('id')
+                    filled_by_file=matched_file_basename,
+                    torrent_id=torrent_info.get('id'),
+                    debrid_folder_name=debrid_folder_name,
+                    debrid_provider=torrent_info.get('_provider'),
                 )
+                record_grab(item, chosen_result_info, kind='torrent', release_title=torrent_title,
+                            info_hash=torrent_info.get('hash'), trigger=queue_grab_trigger(item))
                 processed_this_item = True # Mark primary item as processed for delay logic
 
                 logging.info(f"Removing successfully processed item {item_id} from adding queue memory")
@@ -517,8 +895,15 @@ class AddingQueue:
                                 title=torrent_title,
                                 link=magnet,
                                 filled_by_file=related_file_basename, # Pass the basename
-                                torrent_id=torrent_info.get('id')
+                                torrent_id=torrent_info.get('id'),
+                                debrid_folder_name=debrid_folder_name,
+                                # Same torrent as the primary item, so the same provider
+                                # holds it -- a related episode left unstamped would fall
+                                # back to polling the primary and 404 on its own.
+                                debrid_provider=torrent_info.get('_provider'),
                             )
+                            record_grab(related_item, chosen_result_info, kind='torrent',
+                                        release_title=torrent_title, info_hash=torrent_info.get('hash'))
                             # move_to_checking handles removal from original queue (Scraping/Wanted)
 
                 success = True # Mark overall success if primary item processed
@@ -533,6 +918,11 @@ class AddingQueue:
                 if processed_this_item and delay_seconds > 0:
                     logging.debug(f"Adding Queue: Applying {delay_seconds}s delay after processing item {item_id}.")
                     time.sleep(delay_seconds)
+
+            # NZB items: one attempt per tick so all items in Adding get a turn.
+            # The item stays in Adding with its updated scrape_results for next tick.
+            if _nzb_attempt_made:
+                break
 
         return success
 
@@ -554,7 +944,8 @@ class AddingQueue:
             torrent_info, magnet, chosen_result = self.torrent_processor.process_results(
                 results,
                 accept_uncached=accept_uncached,
-                item=item
+                item=item,
+                adding_queue_items=self.items,
             )
 
             return torrent_info, magnet, chosen_result # Return all three
@@ -564,11 +955,14 @@ class AddingQueue:
             logging.error(f"Cannot call _handle_failed_item from _process_results_with_mode directly.")
             return None, None, None # Return None for all three on error
 
-    def _handle_failed_item(self, item: Dict, error: str, queue_manager: Any):
+    def _handle_failed_item(self, item: Dict, error: str, queue_manager: Any, *, is_nzb: bool = False):
         """
         Handle a failed item by moving it back to Wanted queue if media matching failed,
         or to Sleeping/Blacklisted state for other failures, correctly handling upgrades.
         (Keep existing logic, but note the matching error messages might change slightly)
+
+        is_nzb: True if item['torrent_id'] identifies a cli_mount NZB job rather than a
+            debrid torrent — routes removal to cli_mount instead of the debrid provider.
         """
         from database import get_media_item_by_id, update_media_item
         from queues.upgrading_queue import UpgradingQueue
@@ -578,10 +972,13 @@ class AddingQueue:
         is_upgrade = item.get('upgrading') or item.get('upgrading_from') is not None
         upgrading_queue = None
         item_id = item.get('id') # Get item ID early
+        mark_current_grab(item_id, 'failed', error)
 
         try:
             if is_upgrade:
                 logging.warning(f"Handling failed upgrade for {item_identifier}: {error}")
+                # Store reason on item so upgrading_queue can log it to activity
+                item['_upgrade_failure_reason'] = error
                 upgrading_queue = UpgradingQueue() # Create instance only if needed
 
                 notification_data = {
@@ -616,14 +1013,18 @@ class AddingQueue:
                     upgrading_queue.add_failed_upgrade(item['id'], failed_info)
                     logging.info(f"Successfully reverted failed upgrade for {item_identifier}")
                 else:
-                    logging.error(f"Failed to restore previous state for {item_identifier} after adding queue failure")
+                    # No snapshot to restore; revert to Collected so the item doesn't loop forever at state='Adding'.
+                    logging.error(f"Failed to restore previous state for {item_identifier} after adding queue failure; reverting to Collected")
+                    if item_id:
+                        update_media_item(item_id, state='Collected', upgrading=False, upgrading_from=None)
 
-                # --- START EDIT: Check if failure was due to filter and remove torrent ---
+                # Check if failure was due to filter and remove torrent
                 if "matched filter-out list" in error:
                     logging.info(f"Upgrade for {item_identifier} failed due to filename filter. Attempting to remove torrent.")
-                    if item.get('torrent_id'):
-                        self.remove_unwanted_torrent(item['torrent_id'])
-                # --- END EDIT ---
+                    if item.get('torrent_id') and not self._torrent_has_other_active_owner(item['torrent_id'], item.get('id')):
+                        self.remove_unwanted_torrent(item['torrent_id'], is_nzb=is_nzb)
+                    elif item.get('torrent_id'):
+                        logging.info(f"Torrent {item['torrent_id']} still needed by other episode(s) sharing this pack — not removing")
 
                 # Remove from Adding queue memory regardless of restore success for upgrades
                 self.remove_item(item)
@@ -636,9 +1037,12 @@ class AddingQueue:
                "No matching files found in parsed files" in error or \
                "No valid video files found in torrent" in error:
                 logging.info(f"Media matching failed for {item_identifier}, moving back to Wanted queue. Error: {error}")
-                # Remove torrent if ID is present
-                if item.get('torrent_id'):
+                # Remove torrent if ID is present — but only if no sibling episode sharing this
+                # (season-pack-reused) torrent still actively needs it.
+                if item.get('torrent_id') and not self._torrent_has_other_active_owner(item['torrent_id'], item.get('id')):
                     self.remove_unwanted_torrent(item['torrent_id'])
+                elif item.get('torrent_id'):
+                    logging.info(f"Torrent {item['torrent_id']} still needed by other episode(s) sharing this pack — not removing")
                 queue_manager.move_to_wanted(item, "Adding")
                 # move_to_wanted handles removing from self.items
                 return
@@ -646,8 +1050,10 @@ class AddingQueue:
             # --- NEW: Handle filename/title filter match ---
             elif "matched filter-out list" in error:
                 logging.info(f"Item {item_identifier} matched filename/title filter, moving back to Wanted queue. Error: {error}")
-                if item.get('torrent_id'):
-                    self.remove_unwanted_torrent(item['torrent_id'])
+                if item.get('torrent_id') and not self._torrent_has_other_active_owner(item['torrent_id'], item.get('id')):
+                    self.remove_unwanted_torrent(item['torrent_id'], is_nzb=is_nzb)
+                elif item.get('torrent_id'):
+                    logging.info(f"Torrent {item['torrent_id']} still needed by other episode(s) sharing this pack — not removing")
                 queue_manager.move_to_wanted(item, "Adding")
                 # move_to_wanted handles removing from self.items
                 return
@@ -658,40 +1064,23 @@ class AddingQueue:
 
             if not fall_back_to_single_scraper and get_setting('Scraping', 'fallback_to_single_enabled', default=True):
                 logging.info(f"Falling back to single scraper for {item_identifier} due to error: {error}")
-                if item_id: update_media_item(item_id, fall_back_to_single_scraper=True)
-
-                # Update related items (keep existing logic)
-                if item_id and item.get('type') == 'episode':
-                    series_title = item.get('series_title', '') or item.get('title', '')
-                    season = item.get('season') or item.get('season_number')
-                    current_episode = item.get('episode') or item.get('episode_number')
-                    version = item.get('version')
-
-                    # Stream items from DB to avoid loading entire table into memory
-                    from database import stream_all_media_items  # Local import
-
-                    for candidate in stream_all_media_items(state=None, media_type='episode'):
-                        try:
-                            if ((candidate.get('series_title', '') or candidate.get('title', '')) != series_title):
-                                continue
-                            if (candidate.get('season') or candidate.get('season_number')) != season:
-                                continue
-                            if (candidate.get('episode') or candidate.get('episode_number', -1)) <= current_episode:
-                                continue
-                            if candidate.get('version') != version:
-                                continue
-                            if candidate.get('fall_back_to_single_scraper'):
-                                continue
-
-                            match_id = candidate.get('id')
-                            if match_id:
-                                update_media_item(match_id, fall_back_to_single_scraper=True)
-                                logging.debug(f"Enabled single scraper fallback for related item ID: {match_id} ({candidate.get('title')})")
-                        except Exception as iter_err:
-                            logging.error(f"Error while streaming candidate items for single scraper fallback: {iter_err}")
+                if item_id:
+                    from database.database_writing import enable_fallback_to_single_scraper
+                    enable_fallback_to_single_scraper({**item, 'id': item_id}, reason=f"Adding-queue error: {error}")
 
                 queue_manager.move_to_scraping(item, "Adding")
                 # move_to_scraping handles removal from self.items
+                return
+
+            # --- Missing segments: always move to Sleeping (never Blacklist) ---
+            # When all NZBs failed due to ARTICLE_NOT_FOUND (expired usenet), the content
+            # may become available again via re-posts. Sleeping lets it retry later.
+            if 'missing segments' in error or item.get('_nzb_all_missing_segments'):
+                logging.warning(
+                    f"[AddingQueue] All NZBs had missing segments for {item_identifier} — "
+                    f"moving to Sleeping (will retry, not blacklisting)"
+                )
+                queue_manager.move_to_sleeping(item, "Adding")
                 return
 
             # --- Blacklisting logic for old items (Keep existing) ---
@@ -703,30 +1092,26 @@ class AddingQueue:
                         logging.warning(f"Blacklisting old item {item_identifier} due to adding failure: {error}")
                         queue_manager.move_to_blacklisted(item, "Adding")
 
-                        # Blacklist related items (keep existing logic)
-                        if item_id and item.get('type') == 'episode':
-                            series_title = item.get('series_title', '') or item.get('title', '')
-                            season = item.get('season') or item.get('season_number')
-                            version = item.get('version')
-
-                            # Stream items from DB to avoid loading entire table into memory
+                        # Blacklist siblings that actually depended on the same dead
+                        # torrent/NZB job — not every episode in the season. A per-episode
+                        # failure (e.g. this episode's own candidates all failed their cache
+                        # check, or a rate-limit/legal block on this episode's specific
+                        # release) says nothing about episodes with independent releases.
+                        failed_torrent_id = item.get('torrent_id') or item.get('filled_by_torrent_id')
+                        if item_id and item.get('type') == 'episode' and failed_torrent_id:
                             from database import stream_all_media_items  # Local import
 
                             for candidate in stream_all_media_items(state=None, media_type='episode'):
                                 try:
                                     if candidate.get('id') == item_id:
                                         continue
-                                    if ((candidate.get('series_title', '') or candidate.get('title', '')) != series_title):
-                                        continue
-                                    if (candidate.get('season') or candidate.get('season_number')) != season:
-                                        continue
-                                    if candidate.get('version') != version:
+                                    if candidate.get('filled_by_torrent_id') != failed_torrent_id:
                                         continue
                                     if candidate.get('state') in ('Blacklisted', 'Collected'):
                                         continue
 
                                     related_item_state = candidate.get('state', 'Unknown')
-                                    logging.info(f"Blacklisting related episode ID: {candidate.get('id')} ({candidate.get('title')}) from state {related_item_state} due to primary item failure.")
+                                    logging.info(f"Blacklisting related episode ID: {candidate.get('id')} ({candidate.get('title')}) from state {related_item_state} — shared dead torrent/job {failed_torrent_id} with primary item failure.")
                                     queue_manager.move_to_blacklisted(candidate, related_item_state)
                                 except Exception as iter_err:
                                     logging.error(f"Error while streaming candidate items for blacklist related: {iter_err}")

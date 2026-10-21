@@ -4,7 +4,289 @@ from datetime import datetime
 import os
 import subprocess
 from utilities.settings import get_setting
-from .downsub import main as downsub_main
+
+
+def _is_recollection(item, min_gap_seconds=60):
+    """True when the row was collected before (repair, upgrade): original_collected_at is
+    preserved across re-collections while collected_at is reset."""
+    def _ts(value):
+        if isinstance(value, datetime):
+            return value
+        try:
+            return datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return None
+    first, latest = _ts(item.get('original_collected_at')), _ts(item.get('collected_at'))
+    return bool(first and latest) and (latest - first).total_seconds() > min_gap_seconds
+
+
+def _recently_repaired(item_id, days=7):
+    """True if a repair replaced this item recently (NZB, playback or debrid repair)."""
+    conn = None
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        row = conn.execute(
+            "SELECT 1 FROM nzb_repair_activity WHERE item_id = ? AND outcome = 'replaced' "
+            "AND created_at >= datetime('now', ?) LIMIT 1",
+            (item_id, f'-{int(days)} days'),
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+
+def _has_dangling_symlink_sibling(path):
+    folder = os.path.dirname(path or '')
+    try:
+        return any(
+            entry.is_symlink() and not os.path.exists(entry.path)
+            for entry in os.scandir(folder)
+        ) if folder else False
+    except OSError:
+        return False
+
+
+def _may_have_dead_plex_versions(item):
+    """Cheap checks (no Plex calls) for whether a re-collected item may have left a dead
+    version behind. Debrid repair's reset clears original_collected_at, so the repair
+    activity log covers that path."""
+    return (_is_recollection(item)
+            or _recently_repaired(item.get('id'))
+            or _has_dangling_symlink_sibling(item.get('location_on_disk')))
+
+
+def _same_path(a, b):
+    return bool(a and b) and os.path.normpath(str(a)) == os.path.normpath(str(b))
+
+
+def _delete_replaced_files(item_dict, old_rows, log_tag, entry_label, snapshots=False):
+    """Remove each old row's provider job, symlink, mount file and media server entry
+    via DeletionManager. With snapshots=True the rows are saved copies of files item_dict's
+    own row used to hold, so the DB row is left alone."""
+    item_id = item_dict.get('id')
+    # Symlinked/Local + Plex: the old version is removed from Plex only after Plex has
+    # scanned in the replacement (see remove_replaced_plex_media_after_scan). Deleting
+    # it straight away removed the whole Plex item, so the replacement came back as a
+    # brand-new "recently added" entry. Jellyfin/Emby keep the immediate removal.
+    new_path = item_dict.get('location_on_disk')
+    # Plex mode defers too for snapshots: a force-collected replacement may not be in Plex yet.
+    defer_modes = ('Symlinked/Local', 'Plex') if snapshots else ('Symlinked/Local',)
+    defer_plex = (
+        bool(new_path)
+        and get_setting('File Management', 'file_collection_management') in defer_modes
+        and not (get_setting('Debug', 'emby_jellyfin_url', default='') or '').strip()
+    )
+    new_original = item_dict.get('original_path_for_symlink')
+    new_torrent_id = item_dict.get('filled_by_torrent_id')
+    new_name = os.path.basename(new_original or new_path or item_dict.get('filled_by_file') or '')
+    deferred_plex_paths = []
+
+    from debrid import get_debrid_provider
+    from utilities.deletion_manager import DeletionManager
+
+    try:
+        debrid_provider = get_debrid_provider()
+    except Exception:
+        debrid_provider = None
+    deletion_manager = DeletionManager(debrid_provider=debrid_provider)
+
+    for old_row in old_rows:
+        old_id = item_id if snapshots else old_row['id']
+        old_path = old_row.get('location_on_disk')
+        # Templates without {original_filename} put the replacement at the old symlink path,
+        # and re-grabbing the same release reuses the old mount file: deleting those would
+        # delete the replacement itself.
+        same_symlink = _same_path(old_path, new_path)
+        same_original = _same_path(old_row.get('original_path_for_symlink'), new_original)
+        if snapshots:
+            # Plex mode's library sync can re-collect the row on the old file itself (it still
+            # matches location_basename); that file is the one in use now, so keep everything.
+            old_name = os.path.basename(old_row.get('original_path_for_symlink') or old_path
+                                        or old_row.get('filled_by_file') or '')
+            if old_name and old_name == new_name:
+                logging.info(f"[{log_tag}] Item {item_id} was re-collected on its old file {old_name}; nothing to remove")
+                continue
+            # A row re-collected without a provider job of its own gives no proof the old job is unused.
+            keep_job = not new_torrent_id or old_row.get('filled_by_torrent_id') == new_torrent_id
+        else:
+            keep_job = False
+        try:
+            result = deletion_manager.delete_single_item(
+                old_id,
+                delete_from_debrid=not same_original and not keep_job,
+                delete_from_media_server=not defer_plex and not same_symlink,
+                delete_files=not same_original,
+                delete_symlinks=not same_symlink,
+                clear_cache=False,
+                remove_from_content_source=False,
+                skip_database=snapshots,
+                item=old_row if snapshots else None,
+            )
+            if defer_plex and old_path and not same_symlink:
+                deferred_plex_paths.append(old_path)
+            if result.get('success'):
+                logging.info(f"[{log_tag}] Cleaned up replaced {entry_label} entry {old_id}: {result}")
+            else:
+                logging.warning(f"[{log_tag}] Cleanup for replaced {entry_label} entry {old_id} reported errors: {result.get('errors')}")
+        except Exception as del_err:
+            logging.error(f"[{log_tag}] Failed to clean up replaced {entry_label} entry {old_id}: {del_err}", exc_info=True)
+
+    if deferred_plex_paths:
+        import threading
+        from utilities.plex_functions import remove_replaced_plex_media_after_scan
+        # Runs off the queue thread: it waits for the Checking queue's scan to land.
+        threading.Thread(
+            target=remove_replaced_plex_media_after_scan,
+            args=(item_dict.get('title'), new_path, deferred_plex_paths, item_dict.get('episode_title')),
+            name=f"replace-plex-{item_id}",
+            daemon=True,
+        ).start()
+        logging.info(f"[{log_tag}] Deferred Plex removal of {len(deferred_plex_paths)} replaced version(s) until the replacement is scanned in")
+
+
+def cleanup_files_replaced_by_move_to_wanted(item_dict):
+    """
+    Called after an item is promoted to Collected. "Move back to Wanted" on the library
+    page clears the row's file columns but saves the old files in replaced_files; now
+    that the replacement has landed, remove those old files the same way Replace does.
+    """
+    raw = item_dict.get('replaced_files')
+    item_id = item_dict.get('id')
+    if not raw or not item_id:
+        return
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            # Claim the list first so a second Collected transition can't delete twice.
+            claimed = conn.execute(
+                "UPDATE media_items SET replaced_files = NULL WHERE id = ? AND replaced_files = ?",
+                (item_id, raw)
+            ).rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        if not claimed:
+            return
+        import json
+        old_files = [f for f in json.loads(raw) if isinstance(f, dict)]
+    except Exception as err:
+        logging.error(f"[MOVE_TO_WANTED] Could not read replaced files for item {item_id}: {err}", exc_info=True)
+        return
+    if old_files:
+        logging.info(f"[MOVE_TO_WANTED] Item {item_id} re-collected; removing {len(old_files)} file(s) it replaced")
+        _delete_replaced_files(item_dict, old_files, 'MOVE_TO_WANTED', item_dict.get('type') or 'item', snapshots=True)
+
+
+def replace_cleanup_after_collect(item_dict):
+    """
+    Called after a new item is promoted to Collected state.
+    Cleans up old entries with manual_replace=1 for the same media -
+    removes their debrid/usenet torrent, their symlink and the original
+    mount-side file, and their media server entry - via DeletionManager,
+    the same fully-audited deletion path the library page's own Delete
+    button uses. No-op when no manual_replace items exist for the same
+    imdb_id.
+
+    Previously this reimplemented file/torrent removal by hand: it only
+    ever called the debrid provider's remove_torrent() (a no-op 404 for
+    an NZB job id, since that has to go through the usenet provider
+    instead) and asked Plex to remove the entry, with no direct
+    filesystem unlink at all - so in Symlinked/Local mode the stale
+    symlink (and the real file behind it on the mount) were left behind
+    whenever Plex removal didn't apply or silently failed. Delegating to
+    DeletionManager.delete_single_item() fixes both: it already handles
+    NZB-vs-debrid removal via the usenet/debrid provider factories and
+    directly unlinks the symlink and original file in symlink mode
+    instead of relying solely on the media server to do it.
+    """
+    imdb_id = item_dict.get('imdb_id')
+    item_type = item_dict.get('type')
+    item_id = item_dict.get('id')
+    # Matches SQL's REPLACE(COALESCE(version,''),'*','') exactly.
+    item_version = (item_dict.get('version') or '').rstrip('*')
+
+    if not imdb_id or item_type not in ('episode', 'movie'):
+        return
+
+    conn = None
+    try:
+        from database import get_db_connection
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if item_type == 'episode':
+            season_number = item_dict.get('season_number')
+            episode_number = item_dict.get('episode_number')
+            if season_number is None or episode_number is None:
+                return
+            old_rows = cur.execute(
+                '''SELECT id, title, episode_title, location_on_disk, original_path_for_symlink FROM media_items
+                   WHERE imdb_id = ? AND season_number = ? AND episode_number = ?
+                   AND type = 'episode' AND manual_replace = 1 AND id != ?
+                   AND REPLACE(COALESCE(version,''),'*','') = ?''',
+                (imdb_id, season_number, episode_number, item_id, item_version)
+            ).fetchall()
+            stale_rows = cur.execute(
+                '''SELECT m.id, m.title, m.episode_title, m.location_on_disk, m.original_path_for_symlink FROM media_items m
+                   WHERE m.imdb_id = ? AND m.season_number = ? AND m.type = 'episode'
+                   AND m.manual_replace = 1 AND m.id != ?
+                   AND REPLACE(COALESCE(m.version,''),'*','') = ?
+                   AND EXISTS (
+                       SELECT 1 FROM media_items m2
+                       WHERE m2.imdb_id = m.imdb_id AND m2.season_number = m.season_number
+                       AND m2.episode_number = m.episode_number AND m2.type = 'episode'
+                       AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                       AND REPLACE(COALESCE(m2.version,''),'*','') = REPLACE(COALESCE(m.version,''),'*','')
+                   )''',
+                (imdb_id, season_number, item_id, item_version)
+            ).fetchall()
+            log_tag = 'REPLACE_SEASON'
+            entry_label = 'episode'
+        else:  # movie
+            old_rows = cur.execute(
+                '''SELECT id, title, episode_title, location_on_disk, original_path_for_symlink FROM media_items
+                   WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?
+                   AND REPLACE(COALESCE(version,''),'*','') = ?''',
+                (imdb_id, item_id, item_version)
+            ).fetchall()
+            stale_rows = cur.execute(
+                '''SELECT m.id, m.title, m.episode_title, m.location_on_disk, m.original_path_for_symlink FROM media_items m
+                   WHERE m.imdb_id = ? AND m.type = 'movie'
+                   AND m.manual_replace = 1 AND m.id != ?
+                   AND REPLACE(COALESCE(m.version,''),'*','') = ?
+                   AND EXISTS (
+                       SELECT 1 FROM media_items m2
+                       WHERE m2.imdb_id = m.imdb_id AND m2.type = 'movie'
+                       AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                       AND REPLACE(COALESCE(m2.version,''),'*','') = REPLACE(COALESCE(m.version,''),'*','')
+                   )''',
+                (imdb_id, item_id, item_version)
+            ).fetchall()
+            log_tag = 'REPLACE_MOVIE'
+            entry_label = 'movie'
+
+        # Merge, deduplicating by id
+        rows_to_delete = {row['id']: dict(row) for row in list(old_rows) + list(stale_rows)}
+        conn.close()
+        conn = None
+        if not rows_to_delete:
+            return  # Nothing to clean up
+
+        _delete_replaced_files(item_dict, list(rows_to_delete.values()), log_tag, entry_label)
+
+    except Exception as err:
+        logging.error(f"[REPLACE] Error in replace cleanup after collect: {err}", exc_info=True)
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
 
 def validate_cinesync_path(path: str) -> bool:
     """
@@ -74,11 +356,15 @@ def run_custom_script(item: Dict[str, Any]) -> None:
         item (Dict[str, Any]): The media item that triggered the state change
     """
     if not get_setting('Custom Post-Processing', 'enable_custom_script', False):
+        logging.debug("Custom script disabled or not configured — skipping")
         return
-        
+
     script_path = get_setting('Custom Post-Processing', 'custom_script_path', '')
-    if not script_path or not os.path.isfile(script_path):
-        logging.warning(f"Custom script not found at: {script_path}")
+    if not script_path:
+        logging.warning("Custom script enabled but no script path configured")
+        return
+    if not os.path.isfile(script_path):
+        logging.warning(f"Custom script not found or not accessible inside container at: {script_path} — check volume mounts")
         return
         
     try:
@@ -108,6 +394,56 @@ def run_custom_script(item: Dict[str, Any]) -> None:
                         stderr=subprocess.PIPE)
     except Exception as e:
         logging.error(f"Failed to run custom script: {str(e)}")
+
+def _handle_plex_watchlist_removal(item: Dict[str, Any]) -> None:
+    """Remove item from My Plex Watchlist or Other Plex Watchlist based on its content_source."""
+    if not get_setting('Debug', 'plex_watchlist_removal', False):
+        return
+
+    content_source = item.get('content_source', '')
+    if not content_source:
+        return
+
+    # Resolve source type from source config (e.g. "My Plex Watchlist_1" → type "My Plex Watchlist")
+    from queues.config_manager import load_config
+    config = load_config()
+    source_config = config.get('Content Sources', {}).get(content_source, {})
+    source_type = source_config.get('type', '')
+    if source_type not in ('My Plex Watchlist', 'Other Plex Watchlist'):
+        return
+
+    # Same rule as fetch-time removal (keep_series, movies only when every version is collected,
+    # shows only once ended), so one collected episode can't take a running show off the watchlist.
+    from content_checkers.plex_watchlist import should_remove_from_watchlist
+    imdb_id = item.get('imdb_id')
+    media_type = 'tv' if item.get('type') in ('episode', 'show') else 'movie'
+    if not imdb_id:
+        return
+    remove, reason = should_remove_from_watchlist(imdb_id, media_type)
+    if not remove:
+        logging.debug(f"[WATCHLIST_REMOVE] Keeping '{item.get('title')}' on the watchlist: {reason}")
+        return
+
+    if source_type == 'My Plex Watchlist':
+        from content_checkers.plex_watchlist import remove_from_plex_watchlist_by_item
+        result = remove_from_plex_watchlist_by_item(item)
+        if result.get('success'):
+            logging.info(f"[WATCHLIST_REMOVE] Removed '{item.get('title')}' from My Plex Watchlist")
+        elif not result.get('not_found'):
+            logging.warning(f"[WATCHLIST_REMOVE] Could not remove '{item.get('title')}' from My Plex Watchlist: {result.get('message')}")
+
+    elif source_type == 'Other Plex Watchlist':
+        token = source_config.get('token', '')
+        if not token:
+            logging.warning(f"[WATCHLIST_REMOVE] No token found for source '{content_source}', cannot remove from watchlist")
+            return
+        from content_checkers.plex_watchlist import remove_from_other_plex_watchlist_by_item
+        result = remove_from_other_plex_watchlist_by_item(item, token)
+        if result.get('success'):
+            logging.info(f"[WATCHLIST_REMOVE] Removed '{item.get('title')}' from Other Plex Watchlist ({content_source})")
+        elif not result.get('not_found'):
+            logging.warning(f"[WATCHLIST_REMOVE] Could not remove '{item.get('title')}' from Other Plex Watchlist ({content_source}): {result.get('message')}")
+
 
 def handle_state_change(item: Dict[str, Any]) -> None:
     """
@@ -144,16 +480,32 @@ def handle_state_change(item: Dict[str, Any]) -> None:
             
             # Run subtitle downloader
             try:
-                if get_setting('File Management', 'file_collection_management') == 'Plex':
-                    pass
+                file_path = fresh_item.get('location_on_disk')
+                if not file_path:
+                    logging.warning("No location_on_disk found for item, skipping subtitle download")
+                elif get_setting('File Management', 'file_collection_management') == 'Plex':
+                    # Plex mode: media is on a read-only debrid/usenet mount, so a
+                    # sidecar .srt can't be written next to it. Download subtitles
+                    # and upload them to the Plex item via API (keyed on the stored
+                    # ratingKey). Storage-agnostic — works for zurg/nzbdav/climount.
+                    rk = fresh_item.get('ms_item_id')
+                    if rk:
+                        # The on-disk file is often obfuscated (e.g. tGcr.mkv) on
+                        # debrid/usenet mounts; the release folder name carries the
+                        # real title, so use it as the subtitle-matching hint.
+                        import os as _os_sub
+                        name_hint = (fresh_item.get('debrid_folder_name')
+                                     or fresh_item.get('filled_by_title')
+                                     or _os_sub.path.basename(_os_sub.path.dirname(file_path)) or None)
+                        logging.info("Running subtitle downloader (Plex API upload mode).")
+                        from .downsub import main as downsub_main
+                        downsub_main(file_path, rating_key=str(rk), name_hint=name_hint)
+                    else:
+                        logging.info("Plex-mode subtitle upload skipped: item has no Plex ratingKey (ms_item_id) yet")
                 else:
                     logging.info("Running subtitle downloader - this may take some time if it has never been run.")
-                    # Always use location_on_disk for subtitle downloads
-                    file_path = fresh_item.get('location_on_disk')
-                    if file_path:
-                        downsub_main(file_path)
-                    else:
-                        logging.warning("No location_on_disk found for item, skipping subtitle download")
+                    from .downsub import main as downsub_main
+                    downsub_main(file_path)
             except Exception as e:
                 logging.error(f"Failed to run subtitle downloader: {str(e)}")
                 logging.exception("Subtitle downloader traceback:")
@@ -163,10 +515,15 @@ def handle_state_change(item: Dict[str, Any]) -> None:
 
             # Apply Plex labels based on content source configuration
             try:
-                logging.info(f"POST-PROCESSING: About to apply Plex labels for item {fresh_item.get('id')} ({fresh_item.get('title')})")
-                from utilities.plex_label_manager import apply_labels_for_item
-                result = apply_labels_for_item(dict(fresh_item))
-                logging.info(f"POST-PROCESSING: Plex labels application returned {result} for item {fresh_item.get('id')}")
+                from utilities.plex_label_manager import apply_labels_for_item, is_plex_labels_enabled_anywhere
+
+                # Only process labels if at least one content source has them enabled
+                if is_plex_labels_enabled_anywhere():
+                    logging.info(f"POST-PROCESSING: About to apply Plex labels for item {fresh_item.get('id')} ({fresh_item.get('title')})")
+                    result = apply_labels_for_item(dict(fresh_item))
+                    logging.info(f"POST-PROCESSING: Plex labels application returned {result} for item {fresh_item.get('id')}")
+                else:
+                    logging.debug(f"POST-PROCESSING: Plex labels disabled globally, skipping label application")
             except Exception as e:
                 logging.error(f"Failed to apply Plex labels: {str(e)}")
                 logging.exception("Plex labels traceback:")
@@ -192,6 +549,53 @@ def handle_state_change(item: Dict[str, Any]) -> None:
             except Exception as e:
                 logging.error(f"Failed to update item size/resolution info: {str(e)}")
                 logging.exception("Size/resolution update traceback:")
+
+            # Trigger replace cleanup if this item replaced a manual_replace=1 item
+            if state in ('Collected', 'Upgrading'):
+                try:
+                    replace_cleanup_after_collect(dict(fresh_item))
+                except Exception as e:
+                    logging.error(f"Failed to run replace cleanup after collect: {str(e)}")
+                try:
+                    cleanup_files_replaced_by_move_to_wanted(dict(fresh_item))
+                except Exception as e:
+                    logging.error(f"Failed to clean up files replaced via Move to Wanted: {str(e)}")
+
+                # Repairs/upgrades re-collect the same row under a new file name, leaving the
+                # old version behind in Plex as a dead second version. Only items that look
+                # repaired/re-collected are checked, so a normal collection never polls Plex.
+                if _may_have_dead_plex_versions(fresh_item):
+                    try:
+                        from utilities.plex_functions import start_dead_plex_version_cleanup
+                        start_dead_plex_version_cleanup(dict(fresh_item))
+                    except Exception as e:
+                        logging.error(f"Failed to start dead Plex version cleanup: {str(e)}")
+
+            # Remove from Plex Watchlist if the setting is enabled and the item
+            # came from a My Plex Watchlist or Other Plex Watchlist source.
+            if state == 'Collected':
+                try:
+                    _handle_plex_watchlist_removal(dict(fresh_item))
+                except Exception as e:
+                    logging.error(f"Failed to handle Plex Watchlist removal: {e}")
+
+            # Apply poster overlay in a background thread (non-blocking).
+            # Duplicate-run protection is handled inside apply_overlay_for_new_item
+            # via the _overlay_in_flight set (atomic, lock-protected).
+            try:
+                if get_setting('Overlay Settings', 'overlays_enabled', False):
+                    import threading
+                    from overlays.scheduled_tasks import apply_overlay_for_new_item
+                    t = threading.Thread(
+                        target=apply_overlay_for_new_item,
+                        args=(item_id,),
+                        daemon=True,
+                        name=f'overlay-new-{item_id}'
+                    )
+                    t.start()
+                    logging.debug(f"POST-PROCESSING: Overlay thread started for item {item_id}")
+            except Exception as e:
+                logging.error(f"POST-PROCESSING: Failed to start overlay thread for item {item_id}: {e}")
         else:
             logging.warning(f"Unhandled state {state} in post-processing")
 

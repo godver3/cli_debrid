@@ -31,18 +31,27 @@ async def get_poster_url(session, tmdb_id, media_type):
         cache_unavailable_poster(tmdb_id, normalized_type)
         return UNAVAILABLE_POSTER
     
-    url = f"https://api.themoviedb.org/3/{normalized_type}/{tmdb_id}/images?api_key={tmdb_api_key}"
-    
+    url = (
+        f"https://api.themoviedb.org/3/{normalized_type}/{tmdb_id}/images"
+        f"?api_key={tmdb_api_key}&include_image_language=en,null"
+    )
+
     try:
         async with session.get(url, timeout=10) as response:
             if response.status == 200:
                 data = await response.json()
                 posters = data.get('posters', [])
-                
+
                 if posters:
-                    # First try English posters
-                    english_posters = [p for p in posters if p.get('iso_639_1') == 'en']
-                    poster = english_posters[0] if english_posters else posters[0]
+                    # Prefer English posters; language-null (text-free) are also acceptable.
+                    # Sort by vote_average descending to pick the highest-rated one.
+                    english_posters = [
+                        p for p in posters
+                        if p.get('iso_639_1') in ('en', None)
+                    ]
+                    candidates = english_posters if english_posters else posters
+                    candidates.sort(key=lambda p: p.get('vote_average', 0), reverse=True)
+                    poster = candidates[0]
                     poster_url = f"https://image.tmdb.org/t/p/w300{poster['file_path']}"
                     cache_poster_url(tmdb_id, normalized_type, poster_url)
                     return poster_url

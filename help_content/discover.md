@@ -10,8 +10,8 @@ This page allows you to browse and discover movies and shows using TMDB data, wi
 **View Modes:**
 
 *   **Search Results:** Shows items matching your search query and active filters.
-*   **FlixPatrol Top 10:** Displays top 10 charts from major streaming platforms (Netflix, Disney+, Amazon, HBO, Apple TV+, Paramount+, Hulu, Peacock).
-*   **MDBList:** Browse curated movie and TV collections from MDBList (requires MDBList API key).
+*   **FlixPatrol Top 10:** Displays top 10 charts from major streaming platforms (Netflix, Disney+, Amazon, HBO, Apple TV+, Paramount+, Hulu, Peacock). Supports **weekly aggregation mode** with 7-day scoring — automatically falls back to global charts when regional data is unavailable.
+*   **MDBList:** Browse curated movie and TV collections from MDBList (requires MDBList API key). Includes 40+ built-in curated sources covering streaming originals, franchise collections, and certification-based lists.
 
 **Search:**
 
@@ -68,6 +68,18 @@ Click the **Filters** button to open the filter drawer. Filters are organized in
 *   **Runtime:**
     *   Set minimum and maximum runtime in minutes.
 
+*   **Certification (Rating):**
+    *   Filter content by age certification/content rating (e.g., G, PG, PG-13, R, NC-17 for US).
+    *   **Minimum:** Select a minimum certification to show only that rating and above (more restrictive).
+        *   Example: Min = "PG-13" shows PG-13, R, and NC-17 content.
+    *   **Maximum:** Select a maximum certification to show only that rating and below (less restrictive).
+        *   Example: Max = "PG-13" shows G, PG, and PG-13 content.
+    *   **Range:** Set both min and max to create a specific range.
+        *   Example: Min = "PG", Max = "PG-13" shows only PG and PG-13 content.
+    *   Certifications automatically load based on your selected **Watch Region** (set in Providers section).
+    *   Different regions have different rating systems (MPAA for US, BBFC for UK, etc.).
+    *   **Note:** Certification filtering is only available for movies in TMDB's discover API.
+
 **Active Filters:**
 
 *   Applied filters appear as chips at the top of the filter panel.
@@ -115,6 +127,27 @@ Click the **Filters** button to open the filter drawer. Filters are organized in
 *   Click the add button on any item to open the version selection modal.
 *   **Movies:** Select quality version(s) and click **Request**.
 *   **TV Shows:** Select version(s), then choose "All Seasons" or specific seasons before requesting.
+
+**TV Show Detail Page:**
+
+When viewing a TV show's detail page, the following is shown for each season:
+
+*   Per-season collection progress (e.g. `7 / 10 episodes collected`)
+*   Per-episode status indicators — collected, wanted, missing, or unreleased
+*   File counts per episode where files exist
+
+**Magnet Assign (TV Shows):**
+
+*   Each season header and episode row in the show detail page includes an orange **magnet icon** button.
+*   Clicking it opens the Magnet Assign page pre-filled with the correct show, season, episode, and version — no manual selection needed.
+*   Use this to manually assign a magnet link or torrent file when the scraper can't find one automatically.
+
+**Personal Lists (Trakt):**
+
+When Trakt is connected, a **Personal** section appears in the sidebar with two categories:
+
+*   **My Lists** — your personal Trakt lists, fetched on demand and cached for 24 hours. If the list hasn't changed since the last fetch (detected via Trakt's updated_at timestamp), cached results are returned instantly.
+*   **Special Lists** — Trakt-curated charts: Trending, Popular, Favorited, Played, Watched, Collected, Anticipated, Box Office, and Recommendations. Cached for 24 hours using a content hash — only fetches fresh TMDB data when the list content actually changes.
 
 **Adaptive Lists Integration:**
 

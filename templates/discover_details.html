@@ -3,13 +3,13 @@
 {% block title %}{{ 'Show' if media_type == 'tv' else 'Movie' }} Details - Discover{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/library_movie.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/trailer_modal.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_movie.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_trailer_modal.css') }}">
 {% if media_type == 'tv' %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/library_show.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_show.css') }}">
 {% endif %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/discover.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_discover.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}">
 <style>
     /* Additional styles for discover details */
     /* .status-badge {
@@ -79,6 +79,44 @@
         transform: rotate(-90deg);
     }
     .cast-section.collapsed .cast-grid {
+        display: none;
+    }
+    /* Cast strip below links — horizontal row with names, no header/collapse */
+    .cast-inline {
+        margin-top: 0.75rem;
+    }
+    .cast-inline .cast-grid {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        gap: 0.25rem;
+        margin-top: 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+        align-items: flex-start;
+    }
+    .cast-inline .cast-grid::-webkit-scrollbar {
+        display: none;
+    }
+    .cast-inline .cast-card {
+        flex: 0 0 auto;
+        width: 75px;
+        text-align: center;
+    }
+    .cast-inline .cast-photo {
+        width: 60px;
+        height: 60px;
+        margin: 0 auto 0.25rem;
+    }
+    .cast-inline .cast-name {
+        font-size: 0.65rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: rgba(255,255,255,0.8);
+    }
+    .cast-inline .cast-character {
         display: none;
     }
 </style>
@@ -177,7 +215,11 @@
                                     <div class="movie-meta">
                                         <span id="show-status-badge" class="status-badge">Ended</span>
                                         <span id="show-rating-text">-</span>
-                                        <span class="separator">•</span>
+                                        <span id="show-rating-separator" class="separator" style="display: none;">•</span>
+                                        <span id="movie-certification-text" style="display: none;"></span>
+                                        <span id="certification-separator" class="separator" style="display: none;">•</span>
+                                        <span id="movie-network-text" style="display: none;"></span>
+                                        <span id="network-separator" class="separator" style="display: none;">•</span>
                                         <span id="movie-runtime-text">-</span>
                                         <span class="separator">•</span>
                                         <span id="movie-genres-text">-</span>
@@ -191,50 +233,32 @@
                                 <a id="link-tmdb" href="#" target="_blank" rel="noopener noreferrer" class="link-btn">
                                     <img src="{{ url_for('static', filename='images/tmdb.png') }}" alt="TMDB" class="link-icon">
                                     TMDB
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M15 3h6v6"></path>
-                                        <path d="M10 14 21 3"></path>
-                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                                    </svg>
+                                </a>
+                                <a id="link-tvdb" href="#" target="_blank" rel="noopener noreferrer" class="link-btn" style="display: none;">
+                                    <img src="{{ url_for('static', filename='images/tvdb.png') }}" alt="TVDB" class="link-icon">
+                                    TVDB
                                 </a>
                                 <a id="link-imdb" href="#" target="_blank" rel="noopener noreferrer" class="link-btn" style="display: none;">
                                     <img src="{{ url_for('static', filename='images/imdb.png') }}" alt="IMDb" class="link-icon">
                                     IMDb
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M15 3h6v6"></path>
-                                        <path d="M10 14 21 3"></path>
-                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                                    </svg>
                                 </a>
                                 <a id="link-trakt" href="#" target="_blank" rel="noopener noreferrer" class="link-btn" style="display: none;">
                                     <img src="{{ url_for('static', filename='images/trakt.png') }}" alt="Trakt" class="link-icon">
                                     Trakt
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M15 3h6v6"></path>
-                                        <path d="M10 14 21 3"></path>
-                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                                    </svg>
                                 </a>
                                 <button id="btn-trailer" class="link-btn" style="display: none;" title="Watch Trailer">
-                                    Trailer
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                                         <polygon points="5 3 19 12 5 21 5 3"></polygon>
                                     </svg>
+                                    <span class="trailer-text">Trailer</span>
                                 </button>
+                            </div>
+                            <!-- Cast strip: below links, no header/collapse -->
+                            <div id="cast-section" class="cast-section cast-inline" style="display: none;">
+                                <div id="cast-grid" class="cast-grid"></div>
                             </div>
                         </div>
                     </div>
-                </div>
-
-                <!-- Cast Section (for TV shows and movies) - Collapsible -->
-                <div id="cast-section" class="cast-section" style="display: none;">
-                    <div class="cast-header" id="cast-header">
-                        <h3>Cast</h3>
-                        <svg class="cast-toggle-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <polyline points="6 9 12 15 18 9"></polyline>
-                        </svg>
-                    </div>
-                    <div id="cast-grid" class="cast-grid"></div>
                 </div>
 
                 <!-- Seasons & Episodes Section (for TV shows only) - using library_show style -->
@@ -290,6 +314,10 @@
                             <span class="detail-label">TMDB ID</span>
                             <a id="tmdb-link-detail" href="#" target="_blank" class="detail-link">-</a>
                         </div>
+                        <div class="detail-row" id="tvdb-row" style="display: none;">
+                            <span class="detail-label">TVDB ID</span>
+                            <a id="tvdb-link-detail" href="#" target="_blank" class="detail-link">-</a>
+                        </div>
                         <div class="detail-row" id="imdb-row" style="display: none;">
                             <span class="detail-label">IMDb</span>
                             <a id="imdb-link-detail" href="#" target="_blank" class="detail-link">-</a>
@@ -328,13 +356,14 @@
         <!-- Version Selection Modal for Request -->
         <div id="versionModal" class="version-modal">
             <div class="version-modal-content">
-                <h3>Select Versions</h3>
-                <div id="versionCheckboxes">
-                    <!-- Version checkboxes will be dynamically inserted here -->
+                <div class="dialog-body">
+                    <div id="versionCheckboxes">
+                        <!-- Dynamically populated by JS -->
+                    </div>
                 </div>
-                <div class="version-modal-buttons">
-                    <button id="confirmVersions">Request</button>
-                    <button id="cancelVersions">Cancel</button>
+                <div class="dialog-footer">
+                    <button id="confirmVersions" class="vm-btn vm-btn-accent"><i class="fa-solid fa-paper-plane"></i> Request</button>
+                    <button id="cancelVersions" class="vm-btn vm-btn-ghost"><i class="fa-solid fa-xmark"></i> Cancel</button>
                 </div>
             </div>
         </div>
@@ -351,8 +380,9 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
-<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v=20260118"></script>
-<script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
+<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}"></script>
+<script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
+<script src="{{ url_for('static', filename='js/episode_order_picker.js') }}"></script>
 <script src="{{ url_for('static', filename='js/discover_details.js') }}"></script>
 <script src="{{ url_for('static', filename='js/trailer_modal.js') }}"></script>
 {% endblock %}
