@@ -14,6 +14,7 @@ A file is only assigned when its number points at exactly one episode and
 it is the only file doing so; anything less certain is left for the user.
 """
 import logging
+import os
 import re
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
@@ -64,6 +65,23 @@ def absolute_numbers(seasons: Optional[Dict[Any, Any]]) -> Dict[Tuple[int, int],
 
 # A title ending in a bare number: "Gintama 003" (PTT reads no episode there)
 _TRAILING_NUMBER_RE = re.compile(r'^(?P<prefix>.*?\S)[\s._-]+(?P<number>\d{1,4})$')
+
+# Creditless OP/ED extras: "NCED 01", "NCOP16", "NCOP 16a". PTT reads the
+# trailing number as an episode, which collides with the real SxxExx file.
+_ANIME_OP_ED_RE = re.compile(
+    r'(?<![a-z0-9])(?:nc\s*op|nc\s*ed)(?![a-z])|'
+    r'(?<![a-z0-9])(?:opening|ending)\s*\d|'
+    r'(?<![a-z0-9])(?:op|ed)\d',
+    re.IGNORECASE,
+)
+
+
+def is_anime_op_ed_extra(filename: Optional[str]) -> bool:
+    """True for creditless OP/ED extras that must not auto-assign to episodes."""
+    if not filename:
+        return False
+    stem = os.path.splitext(os.path.basename(filename.replace('\\', '/')))[0]
+    return bool(_ANIME_OP_ED_RE.search(stem))
 
 
 def pack_bare_numbers(parsed_files: List[Dict[str, Any]]) -> Dict[int, int]:
@@ -249,8 +267,10 @@ def match_absolute_files(target_items: List[Dict[str, Any]],
         multi_episode = len(set(_ints((f.get('parsed') or {}).get('episodes')))) > 1
         if f.get('used') and not multi_episode:
             continue
-        explicit = file_explicit_absolute(f.get('parsed') or {}, (f.get('original') or {}).get('filename'),
-                                          show_seasons)
+        filename = (f.get('original') or {}).get('filename')
+        if is_anime_op_ed_extra(filename) or is_anime_op_ed_extra((f.get('original') or {}).get('path')):
+            continue
+        explicit = file_explicit_absolute(f.get('parsed') or {}, filename, show_seasons)
         positions = numbering.file_positions(f.get('parsed') or {}, explicit, bare_numbers.get(id(f)))
         if len(positions) > 1 and not multi_episode:
             continue  # one number, several episodes: left to the user

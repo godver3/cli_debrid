@@ -1091,7 +1091,14 @@ def prepare_manual_assignment():
         # Absolute numbers files state next to their own season ("S13E01 (0422)")
         # outrank the S/E: a file naming another episode's absolute isn't this one
         from utilities.manual_assign_episodes import (absolute_numbers, explicit_absolute_conflicts,
-                                                      file_explicit_absolute)
+                                                      file_explicit_absolute, is_anime_op_ed_extra)
+        # NCED/NCOP extras parse as episode numbers and steal S/E + absolute matches
+        # from the real files (Judas Gintama: eps 1-30 left unassigned).
+        for f_info in parsed_video_files:
+            name = f_info['original'].get('filename') or ''
+            if is_anime_op_ed_extra(name) or is_anime_op_ed_extra(f_info['original'].get('path') or ''):
+                f_info['used'] = True
+                logging.debug(f"Skipping anime OP/ED extra for auto-assign: {f_info['original'].get('path') or name}")
         show_absolute_numbers = {}
         if media_type in ['tv', 'show']:
             for f_info in parsed_video_files:
@@ -1268,6 +1275,16 @@ def prepare_manual_assignment():
             # --- END AGGRESSIVE CLEANING ---
 
             logging.debug(f"[Phase 2] Processing file: '{raw_filename}' (BaseClean: '{cleaned_filename_base}', AggressiveClean: '{cleaned_filename}')")
+
+            # After stripping S/E tags, a leftover that is only the show title
+            # ("gintama") token_set_ratio-matches every episode title that
+            # contains the show name at 100 and mis-assigns leftovers.
+            series_title = (metadata.get('title') or '').strip().lower()
+            cleaned_tokens = re.sub(r'[\s._-]+', ' ', cleaned_filename).strip()
+            series_tokens = re.sub(r'[\s._-]+', ' ', series_title).strip()
+            if not cleaned_tokens or (series_tokens and cleaned_tokens == series_tokens):
+                logging.debug(f"[Phase 2] Skipping '{raw_filename}' - cleaned name is only the series title.")
+                continue
 
             best_match_item = None
             best_match_score = 0

@@ -68,12 +68,17 @@ class ExplicitAbsoluteNumbersTests(unittest.TestCase):
             ('Show S02E05 (05)', [2], [5]),            # the episode itself
             ('Show S02 [01-12]', [2], list(range(1, 13))),  # the season's own count
             ('Show S01E01 (2009)', [1], [1]),          # a year
-            ('Show S01E01 (1080)', [1], [1]),          # a resolution
+            ('Show S01E01 (1080p)', [1], [1]),         # a resolution tag (trailing p)
             ('Show - 0422 (0422)', [], [422]),         # no season: already absolute
             ('Show S02E01E02 (0021)', [2], [1, 2]),    # which episode would it be?
         ]
         for name, seasons, episodes in cases:
             self.assertEqual(explicit_absolute_numbers(name, seasons, episodes), [], name)
+
+    def test_resolution_like_absolute_numbers(self):
+        # Bare (360)/(1080) next to S/E is absolute; long anime hit these values.
+        self.assertEqual(explicit_absolute_numbers('Gintama S10E19 (360)', [10], [19]), [360])
+        self.assertEqual(explicit_absolute_numbers('One Piece S01E01 (1080)', [1], [1]), [1080])
 
     def test_range_inside_the_named_season_counts_that_season(self):
         name = 'Show S03 Part 2 [13-22]'

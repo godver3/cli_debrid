@@ -264,15 +264,15 @@ def seasons_in_absolute_batch(episodes, season_counts: Dict[int, int], imdb_id: 
 _EXPLICIT_ABS_RANGE = re.compile(r'[(\[]\s*(\d{2,4})\s*(?:-|~|to)\s*(\d{2,4})\s*[)\]]', re.IGNORECASE)
 _EXPLICIT_ABS_SINGLE = re.compile(r'[(\[]\s*(\d{2,4})\s*[)\]]')
 _NAMED_SEASON = re.compile(r'(?<![a-z0-9])(?:s\d{1,2}(?![0-9])|season\s*\d{1,2}(?![0-9]))', re.IGNORECASE)
-_RESOLUTIONS = {360, 480, 540, 576, 720, 1080, 1440, 2160, 4320}
+# Bare "(360)" / "(1080)" next to SxxExx is an absolute episode (Gintama 360,
+# One Piece 1080). Quality tags are "360p" / "(1080p)", which _EXPLICIT_ABS_*
+# already leave alone because of the trailing p.
+_YEAR_LIKE = re.compile(r'^(?:19|20)\d{2}$')
 
 
 def _plausible_absolute(text: str) -> bool:
-    n = int(text)
-    if n in _RESOLUTIONS:
-        return False
     # A year, unless zero-padded ("(0422)")
-    return not (len(text) == 4 and not text.startswith('0') and 1950 <= n <= 2099)
+    return not (len(text) == 4 and not text.startswith('0') and _YEAR_LIKE.match(text))
 
 
 def explicit_absolute_numbers(name: str, seasons=None, episodes=None,
