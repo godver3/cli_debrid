@@ -270,6 +270,32 @@ def adding_item_blocks_scraping(adding_item: Dict) -> bool:
     return not str(adding_item.get('filled_by_torrent_id', '')).startswith('nzb:')
 
 
+def _result_resolution(result: Dict) -> str:
+    return str((result.get('parsed_info') or {}).get('resolution') or '').strip().lower()
+
+
+def limit_debrid_pack_probe_results(results: List[Dict], item: Dict) -> List[Dict]:
+    """Packs worth trying for a season sent down the debrid-pack path.
+
+    With NZB season packs disabled, Scraping sends a full season down the debrid
+    season pack path when one ranks first, and its single episodes (debrid or
+    NZB) are never scraped. Working down the whole pack list then ends on
+    whatever the debrid service will serve: Shrinking got a 720p Italian dub
+    after Real-Debrid refused (451) all nine 1080p packs. Only packs at the top
+    pack's resolution are tried; once they're refused the season falls back to
+    the single scraper, where every episode's own best release wins. Kept as is
+    when single fallback is off or already used.
+    """
+    if not (results and results[0].get('_debrid_pack_probe')
+            and not item.get('fall_back_to_single_scraper')
+            and get_setting('Scraping', 'fallback_to_single_enabled', True)):
+        return results
+    tier = _result_resolution(results[0])
+    if not tier or tier == 'unknown':
+        return results[:1]
+    return [r for r in results if r.get('_debrid_pack_probe') and _result_resolution(r) == tier]
+
+
 class AddingQueue:
     """Manages the queue of items being added to the debrid service"""
     
@@ -565,6 +591,12 @@ class AddingQueue:
                     continue
 
                 logging.info(f"Found {len(results)} scrape results for {item_identifier}")
+                _probe_results = limit_debrid_pack_probe_results(results, item)
+                if len(_probe_results) < len(results):
+                    logging.info(f"{item_identifier}: debrid season pack path — trying {len(_probe_results)} of "
+                                 f"{len(results)} pack(s) at {_result_resolution(results[0]) or 'the top'} resolution; "
+                                 f"if they're refused the season falls back to single episodes")
+                    results = _probe_results
 
                 # Add original_scraped_torrent_title to results if missing (important for later matching)
                 for result in results:

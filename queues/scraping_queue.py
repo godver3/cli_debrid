@@ -856,6 +856,13 @@ class ScrapingQueue:
                                         _pre_usable = _pre_results
                                     _debrid_pack_found = bool(_pre_usable) and _is_debrid_season_pack(_pre_usable[0])
                                     if _debrid_pack_found:
+                                        # Adding tries only the packs at the top pack's resolution (see
+                                        # limit_debrid_pack_probe_results): the single episodes were never
+                                        # scraped, so a lower-tier pack (a 720p dub) can be far worse than
+                                        # them. If the debrid service refuses those, the season falls back
+                                        # to single-episode scraping instead.
+                                        for _pr in _pre_results:
+                                            _pr['_debrid_pack_probe'] = True
                                         _prescraped_results = (_pre_results, _pre_filtered)
                                         logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '
                                                      f'NZB season packs disabled but the top result is a debrid season pack, using it')
