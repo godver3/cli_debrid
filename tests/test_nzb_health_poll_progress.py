@@ -50,15 +50,21 @@ def _runner(n_jobs):
 class NzbHealthPollProgressTests(unittest.TestCase):
     def setUp(self):
         self._saved = (ProgramRunner._nzb_health_last_duration, getattr(ProgramRunner, '_nzb_health_job_cursor', 0),
-                       dict(ProgramRunner._nzb_folder_wait_counts))
+                       dict(ProgramRunner._nzb_folder_wait_counts),
+                       dict(getattr(ProgramRunner, '_nzb_job_started_at', {})))
         ProgramRunner._nzb_health_last_duration = 0.0
         ProgramRunner._nzb_health_job_cursor = 0
         ProgramRunner._nzb_folder_wait_counts.clear()
+        if hasattr(ProgramRunner, '_nzb_job_started_at'):
+            ProgramRunner._nzb_job_started_at.clear()
 
     def tearDown(self):
-        (ProgramRunner._nzb_health_last_duration, ProgramRunner._nzb_health_job_cursor, waits) = self._saved
+        (ProgramRunner._nzb_health_last_duration, ProgramRunner._nzb_health_job_cursor, waits, started) = self._saved
         ProgramRunner._nzb_folder_wait_counts.clear()
         ProgramRunner._nzb_folder_wait_counts.update(waits)
+        if hasattr(ProgramRunner, '_nzb_job_started_at'):
+            ProgramRunner._nzb_job_started_at.clear()
+            ProgramRunner._nzb_job_started_at.update(started)
 
     def _tick(self, runner, client):
         runner._nzb_health_last_duration = 0.0
@@ -81,6 +87,34 @@ class NzbHealthPollProgressTests(unittest.TestCase):
         self.assertEqual(len(client.polled), ProgramRunner._NZB_HEALTH_MAX_JOBS_PER_TICK)
         self._tick(runner, client)
         self.assertEqual(set(client.polled), {f'job{i}' for i in range(n)})
+
+
+    def test_row_write_does_not_reset_download_clock(self):
+        runner, adding = _runner(1)
+        client = _FakeSabClient()
+        self._tick(runner, client)
+        started = runner._nzb_job_started_at['job0']
+        adding.items[0]['last_updated'] = datetime.now().isoformat()  # e.g. a sibling pull rewrote the row
+        self._tick(runner, client)
+        self.assertEqual(runner._nzb_job_started_at['job0'], started)
+
+    def test_job_past_timeout_stalls_even_after_row_write(self):
+        runner, adding = _runner(1)
+        client = _FakeSabClient()
+        self._tick(runner, client)  # clock seeded 5 minutes ago
+        runner._nzb_job_started_at['job0'] = datetime.now() - timedelta(hours=3)  # time passes
+        adding.items[0]['last_updated'] = datetime.now().isoformat()
+        with mock.patch('database.nzb_playback_repair.reject_active_candidate', return_value=False), \
+             self.assertLogs(level='WARNING') as logs:
+            self._tick(runner, client)
+        self.assertTrue(any('job0 stalled at 45%' in line for line in logs.output), logs.output)
+
+    def test_clock_dropped_when_job_leaves_adding(self):
+        runner, adding = _runner(2)
+        self._tick(runner, _FakeSabClient())
+        adding.items = adding.items[:1]
+        self._tick(runner, _FakeSabClient())
+        self.assertEqual(set(runner._nzb_job_started_at), {'job0'})
 
 
 if __name__ == '__main__':
