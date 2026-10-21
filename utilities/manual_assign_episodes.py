@@ -14,6 +14,7 @@ A file is only assigned when its number points at exactly one episode and
 it is the only file doing so; anything less certain is left for the user.
 """
 import logging
+import os
 import re
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
@@ -64,6 +65,35 @@ def absolute_numbers(seasons: Optional[Dict[Any, Any]]) -> Dict[Tuple[int, int],
 
 # A title ending in a bare number: "Gintama 003" (PTT reads no episode there)
 _TRAILING_NUMBER_RE = re.compile(r'^(?P<prefix>.*?\S)[\s._-]+(?P<number>\d{1,4})$')
+
+# Numbered BD/fansub extras whose trailing digits PTT (or Phase 2) can read as
+# an episode: NCED/NCOP, OP/ED, Menu, PV, CM, CleanOP/ED. Not OVA/Special —
+# those are often real assignable content (season 0 / specials).
+_ANIME_OP_ED_RE = re.compile(
+    r'(?<![a-z0-9])(?:nc\s*op|nc\s*ed|clean\s*op|clean\s*ed)(?![a-z])|'
+    r'(?<![a-z0-9])(?:opening|ending)\s*\d|'
+    r'(?<![a-z0-9])(?:op|ed|menu|pv|cm)\s*\d',
+    re.IGNORECASE,
+)
+
+
+def is_anime_op_ed_extra(filename: Optional[str]) -> bool:
+    """True for numbered anime OP/ED/menu/PV extras that must not auto-assign."""
+    if not filename:
+        return False
+    stem = os.path.splitext(os.path.basename(filename.replace('\\', '/')))[0]
+    return bool(_ANIME_OP_ED_RE.search(stem))
+
+
+def phase2_title_too_weak(cleaned_filename: str, series_title: Optional[str]) -> bool:
+    """True when Phase 2 fuzzy match would only see the show name (or nothing).
+
+    After S/E tags are stripped, leftovers like "gintama" token_set_ratio-match
+    every episode title that contains the show name at 100.
+    """
+    cleaned = re.sub(r'[\s._-]+', ' ', (cleaned_filename or '').strip().lower()).strip()
+    series = re.sub(r'[\s._-]+', ' ', (series_title or '').strip().lower()).strip()
+    return not cleaned or (bool(series) and cleaned == series)
 
 
 def pack_bare_numbers(parsed_files: List[Dict[str, Any]]) -> Dict[int, int]:
@@ -249,8 +279,10 @@ def match_absolute_files(target_items: List[Dict[str, Any]],
         multi_episode = len(set(_ints((f.get('parsed') or {}).get('episodes')))) > 1
         if f.get('used') and not multi_episode:
             continue
-        explicit = file_explicit_absolute(f.get('parsed') or {}, (f.get('original') or {}).get('filename'),
-                                          show_seasons)
+        filename = (f.get('original') or {}).get('filename')
+        if is_anime_op_ed_extra(filename) or is_anime_op_ed_extra((f.get('original') or {}).get('path')):
+            continue
+        explicit = file_explicit_absolute(f.get('parsed') or {}, filename, show_seasons)
         positions = numbering.file_positions(f.get('parsed') or {}, explicit, bare_numbers.get(id(f)))
         if len(positions) > 1 and not multi_episode:
             continue  # one number, several episodes: left to the user

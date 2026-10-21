@@ -180,6 +180,37 @@ class ManualAssignAbsoluteTests(unittest.TestCase):
         self.assertEqual(self.m.match_absolute_files(items, files, seasons), 0)
         self.assertFalse(items[0]['assigned'])
 
+    def test_nced_ncop_extras_do_not_block_episode_assign(self):
+        # Judas-style: NCED/NCOP share episode numbers with the real S01 files.
+        seasons = _seasons({1: 30}, absolute={(1, n): n for n in range(1, 31)})
+        items = _items([(1, 1), (1, 3), (1, 16)])
+        files = [
+            _file('Extras/[Judas] Gintama - NCED 01.mkv', episodes=[1]),
+            _file('Extras/[Judas] Gintama - NCOP 01.mkv', episodes=[1]),
+            _file('[Judas] Gintama - S01E01-E02 (001-002).mkv', seasons=[1], episodes=[1, 2]),
+            _file('Extras/[Judas] Gintama - NCED 03.mkv', episodes=[3]),
+            _file('Extras/[Judas] Gintama - NCOP 03.mkv', episodes=[3]),
+            _file('[Judas] Gintama - S01E03 (003).mkv', seasons=[1], episodes=[3]),
+            _file('Extras/[Judas] Gintama - NCOP 16a.mkv', episodes=[16]),
+            _file('[Judas] Gintama - S01E16 (016).mkv', seasons=[1], episodes=[16]),
+        ]
+        self.assertTrue(self.m.is_anime_op_ed_extra('Extras/[Judas] Gintama - NCED 01.mkv'))
+        self.assertTrue(self.m.is_anime_op_ed_extra('[Judas] Gintama - NCOP 16a.mkv'))
+        self.assertFalse(self.m.is_anime_op_ed_extra('[Judas] Gintama - S01E03 (003).mkv'))
+        self.assertEqual(self.m.match_absolute_files(items, files, seasons), 3)
+        self.assertEqual(_assigned(items), {
+            (1, 1): '[Judas] Gintama - S01E01-E02 (001-002).mkv',
+            (1, 3): '[Judas] Gintama - S01E03 (003).mkv',
+            (1, 16): '[Judas] Gintama - S01E16 (016).mkv',
+        })
+
+    def test_absolute_360_not_treated_as_resolution(self):
+        seasons = _seasons({1: 367}, absolute={(1, n): n for n in range(1, 368)})
+        items = _items([(1, 360)])
+        files = [_file('[Judas] Gintama - S10E19 (360).mkv', seasons=[10], episodes=[19])]
+        self.assertEqual(self.m.match_absolute_files(items, files, seasons), 1)
+        self.assertEqual(_assigned(items), {(1, 360): '[Judas] Gintama - S10E19 (360).mkv'})
+
     def test_already_assigned_items_and_used_files_are_skipped(self):
         seasons = _seasons({1: 12, 2: 12})
         items = _items([(2, 1), (2, 2)])

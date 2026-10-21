@@ -150,6 +150,18 @@ def _build_scheduler_config():
     return queue_workers, executors, job_defaults
 
 
+def _parse_last_updated(value):
+    """A media_items last_updated value as a naive datetime, or None."""
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    try:
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00').split('+')[0])
+    except ValueError:
+        return None
+
+
 class ProgramRunner:
     _instance = None
 
@@ -3381,6 +3393,8 @@ class ProgramRunner:
     # Track last health check duration to implement skip-if-slow guard
     _nzb_health_last_duration: float = 0.0
     _NZB_HEALTH_MAX_JOBS_PER_TICK = 30   # cap jobs polled per tick
+    _nzb_health_job_cursor: int = 0      # where the next capped tick starts polling
+    _nzb_job_started_at: dict = {}       # job_id → datetime its download clock started (timeout anchor)
     _NZB_HEALTH_JOB_TIMEOUT = 20         # seconds per job poll before giving up
     _NZB_HEALTH_SKIP_THRESHOLD = 20.0   # if last run took this long, skip next tick
     _nzb_folder_wait_counts: dict = {}   # job_id → consecutive ticks where folder not found
@@ -3431,10 +3445,30 @@ class ProgramRunner:
                 _jid = _ni.get('filled_by_torrent_id', '')[4:]
                 _job_groups[_jid].append(_ni)
 
-            # Option 3: cap jobs per tick — process oldest first (preserve order)
-            _unique_jobs = list(_job_groups.keys())[:self._NZB_HEALTH_MAX_JOBS_PER_TICK]
-            if len(_job_groups) > self._NZB_HEALTH_MAX_JOBS_PER_TICK:
-                logging.debug(f'[NZBHealthCheck] Capping to {self._NZB_HEALTH_MAX_JOBS_PER_TICK}/{len(_job_groups)} jobs this tick')
+            # Download-timeout clock per job. It used to be each row's last_updated,
+            # which every row write moves (sibling pulls, score updates...), so a
+            # stuck job could outlive the timeout. Seed once from the oldest row so
+            # the clock still survives restarts, then keep it until the job is gone.
+            for _jid, _rows in _job_groups.items():
+                if _jid not in self._nzb_job_started_at:
+                    _seeds = [_parse_last_updated(_r.get('last_updated')) for _r in _rows]
+                    _seeds = [_sd for _sd in _seeds if _sd is not None]
+                    self._nzb_job_started_at[_jid] = min(_seeds) if _seeds else datetime.now()
+            for _jid in [j for j in self._nzb_job_started_at if j not in _job_groups]:
+                self._nzb_job_started_at.pop(_jid, None)
+
+            # Option 3: cap jobs per tick. Rotate through the jobs: always taking the
+            # first N left every job past the cap unpolled while the first N waited
+            # (MaddGuru: 73 rows sat in Adding for hours).
+            _all_jobs = list(_job_groups.keys())
+            _cap = self._NZB_HEALTH_MAX_JOBS_PER_TICK
+            if len(_all_jobs) > _cap:
+                _start = ProgramRunner._nzb_health_job_cursor % len(_all_jobs)
+                _unique_jobs = (_all_jobs[_start:] + _all_jobs[:_start])[:_cap]
+                ProgramRunner._nzb_health_job_cursor = _start + _cap
+                logging.debug(f'[NZBHealthCheck] Capping to {_cap}/{len(_all_jobs)} jobs this tick (from #{_start})')
+            else:
+                _unique_jobs = _all_jobs
 
             # Shared folder-wait counter dict (closure captures this)
             _job_folder_wait_counts = self._nzb_folder_wait_counts
@@ -3446,8 +3480,11 @@ class ProgramRunner:
                     if not status:
                         return job_id, None, None, None, None
                     raw = status.get('raw', {})
-                    raw_progress = raw.get('progress', status.get('progress', 0))
-                    progress = int(float(raw_progress) * 100)
+                    # Both clients return status['progress'] as a percentage. raw is the
+                    # provider's own slot: cli_mount's 'progress' is 0-1, but a SAB slot
+                    # (NzbDAV/Zurg) has none, and scaling the percentage again made any
+                    # job at 1%+ look complete and wait for a folder with no timeout.
+                    progress = int(float(status.get('progress', 0) or 0))
                     is_complete = raw.get('is_complete', False)
                     state = str(raw.get('state', status.get('state', ''))).lower()
                     inner_status = str(raw.get('status', '')).lower()
@@ -3877,20 +3914,15 @@ class ProgramRunner:
                         continue
                     elif progress < 100:
                         # Check if this job has been downloading too long without finishing.
-                        # Uses last_updated timestamp (set when NZB was submitted) so timeout
-                        # survives app restarts. Default cap: 2 hours.
+                        # Uses the job's own clock (see _nzb_job_started_at), which row
+                        # writes don't reset and restarts don't lose. Default cap: 2 hours.
                         _download_timeout_hours = float(_gs('Usenet Provider', 'nzb_download_timeout_hours', 2.0))
-                        _lu = item.get('last_updated')
+                        _job_started = self._nzb_job_started_at.get(job_id)
                         _timed_out_dl = False
-                        if _lu and _download_timeout_hours > 0:
-                            try:
-                                from datetime import datetime as _dt2
-                                _lu_dt = _dt2.fromisoformat(str(_lu).replace('Z', '+00:00').split('+')[0])
-                                _age_hours = (_dt2.now() - _lu_dt).total_seconds() / 3600.0
-                                if _age_hours > _download_timeout_hours:
-                                    _timed_out_dl = True
-                            except Exception:
-                                pass
+                        if _job_started and _download_timeout_hours > 0:
+                            _age_hours = (datetime.now() - _job_started).total_seconds() / 3600.0
+                            if _age_hours > _download_timeout_hours:
+                                _timed_out_dl = True
                         if not _timed_out_dl:
                             # Mark job as actively downloading after 1 minute so Adding queue skips it
                             _job_id_dl = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id

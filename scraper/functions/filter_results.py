@@ -10,7 +10,8 @@ from scraper.functions.other_functions import smart_search
 from scraper.functions.adult_terms import adult_terms
 from scraper.functions.common import *
 from scraper.functions.anime_utils import (absolute_from_counts, explicit_absolute_numbers,
-                                        full_season_counts, seasons_in_absolute_batch)
+                                        full_season_counts, may_state_resolution_absolute,
+                                        seasons_in_absolute_batch)
 from datetime import datetime, timezone
 # --- Import DirectAPI if type hinting is desired, ensure it's available in the execution path ---
 # from cli_battery.app.direct_api import DirectAPI # Or adjust path as needed
@@ -1159,7 +1160,8 @@ def filter_results(
                 if is_anime and season is not None:
                     explicit_abs = explicit_absolute_numbers(
                         original_title, parsed_info.get('seasons'), parsed_info.get('episodes'))
-                    if explicit_abs:
+                    # "(360)" only counts once the show's episode counts are known
+                    if explicit_abs or may_state_resolution_absolute(original_title):
                         if _absolute_season_counts is None:
                             _absolute_season_counts = full_season_counts(imdb_id, season_episode_counts)
                         explicit_abs = explicit_absolute_numbers(
