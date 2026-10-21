@@ -2,6 +2,8 @@
 
 cli_debrid is a successor to, and pays homage to, plex_debrid. It watches your lists, finds the best release for everything on them, gets it through your debrid service or Usenet, and keeps your Plex or Jellyfin library organised and upgraded, with no files downloaded to your server.
 
+It works with **Real-Debrid, AllDebrid, TorBox, Premiumize and Debrid-Link**, and with **Usenet (NZB)** through cli_mount, NzbDAV or Zurg, for **Plex, Jellyfin and Emby**.
+
 **📖 [Getting Started](https://godver3.github.io/cli_docs/getting-started/)** · [Documentation](https://godver3.github.io/cli_docs/) · [Discord](https://discord.gg/ynqnXGJ4hU)
 
 ## How can you support the project?
@@ -56,6 +58,12 @@ Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> L
 3. The best cached release goes to your **debrid service** or your **Usenet provider**.
 4. A **mount** (cli_mount, Decypharr or Zurg + rclone) streams the files from the cloud. Nothing is downloaded to your server.
 5. cli_debrid files them into your **library**, as Plex-tracked items or a symlinked folder tree, tells your media server to scan, and keeps looking for **upgrades**.
+
+## Coming from another setup?
+
+- **plex_debrid:** cli_debrid is its successor. It does the same job (watchlists in, cached releases out, Plex library kept up to date) with a web interface, a local database of what you have, and automatic upgrades and repairs.
+- **Sonarr/Radarr with a debrid downloader:** cli_debrid takes the place of the *arr apps and the download client. It scrapes, ranks releases against your Versions, sends them to your debrid service or Usenet provider, and builds the library. Bazarr can still connect to it as if it were Sonarr/Radarr.
+- **Usenet with SABnzbd or NZBGet:** NZBs are streamed from your news server through the mount, with nothing downloaded first. See [Usenet migration](https://godver3.github.io/cli_docs/features/usenet-migration/).
 
 ## Key Features
 
