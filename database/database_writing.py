@@ -8,7 +8,7 @@ import os
 import threading
 from utilities.atomic_io import atomic_write_bytes
 from utilities.post_processing import handle_state_change
-from typing import List
+from typing import List, Optional
 import sqlite3
 
 # original_collected_at records an item's first-ever collection time and must
@@ -19,6 +19,99 @@ import sqlite3
 # which both key off original_collected_at being unset). Interpolate this
 # into each reset UPDATE's SET clause instead of hand-typing the two columns.
 RESET_COLLECTION_STATE_SQL = "collected_at = NULL, original_collected_at = NULL"
+
+# Columns saved for a row's old files when they're about to be replaced; once the
+# replacement is Collected, post_processing.cleanup_files_replaced_by_move_to_wanted
+# removes them (symlink, mount file, provider job, media server entry).
+REPLACED_FILE_FIELDS = (
+    'id', 'imdb_id', 'tmdb_id', 'type', 'title', 'episode_title', 'season_number',
+    'episode_number', 'version', 'state', 'location_on_disk', 'original_path_for_symlink',
+    'filled_by_torrent_id', 'filled_by_file', 'filled_by_title', 'location_basename',
+)
+
+
+def stash_replaced_files(rows):
+    """Return (id, json) pairs: each row's current files appended to its replaced_files list."""
+    stashed = []
+    for row in rows:
+        row = dict(row)
+        if not (row.get('location_on_disk') or row.get('original_path_for_symlink')
+                or row.get('filled_by_torrent_id')):
+            continue
+        try:
+            pending = json.loads(row.get('replaced_files') or '[]')
+        except (TypeError, ValueError):
+            pending = []
+        pending.append({k: row.get(k) for k in REPLACED_FILE_FIELDS})
+        stashed.append((row['id'], json.dumps(pending, default=str)))
+    return stashed
+
+
+@retry_on_db_lock()
+def replace_collected_item(item: dict) -> Optional[int]:
+    """Point the library's Collected row for this episode/movie and version at a new release.
+
+    Used by manual assign's "Replace episodes already in the library": instead of
+    inserting a second row next to the one already Collected (two copies, and
+    DupPrevention would drop the new one at collection), the existing row goes
+    back to Checking on the new torrent/file. Its old files are saved in
+    replaced_files and removed once the replacement is Collected.
+    Returns the row id, or None when there's no Collected row to replace.
+    """
+    imdb_id = item.get('imdb_id')
+    item_type = item.get('type')
+    if not imdb_id or item_type not in ('episode', 'movie'):
+        return None
+    where = ("imdb_id = ? AND type = ? AND state = 'Collected' AND (ghostlisted = 0 OR ghostlisted IS NULL) "
+             "AND RTRIM(COALESCE(version, ''), '*') = ?")
+    params = [imdb_id, item_type, (item.get('version') or '').rstrip('*')]
+    if item_type == 'episode':
+        if item.get('season_number') is None or item.get('episode_number') is None:
+            return None
+        where += " AND season_number = ? AND episode_number = ?"
+        params += [item['season_number'], item['episode_number']]
+    conn = get_db_connection()
+    try:
+        row = conn.execute(f"SELECT * FROM media_items WHERE {where} ORDER BY id LIMIT 1", params).fetchone()
+        if not row:
+            return None
+        row = dict(row)
+        stashed = stash_replaced_files([row])
+        conn.execute(
+            """UPDATE media_items SET
+                   state = 'Checking',
+                   version = ?,
+                   filled_by_file = ?,
+                   filled_by_title = ?,
+                   filled_by_magnet = ?,
+                   filled_by_torrent_id = ?,
+                   original_scraped_torrent_title = ?,
+                   location_on_disk = NULL,
+                   original_path_for_symlink = NULL,
+                   original_filename = NULL,
+                   collected_at = NULL,
+                   upgrading_from = NULL,
+                   upgrading = NULL,
+                   manual_replace = 0,
+                   replaced_files = ?,
+                   last_updated = ?
+               WHERE id = ?""",
+            (item.get('version'), item.get('filled_by_file'), item.get('filled_by_title'),
+             item.get('filled_by_magnet'), item.get('filled_by_torrent_id'),
+             item.get('original_scraped_torrent_title'),
+             stashed[0][1] if stashed else row.get('replaced_files'), datetime.now(), row['id'])
+        )
+        conn.commit()
+        logging.info(f"Replacing Collected item {row['id']} ({item_type} {imdb_id} "
+                     f"S{item.get('season_number')}E{item.get('episode_number')}, version {row.get('version')}) "
+                     f"with {item.get('filled_by_file')}; {'old files saved for removal' if stashed else 'no old files'}")
+        return row['id']
+    except sqlite3.OperationalError:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
 
 @retry_on_db_lock()
 def bulk_delete_by_id(id_value, id_type):

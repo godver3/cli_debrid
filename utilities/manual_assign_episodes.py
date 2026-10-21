@@ -6,13 +6,15 @@ episode numbers. Anime packs are often numbered differently:
 - absolute: "Show - 030.mkv" for what the show calls S02E05, or the other
   way round, "S02E05" files for a show set to an absolute episode order
   (everything in season 1);
-- every episode under S01: "S01E30".
+- every episode under S01: "S01E30";
+- a bare number PTT leaves in the title: "[CBT] Gintama 003 [DVDrip].mkv".
 
 match_absolute_files() runs after the S/E pass and assigns what it can.
 A file is only assigned when its number points at exactly one episode and
 it is the only file doing so; anything less certain is left for the user.
 """
 import logging
+import re
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -58,6 +60,37 @@ def absolute_numbers(seasons: Optional[Dict[Any, Any]]) -> Dict[Tuple[int, int],
             if numbers:
                 result[(s_num, e_num)] = list(dict.fromkeys(numbers))
     return result
+
+
+# A title ending in a bare number: "Gintama 003" (PTT reads no episode there)
+_TRAILING_NUMBER_RE = re.compile(r'^(?P<prefix>.*?\S)[\s._-]+(?P<number>\d{1,4})$')
+
+
+def pack_bare_numbers(parsed_files: List[Dict[str, Any]]) -> Dict[int, int]:
+    """{id(file): episode} for files numbered only by a bare number after the title.
+
+    PTT reads "[CBT] Gintama 003 [DVDrip].mkv" as the title "Gintama 003" with
+    no episode. The trailing number counts only when the pack backs it up:
+    the most common title before the number, shared by at least two files
+    with different numbers. A lone "Mob Psycho 100" or extras named
+    "NCOP 1" next to the episodes don't read as episodes.
+    """
+    groups: Dict[str, Dict[int, int]] = defaultdict(dict)
+    for f in parsed_files:
+        parsed = f.get('parsed') or {}
+        if parsed.get('seasons') or parsed.get('episodes'):
+            continue
+        m = _TRAILING_NUMBER_RE.match((parsed.get('title') or '').strip())
+        if not m:
+            continue
+        prefix = re.sub(r'[\s._-]+', ' ', m.group('prefix')).strip().casefold()
+        groups[prefix][id(f)] = int(m.group('number'))
+    best = max(groups.values(), key=len, default={})
+    if len(best) < 2 or len(set(best.values())) < 2:
+        return {}
+    if sum(len(g) == len(best) for g in groups.values()) > 1:
+        return {}  # two equally common titles: no telling which is the episodes
+    return {f_id: n for f_id, n in best.items() if n > 0}
 
 
 def file_explicit_absolute(parsed: Dict[str, Any], filename: Optional[str],
@@ -137,25 +170,32 @@ class _ShowNumbering:
             logging.info(f"[Absolute] Absolute {sorted(set(numbers))} could be any of {sorted(positions)}; not guessing")
         return None
 
-    def file_positions(self, parsed: Dict[str, Any], explicit_absolute: Optional[List[int]] = None) -> Set[Tuple[int, int]]:
+    def file_positions(self, parsed: Dict[str, Any], explicit_absolute: Optional[List[int]] = None,
+                       bare_number: Optional[int] = None) -> Set[Tuple[int, int]]:
         """The show's (season, episode) a parsed file name stands for.
 
         explicit_absolute: absolute numbers the name states next to its own
-        season ("S13E01 (0422)"); they decide over the name's S/E."""
+        season ("S13E01 (0422)"); they decide over the name's S/E.
+        bare_number: the pack's trailing title number ("Gintama 003"), see
+        pack_bare_numbers. Multi-episode files ("001-002") give one position
+        per episode, or none when any of them doesn't resolve."""
         seasons = _ints(parsed.get('seasons'))
         episodes = _ints(parsed.get('episodes'))
         positions: Set[Tuple[int, int]] = set()
         if explicit_absolute:
             pos = self._by_number(explicit_absolute)
             return {pos} if pos else positions
+        if not episodes and not seasons and bare_number:
+            episodes = [bare_number]
         if not episodes:
             return positions
         if not seasons:
             # "Show - 030": the number is already absolute
-            for n in episodes:
+            for n in set(episodes):
                 pos = self._by_number([n])
-                if pos:
-                    positions.add(pos)
+                if not pos:
+                    return set()
+                positions.add(pos)
             return positions
         for s in seasons:
             for e in episodes:
@@ -187,9 +227,12 @@ def match_absolute_files(target_items: List[Dict[str, Any]],
     'original' and 'used'). alt_seasons is another numbering the pack may
     use, normally the default aired order when the show is set to a
     different one. Every episode item gets 'absolute_number' for display.
+    A multi-episode file ("001-002") is assigned to each episode it holds,
+    also when the S/E pass already gave it to the first one.
     Returns how many items were assigned.
     """
     numbering = _ShowNumbering(show_seasons, alt_seasons)
+    bare_numbers = pack_bare_numbers(parsed_files)
 
     items_by_pos: Dict[Tuple[int, int], Dict[str, Any]] = {}
     for item in target_items:
@@ -203,13 +246,16 @@ def match_absolute_files(target_items: List[Dict[str, Any]],
 
     files_by_pos: Dict[Tuple[int, int], List[Dict[str, Any]]] = defaultdict(list)
     for f in parsed_files:
-        if f.get('used'):
+        multi_episode = len(set(_ints((f.get('parsed') or {}).get('episodes')))) > 1
+        if f.get('used') and not multi_episode:
             continue
         explicit = file_explicit_absolute(f.get('parsed') or {}, (f.get('original') or {}).get('filename'),
                                           show_seasons)
-        positions = numbering.file_positions(f.get('parsed') or {}, explicit) & set(items_by_pos)
-        if len(positions) == 1:  # multi-episode files are left to the user
-            files_by_pos[next(iter(positions))].append(f)
+        positions = numbering.file_positions(f.get('parsed') or {}, explicit, bare_numbers.get(id(f)))
+        if len(positions) > 1 and not multi_episode:
+            continue  # one number, several episodes: left to the user
+        for pos in positions & set(items_by_pos):
+            files_by_pos[pos].append(f)
 
     assigned = 0
     for pos, item in items_by_pos.items():

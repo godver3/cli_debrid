@@ -229,3 +229,36 @@ body.tangerine-theme .form-actions button#confirm-assignment-btn:disabled {
         border-bottom: none;
     }
 }
+
+/* ── Replace existing ── */
+body.tangerine-theme .in-library-badge {
+    display: inline-block;
+    align-self: flex-start;
+    width: fit-content;
+    margin-top: 4px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #e8601c;
+    background: rgba(232, 96, 28, .12);
+}
+
+body.tangerine-theme .replace-existing-option input {
+    accent-color: #e8601c;
+}
+
+body.tangerine-theme .replace-existing-option {
+    display: block;
+    margin: 16px 0 0;
+    font-size: 12px;
+    color: #e0e0e0;
+    cursor: pointer;
+}
+
+body.tangerine-theme .replace-existing-hint {
+    display: block;
+    margin: 2px 0 0 22px;
+    font-size: 11px;
+    color: #888;
+}

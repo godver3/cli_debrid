@@ -85,6 +85,16 @@ document.addEventListener('DOMContentLoaded', function() {
         <input type="hidden" name="version" value="{{ version }}">
         <input type="hidden" name="episode_order" value="{{ episode_order or '' }}">
 
+        {% set library_count = target_items|selectattr('in_library')|list|length %}
+        <label class="replace-existing-option">
+            <input type="checkbox" name="replace_existing" value="1" checked>
+            Replace {{ 'episodes' if target_items and target_items[0].type == 'episode' else 'items' }} already in the library
+            <span class="replace-existing-hint">
+                {% if library_count %}{{ library_count }} of these {{ 'is' if library_count == 1 else 'are' }} already in your library as {{ version }}.
+                {% endif %}The old file is removed once the new one is collected. Untick to keep both.
+            </span>
+        </label>
+
         <div class="assignment-grid">
             <div class="assignment-header">Media Item</div>
             <div class="assignment-header">Torrent File</div>
@@ -95,6 +105,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 {% if item.type == 'episode' %}
                     <br><em>S{{ "%02d"|format(item.season_number) }}E{{ "%02d"|format(item.episode_number) }}{% if item.absolute_number and item.season_number != 1 %} (#{{ item.absolute_number }}){% endif %} - {{ item.episode_title }}</em>
                 {% endif %}
+                {% if item.in_library %}<span class="in-library-badge" title="Already in your library as {{ version }}">In library</span>{% endif %}
             </div>
             <div class="file-selector">
                 <select name="{{ item.item_key }}" class="form-control">
