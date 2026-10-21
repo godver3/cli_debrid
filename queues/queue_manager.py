@@ -466,6 +466,11 @@ class QueueManager:
         return processed > 0
 
     def process_adding(self):
+        # Resync from DB before each tick (Scraping already does this). Without it,
+        # memory can keep NZB-awaiting rows that health check already moved, and the
+        # next process() announces a phantom "available" count.
+        if not self.paused:
+            self.queues["Adding"].update()
         self._process_queue_safely("Adding")
 
     def process_unreleased(self):

@@ -412,13 +412,28 @@ class ScrapingQueue:
                 try:
                     adding_queue = queue_manager.queues.get("Adding")
                     if adding_queue and adding_queue.get_contents(): # Check if Adding queue exists and has items
-                        is_in_adding = any(adding_item.get('imdb_id') == item_imdb_id for adding_item in adding_queue.get_contents())
+                        # NZB rows already submitted to cli_mount are owned by health
+                        # check — they used to freeze Scraping for the whole show for
+                        # hours (defer → False → process_scraping breaks the batch).
+                        from queues.adding_queue import adding_item_blocks_scraping
+                        is_in_adding = any(
+                            adding_item.get('imdb_id') == item_imdb_id
+                            and adding_item_blocks_scraping(adding_item)
+                            for adding_item in adding_queue.get_contents()
+                        )
                         if is_in_adding:
                             if str(item_id_being_processed) == DEBUG_ITEM_ID:
                                 # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] DEFERRED - related item found in Adding Queue.")
                                 pass
-                            # logging.info(f"Deferring processing for {item_identifier} (IMDb: {item_imdb_id}) - related item found in Adding Queue.")
-                            return False # Defer processing, keep item in queue
+                            # Rotate to the end so other shows can still scrape this tick
+                            # instead of aborting the whole Scraping batch.
+                            logging.debug(
+                                f"Deferring {item_identifier} (IMDb: {item_imdb_id}) - related "
+                                f"item in Adding; rotating to end of Scraping queue"
+                            )
+                            if self.items and self.items[0] is item_to_process:
+                                self.items.append(self.items.pop(0))
+                            return True
                         elif str(item_id_being_processed) == DEBUG_ITEM_ID:
                             # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] PASSED Adding Queue check (no related item found).")
                             pass
