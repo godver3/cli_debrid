@@ -31,7 +31,7 @@ class TestNormalizeEnabledVersions(unittest.TestCase):
 
 
 class TestLoadLiveContentSourceConfig(unittest.TestCase):
-    @patch("utilities.settings.get_all_settings")
+    @patch("utilities.settings.get_all_settings", create=True)
     def test_returns_current_saved_source_instead_of_scheduled_snapshot(self, get_settings):
         saved_source = {
             "type": "My Plex Watchlist",
@@ -48,7 +48,7 @@ class TestLoadLiveContentSourceConfig(unittest.TestCase):
         self.assertEqual(source["versions"], ["1080p"])
         self.assertIsNot(source, saved_source)
 
-    @patch("utilities.settings.get_all_settings")
+    @patch("utilities.settings.get_all_settings", create=True)
     def test_missing_source_returns_none(self, get_settings):
         get_settings.return_value = {"Content Sources": {}}
         self.assertIsNone(load_live_content_source_config("Removed Source_1"))

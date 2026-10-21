@@ -196,10 +196,9 @@ def format_notification_content(notifications, notification_type, notification_c
         # If notifications is not a list (e.g., single system message), keep it as is
         unique_notifications = notifications
 
-    # --- START EDIT: Use the deduplicated list from now on ---
+    # Use the deduplicated list from now on
     if not unique_notifications:
          return "" # Return empty string if no unique notifications left
-    # --- END EDIT ---
 
     def format_state_suffix(state, is_upgrade=False):
         """Return the appropriate suffix based on state"""
@@ -295,7 +294,7 @@ def format_notification_content(notifications, notification_type, notification_c
     # Group items by show/movie
     grouped_items = {}
     for item in unique_notifications:
-        # --- START EDIT: Check for Checking state during an upgrade ---
+        # Check for Checking state during an upgrade
         # If the state is 'Checking' but 'upgrading_from' is present, treat it as 'Upgrading' for formatting.
         original_state = item.get('new_state', '') # Keep original state for logging
         effective_state = original_state
@@ -303,13 +302,11 @@ def format_notification_content(notifications, notification_type, notification_c
             effective_state = 'Upgrading'
             # Optionally, ensure is_upgrade is also True if not already set, though it should be
             # item['is_upgrade'] = True
-        # --- END EDIT ---
 
         # Group by title, type, year, and the *effective* state for better batching
         # --- EDIT: Add version to the grouping key ---
         version_key_part = item.get('version', '').strip('*') # Get version for key explicitly
         key = (item.get('title'), item.get('type'), item.get('year'), effective_state, item.get('is_upgrade', False), version_key_part)
-        # --- END EDIT ---
         if key not in grouped_items:
             grouped_items[key] = []
         # Store the original item, but we'll use the effective_state when formatting
@@ -321,7 +318,6 @@ def format_notification_content(notifications, notification_type, notification_c
     # Process each group
     # --- EDIT: Update the key unpacking to include version ---
     for (title, type_, year, state, is_upgrade, version), items in sorted(grouped_items.items()):
-    # --- END EDIT ---
         # Log details about the group being processed
         group_key_for_log = (title, type_, year, state, is_upgrade, version)
         # Create a representative item for the group
@@ -330,7 +326,6 @@ def format_notification_content(notifications, notification_type, notification_c
         # --- EDIT: Use the effective state for formatting ---
         # Ensure the representative item uses the effective state determined during grouping
         group_item['new_state'] = state # 'state' here comes from the group key (effective_state)
-        # --- END EDIT ---
 
         # Add the title line only once per group using the (potentially modified) group_item
         formatted_title_line = format_title(group_item) # Get the formatted title
@@ -380,7 +375,6 @@ def format_notification_content(notifications, notification_type, notification_c
                     if episode_line:
                         # Pass the effective state to format_state_suffix
                         content.append(f"{episode_line} {format_state_suffix(effective_episode_state, item.get('is_upgrade', False))}")
-                    # --- END EDIT ---
             # --- END: Truncate episode notifications ---
         else:
             # For movies, just add the state suffix (using the effective state) to the title line

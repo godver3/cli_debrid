@@ -8,6 +8,7 @@ import re
 
 from utilities.settings import get_setting
 from scraper.scraper import scrape
+from scraper.functions.anime_utils import absolute_episode_for
 from database.core import retry_on_db_lock
 from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted, is_nzb_guid_not_wanted, get_base_filename
 from cli_battery.app.direct_api import DirectAPI
@@ -248,6 +249,15 @@ class ScrapingQueue:
             item_identifier = queue_manager.generate_identifier(item_to_process)
             processed_successfully_or_moved = False # Flag to track if item was moved/handled
 
+            # self.items is only synced with the DB once per tick, and Adding runs
+            # concurrently: a season pack added for a sibling moves the rest of the
+            # season to Checking mid-tick. Don't re-scrape an item that has moved on.
+            _live_item = get_media_item_by_id(item_id_being_processed)
+            if _live_item is not None and _live_item.get('state') != 'Scraping':
+                logging.info(f"Skipping {item_identifier}: state is now {_live_item.get('state')}, no longer Scraping")
+                self.remove_item(item_to_process)
+                return True
+
             if str(item_id_being_processed) == DEBUG_ITEM_ID:
                 # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Now being processed at the start of ScrapingQueue.process(). Force_priority: {item_to_process.get('force_priority', False)}")
                 pass
@@ -431,9 +441,8 @@ class ScrapingQueue:
                 # logging.info(f"Starting to process scraping results for {item_identifier}")
                 processed_an_item_this_cycle = True # Mark that we started processing
 
-                # --- START EDIT: Add content source check ---
+                # Add content source check
                 is_magnet_assigned = item_to_process.get('content_source') == 'Magnet_Assigner'
-                # --- END EDIT ---
 
                 # Check release date logic - skip for early release items AND magnet assigned items
                 # --- Use item_to_process instead of item throughout ---
@@ -486,7 +495,7 @@ class ScrapingQueue:
                                     processed_successfully_or_moved = True
 
                     except ValueError:
-                         # --- START EDIT: Add content source check ---
+                         # Add content source check
                         # Only move back if not magnet assigned and date is bad
                         if not is_magnet_assigned:
                             if str(item_id_being_processed) == DEBUG_ITEM_ID:
@@ -502,7 +511,6 @@ class ScrapingQueue:
                             # Log but allow Magnet Assigned items to proceed
                             # logging.warning(f"Magnet Assigned item {item_identifier} has an invalid release date format: {item_to_process['release_date']}. Proceeding anyway.")
                             pass
-                        # --- END EDIT ---
                         # Removed return
 
                 # Proceed only if the item wasn't moved back to Wanted due to release date
@@ -686,16 +694,21 @@ class ScrapingQueue:
                             _curr_season = item_to_process.get('season_number')
                             _curr_version = item_to_process.get('version', '')
                             # Find all Scraping items for same show+season+version
-                            # Exclude items already Collected/Upgrading in DB (stale Scraping items)
+                            # Exclude items already Collected/Upgrading in DB (stale Scraping items),
+                            # and in-memory items whose DB state has moved on (e.g. to Checking via
+                            # a sibling's season pack) since the last update().
                             from database.database_reading import get_all_media_items as _get_items
+                            _show_rows = _get_items(imdb_id=_curr_imdb) or []
                             _already_collected = {
                                 (r['imdb_id'], r['season_number'], r['episode_number'])
-                                for r in (_get_items(imdb_id=_curr_imdb) or [])
+                                for r in _show_rows
                                 if r.get('state') in ('Collected', 'Upgrading')
                             }
+                            _still_scraping = {r['id'] for r in _show_rows if r.get('state') == 'Scraping'}
                             _batch_candidates = [
                                 it for it in self.items
                                 if (it.get('type') == 'episode' and
+                                    it.get('id') in _still_scraping and
                                     it.get('imdb_id') == _curr_imdb and
                                     it.get('season_number') == _curr_season and
                                     it.get('version', '') == _curr_version and
@@ -838,9 +851,21 @@ class ScrapingQueue:
                                     # queue order; it no longer gets the richer normal-path handling
                                     # (not-wanted filtering, delayed-scrape-by-score) in this batched
                                     # case, same as its siblings already didn't.
+                                    def _bep_moved_on(_b):
+                                        # Adding fans a season pack out to siblings one by one
+                                        # while this loop runs; skip any that have left Scraping.
+                                        _live = get_media_item_by_id(_b['id'])
+                                        if _live is not None and _live.get('state') != 'Scraping':
+                                            _batch_ids_to_remove.add(_b['id'])
+                                            return True
+                                        return False
+
                                     for _bep in _batch:
                                         try:
                                             _bep_id = f"{_bep.get('title')} S{_curr_season:02d}E{_bep.get('episode_number', 0):02d}"
+                                            if _bep_moved_on(_bep):
+                                                logging.info(f'[NZBBatch] {_bep_id} is no longer Scraping — skipping')
+                                                continue
                                             _bep_results, _ = self.scrape_with_fallback(
                                                 _bep, False, queue_manager,
                                                 check_pack_wantedness=False
@@ -922,6 +947,10 @@ class ScrapingQueue:
                                                     _batch_ids_to_remove.add(_bep['id'])
                                                     continue
 
+                                                if _bep_moved_on(_bep):
+                                                    logging.info(f'[NZBBatch] {_bep_id} left Scraping while being scraped — not moving to Adding')
+                                                    continue
+
                                                 queue_manager.move_to_adding(
                                                     _bep, 'Scraping',
                                                     _bep_best['title'],
@@ -967,6 +996,16 @@ class ScrapingQueue:
                             queue_manager,
                             check_pack_wantedness=check_pack_wantedness_for_initial_scrape
                         )
+
+                    # The scrape takes a while; a sibling's season pack may have moved
+                    # this item to Checking meanwhile. Every branch below moves the
+                    # item somewhere (Adding, Sleeping, Wanted, Blacklisted) and would
+                    # overwrite that.
+                    _live_after = get_media_item_by_id(item_id_being_processed)
+                    if _live_after is not None and _live_after.get('state') != 'Scraping':
+                        logging.info(f"{item_identifier} left Scraping while being scraped (now {_live_after.get('state')}) — not moving it")
+                        self.remove_item(item_to_process)
+                        return True
 
                     # Ensure both results and filtered_out_results are lists
                     results = results if results is not None else []
@@ -1259,17 +1298,15 @@ class ScrapingQueue:
                 if processed_an_item_this_cycle:
                     processed_count += 1
 
-            # --- START EDIT: Fetch setting from Queue section ---
+            # Fetch setting from Queue section
             if processed_an_item_this_cycle:
-                # --- START EDIT: Add try-except for float conversion ---
+                # Add try-except for float conversion
                 try:
                     delay_seconds = float(get_setting('Queue', 'item_process_delay_seconds', 0.0))
                 except (ValueError, TypeError):
                     delay_seconds = 0.0
-                # --- END EDIT ---
                 if delay_seconds > 0:
                     time.sleep(delay_seconds)
-            # --- END EDIT ---
 
         # Return True if there are more items potentially left to process in the queue
         # Or if we actually processed an item in this call (even if it resulted in removal)
@@ -1374,6 +1411,11 @@ class ScrapingQueue:
             # Filter results based on scene mapping if available, otherwise original item S/E
             filtered_results_using_mapping = []
             for r in results:
+                if r.get('movie_episode'):
+                    # A movie standing in for this episode (scraper.movie_episodes):
+                    # its release has no S/E to check, the scrape filtered it as the movie.
+                    filtered_results_using_mapping.append(r)
+                    continue
                 parsed_info = r.get('parsed_info', {})
                 season_episode_info = parsed_info.get('season_episode_info', {})
                 parsed_seasons = season_episode_info.get('seasons', [])
@@ -1455,12 +1497,11 @@ class ScrapingQueue:
                             base_season = target_season  # This is already XEM-mapped if scene_mapping exists
                             base_episode = target_episode  # This is already XEM-mapped if scene_mapping exists
 
-                            target_absolute_episode = 0
-                            # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata
-                            sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < base_season])
-                            for s_num in sorted_seasons:
-                                target_absolute_episode += season_episode_counts.get(s_num, 0)
-                            target_absolute_episode += base_episode
+                            target_absolute_episode = absolute_episode_for(
+                                base_season, base_episode, season_episode_counts,
+                                imdb_id=None if scene_mapping else item.get('imdb_id'))
+                            if target_absolute_episode is None:
+                                raise ValueError(f"no absolute episode for S{base_season}E{base_episode}")
 
                             # Check if torrent uses absolute episode numbering
                             torrent_seasons = parsed_seasons
@@ -1603,11 +1644,15 @@ class ScrapingQueue:
         if season is not None and episode is not None:
             date_based_results = []
             regular_results = []
+            movie_episode_results = []
             logging.debug(f"Processing {len(individual_results)} individual results for S/E matching for {item_identifier} (Item S{season}E{episode}).")
             # Separate date-based and regular results
             for result_idx, result in enumerate(individual_results):
                 logging.debug(f"  S/E Pre-sort check for individual result #{result_idx + 1} '{result.get('original_title', 'N/A')}': Parsed PTT: {result.get('parsed_info')}")
-                if result.get('parsed_info', {}).get('date'):
+                if result.get('movie_episode'):
+                    # Filtered as the movie it is; no S/E to check (scraper.movie_episodes)
+                    movie_episode_results.append(result)
+                elif result.get('parsed_info', {}).get('date'):
                     result['is_date_based'] = True # Mark it
                     date_based_results.append(result)
                     logging.debug(f"    '{result.get('original_title')}' marked as date_based.")
@@ -1702,12 +1747,11 @@ class ScrapingQueue:
                                 base_season = target_season  # This is already XEM-mapped if scene_mapping exists
                                 base_episode = target_episode  # This is already XEM-mapped if scene_mapping exists
 
-                                target_absolute_episode = 0
-                                # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata
-                                sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < base_season])
-                                for s_num in sorted_seasons:
-                                    target_absolute_episode += season_episode_counts.get(s_num, 0)
-                                target_absolute_episode += base_episode
+                                target_absolute_episode = absolute_episode_for(
+                                    base_season, base_episode, season_episode_counts,
+                                    imdb_id=None if scene_mapping else item.get('imdb_id'))
+                                if target_absolute_episode is None:
+                                    raise ValueError(f"no absolute episode for S{base_season}E{base_episode}")
 
                                 # Check if torrent uses absolute episode numbering
                                 torrent_seasons = parsed_seasons
@@ -1784,7 +1828,7 @@ class ScrapingQueue:
 
             logging.debug(f"  Finished S/E checks. Date-based: {len(date_based_results)}, Filtered Regular: {len(filtered_regular_results)} for {item_identifier}.")
             # Combine date-based and filtered regular results
-            individual_results = date_based_results + filtered_regular_results
+            individual_results = movie_episode_results + date_based_results + filtered_regular_results
             if individual_results:
                  logging.info(f"  After all S/E filtering, {len(individual_results)} individual results remain for {item_identifier}.")
                  logging.debug(f"    Final individual titles: {[r.get('original_title', 'N/A') for r in individual_results]}")

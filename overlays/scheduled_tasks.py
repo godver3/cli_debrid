@@ -4,6 +4,7 @@ Scheduled Tasks for Overlay System
 Periodic tasks for overlay sync and cleanup.
 """
 
+import glob as _glob
 import logging
 import os
 import sqlite3

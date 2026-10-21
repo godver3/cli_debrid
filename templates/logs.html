@@ -2,7 +2,7 @@
 
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/logs.css') }}?v=7">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_logs.css') }}">
 <script>
 (function(){
     var theme = localStorage.getItem('selectedTheme') || 'tangerine';
@@ -718,7 +718,7 @@ function fetchClimountLogs() {
 function startClimountPolling() {
     stopClimountPolling();
     fetchClimountLogs();
-    climountPollTimer = setInterval(fetchClimountLogs, 2000);
+    climountPollTimer = setInterval(() => { if (!document.hidden) fetchClimountLogs(); }, 2000);
 }
 
 function stopClimountPolling() {

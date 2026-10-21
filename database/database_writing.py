@@ -5,6 +5,8 @@ import json
 import pickle
 from pathlib import Path
 import os
+import threading
+from utilities.atomic_io import atomic_write_bytes
 from utilities.post_processing import handle_state_change
 from typing import List
 import sqlite3
@@ -99,20 +101,36 @@ def update_release_date_and_state(
         physical_release_date: str | None = None,
         theatrical_release_date: str | None = None,
         no_early_release: bool | None = None,  # Add the new flag parameter
-        runtime: int | None = None
+        runtime: int | None = None,
+        expected_state: str | None = None
     ):
-    """Update the release date, state, and potentially airtime, early_release, physical_release_date, and no_early_release flag for a media item."""
+    """Update the release date, state, and potentially airtime, early_release, physical_release_date, and no_early_release flag for a media item.
+
+    expected_state: only change the state if the row is still in this state.
+    Callers working from an earlier snapshot (the release-date refresh) would
+    otherwise overwrite a state another queue set in the meantime, e.g. send
+    an item that just moved to Checking back to Wanted. The date fields are
+    updated either way.
+    """
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
 
         # Build the query dynamically
-        set_clauses = [
-            'release_date = ?', 
-            'state = ?',
-            'last_updated = ?'
-        ]
-        params = [release_date, state, datetime.now()]
+        if expected_state is None:
+            set_clauses = [
+                'release_date = ?',
+                'state = ?',
+                'last_updated = ?'
+            ]
+            params = [release_date, state, datetime.now()]
+        else:
+            set_clauses = [
+                'release_date = ?',
+                'state = CASE WHEN state = ? THEN ? ELSE state END',
+                'last_updated = ?'
+            ]
+            params = [release_date, expected_state, state, datetime.now()]
 
         if airtime is not None:
             set_clauses.append('airtime = ?')
@@ -152,7 +170,11 @@ def update_release_date_and_state(
 
         conn.commit()
 
-        logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
+        if updated_item_row and updated_item_row['state'] != state:
+            logging.info(f"Item {item_id} left {expected_state} (now {updated_item_row['state']}) before the "
+                         f"release-date update; kept its state instead of setting {state}")
+        else:
+            logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
         
         return dict(updated_item_row) if updated_item_row else None
 
@@ -453,6 +475,10 @@ def delete_items_batch(item_ids, blacklist=False):
         if conn:
             conn.close()
 
+# Serializes the read-append-write below; concurrent callers lost entries.
+_collected_notifications_lock = threading.Lock()
+
+
 def add_to_collected_notifications(media_item):
     # Get db_content directory from environment variable with fallback
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -460,17 +486,17 @@ def add_to_collected_notifications(media_item):
     
     try:
         os.makedirs(notifications_file.parent, exist_ok=True)
-        
-        if notifications_file.exists():
-            with open(notifications_file, "rb") as f:
-                notifications = pickle.load(f)
-        else:
-            notifications = []
-        
-        notifications.append(media_item)
-        
-        with open(notifications_file, "wb") as f:
-            pickle.dump(notifications, f)
+
+        with _collected_notifications_lock:
+            if notifications_file.exists():
+                with open(notifications_file, "rb") as f:
+                    notifications = pickle.load(f)
+            else:
+                notifications = []
+
+            notifications.append(media_item)
+
+            atomic_write_bytes(str(notifications_file), pickle.dumps(notifications))
         
         logging.debug(f"Added notification for collected item: {media_item['title']} (ID: {media_item['id']})")
     except Exception as e:

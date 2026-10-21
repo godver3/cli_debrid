@@ -413,6 +413,30 @@ def add_db_status_and_episode_info(results, use_battery=False):
                         item['db_status'] = 'collected'
                 # If only wanted/unreleased episodes (no collected/blacklisted), keep current status
 
+def _show_order_seasons(imdb_id):
+    """The show's seasons in the episode order set on its page (Show options),
+    or None while it uses the default order. Same shape as the battery's
+    seasons: {season: {'episode_count', 'episodes': {number: {...}}}}."""
+    from cli_battery.app.episode_order import show_episode_order, fetch_seasons_for_order
+    order = show_episode_order(imdb_id)
+    if not order:
+        return None
+    try:
+        return fetch_seasons_for_order(imdb_id, order) or None
+    except Exception as e:
+        logging.warning(f"Discover: episode order {order} for {imdb_id} unavailable: {e}")
+        return None
+
+
+def _season_list(seasons):
+    """Battery-shaped seasons as TMDB's season list: [{'season_number', 'episode_count', 'name'}]."""
+    return sorted(
+        ({'season_number': int(s),
+          'episode_count': (d or {}).get('episode_count') or len((d or {}).get('episodes') or {}),
+          'name': f"Season {s}"} for s, d in seasons.items() if str(s).isdigit()),
+        key=lambda s: s['season_number'])
+
+
 def get_digital_release_date(tmdb_id, media_type, tmdb_api_key):
     """
     Fetch digital release date for a movie/TV show from TMDB release_dates endpoint.
@@ -2458,6 +2482,15 @@ def details_data(tmdb_id, media_type):
                     logging.debug(f"TVDB error traceback: {traceback.format_exc()}")
                     # Continue with TMDB seasons as fallback
 
+            # A show set to another episode order (Dragon Ball Kai in DVD order) is
+            # shown in that order, as the library has it
+            ordered = _show_order_seasons((data.get('external_ids') or {}).get('imdb_id'))
+            if ordered:
+                ordered_list = _season_list(ordered)
+                data['seasons'] = ordered_list
+                data['number_of_seasons'] = len([s for s in ordered_list if s['season_number'] > 0])
+                data['number_of_episodes'] = sum(s['episode_count'] for s in ordered_list if s['season_number'] > 0)
+
         # Enrich with digital release date if it's a movie — store separately, don't overwrite theatrical date
         digital_release_date = None
         if media_type == 'movie':
@@ -2621,9 +2654,27 @@ def season_episodes(tmdb_id, season_number):
             data = None
             logging.info(f"TMDB returned 404 for season {season_number} of TMDB ID {tmdb_id} — will try TVDB fallback")
 
-        # Pre-fetch TVDB data once if TVDB is configured (used for supplement and/or fallback)
+        # A show set to another episode order (Show options) is listed in that
+        # order. TMDB numbers its episodes differently, so its stills and
+        # overviews would land on the wrong episodes: leave them out.
         tvdb_ep_map = {}
-        if tvdb_api_key:
+        ordered_season = None
+        try:
+            from cli_battery.app.direct_api import DirectAPI as _DirectAPI
+            order_imdb_id, _ = _DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='tv')
+            ordered = _show_order_seasons(order_imdb_id)
+            if ordered:
+                ordered_season = ordered.get(season_number) or ordered.get(str(season_number)) or {}
+        except Exception as e:
+            logging.debug(f"Episode order lookup failed for TMDB {tmdb_id}: {e}")
+        if ordered_season is not None:
+            tvdb_ep_map = {int(k) if str(k).isdigit() else k: v
+                           for k, v in (ordered_season.get('episodes') or {}).items() if isinstance(v, dict)}
+            if not tvdb_ep_map:
+                return jsonify({'error': f'Season {season_number} is not in this show\'s episode order'}), 404
+            data = None
+        # Pre-fetch TVDB data once if TVDB is configured (used for supplement and/or fallback)
+        elif tvdb_api_key:
             try:
                 from cli_battery.app import tvdb_client
                 from cli_battery.app.direct_api import DirectAPI

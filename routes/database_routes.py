@@ -590,15 +590,38 @@ def index():
                 final_where_clause = "WHERE (ghostlisted = FALSE OR ghostlisted IS NULL)"
         
         order_clause = ""
-        # SQL sorting only if not sorting by 'size' and sort_column is a real DB column
-        if sort_column_req != 'size' and sort_column_req in db_actual_columns:
+        if sort_column_req == 'size':
+            # Missing sizes sort as 0; ties keep row order (as the old stable
+            # Python sort did, in both directions)
+            if 'size' in db_actual_columns:
+                order_clause = f'ORDER BY COALESCE("size", 0.0) {sort_order_req}, rowid ASC'
+        elif sort_column_req in db_actual_columns:
             order_clause = f'ORDER BY "{sort_column_req}" {sort_order_req}'
-        
-        # Load all data immediately - no artificial limits
-        query = f"{base_query} {final_where_clause} {order_clause}"
-        logging.debug(f"Executing query: {query} with params: {final_params}")
+
+        # Paginate in SQL: this page used to fetch and convert every matching
+        # row on each infinite-scroll request, then slice one page out.
         timings['filter_processing_done'] = time.perf_counter()
-        cursor.execute(query, final_params)
+        cursor.execute(f"SELECT COUNT(*) FROM media_items {final_where_clause}", final_params)
+        total_count = cursor.fetchone()[0]
+        try:
+            page = int(request.args.get('page', 1))
+        except (ValueError, TypeError):
+            page = 1
+
+        _VALID_PER_PAGE = {100, 250, 500, 1000, 2000, 5000}
+        try:
+            per_page = int(request.args.get('per_page', PER_PAGE))
+            if per_page not in _VALID_PER_PAGE:
+                per_page = PER_PAGE
+        except (ValueError, TypeError):
+            per_page = PER_PAGE
+        total_pages = max(1, (total_count + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))  # Clamp to valid range
+        start_idx = (page - 1) * per_page
+
+        query = f"{base_query} {final_where_clause} {order_clause} LIMIT ? OFFSET ?"
+        logging.debug(f"Executing query: {query} with params: {final_params}")
+        cursor.execute(query, list(final_params) + [per_page, start_idx])
         items_from_db = cursor.fetchall()
         logging.debug(f"Fetched {len(items_from_db)} items from the database")
         timings['main_query_executed'] = time.perf_counter()
@@ -618,9 +641,7 @@ def index():
                     # Don't calculate from disk - it's too slow for remote filesystems
                     # Size will be populated when item is collected/processed
                     item_dict['size_gb'] = 0.0
-        
-        if sort_column_req == 'size':
-            items_dict_list.sort(key=lambda x: x.get('size_gb', 0.0), reverse=(sort_order_req == 'desc'))
+
         timings['item_data_processing_done'] = time.perf_counter()
 
         # OPTIMIZATION: Column values are now lazy-loaded on-demand via /database/get_column_values/<column>
@@ -629,26 +650,8 @@ def index():
         logging.info("Column values will be lazy-loaded on-demand (performance optimization)")
         timings['distinct_values_skipped'] = time.perf_counter()
 
-        # Pagination: items per page for infinite scroll
-        total_count = len(items_dict_list)
-        try:
-            page = int(request.args.get('page', 1))
-        except (ValueError, TypeError):
-            page = 1
-
-        _VALID_PER_PAGE = {100, 250, 500, 1000, 2000, 5000}
-        try:
-            per_page = int(request.args.get('per_page', PER_PAGE))
-            if per_page not in _VALID_PER_PAGE:
-                per_page = PER_PAGE
-        except (ValueError, TypeError):
-            per_page = PER_PAGE
-        total_pages = max(1, (total_count + per_page - 1) // per_page)
-        page = max(1, min(page, total_pages))  # Clamp to valid range
-
-        start_idx = (page - 1) * per_page
-        end_idx = min(start_idx + per_page, total_count)
-        paginated_items = items_dict_list[start_idx:end_idx]
+        end_idx = start_idx + len(items_dict_list)
+        paginated_items = items_dict_list
 
         logging.info(f"Pagination: page {page}/{total_pages}, items {start_idx+1}-{end_idx} of {total_count}")
 

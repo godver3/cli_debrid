@@ -281,6 +281,8 @@ def _recheck_null_airdates():
         logger.info(f"Refresh worker: re-checking NULL airdates for {imdb_id} ({title})")
         try:
             seasons_data, _ = _get_metadata_client().get_show_seasons_and_episodes(imdb_id, include_specials=True)
+            from .episode_order import seasons_in_show_order
+            seasons_data = seasons_in_show_order(imdb_id, seasons_data)
             if seasons_data:
                 with managed_session() as session:
                     from .direct_api import _upsert_seasons_and_episodes

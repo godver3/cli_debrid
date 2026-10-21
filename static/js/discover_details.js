@@ -906,11 +906,15 @@ function setupRequestButton(data) {
     });
 }
 
+// Episode Order picker of the open request dialog (TV only)
+let detailsOrderPicker = null;
+
 function showVersionModal(data) {
     const modal = document.getElementById('versionModal');
     const versionCheckboxes = document.getElementById('versionCheckboxes');
 
     if (!modal || !versionCheckboxes) return;
+    detailsOrderPicker = null;
 
     versionCheckboxes.innerHTML = '';
 
@@ -954,22 +958,49 @@ function showVersionModal(data) {
         seasonSelectionContainer.style.display = 'none';
         versionCheckboxes.appendChild(seasonSelectionContainer);
 
-        if (data.seasons && data.seasons.length > 0) {
-            const list = document.createElement('div');
-            list.className = 'seasons-list';
-            seasonSelectionContainer.appendChild(list);
-            const _hideSpecials2 = (window.discoverState && window.discoverState.discoverSettings)
-                ? window.discoverState.discoverSettings.hide_specials !== false
-                : true;
-            data.seasons.filter(s => _hideSpecials2 ? s.season_number > 0 : true).forEach(season => {
+        const list = document.createElement('div');
+        list.className = 'seasons-list';
+        seasonSelectionContainer.appendChild(list);
+        const renderSeasonRows = (seasonNumbers, counts = {}) => {
+            list.innerHTML = '';
+            seasonNumbers.forEach(num => {
                 const row = document.createElement('div');
                 row.className = 'option-row';
-                row.dataset.value = String(season.season_number);
-                row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">Season ${season.season_number}</span>`;
+                row.dataset.value = String(num);
+                const count = counts[num] ? ` (${counts[num]} episodes)` : '';
+                row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">Season ${num}${count}</span>`;
                 row.addEventListener('click', () => row.classList.toggle('checked'));
                 list.appendChild(row);
             });
-        }
+        };
+        const _hideSpecials2 = (window.discoverState && window.discoverState.discoverSettings)
+            ? window.discoverState.discoverSettings.hide_specials !== false
+            : true;
+        const defaultSeasons = (data.seasons || [])
+            .filter(s => _hideSpecials2 ? s.season_number > 0 : true)
+            .map(s => s.season_number);
+        renderSeasonRows(defaultSeasons);
+
+        // Seasons are numbered in the picked order (Dragon Ball Kai: 2 aired seasons, more on DVD)
+        detailsOrderPicker = window.EpisodeOrderPicker
+            ? window.EpisodeOrderPicker.mount(versionCheckboxes, data.tmdb_id || data.id, async (order) => {
+                // data.seasons are already in the show's saved order
+                if (!order || order === detailsOrderPicker.current()) {
+                    renderSeasonRows(defaultSeasons);
+                    return;
+                }
+                list.innerHTML = '<p style="padding:8px;opacity:0.6;">Loading seasons...</p>';
+                try {
+                    const response = await fetch(`/content/show_seasons?tmdb_id=${encodeURIComponent(data.tmdb_id || data.id)}&order=${encodeURIComponent(order)}`);
+                    const result = await response.json();
+                    if (!result.success) throw new Error(result.error || 'Could not load seasons');
+                    renderSeasonRows(result.seasons, result.episode_counts || {});
+                } catch (error) {
+                    console.error('Error loading seasons for episode order:', error);
+                    list.innerHTML = '<p style="padding:8px;opacity:0.6;">Could not load seasons in that order.</p>';
+                }
+            })
+            : null;
 
         wholeRow.addEventListener('click', () => {
             wholeRow.classList.add('selected');
@@ -1133,6 +1164,10 @@ async function handleConfirmRequest() {
         // Add seasons if specific seasons were selected
         if (seasons && seasons.length > 0) {
             payload.seasons = seasons;
+        }
+        const pickedOrder = mediaType === 'tv' && detailsOrderPicker ? detailsOrderPicker.value() : null;
+        if (pickedOrder) {
+            payload.episode_order = pickedOrder;
         }
 
         if (selectedFolder) {

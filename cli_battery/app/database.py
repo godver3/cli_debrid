@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, LargeBinary, Text
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, LargeBinary, Text, Boolean
 from sqlalchemy.orm import sessionmaker, scoped_session, relationship
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime, timezone
@@ -6,7 +6,7 @@ from sqlalchemy import func, inspect as sa_inspect
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.exc import IntegrityError, OperationalError
 from .logger_config import logger
-from sqlalchemy import text, UniqueConstraint
+from sqlalchemy import text, UniqueConstraint, event
 from sqlalchemy.types import JSON
 import os
 import time
@@ -140,13 +140,20 @@ def init_db():
             pool_recycle=1800,
         )
 
+        # Everything but journal_mode is per-connection, so apply it to every
+        # pooled connection, not just the first one.
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragmas(dbapi_conn, _record):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA busy_timeout=60000")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA cache_size=-2000")
+            cursor.execute("PRAGMA temp_store=MEMORY")
+            cursor.execute("PRAGMA mmap_size=268435456")
+            cursor.close()
+
         with engine.connect() as conn:
             conn.execute(text("PRAGMA journal_mode=WAL"))
-            conn.execute(text("PRAGMA busy_timeout=60000"))
-            conn.execute(text("PRAGMA synchronous=NORMAL"))
-            conn.execute(text("PRAGMA cache_size=-2000"))
-            conn.execute(text("PRAGMA temp_store=MEMORY"))
-            conn.execute(text("PRAGMA mmap_size=268435456"))
             conn.commit()
 
         Session.remove()
@@ -229,6 +236,9 @@ def run_migrations(eng):
                 if 'tvdb_id' not in columns:
                     logger.info("Adding tvdb_id column to episodes table...")
                     conn.execute(text("ALTER TABLE episodes ADD COLUMN tvdb_id STRING"))
+                if 'is_movie' not in columns:
+                    logger.info("Adding is_movie column to episodes table...")
+                    conn.execute(text("ALTER TABLE episodes ADD COLUMN is_movie BOOLEAN"))
 
             # --- seasons: add plex_guid, tmdb_id, tvdb_id ---
             if 'seasons' in inspector.get_table_names():
@@ -242,6 +252,12 @@ def run_migrations(eng):
                 if 'tvdb_id' not in columns:
                     logger.info("Adding tvdb_id column to seasons table...")
                     conn.execute(text("ALTER TABLE seasons ADD COLUMN tvdb_id STRING"))
+
+            # --- metadata: index the item_id foreign key ---
+            # SQLite doesn't index foreign keys, so every per-item metadata
+            # lookup (and selectinload of Item.item_metadata) scanned the table.
+            if 'metadata' in inspector.get_table_names():
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_metadata_item_key ON metadata (item_id, key)"))
 
             # --- items: add media_status, last_trakt_fetch ---
             if 'items' in inspector.get_table_names():
@@ -328,6 +344,7 @@ class Episode(Base):
     tmdb_id = Column(String, nullable=True)
     tvdb_id = Column(String, nullable=True)
     absolute_episode = Column(Integer, nullable=True)
+    is_movie = Column(Boolean, nullable=True)  # TVDB isMovie
     null_airdate_checked_at = Column(DateTime, nullable=True)
     plex_guid = Column(String, nullable=True)
     season = relationship("Season", back_populates="episodes")

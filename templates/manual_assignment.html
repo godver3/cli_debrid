@@ -3,7 +3,7 @@
 {% block title %}Manual Magnet Assignment{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/manual_assignment.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_manual_assignment.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_manual_assignment.css') }}">
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module">
@@ -83,6 +83,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <input type="hidden" name="torrent_filename" value="{{ torrent_filename }}">
         <input type="hidden" name="torrent_id" value="{{ torrent_id }}">
         <input type="hidden" name="version" value="{{ version }}">
+        <input type="hidden" name="episode_order" value="{{ episode_order or '' }}">
 
         <div class="assignment-grid">
             <div class="assignment-header">Media Item</div>
@@ -92,7 +93,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="media-item-info">
                 <strong>{{ item.title }}</strong> ({{ item.year }})
                 {% if item.type == 'episode' %}
-                    <br><em>S{{ "%02d"|format(item.season_number) }}E{{ "%02d"|format(item.episode_number) }} - {{ item.episode_title }}</em>
+                    <br><em>S{{ "%02d"|format(item.season_number) }}E{{ "%02d"|format(item.episode_number) }}{% if item.absolute_number and item.season_number != 1 %} (#{{ item.absolute_number }}){% endif %} - {{ item.episode_title }}</em>
                 {% endif %}
             </div>
             <div class="file-selector">

@@ -3,16 +3,16 @@
 {% block title %}Show Details - Library{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/library_show.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/trailer_modal.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_show.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_trailer_modal.css') }}">
 <script>
     // Dynamically load theme-specific CSS
     (function() {
         function getCurrentTheme() {
-            const savedTheme = localStorage.getItem('theme');
+            const savedTheme = localStorage.getItem('selectedTheme');
             if (savedTheme) return savedTheme;
             const metaTheme = document.querySelector('meta[name="theme"]');
-            return metaTheme ? metaTheme.getAttribute('content') : 'classic';
+            return metaTheme ? metaTheme.getAttribute('content') : 'tangerine';
         }
 
         const theme = getCurrentTheme();
@@ -20,13 +20,13 @@
         var scraperLink = document.createElement('link');
         scraperLink.rel = 'stylesheet';
         if (theme === 'tangerine') {
-            scraperLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}?v=20260118";
+            scraperLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}";
         } else {
-            scraperLink.href = "{{ url_for('static', filename='css/scraper.css') }}";
+            scraperLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}";
         }
         document.head.appendChild(scraperLink);
 
-        var mobileCssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper-mobile.css' : 'css/scraper-mobile.css';
+        var mobileCssFile = 'css/tangerine/tangerine_scraper-mobile.css';
         var mobileLink = document.createElement('link');
         mobileLink.rel = 'stylesheet';
         mobileLink.href = '{{ url_for("static", filename="") }}' + mobileCssFile + '?v={{ range(10000, 99999) | random }}';
@@ -35,7 +35,7 @@
         if (theme === 'tangerine') {
             var showLink = document.createElement('link');
             showLink.rel = 'stylesheet';
-            showLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_library_show.css') }}?v={{ range(10000, 99999) | random }}";
+            showLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_library_show.css') }}";
             document.head.appendChild(showLink);
         }
     })();
@@ -233,6 +233,14 @@
                                             <path d="m16 16-1.9-1.9"></path>
                                         </svg>
                                     </button>
+                                    <button id="btn-show-options" class="action-btn ghost-btn" title="Show options - series type (anime) and episode order" aria-label="Show options">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M4 21v-7"></path><path d="M4 10V3"></path>
+                                            <path d="M12 21v-9"></path><path d="M12 8V3"></path>
+                                            <path d="M20 21v-5"></path><path d="M20 12V3"></path>
+                                            <path d="M2 14h4"></path><path d="M10 8h4"></path><path d="M18 16h4"></path>
+                                        </svg>
+                                    </button>
                                     <button id="btn-settings" class="action-btn ghost-btn" title="Settings" aria-label="Show settings">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                             <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path>
@@ -412,15 +420,17 @@
     </div>
 </div>
 {% include 'fix_match_modal.html' %}
+{% include 'show_options_modal.html' %}
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/deletion_common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v={{ range(10000, 99999) | random }}"></script>
-<script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
-<script src="{{ url_for('static', filename='js/library_show.js') }}?v={{ range(10000, 99999) | random }}"></script>
+<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}"></script>
+<script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
+<script src="{{ url_for('static', filename='js/library_show.js') }}"></script>
 <script src="{{ url_for('static', filename='js/trailer_modal.js') }}"></script>
-<script src="{{ url_for('static', filename='js/fix_match_modal.js') }}?v={{ range(10000, 99999) | random }}"></script>
+<script src="{{ url_for('static', filename='js/fix_match_modal.js') }}"></script>
+<script src="{{ url_for('static', filename='js/show_options_modal.js') }}"></script>
 {% endblock %}

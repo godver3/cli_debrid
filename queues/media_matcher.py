@@ -10,7 +10,8 @@ from typing import Dict, Any, List, Tuple, Optional
 from collections import defaultdict
 from fuzzywuzzy import fuzz
 from PTT import parse_title
-from scraper.functions.anime_utils import detect_absolute_numbering
+from scraper.functions.anime_utils import detect_absolute_numbering, absolute_episode_for, explicit_absolute_numbers
+from scraper.functions.movie_episodes import movie_episode_info, movie_search_title
 
 class MediaMatcher:
     """Handles media content matching and validation"""
@@ -36,6 +37,19 @@ class MediaMatcher:
             logging.debug(f"Could not fetch season episode counts for tmdb_id={tmdb_id}: {e}")
             return None
 
+    def _absolute_for(self, item: Dict[str, Any], season: Optional[int], episode: Optional[int],
+                      metadata_numbering: bool = True) -> Optional[int]:
+        """Absolute episode for S/E of this item's show (see anime_utils.absolute_episode_for).
+
+        metadata_numbering=False for XEM/scene-mapped S/E: only the arithmetic
+        over season counts applies then.
+        """
+        if season is None or episode is None:
+            return None
+        return absolute_episode_for(season, episode,
+                                    self._get_season_episode_counts_cached(item.get('tmdb_id')),
+                                    imdb_id=item.get('imdb_id') if metadata_numbering else None)
+
     def _compute_absolute_episode_for_item(self, item: Dict[str, Any]) -> Optional[int]:
         """Compute the absolute episode number for an item using cached counts or detect_absolute_numbering."""
         try:
@@ -50,19 +64,73 @@ class MediaMatcher:
             if uses_absolute and detected_absolute:
                 return detected_absolute
 
-            season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
-            if not season_episode_counts:
-                return None
-
-            target_absolute_episode = 0
-            sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < target_season])
-            for s_num in sorted_seasons:
-                target_absolute_episode += season_episode_counts.get(s_num, 0)
-            target_absolute_episode += target_episode
-            return target_absolute_episode
+            # Callers pass a clone carrying XEM-mapped S/E when a mapping applies
+            return self._absolute_for(item, target_season, target_episode,
+                                      metadata_numbering=not item.get('_xem_mapped'))
         except Exception as e:
             logging.debug(f"Could not compute absolute episode for item: {e}")
             return None
+
+    def _explicit_absolute_match(self, indexes: Dict[str, Any], item: Dict[str, Any]):
+        """Match by the absolute number files state next to their own season.
+
+        "S13E01 (0422)": the releaser's season may be none of the show's
+        orders, while the absolute number means the same episode in all of
+        them. Returns (the file for this item or None, ids of the files that
+        state an absolute, so S/E matching can skip them). Without the item's
+        absolute number nothing is decided: (None, empty set).
+        """
+        by_abs = indexes.get('by_explicit_absolute') or {}
+        if not by_abs:
+            return None, set()
+        season = item.get('season') or item.get('season_number')
+        episode = item.get('episode') or item.get('episode_number')
+        target_abs = self._absolute_for(item, season, episode)
+        if target_abs is None:
+            return None, set()
+        for pf in by_abs.get(target_abs, []):
+            if pf.get('parsed_info', {}).get('is_anime_special_content', False):
+                continue
+            logging.info(f"Absolute match for item '{item.get('title')}' S{season}E{episode} "
+                         f"(absolute {target_abs}) -> File: {pf['path']}")
+            return pf, set()
+        return None, {id(pf) for pfs in by_abs.values() for pf in pfs}
+
+    @staticmethod
+    def _aired_order_match(parsed_files: List[Dict[str, Any]], item: Dict[str, Any]):
+        """For a show set to another episode order, place files named in aired numbering.
+
+        Releases use TVDB's aired S/E: One Piece DVD S15E01 is aired S13E41,
+        and a file named "S15E01" is aired S15E01, another episode. Returns
+        (the file for this item or None, ids of files whose aired S/E is
+        another episode). Files without a season, or with numbers aired
+        numbering doesn't have ("S01E422"), are left to the usual matching.
+        """
+        from scraper.functions.episode_order_mapping import order_mapping
+        mapping = order_mapping(item.get('imdb_id'))
+        if mapping is None:
+            return None, set()
+        season = item.get('season') or item.get('season_number')
+        episode = item.get('episode') or item.get('episode_number')
+        aired = mapping.aired_of(season, episode)
+        if aired is None:
+            return None, set()
+        hit, others = None, set()
+        for pf in parsed_files:
+            info = pf.get('parsed_info', {})
+            if info.get('is_anime_special_content') or info.get('explicit_absolute'):
+                continue
+            positions = mapping.aired_positions(info.get('seasons') or [], info.get('episodes') or [])
+            if not positions or not info.get('episodes'):
+                continue
+            if aired in positions:
+                hit = hit or pf
+            else:
+                others.add(id(pf))
+        if hit is not None:
+            logging.info(f"Episode order match for item '{item.get('title')}' S{season}E{episode} "
+                         f"(aired S{aired[0]}E{aired[1]}) -> File: {hit['path']}")
+        return hit, others
 
     def _build_parsed_file_indexes(self, parsed_files: List[Dict[str, Any]]):
         """Build fast lookups for parsed files to avoid scanning all files for every item."""
@@ -74,6 +142,8 @@ class MediaMatcher:
             'race': [],
         }
         date_only_files = []  # Files parsed only as date (no seasons/episodes)
+        by_explicit_absolute = defaultdict(list)  # absolute named next to a season -> files
+        delimited_prefixes = self._indexable_delimited_prefixes(parsed_files)
 
         for parsed_file_info in parsed_files:
             parsed_info = parsed_file_info.get('parsed_info', {})
@@ -89,8 +159,17 @@ class MediaMatcher:
             if 'race' in filename_lower:
                 f1_candidates['race'].append(parsed_file_info)
 
+            for abs_num in parsed_info.get('explicit_absolute') or []:
+                by_explicit_absolute[abs_num].append(parsed_file_info)
+
             seasons = parsed_info.get('seasons') or []
             episodes = parsed_info.get('episodes') or []
+            if (not episodes and parsed_info.get('fallback_episode_delimited')
+                    and parsed_info.get('fallback_episode_prefix') in delimited_prefixes):
+                # Only the strict delimited fallback is indexed: the older
+                # first-number fallback also yields numbers for obfuscated
+                # hash names, and indexing those would invite false matches.
+                episodes = [parsed_info['fallback_episode']]
 
             if parsed_info.get('date') and not seasons and not episodes:
                 date_only_files.append(parsed_file_info)
@@ -116,7 +195,89 @@ class MediaMatcher:
             'by_episode_only': by_episode_only,
             'f1_candidates': f1_candidates,
             'date_only_files': date_only_files,
+            'by_explicit_absolute': by_explicit_absolute,
         }
+
+    @staticmethod
+    def _indexable_delimited_prefixes(parsed_files: List[Dict[str, Any]]) -> set:
+        """Name prefixes whose delimited-fallback episode numbers may be indexed.
+
+        A pack named like "Show.2009.001..." is one run of files sharing the
+        text before the number. A stray numbered file next to the real
+        episodes ("Show.Movie.1.mkv", "Behind.the.Scenes.Part.2.mkv") forms a
+        tiny group of its own; indexing it would let it fill an episode the
+        pack doesn't contain. A group is indexed only if it holds at least two
+        files and at least half as many as the pack's main episode run (its
+        largest group, or the files PTT already numbered). A lone file is
+        accepted when it is the only video in the torrent.
+        """
+        groups = defaultdict(int)
+        ptt_numbered = 0
+        videos = 0
+        for parsed_file_info in parsed_files:
+            parsed_info = parsed_file_info.get('parsed_info', {})
+            if parsed_info.get('is_anime_special_content', False):
+                continue
+            videos += 1
+            if parsed_info.get('episodes'):
+                ptt_numbered += 1
+            elif parsed_info.get('fallback_episode_delimited'):
+                groups[parsed_info.get('fallback_episode_prefix')] += 1
+        if not groups:
+            return set()
+        main_run = max(max(groups.values()), ptt_numbered)
+        return {
+            prefix for prefix, count in groups.items()
+            if (count >= 2 and count * 2 >= main_run) or (count == 1 and videos == 1)
+        }
+
+    def _match_movie_episode(self, parsed_files: List[Dict[str, Any]], item: Dict[str, Any],
+                             allow_largest: bool = True) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """File for an episode that is really a movie (scraper.functions.movie_episodes).
+
+        Its release is named like a movie, without S/E. None (so normal episode
+        matching runs) when the item isn't a movie episode, or when some file
+        does carry its S/E, e.g. a complete-series pack naming it S03E01.
+
+        A lone video is the movie. Otherwise the file whose name best matches
+        "<show> <episode title>"; failing that the largest video, but only when
+        allow_largest and no file carries any episode number (so not inside an
+        episode pack, where the largest file is just an episode).
+        """
+        season = item.get('season') or item.get('season_number')
+        episode = item.get('episode') or item.get('episode_number')
+        info = movie_episode_info(item.get('imdb_id'), season, episode)
+        if not info:
+            return None
+        videos = [pf for pf in parsed_files
+                  if not pf.get('parsed_info', {}).get('is_anime_special_content', False)]
+        if not videos:
+            return None
+        for pf in videos:
+            parsed = pf.get('parsed_info', {})
+            if episode in (parsed.get('episodes') or []) and (
+                    season in (parsed.get('seasons') or []) or not parsed.get('seasons')):
+                return None
+
+        movie_title = movie_search_title(item.get('series_title') or item.get('title'), info.get('title'))
+        if len(videos) == 1 and allow_largest:
+            chosen = videos[0]
+        else:
+            def title_score(pf):
+                name = os.path.splitext(os.path.basename(pf['path']))[0]
+                return fuzz.token_set_ratio(movie_title.lower(), re.sub(r'[._]+', ' ', name).lower())
+            best = max(videos, key=title_score)
+            if title_score(best) >= 80:
+                chosen = best
+            elif allow_largest and not any(
+                    pf.get('parsed_info', {}).get('episodes') or pf.get('parsed_info', {}).get('fallback_episode') is not None
+                    for pf in videos):
+                chosen = max(videos, key=lambda pf: pf.get('bytes', 0))
+            else:
+                logging.info(f"Movie episode '{movie_title}': no file title-matched in an episode pack; not matching")
+                return None
+        logging.info(f"Matched movie episode S{season}E{episode} '{movie_title}' -> {chosen['path']}")
+        return (os.path.basename(chosen['path']), item)
 
     def _parse_file_info(self, file_dict: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -169,6 +330,9 @@ class MediaMatcher:
         parsed_info['is_anime_special_content'] = is_anime_special_content
 
         parsed_info['original_filename'] = file_basename # Store basename
+        # "S13E01 (0422)": the absolute number beats the releaser's own season
+        parsed_info['explicit_absolute'] = explicit_absolute_numbers(
+            file_basename, parsed_info.get('seasons'), parsed_info.get('episodes'))
 
         # Attempt fallback episode extraction if PTT fails for episodes
         # PTT might return 'episodes': [] or no 'episodes' key at all.
@@ -177,6 +341,11 @@ class MediaMatcher:
              fallback_episode = self._extract_episode_from_filename(file_basename) # Use basename for fallback
              if fallback_episode is not None:
                   parsed_info['fallback_episode'] = fallback_episode
+             elif not parsed_info.get('is_anime_special_content'):
+                  delimited = self._delimited_episode_match(file_basename)
+                  if delimited is not None:
+                       parsed_info['fallback_episode'], parsed_info['fallback_episode_prefix'] = delimited
+                       parsed_info['fallback_episode_delimited'] = True
         
         # Additional check for anime openings/endings that might have been parsed as episodes
         # Look for patterns like NCOP1, NCED2, OP1, ED1, etc.
@@ -328,20 +497,11 @@ class MediaMatcher:
                 # Check if we have absolute episode evidence
                 has_absolute_episode = False
                 try:
-                    tmdb_id = item.get('tmdb_id')
-                    if tmdb_id:
-                        season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
-                        if season_episode_counts:
-                            # Calculate target absolute episode number
-                            abs_target = 0
-                            sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < target_season])
-                            for s_num in sorted_seasons:
-                                abs_target += season_episode_counts.get(s_num, 0)
-                            abs_target += target_episode
-                            
-                            # Check if absolute episode appears in the original filename
-                            if filename_for_check and re.search(rf'\b{abs_target}\b', filename_for_check):
-                                has_absolute_episode = True
+                    abs_target = self._absolute_for(item, target_season, target_episode,
+                                                    metadata_numbering=not using_xem)
+                    # Check if absolute episode appears in the original filename
+                    if abs_target is not None and filename_for_check and re.search(rf'\b{abs_target}\b', filename_for_check):
+                        has_absolute_episode = True
                 except Exception as e:
                     logging.debug(f"Could not calculate absolute episode for anime matching: {e}")
                 
@@ -376,21 +536,12 @@ class MediaMatcher:
                     has_absolute_episode = False
                     # Calculate absolute episode number on the fly (similar to filter_results.py)
                     try:
-                        tmdb_id = item.get('tmdb_id')
-                        if tmdb_id:
-                            season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
-                            if season_episode_counts:
-                                # Calculate target absolute episode number
-                                abs_target = 0
-                                sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < target_season])
-                                for s_num in sorted_seasons:
-                                    abs_target += season_episode_counts.get(s_num, 0)
-                                abs_target += target_episode
-                                
-                                # Check if absolute episode appears in the original filename
-                                filename_for_abs_check = ptt_result.get('original_filename', '')
-                                if filename_for_abs_check and re.search(rf'\b{abs_target}\b', filename_for_abs_check):
-                                    has_absolute_episode = True
+                        abs_target = self._absolute_for(item, target_season, target_episode,
+                                                        metadata_numbering=not using_xem)
+                        # Check if absolute episode appears in the original filename
+                        filename_for_abs_check = ptt_result.get('original_filename', '')
+                        if abs_target is not None and filename_for_abs_check and re.search(rf'\b{abs_target}\b', filename_for_abs_check):
+                            has_absolute_episode = True
                     except Exception as e:
                         logging.debug(f"Could not calculate absolute episode for anime matching: {e}")
                     
@@ -452,18 +603,13 @@ class MediaMatcher:
                             target_absolute_episode = detected_absolute
                         else:
                             # Traditional calculation for non-absolute numbered anime
-                            season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
-                            
-                            # Calculate target absolute episode number using the same logic as convert_anime_episode_format
-                            # Use XEM-mapped S/E if available, otherwise use original item S/E
-                            # base_season and base_episode already initialized above
-                            
-                            target_absolute_episode = 0
-                            # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata
-                            sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < base_season])
-                            for s_num in sorted_seasons:
-                                target_absolute_episode += season_episode_counts.get(s_num, 0)
-                            target_absolute_episode += base_episode
+                            # (base_season/base_episode are XEM-mapped when using_xem)
+                            target_absolute_episode = self._absolute_for(item, base_season, base_episode,
+                                                                         metadata_numbering=not using_xem)
+                        if target_absolute_episode is None:
+                            # No counts or stored absolute: nothing to match against
+                            # (the enclosing try logs and skips this check)
+                            raise ValueError(f"no absolute episode for S{base_season}E{base_episode}")
                         
                         # Check if torrent uses absolute episode numbering (common patterns: S01E1134, E1134, 1134)
                         torrent_seasons = ptt_result.get('seasons', [])
@@ -491,6 +637,7 @@ class MediaMatcher:
                         # Pattern 4: Check for padded absolute episode formats (E001, E0001, etc.)
                         else:
                             # Determine padding for absolute number (same logic as convert_anime_episode_format)
+                            season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
                             total_show_episodes = sum(season_episode_counts.values()) if season_episode_counts else 0
                             padding = 4 if total_show_episodes > 999 else 3
                             
@@ -614,19 +761,14 @@ class MediaMatcher:
                                     target_absolute_episode = detected_absolute
                                 else:
                                     # Traditional calculation for non-absolute numbered anime
-                                    season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
-                                    
-                                    # Calculate target absolute episode number using the same logic as convert_anime_episode_format
-                                    # Use XEM-mapped S/E if available, otherwise use original item S/E
                                     base_season = target_season  # This is already XEM-mapped if using_xem=True
                                     base_episode = target_episode  # This is already XEM-mapped if using_xem=True
-                                    
-                                    target_absolute_episode = 0
-                                    # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata
-                                    sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < base_season])
-                                    for s_num in sorted_seasons:
-                                        target_absolute_episode += season_episode_counts.get(s_num, 0)
-                                    target_absolute_episode += base_episode
+                                    target_absolute_episode = self._absolute_for(item, base_season, base_episode,
+                                                                                 metadata_numbering=not using_xem)
+                                if target_absolute_episode is None:
+                                    # No counts or stored absolute: nothing to match against
+                                    # (the enclosing try logs and skips this check)
+                                    raise ValueError(f"no absolute episode for S{base_season}E{base_episode}")
                                 
                                 # Check if torrent uses absolute episode numbering
                                 torrent_seasons = ptt_result.get('seasons', [])
@@ -654,6 +796,7 @@ class MediaMatcher:
                                 # Pattern 4: Check for padded absolute episode formats (E001, E0001, etc.)
                                 else:
                                     # Determine padding for absolute number (same logic as convert_anime_episode_format)
+                                    season_episode_counts = self._get_season_episode_counts_cached(tmdb_id)
                                     total_show_episodes = sum(season_episode_counts.values()) if season_episode_counts else 0
                                     padding = 4 if total_show_episodes > 999 else 3
                                     
@@ -776,6 +919,10 @@ class MediaMatcher:
 
         # --- TV Episode Logic ---
         elif item_type == 'episode':
+            movie_match = self._match_movie_episode(parsed_files, item)
+            if movie_match is not None:
+                return movie_match
+
             # Build indexes once for faster candidate selection
             indexes = self._build_parsed_file_indexes(parsed_files)
             by_season_episode = indexes['by_season_episode']
@@ -854,8 +1001,15 @@ class MediaMatcher:
                 except (ValueError, TypeError):
                     logging.warning(f"Invalid XEM mapping format in media matcher: {xem_mapping}. Using original S/E.")
 
+            abs_file, other_abs_files = self._explicit_absolute_match(indexes, item) if is_anime else (None, set())
+            if abs_file is not None:
+                return (os.path.basename(abs_file['path']), item)
+            order_file, other_order_files = self._aired_order_match(parsed_files, item)
+            if order_file is not None:
+                return (os.path.basename(order_file['path']), item)
+
             candidate_files: List[Dict[str, Any]] = []
-            seen_ids = set()
+            seen_ids = set(other_abs_files) | other_order_files  # their numbers say another episode
             if target_episode is not None:
                 # Index hits: (season, episode)
                 for pf in by_season_episode.get((target_season, target_episode), []):
@@ -971,6 +1125,39 @@ class MediaMatcher:
                 except ValueError:
                     continue
 
+        return None
+
+    def _extract_delimited_episode(self, filename: str) -> Optional[int]:
+        """Absolute episode number standing on its own between delimiters.
+
+        Only used when _extract_episode_from_filename finds nothing. That
+        method looks at the first number only, so a year in front of an
+        absolute episode ("Dragon.Ball.Kai.2009.001.1080p...") hid the episode.
+        Takes the first delimited number that isn't a year, a
+        resolution/codec/season token or an audio channel count.
+        """
+        match = self._delimited_episode_match(filename)
+        return match[0] if match else None
+
+    def _delimited_episode_match(self, filename: str) -> Optional[Tuple[int, str]]:
+        """(episode, normalized name prefix before it) for _extract_delimited_episode."""
+        name = os.path.splitext(os.path.basename(filename))[0].lower()
+        for match in re.finditer(r'(?<!\d)(\d{1,4})(?!\d)', name):
+            episode_num = int(match.group(1))
+            if not 0 < episode_num < 2000:
+                continue
+            start, end = match.span(1)
+            before = name[start - 1] if start > 0 else ''
+            after = name[end] if end < len(name) else ''
+            after2 = name[end + 1] if end + 1 < len(name) else ''
+            if before.isalpha() or (after.isalpha() and after != 'v'):
+                continue  # glued to a word: x264, 1080p, S01, DDP5, hash names; "001v2" allowed
+            if len(match.group(1)) == 4 and 1900 <= episode_num <= 2099:
+                continue  # year
+            before2 = name[start - 2] if start > 1 else ''
+            if len(match.group(1)) == 1 and ((after == '.' and after2.isdigit()) or (before == '.' and before2.isdigit())):
+                continue  # audio channels: 5.1, 2.0
+            return episode_num, re.sub(r'[^a-z0-9]+', ' ', name[:start]).strip()
         return None
 
     def match_movie(self, parsed: Dict[str, Any], item: Dict[str, Any], filename: str) -> bool:
@@ -1146,6 +1333,20 @@ class MediaMatcher:
             if pack_season:
                 logging.debug(f"Using original item season as pack season: {pack_season}")
 
+        # Build indexes once for this batch to avoid O(Files × Items)
+        indexes = self._build_parsed_file_indexes(parsed_torrent_files)
+        by_season_episode = indexes['by_season_episode']
+        by_episode_only = indexes['by_episode_only']
+        f1_candidates = indexes['f1_candidates']
+
+        # Files named "S13E01 (0422)" carry the releaser's season, and a show set to
+        # another episode order numbers seasons differently from the pack's aired ones
+        if pack_season is not None and restrict_to_pack_season:
+            from scraper.functions.episode_order_mapping import order_mapping
+            if indexes['by_explicit_absolute'] or order_mapping(original_item.get('imdb_id')):
+                logging.info(f"Pack numbering isn't the show's; not restricting related items to season {pack_season}")
+                pack_season = None
+
         # Apply season restriction if we have a pack season and the setting is enabled
         if pack_season is not None and restrict_to_pack_season:
             logging.info(f"Torrent pack identified as Season {pack_season}. Related item matching will be restricted to this season (per setting).")
@@ -1159,12 +1360,6 @@ class MediaMatcher:
         using_plex = file_collection_management == 'Plex'
         # Apply relaxed matching globally based on the original item context
         use_relaxed_matching_for_all = not using_plex and (is_anime or self.relaxed_matching)
-
-        # Build indexes once for this batch to avoid O(Files × Items)
-        indexes = self._build_parsed_file_indexes(parsed_torrent_files)
-        by_season_episode = indexes['by_season_episode']
-        by_episode_only = indexes['by_episode_only']
-        f1_candidates = indexes['f1_candidates']
 
         for item in all_candidate_items:
             item_id = item.get('id')
@@ -1236,6 +1431,21 @@ class MediaMatcher:
                         if id(pf) not in seen_ids:
                             seen_ids.add(id(pf)); candidate_files.append(pf)
             else:
+                abs_file, other_abs_files = (self._explicit_absolute_match(indexes, item)
+                                             if candidate_is_anime else (None, set()))
+                if abs_file is not None:
+                    logging.info(f"Found related item ID {item_id} (State: {item.get('state', 'Unknown')}) matching file '{abs_file['path']}' by absolute number")
+                    related_matches.append((item, os.path.basename(abs_file['path'])))
+                    processed_item_ids.add(item_id)
+                    continue
+                order_file, other_order_files = self._aired_order_match(parsed_torrent_files, item)
+                if order_file is not None:
+                    logging.info(f"Found related item ID {item_id} (State: {item.get('state', 'Unknown')}) matching file '{order_file['path']}' by aired numbering")
+                    related_matches.append((item, os.path.basename(order_file['path'])))
+                    processed_item_ids.add(item_id)
+                    continue
+                seen_ids |= other_abs_files | other_order_files  # their numbers say another episode
+
                 # Determine target season/episode (respect per-candidate XEM mapping if any)
                 target_season = item.get('season') or item.get('season_number')
                 target_episode = item.get('episode') or item.get('episode_number')
@@ -1275,6 +1485,7 @@ class MediaMatcher:
                         if target_episode is not None:
                             item_clone_for_abs['episode'] = target_episode
                             item_clone_for_abs['episode_number'] = target_episode
+                        item_clone_for_abs['_xem_mapped'] = candidate_xem_mapping is not None
                         abs_ep = self._compute_absolute_episode_for_item(item_clone_for_abs)
                         if abs_ep is not None:
                             for pf in by_episode_only.get(abs_ep, []):
@@ -1307,9 +1518,12 @@ class MediaMatcher:
                     found_match_for_this_item = True
                     break # Move to the next candidate item once a match is found for this one
 
-            # Optional: Debug log for non-matches
-            # if not found_match_for_this_item:
-            #     logging.debug(f"No file match found for candidate item ID {item_id}")
+            if not found_match_for_this_item:
+                # A movie episode inside the pack is named like a movie, without S/E
+                movie_match = self._match_movie_episode(parsed_torrent_files, item, allow_largest=False)
+                if movie_match is not None:
+                    related_matches.append((item, movie_match[0]))
+                    processed_item_ids.add(item_id)
 
         logging.debug(f"Found {len(related_matches)} related items matching files in total.")
         return related_matches

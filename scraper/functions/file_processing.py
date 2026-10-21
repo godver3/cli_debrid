@@ -49,6 +49,9 @@ def _parse_with_ptt(title: str) -> Dict[str, Any]:
         title_lower = title.lower()
         # Use regex to find Dragon Ball series patterns (with spaces or dots)
         dragon_ball_patterns = [
+            # "Z Kai" first, or the plain Z pattern turns Kai releases into DBZ
+            r'dragon\.ball\.z\.kai\b',
+            r'dragon ball z kai\b',
             r'dragon\.ball\.z\b',
             r'dragon ball z\b',
             r'dragon\.ball\.kai\b', 

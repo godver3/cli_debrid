@@ -5,6 +5,7 @@ from queues.queue_manager import QueueManager
 import logging
 from .program_operation_routes import get_program_status
 from queues.initialization import get_initialization_status
+from queues.run_program import is_initial_sync_running
 from utilities.settings import get_setting
 import json
 import time
@@ -80,6 +81,23 @@ def _get_provider_display(item: dict) -> str:
         except Exception:
             pass
     return ''
+
+
+def _initialization_status_payload() -> Optional[Dict]:
+    """The startup sync's progress for the Queues page, or None."""
+    status = get_initialization_status()
+    if not status:
+        return None
+    return {
+        'current_step': status.get('current_step', ''),
+        'total_steps': status.get('total_steps', 4),
+        'current_step_number': status.get('current_step_number', 0),
+        'progress_value': status.get('progress_value', 0),
+        'substep_details': status.get('substep_details', ''),
+        'error_details': status.get('error_details', None),
+        'is_substep': status.get('is_substep', False),
+        'current_phase': status.get('current_phase', None)
+    }
 
 
 def get_torrent_status_check_interval():
@@ -627,20 +645,10 @@ def api_queue_contents():
     
     # Get initialization status
     initialization_status = None
-    if program_status == 'Starting':
+    # The startup sync runs in the background while the program is Running
+    if program_status == 'Starting' or (program_status == 'Running' and is_initial_sync_running()):
         status_start = time.time()
-        status = get_initialization_status()
-        if status:
-            initialization_status = {
-                'current_step': status.get('current_step', ''),
-                'total_steps': status.get('total_steps', 4),
-                'current_step_number': status.get('current_step_number', 0),
-                'progress_value': status.get('progress_value', 0),
-                'substep_details': status.get('substep_details', ''),
-                'error_details': status.get('error_details', None),
-                'is_substep': status.get('is_substep', False),
-                'current_phase': status.get('current_phase', None)
-            }
+        initialization_status = _initialization_status_payload()
         status_time = time.time() - status_start
         logging.debug(f"[QUEUE_ROUTES] get_initialization_status() took {status_time:.3f}s")
     
@@ -1166,18 +1174,7 @@ def queue_stream():
                     initialization_status = None
                     if program_status == "Starting":
                         init_status_start = time.time()
-                        status = get_initialization_status()
-                        if status:
-                            initialization_status = {
-                                'current_step': status.get('current_step', ''),
-                                'total_steps': status.get('total_steps', 4),
-                                'current_step_number': status.get('current_step_number', 0),
-                                'progress_value': status.get('progress_value', 0),
-                                'substep_details': status.get('substep_details', ''),
-                                'error_details': status.get('error_details', None),
-                                'is_substep': status.get('is_substep', False),
-                                'current_phase': status.get('current_phase', None)
-                            }
+                        initialization_status = _initialization_status_payload()
                         init_status_time = time.time() - init_status_start
                         logging.debug(f"[QUEUE_STREAM] get_initialization_status() took {init_status_time:.3f}s")
                         yield f"data: {json.dumps({'program_status': 'Starting', 'initialization_status': initialization_status})}\n\n"
@@ -1334,7 +1331,9 @@ def queue_stream():
                         "currently_processing_upgrade_id": currently_processing_upgrade_id,
                         "items_per_hour": items_per_hour,
                         "remaining_scrape_time": remaining_scrape_time,
-                        "items_remaining": items_remaining
+                        "items_remaining": items_remaining,
+                        # The startup sync runs in the background while Running
+                        "initialization_status": _initialization_status_payload() if is_initial_sync_running() else None,
                     }
 
                     # Performance optimization: Only send if data has changed

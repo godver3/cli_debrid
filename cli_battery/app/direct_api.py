@@ -31,6 +31,7 @@ from . import tvdb_client
 from . import trakt_auth
 from .staleness import is_stale, is_older_than, should_recheck_null_airdate, is_tmdb_mapping_stale
 from .xem_utils import fetch_xem_mapping
+from .episode_order import seasons_in_show_order
 
 # Special-case: Lego Masters US season renumbering
 LEGO_MASTERS_US_IMDB_ID = "tt9615014"
@@ -38,6 +39,23 @@ LEGO_MASTERS_US_IMDB_ID = "tt9615014"
 _refresh_worker_started = False
 _plex_guid_backfilled: set = set()  # tracks shows already backfilled this session
 _plex_guid_backfilled_lock = __import__('threading').Lock()
+
+# One lock per show. _refresh_show deletes and rewrites a show's metadata
+# rows, so two refreshes of one show (the background refresh worker, alias or
+# bulk lookups, a forced refresh, concurrent cache misses) must not overlap.
+# get_show_metadata also holds it across its cache re-check so concurrent
+# misses coalesce into one provider fetch; it's re-entrant because that path
+# then calls _refresh_show.
+_show_refresh_locks: Dict[str, Any] = {}
+_show_refresh_locks_guard = __import__('threading').Lock()
+
+
+def _show_refresh_lock(imdb_id: str):
+    with _show_refresh_locks_guard:
+        lock = _show_refresh_locks.get(imdb_id)
+        if lock is None:
+            lock = _show_refresh_locks[imdb_id] = __import__('threading').RLock()
+        return lock
 
 
 def _apply_lego_masters_us_season_fix(seasons_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -109,6 +127,7 @@ def _format_seasons_from_orm(seasons) -> dict:
                     'tmdb_id': ep.tmdb_id,
                     'tvdb_id': ep.tvdb_id,
                     'absolute': ep.absolute_episode,
+                    'is_movie': ep.is_movie,
                     'plex_guid': ep.plex_guid,
                 } for ep in season.episodes
             },
@@ -310,7 +329,23 @@ def _ensure_plex_guids_in_data(imdb_id: str, data: dict, media_type: str) -> Non
 
 
 def _refresh_show(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
-    """Fetch full show data from metadata provider, persist to DB, return show dict."""
+    """Fetch full show data from metadata provider, persist to DB, return show dict.
+
+    Serialized per show with _show_refresh_lock.
+    """
+    lock = _show_refresh_lock(imdb_id)
+    if not lock.acquire(blocking=False):
+        lock.acquire()
+        # Another thread refreshed this show while we waited, so rows this
+        # session loaded beforehand may have been deleted and rewritten.
+        session.expire_all()
+    try:
+        return _fetch_and_persist_show(imdb_id, session)
+    finally:
+        lock.release()
+
+
+def _fetch_and_persist_show(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
     client = _get_metadata_client()
     show_data = client.get_show_data(imdb_id)
     if not show_data and client is not trakt_client:
@@ -333,8 +368,22 @@ def _refresh_show(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
         logger.debug(f"TMDB alias enrichment failed for {imdb_id}: {_e}")
 
     show_data.setdefault('type', 'show')
+    default_seasons = show_data.get('seasons')
+    show_data['seasons'] = seasons_in_show_order(imdb_id, default_seasons)
+    # The show's chosen episode order couldn't be fetched: store no seasons
+    order_unavailable = bool(default_seasons) and show_data['seasons'] is None
+    previous_fetch = (session.query(Item.last_trakt_fetch).filter_by(imdb_id=imdb_id).scalar()
+                      if order_unavailable else None)
     _ensure_plex_guids_in_data(imdb_id, show_data, 'show')
     _persist_item(imdb_id, dict(show_data), session)
+    if order_unavailable:
+        # Leave the show as stale as it was, so the next read retries the order,
+        # and hand back the seasons already stored (empty for a new show).
+        session.query(Item).filter_by(imdb_id=imdb_id).update({'last_trakt_fetch': previous_fetch})
+        item = session.query(Item).options(
+            selectinload(Item.seasons).selectinload(Season.episodes),
+        ).filter_by(imdb_id=imdb_id).first()
+        show_data['seasons'] = _format_seasons_from_orm(item.seasons) if item else {}
     return show_data
 
 
@@ -556,6 +605,7 @@ def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlA
             'tmdb_id': ep_data.get('tmdb_id') or (str(_ep_ids['tmdb']) if _ep_ids.get('tmdb') else None),
             'tvdb_id': ep_data.get('tvdb_id') or (str(_ep_ids['tvdb']) if _ep_ids.get('tvdb') else None),
             'absolute_episode': ep_data.get('absolute'),
+            'is_movie': ep_data.get('is_movie'),
             'plex_guid': ep_data.get('plex_guid'),
         })
 
@@ -577,6 +627,7 @@ def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlA
                     tmdb_id=func.coalesce(stmt.excluded.tmdb_id, Episode.tmdb_id),
                     tvdb_id=func.coalesce(stmt.excluded.tvdb_id, Episode.tvdb_id),
                     absolute_episode=stmt.excluded.absolute_episode,
+                    is_movie=func.coalesce(stmt.excluded.is_movie, Episode.is_movie),
                     plex_guid=func.coalesce(stmt.excluded.plex_guid, Episode.plex_guid),
                 ),
             )
@@ -623,11 +674,12 @@ def _fetch_and_store_xem(item: Item, session: SqlAlchemySession, metadata_dict: 
         xem_value = xem_data if xem_data else {}
         metadata_dict['xem_mapping'] = xem_value
         now = datetime.now(_get_local_tz())
-        existing = session.query(Metadata).filter_by(item_id=item.id, key='xem_mapping').first()
-        if existing:
-            existing.value = json.dumps(xem_value)
-            existing.last_updated = now
-        else:
+        # Bulk UPDATE rather than mutating a loaded row: a concurrent
+        # _refresh_show can delete the row between load and flush, which made
+        # the ORM raise StaleDataError and fail the whole lookup.
+        updated = session.query(Metadata).filter_by(item_id=item.id, key='xem_mapping').update(
+            {'value': json.dumps(xem_value), 'last_updated': now}, synchronize_session=False)
+        if not updated:
             session.add(Metadata(
                 item_id=item.id, key='xem_mapping',
                 value=json.dumps(xem_value), provider='xem', last_updated=now,
@@ -882,20 +934,37 @@ class DirectAPI:
             logger.warning(f"DirectAPI.get_show_metadata called with invalid imdb_id: {repr(imdb_id)}")
             return None, None
 
+        def _load(session):
+            return session.query(Item).options(
+                selectinload(Item.item_metadata),
+                selectinload(Item.seasons).selectinload(Season.episodes),
+            ).filter_by(imdb_id=imdb_id).first()
+
+        def _cached(item, session):
+            if not item or is_stale(item.type or 'show', item.media_status, item.last_trakt_fetch, force=force_refresh):
+                return None
+            md = _build_show_metadata_dict(item)
+            _fetch_and_store_xem(item, session, md)
+            if imdb_id == LEGO_MASTERS_US_IMDB_ID and 'seasons' in md:
+                md['seasons'] = _apply_lego_masters_us_season_fix(md['seasons'])
+            return md
+
         try:
             with managed_session() as session:
-                item = session.query(Item).options(
-                    selectinload(Item.item_metadata),
-                    selectinload(Item.seasons).selectinload(Season.episodes),
-                ).filter_by(imdb_id=imdb_id).first()
-
-                if item and not is_stale(item.type or 'show', item.media_status, item.last_trakt_fetch, force=force_refresh):
+                item = _load(session)
+                md = _cached(item, session)
+                if md is not None:
                     logging.debug(f"get_show_metadata {imdb_id}: cache HIT")
-                    md = _build_show_metadata_dict(item)
-                    _fetch_and_store_xem(item, session, md)
-                    if imdb_id == LEGO_MASTERS_US_IMDB_ID and 'seasons' in md:
-                        md['seasons'] = _apply_lego_masters_us_season_fix(md['seasons'])
                     return md, 'battery'
+
+            with _show_refresh_lock(imdb_id), managed_session() as session:
+                # Another thread may have refreshed this show while we waited.
+                item = _load(session)
+                if not force_refresh:
+                    md = _cached(item, session)
+                    if md is not None:
+                        logging.debug(f"get_show_metadata {imdb_id}: cache HIT after waiting on refresh")
+                        return md, 'battery'
 
                 # Stale or missing — refresh, unless Trakt is in cooldown
                 logging.debug(f"get_show_metadata {imdb_id}: cache MISS (stale={item is not None})")
@@ -970,6 +1039,7 @@ class DirectAPI:
 
                 # Fetch from metadata provider (may open nested sessions)
                 seasons_data, source = _get_metadata_client().get_show_seasons_and_episodes(imdb_id, include_specials=True)
+                seasons_data = seasons_in_show_order(imdb_id, seasons_data)
                 if seasons_data and item_id is not None:
                     _upsert_seasons_and_episodes(item_id, seasons_data, session)
                     session.query(Item).filter_by(id=item_id).update(

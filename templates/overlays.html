@@ -13,7 +13,7 @@
                 const link = document.createElement('link');
                 link.id = themeId;
                 link.rel = 'stylesheet';
-                link.href = "{{ url_for('static', filename='css/tangerine/tangerine_overlays.css') }}?v=8";
+                link.href = "{{ url_for('static', filename='css/tangerine/tangerine_overlays.css') }}";
                 link.setAttribute('data-theme-css', 'tangerine');
                 document.head.appendChild(link);
             }

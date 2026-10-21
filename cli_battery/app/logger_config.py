@@ -90,9 +90,8 @@ def setup_logger():
     # Prevent propagation to avoid duplicate logs
     logger.propagate = False
 
-    # Configure root logger to allow DEBUG
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
+    # The root logger's level belongs to logging_config.setup_logging(); this
+    # module is imported lazily and must not reset it to DEBUG afterwards.
 
     return logger
 

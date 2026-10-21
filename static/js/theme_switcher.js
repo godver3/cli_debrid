@@ -1,199 +1,43 @@
-// Theme Switcher Module
-// Handles theme switching between Classic and custom themes
-// When a theme other than Classic is selected, all classic CSS files in /static/css are disabled
-// and the theme-specific CSS files from /static/css/themename are loaded instead
+// Theme bootstrap.
+//
+// Tangerine is the only theme. Its stylesheets are linked directly by the
+// templates, so nothing is swapped at runtime any more. This script only keeps
+// the theme markers that other scripts and per-page CSS loaders still read
+// (body data-theme / .tangerine-theme, localStorage + cookie "selectedTheme"),
+// and the window.themeSwitcher API.
 
 (function() {
     'use strict';
 
-    const THEMES = {
-        CLASSIC: 'classic',
-        TANGERINE: 'tangerine'
-    };
-
+    const THEME = 'tangerine';
     const STORAGE_KEY = 'selectedTheme';
 
-    // Initialize theme on page load
-    function initializeTheme() {
-        const savedTheme = getSavedTheme();
-        // Ensure cookie is set on page load
-        saveTheme(savedTheme);
-        applyTheme(savedTheme);
-
-        // Set up the theme selector if it exists
-        const themeSelector = document.getElementById('theme-selector');
-        if (themeSelector) {
-            themeSelector.value = savedTheme;
-            themeSelector.addEventListener('change', handleThemeChange);
+    function persistTheme() {
+        try {
+            localStorage.setItem(STORAGE_KEY, THEME);
+        } catch (e) {
+            // Storage can be unavailable (private mode, blocked site data).
         }
+        document.cookie = `${STORAGE_KEY}=${THEME}; path=/; max-age=31536000`; // 1 year
     }
 
-    // Get the saved theme from localStorage, default to tangerine
-    function getSavedTheme() {
-        const savedTheme = localStorage.getItem(STORAGE_KEY);
-        if (savedTheme && savedTheme !== THEMES.CLASSIC) {
-            return savedTheme;
-        }
-        // Classic is no longer supported — migrate to tangerine
-        return THEMES.TANGERINE;
+    function applyTheme() {
+        document.body.setAttribute('data-theme', THEME);
+        document.body.classList.add('tangerine-theme');
+        document.dispatchEvent(new CustomEvent('themeChanged', { detail: { theme: THEME } }));
     }
 
-    // Save theme preference to localStorage and cookie
-    function saveTheme(theme) {
-        localStorage.setItem(STORAGE_KEY, theme);
-        // Also save as cookie so backend can access it
-        document.cookie = `selectedTheme=${theme}; path=/; max-age=31536000`; // 1 year
-    }
+    persistTheme();
 
-    // Apply the selected theme
-    function applyTheme(theme) {
-        // Set data attribute on body for CSS targeting
-        document.body.setAttribute('data-theme', theme);
-
-        // Add/remove tangerine-theme class for mobile nav styling
-        if (theme === THEMES.TANGERINE) {
-            document.body.classList.add('tangerine-theme');
-        } else {
-            document.body.classList.remove('tangerine-theme');
-        }
-
-        if (theme === THEMES.CLASSIC) {
-            // Classic theme: Enable all classic CSS files, remove theme CSS files
-            enableClassicStylesheets();
-            removeThemeStylesheets();
-        } else {
-            // Custom theme: Disable all classic CSS files, load theme CSS files
-            disableClassicStylesheets();
-            loadThemeStylesheets(theme);
-        }
-
-        // Dispatch custom event for other scripts that might need to know about theme changes
-        const themeChangeEvent = new CustomEvent('themeChanged', {
-            detail: { theme: theme }
-        });
-        document.dispatchEvent(themeChangeEvent);
-    }
-
-    // Disable all classic CSS files in /static/css
-    function disableClassicStylesheets() {
-        const allStylesheets = document.querySelectorAll('link[rel="stylesheet"][href*="/static/css/"]');
-        allStylesheets.forEach(stylesheet => {
-            const href = stylesheet.getAttribute('href');
-            // Only disable classic CSS files (not theme-specific ones)
-            if (href && !href.includes('/tangerine/') && !href.match(/\/static\/css\/[^\/]+\//) && href.includes('/static/css/')) {
-                stylesheet.setAttribute('data-classic-css', 'true');
-                stylesheet.disabled = true;
-            }
-        });
-    }
-
-    // Enable all classic CSS files
-    function enableClassicStylesheets() {
-        const classicStylesheets = document.querySelectorAll('link[data-classic-css="true"]');
-        classicStylesheets.forEach(stylesheet => {
-            stylesheet.disabled = false;
-            stylesheet.removeAttribute('data-classic-css');
-        });
-    }
-
-    // Load theme-specific CSS files from /static/css/themename/
-    function loadThemeStylesheets(themeName) {
-        // Get all currently loaded classic stylesheets to determine which theme files to load
-        const classicStylesheets = document.querySelectorAll('link[rel="stylesheet"][href*="/static/css/"][data-classic-css="true"]');
-
-        classicStylesheets.forEach(classicLink => {
-            const href = classicLink.getAttribute('href');
-
-            // Extract the CSS filename from the classic path
-            // e.g., /static/css/base.css -> base.css
-            const match = href.match(/\/static\/css\/([^\/]+\.css)$/);
-            if (match) {
-                const filename = match[1];
-
-                // Build the theme CSS path
-                // e.g., /static/css/tangerine/tangerine_base.css
-                const themeFilename = `${themeName}_${filename}`;
-                const themePath = `/static/css/${themeName}/${themeFilename}`;
-
-                // Create a unique ID for this theme stylesheet
-                const themeId = `theme-${themeName}-${filename.replace('.css', '')}`;
-
-                // Check if this theme stylesheet is already loaded
-                let existingThemeLink = document.getElementById(themeId);
-                const hrefWithBust = themePath + '?v=' + Date.now();
-                if (!existingThemeLink) {
-                    const themeLink = document.createElement('link');
-                    themeLink.id = themeId;
-                    themeLink.rel = 'stylesheet';
-                    themeLink.href = hrefWithBust;
-                    themeLink.setAttribute('data-theme-css', themeName);
-
-                    // Insert the theme stylesheet after the classic one
-                    if (classicLink.nextSibling) {
-                        classicLink.parentNode.insertBefore(themeLink, classicLink.nextSibling);
-                    } else {
-                        classicLink.parentNode.appendChild(themeLink);
-                    }
-                } else {
-                    // Update href to bust cache on reload
-                    existingThemeLink.href = hrefWithBust;
-                }
-            }
-        });
-
-        // Load mobile nav styles for Tangerine theme — always appended LAST so it overrides tangerine_base.css
-        if (themeName === THEMES.TANGERINE) {
-            const mobileNavId = 'theme-tangerine-mobile-nav';
-            let mobileNavLink = document.getElementById(mobileNavId);
-            if (!mobileNavLink) {
-                mobileNavLink = document.createElement('link');
-                mobileNavLink.id = mobileNavId;
-                mobileNavLink.rel = 'stylesheet';
-                mobileNavLink.setAttribute('data-theme-css', themeName);
-            } else {
-                // Remove and re-append to ensure it's last in <head>
-                mobileNavLink.remove();
-            }
-            mobileNavLink.href = '/static/css/tangerine/tangerine_mobile_nav.css?v=34';
-            document.head.appendChild(mobileNavLink);
-        }
-    }
-
-    // Remove all theme-specific CSS files
-    function removeThemeStylesheets() {
-        const themeStylesheets = document.querySelectorAll('link[data-theme-css]');
-        themeStylesheets.forEach(stylesheet => {
-            stylesheet.remove();
-        });
-    }
-
-    // Handle theme selection change
-    function handleThemeChange(event) {
-        const selectedTheme = event.target.value;
-
-        // Save the theme preference
-        saveTheme(selectedTheme);
-
-        // Apply the theme (which disables/enables stylesheets)
-        applyTheme(selectedTheme);
-    }
-
-    // Make functions available globally if needed
     window.themeSwitcher = {
-        getTheme: getSavedTheme,
-        setTheme: function(theme) {
-            if (Object.values(THEMES).includes(theme)) {
-                saveTheme(theme);
-                applyTheme(theme);
-            }
-        },
-        THEMES: THEMES
+        getTheme: function() { return THEME; },
+        setTheme: function() {},
+        THEMES: { TANGERINE: THEME }
     };
 
-    // Initialize when DOM is ready
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initializeTheme);
+        document.addEventListener('DOMContentLoaded', applyTheme);
     } else {
-        initializeTheme();
+        applyTheme();
     }
 })();

@@ -393,7 +393,7 @@ class RealDebridProvider(DebridProvider):
                 
                 is_cached = status == 'downloaded'
                 
-                # --- START EDIT: Check against DB using filenames before deciding on removal ---
+                # Check against DB using filenames before deciding on removal
                 is_in_db = False
                 if imdb_id:
                     from database.database_reading import is_any_file_in_db_for_item
@@ -412,7 +412,6 @@ class RealDebridProvider(DebridProvider):
                 if is_in_db and is_cached:
                     local_remove_uncached = False
                     local_remove_cached = False
-                # --- END EDIT ---
 
                 # Update PhalanxDB with new cache status if enabled
                 if self.phalanx_enabled and self.phalanx_cache:

@@ -7,7 +7,7 @@
     <script>
         (function() {
             var theme = localStorage.getItem('selectedTheme') || 'tangerine';
-            var cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper_tester.css?v=17' : 'css/scraper_tester.css';
+            var cssFile = 'css/tangerine/tangerine_scraper_tester.css?v=17';
             var link = document.createElement('link');
             link.rel = 'stylesheet';
             link.href = '{{ url_for("static", filename="") }}' + cssFile;
@@ -132,6 +132,6 @@
     </script>
     <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
     <script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/scraper_tester.js') }}?v={{ range(1, 99999) | random }}"></script>
+    <script src="{{ url_for('static', filename='js/scraper_tester.js') }}"></script>
 
 {% endblock %}

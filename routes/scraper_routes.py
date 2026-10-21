@@ -220,14 +220,13 @@ def add_torrent_to_debrid():
             if _tags_raw:
                 selected_tags = _tags_raw
 
-        # --- START EDIT: Get current_score from form data ---
+        # Get current_score from form data
         current_score_str = request.form.get('current_score', '0') # Default to '0'
         try:
             current_score = float(current_score_str)
         except (ValueError, TypeError):
             logging.warning(f"Invalid current_score value received: '{current_score_str}'. Defaulting to 0.")
             current_score = 0.0
-        # --- END EDIT ---
 
         logging.info(f"Adding {title} ({year}) to debrid provider")
 
@@ -682,15 +681,14 @@ def add_torrent_to_debrid():
                     # Get metadata for all episodes in the season
                     metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
                     if metadata and metadata.get('seasons'):
-                        # --- START EDIT: Use integer season_number as key ---
+                        # Use integer season_number as key
                         season_data = metadata['seasons'].get(season_number, {}) # Use integer season_number directly
-                        # --- END EDIT ---
                         episodes = season_data.get('episodes', {})
                         
                         # Create a MediaMatcher instance
                         media_matcher = MediaMatcher()
                         
-                        # --- START EDIT: Pre-parse files ---
+                        # Pre-parse files
                         # Pre-parse all files from the torrent info once
                         parsed_files = []
                         torrent_files = torrent_info.get('files', [])
@@ -708,7 +706,6 @@ def add_torrent_to_debrid():
                                 'message': 'Successfully added torrent, but no valid video files found for season pack processing.',
                                 'cache_status': cache_status
                             })
-                        # --- END EDIT ---
 
                         # For each episode in the season
                         for episode_num_str, episode_data in episodes.items(): # Renamed episode_num to avoid clash
@@ -727,7 +724,7 @@ def add_torrent_to_debrid():
                                 
                                 if first_aired:
                                     try:
-                                        # --- START EDIT: Use iso8601.parse_date for robust parsing ---
+                                        # Use iso8601.parse_date for robust parsing
                                         first_aired_utc = iso8601.parse_date(first_aired)
                                         # Ensure it's timezone-aware (iso8601.parse_date might already return aware)
                                         if first_aired_utc.tzinfo is None or first_aired_utc.tzinfo.utcoffset(first_aired_utc) is None:
@@ -739,11 +736,10 @@ def add_torrent_to_debrid():
                                         # Format the local date as string
                                         episode_item['release_date'] = local_dt.strftime("%Y-%m-%d")
                                     except (ValueError, iso8601.ParseError) as e:
-                                        # --- END EDIT ---
                                         episode_item['release_date'] = 'Unknown'
                                         logging.warning(f"Could not parse release date for S{season_number}E{episode_num}, value was: '{first_aired}'. Error: {e}")
                                 
-                                # --- START EDIT: Find matching file using find_best_match_from_parsed ---
+                                # Find matching file using find_best_match_from_parsed
                                 # Find matching file for this episode from the pre-parsed list
                                 match_result = media_matcher.find_best_match_from_parsed(parsed_files, episode_item)
                                 
@@ -793,7 +789,6 @@ def add_torrent_to_debrid():
                                          logging.error(f"Failed to add episode S{season_number}E{episode_num} to database.")
                                 else:
                                     logging.warning(f"No matching file found for episode S{season_number}E{episode_num} in parsed files.")
-                                # --- END EDIT ---
                             except Exception as e:
                                 logging.error(f"Error processing episode {title} S{season_number}E{episode_num}: {str(e)}", exc_info=True)
                                 continue
@@ -1750,7 +1745,7 @@ def select_media():
         
         logging.info(f"Select media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
         
-        # --- START EDIT: Store imdb_id in session ---
+        # Store imdb_id in session
         if media_id:
             try:
                 from metadata.metadata import get_imdb_id_if_missing
@@ -1767,7 +1762,6 @@ def select_media():
                     logging.warning(f"Could not resolve imdb_id for tmdb_id {media_id} with media_type {api_media_type}. Cache check might be affected.")
             except (ValueError, TypeError) as e:
                 logging.error(f"Error resolving imdb_id from tmdb_id '{media_id}': {e}")
-        # --- END EDIT ---
 
         logging.info(f"Cache check settings: skip_cache_check={skip_cache_check}, background_check={background_check}")
         logging.debug(f"[select_media_route] Calling process_media_selection for '{title}'.")
@@ -2750,7 +2744,7 @@ def api_battery_search():
             })
         return jsonify({'results': normalized, 'source': source})
     except Exception as e:
-        log.error(f"Battery search error: {e}", exc_info=True)
+        logging.error(f"Battery search error: {e}", exc_info=True)
         return jsonify({'results': [], 'error': str(e)}), 500
 
 
@@ -3162,7 +3156,7 @@ def check_cache_status():
             magnet_link = data.get('magnet_link')
             torrent_url = data.get('torrent_url')
             
-            # --- START EDIT: Get imdb_id from request and extract title ---
+            # Get imdb_id from request and extract title
             imdb_id = data.get('imdb_id')
             if not imdb_id:
                 imdb_id = session.get('last_selected_imdb_id')

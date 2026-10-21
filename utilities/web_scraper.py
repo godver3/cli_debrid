@@ -414,7 +414,9 @@ def _search_tmdb_only(search_term: str, tmdb_api_key: str, year: Optional[int] =
                     'id': str(item.get('id')),
                     'title': title,
                     'year': item_year,
-                    'posterPath': item.get('poster_path'),
+                    # Full URL, like the Trakt path's get_media_meta posters:
+                    # callers use it as an <img src> as is
+                    'posterPath': f"https://image.tmdb.org/t/p/w500{item['poster_path']}" if item.get('poster_path') else None,
                     'backdropPath': item.get('backdrop_path'),
                     'votes': item.get('vote_count', 0),
                 })

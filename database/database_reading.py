@@ -158,6 +158,22 @@ def stream_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=No
         if conn:
             conn.close()
 
+def get_media_items_by_torrent_id(torrent_id, columns: Optional[List[str]] = None) -> List[Dict]:
+    """All media items (any state) filled by one torrent / NZB job, via the
+    filled_by_torrent_id index."""
+    if not torrent_id:
+        return []
+    conn = get_db_connection()
+    try:
+        col_str = ', '.join(columns) if columns else '*'
+        cursor = conn.execute(
+            f'SELECT {col_str} FROM media_items WHERE filled_by_torrent_id = ?',
+            (str(torrent_id),),
+        )
+        return [dict(row) for row in cursor]
+    finally:
+        conn.close()
+
 def get_media_item_presence(imdb_id=None, tmdb_id=None):
     conn = get_db_connection()
     try:
@@ -304,15 +320,15 @@ def get_all_season_episode_counts(tmdb_id):
         
         deduplicated_episodes = all_episodes
 
-        # Count episodes per season from deduplicated list
-        season_counts = {}
+        # Count distinct episode numbers per season. Rows are per version, so
+        # counting rows inflated a season for every extra or fallback version
+        # (e.g. 104 rows for 98 episodes), which shifted every absolute
+        # episode number computed for later seasons.
+        season_episodes = {}
         for episode in deduplicated_episodes:
-            season = episode['season_number']
-            if season not in season_counts:
-                season_counts[season] = 0
-            season_counts[season] += 1
-        
-        return season_counts
+            season_episodes.setdefault(episode['season_number'], set()).add(episode['episode_number'])
+
+        return {season: len(episodes) for season, episodes in season_episodes.items()}
     except Exception as e:
         logging.error(f"Error retrieving season episode counts (TMDB ID: {tmdb_id}): {str(e)}")
         return {}
@@ -613,18 +629,20 @@ def get_media_item_by_filename(filename: str) -> Optional[Dict]:
     """
     conn = get_db_connection()
     try:
-        # Select all columns for the matching filename
-        # Check multiple location fields to find the item
-        query = '''
-            SELECT * FROM media_items 
-            WHERE filled_by_file = ? 
-               OR location_on_disk LIKE ? 
-               OR location_basename = ?
-        '''
-        # Use LIKE for location_on_disk to handle full paths, exact match for others
-        location_on_disk_pattern = f'%{filename}'
-        cursor = conn.execute(query, (filename, location_on_disk_pattern, filename))
+        # Indexed exact matches first. The location_on_disk suffix LIKE is a
+        # full table scan, so it only runs when they miss (e.g. NZB rows,
+        # which the location_basename triggers skip).
+        cursor = conn.execute(
+            'SELECT * FROM media_items WHERE filled_by_file = ? OR location_basename = ?',
+            (filename, filename),
+        )
         item = cursor.fetchone()
+        if not item:
+            cursor = conn.execute(
+                'SELECT * FROM media_items WHERE location_on_disk LIKE ?',
+                (f'%{filename}',),
+            )
+            item = cursor.fetchone()
         
         if item:
             item_dict = row_to_dict(item) # Use existing helper function

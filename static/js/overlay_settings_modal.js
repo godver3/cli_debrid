@@ -7,33 +7,13 @@
 (function() {
     'use strict';
 
-    // Load theme-specific CSS dynamically
-    // Always loads the base CSS; for tangerine also loads the theme override on top
+    // Ensure the modal stylesheet is present (base.html normally links it).
     function loadThemeCSS() {
-        const getCurrentTheme = () => localStorage.getItem('theme') || 'default';
-        const theme = getCurrentTheme();
-
-        // Ensure base CSS is always present
-        if (!document.querySelector('link[href*="overlay_settings_modal.css"]:not([href*="tangerine"])')) {
+        if (!document.querySelector('link[href*="tangerine_overlay_settings_modal.css"]')) {
             const link = document.createElement('link');
             link.rel = 'stylesheet';
-            link.href = '/static/css/overlay_settings_modal.css';
+            link.href = '/static/css/tangerine/tangerine_overlay_settings_modal.css';
             document.head.appendChild(link);
-        }
-
-        // Add tangerine override on top if needed
-        const tangerineId = 'tangerine-overlay-settings-css';
-        if (theme === 'tangerine') {
-            if (!document.getElementById(tangerineId)) {
-                const link = document.createElement('link');
-                link.id = tangerineId;
-                link.rel = 'stylesheet';
-                link.href = '/static/css/tangerine/tangerine_overlay_settings_modal.css';
-                document.head.appendChild(link);
-            }
-        } else {
-            const existing = document.getElementById(tangerineId);
-            if (existing) existing.remove();
         }
     }
 

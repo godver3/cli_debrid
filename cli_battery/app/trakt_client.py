@@ -19,6 +19,9 @@ from urllib.parse import urlencode
 from .logger_config import logger
 from . import trakt_auth
 
+# One pooled session: keeps TLS connections to the API alive across calls.
+_http = requests.Session()
+
 TRAKT_BASE_URL = "https://api.trakt.tv"
 REQUEST_TIMEOUT = 10
 
@@ -86,7 +89,7 @@ def _make_request(url: str, method: str = 'GET', max_retries: int = 4,
             pass
 
         try:
-            resp = requests.request(method.upper(), url, headers=headers, timeout=REQUEST_TIMEOUT)
+            resp = _http.request(method.upper(), url, headers=headers, timeout=REQUEST_TIMEOUT)
         except requests.exceptions.RequestException as e:
             logger.error(f"RequestException (attempt {attempt + 1}/{max_retries}) {url}: {e}")
             if attempt == max_retries - 1:
@@ -352,7 +355,7 @@ def _fetch_tmdb_alternative_titles(tmdb_id, media_type: str, trakt_title: str = 
         # Single TMDB call with append_to_response for efficiency
         url = (f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}"
                f"?api_key={api_key}&append_to_response=alternative_titles")
-        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
+        resp = _http.get(url, timeout=REQUEST_TIMEOUT)
         if resp.status_code != 200:
             return {}
         data = resp.json()

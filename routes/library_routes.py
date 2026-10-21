@@ -47,6 +47,10 @@ def index():
                          has_admin_permissions=has_admin_permissions,
                          nas_paths=get_nas_paths())
 
+# Keep-alive to the Plex server across the many poster requests of a page
+_plex_image_session = requests.Session()
+
+
 @library_bp.route('/plex_image/<path:plex_path>')
 @user_required
 def plex_image_proxy(plex_path):
@@ -71,15 +75,19 @@ def plex_image_proxy(plex_path):
         full_url = f"{plex_url}{plex_path}?X-Plex-Token={plex_token}&includeAllConcerts=1"
 
         # Fetch image from Plex
-        response = requests.get(full_url, timeout=10, stream=True)
+        response = _plex_image_session.get(full_url, timeout=10)
 
         if response.status_code == 200:
-            # Return the image with appropriate content type
-            # Only cache if web caching is enabled in settings
-            from utilities.settings import load_config
-            config = load_config()
-            enable_caching = config.get('UI Settings', {}).get('enable_caching', False)
-            cache_header = 'public, max-age=86400' if enable_caching else 'no-cache'
+            # Plex thumb paths end in the artwork's update timestamp
+            # (/library/metadata/<id>/thumb/<ts>), so a changed poster gets a new
+            # URL and the browser can keep this one. Unversioned paths keep the
+            # enable_caching behaviour.
+            if plex_path.rstrip('/').rsplit('/', 1)[-1].isdigit():
+                cache_header = 'public, max-age=604800'
+            elif get_setting('UI Settings', 'enable_caching', False):
+                cache_header = 'public, max-age=86400'
+            else:
+                cache_header = 'no-cache'
 
             return Response(
                 response.content,
@@ -1906,45 +1914,14 @@ def refresh_show_metadata(media_id, queue_missing=True):
         try:
             if not queue_missing:
                 raise _SkipQueueMissing()
-            from metadata.metadata import process_metadata
-            from database.wanted_items import add_wanted_items
+            from utilities.missing_episodes import queue_missing_episodes
 
-            # Get the versions used by existing episodes of this show
-            cursor.execute(
-                "SELECT versions FROM media_items WHERE imdb_id = ? AND type = 'episode' AND versions IS NOT NULL LIMIT 1",
-                (imdb_id,)
-            )
-            versions_row = cursor.fetchone()
-            import json as _json
-            existing_versions = {}
-            if versions_row and versions_row[0]:
-                try:
-                    existing_versions = _json.loads(versions_row[0])
-                except Exception:
-                    pass
-
-            wanted_item = {
-                'imdb_id': imdb_id,
-                'tmdb_id': tmdb_id,
-                'media_type': 'tv',
-                'title': title,
-                'versions': existing_versions,
-                'content_source': 'content_requester',
-                'content_source_detail': 'Metadata-Refresh',
-            }
             db_content.commit()  # Commit current updates before process_metadata reads the DB
-
-            processed = process_metadata([wanted_item])
-            if processed:
-                new_items = processed.get('episodes', [])
-                if new_items:
-                    for ep in new_items:
-                        ep['content_source'] = 'content_requester'
-                        ep['content_source_detail'] = 'Metadata-Refresh'
-                    added = add_wanted_items(new_items, existing_versions)
-                    new_episodes_added = added or 0
-                    if new_episodes_added:
-                        logging.info(f"Metadata refresh for {title}: added {new_episodes_added} previously-missing episode(s) to the queue.")
+            # In the versions the show is collected in. This read a `versions`
+            # column media_items doesn't have, so it never added anything.
+            new_episodes_added = queue_missing_episodes(imdb_id, 'Metadata-Refresh')
+            if new_episodes_added:
+                logging.info(f"Metadata refresh for {title}: added {new_episodes_added} previously-missing episode(s) to the queue.")
         except _SkipQueueMissing:
             logging.info(f"Metadata refresh for {imdb_id}: not queueing missing episodes (caller opted out)")
         except Exception as e_add:
@@ -4746,7 +4723,7 @@ def movie_detail_data(media_id):
                     logging.error(f"Error fetching TMDB metadata for movie {tmdb_id}: {e}")
             else:
                 logging.warning(f"TMDB API key not configured, skipping metadata fetch for movie {tmdb_id}")
-        elif not battery_metadata:
+        else:
             logging.warning(f"No TMDB ID or IMDb ID available for movie {movie_data['title']}, skipping metadata fetch")
 
         # Get content source display name

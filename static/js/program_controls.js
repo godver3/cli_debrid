@@ -240,10 +240,17 @@ export function initializeProgramControls() {
 
     // Fetch settings initially and then every 30 seconds
     fetchSettings();
-    setInterval(fetchSettings, 30000);
+    setInterval(() => { if (!document.hidden) fetchSettings(); }, 30000);
 
-    // Fetch program status every 5 seconds for responsiveness
-    setInterval(fetchProgramStatus, 5000);
+    // Fetch program status every 5 seconds for responsiveness. Hidden tabs
+    // skip both polls and catch up as soon as they are shown again.
+    setInterval(() => { if (!document.hidden) fetchProgramStatus(); }, 5000);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            fetchProgramStatus();
+            fetchSettings();
+        }
+    });
 
     // Add event listeners to update button state when settings change
     document.addEventListener('change', function(event) {

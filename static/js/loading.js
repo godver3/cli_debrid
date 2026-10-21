@@ -1,7 +1,4 @@
-// Loading overlay styles are now defined in theme-specific CSS files:
-// - Classic theme: static/css/settings.css
-// - Tangerine theme: static/css/tangerine/tangerine_settings.css
-// This ensures the loading overlay matches the selected theme
+// Loading overlay styles live in static/css/tangerine/tangerine_settings.css.
 
 // Global loading object
 const Loading = {

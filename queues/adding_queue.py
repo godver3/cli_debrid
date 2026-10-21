@@ -375,7 +375,7 @@ class AddingQueue:
 
         logging.info(f"Adding Queue - Starting processing of {len(items_to_process)} available items")
             
-        # --- START EDIT: Get Wanted Queue items ONCE before the loop ---
+        # Get Wanted Queue items ONCE before the loop
         wanted_items = []
         scraping_items = []
         try:
@@ -391,14 +391,12 @@ class AddingQueue:
                  logging.warning("Scraping queue not found in QueueManager.")
         except Exception as e:
             logging.error(f"Error getting Wanted/Scraping queue contents: {e}")
-        # --- END EDIT ---
 
-        # --- START EDIT: Fetch setting from Queue section ---
+        # Fetch setting from Queue section
         try:
             delay_seconds = float(get_setting('Queue', 'item_process_delay_seconds', 0.0))
         except (ValueError, TypeError):
             delay_seconds = 0.0
-        # --- END EDIT ---
 
         for item in items_to_process:
             item_identifier = f"{item.get('title')} ({item.get('type')})"
@@ -1020,14 +1018,13 @@ class AddingQueue:
                     if item_id:
                         update_media_item(item_id, state='Collected', upgrading=False, upgrading_from=None)
 
-                # --- START EDIT: Check if failure was due to filter and remove torrent ---
+                # Check if failure was due to filter and remove torrent
                 if "matched filter-out list" in error:
                     logging.info(f"Upgrade for {item_identifier} failed due to filename filter. Attempting to remove torrent.")
                     if item.get('torrent_id') and not self._torrent_has_other_active_owner(item['torrent_id'], item.get('id')):
                         self.remove_unwanted_torrent(item['torrent_id'], is_nzb=is_nzb)
                     elif item.get('torrent_id'):
                         logging.info(f"Torrent {item['torrent_id']} still needed by other episode(s) sharing this pack — not removing")
-                # --- END EDIT ---
 
                 # Remove from Adding queue memory regardless of restore success for upgrades
                 self.remove_item(item)

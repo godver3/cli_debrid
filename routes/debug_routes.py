@@ -1442,8 +1442,8 @@ def get_rate_limit_info():
     current_time = time.time()
     
     for domain in api.monitored_domains:
-        hourly_calls = [t for t in api.rate_limiter.hourly_calls[domain] if t > current_time - 3600]
-        five_minute_calls = [t for t in api.rate_limiter.five_minute_calls[domain] if t > current_time - 300]
+        hourly_calls = [t for t in list(api.rate_limiter.hourly_calls[domain]) if t > current_time - 3600]
+        five_minute_calls = [t for t in list(api.rate_limiter.five_minute_calls[domain]) if t > current_time - 300]
         
         rate_limit_info[domain] = {
             'five_minute': {
@@ -1935,6 +1935,10 @@ def get_available_tasks():
         {'id': 'task_debug_log', 'display_name': 'Debug Log'},
         {'id': 'task_refresh_release_dates', 'display_name': 'Refresh Release Dates'},
         {'id': 'task_purge_not_wanted_magnets_file', 'display_name': 'Purge Not Wanted Magnets File'},
+        {'id': 'task_purge_not_wanted_urls_file', 'display_name': 'Purge Not Wanted URLs File'},
+        {'id': 'task_purge_not_wanted_nzbs_files', 'display_name': 'Purge Not Wanted NZBs (segments + GUIDs)'},
+        {'id': 'task_purge_all_not_wanted_files', 'display_name': 'Purge All Not Wanted Lists (magnets, URLs, NZBs)'},
+        {'id': 'task_reset_trakt_auth', 'display_name': 'Reset Trakt Authorization (clears tokens, keeps client ID/secret)'},
         {'id': 'task_generate_airtime_report', 'display_name': 'Generate Airtime Report'},
         {'id': 'task_check_service_connectivity', 'display_name': 'Check Service Connectivity'},
         {'id': 'task_send_notifications', 'display_name': 'Send Notifications'},

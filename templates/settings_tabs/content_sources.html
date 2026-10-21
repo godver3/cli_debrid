@@ -1,16 +1,31 @@
-<h3>Content Sources Settings</h3>
-<div class="settings-expand-collapse-buttons">
-    <button type="button" class="settings-expand-all">Expand All</button>
-    <button type="button" class="settings-collapse-all">Collapse All</button>
-</div>
-<button id="add-source-btn" class="add-source-link">Add New Source</button>
+<div class="content-sources-page">
+    <h2 class="content-sources-title">Content Sources</h2>
+    <p class="content-sources-subtitle">Manage your content sources and lists</p>
 
-<div class="info-banner" style="background-color: #2c2c2c; border-radius: 10px; padding: 1rem; margin-bottom: 1.5rem; border: 1px solid #444;">
-    <p style="margin: 0; color: #f4f4f4;">
-        <strong>Note:</strong> To enable or disable content sources, please use the <a href="/program_operation/task_timings" style="color: #007bff; text-decoration: underline;">Task Manager page</a>. 
-        The Task Manager allows you to control which content sources are active and their processing intervals.
-    </p>
-</div>
+    <div class="info-banner info-banner-blue">
+        <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+        <div class="info-banner-content">
+            <strong>Note:</strong> To enable or disable content sources, please use the <a href="/program_operation/task_timings" class="info-link">Task Manager page</a>.
+            The Task Manager allows you to control which content sources are active and their processing intervals.
+        </div>
+    </div>
+
+    <div class="content-section">
+        <div class="content-sources-header section-header">
+            <h3 class="content-sources-settings-title section-title">
+                <span class="title-bar"></span>
+                Sources
+            </h3>
+            <div class="content-sources-actions action-buttons settings-expand-collapse-buttons">
+                <button type="button" class="content-sources-btn btn-secondary settings-collapse-all"><i class="fa-solid fa-compress"></i> Collapse All</button>
+                <button type="button" class="content-sources-btn btn-secondary settings-expand-all"><i class="fa-solid fa-expand"></i> Expand All</button>
+                <button id="add-source-btn" class="content-sources-btn-primary btn-primary add-source-link"><i class="fa-solid fa-plus"></i> Add New Source</button>
+            </div>
+        </div>
+
+        <div class="source-list">
 
 <script>
     let contentSourceSettingsLoaded = false;
@@ -18,9 +33,78 @@
     // Initialize with value from Jinja template
     window.currentFileManagementModeForSymlinkVisibility = "{{ settings.get('File Management', {}).get('file_collection_management', '') }}";
 
+    // ── Virtual Folder Creator ───────────────────────────────────────────────
+    let _csVfSourceId = null;
+    function csVfOpen(sourceId) {
+        _csVfSourceId = sourceId;
+        const tags = window._csTags || [];
+        const modal = document.getElementById('cs-vf-modal');
+        if (!modal) return;
+        // Populate tag checkboxes
+        const cbs = document.getElementById('cs-vf-tags');
+        cbs.innerHTML = tags.length ? tags.map(t =>
+            `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;">
+                <input type="checkbox" class="cs-vf-tag-cb" value="${t}"> <span>${t}</span>
+            </label>`
+        ).join('') : '<p style="opacity:.6;font-size:13px;">No global tags defined yet.</p>';
+        document.getElementById('cs-vf-name').value = '';
+        document.getElementById('cs-vf-combined').checked = true;
+        csVfToggleMode();
+        modal.style.display = 'flex';
+    }
+    function csVfClose() { const m = document.getElementById('cs-vf-modal'); if(m) m.style.display='none'; }
+    function csVfToggleMode() {
+        const combined = document.getElementById('cs-vf-combined').checked;
+        document.getElementById('cs-vf-name-row').style.display = combined ? '' : 'none';
+    }
+    async function csVfSubmit() {
+        const combined = document.getElementById('cs-vf-combined').checked;
+        const folderName = document.getElementById('cs-vf-name').value.trim();
+        const selectedTags = Array.from(document.querySelectorAll('.cs-vf-tag-cb:checked')).map(cb => cb.value);
+        if (!selectedTags.length) { alert('Select at least one tag.'); return; }
+        if (combined && !folderName) { alert('Enter a folder name.'); return; }
+        const btn = document.getElementById('cs-vf-submit');
+        btn.disabled = true; btn.textContent = 'Creating...';
+        try {
+            const r = await fetch('/settings/api/create_virtual_folder', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ folder_name: folderName, tags: selectedTags, mode: combined ? 'combined' : 'per_tag' })
+            });
+            const d = await r.json();
+            if (d.success) {
+                csVfClose();
+                if (window.showPopup) window.showPopup({ type: 'success', title: 'Virtual Folder Created', message: d.message });
+                else alert(d.message);
+            } else {
+                if (window.showPopup) window.showPopup({ type: 'error', title: 'Error', message: d.error });
+                else alert('Error: ' + d.error);
+            }
+        } catch(e) {
+            alert('Request failed: ' + e);
+        }
+        btn.disabled = false; btn.textContent = 'Create';
+    }
+    // ── End Virtual Folder Creator ───────────────────────────────────────────
+
     document.addEventListener('DOMContentLoaded', function() {
         loadSettings();
+        // Tags pill UI init
+        fetch('/settings/api/config').then(r=>r.json()).then(cfg=>{
+            window._csTags=(cfg['Tags']||{})['tags_list']||[];
+        }).catch(()=>{ window._csTags=[]; });
+        document.addEventListener('click',function(e){
+            if(!e.target.closest('.cs-tags-pill-input')) document.querySelectorAll('.cs-tags-dropdown').forEach(d=>d.style.display='none');
+        });
     });
+
+    function csTgGet(sid){const h=document.getElementById('cs-tags-hidden-'+sid);return h&&h.value.trim()?h.value.split(',').map(t=>t.trim()).filter(Boolean):[];}
+    function csTgSet(sid,tags){const h=document.getElementById('cs-tags-hidden-'+sid);if(h){h.value=tags.join(',');h.dispatchEvent(new Event('change',{bubbles:true}));}}
+    function csTgRender(sid){const c=document.getElementById('cs-tags-pill-input-'+sid);if(!c)return;c.querySelectorAll('.cs-tag-pill').forEach(p=>p.remove());const tags=csTgGet(sid),w=c.querySelector('.cs-tags-input-wrapper');tags.forEach(tag=>{const p=document.createElement('span');p.className='cs-tag-pill';p.innerHTML=tag+'<button type="button" onclick="csTgRemove(\''+sid+'\',\''+tag+'\')">&times;</button>';c.insertBefore(p,w);});}
+    function csTgAdd(sid,tag){tag=tag.trim();if(!tag)return;const tags=csTgGet(sid);if(tags.includes(tag))return;tags.push(tag);if(!(window._csTags||[]).includes(tag)){(window._csTags=window._csTags||[]).push(tag);fetch('/settings/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({Tags:{tags_list:window._csTags}})}).catch(()=>{});}csTgSet(sid,tags);csTgRender(sid);const i=document.getElementById('cs-tags-search-'+sid);if(i){i.value='';csTgFilter(sid);}}
+    function csTgRemove(sid,tag){csTgSet(sid,csTgGet(sid).filter(t=>t!==tag));csTgRender(sid);}
+    function csTgFilter(sid){const i=document.getElementById('cs-tags-search-'+sid),d=document.getElementById('cs-tags-dropdown-'+sid);if(!i||!d)return;const q=i.value.trim().toLowerCase(),cur=csTgGet(sid),all=window._csTags||[],matches=all.filter(t=>t.toLowerCase().includes(q)&&!cur.includes(t));d.innerHTML='';if(q&&!all.map(t=>t.toLowerCase()).includes(q)&&!cur.includes(i.value.trim())){const c=document.createElement('div');c.className='cs-tags-dd-item cs-tags-dd-create';c.textContent='+ Create "'+i.value.trim()+'"';c.onclick=()=>{csTgAdd(sid,i.value.trim());d.style.display='none';};d.appendChild(c);}matches.forEach(tag=>{const item=document.createElement('div');item.className='cs-tags-dd-item';item.textContent=tag;item.onclick=()=>{csTgAdd(sid,tag);d.style.display='none';};d.appendChild(item);});d.style.display=d.children.length?'block':'none';}
+    function csTgKeydown(e,sid){if(e.key==='Enter'){e.preventDefault();const i=document.getElementById('cs-tags-search-'+sid);if(i&&i.value.trim())csTgAdd(sid,i.value.trim());}else if(e.key==='Escape'){const d=document.getElementById('cs-tags-dropdown-'+sid);if(d)d.style.display='none';}}
 
     function loadSettings() {
         Promise.all([
@@ -45,6 +129,7 @@
         initializeAdaptiveListButtons();
         initializeScrobListPickers();
         loadOverseerrUsers();
+        updatePlexOnlySections();
         initializeMdblistModeToggles();
 
         const settingsContainer = document.querySelector('.settings-container');
@@ -53,12 +138,11 @@
             settingsContainer.addEventListener('click', handleImportLikedClick);
         }
 
-        // Set initial visibility for symlink subfolder and tags settings
+        // Set initial visibility for symlink subfolder settings
         document.querySelectorAll('.settings-section[data-source-id]').forEach(section => {
             const sourceId = section.getAttribute('data-source-id');
             if (sourceId) {
                 updateSymlinkSubfolderVisibility(sourceId, window.currentFileManagementModeForSymlinkVisibility);
-                updateTagsVisibility(sourceId, window.currentFileManagementModeForSymlinkVisibility);
             }
         });
 
@@ -104,153 +188,63 @@
         const containers = document.querySelectorAll(`.symlink-subfolder-container[data-source-id="${sourceId}"]`);
         containers.forEach(container => {
             if (container) {
-                container.style.display = (fileManagementValue === 'Symlinked/Local') ? 'block' : 'none';
+                const show = (fileManagementValue === 'Symlinked/Local');
+                container.style.display = show ? 'block' : 'none';
+                // Also hide/show the parent settings-form-group to prevent empty gap
+                const parent = container.parentElement;
+                if (parent && parent.classList.contains('settings-form-group')) {
+                    parent.style.display = show ? '' : 'none';
+                }
             }
         });
     }
 
-    function updateTagsVisibility(sourceId, fileManagementValue) {
-        const containers = document.querySelectorAll(`.tags-container[data-source-id="${sourceId}"]`);
-        containers.forEach(container => {
-            if (container) {
-                container.style.display = (fileManagementValue === 'Plex') ? 'block' : 'none';
+    // Show/hide Plex-only sections (Plex Labels, Plex Collection)
+    // Visible when: file_collection_management == 'Plex'
+    //            OR file_collection_management == 'Symlinked/Local' AND media_server_type == 'plex'
+    window.currentMediaServerType = "{{ settings.get('File Management', {}).get('media_server_type', '') }}";
+
+    function updatePlexOnlySections() {
+        const fm = window.currentFileManagementModeForSymlinkVisibility || '';
+        const ms = window.currentMediaServerType || '';
+        const show = !(fm === 'Symlinked/Local' && ms === 'jellyfin');
+        document.querySelectorAll('.plex-only-section').forEach(el => {
+            el.style.display = show ? '' : 'none';
+            // Also hide/show parent settings-form-group to prevent empty gap
+            const parent = el.parentElement;
+            if (parent && parent.classList.contains('settings-form-group')) {
+                parent.style.display = show ? '' : 'none';
+            }
+        });
+        // Tags visible only in Plex mode
+        const isPlex = (fm === 'Plex');
+        document.querySelectorAll('.cs-tags-plex-only').forEach(el => {
+            el.style.display = isPlex ? '' : 'none';
+            // Also hide/show parent settings-form-group to prevent empty gap
+            const parent = el.parentElement;
+            if (parent && parent.classList.contains('settings-form-group')) {
+                parent.style.display = isPlex ? '' : 'none';
             }
         });
     }
 
-    // ── Tags pill input ──────────────────────────────────────────────────────
-    // Global tag list fetched from config
-    let _globalTagsList = [];
-    async function loadGlobalTags() {
-        try {
-            const r = await fetch('/settings/api/config');
-            const cfg = await r.json();
-            _globalTagsList = (cfg['Tags'] || {})['tags_list'] || [];
-        } catch(e) { _globalTagsList = []; }
-    }
-
-    function getSourceTags(sourceId) {
-        const hidden = document.getElementById(`tags-hidden-${sourceId}`);
-        if (!hidden || !hidden.value.trim()) return [];
-        return hidden.value.split(',').map(t => t.trim()).filter(Boolean);
-    }
-
-    function setSourceTags(sourceId, tags) {
-        const hidden = document.getElementById(`tags-hidden-${sourceId}`);
-        if (hidden) {
-            hidden.value = tags.join(',');
-            hidden.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-    }
-
-    function renderTagPills(sourceId) {
-        const container = document.getElementById(`tags-pill-input-${sourceId}`);
-        if (!container) return;
-        // Remove existing pills
-        container.querySelectorAll('.tag-pill').forEach(p => p.remove());
-        const tags = getSourceTags(sourceId);
-        const wrapper = container.querySelector('.tags-input-wrapper');
-        tags.forEach(tag => {
-            const pill = document.createElement('span');
-            pill.className = 'tag-pill';
-            pill.dataset.tag = tag;
-            pill.innerHTML = `${tag}<button type="button" class="tag-pill-remove" onclick="removeTag('${sourceId}', '${tag}')">&times;</button>`;
-            container.insertBefore(pill, wrapper);
-        });
-    }
-
-    function addTag(sourceId, tag) {
-        tag = tag.trim();
-        if (!tag) return;
-        const tags = getSourceTags(sourceId);
-        if (tags.includes(tag)) return;
-        tags.push(tag);
-        // Add to global list if new
-        if (!_globalTagsList.includes(tag)) {
-            _globalTagsList.push(tag);
-            saveGlobalTags();
-        }
-        setSourceTags(sourceId, tags);
-        renderTagPills(sourceId);
-        const input = document.getElementById(`tags-search-${sourceId}`);
-        if (input) { input.value = ''; filterTagDropdown(sourceId); }
-    }
-
-    function removeTag(sourceId, tag) {
-        const tags = getSourceTags(sourceId).filter(t => t !== tag);
-        setSourceTags(sourceId, tags);
-        renderTagPills(sourceId);
-    }
-
-    function filterTagDropdown(sourceId) {
-        const input = document.getElementById(`tags-search-${sourceId}`);
-        const dropdown = document.getElementById(`tags-dropdown-${sourceId}`);
-        if (!input || !dropdown) return;
-        const q = input.value.trim().toLowerCase();
-        const current = getSourceTags(sourceId);
-        const matches = _globalTagsList.filter(t => t.toLowerCase().includes(q) && !current.includes(t));
-        if (!q && !matches.length) { dropdown.style.display = 'none'; return; }
-        dropdown.innerHTML = '';
-        if (q && !_globalTagsList.map(t=>t.toLowerCase()).includes(q) && !current.includes(input.value.trim())) {
-            const createOpt = document.createElement('div');
-            createOpt.className = 'tags-dropdown-item tags-dropdown-create';
-            createOpt.textContent = `+ Create "${input.value.trim()}"`;
-            createOpt.onclick = () => { addTag(sourceId, input.value.trim()); dropdown.style.display = 'none'; };
-            dropdown.appendChild(createOpt);
-        }
-        matches.forEach(tag => {
-            const item = document.createElement('div');
-            item.className = 'tags-dropdown-item';
-            item.textContent = tag;
-            item.onclick = () => { addTag(sourceId, tag); dropdown.style.display = 'none'; };
-            dropdown.appendChild(item);
-        });
-        dropdown.style.display = (dropdown.children.length > 0) ? 'block' : 'none';
-    }
-
-    function handleTagKeydown(event, sourceId) {
-        if (event.key === 'Enter') {
-            event.preventDefault();
-            const input = document.getElementById(`tags-search-${sourceId}`);
-            if (input && input.value.trim()) addTag(sourceId, input.value.trim());
-        } else if (event.key === 'Escape') {
-            const dropdown = document.getElementById(`tags-dropdown-${sourceId}`);
-            if (dropdown) dropdown.style.display = 'none';
-        }
-    }
-
-    async function saveGlobalTags() {
-        try {
-            await fetch('/settings/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ Tags: { tags_list: _globalTagsList } })
-            });
-        } catch(e) {}
-    }
-
-    // Close dropdowns on outside click
-    document.addEventListener('click', function(e) {
-        if (!e.target.closest('.tags-pill-input')) {
-            document.querySelectorAll('.tags-dropdown').forEach(d => d.style.display = 'none');
-        }
-    });
-
-    // Initialize tags on page load
-    loadGlobalTags();
-    // ── End Tags pill input ──────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', updatePlexOnlySections);
 
     // Listen for changes from other tabs (specifically required.html for file management type)
     document.addEventListener('settings-changed', function(event) {
         if (event.detail.section === 'File Management' && event.detail.key === 'file_collection_management') {
-            window.currentFileManagementModeForSymlinkVisibility = event.detail.value; // Update global
+            window.currentFileManagementModeForSymlinkVisibility = event.detail.value;
             document.querySelectorAll('.settings-section[data-source-id]').forEach(section => {
                 const sourceId = section.getAttribute('data-source-id');
                 if (sourceId) {
                     updateSymlinkSubfolderVisibility(sourceId, window.currentFileManagementModeForSymlinkVisibility);
-                    updateTagsVisibility(sourceId, window.currentFileManagementModeForSymlinkVisibility);
                 }
             });
+            updatePlexOnlySections();
+        }
+        if (event.detail.section === 'File Management' && event.detail.key === 'media_server_type') {
+            window.currentMediaServerType = event.detail.value;
+            updatePlexOnlySections();
         }
     });
 
@@ -1035,7 +1029,14 @@
         loadOverseerrUsers();
         loadCollectionPosterPickers();
         initCollectionIconPickers();
+        initPlexLibraryPickers();
     });
+    // Also call after a short delay in case the tab content loads after DOMContentLoaded
+    setTimeout(function() {
+        if (document.querySelectorAll('.plex-collection-poster-picker').length > 0) {
+            loadCollectionPosterPickers();
+        }
+    }, 800);
 
     // ── Plex Collection Poster Picker ─────────────────────────────────────────
     let _posterDesigns = null;
@@ -1046,9 +1047,14 @@
                 const resp = await fetch('/settings/content-sources/collection-poster/previews');
                 const data = await resp.json();
                 _posterDesigns = data.success ? data.designs : [];
-            } catch(e) { _posterDesigns = []; }
+            } catch(e) {
+                console.error('Failed to load poster designs:', e);
+                _posterDesigns = [];
+            }
         }
-        document.querySelectorAll('.plex-collection-poster-picker').forEach(_renderPosterPicker);
+        document.querySelectorAll('.plex-collection-poster-picker').forEach(function(picker) {
+            _renderPosterPicker(picker);
+        });
     }
 
     function _renderPosterPicker(picker) {
@@ -1063,45 +1069,185 @@
             const img = document.createElement('img');
             img.src = `/settings/content-sources/collection-poster/preview/${design.id}`;
             img.alt = design.name;
-            img.style.cssText = `width:240px; height:auto; border-radius:10px; border:2px solid ${isSelected ? .#007bff. : .#444.}; display:block; margin-bottom:4px; transition:border-color 0.2s;`;
+            img.style.cssText = `
+                width:240px; height:auto; border-radius:10px;
+                border:2px solid ${isSelected ? 'var(--accent-color,#e87429)' : 'rgba(255,255,255,0.1)'};
+                display:block; margin-bottom:4px; transition:border-color 0.2s;
+            `;
+            img.onerror = function() {
+                // Preview not ready yet — retry after 2 seconds (generation may still be in progress)
+                const _img = this;
+                _img.style.background='#1a1a2e';
+                setTimeout(function() {
+                    const src = _img.src;
+                    _img.src = '';
+                    _img.src = src + '?t=' + Date.now();
+                }, 2000);
+            };
             const label = document.createElement('div');
             label.textContent = design.name;
-            label.style.cssText = `font-size:0.7em; color:${isSelected ? '#007bff' : '#aaa'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:244px;`;
-            wrap.appendChild(img); wrap.appendChild(label);
+            label.style.cssText = `font-size:0.7em; color:${isSelected ? 'var(--accent-color,#e87429)' : '#aaa'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:244px;`;
+            wrap.appendChild(img);
+            wrap.appendChild(label);
             wrap.addEventListener('click', function() {
                 if (hidden) hidden.value = design.id;
-                picker.querySelectorAll('img').forEach(i => { i.style.borderColor='#444'; i.nextElementSibling.style.color='#aaa'; });
-                img.style.borderColor='#007bff'; label.style.color='#007bff';
-                hidden.dispatchEvent(new Event('change', {bubbles: true}));
+                // Update borders
+                picker.querySelectorAll('img').forEach(i => {
+                    i.style.borderColor = 'rgba(255,255,255,0.1)';
+                    i.nextElementSibling.style.color = '#aaa';
+                });
+                img.style.borderColor = 'var(--accent-color,#e87429)';
+                label.style.color = 'var(--accent-color,#e87429)';
+                // Trigger change for save detection
+                if (hidden) hidden.dispatchEvent(new Event('change', {bubbles: true}));
             });
             picker.appendChild(wrap);
         });
     }
 
+    // ── Plex Collection Icon Picker ───────────────────────────────────────────
+    let _iconPickerTargetSourceId = null;
+
     function initCollectionIconPickers() {
-        // Delegate to the shared icon picker defined in the tangerine template or standalone
+        // Inject mini logo picker modal once
+        if (!document.getElementById('plex-coll-logo-modal')) {
+            const modal = document.createElement('div');
+            modal.id = 'plex-coll-logo-modal';
+            modal.style.cssText = 'display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.7); align-items:center; justify-content:center;';
+            modal.innerHTML = `
+                <div style="background:#1a1a2a; border:1px solid rgba(255,255,255,0.1); border-radius:12px; width:min(900px,95vw); max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.08);">
+                        <span style="font-weight:600; font-size:1em; color:#fff;">Choose Icon</span>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <input type="text" id="plex-coll-logo-search" placeholder="Search logos..." style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:6px 12px; color:#ddd; font-size:0.85em; width:200px;">
+                            <button onclick="document.getElementById('plex-coll-logo-modal').style.display='none'" style="background:none; border:none; color:#888; font-size:1.4em; cursor:pointer; line-height:1;">✕</button>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:0; flex:1; overflow:hidden;">
+                        <div id="plex-coll-logo-cats" style="width:140px; flex-shrink:0; border-right:1px solid rgba(255,255,255,0.08); overflow-y:auto; padding:8px 0;"></div>
+                        <div id="plex-coll-logo-grid" style="flex:1; overflow-y:auto; padding:16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(80px,1fr)); gap:10px; align-content:start;"></div>
+                    </div>
+                    <div style="padding:12px 20px; border-top:1px solid rgba(255,255,255,0.08); display:flex; justify-content:space-between; align-items:center;">
+                        <button onclick="_clearCollIcon()" style="background:none; border:1px solid rgba(255,0,0,0.3); border-radius:6px; padding:6px 14px; color:#f66; cursor:pointer; font-size:0.85em;">Clear (use default)</button>
+                        <button onclick="document.getElementById('plex-coll-logo-modal').style.display='none'" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:6px; padding:6px 14px; color:#ddd; cursor:pointer; font-size:0.85em;">Cancel</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
+            modal.addEventListener('click', function(e) { if (e.target === modal) modal.style.display='none'; });
+            document.getElementById('plex-coll-logo-search').addEventListener('input', function() { _filterCollLogos(this.value); });
+        }
+
         document.querySelectorAll('.plex-collection-icon-picker-btn').forEach(function(btn) {
             btn.addEventListener('click', function() {
                 _iconPickerTargetSourceId = btn.dataset.sourceId;
                 _openCollIconPicker();
             });
         });
+    }
 
-        // ── Plex Library Picker ──────────────────────────────────────────────
+    let _collLogosCache = null;
+    let _collActiveCat = 'rating';
+
+    async function _openCollIconPicker() {
+        const modal = document.getElementById('plex-coll-logo-modal');
+        modal.style.display = 'flex';
+        if (!_collLogosCache) {
+            document.getElementById('plex-coll-logo-grid').innerHTML = '<div style="color:#888; padding:20px;">Loading...</div>';
+            try {
+                const resp = await fetch('/api/overlays/logos');
+                _collLogosCache = (await resp.json()).categories || [];
+            } catch(e) { _collLogosCache = []; }
+        }
+        _renderCollCats();
+        _renderCollLogos(_collActiveCat);
+    }
+
+    function _renderCollCats() {
+        const el = document.getElementById('plex-coll-logo-cats');
+        el.innerHTML = '';
+        (_collLogosCache || []).forEach(function(cat) {
+            const btn = document.createElement('button');
+            btn.textContent = cat.name;
+            btn.style.cssText = `display:block; width:100%; text-align:left; padding:8px 16px; background:${cat.name===_collActiveCat?'rgba(255,255,255,0.08)':'none'}; border:none; color:${cat.name===_collActiveCat?'#fff':'#aaa'}; cursor:pointer; font-size:0.82em; transition:background 0.15s;`;
+            btn.onclick = function() { _collActiveCat = cat.name; _renderCollCats(); _renderCollLogos(cat.name); };
+            el.appendChild(btn);
+        });
+    }
+
+    function _renderCollLogos(catName, filter) {
+        const grid = document.getElementById('plex-coll-logo-grid');
+        grid.innerHTML = '';
+        const cat = (_collLogosCache || []).find(c => c.name === catName);
+        if (!cat) return;
+        const logos = cat.groups ? cat.groups.flatMap(g => g.logos || []) : (cat.logos || []);
+        logos.filter(l => !filter || l.name.toLowerCase().includes(filter.toLowerCase())).forEach(function(logo) {
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'text-align:center; cursor:pointer; padding:8px; border-radius:8px; background:rgba(255,255,255,0.03); transition:background 0.15s;';
+            wrap.onmouseover = function() { this.style.background='rgba(255,255,255,0.08)'; };
+            wrap.onmouseout = function() { this.style.background='rgba(255,255,255,0.03)'; };
+            const img = document.createElement('img');
+            img.src = logo.url || `/api/overlays/logos/serve/${logo.path}`;
+            img.style.cssText = 'width:48px; height:48px; object-fit:contain; display:block; margin:0 auto 4px;';
+            img.onerror = function() { this.style.display='none'; };
+            const label = document.createElement('div');
+            label.textContent = logo.name;
+            label.style.cssText = 'font-size:0.65em; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+            wrap.appendChild(img); wrap.appendChild(label);
+            wrap.onclick = function() { _selectCollIcon(logo.path || logo.url); };
+            grid.appendChild(wrap);
+        });
+        if (!grid.children.length) grid.innerHTML = '<div style="color:#666; padding:20px; font-size:0.85em;">No logos found</div>';
+    }
+
+    function _filterCollLogos(q) {
+        _renderCollLogos(_collActiveCat, q);
+    }
+
+    function _selectCollIcon(path) {
+        if (!_iconPickerTargetSourceId) return;
+        const hidden = document.getElementById(`content-sources-${_iconPickerTargetSourceId}-plex_collection-poster_icon`);
+        if (hidden) { hidden.value = path; hidden.dispatchEvent(new Event('change', {bubbles:true})); }
+        // Update button preview
+        const btn = document.querySelector(`.plex-collection-icon-picker-btn[data-source-id="${_iconPickerTargetSourceId}"]`);
+        if (btn) {
+            const preview = btn.querySelector('.plex-coll-icon-preview');
+            const label = btn.querySelector('span:last-child');
+            if (preview) preview.innerHTML = `<img src="/api/overlays/logos/serve/${path}" style="max-width:28px;max-height:28px;object-fit:contain;" alt=""><svg style="margin-left:4px;opacity:0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+            if (label) label.textContent = path.split('/').pop();
+        }
+        document.getElementById('plex-coll-logo-modal').style.display = 'none';
+    }
+
+    function _clearCollIcon() {
+        if (!_iconPickerTargetSourceId) return;
+        const hidden = document.getElementById(`content-sources-${_iconPickerTargetSourceId}-plex_collection-poster_icon`);
+        if (hidden) { hidden.value = ''; hidden.dispatchEvent(new Event('change', {bubbles:true})); }
+        const btn = document.querySelector(`.plex-collection-icon-picker-btn[data-source-id="${_iconPickerTargetSourceId}"]`);
+        if (btn) {
+            const preview = btn.querySelector('.plex-coll-icon-preview');
+            const label = btn.querySelector('span:last-child');
+            if (preview) preview.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+            if (label) label.textContent = 'Choose icon from library';
+        }
+        document.getElementById('plex-coll-logo-modal').style.display = 'none';
+    }
+
+    // ── Plex Library Picker ──────────────────────────────────────────────
+    function initPlexLibraryPickers() {
         document.querySelectorAll('.plex-lib-load-btn').forEach(function(btn) {
             btn.addEventListener('click', function() {
                 var sourceId = btn.dataset.sourceId;
                 var listEl   = document.getElementById('plex-lib-list-' + sourceId);
                 var hiddenEl = document.getElementById('plex-lib-hidden-' + sourceId);
                 btn.disabled = true;
-                btn.textContent = 'Loading…';
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin" style="margin-right:6px;"></i>Loading…';
                 fetch('/settings/api/plex-libraries')
                     .then(function(r) { return r.json(); })
                     .then(function(data) {
                         btn.disabled = false;
-                        btn.textContent = 'Reload Libraries';
+                        btn.innerHTML = '<i class="fas fa-rotate" style="margin-right:6px;"></i>Reload Libraries';
                         if (!data.success) {
-                            listEl.innerHTML = '<span style="color:#e57373;font-size:0.85em;">Error: ' + (data.error || 'Could not connect to Plex') + '</span>';
+                            listEl.innerHTML = '<span style="color:#e57373;font-size:0.85em;"><i class="fas fa-circle-exclamation" style="margin-right:4px;"></i>Error: ' + (data.error || 'Could not connect to Plex') + '</span>';
                             return;
                         }
                         var saved = [];
@@ -1110,10 +1256,10 @@
 
                         listEl.innerHTML = '';
                         data.libraries.forEach(function(lib) {
-                            var typeLabel = lib.type === 'movie' ? '🎬' : '📺';
+                            var iconClass = lib.type === 'movie' ? 'fa-film' : 'fa-tv';
                             var checked = saved.includes(String(lib.key));
                             var label = document.createElement('label');
-                            label.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:0.9em;color:#ccc;';
+                            label.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:0.9em;color:var(--text-secondary,#ccc);';
                             var cb = document.createElement('input');
                             cb.type = 'checkbox';
                             cb.checked = checked;
@@ -1123,10 +1269,15 @@
                                     .filter(function(c) { return c.checked; })
                                     .map(function(c) { return c.dataset.key; });
                                 hiddenEl.value = JSON.stringify(allChecked);
+                                hiddenEl.dispatchEvent(new Event('change', {bubbles: true}));
                             });
                             cb.dataset.key = String(lib.key);
+                            var icon = document.createElement('i');
+                            icon.className = 'fas ' + iconClass;
+                            icon.style.cssText = 'width:14px;text-align:center;opacity:0.7;';
                             label.appendChild(cb);
-                            label.appendChild(document.createTextNode(typeLabel + ' ' + lib.title + ' (' + lib.key + ')'));
+                            label.appendChild(icon);
+                            label.appendChild(document.createTextNode(' ' + lib.title + ' (' + lib.key + ')'));
                             listEl.appendChild(label);
                         });
                         if (data.libraries.length === 0) {
@@ -1135,8 +1286,8 @@
                     })
                     .catch(function(e) {
                         btn.disabled = false;
-                        btn.textContent = 'Load Libraries';
-                        listEl.innerHTML = '<span style="color:#e57373;font-size:0.85em;">Failed to reach server.</span>';
+                        btn.innerHTML = '<i class="fas fa-photo-film" style="margin-right:6px;"></i>Load Libraries';
+                        listEl.innerHTML = '<span style="color:#e57373;font-size:0.85em;"><i class="fas fa-circle-exclamation" style="margin-right:4px;"></i>Failed to reach server.</span>';
                     });
             });
         });
@@ -1144,39 +1295,14 @@
 </script>
 
 <style>
-    /* Tags pill input */
-    .tags-pill-input {
-        display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-        min-height: 38px; padding: 6px 10px;
-        background: #1a1a1a; border: 1px solid #444; border-radius: 6px;
-        cursor: text;
-    }
-    .tag-pill {
-        display: inline-flex; align-items: center; gap: 4px;
-        background: #e8651a; color: #fff; border-radius: 12px;
-        padding: 2px 10px; font-size: 12px; white-space: nowrap;
-    }
-    .tag-pill-remove {
-        background: none; border: none; color: #fff; cursor: pointer;
-        padding: 0; font-size: 14px; line-height: 1; opacity: 0.8;
-    }
-    .tag-pill-remove:hover { opacity: 1; }
-    .tags-input-wrapper { position: relative; flex: 1; min-width: 120px; }
-    .tags-search-input {
-        width: 100%; background: transparent; border: none; outline: none;
-        color: #fff; font-size: 13px; padding: 2px 0;
-    }
-    .tags-dropdown {
-        position: absolute; top: 100%; left: 0; right: 0; z-index: 999;
-        background: #222; border: 1px solid #444; border-radius: 6px;
-        max-height: 160px; overflow-y: auto; margin-top: 4px;
-    }
-    .tags-dropdown-item {
-        padding: 8px 12px; cursor: pointer; font-size: 13px; color: #ddd;
-    }
-    .tags-dropdown-item:hover { background: #333; }
-    .tags-dropdown-create { color: #e8651a; font-style: italic; }
-
+    .cs-tags-pill-input{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:38px;padding:6px 10px;background:#1a1a1a;border:1px solid #444;border-radius:6px;cursor:text;}
+    .cs-tag-pill{display:inline-flex;align-items:center;gap:4px;background:#e8651a;color:#fff;border-radius:12px;padding:2px 10px;font-size:12px;}
+    .cs-tag-pill button{background:none;border:none;color:#fff;cursor:pointer;padding:0;font-size:14px;line-height:1;opacity:.8;}.cs-tag-pill button:hover{opacity:1;}
+    .cs-tags-input-wrapper{position:relative;flex:1;min-width:120px;}
+    .cs-tags-search{width:100%;background:transparent;border:none;outline:none;color:#fff;font-size:13px;padding:2px 0;}
+    .cs-tags-dropdown{position:absolute;top:100%;left:0;right:0;z-index:9999;background:#222;border:1px solid #444;border-radius:6px;max-height:160px;overflow-y:auto;margin-top:4px;}
+    .cs-tags-dd-item{padding:8px 12px;cursor:pointer;font-size:13px;color:#ddd;}.cs-tags-dd-item:hover{background:#333;}
+    .cs-tags-dd-create{color:#e8651a;font-style:italic;}
     /* Add your custom styles here */
     .versions-checkboxes {
         display: flex;
@@ -1235,12 +1361,12 @@
     }
 
     .edit-adaptive-list-btn {
-        background: #007bff !important;
+        background: var(--accent-color, #e67e22) !important;
         color: white !important;
     }
 
     .edit-adaptive-list-btn:hover {
-        background: #0056b3 !important;
+        background: var(--accent-color-hover, #d35400) !important;
     }
 
     .delete-adaptive-list-btn {
@@ -1288,45 +1414,47 @@
                 {% endif %}
             {% endif %}
             
-            {# Type badge. For MDBList it also shows which list source method the source uses. #}
-            {% set mdblist_mode_labels = {'json_url': 'JSON list', 'api_watchlist': 'Watchlist API', 'api_user_list': 'User List API', 'api_list_id': 'List ID API'} %}
-            {% if config.type == 'Overseerr' %}
-                {% set type_label = 'Seerr' %}
-            {% elif config.type == 'MDBList' %}
-                {% set type_label = 'MDBList/' ~ mdblist_mode_labels.get(config.get('source_mode') or 'json_url', 'JSON list') %}
-            {% else %}
-                {% set type_label = config.type %}
-            {% endif %}
-
-            <div class="settings-section" data-source-id="{{ source_id }}">
-                <div class="settings-section-header{% if not config.get('enabled', True) %} source-disabled{% endif %}">
-                    <span class="settings-toggle-icon">+</span>
-                    <h4>
-                        {% if config.display_name %}
-                            {{ config.display_name }} [{{ type_label }}]
-                        {% else %}
-                            {% if config.type == 'Overseerr' %}
-                                Seerr_{{ source_id.split('_')[-1] if '_' in source_id else source_id }} [Seerr]
-                            {% else %}
-                                {{ source_id }} [{{ type_label }}]
-                            {% endif %}
-                        {% endif %}
+            <div class="settings-section content-source-card source-item" data-source-id="{{ source_id }}">
+                <div class="settings-section-header content-source-header source-info{% if not config.get('enabled', True) %} source-disabled{% endif %}">
+                    <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                    <div class="content-source-header-left content-source-info">
+                        <div>
+                            <h4 class="content-source-name source-name">
+                                {% if config.display_name %}
+                                    {{ config.display_name }}
+                                {% else %}
+                                    {% if config.type == 'Overseerr' %}
+                                        Seerr_{{ source_id.split('_')[-1] if '_' in source_id else source_id }}
+                                    {% else %}
+                                        {{ source_id }}
+                                    {% endif %}
+                                {% endif %}
+                            </h4>
+                        </div>
+                        {# For MDBList, the badge also shows which list source method the source uses #}
+                        {% set mdblist_mode_labels = {'json_url': 'JSON list', 'api_watchlist': 'Watchlist API', 'api_user_list': 'User List API', 'api_list_id': 'List ID API'} %}
+                        <span class="content-source-type source-type">{% if config.type == 'Overseerr' %}Seerr{% elif config.type == 'MDBList' %}MDBList/{{ mdblist_mode_labels.get(config.get('source_mode') or 'json_url', 'JSON list') }}{% else %}{{ config.type }}{% endif %}</span>
                         {% if not has_enabled_versions %}
                             <span class="no-versions-warning">
                                 <span class="no-versions-warning-icon">⚠️</span>
                                 No versions enabled
                             </span>
                         {% endif %}
-                    </h4>
-                    <div class="source-buttons">
-                        <button type="button" class="delete-source-btn" data-source-id="{{ source_id }}">Delete Source</button>
+                    </div>
+                    <div class="source-buttons content-source-actions source-actions">
+                        <button type="button" class="delete-source-btn btn-danger" data-source-id="{{ source_id }}">
+                            <i class="fa-solid fa-trash"></i>
+                <span class="btn-text">Delete</span>
+                        </button>
                     </div>
                 </div>
                 <div class="settings-section-content" style="display: none;">
 
                     {# --- START: Conditional Rendering based on Type --- #}
                     {% if config.type == 'Adaptive List' %}
-                        {# --- Render Adaptive List - each is its own content source --- #}
+                        {# --- Render Adaptive List with filter summary --- #}
 
                         {# Filter Summary #}
                         {% set filters = config.get('filters', {}) %}
@@ -1400,8 +1528,8 @@
                                         {% endif %}
                                     </div>
                                     <a href="/discover?edit_adaptive_list={{ source_id }}"
-                                       class="popup-button edit-adaptive-list-btn"
-                                       style="padding: 6px 12px; font-size: 0.85em; text-decoration: none;">
+                                       class="btn-primary edit-adaptive-list-btn"
+                                       style="padding: 6px 12px; font-size: 0.85em; text-decoration: none; border-radius: 4px;">
                                         Edit Filters
                                     </a>
                                 </div>
@@ -1509,6 +1637,62 @@
                             <p class="settings-description">Maximum number of items to process from this source. Set to 0 for no limit.</p>
                         </div>
 
+                        {# Seasons Per Show #}
+                        {% set key = 'seasons_per_show' %}
+                        {% set value = config.get(key, 0) %}
+                        <div class="settings-form-group">
+                            <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Seasons Per TV Show:</label>
+                            <input type="number" id="content-sources-{{ source_id }}-{{ key }}"
+                                   name="Content Sources.{{ source_id }}.{{ key }}"
+                                   value="{{ value }}"
+                                   class="settings-input"
+                                   data-section="Content Sources"
+                                   data-key="{{ source_id }}.{{ key }}"
+                                   min="0"
+                                   placeholder="0 = all seasons">
+                            <p class="settings-description">Limit each TV show to this many seasons. Set to 0 for all seasons. Use Season Grab Order below to control which seasons are selected.</p>
+                        </div>
+
+                        {# Season Grab Order #}
+                        {% set key = 'season_grab_order' %}
+                        {% set value = config.get(key, 'first') %}
+                        <div class="settings-form-group">
+                            <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Season Grab Order:</label>
+                            <select id="content-sources-{{ source_id }}-{{ key }}"
+                                    name="Content Sources.{{ source_id }}.{{ key }}"
+                                    class="settings-input"
+                                    data-section="Content Sources"
+                                    data-key="{{ source_id }}.{{ key }}">
+                                <option value="first" {% if value == 'first' %}selected{% endif %}>First seasons</option>
+                                <option value="latest" {% if value == 'latest' %}selected{% endif %}>Latest seasons</option>
+                                <option value="recent" {% if value == 'recent' %}selected{% endif %}>Most recently aired</option>
+                            </select>
+                            <p class="settings-description">Choose which seasons to grab when Seasons Per TV Show is limited: First (oldest), Latest (newest by number), or Most recently aired (by air date).</p>
+                        </div>
+
+                        {# Tags — Plex mode only #}
+                        {% set tags_val = config.get('tags', []) %}
+                        {% set tags_str = tags_val | join(',') if tags_val is iterable and tags_val is not string else (tags_val or '') %}
+                        <div class="cs-tags-plex-only">
+                            <div class="settings-form-group">
+                                <label class="settings-title">Tags:</label>
+                                <div class="cs-tags-pill-input" id="cs-tags-pill-input-{{ source_id }}">
+                                    {% for tag in tags_val %}
+                                    <span class="cs-tag-pill">{{ tag }}<button type="button" onclick="csTgRemove('{{ source_id }}','{{ tag }}')">&times;</button></span>
+                                    {% endfor %}
+                                    <div class="cs-tags-input-wrapper">
+                                        <input type="text" class="cs-tags-search" id="cs-tags-search-{{ source_id }}" placeholder="Search or add..." autocomplete="off" oninput="csTgFilter('{{ source_id }}')" onkeydown="csTgKeydown(event,'{{ source_id }}')">
+                                        <div class="cs-tags-dropdown" id="cs-tags-dropdown-{{ source_id }}" style="display:none;"></div>
+                                    </div>
+                                </div>
+                                <input type="hidden" id="cs-tags-hidden-{{ source_id }}" name="Content Sources.{{ source_id }}.tags" data-section="Content Sources" data-key="{{ source_id }}.tags" value="{{ tags_str }}">
+                                <p class="settings-description" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                                    <span>Plex mode only: Tags are pushed to cli_mount for virtual folder routing.</span>
+                                    <button type="button" onclick="csVfOpen('{{ source_id }}')" style="background:#e8651a;color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">+ Create Virtual Folder</button>
+                                </p>
+                            </div>
+                        </div>
+
                         {# Custom Symlink Subfolder #}
                         {% set key = 'custom_symlink_subfolder' %}
                         {% set value = config.get(key, '') %}
@@ -1524,29 +1708,6 @@
                                        placeholder="e.g., AdaptiveLists">
                                 <p class="settings-description">Optional: Specify a custom subfolder within the main symlink root directory for items from this source.</p>
                             </div>
-
-                        {# Tags — Plex mode only #}
-                        {% set tags_value = config.get('tags', []) %}
-                        <div class="tags-container" data-source-id="{{ source_id }}">
-                            <div class="settings-form-group">
-                                <label class="settings-title">Tags:</label>
-                                <div class="tags-pill-input" id="tags-pill-input-{{ source_id }}" data-source-id="{{ source_id }}">
-                                    {% for tag in tags_value %}
-                                    <span class="tag-pill" data-tag="{{ tag }}">{{ tag }}<button type="button" class="tag-pill-remove" onclick="removeTag('{{ source_id }}', '{{ tag }}')">&times;</button></span>
-                                    {% endfor %}
-                                    <div class="tags-input-wrapper">
-                                        <input type="text" class="tags-search-input" id="tags-search-{{ source_id }}"
-                                               placeholder="Search or add tag..." autocomplete="off"
-                                               oninput="filterTagDropdown('{{ source_id }}')"
-                                               onkeydown="handleTagKeydown(event, '{{ source_id }}')">
-                                        <div class="tags-dropdown" id="tags-dropdown-{{ source_id }}" style="display:none;"></div>
-                                    </div>
-                                </div>
-                                <input type="hidden" id="tags-hidden-{{ source_id }}"
-                                       name="Content Sources.{{ source_id }}.tags"
-                                               value="{{ tags_value | join(',') }}">
-                                <p class="settings-description">Plex mode: Tags embedded in NZB filenames for virtual folder routing. Requires NZB file naming enabled.</p>
-                            </div>
                         </div>
 
                         {# Render Plex Labels configuration if available for this source type #}
@@ -1557,7 +1718,7 @@
                             {% set plex_labels_config = config.get('plex_labels', {}) if config.get('plex_labels', {}) is mapping else {} %}
                             {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
 
-                            <div class="settings-form-group" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
                                 <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Labels Configuration</h5>
                                 <p class="settings-description" style="margin-bottom: 15px;">
                                     Configure automatic Plex label assignment for items from this source. Labels help organize your Plex library and can be used for collections or filtering. More Plex label functions can be found on debug functions page.
@@ -1754,6 +1915,29 @@
                              {% endif %}
                         </div>
 
+                        {# Tags — Plex mode only #}
+                        {% set tags_val2 = config.get('tags', []) %}
+                        {% set tags_str2 = tags_val2 | join(',') if tags_val2 is iterable and tags_val2 is not string else (tags_val2 or '') %}
+                        <div class="cs-tags-plex-only">
+                            <div class="settings-form-group">
+                                <label class="settings-title">Tags:</label>
+                                <div class="cs-tags-pill-input" id="cs-tags-pill-input-{{ source_id }}">
+                                    {% for tag in tags_val %}
+                                    <span class="cs-tag-pill">{{ tag }}<button type="button" onclick="csTgRemove('{{ source_id }}','{{ tag }}')">&times;</button></span>
+                                    {% endfor %}
+                                    <div class="cs-tags-input-wrapper">
+                                        <input type="text" class="cs-tags-search" id="cs-tags-search-{{ source_id }}" placeholder="Search or add..." autocomplete="off" oninput="csTgFilter('{{ source_id }}')" onkeydown="csTgKeydown(event,'{{ source_id }}')">
+                                        <div class="cs-tags-dropdown" id="cs-tags-dropdown-{{ source_id }}" style="display:none;"></div>
+                                    </div>
+                                </div>
+                                <input type="hidden" id="cs-tags-hidden-{{ source_id }}" name="Content Sources.{{ source_id }}.tags" data-section="Content Sources" data-key="{{ source_id }}.tags" value="{{ tags_str2 }}">
+                                <p class="settings-description" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                                    <span>Plex mode only: Tags are pushed to cli_mount for virtual folder routing.</span>
+                                    <button type="button" onclick="csVfOpen('{{ source_id }}')" style="background:#e8651a;color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">+ Create Virtual Folder</button>
+                                </p>
+                            </div>
+                        </div>
+
                         {# Custom Symlink Subfolder - ADDED FOR 'Other Plex Watchlist' #}
                         {% set key = 'custom_symlink_subfolder' %}
                         {% set value = config.get(key, '') %}
@@ -1833,6 +2017,75 @@
                                 <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
                             {% endif %}
                         </div>
+                        {# Render Plex Labels configuration if available for this source type #}
+                        {% set source_type = config.type %}
+                        {% if settings_schema['Content Sources'].schema is defined and
+                              source_type in settings_schema['Content Sources'].schema and
+                              'plex_labels' in settings_schema['Content Sources'].schema[source_type] %}
+                            {% set plex_labels_config = config.get('plex_labels', {}) if config.get('plex_labels', {}) is mapping else {} %}
+                            {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
+
+                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                                <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Labels Configuration</h5>
+                                <p class="settings-description" style="margin-bottom: 15px;">
+                                    Configure automatic Plex label assignment for items from this source. Labels help organize your Plex library and can be used for collections or filtering. More Plex label functions can be found on debug functions page.
+                                </p>
+
+                                {# Enabled checkbox #}
+                                <div class="settings-form-group">
+                                    <label class="settings-title">
+                                        <input type="checkbox"
+                                               id="content-sources-{{ source_id }}-plex_labels-enabled"
+                                               name="Content Sources.{{ source_id }}.plex_labels.enabled"
+                                               data-section="Content Sources"
+                                               data-key="{{ source_id }}.plex_labels.enabled"
+                                               onchange="togglePlexLabelsFields('{{ source_id }}')"
+                                               {% if plex_labels_config.get('enabled', False) %}checked{% endif %}>
+                                        Enable Plex Labels
+                                    </label>
+                                    <p class="settings-description">{{ plex_labels_schema.enabled.description }}</p>
+                                </div>
+
+                                {# Plex Labels dependent fields - indented and disabled when Enable Plex Labels is unchecked #}
+                                <div class="plex-labels-dependent-fields" id="plex-labels-dependent-{{ source_id }}" style="margin-left: 10px;">
+                                    {# Label Mode dropdown #}
+                                    <div class="settings-form-group">
+                                        <label for="content-sources-{{ source_id }}-plex_labels-label_mode" class="settings-title">Label Mode:</label>
+                                        <select id="content-sources-{{ source_id }}-plex_labels-label_mode"
+                                                name="Content Sources.{{ source_id }}.plex_labels.label_mode"
+                                                class="settings-input"
+                                                data-section="Content Sources"
+                                                data-key="{{ source_id }}.plex_labels.label_mode"
+                                                onchange="updatePlexLabelsVisibility('{{ source_id }}')"
+                                                {% if not plex_labels_config.get('enabled', False) %}disabled{% endif %}>
+                                            {% for choice in plex_labels_schema.label_mode.choices %}
+                                                <option value="{{ choice }}"
+                                                        {% if plex_labels_config.get('label_mode', plex_labels_schema.label_mode.default) == choice %}selected{% endif %}>
+                                                    {{ choice|title }}
+                                                </option>
+                                            {% endfor %}
+                                        </select>
+                                        <p class="settings-description">{{ plex_labels_schema.label_mode.description }}</p>
+                                    </div>
+
+                                    {# Fixed Label input (shown when label_mode is 'fixed') #}
+                                    <div class="settings-form-group plex-labels-fixed" id="plex-labels-fixed-{{ source_id }}"
+                                         style="display: {% if plex_labels_config.get('label_mode', plex_labels_schema.label_mode.default) == 'fixed' %}block{% else %}none{% endif %};">
+                                        <label for="content-sources-{{ source_id }}-plex_labels-fixed_label" class="settings-title">Fixed Label:</label>
+                                        <input type="text"
+                                               id="content-sources-{{ source_id }}-plex_labels-fixed_label"
+                                               name="Content Sources.{{ source_id }}.plex_labels.fixed_label"
+                                               value="{{ plex_labels_config.get('fixed_label', '') }}"
+                                               class="settings-input"
+                                               data-section="Content Sources"
+                                               data-key="{{ source_id }}.plex_labels.fixed_label"
+                                               placeholder="e.g., Kids Content"
+                                               {% if not plex_labels_config.get('enabled', False) %}disabled{% endif %}>
+                                        <p class="settings-description">{{ plex_labels_schema.fixed_label.description }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endif %}
 
                     {% else %}
                         {% if config.type == 'MDBList' %}
@@ -1844,7 +2097,7 @@
                         {% for key, value in config.items() %}
                             {# Skip standard 'type' field and any empty/invalid keys #}
                             {% if key and key != 'type' %}
-                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters'] or (key == 'ignore_tags' and config.type == 'Overseerr') or (config.type == 'MDBList' and key in ['source_mode', 'urls', 'username', 'listname', 'list_id']) %}
+                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters', 'seasons_per_show', 'season_grab_order', 'tags', 'tags_exclusive'] or (key == 'ignore_tags' and config.type == 'Overseerr') or (config.type == 'MDBList' and key in ['source_mode', 'urls', 'username', 'listname', 'list_id']) %}
                                 {% if not _skip %}
                                 <div class="settings-form-group">
                                     {% if key == 'versions' %}
@@ -1883,7 +2136,7 @@
                                     {% elif key == 'scrob_list_ids' and config.type == 'Scrob Lists' %}
                                          {# Multi-select populated live from GET /settings/content-sources/scrob-lists.
                                             The hidden input carries the actual comma-separated value that gets saved;
-                                            the visible <select> is just a picker UI kept in sync via scrob-list-select.js logic below. #}
+                                            the visible <select> is just a picker UI kept in sync via initializeScrobListPickers() below. #}
                                          <label for="content-sources-{{ source_id }}-scrob_list_ids-select" class="settings-title">Scrob List(s):</label>
                                          <select id="content-sources-{{ source_id }}-scrob_list_ids-select"
                                                  class="settings-input scrob-list-multiselect"
@@ -1965,26 +2218,19 @@
                                             {% endif %}
                                         </div>
                                     {% elif key == 'tags' %}
-                                        {# Tags pill input — Plex mode only #}
-                                        {% set tags_value = value if value is iterable and value is not string else [] %}
+                                        {% set tv = value if value is iterable and value is not string else [] %}
+                                        {% set ts = tv | join(',') if tv else (value or '') %}
                                         {% set tags_excl_value = config.get('tags_exclusive', False) %}
-                                        <div class="tags-container" data-source-id="{{ source_id }}">
+                                        <div class="cs-tags-plex-only">
                                             <label class="settings-title">Tags:</label>
-                                            <div class="tags-pill-input" id="tags-pill-input-{{ source_id }}" data-source-id="{{ source_id }}">
-                                                {% for tag in tags_value %}
-                                                <span class="tag-pill" data-tag="{{ tag }}">{{ tag }}<button type="button" class="tag-pill-remove" onclick="removeTag('{{ source_id }}', '{{ tag }}')">&times;</button></span>
-                                                {% endfor %}
-                                                <div class="tags-input-wrapper">
-                                                    <input type="text" class="tags-search-input" id="tags-search-{{ source_id }}"
-                                                           placeholder="Search or add tag..." autocomplete="off"
-                                                           oninput="filterTagDropdown('{{ source_id }}')"
-                                                           onkeydown="handleTagKeydown(event, '{{ source_id }}')">
-                                                    <div class="tags-dropdown" id="tags-dropdown-{{ source_id }}" style="display:none;"></div>
+                                            <div class="cs-tags-pill-input" id="cs-tags-pill-input-{{ source_id }}">
+                                                {% for tag in tv %}<span class="cs-tag-pill">{{ tag }}<button type="button" onclick="csTgRemove('{{ source_id }}','{{ tag }}')">&times;</button></span>{% endfor %}
+                                                <div class="cs-tags-input-wrapper">
+                                                    <input type="text" class="cs-tags-search" id="cs-tags-search-{{ source_id }}" placeholder="Search or add..." autocomplete="off" oninput="csTgFilter('{{ source_id }}')" onkeydown="csTgKeydown(event,'{{ source_id }}')">
+                                                    <div class="cs-tags-dropdown" id="cs-tags-dropdown-{{ source_id }}" style="display:none;"></div>
                                                 </div>
                                             </div>
-                                            <input type="hidden" id="tags-hidden-{{ source_id }}"
-                                                   name="Content Sources.{{ source_id }}.tags"
-                                                          value="{{ tags_value | join(',') }}">
+                                            <input type="hidden" id="cs-tags-hidden-{{ source_id }}" name="Content Sources.{{ source_id }}.tags" data-section="Content Sources" data-key="{{ source_id }}.tags" value="{{ ts }}">
                                             <div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
                                                 <input type="checkbox" id="tags-exclusive-{{ source_id }}"
                                                        name="Content Sources.{{ source_id }}.tags_exclusive"
@@ -1993,7 +2239,6 @@
                                                        {% if tags_excl_value %}checked{% endif %}>
                                                 <label for="tags-exclusive-{{ source_id }}" style="font-size:12px;cursor:pointer;">NzbDAV only: route exclusively to tag category (skip resolution detection)</label>
                                             </div>
-                                            <p class="settings-description">Plex mode: Tags embedded in NZB filenames for virtual folder routing. Requires NZB file naming enabled.</p>
                                         </div>
                                     {% elif key == 'tags_exclusive' %}
                                         {# Rendered inline with 'tags' above — skip standalone render #}
@@ -2077,6 +2322,25 @@
                             {% endif %} {# End if key != 'type' #}
                         {% endfor %}
 
+                        {# Tags — rendered explicitly so it always appears even if key missing from saved config #}
+                        {% set tags_val3 = config.get('tags', []) %}
+                        {% set tags_str3 = tags_val3 | join(',') if tags_val3 is iterable and tags_val3 is not string else (tags_val3 or '') %}
+                        <div class="settings-form-group cs-tags-plex-only">
+                            <label class="settings-title">Tags:</label>
+                            <div class="cs-tags-pill-input" id="cs-tags-pill-input-{{ source_id }}">
+                                {% for tag in tags_val3 %}<span class="cs-tag-pill">{{ tag }}<button type="button" onclick="csTgRemove('{{ source_id }}','{{ tag }}')">&times;</button></span>{% endfor %}
+                                <div class="cs-tags-input-wrapper">
+                                    <input type="text" class="cs-tags-search" id="cs-tags-search-{{ source_id }}" placeholder="Search or add..." autocomplete="off" oninput="csTgFilter('{{ source_id }}')" onkeydown="csTgKeydown(event,'{{ source_id }}')">
+                                    <div class="cs-tags-dropdown" id="cs-tags-dropdown-{{ source_id }}" style="display:none;"></div>
+                                </div>
+                            </div>
+                            <input type="hidden" id="cs-tags-hidden-{{ source_id }}" name="Content Sources.{{ source_id }}.tags" data-section="Content Sources" data-key="{{ source_id }}.tags" value="{{ tags_str3 }}">
+                            <p class="settings-description" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                                <span>Plex mode only: Tags embedded in NZB filenames for cli_mount virtual folder routing.</span>
+                                <button type="button" class="btn-sm" onclick="csVfOpen('{{ source_id }}')" style="background:#e8651a;color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">+ Create Virtual Folder</button>
+                            </p>
+                        </div>
+
                         {# Requesters — Overseerr only, rendered explicitly so it always appears even if key missing from saved config #}
                         {% if config.type == 'Overseerr' %}
                         <div class="settings-form-group">
@@ -2140,29 +2404,6 @@
                                 Unblacklist on Source Run
                             </label>
                             <p class="settings-description">When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.</p>
-
-                        {# Tags — Plex mode only #}
-                        {% set tags_value = config.get('tags', []) %}
-                        <div class="tags-container" data-source-id="{{ source_id }}">
-                            <div class="settings-form-group">
-                                <label class="settings-title">Tags:</label>
-                                <div class="tags-pill-input" id="tags-pill-input-{{ source_id }}" data-source-id="{{ source_id }}">
-                                    {% for tag in tags_value %}
-                                    <span class="tag-pill" data-tag="{{ tag }}">{{ tag }}<button type="button" class="tag-pill-remove" onclick="removeTag('{{ source_id }}', '{{ tag }}')">&times;</button></span>
-                                    {% endfor %}
-                                    <div class="tags-input-wrapper">
-                                        <input type="text" class="tags-search-input" id="tags-search-{{ source_id }}"
-                                               placeholder="Search or add tag..." autocomplete="off"
-                                               oninput="filterTagDropdown('{{ source_id }}')"
-                                               onkeydown="handleTagKeydown(event, '{{ source_id }}')">
-                                        <div class="tags-dropdown" id="tags-dropdown-{{ source_id }}" style="display:none;"></div>
-                                    </div>
-                                </div>
-                                <input type="hidden" id="tags-hidden-{{ source_id }}"
-                                       name="Content Sources.{{ source_id }}.tags"
-                                               value="{{ tags_value | join(',') }}">
-                                <p class="settings-description">Plex mode: Tags embedded in NZB filenames for virtual folder routing. Requires NZB file naming enabled.</p>
-                            </div>
                         </div>
 
                         {# Render Plex Labels configuration if available for this source type #}
@@ -2173,7 +2414,7 @@
                             {% set plex_labels_config = config.get('plex_labels', {}) if config.get('plex_labels', {}) is mapping else {} %}
                             {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
 
-                            <div class="settings-form-group" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
                                 <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Labels Configuration</h5>
                                 <p class="settings-description" style="margin-bottom: 15px;">
                                     Configure automatic Plex label assignment for items from this source. Labels help organize your Plex library and can be used for collections or filtering. More Plex label functions can be found on debug functions page.
@@ -2243,8 +2484,8 @@
                               source_type_pc in settings_schema['Content Sources'].schema and
                               'plex_collection' in settings_schema['Content Sources'].schema[source_type_pc] %}
                             {% set plex_coll_config = config.get("plex_collection", {}) %}{% if plex_coll_config is not mapping %}{% set plex_coll_config = {} %}{% endif %}
-                            <div class="settings-form-group" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
-                                <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Collection</h5>
+                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px; margin-top: 15px;">
+                                <h5 style="margin-bottom: 10px;">Plex Collection</h5>
                                 <p class="settings-description" style="margin-bottom: 15px;">
                                     Automatically create and maintain a Plex collection that mirrors this source list order.
                                 </p>
@@ -2272,7 +2513,7 @@
                                            placeholder="{{ config.get('display_name', source_id) }}">
                                     <p class="settings-description">Collection name. Defaults to display name. For mixed (Movies+Shows) lists, ' Movies' and ' Shows' are added automatically unless overridden below.</p>
                                 </div>
-                                {% if config.get('media_type', 'All') == 'All' %}
+                                {% if config.get('media_type', 'All')|lower == 'all' %}
                                 <div class="settings-form-group">
                                     <label for="content-sources-{{ source_id }}-plex_collection-collection_name_movies" class="settings-title">Movies Collection Name Override:</label>
                                     <input type="text"
@@ -2303,7 +2544,7 @@
                                     <input type="text"
                                            id="content-sources-{{ source_id }}-plex_collection-sort_prefix"
                                            name="Content Sources.{{ source_id }}.plex_collection.sort_prefix"
-                                           value="{{ plex_coll_config.get('sort_prefix', '!') }}"
+                                           value="{{ plex_coll_config.get('sort_prefix', '!!!!') }}"
                                            class="settings-input"
                                            data-section="Content Sources"
                                            data-key="{{ source_id }}.plex_collection.sort_prefix"
@@ -2359,11 +2600,12 @@
                                 </div>
 
                                 {# ── Poster Design ── #}
-                                <div class="settings-form-group" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid #2a2a2a;">
+                                <div class="settings-form-group" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.07);">
                                     <label class="settings-title">Poster Design:</label>
-                                    <p class="settings-description" style="margin-bottom: 10px;">Select a custom poster for this collection. Leave on "None" to use the Plex default poster.</p>
+                                    <p class="settings-description" style="margin-bottom: 10px;">Select a custom poster for this collection. Click a design to select it. Leave on "None" to use the Plex default poster.</p>
                                     <div class="plex-collection-poster-picker" data-source-id="{{ source_id }}"
                                          style="display:flex; gap:10px; overflow-x:auto; padding:6px 2px 12px; scrollbar-width:thin; min-height:380px;">
+                                        {# Designs 0-8 rendered by JS after previews load #}
                                         <div class="poster-loading-placeholder" style="color:#888; font-size:0.85em; padding:8px;">Loading designs...</div>
                                     </div>
                                     <input type="hidden"
@@ -2373,6 +2615,8 @@
                                            data-key="{{ source_id }}.plex_collection.poster_design"
                                            value="{{ plex_coll_config.get('poster_design', 0) }}">
                                 </div>
+
+                                {# ── Poster Accent Color ── #}
                                 <div class="settings-form-group">
                                     <label for="content-sources-{{ source_id }}-plex_collection-poster_accent" class="settings-title">Poster Accent Color:</label>
                                     <div style="display:flex; align-items:center; gap:10px;">
@@ -2381,12 +2625,63 @@
                                                name="Content Sources.{{ source_id }}.plex_collection.poster_accent"
                                                data-section="Content Sources"
                                                data-key="{{ source_id }}.plex_collection.poster_accent"
-                                               value="{{ plex_coll_config.get('poster_accent', '#E6A800') }}"
-                                               style="width:44px; height:36px; border:none; background:none; cursor:pointer; border-radius:6px;">
-                                        <span style="font-size:0.85em; color:#888;">{{ plex_coll_config.get('poster_accent', '#E6A800') }}</span>
+                                               value="{{ plex_coll_config.get('poster_accent', '') }}"
+                                               style="width:44px; height:36px; border:none; background:none; cursor:pointer; border-radius:6px;{% if not plex_coll_config.get('poster_accent') %} opacity:0.4;{% endif %}">
+                                        <span style="font-size:0.85em; color:#888;">{{ plex_coll_config.get('poster_accent', '') or 'Design default' }}</span>
+                                        {% if plex_coll_config.get('poster_accent') %}
+                                        <button type="button"
+                                                onclick="(function(){var inp=document.getElementById('content-sources-{{ source_id }}-plex_collection-poster_accent'); inp.value=''; inp.dispatchEvent(new Event('input',{bubbles:true})); inp.dispatchEvent(new Event('change',{bubbles:true})); inp.style.opacity='0.4'; inp.nextElementSibling.textContent='Design default'; this.style.display='none';}).call(this)"
+                                                style="font-size:0.75em; padding:3px 8px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#aaa; cursor:pointer;">
+                                            Use default
+                                        </button>
+                                        {% endif %}
                                     </div>
-                                    <p class="settings-description">Accent color used throughout the poster design.</p>
+                                    <p class="settings-description">Accent color used throughout the poster design. Leave unset to use the layout's default color.</p>
                                 </div>
+
+                                {# ── Poster Card Overlay Opacity ── #}
+                                <div class="settings-form-group">
+                                    <label class="settings-title">Card Overlay Opacity: <span id="overlay-opacity-val-{{ source_id }}">{{ plex_coll_config.get('poster_overlay_opacity', 60) }}%</span></label>
+                                    <input type="range" min="0" max="100" step="5"
+                                           id="content-sources-{{ source_id }}-plex_collection-poster_overlay_opacity"
+                                           name="Content Sources.{{ source_id }}.plex_collection.poster_overlay_opacity"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.poster_overlay_opacity"
+                                           value="{{ plex_coll_config.get('poster_overlay_opacity', 60) }}"
+                                           style="width:100%; accent-color:var(--accent-color,#e87429);"
+                                           oninput="document.getElementById('overlay-opacity-val-{{ source_id }}').textContent=this.value+'%'">
+                                    <p class="settings-description">Dark gradient fade at the bottom of each movie/show card inside the poster. Higher = darker fade over the card art.</p>
+                                </div>
+
+                                {# ── Poster Accent Glow Opacity ── #}
+                                <div class="settings-form-group">
+                                    <label class="settings-title">Accent Glow Opacity: <span id="glow-opacity-val-{{ source_id }}">{{ plex_coll_config.get('poster_glow_opacity', 80) }}%</span></label>
+                                    <input type="range" min="0" max="100" step="5"
+                                           id="content-sources-{{ source_id }}-plex_collection-poster_glow_opacity"
+                                           name="Content Sources.{{ source_id }}.plex_collection.poster_glow_opacity"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.poster_glow_opacity"
+                                           value="{{ plex_coll_config.get('poster_glow_opacity', 80) }}"
+                                           style="width:100%; accent-color:var(--accent-color,#e87429);"
+                                           oninput="document.getElementById('glow-opacity-val-{{ source_id }}').textContent=this.value+'%'">
+                                    <p class="settings-description">Intensity of the accent color glow around the edges of the poster background. Higher = more vivid color, lower = more subtle.</p>
+                                </div>
+
+                                {# ── Poster Glow Radius ── #}
+                                <div class="settings-form-group">
+                                    <label class="settings-title">Accent Glow Radius: <span id="glow-radius-val-{{ source_id }}">{{ plex_coll_config.get('poster_glow_radius', 55) }}</span></label>
+                                    <input type="range" min="10" max="200" step="5"
+                                           id="content-sources-{{ source_id }}-plex_collection-poster_glow_radius"
+                                           name="Content Sources.{{ source_id }}.plex_collection.poster_glow_radius"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.poster_glow_radius"
+                                           value="{{ plex_coll_config.get('poster_glow_radius', 55) }}"
+                                           style="width:100%; accent-color:var(--accent-color,#e87429);"
+                                           oninput="document.getElementById('glow-radius-val-{{ source_id }}').textContent=this.value">
+                                    <p class="settings-description">How far the accent color glow spreads across the poster. Default 55 = tight glow near edges. Higher values (e.g. 150) spread the color across more of the poster.</p>
+                                </div>
+
+                                {# ── Poster Eyebrow Text ── #}
                                 <div class="settings-form-group">
                                     <label for="content-sources-{{ source_id }}-plex_collection-poster_eyebrow" class="settings-title">Eyebrow Text:</label>
                                     <input type="text"
@@ -2399,6 +2694,8 @@
                                            placeholder="e.g. PERSONAL COLLECTION (optional)">
                                     <p class="settings-description">Small text above the collection title. Leave blank to hide.</p>
                                 </div>
+
+                                {# ── Poster Icon ── #}
                                 <div class="settings-form-group">
                                     <label class="settings-title">Poster Icon:</label>
                                     <input type="hidden"
@@ -2410,20 +2707,21 @@
                                     <button type="button"
                                             class="plex-collection-icon-picker-btn"
                                             data-source-id="{{ source_id }}"
-                                            style="display:flex; align-items:center; gap:10px; background:#1e1e1e; border:1px solid #444; border-radius:6px; padding:8px 14px; cursor:pointer; color:#ddd; font-size:0.9em; transition:border-color 0.2s;"
-                                            onmouseover="this.style.borderColor='#007bff'" onmouseout="this.style.borderColor='#444'">
+                                            style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px 14px; cursor:pointer; color:#ddd; font-size:0.9em; transition:border-color 0.2s;"
+                                            onmouseover="this.style.borderColor='var(--accent-color,#e87429)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'">
                                         <span class="plex-coll-icon-preview" data-source-id="{{ source_id }}"
                                               style="display:flex; align-items:center; justify-content:center; width:28px; height:28px; flex-shrink:0;">
                                             {% if plex_coll_config.get('poster_icon') %}
                                             <img src="/api/overlays/logos/serve/{{ plex_coll_config.get('poster_icon') }}"
                                                  style="max-width:28px; max-height:28px; object-fit:contain;" alt="">
+                                            <svg style="margin-left:4px;opacity:0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                                             {% else %}
-                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                                             {% endif %}
                                         </span>
                                         <span>{% if plex_coll_config.get('poster_icon') %}{{ plex_coll_config.get('poster_icon').split('/')[-1] }}{% else %}Choose icon from library{% endif %}</span>
                                     </button>
-                                    <p class="settings-description" style="margin-top:6px;">Icon shown on the poster. Leave blank to use the source default.</p>
+                                    <p class="settings-description" style="margin-top:6px;">Icon shown on the poster. Leave blank to use the source default (Trakt / MDBList / CLI icon).</p>
                                 </div>
                             </div>
                         {% endif %}
@@ -2452,11 +2750,9 @@
                                     {% endif %}
                                 </div>
                                 <button type="button"
-                                        class="plex-lib-load-btn"
-                                        data-source-id="{{ source_id }}"
-                                        style="background:#1e1e1e; border:1px solid #444; border-radius:6px; padding:6px 14px; cursor:pointer; color:#ddd; font-size:0.85em; transition:border-color 0.2s;"
-                                        onmouseover="this.style.borderColor='#007bff'" onmouseout="this.style.borderColor='#444'">
-                                    Load Libraries
+                                        class="plex-lib-load-btn content-sources-btn btn-secondary"
+                                        data-source-id="{{ source_id }}">
+                                    <i class="fas fa-photo-film" style="margin-right:6px;"></i>Load Libraries
                                 </button>
                                 <p class="settings-description">Select which Plex libraries this collection should appear in. Leave empty to use the first library of each type (default behaviour).</p>
                             </div>
@@ -2468,12 +2764,21 @@
                 </div> {# End of settings-section-content #}
             </div> {# End of settings-section #}
         {% else %}
-            <div class="settings-section settings-section-invalid" data-source-id="{{ source_id }}">
-                <div class="settings-section-header">
-                    <span class="settings-toggle-icon" style="color: red;">!</span>
-                    <h4>Invalid Source: {{ source_id }}</h4>
-                    <div class="source-buttons">
-                        <button type="button" class="delete-source-btn" data-source-id="{{ source_id }}">Delete Source</button>
+            <div class="settings-section settings-section-invalid content-source-card content-source-invalid source-item" data-source-id="{{ source_id }}">
+                <div class="settings-section-header content-source-header source-info">
+                    <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="color: red;">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    </svg>
+                    <div class="content-source-header-left content-source-info">
+                        <div>
+                            <h4 class="content-source-name source-name">Invalid Source: {{ source_id }}</h4>
+                        </div>
+                    </div>
+                    <div class="source-buttons content-source-actions source-actions">
+                        <button type="button" class="delete-source-btn btn-danger" data-source-id="{{ source_id }}">
+                            <i class="fa-solid fa-trash"></i>
+                <span class="btn-text">Delete</span>
+                        </button>
                     </div>
                 </div>
                 <div class="settings-section-content" style="display: none; color: #aaa;">
@@ -2483,6 +2788,42 @@
             </div>
         {% endif %}
     {% endfor %}
+{# Virtual Folder Creator Modal #}
+<div id="cs-vf-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10000;align-items:center;justify-content:center;">
+    <div style="background:#1a1a1a;border:1px solid #444;border-radius:12px;padding:24px;width:min(460px,95vw);max-height:85vh;overflow-y:auto;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <h4 style="margin:0;color:#fff;font-size:16px;">Create cli_mount Virtual Folder</h4>
+            <button onclick="csVfClose()" style="background:none;border:none;color:#aaa;font-size:20px;cursor:pointer;">&times;</button>
+        </div>
+        <div class="vm-divider"></div>
+
+        <div class="section-label" style="margin-top:12px;">Mode</div>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer;">
+            <input type="radio" name="cs-vf-mode" id="cs-vf-combined" value="combined" onchange="csVfToggleMode()"> One folder for all selected tags
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer;">
+            <input type="radio" name="cs-vf-mode" id="cs-vf-per-tag" value="per_tag" onchange="csVfToggleMode()"> One folder per tag (folder name = tag name)
+        </label>
+
+        <div id="cs-vf-name-row" style="margin-top:12px;">
+            <div class="section-label">Folder Name</div>
+            <input type="text" id="cs-vf-name" placeholder="e.g. SciFi" style="width:100%;padding:8px 10px;background:#111;color:#fff;border:1px solid #444;border-radius:6px;font-size:13px;margin-top:6px;box-sizing:border-box;">
+        </div>
+
+        <div class="section-label" style="margin-top:16px;">Tags</div>
+        <div id="cs-vf-tags" style="margin-top:6px;max-height:160px;overflow-y:auto;border:1px solid #333;border-radius:6px;padding:8px 12px;"></div>
+
+        <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end;">
+            <button onclick="csVfClose()" style="background:#333;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;">Cancel</button>
+            <button id="cs-vf-submit" onclick="csVfSubmit()" style="background:#e8651a;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-weight:600;">Create</button>
+        </div>
+    </div>
+</div>
+
 {% else %}
     <p>No Content Sources configured or invalid configuration.</p>
 {% endif %}
+
+        </div> {# End of source-list #}
+    </div> {# End of content-section #}
+</div> {# End of content-sources-page #}

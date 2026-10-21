@@ -41,6 +41,8 @@ def migrate_schema():
 
         from .match_overrides import ensure_match_override_table
         ensure_match_override_table(conn)
+        from .show_overrides import ensure_show_overrides_table
+        ensure_show_overrides_table(conn)
         
         # Check if statistics_summary table exists and has id column
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
@@ -543,6 +545,12 @@ def migrate_schema():
             conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_content_source_detail ON media_items(content_source_detail);')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_content_source_detail.")
 
+        # Sibling lookups by torrent/NZB job id run on every Checking/Adding
+        # tick; filename lookups back webhooks and the Plex removal cache.
+        # Both were full table scans.
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_filled_by_torrent_id ON media_items(filled_by_torrent_id);')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_filled_by_file ON media_items(filled_by_file);')
+
         # Add triggers for location_basename
         cursor.execute("DROP TRIGGER IF EXISTS trigger_media_items_insert_location_basename")
         cursor.execute("DROP TRIGGER IF EXISTS trigger_media_items_update_location_basename")
@@ -1030,6 +1038,8 @@ def create_tables():
 
         from .match_overrides import ensure_match_override_table
         ensure_match_override_table(conn)
+        from .show_overrides import ensure_show_overrides_table
+        ensure_show_overrides_table(conn)
 
         # Add new table for tracking requested seasons
         cursor.execute('''

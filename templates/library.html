@@ -7,7 +7,7 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const theme = getCurrentTheme();
-        const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_library.css?v=2' : 'css/library.css';
+        const cssFile = 'css/tangerine/tangerine_library.css?v=2';
         const link = document.createElement('link');
         link.rel = 'stylesheet';
         link.href = '{{ url_for("static", filename="") }}' + cssFile;
@@ -196,7 +196,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="{{ url_for('static', filename='js/notifications.js') }}?v=2"></script>
-<script type="module" src="{{ url_for('static', filename='js/deletion_common.js') }}?v=2"></script>
-<script src="{{ url_for('static', filename='js/library.js') }}?v=3"></script>
+<script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/deletion_common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/library.js') }}"></script>
 {% endblock %}

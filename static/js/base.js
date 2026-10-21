@@ -396,6 +396,23 @@ function initializeTangerineMobileNav() {
     restoreExpandedState();
 }
 
+// marked is only needed for release notes, so it loads on first open
+// instead of with every page.
+let markedPromise = null;
+function loadMarked() {
+    if (window.marked) return Promise.resolve();
+    if (!markedPromise) {
+        markedPromise = new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js';
+            script.onload = resolve;
+            script.onerror = () => { markedPromise = null; reject(new Error('Failed to load marked')); };
+            document.head.appendChild(script);
+        });
+    }
+    return markedPromise;
+}
+
 // Release notes functionality
 function initializeReleaseNotes() {
     const releaseNotesButton = document.getElementById('releaseNotesButton');
@@ -408,9 +425,8 @@ function initializeReleaseNotes() {
         releaseNotesPopup.style.display = 'block';
         releaseNotesOverlay.style.display = 'block';
         
-        fetch('/base/api/release-notes')
-            .then(response => response.json())
-            .then(data => {
+        Promise.all([fetch('/base/api/release-notes').then(response => response.json()), loadMarked()])
+            .then(([data]) => {
                 if (data.success) {
                     releaseNotesContent.innerHTML = marked.parse(data.body);
                 } else {
@@ -903,6 +919,11 @@ document.addEventListener('DOMContentLoaded', function() {
     function initNotificationStream() {
         if (notificationEventSource) {
             notificationEventSource.close();
+            notificationEventSource = null;
+        }
+        // Hidden tabs hold no stream; the visibilitychange handler reopens it
+        if (document.hidden) {
+            return;
         }
 
         try {
@@ -1277,6 +1298,20 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize real-time notification streaming
     initNotificationStream();
+
+    // Close the stream while the tab is hidden; on return, catch up on what
+    // arrived meanwhile and reconnect.
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            if (notificationEventSource) {
+                notificationEventSource.close();
+                notificationEventSource = null;
+            }
+        } else if (!notificationEventSource) {
+            fetchNotifications();
+            initNotificationStream();
+        }
+    });
 
     // Cleanup EventSource on page unload
     window.addEventListener('beforeunload', function() {

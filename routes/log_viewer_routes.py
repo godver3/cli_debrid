@@ -477,6 +477,46 @@ def get_all_logs_for_upload(max_lines=1500000):
 
     return final_lines
 
+def _tail_lines(path, max_lines, block_size=65536):
+    """Return the last ``max_lines`` lines of a text file, like
+    ``deque(open(path), maxlen=max_lines)`` but reading only the tail: the
+    live viewer polls a log of up to 50 MB twice a second."""
+    if max_lines <= 0:
+        return []
+    with open(path, 'rb') as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        data = b''
+        # One extra newline guarantees max_lines complete lines after the
+        # (possibly partial) first line is dropped.
+        while pos > 0 and data.count(b'\n') <= max_lines:
+            step = min(block_size, pos)
+            pos -= step
+            f.seek(pos)
+            data = f.read(step) + data
+    lines = data.splitlines(keepends=True)
+    if pos > 0 and lines:
+        lines = lines[1:]  # starts mid-line
+    result = []
+    for line in lines[-max_lines:]:
+        text = line.decode('utf-8', errors='replace')
+        # Universal newlines, as text-mode iteration does
+        if text.endswith('\r\n'):
+            text = text[:-2] + '\n'
+        elif text.endswith('\r'):
+            text = text[:-1] + '\n'
+        result.append(text)
+    return result
+
+
+def _file_signature(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
 def get_recent_logs(n, since='', level='all'):
     """Get recent logs for the live viewer"""
     # Get logs directory from environment variable with fallback
@@ -492,9 +532,8 @@ def get_recent_logs(n, since='', level='all'):
         buffer_multiplier = 5 if level != 'all' else 1
         max_lines = n * buffer_multiplier
 
-        with open(log_path, 'r', encoding='utf-8') as f:
-            lines = deque(f, maxlen=max_lines)
-        
+        lines = _tail_lines(log_path, max_lines)
+
         current_log = None
         for line in lines:
             line = line.strip()
@@ -605,19 +644,29 @@ def stream_logs():
         # Pre-initialize json encoder for performance
         json_encoder = json.JSONEncoder()
 
+        # An unchanged debug.log (same inode, size, mtime) has nothing new,
+        # so the tick skips reading and parsing it.
+        log_path = os.path.join(os.environ.get('USER_LOGS', '/user/logs'), 'debug.log')
+        last_signature = None
+
         while True:
             try:
                 start_time = time.time()
 
                 # On first connection, get all logs up to requested lines
+                signature = _file_signature(log_path)
                 if first_batch:
                     logs = get_recent_logs(lines, level=level)
                     first_batch = False
+                    last_signature = signature
                     # Populate seen_log_hashes with initial logs
                     for log in logs:
                         log_hash = hash((log['timestamp'], log['message'][:100]))
                         seen_log_hashes.add(log_hash)
+                elif signature is not None and signature == last_signature:
+                    logs = []
                 else:
+                    last_signature = signature
                     # After first batch, only get new logs since last timestamp
                     raw_logs = get_recent_logs(lines, since=last_timestamp, level=level)
 

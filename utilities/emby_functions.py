@@ -21,6 +21,7 @@ from database.database_reading import get_media_item_by_id
 import time
 import json
 from datetime import datetime, timezone
+from utilities.jellyfin_auth import jellyfin_auth_headers
 
 def _parse_emby_date(date_str: Optional[str]) -> Optional[int]:
     """Parse Emby/Jellyfin ISO date string to Unix timestamp (integer)."""
@@ -139,7 +140,7 @@ def emby_update_item(item: Dict[str, Any]) -> bool:
             
         # Prepare headers with API key
         headers = {
-            'X-Emby-Token': emby_token,
+            **jellyfin_auth_headers(emby_token),
             'Content-Type': 'application/json'
         }
         
@@ -280,7 +281,7 @@ def remove_file_from_emby(item_title: str, item_path: str, episode_title: str = 
             
         # Prepare headers with API key
         headers = {
-            'X-Emby-Token': emby_token,
+            **jellyfin_auth_headers(emby_token),
             'Content-Type': 'application/json'
         }
         
@@ -444,7 +445,7 @@ def get_collected_from_emby(progress_callback=None, bypass=False) -> Optional[Di
         return None
 
     headers = {
-        'X-Emby-Token': emby_token,
+        **jellyfin_auth_headers(emby_token),
         'Accept': 'application/json'
     }
 

@@ -5,6 +5,7 @@ from plexapi.exceptions import Unauthorized, NotFound
 import requests
 from urllib.parse import urlparse
 from trakt.core import get_device_code
+from utilities.jellyfin_auth import jellyfin_auth_headers
 
 settings_validation_bp = Blueprint('settings_validation', __name__)
 
@@ -375,7 +376,7 @@ def validate_onboarding_settings():
                 try:
                     import requests as _req
                     resp = _req.get(f"{jellyfin_url.rstrip('/')}/System/Info",
-                                    headers={'X-Emby-Token': jellyfin_token}, timeout=5)
+                                    headers=jellyfin_auth_headers(jellyfin_token), timeout=5)
                     jf_valid = resp.status_code == 200
                     jf_message = 'Jellyfin connection successful' if jf_valid else f'Jellyfin returned status {resp.status_code}'
                 except Exception as e:

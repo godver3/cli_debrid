@@ -20,7 +20,12 @@ import sys
 from PTT import parse_title
 from pathlib import Path
 from scraper.functions import *
-from scraper.functions.anime_utils import convert_anime_episode_format_smart, detect_absolute_numbering
+from scraper.functions.anime_utils import (
+    convert_anime_episode_format_smart, detect_absolute_numbering, stored_absolute_episode,
+    resolve_absolute_episode, is_latin_script, pick_romanized_alias,
+)
+from scraper.functions.movie_episodes import movie_episode_info, movie_search_title
+from cli_battery.app.episode_order import show_episode_order
 from cli_battery.app.direct_api import DirectAPI
 import json
 import threading
@@ -54,246 +59,58 @@ def normalize_episode_format_for_dedup(episode_format: str) -> str:
     
     return normalized
 
-def get_absolute_episode_from_database(imdb_id: str, season: int, episode: int) -> Optional[int]:
-    """Get the absolute episode number from the database if available."""
-    try:
-        from cli_battery.app.database import Session, Item, Season, Episode
-        
-        with Session() as session:
-            # Find the item by IMDB ID
-            item = session.query(Item).filter_by(imdb_id=imdb_id).first()
-            if not item:
-                logging.debug(f"Item not found in database for IMDB ID: {imdb_id}")
-                return None
-            
-            # Find the season
-            season_obj = session.query(Season).filter_by(item_id=item.id, season_number=season).first()
-            if not season_obj:
-                logging.debug(f"Season {season} not found for item {imdb_id}")
-                return None
-            
-            # Find the episode
-            episode_obj = session.query(Episode).filter_by(season_id=season_obj.id, episode_number=episode).first()
-            if not episode_obj:
-                logging.debug(f"Episode S{season}E{episode} not found for item {imdb_id}")
-                return None
-            
-            # Check if absolute episode number exists
-            if episode_obj.absolute_episode is not None:
-                logging.info(f"Found absolute episode number {episode_obj.absolute_episode} for S{season}E{episode} in database")
-                return episode_obj.absolute_episode
-            else:
-                logging.debug(f"Episode S{season}E{episode} exists but has no absolute episode number")
-                return None
-                
-    except Exception as e:
-        logging.warning(f"Error getting absolute episode from database: {e}")
-        return None
+def _predates_show(result: Dict[str, Any], show_year: Optional[int]) -> bool:
+    """True if every year in the release name is before the show's first year."""
+    if not show_year:
+        return False
+    parsed_year = (result.get('parsed_info') or {}).get('year')
+    years = parsed_year if isinstance(parsed_year, list) else [parsed_year]
+    years = [int(y) for y in years if str(y).isdigit()]
+    return bool(years) and all(y < show_year - 1 for y in years)
+
+
+# Kept under its old name for callers outside this module.
+get_absolute_episode_from_database = stored_absolute_episode
+
 
 def convert_anime_episode_format(season: int, episode: int, season_episode_counts: Dict[int, int], xem_mapping: Optional[List[Dict]] = None, tmdb_id: Optional[str] = None, imdb_id: Optional[str] = None, multi: bool = False) -> Dict[str, str]:
     """Convert anime episode numbers into different formats using XEM mapping when available.
-    
+
     For single episodes (multi=False), returns:
     - regular: S04E01
-    - absolute: 60 (no leading zeros)  
+    - absolute: 60 (no leading zeros)
     - combined: S04E60
-    
+
     For season packs (multi=True), returns:
     - season: S02
     - absolute: 25 (no leading zeros)
+
+    The absolute number comes from the provider's stored absolute, then XEM,
+    then arithmetic over earlier seasons (specials excluded).
     """
     logging.info(f"Converting anime episode format - Season: {season}, Episode: {episode}, Multi: {multi}, Counts: {season_episode_counts}")
 
-    # For season packs, we want season-only formats
-    if multi:
-        # Calculate absolute episode number for the season (same logic as episode formats)
-        absolute_episode = None
-        
-        if xem_mapping:
-            logging.info(f"Checking XEM mapping for S{season}E{episode} (season pack)")
-            for mapping_entry in xem_mapping:
-                tvdb_info = mapping_entry.get('tvdb', {})
-                scene_info = mapping_entry.get('scene', {})
-                
-                # Check if this mapping matches our season/episode
-                if (tvdb_info.get('season') == season and 
-                    tvdb_info.get('episode') == episode):
-                    # Use TVDB absolute as the primary source
-                    if tvdb_info.get('absolute'):
-                        absolute_episode = tvdb_info.get('absolute')
-                        logging.info(f"Found XEM tvdb absolute: {absolute_episode} for S{season}E{episode} (season pack)")
-                    elif scene_info and scene_info.get('absolute'):
-                        absolute_episode = scene_info.get('absolute')
-                        logging.info(f"Found XEM scene absolute (fallback): {absolute_episode} for S{season}E{episode} (season pack)")
-                    break
-        
-        # Fallback to arithmetic calculation if no XEM mapping found
-        if absolute_episode is None:
-            logging.info("No XEM mapping found, using arithmetic calculation for season pack")
-            
-            # For season 2+, try DirectAPI first to get accurate counts
-            if season > 1 and imdb_id:
-                try:
-                    from cli_battery.app.direct_api import DirectAPI
-                    direct_api_instance = DirectAPI()
-                    show_metadata, _ = direct_api_instance.get_show_metadata(imdb_id)
-                    
-                    if show_metadata and isinstance(show_metadata, dict) and 'seasons' in show_metadata:
-                        show_seasons = show_metadata['seasons']
-                        logging.info(f"Using DirectAPI for season {season} episode calculation (season pack)")
-                        api_absolute_episode = 0
-                        
-                        # Sort seasons and sum episodes up to our target season
-                        sorted_api_seasons = sorted([s for s in show_seasons.keys() if isinstance(s, int) and s < season])
-                        
-                        for s_num in sorted_api_seasons:
-                            s_data = show_seasons.get(s_num, {})
-                            if isinstance(s_data, dict):
-                                ep_count = s_data.get('episode_count', 0)
-                                api_absolute_episode += ep_count
-                        
-                        # Add current episode
-                        api_absolute_episode += episode
-                        logging.info(f"DirectAPI calculated absolute episode number for season pack: {api_absolute_episode}")
-                        absolute_episode = api_absolute_episode
-                        
-                except Exception as api_err:
-                    logging.warning(f"Failed to get season counts from DirectAPI for season {season}: {api_err}")
-                    logging.info("Falling back to arithmetic calculation for season pack")
-            
-            # Use arithmetic calculation for season 1 or if DirectAPI failed
-            if absolute_episode is None:
-                absolute_episode = 0
-                sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < season])
-                for s_num in sorted_seasons:
-                    absolute_episode += season_episode_counts.get(s_num, 0)
-                absolute_episode += episode
-                logging.info(f"Arithmetic calculated absolute episode number for season pack: {absolute_episode}")
+    absolute_episode = resolve_absolute_episode(season, episode, season_episode_counts,
+                                                xem_mapping=xem_mapping, imdb_id=imdb_id)
 
-        # Build season pack formats
+    if multi:
         formats = {
             'season': f"S{season:02d}",
             'absolute': str(absolute_episode)  # No leading zeros
         }
-        
         logging.info(f"Generated season pack formats: {formats}")
         return formats
 
-    # Original logic for single episodes
-    # Try to get absolute episode from database first (most accurate for One Piece)
-    absolute_episode = None
-    if imdb_id:
-        absolute_episode = get_absolute_episode_from_database(imdb_id, season, episode)
-        if absolute_episode is not None:
-            logging.info(f"Using absolute episode number {absolute_episode} from database for S{season}E{episode}")
-    
-    # If not in database, try XEM mapping as fallback
-    if absolute_episode is None and xem_mapping:
-        logging.info(f"Checking XEM mapping for S{season}E{episode}")
-        for mapping_entry in xem_mapping:
-            tvdb_info = mapping_entry.get('tvdb', {})
-            scene_info = mapping_entry.get('scene', {})
-            
-            # Check if this mapping matches our season/episode
-            if (tvdb_info.get('season') == season and 
-                tvdb_info.get('episode') == episode):
-                # Use TVDB absolute as the primary source (this is what we want for anime)
-                if tvdb_info.get('absolute'):
-                    absolute_episode = tvdb_info.get('absolute')
-                    logging.info(f"Found XEM tvdb absolute: {absolute_episode} for S{season}E{episode}")
-                elif scene_info and scene_info.get('absolute'):
-                    absolute_episode = scene_info.get('absolute')
-                    logging.info(f"Found XEM scene absolute (fallback): {absolute_episode} for S{season}E{episode}")
-                break
-    
-    # Fallback to arithmetic calculation if no XEM mapping found
-    if absolute_episode is None:
-        logging.info("No XEM mapping found, using arithmetic calculation")
-        
-        # For season 2+, try DirectAPI first to get accurate counts
-        if season > 1 and imdb_id:
-            try:
-                from cli_battery.app.direct_api import DirectAPI
-                direct_api_instance = DirectAPI()
-                show_metadata, _ = direct_api_instance.get_show_metadata(imdb_id)
-                
-                # Add detailed logging to see what DirectAPI returns
-                logging.info(f"DirectAPI.get_show_metadata returned: type={type(show_metadata)}, has_seasons={'seasons' in show_metadata if show_metadata else False}")
-                
-                if show_metadata and isinstance(show_metadata, dict) and 'seasons' in show_metadata:
-                    show_seasons = show_metadata['seasons']
-                    logging.info(f"Using DirectAPI for season {season} episode calculation")
-                    logging.info(f"DirectAPI seasons data: {show_seasons}")
-                    api_absolute_episode = 0
-                    
-                    # Sort seasons and sum episodes up to our target season
-                    sorted_api_seasons = sorted([s for s in show_seasons.keys() if isinstance(s, int) and s < season])
-                    logging.info(f"Sorted API seasons for calculation: {sorted_api_seasons}")
-                    
-                    for s_num in sorted_api_seasons:
-                        s_data = show_seasons.get(s_num, {})
-                        logging.info(f"Season {s_num} data: {s_data}")
-                        if isinstance(s_data, dict):
-                            ep_count = s_data.get('episode_count', 0)
-                            api_absolute_episode += ep_count
-                            logging.info(f"API season {s_num}: {ep_count} episodes, running total: {api_absolute_episode}")
-                        else:
-                            logging.warning(f"Season {s_num} data is not a dict: {type(s_data)}")
-                    
-                    # Add current episode
-                    api_absolute_episode += episode
-                    logging.info(f"DirectAPI calculated absolute episode number: {api_absolute_episode}")
-                    absolute_episode = api_absolute_episode
-                else:
-                    logging.warning(f"DirectAPI returned invalid data for season {season}, falling back to arithmetic")
-                    logging.warning(f"show_metadata type: {type(show_metadata)}, has_seasons: {'seasons' in show_metadata if show_metadata else False}")
-                    # Fall through to arithmetic calculation
-                    
-            except Exception as api_err:
-                logging.warning(f"Failed to get season counts from DirectAPI for season {season}: {api_err}")
-                logging.info("Falling back to arithmetic calculation")
-                # Fall through to arithmetic calculation
-        
-        # Use arithmetic calculation for season 1 or if DirectAPI failed
-        if absolute_episode is None:
-            absolute_episode = 0
-            sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < season])
-            for s_num in sorted_seasons:
-                absolute_episode += season_episode_counts.get(s_num, 0)
-            absolute_episode += episode
-            logging.info(f"Arithmetic calculated absolute episode number: {absolute_episode}")
-
-    # Build the three essential formats for single episodes
     formats = {
         'regular': f"S{season:02d}E{episode:02d}",
         'absolute': str(absolute_episode),  # No leading zeros
         'combined': f"S{season:02d}E{absolute_episode}"
     }
-    
     logging.info(f"Generated single episode formats: {formats}")
     return formats
 
-_ORIGINAL_LANGUAGE_CACHE: Dict[Tuple[str, str], str] = {}
-
-
-def _original_language(tmdb_id, content_type) -> Optional[str]:
-    """TMDB original_language ('ko' for Parasite), cached per process. Failures aren't
-    cached, and return None, which leaves the foreign-language penalty as it was."""
-    if not tmdb_id:
-        return None
-    media_type = 'movie' if (content_type or '').lower() == 'movie' else 'tv'
-    key = (str(tmdb_id), media_type)
-    if key not in _ORIGINAL_LANGUAGE_CACHE:
-        try:
-            from metadata.metadata import get_tmdb_metadata
-            language = ((get_tmdb_metadata(str(tmdb_id), media_type) or {}).get('original_language') or '').lower()
-        except Exception as e:
-            logging.warning(f"Could not get original language for TMDB {media_type} {tmdb_id}: {e}")
-            return None
-        if not language:
-            return None
-        _ORIGINAL_LANGUAGE_CACHE[key] = language
-    return _ORIGINAL_LANGUAGE_CACHE[key]
+# The title's TMDB original language; shared with anime detection.
+from utilities.anime_detection import original_language as _original_language
 
 
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, skip_cache_check: bool = False, check_pack_wantedness: bool = False) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
@@ -304,6 +121,16 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
     # Store original season/episode and initialize scene numbers
     original_season = season
     original_episode = episode 
+
+    # A "season" that is really a movie (Initial D S03E01 "Third Stage") is
+    # searched and filtered like a movie; see scraper/functions/movie_episodes.py.
+    movie_episode = None
+    if content_type.lower() == 'episode' and season:
+        movie_episode = movie_episode_info(imdb_id, season, None if multi else episode)
+        if movie_episode:
+            logging.info(f"S{season}E{movie_episode['episode_number']} of '{title}' is a movie "
+                         f"('{movie_episode.get('title')}', {movie_episode.get('runtime')} min, "
+                         f"{movie_episode.get('year')}); searching for it as a movie.")
     scene_season = None
     scene_episode = None
     
@@ -411,6 +238,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     # Store airs data if available
                     airs_data = show_metadata.get('airs')
                     xem_mapping_list = show_metadata.get('xem_mapping')
+                    if xem_mapping_list and show_episode_order(imdb_id):
+                        # XEM maps TVDB aired-order numbers; the show uses another order
+                        logging.info(f"Ignoring XEM mapping for {title}: the show uses episode order {show_episode_order(imdb_id)}")
+                        xem_mapping_list = None
                     trakt_seasons_data = show_metadata.get('seasons') # Get Trakt season structure
 
                     # --- Extract Target Air Date ---
@@ -922,6 +753,26 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 season = original_season
                 episode = original_episode
 
+        # A show set to another episode order (DVD, absolute, a TMDB group):
+        # releases use TVDB's aired numbering, so the episode is searched and
+        # filtered by its aired S/E. Its absolute number stays the show's, and
+        # names in the order's own numbering aren't accepted as a fallback
+        # (aired "S15E01" is another episode than DVD S15E01).
+        order_aired = None
+        if (content_type.lower() == 'episode' and not multi and not movie_episode
+                and original_season is not None and original_episode is not None):
+            from scraper.functions.episode_order_mapping import order_mapping
+            _order_map = order_mapping(imdb_id)
+            order_aired = _order_map.aired_of(original_season, original_episode) if _order_map else None
+            if order_aired:
+                season, episode = order_aired
+                if episode_formats and episode_formats.get('absolute'):
+                    abs_text = episode_formats['absolute']
+                    episode_formats = {'regular': f"S{season:02d}E{episode:02d}", 'absolute': abs_text,
+                                       'combined': f"S{season:02d}E{abs_text}"}
+                logging.info(f"Episode order: S{original_season}E{original_episode} of '{title}' is aired "
+                             f"S{season}E{episode}; searching by the aired numbering")
+
         # Initialize results lists
         all_filtered_results = []
         all_filtered_out_results = []
@@ -1010,7 +861,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             scene_episode_map: Optional[int] = None,
             check_pack_wantedness: bool = False,
             original_episode: Optional[int] = None,
-            original_season: Optional[int] = None
+            original_season: Optional[int] = None,
+            movie_episode: Optional[Dict[str, Any]] = None
         ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], Dict[str, float]]:
             start_time = time.time()
             task_timings = {}
@@ -1036,8 +888,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 'media_type': 'movie' if content_type.lower() == 'movie' else 'episode',
                 'tmdb_id': tmdb_id
             }
-            enhanced_media_items = get_media_info_for_bitrate([media_item])
-            if enhanced_media_items:
+            enhanced_media_items = None if movie_episode else get_media_info_for_bitrate([media_item])
+            if movie_episode:
+                episode_count = 1
+                runtime = movie_episode.get('runtime') or 100
+            elif enhanced_media_items:
                 episode_count = enhanced_media_items[0]['episode_count']
                 runtime = enhanced_media_items[0]['runtime']
             else:
@@ -1048,7 +903,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             # Pre-calculate episode counts for TV shows
             task_start = time.time()
             season_episode_counts = {}
-            if content_type.lower() == 'episode':
+            if content_type.lower() == 'episode' and not movie_episode:
                 season_episode_counts = get_all_season_episode_counts(tmdb_id)
                 logging.debug(f"Fetched season_episode_counts for tmdb_id '{tmdb_id}': {season_episode_counts}") # Keep this one for now
             task_timings['episode_counts'] = time.time() - task_start
@@ -1063,20 +918,35 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             scraper_manager = ScraperManager(load_config())
             # Determine if the current search is using the translated title
             is_translated = bool(translated_title and search_title == translated_title)
-            all_results = scraper_manager.scrape_all(
-                imdb_id=imdb_id_for_fallback,
-                title=search_title,
-                year=year,
-                content_type=content_type,
-                season=season,
-                episode=episode,
-                multi=multi,
-                genres=genres,
-                episode_formats=episode_formats,
-                tmdb_id=tmdb_id,
-                is_translated_search=is_translated, # Pass the flag here
-                is_anime=is_anime # Pass the is_anime flag
-            )
+            if movie_episode:
+                # Movie mode, without the show's IDs (an ID-based scraper would
+                # look the show up as if it were a film) and without a year: the
+                # episode's air date is often not the film's year (Initial D
+                # Third Stage aired on TV in 2004, the film is from 2001).
+                all_results = scraper_manager.scrape_all(
+                    imdb_id=None,
+                    title=search_title,
+                    year=None,
+                    content_type='movie',
+                    genres=genres,
+                    tmdb_id=None,
+                    is_anime=is_anime
+                )
+            else:
+                all_results = scraper_manager.scrape_all(
+                    imdb_id=imdb_id_for_fallback,
+                    title=search_title,
+                    year=year,
+                    content_type=content_type,
+                    season=season,
+                    episode=episode,
+                    multi=multi,
+                    genres=genres,
+                    episode_formats=episode_formats,
+                    tmdb_id=tmdb_id,
+                    is_translated_search=is_translated, # Pass the flag here
+                    is_anime=is_anime # Pass the is_anime flag
+                )
             task_timings['scraping'] = time.time() - task_start
             logging.debug(f"[_do_scrape] scraper_manager.scrape_all for '{search_title}' returned: {len(all_results)} raw items.")
 
@@ -1165,7 +1035,9 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
             # If use_alternative_titles is enabled, include title aliases for the version's language code.
             effective_matching_aliases = list(matching_aliases)
-            if version_settings.get('use_alternative_titles', False) and imdb_id_for_fallback:
+            if movie_episode:
+                effective_matching_aliases = [search_title]
+            elif version_settings.get('use_alternative_titles', False) and imdb_id_for_fallback:
                 try:
                     if content_type.lower() == 'movie':
                         full_aliases, _ = direct_api_instance.get_movie_aliases(imdb_id_for_fallback)
@@ -1184,21 +1056,40 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 except Exception as _alt_err:
                     logging.warning(f"Failed to fetch alternative title aliases for {imdb_id_for_fallback}: {_alt_err}")
 
-            # --- Pass imdb_id_for_fallback and direct_api_instance ---
-            filtered_results, pre_size_filtered_results = filter_results(
-                normalized_results, tmdb_id, original_media_title, year, content_type,
-                season, episode, multi, version_settings, runtime, episode_count,
-                season_episode_counts, genres, effective_matching_aliases,
-                imdb_id=imdb_id_for_fallback,
-                direct_api=direct_api_instance,
-                preferred_language=preferred_language,
-                translated_title=translated_title,
-                target_air_date=target_air_date,
-                check_pack_wantedness=check_pack_wantedness,
-                current_scrape_target_version=version,
-                original_episode=original_episode,
-                original_season=original_season  # Pass original TVDB season so filter accepts both scene and TVDB-numbered torrents
-            )
+            if movie_episode:
+                # Filtered as the movie: its title and runtime, no season or episode,
+                # no year (see above), and no show IDs (alias/metadata lookups by
+                # the show's ID would treat the show as a film).
+                filtered_results, pre_size_filtered_results = filter_results(
+                    normalized_results, None, search_title, None, 'movie',
+                    None, None, False, version_settings, runtime, 1,
+                    {}, genres, effective_matching_aliases,
+                    imdb_id=None,
+                    direct_api=None,
+                    preferred_language=preferred_language,
+                    current_scrape_target_version=version,
+                )
+                # Like specials: a release dated before the show began is some
+                # other same-titled film.
+                filtered_results = [r for r in filtered_results if not _predates_show(r, year)]
+                for result in filtered_results:
+                    result['movie_episode'] = True
+            else:
+                # --- Pass imdb_id_for_fallback and direct_api_instance ---
+                filtered_results, pre_size_filtered_results = filter_results(
+                    normalized_results, tmdb_id, original_media_title, year, content_type,
+                    season, episode, multi, version_settings, runtime, episode_count,
+                    season_episode_counts, genres, effective_matching_aliases,
+                    imdb_id=imdb_id_for_fallback,
+                    direct_api=direct_api_instance,
+                    preferred_language=preferred_language,
+                    translated_title=translated_title,
+                    target_air_date=target_air_date,
+                    check_pack_wantedness=check_pack_wantedness,
+                    current_scrape_target_version=version,
+                    original_episode=original_episode,
+                    original_season=original_season  # Pass original TVDB season so filter accepts both scene and TVDB-numbered torrents
+                )
             filtered_out_results = [result for result in normalized_results if result not in filtered_results]
             task_timings['filtering'] = time.time() - task_start
 
@@ -1207,7 +1098,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             logging.debug(f"[_do_scrape] For '{search_title}', comprehensive_filtered_out_list length: {len(comprehensive_filtered_out_list)}")
 
             # --- Attach scene mapping info to results --- 
-            if scene_season_map is not None and scene_episode_map is not None:
+            if scene_season_map is not None and scene_episode_map is not None and not movie_episode:
                 logging.debug(f"Attaching scene mapping S{scene_season_map}E{scene_episode_map} to {len(filtered_results)} results.")
                 for result in filtered_results:
                     result['xem_scene_mapping'] = {'season': scene_season_map, 'episode': scene_episode_map}
@@ -1238,7 +1129,6 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 if metadata:
                     # First, check aliases for a properly formatted romanized title
                     aliases = metadata.get('aliases', {})
-                    romanized_found = False
                     
                     # Look for a romanized title specifically among Japan-sourced aliases.
                     # Previously this scanned every country's aliases and guessed "is this
@@ -1251,21 +1141,14 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     # dict is already keyed by the country/language it actually came from —
                     # use that directly instead of guessing from the text.
                     for country_code, alias_list in aliases.items():
-                        if country_code.lower() != 'jp':
+                        if country_code.lower() != 'jp' or not isinstance(alias_list, list):
                             continue
-                        if isinstance(alias_list, list):
-                            for alias in alias_list:
-                                # Only the Latin-script form of a Japan-sourced alias is a
-                                # useful search query — the native kanji/kana form isn't.
-                                if alias and re.match(r'^[a-zA-Z\s\-]+$', alias) and alias.lower() not in tried_titles_lower:
-                                    # Skip if it's just the English title again
-                                    if alias.lower() != title.lower():
-                                        logging.info(f"Adding Japanese romanized alias for anime: {alias}")
-                                        titles_to_try.append(('romanized_alias', alias))
-                                        tried_titles_lower.add(alias.lower())
-                                        romanized_found = True
-                                        break
-                        if romanized_found:
+                        # Latin-script, non-arc, ASCII spelling first (see pick_romanized_alias)
+                        alias = pick_romanized_alias(alias_list, title, tried_titles_lower)
+                        if alias:
+                            logging.info(f"Adding Japanese romanized alias for anime: {alias}")
+                            titles_to_try.append(('romanized_alias', alias))
+                            tried_titles_lower.add(alias.lower())
                             break
                     
                     # Always try to add original language title from metadata for anime (regardless of romanized alias found)
@@ -1307,6 +1190,20 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             except Exception as e:
                 logging.warning(f"Failed to get original title from metadata for {imdb_id}: {e}")
 
+            # Later seasons are often released under their own romaji name
+            # ("Shingeki no Kyojin Season 3 Part 2"); AniList has one per season/cour.
+            if content_type.lower() != 'movie' and original_season and original_season > 1:
+                try:
+                    from scraper.seadex import anilist_entries_for_season
+                    for _, season_romaji in anilist_entries_for_season(imdb_id, original_season):
+                        if (season_romaji and is_latin_script(season_romaji)
+                                and season_romaji.lower() not in tried_titles_lower):
+                            logging.info(f"Adding AniList season title for anime: {season_romaji}")
+                            titles_to_try.append(('anilist_season_romaji', season_romaji))
+                            tried_titles_lower.add(season_romaji.lower())
+                except Exception as e:
+                    logging.debug(f"AniList season title lookup failed for {imdb_id} S{original_season}: {e}")
+
         # 4. Add preferred alias
         if not aliases_disabled and preferred_alias and preferred_alias.lower() not in tried_titles_lower:
             logging.info(f"Adding preferred alias: {preferred_alias}")
@@ -1320,6 +1217,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     logging.info(f"Adding country alias: {alias}")
                     titles_to_try.append(('country_alias', alias))
                     tried_titles_lower.add(alias.lower())
+
+        if movie_episode:
+            # The movie is released under the show's name plus its own title
+            titles_to_try = [('movie_episode', movie_search_title(title, movie_episode.get('title')))]
 
         # Execute scraping based on the determined titles with threading
         logging.info(f"Will search with {len(titles_to_try)} titles: {[source for source, _ in titles_to_try]}")
@@ -1354,7 +1255,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     episode=episode, # Use potentially XEM-modified episode
                     multi=multi,
                     genres=genres,
-                    episode_formats=episode_formats,
+                    episode_formats=None if movie_episode else episode_formats,
                     is_anime=is_anime,
                     imdb_id_for_fallback=imdb_id,
                     direct_api_instance=direct_api,
@@ -1367,8 +1268,9 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     scene_season_map=scene_season, # This is the XEM-mapped season (or None)
                     scene_episode_map=scene_episode, # This is the XEM-mapped episode (or None)
                     check_pack_wantedness=check_pack_wantedness,
-                    original_episode=original_episode,
-                    original_season=original_season  # Pass original TVDB season before any XEM remapping
+                    original_episode=None if order_aired else original_episode,
+                    original_season=None if order_aired else original_season,  # Pass original TVDB season before any XEM remapping
+                    movie_episode=movie_episode
                 )
                 logging.debug(f"[scrape_main] _do_scrape for '{search_title}' returned: passed={len(filtered_results)}, filtered_out={len(filtered_out_results if filtered_out_results else [])}")
                 
@@ -1462,8 +1364,19 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             if is_anime and 'is_anime' not in x:
                 x['is_anime'] = is_anime
             # Pass preferred_language and translated_title to rank_result_key (Modification needed in rank_results function signature)
+            if movie_episode:
+                # Ranked as the movie it is: an episode ranking penalises every
+                # release without a season/episode number.
+                return rank_result_key(
+                    x, deduplicated_results, movie_search_title(title, movie_episode.get('title')),
+                    None, None, None, False,  # no year: the air date isn't the film's year
+                    'movie', version_settings,
+                    preferred_language=preferred_language,
+                    translated_title=translated_title,
+                    original_language=original_language,
+                )
             return rank_result_key(
-                x, deduplicated_results, title, year, scene_season if xem_applied else original_season, scene_episode if xem_applied else original_episode, multi, # Pass original title to ranker
+                x, deduplicated_results, title, year, scene_season if xem_applied else (season if order_aired else original_season), scene_episode if xem_applied else (episode if order_aired else original_episode), multi, # Pass original title to ranker
                 content_type, version_settings,
                 preferred_language=preferred_language, # Pass new arg
                 translated_title=translated_title,     # Pass new arg
@@ -1517,7 +1430,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             try:
                 from scraper.seadex import get_seadex_hashes
                 from debrid.common.utils import extract_hash_from_magnet
-                seadex_hashes = get_seadex_hashes(imdb_id)
+                seadex_hashes = get_seadex_hashes(
+                    imdb_id, original_season if content_type.lower() != 'movie' else None)
                 if seadex_hashes:
                     boosted, rest = [], []
                     for result in deduplicated_results:

@@ -9,6 +9,8 @@ from scraper.functions.file_processing import compare_resolutions, parse_size, c
 from scraper.functions.other_functions import smart_search
 from scraper.functions.adult_terms import adult_terms
 from scraper.functions.common import *
+from scraper.functions.anime_utils import (absolute_from_counts, explicit_absolute_numbers,
+                                        full_season_counts, seasons_in_absolute_batch)
 from datetime import datetime, timezone
 # --- Import DirectAPI if type hinting is desired, ensure it's available in the execution path ---
 # from cli_battery.app.direct_api import DirectAPI # Or adjust path as needed
@@ -70,6 +72,18 @@ def extract_year_from_title(title: str) -> Optional[int]:
         return earliest_year
     
     return None
+
+
+def tv_release_year_matches(release_year: int, show_year: Optional[int], season_year: int) -> bool:
+    """Whether a year in a TV release name fits the season being searched.
+
+    Either the show's premiere year, as Sonarr-style names carry it ("JUJUTSU
+    KAISEN (2020) S03E04" for a season that aired in 2026), however late the
+    season aired; or within a year of the season's own air year. A remake or
+    revival has a different premiere year, so it still fails both.
+    """
+    return release_year == show_year or abs(release_year - season_year) <= 1
+
 
 def filter_results(
     results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str,
@@ -187,6 +201,8 @@ def filter_results(
     
     # --- Cache for API fallback results within this filter_results call ---
     _fetched_detailed_seasons_data_cache = None
+    _absolute_season_counts = None  # full season counts, loaded on the first absolute-numbered batch
+    _order_map = False  # aired numbering -> the show's episode order; loaded on the first season pack
     
     for result in results:
         try:
@@ -762,8 +778,11 @@ def filter_results(
                 # Show simple similarity calculations if they were computed
                 try:
                     logging.info(f"  Simple similarities - result: {simple_sim_result:.3f}, parsed: {simple_sim_parsed:.3f}, combined: {simple_sim:.3f}")
-                except NameError:
-                    logging.info(f"  Simple similarities - not computed (similarity was high enough)")
+                except (NameError, TypeError):
+                    # NameError: not computed. TypeError: computed but None (no parsed
+                    # title) -- this debug line used to drop the whole result.
+                    logging.info(f"  Simple similarities - result: {simple_sim_result if 'simple_sim_result' in locals() else 'n/a'}, "
+                                 f"parsed: {simple_sim_parsed if 'simple_sim_parsed' in locals() else 'n/a'}")
                 logging.info(f"  Alias similarities: {alias_similarities}")
                 logging.info(f"  Best alias sim: {best_alias_sim:.3f}")
                 logging.info(f"  Translated title sim: {translated_title_sim:.3f}")
@@ -785,7 +804,10 @@ def filter_results(
                 dragon_ball_series = [
                     ('daima', ['dragon ball daima', 'dragonball daima', 'dbdaima', 'ドラゴンボールdaima', 'dragon ball daima 2024', 'dragonball daima 2024']),
                     ('super', ['dragon ball super', 'dragonball super', 'dbs', 'ドラゴンボールsuper', 'dragon ball super 2015', 'dragonball super 2015']),
-                    ('kai', ['dragon ball kai', 'dragonball kai', 'dbkai', 'ドラゴンボールkai', 'dragon ball kai 2009', 'dragonball kai 2009']),
+                    # "Dragon Ball Z Kai" is the usual English release name; it must match
+                    # here, before the 'z' identifiers below claim it.
+                    ('kai', ['dragon ball kai', 'dragonball kai', 'dbkai', 'ドラゴンボールkai', 'dragon ball kai 2009', 'dragonball kai 2009',
+                             'dragon ball z kai', 'dragonball z kai', 'dbz kai']),
                     ('gt', ['dragon ball gt', 'dragonball gt', 'dbgt', 'ドラゴンボールgt', 'dragon ball gt 1996', 'dragonball gt 1996']),
                     ('z', ['dragon ball z', 'dragonball z', 'dbz', 'ドラゴンボールz', 'ドラゴンボールz', 'dragon ball z 1989', 'dragonball z 1989']),
                     ('original', ['dragon ball', 'dragonball', 'ドラゴンボール', 'dragon ball 1986', 'dragonball 1986'])
@@ -1053,25 +1075,9 @@ def filter_results(
                             try:
                                 # For TV shows, be more lenient with year matching
                                 # Check if any year in the list matches with appropriate tolerance
-                                year_matches = []
-                                for py in parsed_year:
-                                    if str(py).isdigit():
-                                        py_int = int(py)
-                                        year_difference = abs(py_int - target_year)
-                                        
-                                        # If the torrent year matches the original show year exactly, be more lenient
-                                        if py_int == year and target_year != year:
-                                            # Torrent uses original show year, but we have a different season year
-                                            # Allow if the season year is within a reasonable range (e.g., ±5 years)
-                                            max_year_difference = 5  # More lenient for TV shows
-                                            if year_difference <= max_year_difference:
-                                                year_matches.append(py_int)
-                                                logging.info(f"Accepting torrent with original show year ({py_int}) for season {season} (air date: {target_year}) - within {max_year_difference} year tolerance for '{original_title}'")
-                                        else:
-                                            # Standard ±1 year tolerance for other cases
-                                            if year_difference <= 1:
-                                                year_matches.append(py_int)
-                                
+                                year_matches = [int(py) for py in parsed_year
+                                                if str(py).isdigit() and tv_release_year_matches(int(py), year, target_year)]
+
                                 if not year_matches:
                                     result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
                                     logging.info(f"Rejected: TV year list {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
@@ -1099,23 +1105,10 @@ def filter_results(
                                 logging.info(f"  - parsed_year_int == year: {parsed_year_int == year}")
                                 logging.info(f"  - target_year != year: {target_year != year}")
                             
-                            # If the torrent year matches the original show year exactly, be more lenient
-                            if parsed_year_int == year and target_year != year:
-                                # Torrent uses original show year, but we have a different season year
-                                # Allow if the season year is within a reasonable range (e.g., ±5 years)
-                                max_year_difference = 5  # More lenient for TV shows
-                                if year_difference <= max_year_difference:
-                                    logging.info(f"Accepting torrent with original show year ({parsed_year_int}) for season {season} (air date: {target_year}) - within {max_year_difference} year tolerance for '{original_title}'")
-                                else:
-                                    result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year}) - torrent uses original show year but season air date is too far"
-                                    logging.info(f"Rejected: TV year {parsed_year} (original show year) too far from season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                                    continue
-                            else:
-                                # Standard ±1 year tolerance for other cases
-                                if year_difference > 1:
-                                    result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
-                                    logging.info(f"Rejected: TV year {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                                    continue
+                            if not tv_release_year_matches(parsed_year_int, year, target_year):
+                                result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
+                                logging.info(f"Rejected: TV year {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
+                                continue
                         else:
                             # Handle cases where parsed_year is not a list or a valid int/str digit
                             logging.warning(f"Skipping year check due to invalid year format for '{original_title}': {parsed_year}")
@@ -1140,8 +1133,13 @@ def filter_results(
                 season_episode_info = parsed_info.get('season_episode_info', {})
                 #logging.debug(f"Season episode info: {season_episode_info}")
                 
-                # Check if title contains "complete" - consider it as having all episodes
-                if 'complete' in original_title.lower():
+                # "Complete" with no season in the name is a complete-series pack.
+                # A named season ("S01 Complete", "Season 3 Complete") stays that
+                # season's pack, and "Incomplete" isn't a match.
+                # (PTT's own seasons: season_episode_info assumes season 1 for an
+                # absolute range like "001-167 Complete".)
+                if (re.search(r'\bcomplete\b', original_title, re.IGNORECASE)
+                        and not parsed_info.get('seasons')):
                     #logging.debug("Complete series pack detected")
                     season_episode_info['season_pack'] = 'Complete'
                     if season_episode_counts: # Check if the dictionary is not empty
@@ -1154,10 +1152,105 @@ def filter_results(
                         # logging.debug("Complete pack detected but season_episode_counts is empty. Setting seasons/episodes to empty.")
                     result['parsed_info']['season_episode_info'] = season_episode_info
                 
+                # Absolute numbers the title states next to its own season ("Season 13
+                # [422-458]", "S13E01 (0422)"). The releaser's season may match none of
+                # the show's orders; the absolute numbers decide instead.
+                explicit_abs = []
+                if is_anime and season is not None:
+                    explicit_abs = explicit_absolute_numbers(
+                        original_title, parsed_info.get('seasons'), parsed_info.get('episodes'))
+                    if explicit_abs:
+                        if _absolute_season_counts is None:
+                            _absolute_season_counts = full_season_counts(imdb_id, season_episode_counts)
+                        explicit_abs = explicit_absolute_numbers(
+                            original_title, parsed_info.get('seasons'), parsed_info.get('episodes'),
+                            _absolute_season_counts)
+
                 if multi:
                     #logging.debug(f"Multi-episode mode: season={season}, season_pack={season_episode_info.get('season_pack')}, seasons={season_episode_info.get('seasons')}")
 
                     episodes = season_episode_info.get('episodes', [])
+
+                    if len(explicit_abs) > 1:
+                        covered = seasons_in_absolute_batch(explicit_abs, _absolute_season_counts, imdb_id)
+                        if season not in covered:
+                            result['filter_reason'] = (f"Absolute episodes {explicit_abs[0]}-{explicit_abs[-1]} "
+                                                       f"don't hold all of season {season}")
+                            logging.info(f"Rejected: absolute episodes {explicit_abs[0]}-{explicit_abs[-1]} don't hold "
+                                         f"all of season {season} (they hold {covered or 'no whole season'}) "
+                                         f"for '{original_title}' (Size: {result['size']:.2f}GB)")
+                            continue
+                        season_episode_info = dict(
+                            season_episode_info,
+                            season_pack=','.join(str(s) for s in covered),
+                            seasons=covered,
+                            episodes=list(range(1, _absolute_season_counts[season] + 1)),
+                            absolute_batch=True,
+                            batch_episode_count=len(explicit_abs),
+                        )
+                        result['parsed_info']['season_episode_info'] = season_episode_info
+                        episodes = season_episode_info['episodes']
+                        logging.info(f"Absolute episodes {explicit_abs[0]}-{explicit_abs[-1]} in '{original_title}' "
+                                     f"hold season(s) {covered}")
+                    elif (parsed_info.get('seasons') and season is not None
+                          and season_episode_info.get('season_pack') != 'Complete'):
+                        # Show set to another episode order: the name's seasons are aired ones
+                        if _order_map is False:
+                            from scraper.functions.episode_order_mapping import order_mapping
+                            _order_map = order_mapping(imdb_id)
+                        named = [s for s in parsed_info.get('seasons') if isinstance(s, int)]
+                        named_eps = [e for e in (parsed_info.get('episodes') or []) if isinstance(e, int)]
+                        # No aired episode by those numbers ("S13 Ep. 230-265"): left to the absolute checks below
+                        aired_positions = _order_map.aired_positions(named, named_eps) if _order_map else set()
+                        if aired_positions:
+                            held = _order_map.order_seasons_held(aired_positions)
+                            if season not in held:
+                                result['filter_reason'] = (f"Aired season(s) {named} don't hold all of season {season} "
+                                                           f"in the show's episode order")
+                                logging.info(f"Rejected: aired season(s) {named} hold {held or 'no whole season'} of the "
+                                             f"show's order, not season {season}, for '{original_title}' "
+                                             f"(Size: {result['size']:.2f}GB)")
+                                continue
+                            season_episode_info = dict(
+                                season_episode_info,
+                                season_pack=','.join(str(s) for s in held),
+                                seasons=held,
+                                episodes=list(range(1, _order_map.order_counts[season] + 1)),
+                                absolute_batch=True,
+                                batch_episode_count=len(aired_positions),
+                            )
+                            result['parsed_info']['season_episode_info'] = season_episode_info
+                            episodes = season_episode_info['episodes']
+                            logging.info(f"Aired season(s) {named} in '{original_title}' hold season(s) {held} "
+                                         f"of the show's episode order")
+
+                    # An anime batch numbered by absolute episode was rejected for any later
+                    # season: with no season in the name ("[Erai-raws] Bleach - 001 ~ 366
+                    # [BATCH]") it was read as season 1, and with one ("Bleach S13 Ep.
+                    # 230-265") it lacked episode 1. Count the seasons it really holds.
+                    named_seasons = parsed_info.get('seasons') or []
+                    if (not explicit_abs and not season_episode_info.get('absolute_batch')
+                            and is_anime and season and season > 1 and len(episodes) > 1
+                            and named_seasons in ([], [season])
+                            and season_episode_info.get('season_pack') != 'Complete'):
+                        if _absolute_season_counts is None:
+                            _absolute_season_counts = full_season_counts(imdb_id, season_episode_counts)
+                        covered = []
+                        if not named_seasons or max(episodes) > _absolute_season_counts.get(season, max(episodes)):
+                            covered = seasons_in_absolute_batch(episodes, _absolute_season_counts, imdb_id)
+                        if season in covered:
+                            season_episode_info = dict(
+                                season_episode_info,
+                                season_pack=','.join(str(s) for s in covered),
+                                seasons=covered,
+                                episodes=list(range(1, _absolute_season_counts[season] + 1)),
+                                absolute_batch=True,
+                                batch_episode_count=len(set(episodes)),
+                            )
+                            result['parsed_info']['season_episode_info'] = season_episode_info
+                            episodes = season_episode_info['episodes']
+                            logging.info(f"Absolute-numbered batch '{original_title}' holds season(s) {covered}")
+
                     if len(episodes) == 1:
                         result['filter_reason'] = "Single episode result when searching for multi"
                         logging.info(f"Rejected: Single episode in multi mode for '{original_title}' (Size: {result['size']:.2f}GB)")
@@ -1238,7 +1331,13 @@ def filter_results(
                         # Reject multi-season packs when searching for a single season in multi mode.
                         # A pack containing seasons [1,2,3,4,5] is not a valid match for a season 1
                         # request — downloading 4 extra seasons is wrong regardless of cache status.
-                        if len(result_seasons) > 1:
+                        # An absolute-numbered batch is let through like a "Complete" pack: for
+                        # long anime it's often the only pack that holds the season. So is a
+                        # complete pack that names its seasons ("S01-S05 COMPLETE", "Season
+                        # 1-10 Complete"); it's sized by those seasons' episodes below.
+                        named_complete_pack = bool(re.search(r'\bcomplete\b', original_title, re.IGNORECASE))
+                        if (len(result_seasons) > 1 and not season_episode_info.get('absolute_batch')
+                                and not named_complete_pack):
                             result['filter_reason'] = f"Multi-season pack {result_seasons} when searching for single season {season}"
                             logging.info(f"Rejected: Multi-season pack {result_seasons} for single season {season} request: '{original_title}' (Size: {result['size']:.2f}GB)")
                             continue
@@ -1267,6 +1366,18 @@ def filter_results(
                                 continue
 
                     #logging.debug("✓ Passed multi-episode checks")
+                elif explicit_abs and result.get('target_abs_episode'):
+                    # Single episode by its absolute number, whatever season the title names
+                    target_abs = result['target_abs_episode']
+                    if target_abs not in explicit_abs:
+                        shown = (f"{explicit_abs[0]}-{explicit_abs[-1]}" if len(explicit_abs) > 1
+                                 else str(explicit_abs[0]))
+                        result['filter_reason'] = f"Absolute episode mismatch: needed {target_abs}, title has {shown}"
+                        logging.info(f"Rejected: absolute episode {target_abs} not in {shown} for "
+                                     f"'{original_title}' (Size: {result['size']:.2f}GB)")
+                        continue
+                    logging.info(f"Absolute episode {target_abs} matched in '{original_title}' "
+                                 f"(S{season}E{episode} in the show's order)")
                 else: # Single episode mode
                     #logging.debug(f"Single episode mode: S{season}E{episode}")
                     
@@ -1525,12 +1636,10 @@ def filter_results(
                                     f"{original_abs} for '{original_title}'")
                             else:
                                 # Convert mapped S/E back to the show's absolute number
-                                abs_target = 0
-                                if season_episode_counts:
-                                    for s_num in sorted(k for k in season_episode_counts
-                                                        if isinstance(k, int) and k < season):
-                                        abs_target += season_episode_counts.get(s_num, 0)
-                                abs_target += episode           # <- mapped episode (e.g. 4) gives 16
+                                # (e.g. mapped episode 4 gives 16); specials aren't counted
+                                abs_target = absolute_from_counts(season, episode, season_episode_counts)
+                                if abs_target is None:
+                                    abs_target = episode
                                 # Accept if torrent explicitly carries that absolute number
                                 if (abs_target in result_episodes or
                                     # re.search(rf'\b{abs_target}\b', original_title)):  # COMMENTED OUT: This regex causes false positives like matching numbers in episode counts
@@ -1719,7 +1828,10 @@ def filter_results(
                     # But we still want to calculate the true num_episodes_in_pack for bitrate
                     
                     # Calculate true number of episodes in the pack for bitrate calculation
-                    if season_pack_type_from_parse == 'Complete':
+                    if season_episode_info.get('absolute_batch'):
+                        # "221-302" holds 82 episodes, not just the 36 of the season it covers
+                        num_episodes_in_pack = season_episode_info['batch_episode_count']
+                    elif season_pack_type_from_parse == 'Complete':
                         num_episodes_in_pack = total_episodes
                         if num_episodes_in_pack == 0 and imdb_id and direct_api:
                             # API fallback logic for 'Complete' packs (as previously implemented)

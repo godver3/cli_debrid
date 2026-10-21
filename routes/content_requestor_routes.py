@@ -11,6 +11,42 @@ from utilities.settings import load_config
 
 content_requestor_bp = Blueprint('content', __name__)
 
+
+def _can_set_episode_order():
+    """Picking a show's episode order is an admin action, like Show options."""
+    if not is_user_system_enabled():
+        return True
+    return current_user.is_authenticated and getattr(current_user, 'role', None) == 'admin'
+
+
+def _apply_requested_episode_order(imdb_id, tmdb_id, raw_order):
+    """Set the episode order a show was requested in, before its episodes are added.
+
+    Returns (error, http_status, plex_note). Only a show with no library
+    episodes can be set here; one already in the library changes order from
+    its show page, which moves and renames what is there.
+    """
+    from routes.magnet_routes import (
+        _requested_episode_order, _saved_episode_order, _library_episode_rows,
+        _seasons_for_order, _save_episode_order, _sync_plex_order_for_new_show,
+    )
+    order = _requested_episode_order(raw_order)
+    if not order:
+        return f'Unknown episode order: {raw_order}', 400, None
+    if order == _saved_episode_order(imdb_id):
+        return None, None, None
+    if not _can_set_episode_order():
+        return "Only an admin can change a show's episode order", 403, None
+    rows = _library_episode_rows(imdb_id)
+    if rows:
+        return (f'This show already has {rows} episode(s) in the library in another episode order. '
+                f'Change its order from the show page (Show options) first, then request it.'), 409, None
+    if order != 'default' and not _seasons_for_order(imdb_id, order):
+        return 'Could not load that episode order for this show', 502, None
+    _save_episode_order(imdb_id, tmdb_id, order)
+    logging.info(f"Content request: episode order for {imdb_id} set to {order}")
+    return None, None, _sync_plex_order_for_new_show(imdb_id, order)
+
 @content_requestor_bp.route('/')
 @user_required
 @onboarding_required
@@ -106,6 +142,15 @@ def request_content():
             else:
                 logging.info(f"No IMDB ID found for UFC content with TMDB ID {tmdb_id}, proceeding with Jackett scraper(s)")
             
+        # A show requested in another episode order (Dragon Ball Kai in DVD order):
+        # set it before the seasons and episodes below are read in that numbering.
+        order_plex_note = None
+        if media_type == 'tv' and imdb_id and data.get('episode_order'):
+            order_error, order_status, order_plex_note = _apply_requested_episode_order(
+                imdb_id, tmdb_id, data.get('episode_order'))
+            if order_error:
+                return jsonify({'error': order_error}), order_status
+
         # If media_type is 'tv' and no specific seasons are selected (i.e., "whole show"),
         # fetch all available seasons.
         if media_type == 'tv' and not selected_seasons and imdb_id:
@@ -266,7 +311,10 @@ def request_content():
                 'items_added': 0,
                 'message': f"Already have {data.get('title', 'this title')} in the requested version(s)"
             })
-        return jsonify({'success': True, 'item': wanted_item, 'items_added': items_added})
+        response = {'success': True, 'item': wanted_item, 'items_added': items_added}
+        if order_plex_note:
+            response['message'] = f"Requested {data.get('title') or 'the show'}. {order_plex_note}"
+        return jsonify(response)
         
     except Exception as e:
         logging.error(f"Error processing content request: {str(e)}")
@@ -304,7 +352,22 @@ def get_show_seasons():
         if not imdb_id:
             logging.error(f"Could not convert TMDB ID {tmdb_id} to IMDB ID")
             return jsonify({'error': f'Could not convert TMDB ID {tmdb_id} to IMDB ID'}), 400
-            
+
+        # Seasons in an episode order picked on the request dialog (read-only:
+        # nothing is saved until the show is requested in that order). Without
+        # one, the battery's seasons below are already in the show's own order.
+        raw_order = request.args.get('order')
+        if raw_order:
+            from routes.magnet_routes import _requested_episode_order, _seasons_for_order
+            order = _requested_episode_order(raw_order)
+            ordered = _seasons_for_order(imdb_id, order) if order else None
+            if not ordered:
+                return jsonify({'error': 'Could not load that episode order for this show'}), 502
+            season_numbers = sorted(int(s) for s in ordered if str(s).isdigit() and int(s) > 0)
+            counts = {s: (ordered.get(s) or {}).get('episode_count') or len((ordered.get(s) or {}).get('episodes') or {})
+                      for s in season_numbers}
+            return jsonify({'success': True, 'seasons': season_numbers, 'episode_counts': counts, 'order': order})
+
         # Get show seasons from API
         logging.info(f"Fetching seasons for show with IMDB ID {imdb_id}")
         try:

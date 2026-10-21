@@ -345,7 +345,7 @@ def scrape_nyaa_instance(settings: Dict[str, Any], title: str, year: int, conten
     # Normalize the title and build query
     title = title.replace(".", " ").strip()
     if content_type.lower() == 'movie':
-        query = f"{title} {year}"
+        query = f"{title} {year or ''}".strip()
     else:
         query = title
         if episode is not None and not multi:
@@ -355,7 +355,7 @@ def scrape_nyaa_instance(settings: Dict[str, Any], title: str, year: int, conten
         # Use the new retry-enabled search function
         results = scrape_nyaa_with_retry(query, category, subcategory, filters)
         
-        if not results and str(year) in query:
+        if not results and year and str(year) in query:
             # Try alternative query without the year
             alt_query = query.replace(str(year), "").strip()
             results = scrape_nyaa_with_retry(alt_query, category, subcategory, filters)
