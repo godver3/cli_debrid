@@ -3381,6 +3381,7 @@ class ProgramRunner:
     # Track last health check duration to implement skip-if-slow guard
     _nzb_health_last_duration: float = 0.0
     _NZB_HEALTH_MAX_JOBS_PER_TICK = 30   # cap jobs polled per tick
+    _nzb_health_job_cursor: int = 0      # where the next capped tick starts polling
     _NZB_HEALTH_JOB_TIMEOUT = 20         # seconds per job poll before giving up
     _NZB_HEALTH_SKIP_THRESHOLD = 20.0   # if last run took this long, skip next tick
     _nzb_folder_wait_counts: dict = {}   # job_id → consecutive ticks where folder not found
@@ -3431,10 +3432,18 @@ class ProgramRunner:
                 _jid = _ni.get('filled_by_torrent_id', '')[4:]
                 _job_groups[_jid].append(_ni)
 
-            # Option 3: cap jobs per tick — process oldest first (preserve order)
-            _unique_jobs = list(_job_groups.keys())[:self._NZB_HEALTH_MAX_JOBS_PER_TICK]
-            if len(_job_groups) > self._NZB_HEALTH_MAX_JOBS_PER_TICK:
-                logging.debug(f'[NZBHealthCheck] Capping to {self._NZB_HEALTH_MAX_JOBS_PER_TICK}/{len(_job_groups)} jobs this tick')
+            # Option 3: cap jobs per tick. Rotate through the jobs: always taking the
+            # first N left every job past the cap unpolled while the first N waited
+            # (MaddGuru: 73 rows sat in Adding for hours).
+            _all_jobs = list(_job_groups.keys())
+            _cap = self._NZB_HEALTH_MAX_JOBS_PER_TICK
+            if len(_all_jobs) > _cap:
+                _start = ProgramRunner._nzb_health_job_cursor % len(_all_jobs)
+                _unique_jobs = (_all_jobs[_start:] + _all_jobs[:_start])[:_cap]
+                ProgramRunner._nzb_health_job_cursor = _start + _cap
+                logging.debug(f'[NZBHealthCheck] Capping to {_cap}/{len(_all_jobs)} jobs this tick (from #{_start})')
+            else:
+                _unique_jobs = _all_jobs
 
             # Shared folder-wait counter dict (closure captures this)
             _job_folder_wait_counts = self._nzb_folder_wait_counts
@@ -3446,8 +3455,11 @@ class ProgramRunner:
                     if not status:
                         return job_id, None, None, None, None
                     raw = status.get('raw', {})
-                    raw_progress = raw.get('progress', status.get('progress', 0))
-                    progress = int(float(raw_progress) * 100)
+                    # Both clients return status['progress'] as a percentage. raw is the
+                    # provider's own slot: cli_mount's 'progress' is 0-1, but a SAB slot
+                    # (NzbDAV/Zurg) has none, and scaling the percentage again made any
+                    # job at 1%+ look complete and wait for a folder with no timeout.
+                    progress = int(float(status.get('progress', 0) or 0))
                     is_complete = raw.get('is_complete', False)
                     state = str(raw.get('state', status.get('state', ''))).lower()
                     inner_status = str(raw.get('status', '')).lower()
