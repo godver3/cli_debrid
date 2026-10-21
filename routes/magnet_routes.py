@@ -3,7 +3,7 @@ import threading as _threading
 _assignment_store = {}  # token -> assignment data, avoids session size/race issues
 _assignment_store_lock = _threading.Lock()
 from debrid import get_debrid_provider
-from database.database_writing import add_media_item
+from database.database_writing import add_media_item, replace_collected_item
 from .models import admin_required
 from queues.config_manager import load_config
 from queues.checking_queue import CheckingQueue
@@ -266,6 +266,33 @@ def _order_change_blocked(imdb_id, requested_order):
         return (f'This show already has {rows} episode(s) in the library in another episode order. '
                 f'Change its order from the show page (Show options) first, then assign.')
     return None
+
+
+def _mark_items_in_library(target_items, imdb_id, version):
+    """Flag items already Collected in this version (in_library), which the
+    "Replace episodes already in the library" option would replace."""
+    if not imdb_id or not target_items:
+        return
+    version = (version or '').rstrip('*')
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                "SELECT type, season_number, episode_number FROM media_items WHERE imdb_id = ? "
+                "AND state = 'Collected' AND (ghostlisted = 0 OR ghostlisted IS NULL) "
+                "AND RTRIM(COALESCE(version, ''), '*') = ?", (imdb_id, version)).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        logging.warning(f"Could not read library items for {imdb_id}: {e}")
+        return
+    have = {(r['type'], r['season_number'] if r['type'] == 'episode' else None,
+             r['episode_number'] if r['type'] == 'episode' else None) for r in rows}
+    for item in target_items:
+        episode = item.get('type') == 'episode'
+        item['in_library'] = (item.get('type'), item.get('season_number') if episode else None,
+                              item.get('episode_number') if episode else None) in have
 
 
 def _seasons_for_order(imdb_id, order):
@@ -1023,6 +1050,7 @@ def prepare_manual_assignment():
                 return (item.get('season_number', 999), item.get('episode_number', 999))
 
         target_items.sort(key=sort_key)
+        _mark_items_in_library(target_items, metadata.get('imdb_id'), version)
         logging.debug(f"Sorted target_items: {[item.get('item_key', 'N/A') for item in target_items]}")
         # --- END SORT ---
 
@@ -1341,6 +1369,9 @@ def confirm_manual_assignment():
         version = assignments.pop('version', [None])[0]
         is_torrent_file = assignments.pop('is_torrent_file', [False])[0]
         requested_order = _requested_episode_order(assignments.pop('episode_order', [''])[0])
+        # "Replace episodes already in the library": a Collected row in this version
+        # is pointed at the new file instead of getting a second copy next to it
+        replace_existing = assignments.pop('replace_existing', [''])[0] in ('1', 'on', 'true')
 
         if not all([torrent_filename, initial_torrent_id, version]):
              return jsonify({'success': False, 'error': 'Missing essential torrent information in submission.'}), 400
@@ -1469,6 +1500,7 @@ def confirm_manual_assignment():
         # so initial_torrent_id is already permanent for that path.
 
         added_items_count = 0
+        replaced_items_count = 0
         failed_items_count = 0
         processed_items_info = [] # To store info for notifications
         _ordered_seasons_cache = {}  # imdb_id -> seasons in the show's episode order
@@ -1643,7 +1675,11 @@ def confirm_manual_assignment():
                     'series_title', 'season', 'episode', 'series_year', 'media_type', '_matcher_data', 'item_key'
                 ]}
                 
-                item_id = add_media_item(db_item, user_initiated=True)
+                item_id = replace_collected_item(db_item) if replace_existing else None
+                if item_id:
+                    replaced_items_count += 1
+                else:
+                    item_id = add_media_item(db_item, user_initiated=True)
                 if item_id:
                     added_items_count += 1
                     successfully_added_items.append(item_id)
@@ -1728,6 +1764,9 @@ def confirm_manual_assignment():
 
         if added_items_count > 0:
             message = f'Successfully assigned {added_items_count} item(s).' 
+            if replaced_items_count:
+                message += (f' {replaced_items_count} of them replaced what was already in the library; '
+                            f'the old files are removed once the new ones are collected.')
             if failed_items_count > 0:
                  message += f' Failed to assign {failed_items_count} item(s).' 
             if order_imdb_id:
