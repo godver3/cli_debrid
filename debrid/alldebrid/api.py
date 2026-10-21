@@ -118,11 +118,28 @@ def should_retry_error(exception: Exception) -> bool:
     return isinstance(exception, (api.exceptions.Timeout, api.exceptions.ConnectionError))
 
 
+def _log_and_return_none_on_exhausted_retries(retry_state):
+    """
+    Preserve the existing "return None after exhausted retries" contract for
+    callers (changing it to raise would require auditing every make_request
+    call site), but log the real underlying exception first — otherwise
+    callers only see a bare None and have to guess, surfacing as a generic,
+    non-actionable "No response" error with the actual cause discarded.
+    """
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    logging.error(
+        f"AllDebrid request failed after {retry_state.attempt_number} attempt(s), giving up: "
+        f"{type(exc).__name__}: {exc}" if exc else
+        f"AllDebrid request failed after {retry_state.attempt_number} attempt(s), giving up (no exception captured)"
+    )
+    return None
+
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=10),
     retry=retry_if_exception_type((api.exceptions.RequestException, AllDebridAPIError, RateLimitError, api.exceptions.HTTPError)),
-    retry_error_callback=lambda retry_state: None  # Return None on final failure
+    retry_error_callback=_log_and_return_none_on_exhausted_retries
 )
 def make_request(
     method: str,

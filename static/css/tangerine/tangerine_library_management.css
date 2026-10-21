@@ -327,9 +327,8 @@
 h2::before {
     content: '';
     width: 4px;
-    height: 33px;
-    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
-    border-radius: 2px;
+    height: 28px;
+    border-left: 3px solid #e8601c;
 }
 
 h2 {

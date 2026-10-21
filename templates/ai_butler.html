@@ -1,0 +1,155 @@
+<!-- AI Butler Chat Widget — included in base.html when AI Assistant is enabled -->
+
+<!-- Toggle button -->
+<button id="ai-butler-toggle" class="ai-butler-toggle" style="display:none;" title="AI Butler" aria-label="Open AI Butler">
+    <i class="fas fa-robot"></i>
+    <span class="ai-butler-badge" id="ai-butler-badge" style="display:none;"></span>
+</button>
+
+<!-- Chat panel -->
+<div id="ai-butler-panel" class="ai-butler-panel" style="display:none;">
+    <div class="ai-butler-header">
+        <div class="ai-butler-header-left">
+            <i class="fas fa-robot"></i>
+            <span class="ai-butler-title" id="ai-butler-title">AI Butler</span>
+            <span class="ai-butler-beta-badge">beta</span>
+            <span class="ai-butler-status" id="ai-butler-status-dot" title="Checking..."></span>
+        </div>
+        <div class="ai-butler-header-right">
+            <button class="ai-butler-new-session-btn" id="ai-butler-new-session" title="New session (clears AI memory)">
+                <i class="fas fa-plus-circle"></i>
+            </button>
+            <button class="ai-butler-help-btn" id="ai-butler-help" title="Help">
+                <i class="fas fa-question-circle"></i>
+            </button>
+            <button class="ai-butler-settings-btn" id="ai-butler-settings" title="AI Assistant settings">
+                <i class="fas fa-cog"></i>
+            </button>
+            <button class="ai-butler-expand-btn" id="ai-butler-expand" title="Expand">
+                <i class="fas fa-expand-alt"></i>
+            </button>
+            <button class="ai-butler-clear-btn" id="ai-butler-clear" title="Clear local history">
+                <i class="fas fa-trash-alt"></i>
+            </button>
+            <button class="ai-butler-close-btn" id="ai-butler-close" title="Close">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="ai-butler-messages" id="ai-butler-messages">
+        <div class="ai-butler-message ai-butler-message--assistant">
+            <div class="ai-butler-message-content">
+                Hi! I'm the cli_debrid AI Butler. Ask me anything about the app — settings, queues, troubleshooting, or how things work.
+            </div>
+        </div>
+    </div>
+
+    <div class="ai-butler-input-row">
+        <textarea
+            id="ai-butler-input"
+            class="ai-butler-input"
+            placeholder="Ask the butler..."
+            rows="1"
+            maxlength="2000"
+        ></textarea>
+        <button id="ai-butler-send" class="ai-butler-send-btn" title="Send">
+            <i class="fas fa-paper-plane"></i>
+        </button>
+    </div>
+</div>
+
+<!-- AI Butler Settings Modal -->
+<div id="ai-butler-settings-modal" class="ai-butler-modal-overlay" style="display:none;">
+    <div class="ai-butler-modal">
+        <div class="ai-butler-modal-header">
+            <span><i class="fas fa-robot"></i> AI Assistant Settings</span>
+            <button class="ai-butler-modal-close" id="ai-butler-modal-close" title="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="ai-butler-modal-body">
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label">
+                    <input type="checkbox" id="aim-enabled"> Enable AI Butler
+                </label>
+                <p class="ai-butler-modal-desc">Show the chat widget. Requires OpenClaw to be installed and configured.</p>
+            </div>
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label-text">OpenClaw URL</label>
+                <input type="text" id="aim-openclaw-url" class="ai-butler-modal-input" placeholder="http://192.168.1.x:18789">
+                <p class="ai-butler-modal-desc">URL of your OpenClaw instance. Handles AI provider selection and session memory.</p>
+            </div>
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label-text">Bearer Token</label>
+                <input type="password" id="aim-openclaw-token" class="ai-butler-modal-input" placeholder="Leave blank if no auth configured">
+            </div>
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label-text">Agent ID</label>
+                <input type="text" id="aim-agent-id" class="ai-butler-modal-input" placeholder="main">
+                <p class="ai-butler-modal-desc">OpenClaw agent to use (default: main).</p>
+            </div>
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label-text">Display Name</label>
+                <input type="text" id="aim-display-name" class="ai-butler-modal-input" placeholder="AI Butler">
+                <p class="ai-butler-modal-desc">Name shown in the chat header. Set this to your OpenClaw agent's name.</p>
+            </div>
+            <hr class="ai-butler-modal-divider">
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label">
+                    <input type="checkbox" id="aim-settings-assistant"> Settings Assistant
+                </label>
+                <p class="ai-butler-modal-desc">Allow the AI to suggest and apply setting changes directly from chat.</p>
+            </div>
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label">
+                    <input type="checkbox" id="aim-proactive"> Proactive Notifications
+                </label>
+                <p class="ai-butler-modal-desc">Background health monitor sends alerts via your notification channels.</p>
+            </div>
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label">
+                    <input type="checkbox" id="aim-recommendations"> Content Recommendations
+                </label>
+                <p class="ai-butler-modal-desc">AI suggests movies/shows based on your watch history and lets you add them with one click.</p>
+            </div>
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label">
+                    <input type="checkbox" id="aim-habits"> Habit Learning
+                </label>
+                <p class="ai-butler-modal-desc">Records actions to suggest automations (e.g. scheduling sources you trigger manually).</p>
+            </div>
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label">
+                    <input type="checkbox" id="aim-share-config"> Share Full Config with AI
+                </label>
+                <p class="ai-butler-modal-desc">Sends your full config (tokens redacted) so the AI can diagnose configuration problems.</p>
+            </div>
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label">
+                    <input type="checkbox" id="aim-health-notifications"> Health Notifications
+                </label>
+                <p class="ai-butler-modal-desc">Send proactive health alerts via notification channels when issues are detected.</p>
+            </div>
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label-text">Health Check Interval (seconds)</label>
+                <input type="number" id="aim-health-interval" class="ai-butler-modal-input ai-butler-modal-input--short" min="300" step="60" placeholder="900">
+                <p class="ai-butler-modal-desc">How often the AI runs background health checks. Minimum 300 (5 min).</p>
+            </div>
+            <hr class="ai-butler-modal-divider">
+            <div class="ai-butler-modal-field">
+                <label class="ai-butler-modal-label">
+                    <input type="checkbox" id="aim-plex-labels-enabled"> Plex Labels
+                </label>
+                <p class="ai-butler-modal-desc">Apply a Plex label to items added to your library via the AI Butler.</p>
+            </div>
+            <div class="ai-butler-modal-field" id="aim-plex-labels-fixed-field" style="display:none;">
+                <label class="ai-butler-modal-label-text">Fixed Label</label>
+                <input type="text" id="aim-plex-labels-fixed-label" class="ai-butler-modal-input" placeholder="AI Butler">
+                <p class="ai-butler-modal-desc">Label to apply to all AI Butler additions. Comma-separated for multiple.</p>
+            </div>
+        </div>
+        <div class="ai-butler-modal-footer">
+            <span class="ai-butler-modal-status" id="ai-butler-modal-status"></span>
+            <button class="ai-butler-modal-save" id="ai-butler-modal-save">Save</button>
+        </div>
+    </div>
+</div>

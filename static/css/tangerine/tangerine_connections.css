@@ -77,6 +77,13 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
     max-width: 55%;
 }
 
+.connection-card:hover .connection-title {
+    overflow: visible;
+    white-space: normal;
+    word-break: break-word;
+    max-width: 100%;
+}
+
 .connection-status {
     display: flex;
     align-items: center;
@@ -371,7 +378,7 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
     }
 
     .connection-title {
-        max-width: 60%;
+        word-break: break-word;
     }
     
     .failing-connections {

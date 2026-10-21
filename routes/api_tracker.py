@@ -4,10 +4,13 @@ import logging.handlers
 from functools import wraps
 from urllib.parse import urlparse, parse_qs
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from flask import current_app, g
+from requests.adapters import HTTPAdapter
 from requests.exceptions import RequestException
 import os
+from utilities.version import get_app_version
+from utilities.log_redaction import RedactingFormatter
 
 def setup_api_logging():
     print("Setting up API logging")
@@ -30,7 +33,7 @@ def setup_api_logging():
     )
     
     # Use a more compact log format
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', 
+    formatter = RedactingFormatter('%(asctime)s - %(levelname)s - %(message)s', 
                                 datefmt='%Y-%m-%d %H:%M:%S')
     handler.setFormatter(formatter)
     
@@ -92,20 +95,22 @@ class APIRateLimiter:
     def __init__(self):
         self.hourly_limit = 2000
         self.five_minute_limit = 1000
-        self.hourly_calls = defaultdict(list)
-        self.five_minute_calls = defaultdict(list)
+        self.hourly_calls = defaultdict(deque)
+        self.five_minute_calls = defaultdict(deque)
         self.blocked_domains = set()
 
     def check_limits(self, domain):
         current_time = time.time()
         
-        # Clean up old calls
-        self.hourly_calls[domain] = [t for t in self.hourly_calls[domain] if current_time - t < 3600]
-        self.five_minute_calls[domain] = [t for t in self.five_minute_calls[domain] if current_time - t < 300]
-        
-        # Add current call
-        self.hourly_calls[domain].append(current_time)
-        self.five_minute_calls[domain].append(current_time)
+        # Drop expired calls (oldest first) and record this one
+        hourly = self.hourly_calls[domain]
+        five_minute = self.five_minute_calls[domain]
+        while hourly and current_time - hourly[0] >= 3600:
+            hourly.popleft()
+        while five_minute and current_time - five_minute[0] >= 300:
+            five_minute.popleft()
+        hourly.append(current_time)
+        five_minute.append(current_time)
         
         # Track if limits are exceeded but don't enforce
         hourly_exceeded = len(self.hourly_calls[domain]) > self.hourly_limit
@@ -138,9 +143,21 @@ class APIRateLimiter:
         self.blocked_domains.clear()
         api_logger.info("Rate limits have been manually reset.")
 
+# Applied when a caller passes no timeout: without one a stalled server hangs
+# the calling thread forever (scraper futures are abandoned, not killed).
+DEFAULT_TIMEOUT = (10, 120)
+
 class APITracker:
     def __init__(self):
         self.session = requests.Session()
+        # Scrapers fan out across many threads; urllib3's default of 10 pooled
+        # connections per host discarded the rest after each request.
+        adapter = HTTPAdapter(pool_connections=20, pool_maxsize=32)
+        self.session.mount('https://', adapter)
+        self.session.mount('http://', adapter)
+        self.session.headers.update({
+            'User-Agent': f'cli_debrid/{get_app_version()} (+https://github.com/godver3/cli_debrid)'
+        })
         self.cookies = requests.cookies
         self.exceptions = requests.exceptions
         self.utils = requests.utils
@@ -148,7 +165,7 @@ class APITracker:
         self.current_url = None
         self._args = None
         self.rate_limiter = APIRateLimiter()
-        self.monitored_domains = {'api.real-debrid.com', 'api.alldebrid.com', 'api.trakt.tv', 'torrentio.strem.fun'}
+        self.monitored_domains = {'api.real-debrid.com', 'api.alldebrid.com', 'api.trakt.tv', 'torrentio.strem.fun', 'api.themoviedb.org'}
 
     @property
     def args(self):
@@ -161,10 +178,11 @@ class APITracker:
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:
             self.rate_limiter.check_limits(domain)
-        
+
         try:
             self.current_url = url
             self._args = None
+            kwargs.setdefault('timeout', DEFAULT_TIMEOUT)
             response = self.session.get(url, **kwargs)
             response.raise_for_status()
             return response
@@ -177,10 +195,11 @@ class APITracker:
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:
             self.rate_limiter.check_limits(domain)
-        
+
         try:
             self.current_url = url
             self._args = None
+            kwargs.setdefault('timeout', DEFAULT_TIMEOUT)
             response = self.session.post(url, **kwargs)
             response.raise_for_status()
             return response
@@ -193,10 +212,11 @@ class APITracker:
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:
             self.rate_limiter.check_limits(domain)
-        
+
         try:
             self.current_url = url
             self._args = None
+            kwargs.setdefault('timeout', DEFAULT_TIMEOUT)
             response = self.session.put(url, **kwargs)
             response.raise_for_status()
             return response
@@ -209,10 +229,11 @@ class APITracker:
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:
             self.rate_limiter.check_limits(domain)
-        
+
         try:
             self.current_url = url
             self._args = None
+            kwargs.setdefault('timeout', DEFAULT_TIMEOUT)
             response = self.session.delete(url, **kwargs)
             response.raise_for_status()
             return response

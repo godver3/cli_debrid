@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/inline.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_inline.css') }}">
 {% endblock %}
 {% block title %}Onboarding - Step 2{% endblock %}
 {% block content %}
@@ -116,21 +116,44 @@
 
         <!-- Local/Symlinked-specific fields -->
         <div id="local-fields" class="conditional-fields">
-            <label for="plex_url_for_symlink" class="onboarding-label">Plex URL (Optional):</label>
-            <div class="settings-description">Plex server URL for symlink updates (optional)</div>
-            <input type="text" id="plex_url_for_symlink" name="plex_url_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_url_for_symlink', '') }}">
 
-            <label for="plex_token_for_symlink" class="onboarding-label">Plex Token (Optional):</label>
-            <div class="settings-description">Plex authentication token for symlink updates (optional)</div>
-            <input type="text" id="plex_token_for_symlink" name="plex_token_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_token_for_symlink', '') }}">
-        
+            <label class="onboarding-label">Media Server (Optional):</label>
+            <div class="settings-description">Select your media server for automatic library updates when new files are added.</div>
+            <select id="symlink_media_server" name="symlink_media_server" class="onboarding-input">
+                <option value="none">None</option>
+                <option value="plex" {% if settings.get('File Management', {}).get('plex_url_for_symlink') %}selected{% endif %}>Plex</option>
+                <option value="jellyfin" {% if settings.get('Debug', {}).get('emby_jellyfin_url') %}selected{% endif %}>Jellyfin / Emby</option>
+            </select>
+
+            <!-- Plex fields for symlink -->
+            <div id="symlink-plex-fields" style="display:none;">
+                <label for="plex_url_for_symlink" class="onboarding-label">Plex URL:</label>
+                <div class="settings-description">Plex server URL e.g. http://192.168.1.100:32400</div>
+                <input type="text" id="plex_url_for_symlink" name="plex_url_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_url_for_symlink', '') }}">
+
+                <label for="plex_token_for_symlink" class="onboarding-label">Plex Token:</label>
+                <div class="settings-description">Plex authentication token</div>
+                <input type="text" id="plex_token_for_symlink" name="plex_token_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_token_for_symlink', '') }}">
+            </div>
+
+            <!-- Jellyfin fields for symlink -->
+            <div id="symlink-jellyfin-fields" style="display:none;">
+                <label for="emby_jellyfin_url" class="onboarding-label">Jellyfin / Emby URL:</label>
+                <div class="settings-description">URL of your Jellyfin or Emby server e.g. http://192.168.1.100:8096</div>
+                <input type="text" id="emby_jellyfin_url" name="emby_jellyfin_url" class="onboarding-input" value="{{ settings.get('Debug', {}).get('emby_jellyfin_url', '') }}">
+
+                <label for="emby_jellyfin_token" class="onboarding-label">Jellyfin / Emby API Token:</label>
+                <div class="settings-description">API key from your Jellyfin/Emby server (Dashboard → API Keys)</div>
+                <input type="text" id="emby_jellyfin_token" name="emby_jellyfin_token" class="onboarding-input" value="{{ settings.get('Debug', {}).get('emby_jellyfin_token', '') }}">
+            </div>
+
             <div class="advice-section">
                 <div class="advice-header">
                     💡 Want my advice?
                     <i class="fas fa-chevron-down toggle-icon"></i>
                 </div>
                 <div class="advice-content">
-                    I recommend including your Plex URL and token even when using Symlinked libraries! This allows cli_debrid to automatically trigger Plex library scans when new files are added, ensuring your content appears in Plex immediately.
+                    Connect your media server so cli_debrid can automatically trigger library scans when new files are added, ensuring your content appears immediately.
                 </div>
             </div>
 
@@ -158,35 +181,66 @@
             </div>
         </div>
 
-        <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
-        <div id="debrid-provider-description" class="settings-description">
-            Debrid Provider is the debrid provider you want to use.
-        </div>
-        <select id="debrid_provider" name="debrid_provider" required class="onboarding-input">
-            <option value="RealDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'RealDebrid' %}selected{% endif %}>RealDebrid</option>
-            <option value="AllDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'AllDebrid' %}selected{% endif %}>AllDebrid</option>
-        </select>
+        <!-- Debrid or Usenet Provider Section -->
+        <div style="margin-top: 20px;">
+            <h3 style="margin-bottom: 4px;">Debrid or Usenet Provider</h3>
+            <p class="settings-description">cli_debrid requires either a debrid provider or a Usenet provider (cli_mount or NzbDAV) to download media.</p>
 
-        <label for="debrid_api_key" class="onboarding-label">Debrid API Key:</label>
-        <div id="debrid-api-key-description" class="settings-description">
-            Debrid API Key is the API key for your debrid provider.
-        </div>
-        <input type="text" id="debrid_api_key" name="debrid_api_key" required class="onboarding-input" value="{{ settings.get('Debrid Provider', {}).get('api_key', '') }}">
+            <div style="display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid #444;">
+                <button type="button" id="tab-debrid" onclick="switchProviderTab('debrid')"
+                    style="padding: 8px 20px; background: none; border: none; border-bottom: 2px solid #e67e22; margin-bottom: -2px; color: #e67e22; font-weight: bold; cursor: pointer; font-size: 0.95em;">
+                    Debrid
+                </button>
+                <button type="button" id="tab-usenet" onclick="switchProviderTab('usenet')"
+                    style="padding: 8px 20px; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; color: #aaa; cursor: pointer; font-size: 0.95em;">
+                    Usenet
+                </button>
+            </div>
 
-        <p class="settings-description">Please create an application at <a href="https://trakt.tv/oauth/applications/" target="_blank" style="color: #3498db;">Trakt Applications</a> if you have not yet done so. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p> 
+            <input type="hidden" id="provider_type" name="provider_type" value="{{ 'usenet' if settings.get('Usenet Provider', {}).get('enabled') and not settings.get('Debrid Provider', {}).get('api_key') else 'debrid' }}">
+
+            <!-- Debrid tab -->
+            <div id="panel-debrid">
+                <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
+                <div class="settings-description">Select your debrid provider.</div>
+                <select id="debrid_provider" name="debrid_provider" class="onboarding-input">
+                    <option value="RealDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'RealDebrid' %}selected{% endif %}>RealDebrid</option>
+                    <option value="AllDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'AllDebrid' %}selected{% endif %}>AllDebrid</option>
+                    <option value="Premiumize" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'Premiumize' %}selected{% endif %}>Premiumize</option>
+                    <option value="Torbox" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'Torbox' %}selected{% endif %}>Torbox</option>
+                    <option value="DebridLink" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'DebridLink' %}selected{% endif %}>Debrid-Link</option>
+                </select>
+                <label for="debrid_api_key" class="onboarding-label">Debrid API Key:</label>
+                <div class="settings-description">API key from your debrid provider.</div>
+                <input type="text" id="debrid_api_key" name="debrid_api_key" class="onboarding-input" value="{{ settings.get('Debrid Provider', {}).get('api_key', '') }}">
+            </div>
+
+            <!-- Usenet tab -->
+            <div id="panel-usenet" style="display:none;">
+                <label for="usenet_url" class="onboarding-label">Usenet Provider URL:</label>
+                <div class="settings-description">URL of your usenet backend — cli_mount (default :8888) or NzbDAV (default :3000), e.g. http://192.168.1.x:8888</div>
+                <input type="text" id="usenet_url" name="usenet_url" class="onboarding-input" value="{{ settings.get('Usenet Provider', {}).get('url', '') }}">
+                <label for="usenet_api_token" class="onboarding-label">API Token (optional):</label>
+                <div class="settings-description">Only required if your usenet backend has authentication enabled.</div>
+                <input type="text" id="usenet_api_token" name="usenet_api_token" class="onboarding-input" value="{{ settings.get('Usenet Provider', {}).get('api_token', '') }}">
+                {% include '_nzbdav_setup_helper.html' %}
+            </div>
+        </div>
+
+        <p class="settings-description">Trakt is an <b>optional</b> integration used for Trakt-based content sources and as a metadata fallback — you can skip this and configure it later in Settings. If you'd like to enable it now, create an application at <a href="https://trakt.tv/oauth/applications/" target="_blank" style="color: #3498db;">Trakt Applications</a>. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p>
         <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
 
-        <label for="trakt_client_id" class="onboarding-label"><br>Trakt Client ID:</label>
+        <label for="trakt_client_id" class="onboarding-label"><br>Trakt Client ID (optional):</label>
         <div id="trakt-client-id-description" class="settings-description">
             Trakt Client ID is the Client ID for your Trakt application.
         </div>
-        <input type="text" id="trakt_client_id" name="trakt_client_id" required class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_id', '') }}">
+        <input type="text" id="trakt_client_id" name="trakt_client_id" class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_id', '') }}">
 
-        <label for="trakt_client_secret" class="onboarding-label">Trakt Client Secret:</label>
+        <label for="trakt_client_secret" class="onboarding-label">Trakt Client Secret (optional):</label>
         <div id="trakt-client-secret-description" class="settings-description">
             Trakt Client Secret is the Client Secret for your Trakt application.
         </div>
-        <input type="text" id="trakt_client_secret" name="trakt_client_secret" required class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_secret', '') }}">
+        <input type="text" id="trakt_client_secret" name="trakt_client_secret" class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_secret', '') }}">
 
         <button type="submit" class="onboarding-submit">Save Settings</button>
         <br>
@@ -242,6 +296,19 @@
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Show/hide Plex or Jellyfin fields based on media server selection
+    function toggleSymlinkMediaServerFields(value) {
+        const plexFields = document.getElementById('symlink-plex-fields');
+        const jellyfinFields = document.getElementById('symlink-jellyfin-fields');
+        if (plexFields) plexFields.style.display = value === 'plex' ? 'block' : 'none';
+        if (jellyfinFields) jellyfinFields.style.display = value === 'jellyfin' ? 'block' : 'none';
+    }
+
+    const symlinkMediaServer = document.getElementById('symlink_media_server');
+    if (symlinkMediaServer) {
+        toggleSymlinkMediaServerFields(symlinkMediaServer.value);
+        symlinkMediaServer.addEventListener('change', (e) => toggleSymlinkMediaServerFields(e.target.value));
+    }
     const settingsForm = document.getElementById('settings-form');
     const nextStepBtn = document.querySelector('.next-step-btn');
     const fileManagementSelect = document.getElementById('file_collection_management');
@@ -827,6 +894,12 @@ document.addEventListener('DOMContentLoaded', function() {
             formData.set('realdebrid_api_key', apiKey);
         } else if (provider === 'AllDebrid') {
             formData.set('alldebrid_api_key', apiKey);
+        } else if (provider === 'Premiumize') {
+            formData.set('premiumize_api_key', apiKey);
+        } else if (provider === 'Torbox') {
+            formData.set('torbox_api_key', apiKey);
+        } else if (provider === 'DebridLink') {
+            formData.set('debridlink_api_key', apiKey);
         }
         
         try {
@@ -863,6 +936,32 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
+// Persist just the Trakt client_id/client_secret fields before starting
+// authorization. "Authorize Trakt" used to read whatever was last saved to
+// disk, ignoring unsaved edits still sitting in these two inputs — clicking
+// Authorize right after typing new credentials failed with "Trakt client ID
+// or secret not set" even though the fields were filled in.
+function saveTraktCredentials() {
+    const clientIdInput = document.getElementById('trakt_client_id');
+    const clientSecretInput = document.getElementById('trakt_client_secret');
+    const clientId = clientIdInput ? clientIdInput.value.trim() : '';
+    const clientSecret = clientSecretInput ? clientSecretInput.value.trim() : '';
+    if (!clientId || !clientSecret) {
+        return Promise.reject(new Error('Enter both a Trakt Client ID and Client Secret first.'));
+    }
+    return fetch('/settings/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ Trakt: { client_id: clientId, client_secret: clientSecret } })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status !== 'success') {
+                throw new Error(data.message || 'Failed to save Trakt credentials');
+            }
+        });
+}
+
 function initializeTraktAuthorization() {
     const traktAuthBtn = document.getElementById('trakt-auth-btn');
     const traktAuthStatus = document.getElementById('trakt-auth-status');
@@ -873,10 +972,14 @@ function initializeTraktAuthorization() {
     if (traktAuthBtn) {
         traktAuthBtn.addEventListener('click', function() {
             traktAuthBtn.disabled = true;
-            traktAuthStatus.textContent = 'Initializing Trakt authorization...';
+            traktAuthStatus.textContent = 'Saving Trakt credentials...';
             traktAuthCode.style.display = 'none';
 
-            fetch('/trakt/trakt_auth', { method: 'POST' })
+            saveTraktCredentials()
+                .then(() => {
+                    traktAuthStatus.textContent = 'Initializing Trakt authorization...';
+                    return fetch('/trakt/trakt_auth', { method: 'POST' });
+                })
                 .then(response => response.json())
                 .then(data => {
                     console.log('Trakt auth response:', data);
@@ -892,7 +995,7 @@ function initializeTraktAuthorization() {
                 })
                 .catch(error => {
                     console.error('Trakt auth error:', error);
-                    traktAuthStatus.textContent = 'Error: Unable to start authorization process';
+                    traktAuthStatus.textContent = 'Error: ' + (error.message || 'Unable to start authorization process');
                 })
                 .finally(() => {
                     traktAuthBtn.disabled = false;
@@ -936,6 +1039,40 @@ function pollTraktAuthStatus(device_code) {
             });
     }, 5000); // Check every 5 seconds
 }
+
+window.switchProviderTab = function switchProviderTab(tab) {
+    const debridPanel = document.getElementById('panel-debrid');
+    const usenetPanel = document.getElementById('panel-usenet');
+    const tabDebrid = document.getElementById('tab-debrid');
+    const tabUsenet = document.getElementById('tab-usenet');
+    const providerType = document.getElementById('provider_type');
+
+    if (tab === 'usenet') {
+        debridPanel.style.display = 'none';
+        usenetPanel.style.display = 'block';
+        tabDebrid.style.borderBottomColor = 'transparent';
+        tabDebrid.style.color = '#aaa';
+        tabUsenet.style.borderBottomColor = '#e67e22';
+        tabUsenet.style.color = '#e67e22';
+        providerType.value = 'usenet';
+    } else {
+        debridPanel.style.display = 'block';
+        usenetPanel.style.display = 'none';
+        tabDebrid.style.borderBottomColor = '#e67e22';
+        tabDebrid.style.color = '#e67e22';
+        tabUsenet.style.borderBottomColor = 'transparent';
+        tabUsenet.style.color = '#aaa';
+        providerType.value = 'debrid';
+    }
+}
+
+// Initialize correct tab on page load
+document.addEventListener('DOMContentLoaded', function() {
+    const providerType = document.getElementById('provider_type');
+    if (providerType && providerType.value === 'usenet') {
+        switchProviderTab('usenet');
+    }
+});
 
 function checkTraktAuthStatus() {
     const traktAuthStatus = document.getElementById('trakt-auth-status');

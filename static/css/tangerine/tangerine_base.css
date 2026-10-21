@@ -3,6 +3,12 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    caret-color: transparent;
+}
+
+/* Restore caret for actual text input elements */
+input, textarea, [contenteditable="true"] {
+    caret-color: auto;
 }
 
     /* Scrollbar styles */
@@ -127,30 +133,13 @@ select option {
 select option:hover,
 select option:focus,
 select option:checked {
-    background-color: rgba(255, 107, 53, 0.2);
+    background-color: rgb(55 35 18 / 85%);
 }
 
 /* ========================================
    Main Page Titles - Orange Gradient Text
    All main page titles (h1, h2)
    ======================================== */
-main > h1::before,
-main > h2::before,
-.container > h1::before,
-.container > h2::before,
-[class*="-container"] > h1::before,
-[class*="-container"] > h2::before,
-.content > h1::before,
-.content > h2::before,
-body > h1::before,
-body > h2::before,
-.manage-users > h2::before {
-    content: '';
-    width: 4px;
-    height: 33px;
-    background: linear-gradient(180deg, #e17c52 0%, #f7931e 100%);
-    border-radius: 2px;
-}
 
 main > h1,
 main > h2,
@@ -220,8 +209,8 @@ body > h2,
     top: 0;
     bottom: 0;
     width: 4px;
-    background: linear-gradient(135deg, #e17c52 0%, #f7931e 100%);
-    border-radius: 2px;
+    border-left: 3px solid #e8601c;
+    padding-left: 10px;
 }
 
 /* Exclude content sources settings title from the ::before bar */
@@ -231,7 +220,7 @@ body > h2,
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     line-height: 1.6;
     color: #e0e0e0;
     background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%) fixed;
@@ -1296,9 +1285,10 @@ tr:hover {
     .button-text {
         display: inline;
         margin-left: 8px;
-        font-size: 14px;
+        font-size: 12px;
+        font-weight: 600;
         white-space: nowrap;
-        color: white;
+        color: #e0e0e0;
     }
 
     /* Hide button text for release notes button */
@@ -1440,7 +1430,13 @@ main {
     max-width: 800px;
     width: 90%;
     max-height: 85vh;
-    overflow-y: auto;
+    overflow: hidden;
+    flex-direction: column;
+}
+
+.release-notes-popup[style*="display: block"],
+.release-notes-popup[style*="display:block"] {
+    display: flex !important;
 }
 
 .release-notes-overlay {
@@ -1462,6 +1458,7 @@ main {
     margin-bottom: 20px;
     padding-bottom: 15px;
     border-bottom: 1px solid #333;
+    flex-shrink: 0;
 }
 
 .release-notes-title {
@@ -1488,6 +1485,10 @@ main {
 .release-notes-content {
     color: #e0e0e0;
     line-height: 1.8;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    padding-right: 4px;
 }
 
 .release-notes-content h4 {
@@ -1500,7 +1501,7 @@ main {
 }
 
 .release-notes-content h3 {
-    color: #888;
+    color: #e8601c !important;
     font-size: 1em;
     font-weight: normal;
     margin: 5px 0 0 0;
@@ -1522,22 +1523,20 @@ main {
 }
 
 /* Custom scrollbar for release notes */
-.release-notes-popup::-webkit-scrollbar {
-    width: 10px;
+.release-notes-content::-webkit-scrollbar {
+    width: 6px;
 }
 
-.release-notes-popup::-webkit-scrollbar-track {
-    background: #1a1a1a;
-    border-radius: 12px;
+.release-notes-content::-webkit-scrollbar-track {
+    background: transparent;
 }
 
-.release-notes-popup::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
-    border: 2px solid #1a1a1a;
+.release-notes-content::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 3px;
 }
 
-.release-notes-popup::-webkit-scrollbar-thumb:hover {
+.release-notes-content::-webkit-scrollbar-thumb:hover {
     background: #555;
 }
 
@@ -1797,6 +1796,102 @@ main {
     padding: 20px;
     text-align: center;
     color: #888;
+}
+
+/* ── Global Loading Overlay (loading.js) ── */
+#loading {
+    display: none;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background-color: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(4px);
+    z-index: 9999;
+    justify-content: center;
+    align-items: center;
+}
+#loading .loading-content {
+    background: #141414;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    min-width: 420px;
+    max-width: 480px;
+    overflow: hidden;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+    padding: 0;
+    text-align: left;
+}
+#loading .loading-progress-bar-container {
+    height: 3px;
+    background: rgba(255, 255, 255, 0.06);
+}
+#loading .loading-progress-bar {
+    height: 100%;
+    width: 20%;
+    background: linear-gradient(90deg, #ff6b35, #ff8c5a);
+    border-radius: 0 2px 2px 0;
+    animation: loading-bar-pulse 1.8s ease-in-out infinite;
+}
+@keyframes loading-bar-pulse {
+    0%   { width: 20%; opacity: 1; }
+    50%  { width: 70%; opacity: 0.85; }
+    100% { width: 20%; opacity: 1; }
+}
+#loading .loading-inner {
+    padding: 1.5rem 1.75rem 1.25rem;
+}
+#loading .loading-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    margin-bottom: 0.6rem;
+}
+#loading .loading-spin-icon {
+    color: #888;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+#loading .loading-message {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e8e8e8;
+    margin: 0;
+}
+#loading .loading-details {
+    font-size: 0.82rem;
+    color: #888;
+    margin-left: 1.95rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+#loading .loading-progress {
+    font-size: 0.82rem;
+    color: #ff8c5a;
+    font-weight: 600;
+    margin-left: 1.95rem;
+    margin-top: 0.3rem;
+}
+#loading .loading-button-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 1.1rem;
+}
+#loading .spinner { display: none; }
+#loading .close-loading {
+    padding: 0.4rem 1rem;
+    font-size: 0.82rem;
+    background: rgba(255, 107, 53, 0.12);
+    border: 1px solid rgba(255, 107, 53, 0.35);
+    color: #ff8c5a;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+}
+#loading .close-loading:hover {
+    background: rgba(255, 107, 53, 0.22);
+    border-color: rgba(255, 107, 53, 0.6);
+    color: #fff;
 }
 
 /* Task monitor scrollbar styles */
@@ -4214,6 +4309,30 @@ body[data-theme="tangerine"] .universal-popup #popupConfirm:hover {
 }
 
 body[data-theme="tangerine"] .universal-popup #popupConfirm:active {
+    transform: translateY(0) !important;
+}
+
+/* Extra (3rd) Action Button */
+body[data-theme="tangerine"] .universal-popup #popupExtra {
+    background: rgba(255, 255, 255, 0.05) !important;
+    color: #f7931e !important;
+    border: 1px solid rgba(247, 147, 30, 0.5) !important;
+    padding: 0.75rem 2rem !important;
+    border-radius: 8px !important;
+    font-size: 0.95rem !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    transition: all 0.3s ease !important;
+}
+
+body[data-theme="tangerine"] .universal-popup #popupExtra:hover {
+    background: rgba(247, 147, 30, 0.1) !important;
+    border-color: rgba(247, 147, 30, 0.8) !important;
+    transform: translateY(-2px) !important;
+    opacity: 1 !important;
+}
+
+body[data-theme="tangerine"] .universal-popup #popupExtra:active {
     transform: translateY(0) !important;
 }
 

@@ -1,0 +1,310 @@
+{% extends "base.html" %}
+
+{% block title %}Scraper Stats{% endblock %}
+
+{% block head %}
+<style>
+#sstats{
+  --surface:#1a1a1a;--surface2:#222;--border:#2d2d2d;--border2:#3d3d3d;
+  --accent:#e8601c;--text:#e0e0e0;--text2:#aaa;--text3:#777;
+  --green:#22c55e;--red:#ef4444;--yellow:#f59e0b;--blue:#60a5fa;
+  font-family:'Inter',sans-serif;font-size:13px;color:var(--text);
+  max-width:1300px;margin:0 auto;padding:1.25rem 16px;box-sizing:border-box;
+}
+.container:has(#sstats){max-width:100%!important;padding:0!important;}
+#sstats *{box-sizing:border-box;}
+#sstats .hdr{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem;}
+#sstats .title{font-size:20px;font-weight:700;border-left:3px solid var(--accent);padding-left:10px;}
+#sstats .since{color:var(--text3);font-size:12px;}
+#sstats .intro{color:var(--text2);font-size:12px;margin:0 0 1rem;max-width:760px;line-height:1.5;}
+#sstats .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1rem;}
+#sstats .pills{display:flex;background:var(--surface2);border-radius:6px;padding:3px;gap:2px;}
+#sstats .pill{padding:5px 12px;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer;color:var(--text3);border:1px solid transparent;background:none;font-family:inherit;}
+#sstats .pill.active{background:var(--surface);color:var(--text);border-color:var(--border2);}
+#sstats .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:1.25rem;}
+#sstats .tile{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:10px 14px;}
+#sstats .tile-val{font-size:20px;font-weight:700;font-family:'JetBrains Mono',monospace;}
+#sstats .tile-lbl{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-top:2px;}
+#sstats .tbl-wrap{background:var(--surface);border:1px solid var(--border);border-radius:7px;overflow-x:auto;}
+#sstats table{width:100%;border-collapse:collapse;min-width:640px;}
+#sstats th,#sstats td{padding:8px 10px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--border);}
+#sstats th{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);font-weight:600;cursor:pointer;user-select:none;}
+#sstats th:first-child,#sstats td:first-child{text-align:left;}
+#sstats th.sorted{color:var(--text);}
+#sstats td{font-family:'JetBrains Mono',monospace;font-size:12px;}
+#sstats td:first-child{font-family:inherit;font-size:13px;}
+#sstats tr.scraper{cursor:pointer;}
+#sstats tr.scraper:hover td,#sstats tr.indexer:hover td{background:var(--surface2);}
+#sstats tr.indexer td:first-child{padding-left:32px;color:var(--text2);}
+#sstats tr.indexer{cursor:pointer;}
+#sstats tr.selected td{background:#e8601c14;}
+#sstats .caret{display:inline-block;width:14px;color:var(--text3);font-size:10px;}
+#sstats .type{color:var(--text3);font-size:11px;margin-left:6px;}
+#sstats .rate{display:inline-flex;align-items:center;gap:6px;}
+#sstats .bar{width:48px;height:5px;background:var(--surface2);border-radius:3px;overflow:hidden;}
+#sstats .bar span{display:block;height:100%;}
+#sstats .muted{color:var(--text3);}
+#sstats .bad{color:var(--red);}
+#sstats .warn{color:var(--yellow);}
+#sstats .empty{padding:2.5rem 1rem;text-align:center;color:var(--text2);}
+#sstats .recent{margin-top:1.25rem;}
+#sstats .recent h3{font-size:14px;font-weight:600;margin:0 0 .5rem;}
+#sstats .recent table{min-width:720px;}
+#sstats .recent th,#sstats .recent td{text-align:left;}
+#sstats .badge{display:inline-block;padding:1px 7px;border-radius:9px;font-size:11px;font-family:'Inter',sans-serif;}
+#sstats .b-collected{background:#22c55e22;color:var(--green);}
+#sstats .b-pending{background:#60a5fa22;color:var(--blue);}
+#sstats .b-failed{background:#ef444422;color:var(--red);}
+#sstats .b-repaired{background:#f59e0b22;color:var(--yellow);}
+#sstats .b-replaced{background:#ffffff14;color:var(--text2);}
+#sstats .b-removed{background:#ffffff0a;color:var(--text3);}
+#sstats .rel{max-width:420px;overflow:hidden;text-overflow:ellipsis;}
+@media (max-width:640px){
+  #sstats .hide-sm{display:none;}
+  #sstats table{min-width:0;}
+  #sstats .bar{width:28px;}
+  #sstats th,#sstats td{padding:8px 6px;}
+  #sstats .recent table{min-width:560px;}
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="sstats">
+  <div class="hdr">
+    <div class="title">Scraper Stats</div>
+    <div class="since" id="ss-since"></div>
+  </div>
+  <p class="intro">
+    Which scrapers and indexers supply your library. Every release cli_debrid grabs is
+    logged with where it came from and how it ended: collected, failed before it reached
+    the library, repaired after it turned out to be broken, replaced by an upgrade, or
+    removed from the library later (deleted, or reset because the file went missing).
+    Removed files still count as a success for the source that supplied them.
+    Grabs are counted per media item, so a season pack counts once for each episode it filled.
+  </p>
+  <div class="toolbar">
+    <div class="pills" id="ss-days">
+      <button class="pill" data-v="7">7 days</button>
+      <button class="pill active" data-v="30">30 days</button>
+      <button class="pill" data-v="90">90 days</button>
+      <button class="pill" data-v="all">All time</button>
+    </div>
+    <div class="pills" id="ss-kind">
+      <button class="pill active" data-v="all">All</button>
+      <button class="pill" data-v="torrent">Torrent</button>
+      <button class="pill" data-v="nzb">NZB</button>
+    </div>
+  </div>
+  <div class="tiles" id="ss-tiles"></div>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr id="ss-head">
+        <th data-k="instance">Scraper / indexer</th>
+        <th data-k="grabs" title="Releases grabbed (one per media item)">Grabs</th>
+        <th data-k="in_library" class="hide-sm" title="Grabs that are the item's current file">In library</th>
+        <th data-k="success_rate" title="Reached the library ÷ grabs that have finished">Success</th>
+        <th data-k="failed">Failed</th>
+        <th data-k="repaired" class="hide-sm" title="Reached the library, later found broken and repaired">Repaired</th>
+        <th data-k="replaced" class="hide-sm" title="Reached the library, later replaced by an upgrade">Replaced</th>
+        <th data-k="removed" class="hide-sm" title="Reached the library, later deleted or reset without an upgrade or repair">Removed</th>
+        <th data-k="pending" class="hide-sm" title="Still downloading or checking">Pending</th>
+        <th data-k="last_grab" class="hide-sm">Last grab</th>
+      </tr></thead>
+      <tbody id="ss-body"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="recent" id="ss-recent" hidden>
+    <h3 id="ss-recent-title"></h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>When</th><th>Item</th><th>Release</th><th>Indexer</th><th>Trigger</th><th>Outcome</th></tr></thead>
+        <tbody id="ss-recent-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const state = { days: '30', kind: 'all', sort: 'grabs', desc: true, open: new Set(), data: null, sel: null };
+  const $ = id => document.getElementById(id);
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  function when(ts) {
+    if (!ts) return '—';
+    const d = new Date(String(ts).replace(' ', 'T'));
+    if (isNaN(d)) return esc(ts);
+    const mins = Math.round((Date.now() - d) / 60000);
+    if (mins < 60) return `${Math.max(mins, 0)}m ago`;
+    if (mins < 1440) return `${Math.round(mins / 60)}h ago`;
+    return `${Math.round(mins / 1440)}d ago`;
+  }
+
+  function rate(v) {
+    if (v === null || v === undefined) return '<span class="muted">—</span>';
+    const color = v >= 80 ? 'var(--green)' : v >= 50 ? 'var(--yellow)' : 'var(--red)';
+    return `<span class="rate">${v.toFixed(0)}%<span class="bar"><span style="width:${v}%;background:${color}"></span></span></span>`;
+  }
+
+  function num(v, cls) {
+    return v ? `<span class="${cls || ''}">${v}</span>` : '<span class="muted">0</span>';
+  }
+
+  function cells(r) {
+    return `<td>${num(r.grabs)}</td><td class="hide-sm">${num(r.in_library)}</td><td>${rate(r.success_rate)}</td>` +
+      `<td>${num(r.failed, 'bad')}</td><td class="hide-sm">${num(r.repaired, 'warn')}</td>` +
+      `<td class="hide-sm">${num(r.replaced)}</td><td class="hide-sm">${num(r.removed)}</td>` +
+      `<td class="hide-sm">${num(r.pending)}</td>` +
+      `<td class="hide-sm">${when(r.last_grab)}</td>`;
+  }
+
+  function sorted(rows) {
+    const k = state.sort, dir = state.desc ? -1 : 1;
+    return [...rows].sort((a, b) => {
+      const x = a[k] ?? -1, y = b[k] ?? -1;
+      return (x > y ? 1 : x < y ? -1 : 0) * dir;
+    });
+  }
+
+  function renderTiles(scrapers) {
+    const t = scrapers.reduce((acc, s) => {
+      for (const k of ['grabs', 'in_library', 'failed', 'repaired', 'pending', 'ever_collected']) acc[k] += s[k] || 0;
+      return acc;
+    }, { grabs: 0, in_library: 0, failed: 0, repaired: 0, pending: 0, ever_collected: 0 });
+    const settled = t.grabs - t.pending;
+    const success = settled ? `${(100 * t.ever_collected / settled).toFixed(0)}%` : '—';
+    $('ss-tiles').innerHTML = [
+      ['Grabs', t.grabs], ['In library', t.in_library], ['Success', success],
+      ['Failed', t.failed], ['Repaired', t.repaired], ['Scrapers', scrapers.length],
+    ].map(([l, v]) => `<div class="tile"><div class="tile-val">${esc(v)}</div><div class="tile-lbl">${l}</div></div>`).join('');
+  }
+
+  function render() {
+    const d = state.data;
+    document.querySelectorAll('#ss-head th').forEach(th => th.classList.toggle('sorted', th.dataset.k === state.sort));
+    $('ss-since').textContent = d && d.tracking_since
+      ? `Tracking since ${new Date(String(d.tracking_since).replace(' ', 'T')).toLocaleDateString()}` : '';
+    if (!d || !d.scrapers.length) {
+      $('ss-tiles').innerHTML = '';
+      $('ss-body').innerHTML = `<tr><td colspan="10" class="empty">${d && d.tracking_since
+        ? 'No grabs in this range.'
+        : 'No grabs recorded yet. Stats start with the next release cli_debrid grabs — earlier history isn’t available.'}</td></tr>`;
+      return;
+    }
+    renderTiles(d.scrapers);
+    let html = '';
+    for (const s of sorted(d.scrapers)) {
+      const open = state.open.has(s.instance);
+      const hasIdx = s.indexers.length > 0;
+      const sel = state.sel && state.sel.instance === s.instance && state.sel.indexer == null;
+      html += `<tr class="scraper${sel ? ' selected' : ''}" data-i="${esc(s.instance)}">` +
+        `<td><span class="caret">${hasIdx ? (open ? '▼' : '▶') : ''}</span>${esc(s.instance)}` +
+        `${s.scraper_type && s.scraper_type !== s.instance ? `<span class="type">${esc(s.scraper_type)}</span>` : ''}</td>` +
+        cells(s) + '</tr>';
+      if (open) {
+        for (const ix of sorted(s.indexers)) {
+          const isel = state.sel && state.sel.instance === s.instance && state.sel.indexer === ix.indexer;
+          html += `<tr class="indexer${isel ? ' selected' : ''}" data-i="${esc(s.instance)}" data-x="${esc(ix.indexer)}">` +
+            `<td>${esc(ix.indexer)}</td>${cells(ix)}</tr>`;
+        }
+      }
+    }
+    $('ss-body').innerHTML = html;
+  }
+
+  async function load() {
+    try {
+      const r = await fetch(`/statistics/api/scraper_stats?days=${state.days}&kind=${state.kind}`);
+      const j = await r.json();
+      if (!j.success) throw new Error(j.error || 'request failed');
+      state.data = j;
+    } catch (e) {
+      state.data = null;
+      $('ss-body').innerHTML = `<tr><td colspan="10" class="empty">Could not load stats: ${esc(e.message)}</td></tr>`;
+      return;
+    }
+    render();
+    if (state.sel) loadRecent(state.sel.instance, state.sel.indexer);
+  }
+
+  async function loadRecent(instance, indexer) {
+    state.sel = { instance, indexer };
+    render();
+    const q = new URLSearchParams({ instance, days: state.days, kind: state.kind });
+    if (indexer != null) q.set('indexer', indexer);
+    $('ss-recent').hidden = false;
+    $('ss-recent-title').textContent = `Recent grabs — ${instance}${indexer != null ? ' / ' + indexer : ''}`;
+    $('ss-recent-body').innerHTML = '<tr><td colspan="6" class="muted">Loading…</td></tr>';
+    try {
+      const j = await (await fetch(`/statistics/api/scraper_stats/recent?${q}`)).json();
+      if (!j.success) throw new Error(j.error || 'request failed');
+      $('ss-recent-body').innerHTML = j.grabs.length ? j.grabs.map(g => {
+        const ep = g.season != null && g.episode != null
+          ? ` S${String(g.season).padStart(2, '0')}E${String(g.episode).padStart(2, '0')}` : '';
+        const split = g.source_detail ? Object.values(g.source_detail).reduce((acc, s) => {
+          const k = s.indexer || s.scraper_instance || '?'; acc[k] = (acc[k] || 0) + 1; return acc;
+        }, {}) : null;
+        const idx = split ? Object.entries(split).map(([k, n]) => `${esc(k)} ×${n}`).join(', ') : esc(g.indexer || '—');
+        return `<tr><td>${when(g.grabbed_at)}</td><td>${esc(g.title)}${ep}</td>` +
+          `<td class="rel" title="${esc(g.release_title)}">${esc(g.release_title)}</td><td>${idx}</td>` +
+          `<td>${esc(g.trigger)}</td>` +
+          `<td><span class="badge b-${esc(g.outcome)}" title="${esc(g.outcome_reason || '')}">${esc(g.outcome)}</span></td></tr>`;
+      }).join('') : '<tr><td colspan="6" class="muted">No grabs in this range.</td></tr>';
+    } catch (e) {
+      $('ss-recent-body').innerHTML = `<tr><td colspan="6" class="muted">Could not load: ${esc(e.message)}</td></tr>`;
+    }
+  }
+
+  function pills(id, key) {
+    $(id).addEventListener('click', e => {
+      const b = e.target.closest('.pill');
+      if (!b) return;
+      $(id).querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p === b));
+      state[key] = b.dataset.v;
+      try { localStorage.setItem('sstats-' + key, b.dataset.v); } catch (_) {}
+      load();
+    });
+    let saved = null;
+    try { saved = localStorage.getItem('sstats-' + key); } catch (_) {}
+    const match = saved && $(id).querySelector(`.pill[data-v="${saved}"]`);
+    if (match) {
+      state[key] = saved;
+      $(id).querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p === match));
+    }
+  }
+
+  $('ss-head').addEventListener('click', e => {
+    const th = e.target.closest('th');
+    if (!th) return;
+    if (state.sort === th.dataset.k) state.desc = !state.desc;
+    else { state.sort = th.dataset.k; state.desc = th.dataset.k !== 'instance'; }
+    render();
+  });
+
+  $('ss-body').addEventListener('click', e => {
+    const tr = e.target.closest('tr');
+    if (!tr || !tr.dataset.i) return;
+    const instance = tr.dataset.i;
+    if (tr.classList.contains('scraper')) {
+      const s = state.data.scrapers.find(x => x.instance === instance);
+      if (s && s.indexers.length && e.target.closest('.caret')) {
+        state.open.has(instance) ? state.open.delete(instance) : state.open.add(instance);
+        render();
+        return;
+      }
+      if (s && s.indexers.length) state.open.add(instance);
+      loadRecent(instance, null);
+    } else {
+      loadRecent(instance, tr.dataset.x);
+    }
+  });
+
+  pills('ss-days', 'days');
+  pills('ss-kind', 'kind');
+  load();
+})();
+</script>
+{% endblock %}

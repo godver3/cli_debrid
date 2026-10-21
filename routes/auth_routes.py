@@ -50,6 +50,10 @@ def create_default_admin():
         else:
             logging.info(f"Created default admin user '{username}' - onboarding required")
 
+def _generate_api_token():
+    import secrets
+    return secrets.token_hex(24)
+
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -57,6 +61,17 @@ class User(UserMixin, db.Model):
     role = db.Column(db.String(20), nullable=False)
     is_default = db.Column(db.Boolean, default=False)
     onboarding_complete = db.Column(db.Boolean, default=False)
+    # SSO/OIDC fields
+    oidc_sub = db.Column(db.String(255), nullable=True, unique=True)
+    oidc_provider = db.Column(db.String(50), nullable=True)
+    email = db.Column(db.String(255), nullable=True)
+    # API token for external access (OpenClaw, homepage widgets, etc.)
+    api_token = db.Column(db.String(48), nullable=True, unique=True)
+
+    @property
+    def is_sso_user(self):
+        """True if this account was created via SSO and has no local password."""
+        return bool(self.oidc_sub) and not self.password
 
 def init_db(app):
     db.init_app(app)
@@ -173,37 +188,51 @@ def login():
         login_reminder_message = "Login using your Debridify dashboard instance information"
     
     from routes.extensions import get_root_domain
+    from utilities.settings import get_setting as _get_setting
     domain = get_root_domain(request.host) if hasattr(request, 'host') else None
+    sso_enabled = _get_setting('SSO', 'enabled', False)
+    local_auth_disabled = sso_enabled and _get_setting('SSO', 'disable_local_auth', False)
+
+    if request.method == 'POST' and local_auth_disabled:
+        # Local login disabled — reject and redirect to SSO
+        return redirect(url_for('oidc.login'))
 
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
         remember = bool(request.form.get('remember_me'))
-        
+
         user = User.query.filter_by(username=username).first()
+        # Block local password login for SSO-only accounts
+        if user and not user.password:
+            flash('This account uses SSO login. Please use the "Sign in with SSO" button.', 'error')
+            response = make_response(render_template('login.html', show_login_reminder=show_login_reminder_flag, login_reminder_message=login_reminder_message, posters=posters_data, sso_enabled=sso_enabled, local_auth_disabled=local_auth_disabled))
+            response.set_cookie('session', '', expires=0, path='/', domain=domain)
+            response.set_cookie('remember_token', '', expires=0, path='/', domain=domain)
+            return response
         if user and check_password_hash(user.password, password):
-            session.clear() 
+            session.clear()
             session.permanent = True
             login_user(user, remember=remember)
             session.modified = True
-            
+
             if not user.onboarding_complete:
                 response = make_response(redirect(url_for('onboarding.onboarding_step', step=1)))
             else:
                 response = make_response(redirect(url_for('root.root')))
-            
+
             response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
             response.headers['Pragma'] = 'no-cache'
             response.headers['Expires'] = '0'
             return response
-            
+
         flash('Please check your login details and try again.', 'error')
-        response = make_response(render_template('login.html', show_login_reminder=show_login_reminder_flag, login_reminder_message=login_reminder_message, posters=posters_data))
+        response = make_response(render_template('login.html', show_login_reminder=show_login_reminder_flag, login_reminder_message=login_reminder_message, posters=posters_data, sso_enabled=sso_enabled, local_auth_disabled=local_auth_disabled))
         response.set_cookie('session', '', expires=0, path='/', domain=domain)
         response.set_cookie('remember_token', '', expires=0, path='/', domain=domain)
         return response
 
-    response = make_response(render_template('login.html', show_login_reminder=show_login_reminder_flag, login_reminder_message=login_reminder_message, posters=posters_data))
+    response = make_response(render_template('login.html', show_login_reminder=show_login_reminder_flag, login_reminder_message=login_reminder_message, posters=posters_data, sso_enabled=sso_enabled, local_auth_disabled=local_auth_disabled))
     response.set_cookie('session', '', expires=0, path='/', domain=domain)
     response.set_cookie('remember_token', '', expires=0, path='/', domain=domain)
     return response

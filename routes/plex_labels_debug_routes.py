@@ -94,16 +94,24 @@ def bulk_apply_preview():
         if not label_config:
             return jsonify({'success': False, 'message': 'No label configuration found for this source'}), 400
 
-        # Count items from this source in Collected state
+        # Count items from this source in Collected state —
+        # primary source OR listed in content_sources JSON
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
         cursor.execute('''
-            SELECT COUNT(*) as count
+            SELECT COUNT(DISTINCT id) as count
             FROM media_items
-            WHERE content_source = ?
-            AND state = 'Collected'
-        ''', (source_id,))
+            WHERE state = 'Collected'
+              AND (ghostlisted IS NULL OR ghostlisted != 1)
+              AND (
+                content_source = ?
+                OR EXISTS (
+                    SELECT 1 FROM json_each(content_sources) e
+                    WHERE json_extract(e.value, '$.source') = ?
+                )
+              )
+        ''', (source_id, source_id))
 
         count = cursor.fetchone()[0]
         cursor.close()
@@ -161,17 +169,24 @@ def bulk_apply():
 
         logging.info(f"bulk_apply: Starting bulk label application for source_id: {source_id}")
 
-        # Get items from this source in Collected state
+        # Get items from this source in Collected state —
+        # primary source OR listed in content_sources JSON
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
         cursor.execute('''
-            SELECT id, title, type, content_source, content_source_detail
+            SELECT DISTINCT id, title, type, content_source, content_source_detail, content_sources
             FROM media_items
-            WHERE content_source = ?
-            AND state = 'Collected'
-        ''', (source_id,))
+            WHERE state = 'Collected'
+              AND (
+                content_source = ?
+                OR EXISTS (
+                    SELECT 1 FROM json_each(content_sources) e
+                    WHERE json_extract(e.value, '$.source') = ?
+                )
+              )
+        ''', (source_id, source_id))
 
         items = cursor.fetchall()
         cursor.close()
@@ -185,6 +200,12 @@ def bulk_apply():
         failed_items = []
         for row in items:
             item = dict(row)
+            # For items where source_id is secondary, temporarily treat it as primary
+            # so apply_labels_for_item applies that source's label
+            if item.get('content_source') != source_id:
+                item = dict(item)
+                item['content_source'] = source_id
+                item['content_source_detail'] = None
             try:
                 labels_applied = apply_labels_for_item(item)
                 if labels_applied > 0:
@@ -244,17 +265,23 @@ def bulk_apply_stream():
                 yield f"data: {json.dumps({'error': 'source_id is required'})}\n\n"
                 return
 
-            # Get items from this source
+            # Get items from this source — primary source OR listed in content_sources JSON
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
             cursor.execute('''
-                SELECT id, title, type, content_source, content_source_detail
+                SELECT DISTINCT id, title, type, content_source, content_source_detail, content_sources
                 FROM media_items
-                WHERE content_source = ?
-                AND state = 'Collected'
-            ''', (source_id,))
+                WHERE state = 'Collected'
+                  AND (
+                    content_source = ?
+                    OR EXISTS (
+                        SELECT 1 FROM json_each(content_sources) e
+                        WHERE json_extract(e.value, '$.source') = ?
+                    )
+                  )
+            ''', (source_id, source_id))
 
             items = cursor.fetchall()
             cursor.close()
@@ -273,6 +300,11 @@ def bulk_apply_stream():
 
             for index, row in enumerate(items, 1):
                 item = dict(row)
+                # For items where source_id is secondary, treat it as primary for this apply
+                if item.get('content_source') != source_id:
+                    item = dict(item)
+                    item['content_source'] = source_id
+                    item['content_source_detail'] = None
 
                 try:
                     labels_applied = apply_labels_for_item(item)
@@ -365,22 +397,18 @@ def bulk_remove_stream():
 
             sanitized_label = sanitize_label(label)
 
-            # Get items with this label
+            # Get items with this label using DB-level json_each filtering
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
             cursor.execute('''
-                SELECT id, title, plex_labels
-                FROM media_items
-                WHERE plex_labels IS NOT NULL
-            ''')
+                SELECT DISTINCT m.id, m.title, m.plex_labels
+                FROM media_items m, json_each(m.plex_labels) je
+                WHERE m.plex_labels IS NOT NULL AND je.key = ?
+            ''', (sanitized_label,))
 
-            items_to_remove = []
-            for row in cursor.fetchall():
-                plex_labels = parse_plex_labels(row['plex_labels'])
-                if sanitized_label in plex_labels:
-                    items_to_remove.append(dict(row))
+            items_to_remove = [dict(row) for row in cursor.fetchall()]
 
             cursor.close()
             conn.close()
@@ -564,22 +592,24 @@ def sync_all_stream():
 
 @plex_labels_debug_bp.route('/debug/plex-labels/cleanup-orphaned-stream', methods=['POST'])
 def cleanup_orphaned_stream():
-    """Cleanup orphaned labels with streaming progress"""
+    """Cleanup orphaned labels and items from unconfigured sources with streaming progress"""
     def generate():
         conn = None
         cursor = None
         try:
-            # Get active sources
-            settings = get_all_settings()
+            # Get active and configured sources
+            all_settings = get_all_settings()
+            content_sources = all_settings.get('Content Sources', {})
+
             # Build active sources set (lowercase for case-insensitive matching)
             active_sources = set()
-            for category, cat_settings in settings.items():
-                if isinstance(cat_settings, dict):
-                    for key, value in cat_settings.items():
-                        if key.endswith('_plex_labels') and value:
-                            source_key = key.replace('_plex_labels', '')
-                            active_sources.add(source_key.lower())
+            all_configured_sources = set()
+            for source_id, config in content_sources.items():
+                all_configured_sources.add(source_id.lower())
+                if config.get('plex_labels', {}).get('enabled', False):
+                    active_sources.add(source_id.lower())
 
+            # PHASE 1: Clean orphaned labels
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -592,10 +622,10 @@ def cleanup_orphaned_stream():
             cursor = None
             conn = None
 
-            total = len(items)
-            yield f"data: {json.dumps({'status': 'started', 'total': total})}\n\n"
+            total_phase1 = len(items)
+            yield f"data: {json.dumps({'status': 'started', 'phase': 1, 'total': total_phase1, 'message': 'Cleaning orphaned labels'})}\n\n"
 
-            cleaned_count = 0
+            labels_cleaned_count = 0
             start_time = time.time()
 
             for index, row in enumerate(items, 1):
@@ -603,13 +633,14 @@ def cleanup_orphaned_stream():
                 labels_dict = parse_plex_labels(item['plex_labels'])
                 removed_any = False
 
-                for label, sources in list(labels_dict.items()):
+                for label, info in list(labels_dict.items()):
                     # Skip built-in application labels (always active)
                     if label in BUILTIN_LABELS:
                         continue
 
-                    # Check for orphaned sources (case-insensitive, excluding manual)
-                    orphaned_sources = [s for s in sources if s.lower() not in active_sources and s != 'manual']
+                    # Check for orphaned sources (case-insensitive)
+                    source_list = info.get('sources', [])
+                    orphaned_sources = [s for s in source_list if s.lower() not in active_sources]
                     if orphaned_sources:
                         for source in orphaned_sources:
                             try:
@@ -619,29 +650,100 @@ def cleanup_orphaned_stream():
                                 logging.error(f"Error removing orphaned label '{label}' (source: {source}) from item {item['id']}: {e}")
 
                 if removed_any:
-                    cleaned_count += 1
+                    labels_cleaned_count += 1
 
                 elapsed = time.time() - start_time
-                avg_time_per_item = elapsed / index
-                remaining_items = total - index
+                avg_time_per_item = elapsed / index if index > 0 else 0
+                remaining_items = total_phase1 - index
                 estimated_remaining = avg_time_per_item * remaining_items
 
                 progress_data = {
                     'status': 'progress',
+                    'phase': 1,
                     'current': index,
-                    'total': total,
-                    'cleaned': cleaned_count,
+                    'total': total_phase1,
+                    'labels_cleaned': labels_cleaned_count,
                     'item_title': item.get('title', 'Unknown'),
                     'elapsed_seconds': int(elapsed),
                     'estimated_remaining_seconds': int(estimated_remaining)
                 }
                 yield f"data: {json.dumps(progress_data)}\n\n"
 
+            # PHASE 2: Clear orphaned source metadata from items with unconfigured sources
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT id, title, content_source, content_source_detail
+                FROM media_items
+                WHERE content_source IS NOT NULL
+                AND content_source NOT IN ('content_requestor', 'content_requester', 'Collected_1')
+            ''')
+
+            items_with_sources = cursor.fetchall()
+
+            # Collect items that need cleaning
+            items_to_clean = []
+            for row in items_with_sources:
+                content_source = row['content_source']
+                if content_source.lower() not in all_configured_sources:
+                    items_to_clean.append(dict(row))
+
+            total_phase2 = len(items_to_clean)
+            yield f"data: {json.dumps({'status': 'started', 'phase': 2, 'total': total_phase2, 'message': 'Clearing orphaned source metadata'})}\n\n"
+
+            sources_cleaned_count = 0
+            phase2_start = time.time()
+
+            for index, item in enumerate(items_to_clean, 1):
+                item_id = item['id']
+                content_source = item['content_source']
+                title = item['title']
+
+                try:
+                    # Clear the orphaned source metadata
+                    cursor.execute('''
+                        UPDATE media_items
+                        SET content_source = NULL, content_source_detail = NULL
+                        WHERE id = ?
+                    ''', (item_id,))
+                    conn.commit()
+                    sources_cleaned_count += 1
+                    logging.info(f"Cleared orphaned source metadata from item {item_id} ('{title}'): {content_source}")
+                except Exception as e:
+                    logging.error(f"Error clearing source metadata for item {item_id} from unconfigured source {content_source}: {e}")
+
+                elapsed = time.time() - phase2_start
+                avg_time_per_item = elapsed / index if index > 0 else 0
+                remaining_items = total_phase2 - index
+                estimated_remaining = avg_time_per_item * remaining_items
+
+                progress_data = {
+                    'status': 'progress',
+                    'phase': 2,
+                    'current': index,
+                    'total': total_phase2,
+                    'sources_cleaned': sources_cleaned_count,
+                    'item_title': title,
+                    'source': content_source,
+                    'elapsed_seconds': int(elapsed),
+                    'estimated_remaining_seconds': int(estimated_remaining)
+                }
+                yield f"data: {json.dumps(progress_data)}\n\n"
+
+            cursor.close()
+            conn.close()
+            cursor = None
+            conn = None
+
             result = {
                 'status': 'complete',
                 'success': True,
-                'cleaned': cleaned_count,
-                'total': total,
+                'labels_cleaned': labels_cleaned_count,
+                'sources_cleaned': sources_cleaned_count,
+                'total_phase1': total_phase1,
+                'total_phase2': total_phase2,
                 'elapsed_seconds': int(time.time() - start_time)
             }
 
@@ -678,31 +780,14 @@ def bulk_remove_preview():
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        # Count items with this label
+        # Count items with this label using DB-level json_each filtering
         cursor.execute('''
-            SELECT COUNT(*) as count
-            FROM media_items
-            WHERE plex_labels IS NOT NULL
-        ''')
+            SELECT COUNT(DISTINCT m.id)
+            FROM media_items m, json_each(m.plex_labels) je
+            WHERE m.plex_labels IS NOT NULL AND je.key = ?
+        ''', (sanitized_label,))
 
-        total = cursor.fetchone()[0]
-        cursor.close()
-
-        # Count matching items
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT id, plex_labels
-            FROM media_items
-            WHERE plex_labels IS NOT NULL
-        ''')
-
-        count = 0
-        for row in cursor.fetchall():
-            plex_labels = parse_plex_labels(row['plex_labels'])
-            if sanitized_label in plex_labels:
-                count += 1
+        count = cursor.fetchone()[0]
 
         cursor.close()
         conn.close()
@@ -743,17 +828,14 @@ def bulk_remove():
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
+        # Get items with this label using DB-level json_each filtering
         cursor.execute('''
-            SELECT id, plex_labels
-            FROM media_items
-            WHERE plex_labels IS NOT NULL
-        ''')
+            SELECT DISTINCT m.id
+            FROM media_items m, json_each(m.plex_labels) je
+            WHERE m.plex_labels IS NOT NULL AND je.key = ?
+        ''', (sanitized_label,))
 
-        items_to_remove = []
-        for row in cursor.fetchall():
-            plex_labels = parse_plex_labels(row['plex_labels'])
-            if sanitized_label in plex_labels:
-                items_to_remove.append(row['id'])
+        items_to_remove = [row['id'] for row in cursor.fetchall()]
 
         cursor.close()
         conn.close()
@@ -812,9 +894,9 @@ def bulk_remove():
 
 @plex_labels_debug_bp.route('/debug/plex-labels/find-orphaned')
 def find_orphaned():
-    """Find orphaned labels (labels not associated with any active content source)"""
+    """Find orphaned labels and items from unconfigured content sources"""
     try:
-        # Get all configured content sources with labels enabled
+        # Get all configured content sources (both with and without labels enabled for comprehensive check)
         all_settings = get_all_settings()
         content_sources = all_settings.get('Content Sources', {})
 
@@ -824,11 +906,14 @@ def find_orphaned():
             if config.get('plex_labels', {}).get('enabled', False):
                 active_sources.add(source_id.lower())
 
-        # Find all labels in database
+        # Also track ALL configured sources (even if labels disabled) for content_source check
+        all_configured_sources = set(source_id.lower() for source_id in content_sources.keys())
+
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
+        # TYPE 1: Find orphaned labels (items with labels from inactive sources)
         cursor.execute('''
             SELECT id, plex_labels
             FROM media_items
@@ -851,19 +936,50 @@ def find_orphaned():
                         orphaned_labels[label] = 0
                     orphaned_labels[label] += 1
 
+        # TYPE 2: Find items with content_source pointing to unconfigured sources
+        cursor.execute('''
+            SELECT content_source, COUNT(*) as count
+            FROM media_items
+            WHERE content_source IS NOT NULL
+            AND content_source NOT IN ('content_requestor', 'content_requester', 'Collected_1')
+            GROUP BY content_source
+        ''')
+
+        orphaned_sources = {}
+        for row in cursor.fetchall():
+            source = row['content_source']
+            count = row['count']
+            # Check if source is in config (case-insensitive)
+            if source.lower() not in all_configured_sources:
+                orphaned_sources[source] = count
+
         cursor.close()
         conn.close()
 
         # Format results
-        orphaned_list = [
-            {'label': label, 'item_count': count}
+        orphaned_labels_list = [
+            {'label': label, 'item_count': count, 'type': 'label'}
             for label, count in orphaned_labels.items()
         ]
 
+        orphaned_sources_list = [
+            {'source': source, 'item_count': count, 'type': 'content_source'}
+            for source, count in orphaned_sources.items()
+        ]
+
+        # Combine both types
+        total_orphaned_labels = sum(orphaned_labels.values())
+        total_orphaned_sources = sum(orphaned_sources.values())
+
         return jsonify({
             'success': True,
-            'orphaned_labels': orphaned_list,
-            'count': len(orphaned_list)
+            'orphaned_labels': orphaned_labels_list,
+            'orphaned_sources': orphaned_sources_list,
+            'labels_count': len(orphaned_labels_list),
+            'sources_count': len(orphaned_sources_list),
+            'total_items_with_orphaned_labels': total_orphaned_labels,
+            'total_items_from_orphaned_sources': total_orphaned_sources,
+            'count': len(orphaned_labels_list) + len(orphaned_sources_list)  # Total unique orphans
         })
 
     except Exception as e:
@@ -873,11 +989,11 @@ def find_orphaned():
 
 @plex_labels_debug_bp.route('/debug/plex-labels/cleanup-orphaned', methods=['POST'])
 def cleanup_orphaned():
-    """Remove all orphaned labels"""
+    """Remove all orphaned labels and items from unconfigured sources"""
     conn = None
     cursor = None
     try:
-        logging.info("cleanup_orphaned: Starting cleanup of orphaned labels")
+        logging.info("cleanup_orphaned: Starting cleanup of orphaned labels and items")
 
         # Get active sources first
         all_settings = get_all_settings()
@@ -885,13 +1001,15 @@ def cleanup_orphaned():
 
         # Build active sources set (lowercase for case-insensitive matching)
         active_sources = set()
+        all_configured_sources = set()
         for source_id, config in content_sources.items():
+            all_configured_sources.add(source_id.lower())
             if config.get('plex_labels', {}).get('enabled', False):
                 active_sources.add(source_id.lower())
 
-        logging.info(f"cleanup_orphaned: Found {len(active_sources)} active content sources")
+        logging.info(f"cleanup_orphaned: Found {len(active_sources)} active content sources, {len(all_configured_sources)} total configured")
 
-        # Find and remove orphaned labels
+        # TYPE 1: Find and remove orphaned labels (labels from inactive sources)
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -908,10 +1026,10 @@ def cleanup_orphaned():
         cursor = None
         conn = None
 
-        logging.info(f"cleanup_orphaned: Processing {len(all_items)} items")
+        logging.info(f"cleanup_orphaned: Processing {len(all_items)} items for orphaned labels")
 
-        cleaned_count = 0
-        failed_removals = []
+        labels_cleaned_count = 0
+        failed_label_removals = []
         for row in all_items:
             item_id = row['id']
             plex_labels = parse_plex_labels(row['plex_labels'])
@@ -927,21 +1045,75 @@ def cleanup_orphaned():
                 for source in orphaned_sources:
                     try:
                         remove_label_from_item(item_id, label, source, remove_from_plex=True)
-                        cleaned_count += 1
+                        labels_cleaned_count += 1
                     except Exception as e:
                         logging.error(f"Error removing orphaned label {label} from item {item_id}: {e}", exc_info=True)
-                        failed_removals.append({'item_id': item_id, 'label': label, 'source': source, 'error': str(e)})
+                        failed_label_removals.append({'item_id': item_id, 'label': label, 'source': source, 'error': str(e)})
+
+        # TYPE 2: Clear orphaned source metadata from items with unconfigured sources
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT id, title, content_source, content_source_detail
+            FROM media_items
+            WHERE content_source IS NOT NULL
+            AND content_source NOT IN ('content_requestor', 'content_requester', 'Collected_1')
+        ''')
+
+        items_with_sources = cursor.fetchall()
+
+        logging.info(f"cleanup_orphaned: Checking {len(items_with_sources)} items for unconfigured sources")
+
+        sources_cleaned_count = 0
+        failed_source_cleanups = []
+
+        # Collect items to update
+        items_to_clean = []
+        for row in items_with_sources:
+            content_source = row['content_source']
+            if content_source.lower() not in all_configured_sources:
+                items_to_clean.append((row['id'], row['title'], content_source))
+
+        # Update all in one transaction
+        if items_to_clean:
+            try:
+                for item_id, title, source in items_to_clean:
+                    cursor.execute('''
+                        UPDATE media_items
+                        SET content_source = NULL, content_source_detail = NULL
+                        WHERE id = ?
+                    ''', (item_id,))
+                    sources_cleaned_count += 1
+                    logging.info(f"Cleared orphaned source metadata from item {item_id} ('{title}'): {source}")
+
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logging.error(f"Error clearing orphaned source metadata: {e}", exc_info=True)
+                failed_source_cleanups.append({'error': str(e)})
+
+        cursor.close()
+        conn.close()
+        cursor = None
+        conn = None
 
         result = {
             'success': True,
-            'count': cleaned_count
+            'labels_cleaned': labels_cleaned_count,
+            'sources_cleaned': sources_cleaned_count
         }
 
-        if failed_removals:
-            result['failed_removals'] = failed_removals
-            result['failed_count'] = len(failed_removals)
+        if failed_label_removals:
+            result['failed_label_removals'] = failed_label_removals
+            result['failed_label_count'] = len(failed_label_removals)
 
-        logging.info(f"cleanup_orphaned: Completed - cleaned {cleaned_count} orphaned label associations")
+        if failed_source_cleanups:
+            result['failed_source_cleanups'] = failed_source_cleanups
+            result['failed_source_count'] = len(failed_source_cleanups)
+
+        logging.info(f"cleanup_orphaned: Completed - cleaned {labels_cleaned_count} orphaned label associations, cleared {sources_cleaned_count} orphaned source metadata")
         return jsonify(result)
 
     except sqlite3.Error as e:
@@ -1079,6 +1251,38 @@ def backfill_content_source_detail_endpoint():
 
     except Exception as e:
         logging.error(f"Error in backfill endpoint: {e}", exc_info=True)
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
+
+@plex_labels_debug_bp.route('/debug/plex-labels/backfill-resolution', methods=['POST'])
+def backfill_resolution_endpoint():
+    """Backfill resolution for Collected items with NULL resolution from stored paths"""
+    from queues.run_program import backfill_resolution_from_stored_paths
+
+    try:
+        result = backfill_resolution_from_stored_paths()
+
+        if result.get('success'):
+            message = f'Backfilled resolution for {result["updated"]} items'
+            if result.get('failed', 0) > 0:
+                message += f' ({result["failed"]} failed)'
+
+            return jsonify({
+                'success': True,
+                'message': message,
+                'total_items': result['total_items'],
+                'updated': result['updated'],
+                'failed': result['failed'],
+                'by_resolution': result.get('by_resolution', {})
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'Error: {result.get("error", "Unknown error")}'
+            }), 500
+
+    except Exception as e:
+        logging.error(f"Error in resolution backfill endpoint: {e}", exc_info=True)
         return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
 
@@ -1272,6 +1476,35 @@ def find_item_by_title():
 
     except Exception as e:
         logging.error(f"Error finding items by title: {e}", exc_info=True)
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@plex_labels_debug_bp.route('/debug/plex-labels/fix-imdb-by-tmdb/<tmdb_id>/<imdb_id>', methods=['POST'])
+def fix_imdb_id_by_tmdb(tmdb_id, imdb_id):
+    """Fix IMDb ID for all items matching a TMDB ID"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, title, imdb_id FROM media_items WHERE tmdb_id = ?', (tmdb_id,))
+        rows = cursor.fetchall()
+        if not rows:
+            cursor.close()
+            conn.close()
+            return jsonify({'success': False, 'message': f'No items found with TMDB ID {tmdb_id}'}), 404
+        cursor.execute('UPDATE media_items SET imdb_id = ? WHERE tmdb_id = ?', (imdb_id, tmdb_id))
+        conn.commit()
+        updated = [{'id': r[0], 'title': r[1], 'imdb_id_before': r[2]} for r in rows]
+        cursor.close()
+        conn.close()
+        logging.info(f"Updated IMDb ID to {imdb_id} for {len(updated)} items with TMDB ID {tmdb_id}")
+        return jsonify({
+            'success': True,
+            'updated_count': len(updated),
+            'imdb_id_after': imdb_id,
+            'items': updated
+        })
+    except Exception as e:
+        logging.error(f"Error fixing IMDb ID by TMDB ID {tmdb_id}: {e}", exc_info=True)
         return jsonify({'success': False, 'message': str(e)}), 500
 
 

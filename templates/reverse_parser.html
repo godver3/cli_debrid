@@ -1,77 +1,128 @@
 {% extends "base.html" %}
 {% block title %}Reverse Parser Settings{% endblock %}
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/reverse_parser.css') }}">
-<div class="container">
-    <h2>Reverse Parser Tester</h2>
+<style>
+*{box-sizing:border-box}
+:root{
+  --rp-bg:#111;--rp-surface:#1a1a1a;--rp-surface2:#222;--rp-surface3:#2a2a2a;
+  --rp-border:#333;--rp-border2:#3d3d3d;--rp-accent:#e8601c;
+  --rp-text:#e0e0e0;--rp-text2:#aaa;--rp-text3:#666;
+  --rp-green:#22c55e;--rp-red:#ef4444;--rp-blue:#3b82f6;--rp-yellow:#f59e0b;
+  --rp-sans:'Inter',system-ui,sans-serif;
+}
 
-    <div class="settings-section">
-        <div class="settings-section-header">
-            <h4>Information</h4>
-        </div>
-        <div class="settings-section-content">
-            <p class="info-note">
-                This page tests the reverse parsing logic which assigns a "Scraping Version" to filenames. 
-                The "Default Version" below is used as a fallback if no specific scraping version matches a filename based on its content and your scraping configurations.
-                The parsing is primarily automatic, based on your 'Scraping' version configurations.
-            </p>
-        </div>
-    </div>
+.rp-wrap{max-width:1400px;margin:0 auto;padding:1.5rem 1.25rem;font-family:var(--rp-sans);font-size:13px;color:var(--rp-text)}
 
-    <div class="settings-section default-version-container">
-        <div class="settings-section-header">
-            <h4>Default Version (Fallback)</h4>
-        </div>
-        <div class="settings-section-content">
-            <select id="default-version" name="Reverse Parser.default_version" class="settings-input">
-                <!-- Options will be dynamically populated -->
-            </select>
-        </div>
-    </div>
+.rp-page-title{font-size:20px;font-weight:700;color:var(--rp-text);border-left:3px solid var(--rp-accent);padding-left:10px;margin-bottom:1.5rem}
 
-    <div class="settings-section">
-        <div class="settings-section-header">
-            <h4>Filter Options</h4>
-        </div>
-        <div class="settings-section-content">
-            <button id="filterDefaultButton" class="filter-button">
-                {{ 'Show All' if filter_default else 'Show Only Default Version' }}
-            </button>
-        </div>
+/* Cards */
+.rp-card{background:var(--rp-surface);border:1px solid var(--rp-border);border-radius:8px;padding:1.25rem;margin-bottom:1rem}
+
+/* Section headings */
+.rp-section-title{font-size:14px;font-weight:600;color:var(--rp-text2);text-transform:uppercase;letter-spacing:.05em;margin:0 0 .75rem}
+
+/* Info note */
+.rp-info{font-size:13px;color:var(--rp-text2);line-height:1.6;margin:0}
+
+/* Select */
+.rp-select{background:var(--rp-surface2);border:1px solid var(--rp-border2);color:var(--rp-text);border-radius:5px;padding:7px 11px;font-size:13px;font-family:var(--rp-sans);min-width:200px;cursor:pointer;transition:border-color .15s}
+.rp-select:focus{border-color:var(--rp-accent);outline:none}
+
+/* Toolbar row */
+.rp-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:1rem}
+
+/* Buttons */
+.rp-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:6px;font-family:var(--rp-sans);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap;border:none}
+.rp-btn-primary{background:var(--rp-accent);color:#fff}
+.rp-btn-primary:hover{background:#cc5218}
+.rp-btn-secondary{background:transparent;border:1px solid var(--rp-border2);color:var(--rp-text2)}
+.rp-btn-secondary:hover{border-color:var(--rp-text2);color:var(--rp-text)}
+
+/* Table */
+.rp-table-wrap{overflow-x:auto}
+#items-table{width:100%;border-collapse:collapse;font-size:13px}
+#items-table thead th{background:var(--rp-surface2);color:var(--rp-text2);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:9px 12px;text-align:left;border-bottom:1px solid var(--rp-border);white-space:nowrap}
+#items-table tbody tr{border-bottom:1px solid var(--rp-border)}
+#items-table tbody tr:last-child{border-bottom:none}
+#items-table tbody tr:hover{background:rgba(255,255,255,.03)}
+#items-table tbody td{padding:8px 12px;color:var(--rp-text);vertical-align:middle;max-width:300px}
+
+td.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Version badge */
+td.assigned-version{white-space:nowrap;font-weight:500}
+#items-table tr.matched td.assigned-version{color:var(--rp-green) !important}
+#items-table tr.default-version td.assigned-version{color:var(--rp-yellow) !important}
+
+/* Row-level tint */
+#items-table tr.matched{background:rgba(34,197,94,.04)}
+#items-table tr.default-version{background:rgba(245,158,11,.04)}
+
+/* Empty state */
+.rp-empty{font-size:13px;color:var(--rp-text3);padding:.5rem 0}
+</style>
+
+<div class="rp-wrap">
+  <div class="rp-page-title">Reverse Parser Tester</div>
+
+  <!-- Info -->
+  <div class="rp-card">
+    <div class="rp-section-title">Information</div>
+    <p class="rp-info">
+      This page tests the reverse parsing logic which assigns a "Scraping Version" to filenames.
+      The "Default Version" below is used as a fallback if no specific scraping version matches a filename based on its content and your scraping configurations.
+      The parsing is primarily automatic, based on your 'Scraping' version configurations.
+    </p>
+  </div>
+
+  <!-- Controls -->
+  <div class="rp-card">
+    <div class="rp-toolbar">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:12px;color:var(--rp-text2);white-space:nowrap">Default Version (Fallback)</span>
+        <select id="default-version" name="Reverse Parser.default_version" class="rp-select"></select>
+      </div>
+      <button id="filterDefaultButton" class="rp-btn rp-btn-secondary">
+        {{ 'Show All' if filter_default else 'Show Only Default Version' }}
+      </button>
+      <button type="button" id="applyParsedVersionsButton" class="rp-btn rp-btn-primary">Apply Parsed Versions</button>
     </div>
-    <button type="button" id="applyParsedVersionsButton" class="save-button">Apply Parsed Versions</button>
-    
-    <h3>Collected Items</h3>
-    <div class="table-container">
-        {% if items %}
-            <table id="items-table">
-                <thead>
-                    <tr>
-                        {% for column in selected_columns %}
-                            {% if column != 'version' %}
-                                <th>{{ column|title }}</th>
-                            {% endif %}
-                        {% endfor %}
-                        <th>Assigned Version</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in items %}
-                        <tr>
-                            {% for column in selected_columns %}
-                                {% if column != 'version' %}
-                                    <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
-                                {% endif %}
-                            {% endfor %}
-                            <td class="assigned-version" data-parsed-version="{{ item['parsed_version'] }}"></td>
-                        </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        {% else %}
-            <p>No collected items found in the database.</p>
-        {% endif %}
+  </div>
+
+  <!-- Table -->
+  <div class="rp-card">
+    <div class="rp-section-title">Collected Items</div>
+    <div class="table-container rp-table-wrap">
+      {% if items %}
+        <table id="items-table">
+          <thead>
+            <tr>
+              {% for column in selected_columns %}
+                {% if column != 'version' %}
+                  <th>{{ column|title }}</th>
+                {% endif %}
+              {% endfor %}
+              <th>Assigned Version</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in items %}
+              <tr>
+                {% for column in selected_columns %}
+                  {% if column != 'version' %}
+                    <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
+                  {% endif %}
+                {% endfor %}
+                <td class="assigned-version" data-parsed-version="{{ item['parsed_version'] }}"></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="rp-empty">No collected items found in the database.</p>
+      {% endif %}
     </div>
+  </div>
 </div>
 
 <script type="module">
@@ -94,7 +145,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeTooltips();
     setupEventListeners();
     loadVersionData();
-    
+
     // Event Listeners Setup
     function setupEventListeners() {
         if (filterDefaultButton) {
@@ -271,7 +322,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         assignVersions();  // Call this after rendering the table
                     } else {
                         currentItems = []; // Clear items if none found
-                        tableContainer.innerHTML = '<p>No collected items found in the database.</p>';
+                        tableContainer.innerHTML = '<p class="rp-empty">No collected items found in the database.</p>';
                     }
                 } else {
                     console.error('Table container not found');
@@ -382,7 +433,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (filterDefaultButton) {
             filterDefaultButton.textContent = isFilteringDefault ? 'Show All' : 'Show Only Default Version';
         }
-    }  
+    }
 });
 </script>
 {% endblock %}

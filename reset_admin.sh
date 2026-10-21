@@ -3,9 +3,6 @@
 # Navigate to the project directory
 cd "$(dirname "$0")"
 
-# Default action
-ACTION=""
-
 # Parse arguments
 if [ "$1" == "--reset-all" ]; then
     ACTION="reset_all"
@@ -18,41 +15,45 @@ else
     exit 1
 fi
 
-# Run a Python script to perform the action
-python3 -c """
-from web_server import app, db
-from routes.auth_routes import User
+DB_PATH="${USER_DB_CONTENT:-/user/db_content}/users.db"
+
+if [ ! -f "$DB_PATH" ]; then
+    echo "Error: users.db not found at $DB_PATH"
+    exit 1
+fi
+
+python3 << PYEOF
+import sqlite3
 from werkzeug.security import generate_password_hash
-import sys
 
-action = '$ACTION'
+db_path = "$DB_PATH"
+action = "$ACTION"
 
-with app.app_context():
-    if action == 'reset_all':
-        # Delete all existing users
-        User.query.delete()
-        db.session.commit()
-        
-        # Create new admin user
-        hashed_password = generate_password_hash('admin')
-        new_admin = User(username='admin', password=hashed_password, role='admin', is_default=True)
-        db.session.add(new_admin)
-        db.session.commit()
-        print("All users deleted and admin account reset to admin/admin successfully.")
-    
-    elif action == 'reset_admin_password':
-        admin_users = User.query.filter_by(role='admin').all()
-        
-        if admin_users:
-            updated_count = 0
-            for user in admin_users:
-                user.password = generate_password_hash('admin')
-                print(f"Password for admin user '{user.username}' has been reset to 'admin'.")
-                updated_count += 1
-            db.session.commit()
-            print("\nSuccessfully reset passwords for all admin users.")
-        else:
-            print("No admin users found to reset.")
+conn = sqlite3.connect(db_path)
+cur = conn.cursor()
+
+if action == "reset_all":
+    cur.execute("DELETE FROM user")
+    hashed = generate_password_hash("admin")
+    cur.execute(
+        "INSERT INTO user (username, password, role, is_default) VALUES (?, ?, ?, ?)",
+        ("admin", hashed, "admin", 1)
+    )
+    conn.commit()
+    print("All users deleted and admin account reset to admin/admin successfully.")
+
+elif action == "reset_admin_password":
+    cur.execute("SELECT id, username FROM user WHERE role = 'admin'")
+    admins = cur.fetchall()
+    if admins:
+        hashed = generate_password_hash("admin")
+        for user_id, username in admins:
+            cur.execute("UPDATE user SET password = ? WHERE id = ?", (hashed, user_id))
+            print("Password for admin user '{}' has been reset to 'admin'.".format(username))
+        conn.commit()
+        print("\nSuccessfully reset passwords for all admin users.")
     else:
-        print("Invalid action specified to Python script.")
-"""
+        print("No admin users found to reset.")
+
+conn.close()
+PYEOF

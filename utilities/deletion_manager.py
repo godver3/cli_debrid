@@ -36,6 +36,14 @@ STATE_PRIORITY = {
     'all_blacklisted': 9  # DELETE candidate
 }
 
+_PLEX_WATCHLIST_SOURCE_TYPES = {'My Plex Watchlist', 'Other Plex Watchlist', 'My', 'Other', 'Plex'}
+
+
+def _item_from_plex_watchlist(item_source_types) -> bool:
+    """True if any recorded source type is a My/Other Plex Watchlist (or its first-word form)."""
+    return any(t in _PLEX_WATCHLIST_SOURCE_TYPES for t in item_source_types)
+
+
 class DeletionManager:
     """
     Unified deletion manager for all library deletion operations
@@ -370,6 +378,19 @@ class DeletionManager:
                 result['deleted_symlinks'].append(symlink_path)
                 logging.info(f"Deleted symlink: {symlink_path}")
 
+                # Delete subtitle sidecar files left by Bazarr (if setting enabled)
+                subtitle_extensions = {'.srt', '.ass', '.sub', '.ssa', '.vtt', '.idx', '.sup'}
+                delete_subtitles = get_setting('Bazarr Integration', 'delete_subtitles_on_removal', fallback=True)
+                if delete_subtitles and parent_folder and os.path.exists(parent_folder):
+                    try:
+                        for fname in os.listdir(parent_folder):
+                            if os.path.splitext(fname)[1].lower() in subtitle_extensions:
+                                sub_path = os.path.join(parent_folder, fname)
+                                os.remove(sub_path)
+                                logging.info(f"[SYMLINK_DELETION] Deleted subtitle sidecar: {sub_path}")
+                    except Exception as e:
+                        logging.warning(f"[SYMLINK_DELETION] Error cleaning up subtitle files in {parent_folder}: {e}")
+
                 # Handle parent folder cleanup (with safety checks)
                 if parent_folder and os.path.exists(parent_folder) and is_safe_to_delete(parent_folder):
                     try:
@@ -646,6 +667,11 @@ class DeletionManager:
         symlink_paths = []
         for item in items:
             symlink_path = item.get('location_on_disk')
+            # Translate Plex-view paths to local paths, same as delete_single_item,
+            # so items whose location_on_disk isn't already the local symlink path
+            # aren't silently dropped from the batch.
+            if symlink_path:
+                symlink_path = self._translate_plex_path_to_local(symlink_path)
             if symlink_path and symlink_path.startswith(symlink_base):
                 symlink_paths.append(symlink_path)
 
@@ -658,11 +684,17 @@ class DeletionManager:
         # PHASE 2: Delete all symlinks (batch operation)
         for symlink_path in symlink_paths:
             try:
-                if os.path.exists(symlink_path) and os.path.islink(symlink_path):
+                # os.path.islink() alone (not gated on os.path.exists()) is required
+                # to catch broken symlinks: exists() follows the link and returns
+                # False when the target is missing, which is the defining trait of
+                # a broken symlink — the exact case this deletion needs to handle.
+                if os.path.islink(symlink_path):
                     os.unlink(symlink_path)
                     result['deleted_symlinks'].append(symlink_path)
                 elif os.path.exists(symlink_path):
                     logging.warning(f"[BATCH_DELETE_SYMLINKS] Path exists but is not a symlink: {symlink_path}")
+                else:
+                    logging.info(f"[BATCH_DELETE_SYMLINKS] Symlink {symlink_path} already removed (not found)")
             except Exception as e:
                 logging.error(f"[BATCH_DELETE_SYMLINKS] Failed to delete symlink {symlink_path}: {e}")
                 result['errors'].append(f"Symlink deletion failed: {str(e)}")
@@ -992,7 +1024,6 @@ class DeletionManager:
                         section_type = 'show'
 
                     # Use parent folder path for scanning (more efficient than full section scan)
-                    import os
                     scan_paths = [os.path.dirname(item_path)] if item_path else None
 
                     scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
@@ -1133,7 +1164,14 @@ class DeletionManager:
                 import json
                 sources_list = json.loads(item['content_sources']) if isinstance(item['content_sources'], str) else item['content_sources']
                 if sources_list:
-                    item_content_sources.extend(sources_list)
+                    for s in sources_list:
+                        if isinstance(s, dict):
+                            # content_sources stores dicts like {"source": "Overseerr_1", ...}
+                            source_name = s.get('source', '')
+                            if source_name:
+                                item_content_sources.append(source_name)
+                        elif isinstance(s, str):
+                            item_content_sources.append(s)
             except Exception as e:
                 logging.warning(f"[CONTENT_SOURCE_REMOVAL] Could not parse content_sources: {e}")
 
@@ -1336,29 +1374,115 @@ class DeletionManager:
                     result['sources_failed'].append(source_name)
                     result['details'][source_name] = {'success': False, 'message': str(e)}
 
-            # Check Plex Watchlist - SKIP if item not from Plex Watchlist
-            if item_source_types and 'Plex' not in item_source_types and 'My' not in item_source_types:
+            # Check Scrob Lists/Collection — SKIP if item not from a Scrob source
+            # (item_source_types values are the literal source_type strings, e.g.
+            # "Scrob Lists_1".split('_')[0] == "Scrob Lists" — check by prefix,
+            # not exact match, same as the pre-existing "'Trakt' not in ..." gates above).
+            item_is_from_scrob = any(t.startswith('Scrob') for t in item_source_types)
+            if item_source_types and not item_is_from_scrob:
+                logging.info(f"[CONTENT_SOURCE_REMOVAL] ⏭️  Skipping Scrob - item not from a Scrob source")
+            else:
+                from content_checkers.scrob import is_deletion_sync_configured
+                if not is_deletion_sync_configured():
+                    logging.debug("[CONTENT_SOURCE_REMOVAL] Scrob username/password not configured — skipping Scrob deletion sync")
+                else:
+                    # Scrob Collection
+                    scrob_collection_sources = [
+                        source_key for source_key, source_config in content_sources.items()
+                        if source_config.get('type') == 'Scrob Collection' and source_config.get('enabled', False)
+                    ]
+                    if scrob_collection_sources:
+                        source_name = 'Scrob_Collection'
+                        result['sources_attempted'].append(source_name)
+                        try:
+                            from content_checkers.scrob import remove_from_scrob_collection
+                            removal_result = remove_from_scrob_collection([item])
+                            result['details'][source_name] = removal_result
+                            if removal_result.get('success'):
+                                logging.info(f"[CONTENT_SOURCE_REMOVAL] ✓ Successfully removed from Scrob Collection: {removal_result.get('message')}")
+                                result['sources_succeeded'].append(source_name)
+                            else:
+                                logging.warning(f"[CONTENT_SOURCE_REMOVAL] ✗ Failed to remove from Scrob Collection: {removal_result.get('message')}")
+                                result['sources_failed'].append(source_name)
+                        except Exception as e:
+                            logging.error(f"[CONTENT_SOURCE_REMOVAL] Exception removing from Scrob Collection: {e}")
+                            result['sources_failed'].append(source_name)
+                            result['details'][source_name] = {'success': False, 'message': str(e)}
+
+                    # Scrob Lists — one removal attempt per configured list ID, across all enabled Scrob Lists sources
+                    scrob_list_ids = set()
+                    for source_key, source_config in content_sources.items():
+                        if source_config.get('type') == 'Scrob Lists' and source_config.get('enabled', False):
+                            source_media_type = source_config.get('media_type', 'All')
+                            if source_media_type != 'All':
+                                if media_type == 'movie' and source_media_type != 'Movies':
+                                    continue
+                                if media_type == 'show' and source_media_type != 'Shows':
+                                    continue
+                            for lid in (source_config.get('scrob_list_ids', '') or '').split(','):
+                                lid = lid.strip()
+                                if lid:
+                                    scrob_list_ids.add(lid)
+
+                    for list_id in scrob_list_ids:
+                        source_name = f'Scrob_List_{list_id}'
+                        result['sources_attempted'].append(source_name)
+                        try:
+                            from content_checkers.scrob import remove_from_scrob_list
+                            removal_result = remove_from_scrob_list(list_id, [item])
+                            result['details'][source_name] = removal_result
+                            if removal_result.get('success'):
+                                logging.info(f"[CONTENT_SOURCE_REMOVAL] ✓ Successfully removed from Scrob list {list_id}: {removal_result.get('message')}")
+                                result['sources_succeeded'].append(source_name)
+                            else:
+                                logging.warning(f"[CONTENT_SOURCE_REMOVAL] ✗ Failed to remove from Scrob list {list_id}: {removal_result.get('message')}")
+                                result['sources_failed'].append(source_name)
+                        except Exception as e:
+                            logging.error(f"[CONTENT_SOURCE_REMOVAL] Exception removing from Scrob list {list_id}: {e}")
+                            result['sources_failed'].append(source_name)
+                            result['details'][source_name] = {'success': False, 'message': str(e)}
+
+            # Check Plex Watchlists (My + Other) - SKIP if item not from a Plex watchlist source.
+            # item_source_types holds the literal source types ("My Plex Watchlist"), or just the
+            # first word ("My", "Other") for ids without an underscore, so match both forms.
+            if item_source_types and not _item_from_plex_watchlist(item_source_types):
                 logging.info(f"[CONTENT_SOURCE_REMOVAL] ⏭️  Skipping Plex Watchlist - item not from Plex source")
             else:
                 for source_key, source_config in content_sources.items():
-                    if source_config.get('type') == 'My Plex Watchlist' and source_config.get('enabled', False):
-                        result['sources_attempted'].append('Plex_Watchlist')
-                        try:
+                    source_type = source_config.get('type')
+                    if source_type not in ('My Plex Watchlist', 'Other Plex Watchlist') or not source_config.get('enabled', False):
+                        continue
+                    if source_type == 'Other Plex Watchlist':
+                        # Each Other source is a different person's watchlist: only touch the one(s)
+                        # that added this item (all of them when the item has no recorded source).
+                        if item_content_sources and source_key not in item_content_sources:
+                            continue
+                        token = source_config.get('token', '')
+                        if not token:
+                            logging.warning(f"[CONTENT_SOURCE_REMOVAL] No token for {source_key}, cannot remove from that watchlist")
+                            continue
+                    detail_key = 'Plex_Watchlist' if source_type == 'My Plex Watchlist' else f'Other_Plex_Watchlist_{source_key}'
+                    result['sources_attempted'].append(detail_key)
+                    try:
+                        if source_type == 'My Plex Watchlist':
                             from content_checkers.plex_watchlist import remove_from_plex_watchlist_by_item
                             removal_result = remove_from_plex_watchlist_by_item(item)
-                            result['details']['Plex_Watchlist'] = removal_result
-                            if removal_result.get('success'):
-                                result['sources_succeeded'].append('Plex_Watchlist')
-                            elif removal_result.get('not_found'):
-                                # Item wasn't in watchlist - not an error, just checked
-                                result['sources_not_found'].append('Plex_Watchlist')
-                                logging.info(f"[CONTENT_SOURCE_REMOVAL] ⊘ Plex Watchlist checked (item not found in source)")
-                            else:
-                                result['sources_failed'].append('Plex_Watchlist')
-                        except Exception as e:
-                            logging.error(f"Error removing from Plex Watchlist: {e}")
-                            result['sources_failed'].append('Plex_Watchlist')
-                            result['details']['Plex_Watchlist'] = {'success': False, 'message': str(e)}
+                        else:
+                            from content_checkers.plex_watchlist import remove_from_other_plex_watchlist_by_item
+                            removal_result = remove_from_other_plex_watchlist_by_item(item, token)
+                        result['details'][detail_key] = removal_result
+                        if removal_result.get('success'):
+                            result['sources_succeeded'].append(detail_key)
+                        elif removal_result.get('not_found'):
+                            # Item wasn't in watchlist - not an error, just checked
+                            result['sources_not_found'].append(detail_key)
+                            logging.info(f"[CONTENT_SOURCE_REMOVAL] ⊘ {source_type} checked (item not found in source)")
+                        else:
+                            result['sources_failed'].append(detail_key)
+                    except Exception as e:
+                        logging.error(f"Error removing from {source_type}: {e}")
+                        result['sources_failed'].append(detail_key)
+                        result['details'][detail_key] = {'success': False, 'message': str(e)}
 
             # Check Overseerr from Content Sources - SKIP if item not from Overseerr
             if item_source_types and 'Overseerr' not in item_source_types:
@@ -1479,8 +1603,8 @@ class DeletionManager:
                                 logging.error(f"[CONTENT_SOURCE_REMOVAL] Exception removing from MDBList '{list_name}': {e}")
                                 result['sources_failed'].append(source_label)
                                 result['details'][source_label] = {'success': False, 'message': str(e)}
-            elif not mdblist_api_key and mdblist_sources:
-                logging.warning(f"[CONTENT_SOURCE_REMOVAL] MDBList sources configured but API key is missing")
+                elif not mdblist_api_key and mdblist_sources:
+                    logging.warning(f"[CONTENT_SOURCE_REMOVAL] MDBList sources configured but API key is missing")
 
             # Build summary message
             if not result['sources_attempted']:
@@ -1731,7 +1855,7 @@ class DeletionManager:
                           delete_from_media_server: bool = True, delete_files: bool = True,
                           delete_symlinks: bool = True, remove_from_content_source: bool = False,
                           skip_database: bool = False, force_delete_parent_folder: bool = False,
-                          skip_filesystem_wait: bool = False) -> dict:
+                          skip_filesystem_wait: bool = False, item: Optional[dict] = None) -> dict:
         """
         Delete single item with configurable layers
 
@@ -1747,6 +1871,7 @@ class DeletionManager:
             skip_database: If True, skip database operations (for ghostlist where DB already updated)
             force_delete_parent_folder: If True, delete parent folder even if not empty (whole show/movie delete)
             skip_filesystem_wait: If True, skip the 1-second filesystem wait (used in batch operations where wait happens once for entire batch)
+            item: Use this snapshot instead of reading item_id's row (files the row no longer points to)
 
         Returns:
         {
@@ -1781,7 +1906,8 @@ class DeletionManager:
 
         try:
             # Get item from database
-            item = get_item_by_id(item_id)
+            if item is None:
+                item = get_item_by_id(item_id)
             if not item:
                 result['errors'].append(f"Item {item_id} not found")
                 result['success'] = False  # Explicit for clarity (already False from init)
@@ -2005,7 +2131,6 @@ class DeletionManager:
                                     section_type = 'show'
 
                                 # Use parent folder path for scanning
-                                import os
                                 scan_paths = [os.path.dirname(path_for_plex_api)] if path_for_plex_api else None
 
                                 scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
@@ -2040,12 +2165,59 @@ class DeletionManager:
                 # Note: Debrid removal happens after this block (Layer 4)
                 # No local file deletion - rclone mount auto-updates when debrid removes the file
 
-            # Layer 4: Debrid removal (if requested)
+            # Layer 4: Debrid / Usenet removal (if requested)
             if delete_from_debrid and not skip_physical_operations:
-                logging.info(f"[DEBRID_REMOVAL] Debrid removal requested. debrid_provider={self.debrid is not None}, torrent_id={item.get('filled_by_torrent_id')}")
-                if self.debrid and item.get('filled_by_torrent_id'):
-                    torrent_id = item['filled_by_torrent_id']
-                    item_title = item.get('title', 'Unknown')
+                torrent_id = item.get('filled_by_torrent_id')
+                item_title = item.get('title', 'Unknown')
+                is_nzb = str(torrent_id or '').startswith('nzb:')
+                logging.info(f"[DEBRID_REMOVAL] Removal requested. is_nzb={is_nzb}, torrent_id={torrent_id}")
+                # Sibling guard: never remove the provider entry while another
+                # media_items row (e.g. a different version sharing this job id due
+                # to a since-fixed dedup bug) still references it — that would delete
+                # the file out from under the surviving row.
+                _has_sibling = False
+                if torrent_id:
+                    try:
+                        from database import get_db_connection as _gdb_single_del
+                        _conn_sd = _gdb_single_del()
+                        try:
+                            _sib_row = _conn_sd.execute(
+                                "SELECT COUNT(*) FROM media_items "
+                                "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                                (torrent_id, item_id)
+                            ).fetchone()
+                            _has_sibling = (_sib_row[0] if _sib_row else 0) > 0
+                        finally:
+                            _conn_sd.close()
+                    except Exception as _sib_err:
+                        logging.warning(f"[DEBRID_REMOVAL] Sibling check failed for {torrent_id!r}, skipping removal to be safe: {_sib_err}")
+                        _has_sibling = True
+                if _has_sibling:
+                    logging.info(f"[DEBRID_REMOVAL] Skipping removal of {torrent_id!r} — still referenced by another item")
+                elif is_nzb:
+                    # NZB item — delete from usenet provider (cli_mount or NzbDAV)
+                    try:
+                        from usenet import get_usenet_client, reset_usenet_client
+                        reset_usenet_client()
+                        client = get_usenet_client()
+                        info_hash = torrent_id[4:]  # strip 'nzb:'
+                        # Pass location_basename (the scene release name) as the
+                        # fallback match key: it equals the provider's history entry
+                        # name and carries quality/codec, so a stale id on a migrated
+                        # item resolves to the right entry. filled_by_file is often an
+                        # opaque blob name; title is too loose.
+                        nzb_match_name = item.get('location_basename') or item.get('filled_by_file') or item_title
+                        removed = client.remove_nzb(info_hash, nzb_match_name)
+                        result['debrid_removed'] = removed
+                        result['debrid_nzb_removed'] = 1 if removed else 0
+                        if removed:
+                            logging.info(f"[DEBRID_REMOVAL] Successfully removed NZB {info_hash} from usenet provider for '{item_title}'")
+                        else:
+                            logging.warning(f"[DEBRID_REMOVAL] Usenet provider removal returned False for {info_hash}")
+                    except Exception as e:
+                        logging.error(f"[DEBRID_REMOVAL] Failed to remove NZB {torrent_id} from usenet provider: {e}")
+                        result['errors'].append(f"Usenet provider removal failed: {str(e)}")
+                elif self.debrid and torrent_id:
                     logging.info(f"[DEBRID_REMOVAL] Attempting to remove torrent {torrent_id} for '{item_title}'")
                     try:
                         self.debrid.remove_torrent(torrent_id, removal_reason=f"Library deletion: {item_title}")
@@ -2053,17 +2225,16 @@ class DeletionManager:
                         logging.info(f"[DEBRID_REMOVAL] Successfully removed torrent {torrent_id} from debrid provider")
                     except Exception as e:
                         error_msg = str(e)
-                        # 404 errors are expected when Plex already removed the torrent - log as info not error
                         if '404' in error_msg or 'Not Found' in error_msg:
                             logging.info(f"[DEBRID_REMOVAL] Torrent {torrent_id} already removed from debrid provider (expected after Plex deletion)")
-                            result['debrid_removed'] = True  # Still mark as removed since torrent is gone
+                            result['debrid_removed'] = True
                         else:
                             logging.error(f"[DEBRID_REMOVAL] Failed to remove torrent {torrent_id}: {e}")
                             result['errors'].append(f"Debrid removal failed: {str(e)}")
-                elif not self.debrid:
+                elif not self.debrid and not is_nzb:
                     logging.warning(f"[DEBRID_REMOVAL] Skipped - debrid provider not initialized")
-                elif not item.get('filled_by_torrent_id'):
-                    logging.warning(f"[DEBRID_REMOVAL] Skipped - item has no filled_by_torrent_id (title: {item.get('title', 'Unknown')})")
+                elif not torrent_id:
+                    logging.warning(f"[DEBRID_REMOVAL] Skipped - item has no filled_by_torrent_id (title: {item_title})")
 
             # Layer 6: Clear content source cache (if requested)
             if clear_cache and source_info['cache_files']:
@@ -2438,57 +2609,132 @@ class DeletionManager:
                 aggregate_result['errors'] = [err for err in aggregate_result['errors']
                                              if 'Plex deletion disabled' not in str(err) and '400 Bad Request' not in str(err)]
             else:
-                # Not found error - this is OK, just log and continue
-                logging.info(f"[DELETE_MULTIPLE] Plex content not found (already deleted or never added) - continuing with other deletion layers")
+                # Not found error — signal the caller to prompt the user before continuing
+                logging.info(f"[DELETE_MULTIPLE] Plex content not found (already deleted or never added) - returning plex_not_found for user confirmation")
+                aggregate_result['success'] = False
+                aggregate_result['plex_not_found'] = True
+                return aggregate_result
 
-        # PHASE 0: Deduplicated debrid removal - collect unique torrent IDs and remove each ONCE
-        # This prevents removing the same torrent 10+ times when episodes share a torrent pack
-        debrid_removed_ids = set()  # Track which torrent IDs we've already removed
-        if delete_from_debrid and self.debrid:
+        # PHASE 0: Deduplicated debrid/usenet removal - collect unique IDs and remove each ONCE
+        # This prevents removing the same torrent/NZB 10+ times when episodes share a pack
+        debrid_removed_ids = set()
+        if delete_from_debrid:
             from database.database_reading import get_item_by_id
 
-            # Collect unique torrent IDs from all items
-            unique_torrent_ids = {}  # torrent_id -> first item title (for logging)
+            # Collect unique torrent/NZB IDs from all items, split by type
+            unique_torrent_ids = {}   # torrent_id -> (title, infohash, debrid_folder_name)
+            unique_nzb_ids = {}       # info_hash -> (filled_by_file, title) (cli_mount)
             for item_id in item_ids:
                 try:
                     item = get_item_by_id(item_id)
                     if item and item.get('filled_by_torrent_id'):
-                        torrent_id = item['filled_by_torrent_id']
-                        if torrent_id not in unique_torrent_ids:
-                            unique_torrent_ids[torrent_id] = item.get('title', 'Unknown')
+                        tid = item['filled_by_torrent_id']
+                        title = item.get('title', 'Unknown')
+                        if str(tid).startswith('nzb:'):
+                            if tid not in unique_nzb_ids:
+                                # location_basename = scene release name = the provider's
+                                # history entry name (the exact-name fallback key).
+                                match_name = item.get('location_basename') or item.get('filled_by_file') or title
+                                unique_nzb_ids[tid] = (match_name, title)
+                        elif tid not in unique_torrent_ids:
+                            # Store infohash (from magnet) and folder name for cli_mount deletion
+                            magnet = item.get('filled_by_magnet') or ''
+                            import re as _re
+                            _m = _re.search(r'urn:btih:([0-9a-fA-F]{40})', magnet, _re.IGNORECASE)
+                            infohash = _m.group(1).lower() if _m else ''
+                            folder_name = item.get('debrid_folder_name') or ''
+                            unique_torrent_ids[tid] = (title, infohash, folder_name)
                 except Exception as e:
-                    logging.warning(f"[DELETE_MULTIPLE] Could not get item {item_id} for debrid dedup: {e}")
+                    logging.warning(f"[DELETE_MULTIPLE] Could not get item {item_id} for dedup: {e}")
 
-            if unique_torrent_ids:
+            # Sibling guard: never remove a torrent/NZB from the provider while a
+            # media_items row OUTSIDE this delete batch (e.g. a different version
+            # sharing the same job id due to a since-fixed dedup bug) still references
+            # it — that would delete the file out from under the surviving row,
+            # leaving it with a broken symlink. Mirrors the guard already used for
+            # single-item deletion in routes/database_routes.py.
+            _batch_id_set = set(item_ids)
+
+            def _has_external_sibling(_torrent_or_nzb_id):
+                # Select rows by torrent id (one small query, no per-batch-item
+                # placeholder) and compare returned ids against the batch in
+                # Python — avoids SQLite's bound-parameter limit on large batches
+                # (e.g. deleting an entire show with thousands of episodes).
+                try:
+                    from database import get_db_connection as _gdb_dm
+                    _conn_dm = _gdb_dm()
+                    try:
+                        _rows = _conn_dm.execute(
+                            "SELECT id FROM media_items "
+                            "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking')",
+                            (_torrent_or_nzb_id,)
+                        ).fetchall()
+                        return any(r[0] not in _batch_id_set for r in _rows)
+                    finally:
+                        _conn_dm.close()
+                except Exception as _sib_err:
+                    logging.warning(f"[DELETE_MULTIPLE] Sibling check failed for {_torrent_or_nzb_id!r}, skipping removal to be safe: {_sib_err}")
+                    return True
+
+            # Remove NZB items from usenet provider (cli_mount or NzbDAV)
+            if unique_nzb_ids:
+                logging.info(f"[DELETE_MULTIPLE] Phase 0: Removing {len(unique_nzb_ids)} NZB(s) from usenet provider")
+                try:
+                    from usenet import get_usenet_client, reset_usenet_client
+                    reset_usenet_client()
+                    dcy_client = get_usenet_client()
+                    for tid, (file_name, title) in unique_nzb_ids.items():
+                        info_hash = tid[4:]
+                        if _has_external_sibling(tid):
+                            logging.info(f"[DELETE_MULTIPLE] Skipping usenet provider removal for {info_hash} — still referenced by an item outside this batch")
+                            continue
+                        try:
+                            removed = dcy_client.remove_nzb(info_hash, file_name or title)
+                            if removed:
+                                debrid_removed_ids.add(tid)
+                                logging.info(f"[DELETE_MULTIPLE] Removed NZB {info_hash} from usenet provider")
+                            else:
+                                logging.warning(f"[DELETE_MULTIPLE] Usenet provider remove returned False for {info_hash}")
+                        except Exception as e:
+                            logging.error(f"[DELETE_MULTIPLE] Failed to remove NZB {info_hash}: {e}")
+                            aggregate_result['errors'].append(f"Usenet provider removal failed for {tid}: {str(e)}")
+                except Exception as e:
+                    logging.error(f"[DELETE_MULTIPLE] Usenet provider client error: {e}")
+
+            # Remove torrent items from debrid provider
+            if unique_torrent_ids and self.debrid:
                 logging.info(f"[DELETE_MULTIPLE] Phase 0: Removing {len(unique_torrent_ids)} unique torrent(s) from debrid (from {len(item_ids)} items) - PARALLEL MODE (5 concurrent)")
 
-                # PHASE 2: Parallel deletion with ThreadPoolExecutor (5 concurrent workers)
-                def remove_single_torrent(torrent_id_and_title):
-                    """Helper function for parallel torrent deletion"""
-                    torrent_id, first_title = torrent_id_and_title
+                def remove_single_torrent(torrent_id_and_info):
+                    torrent_id, (first_title, infohash, folder_name) = torrent_id_and_info
+                    if _has_external_sibling(torrent_id):
+                        logging.info(f"[DELETE_MULTIPLE] Skipping debrid removal for {torrent_id} — still referenced by an item outside this batch")
+                        return torrent_id, False, None
                     try:
-                        # Skip hash tracking for bulk operations (50% speed improvement)
                         self.debrid.remove_torrent(torrent_id, removal_reason=f"Library deletion: {first_title}", skip_hash_tracking=True)
                         logging.info(f"[DELETE_MULTIPLE] Removed torrent {torrent_id} from debrid")
-                        return torrent_id, True, None
                     except Exception as e:
                         error_msg = str(e)
                         if '404' in error_msg or 'Not Found' in error_msg:
                             logging.info(f"[DELETE_MULTIPLE] Torrent {torrent_id} already removed from debrid")
-                            return torrent_id, True, None  # Still mark as handled
                         else:
                             logging.error(f"[DELETE_MULTIPLE] Failed to remove torrent {torrent_id}: {e}")
                             return torrent_id, False, str(e)
+                    # Also remove from cli_mount — it keeps its own entry separate from RD
+                    if infohash:
+                        try:
+                            from usenet.debrid_repair_engine import _delete_from_climount
+                            _delete_from_climount(infohash, folder_name)
+                            logging.info(f"[DELETE_MULTIPLE] Removed torrent {infohash} from cli_mount")
+                        except Exception as dcy_err:
+                            logging.warning(f"[DELETE_MULTIPLE] cli_mount removal failed for {infohash}: {dcy_err}")
+                    return torrent_id, True, None
 
-                # Execute deletions in parallel with 5 concurrent workers
                 with ThreadPoolExecutor(max_workers=5) as executor:
-                    # Submit all deletion tasks
                     future_to_torrent = {
-                        executor.submit(remove_single_torrent, (tid, title)): tid
-                        for tid, title in unique_torrent_ids.items()
+                        executor.submit(remove_single_torrent, (tid, info)): tid
+                        for tid, info in unique_torrent_ids.items()
                     }
-
-                    # Process results as they complete
                     for future in as_completed(future_to_torrent):
                         torrent_id, success, error = future.result()
                         if success:
@@ -2496,11 +2742,81 @@ class DeletionManager:
                         elif error:
                             aggregate_result['errors'].append(f"Debrid removal failed for {torrent_id}: {error}")
 
-                logging.info(f"[DELETE_MULTIPLE] Phase 0 complete: {len(debrid_removed_ids)}/{len(unique_torrent_ids)} torrents removed (PARALLEL)")
+            total = len(unique_torrent_ids) + len(unique_nzb_ids)
+            if total:
+                logging.info(f"[DELETE_MULTIPLE] Phase 0 complete: {len(debrid_removed_ids)}/{total} items removed")
                 aggregate_result['debrid_removed'] = len(debrid_removed_ids) > 0
-                aggregate_result['debrid_torrents_removed'] = len(debrid_removed_ids)
+                aggregate_result['debrid_torrents_removed'] = sum(1 for tid in debrid_removed_ids if not str(tid).startswith('nzb:'))
+                aggregate_result['debrid_nzb_removed'] = sum(1 for tid in debrid_removed_ids if str(tid).startswith('nzb:'))
             else:
-                logging.info(f"[DELETE_MULTIPLE] Phase 0: No torrent IDs found for debrid removal")
+                logging.info(f"[DELETE_MULTIPLE] Phase 0: No torrent/NZB IDs found for removal")
+
+        # PHASE 0.3: Content source removal (Trakt/Overseerr/etc.) - grouped, not per-item.
+        # For TV, a request/media record in a content source is tracked per SHOW, not per
+        # episode — so this must only fire when this batch covers every remaining kept
+        # episode of the show (no sibling outside the batch). Without this guard, deleting
+        # even a single episode or season through the generic multi-select path would
+        # remove the content source's request/media record for the ENTIRE show, wiping its
+        # availability status even though most of it is still collected. Movies don't have
+        # this ambiguity (one item = one removal target) and are handled per-item as before.
+        # Mirrors the existing show-level call already used by the dedicated /delete_show
+        # route, generalized here so every caller gets the same safety automatically.
+        if remove_from_content_source:
+            from database.database_reading import get_items_by_ids as _get_items_for_cs
+
+            content_source_results = {}
+            items_for_cs = _get_items_for_cs(item_ids)
+            _batch_id_set_cs = set(item_ids)
+
+            for movie_item in (it for it in items_for_cs if it.get('type') == 'movie'):
+                try:
+                    r = self.remove_from_content_source(movie_item)
+                    content_source_results[f"movie_{movie_item['id']}"] = r
+                except Exception as e:
+                    logging.error(f"[DELETE_MULTIPLE] Content source removal failed for movie {movie_item.get('id')}: {e}")
+
+            # Group episode items by show (imdb_id) - one removal attempt per show, not per episode
+            shows_seen = {}
+            for ep in (it for it in items_for_cs if it.get('type') == 'episode'):
+                imdb_id = ep.get('imdb_id')
+                if imdb_id and imdb_id not in shows_seen:
+                    shows_seen[imdb_id] = ep
+
+            for imdb_id, rep_episode in shows_seen.items():
+                try:
+                    from database import get_db_connection as _gdb_cs
+                    _conn_cs = _gdb_cs()
+                    try:
+                        _rows = _conn_cs.execute(
+                            "SELECT id FROM media_items WHERE imdb_id = ? AND type = 'episode' "
+                            "AND state IN ('Collected','Upgrading','Checking')",
+                            (imdb_id,)
+                        ).fetchall()
+                    finally:
+                        _conn_cs.close()
+                    has_external_sibling = any(r[0] not in _batch_id_set_cs for r in _rows)
+                except Exception as e:
+                    logging.warning(f"[DELETE_MULTIPLE] Sibling check failed for content source removal of show {imdb_id}, skipping to be safe: {e}")
+                    has_external_sibling = True
+
+                if has_external_sibling:
+                    logging.info(f"[DELETE_MULTIPLE] Skipping content source removal for show {imdb_id} — other episodes remain outside this batch (partial deletion)")
+                    continue
+
+                show_item = rep_episode.copy()
+                show_item['type'] = 'show'
+                try:
+                    r = self.remove_from_content_source(show_item)
+                    content_source_results[f"show_{imdb_id}"] = r
+                    logging.info(f"[DELETE_MULTIPLE] Removed show {imdb_id} from content sources (batch covers every remaining episode): {r.get('message')}")
+                except Exception as e:
+                    logging.error(f"[DELETE_MULTIPLE] Content source removal failed for show {imdb_id}: {e}")
+
+            aggregate_result['content_source_removal'] = content_source_results
+
+            # Already handled above, centrally and per-show/per-movie - never let the
+            # per-item loop below redundantly (and unsafely, for episodes) repeat this.
+            remove_from_content_source = False
 
         # PHASE 0.5: Batch cache clearing (if enabled) - BEFORE per-item loop
         # Opens each cache file once instead of once per item

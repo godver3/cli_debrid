@@ -140,6 +140,11 @@ def make_request(
                 response.raise_for_status()
             elif response.status_code in [503, 504]:
                 raise RealDebridAPIError(f"Service temporarily unavailable (HTTP {response.status_code})")
+            elif response.status_code == 451:
+                # RD /user returns 451 with malformed body but valid user data — let it fall through.
+                # RD /torrents/addMagnet returns 451 for DMCA blocks — raise so callers can try fallback.
+                if endpoint != '/user':
+                    raise ProviderUnavailableError("Request failed: 451 Client Error: Unavailable For Legal Reasons")
             else:
                 response.raise_for_status()
         
@@ -154,13 +159,45 @@ def make_request(
             _decrease_rate_limit_on_success()
             return result
         except ValueError:
+            # RD occasionally returns 451 with a malformed body: two concatenated JSON objects.
+            # Extract the last valid JSON object from the response text.
+            if response.status_code == 451:
+                import re as _re
+                text = response.text
+                matches = list(_re.finditer(r'\{', text))
+                for m in reversed(matches):
+                    try:
+                        import json as _json
+                        obj = _json.loads(text[m.start():])
+                        if 'id' in obj or 'username' in obj:
+                            _decrease_rate_limit_on_success()
+                            return obj
+                    except Exception:
+                        continue
             result = response.content
             _decrease_rate_limit_on_success()
             return result
             
     except api.exceptions.Timeout:
         raise ProviderUnavailableError("Request timed out")
-        
+
+    except api.exceptions.HTTPError as e:
+        # Handle HTTP errors that were raised by api_tracker's raise_for_status()
+        # Check for 404 on addMagnet
+        if e.response is not None and e.response.status_code == 404:
+            if method == 'POST' and endpoint == '/torrents/addMagnet':
+                # Log the response body for debugging
+                try:
+                    error_body = e.response.json()
+                    error_details = error_body.get('error_details', 'Unknown error')
+                    logging.error(f"Real-Debrid addMagnet failed: {error_details}")
+                except:
+                    logging.error(f"Real-Debrid addMagnet failed with 404")
+                # Raise error with details
+                raise RealDebridAPIError(f"Invalid magnet link or torrent unavailable")
+        # Re-raise other HTTP errors
+        raise ProviderUnavailableError(f"Request failed: {str(e)}")
+
     except api.exceptions.RequestException as e:
         if should_retry_error(e):
             raise RealDebridAPIError(f"Temporary service error: {str(e)}")

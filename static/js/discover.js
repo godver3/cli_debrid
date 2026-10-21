@@ -4,18 +4,22 @@
  * Features advanced filtering, search, and visual browsing
  */
 
+/* global showToast */
+
 // State management
 window.discoverState = {
     currentTab: 'trending',
     searchTerm: '',
     mediaType: 'all',
-    sortBy: 'popularity.desc',
+    sortBy: 'none',
     sortOrder: 'desc',
     page: 1,
     hasMore: true,
     isLoading: false,
+    listModeActive: false, // true when list content (MDBList/FlixPatrol/Personal/sidebar) is displayed
+    contentGen: 0, // bumped by every load that replaces the results view; see beginContentLoad()
     autoLoadCount: 0, // Track consecutive auto-loads to prevent infinite loops
-    maxAutoLoads: 3,  // Maximum pages to auto-load before requiring user scroll
+    maxAutoLoads: 1,  // Maximum pages to auto-load before requiring user scroll
     liveFilterEnabled: true, // Enable live filtering when filter values change
     genres: {
         movie: [],
@@ -24,7 +28,7 @@ window.discoverState = {
     filters: {
         // Search & Sort
         searchQuery: '',
-        sortBy: 'popularity',
+        sortBy: 'none',
         sortOrder: 'desc',
         
         // Basic Filters
@@ -49,11 +53,14 @@ window.discoverState = {
         excludedLanguages: [],
         selectedCountries: [],
         excludedCountries: [],
+        certificationMin: '',
+        certificationMax: '',
         selectedProviders: [],
         excludedProviders: [],
         watchRegion: 'US',
         selectedNetworks: [],
         excludedNetworks: [],
+        networkCache: {},  // Cache network names by ID for display
         selectedCompanies: [],
         excludedCompanies: [],
         companyCache: {},  // Cache company names by ID for display
@@ -63,6 +70,7 @@ window.discoverState = {
         titleFilter: '',  // Client-side title filter (supports text or regex)
         runtimeMin: 0,
         runtimeMax: 300,
+        seasonsMax: 0,
 
         // Active filters for UI
         activeFilters: []
@@ -71,22 +79,29 @@ window.discoverState = {
     discoverSettings: {
         hide_no_rating: false,
         hide_no_poster: false,
-        only_show_missing: false
+        only_show_missing: false,
+        hide_specials: true
     }
 };
 
 // DOM elements
-let searchInput, searchClearBtn, filterToggleBtn, filterDrawer, filterOverlay;
+let searchInput, searchClearBtn, filterToggleBtn, filterDrawer, filterOverlay, filterCloseBtn;
 let tabButtons, resultsGrid, loadingState, emptyState, errorState, pagination;
 let ratingSlider, ratingDisplay, yearFromInput, yearToInput, genresContainer;
 let loadMoreBtn;
+const _listKeywordCache = {}; // tmdbId_mediaType -> array of keyword IDs
+let _filterFetchController = null; // AbortController for in-flight filter fetches
 // Category grids for trending rows
 let trendingContent, searchResults, moviesGrid, showsGrid, animeGrid;
+// Recommendations
+let recommendationsContent, recMoviesGrid, recShowsGrid;
 
 /**
  * Save current filter state to localStorage
  */
 function saveFiltersToStorage() {
+    // Don't persist state when editing an adaptive list — it would overwrite the user's saved session
+    if (window.adaptiveListEditMode) return;
     try {
         const state = window.discoverState;
         const filtersToSave = {
@@ -131,11 +146,15 @@ function saveFiltersToStorage() {
             titleFilter: state.filters.titleFilter,
             runtimeMin: state.filters.runtimeMin,
             runtimeMax: state.filters.runtimeMax,
+            seasonsMax: state.filters.seasonsMax,
+            certificationMin: state.filters.certificationMin,
+            certificationMax: state.filters.certificationMax,
             includeVideo: state.filters.includeVideo,
-            
-            // Cache keyword/company names (needed for chip display)
+
+            // Cache keyword/company/network names (needed for chip display)
             keywordCache: state.filters.keywordCache || {},
-            companyCache: state.filters.companyCache || {}
+            companyCache: state.filters.companyCache || {},
+            networkCache: state.filters.networkCache || {}
         };
         
         localStorage.setItem('discoverFilters', JSON.stringify(filtersToSave));
@@ -171,12 +190,15 @@ function clearSavedFilters() {
     localStorage.removeItem('discoverSidebarLists');
     localStorage.removeItem('discoverFlixPatrol');
     localStorage.removeItem('discoverMDBList');
+    localStorage.removeItem('discoverPersonal');
 }
 
 /**
  * Save sidebar lists selection to localStorage
  */
 function saveSidebarListsToStorage() {
+    // Don't persist state when editing an adaptive list — it would overwrite the user's saved session
+    if (window.adaptiveListEditMode) return;
     try {
         const listsToSave = window.sidebarListsState.selectedLists;
         localStorage.setItem('discoverSidebarLists', JSON.stringify(listsToSave));
@@ -204,6 +226,17 @@ function loadSidebarListsFromStorage() {
 }
 
 /**
+ * Clear sidebar lists from localStorage
+ */
+function clearSavedSidebarLists() {
+    try {
+        localStorage.removeItem('discoverSidebarLists');
+    } catch (e) {
+        console.error('[Lists Filter] Failed to clear saved lists:', e);
+    }
+}
+
+/**
  * Load discover settings from API
  */
 async function loadDiscoverSettings() {
@@ -222,7 +255,8 @@ async function loadDiscoverSettings() {
             hide_no_rating: discoverSettings.hide_no_rating || false,
             hide_no_poster: discoverSettings.hide_no_poster || false,
             only_show_missing: discoverSettings.only_show_missing || false,
-            tv_show_episode_view: discoverSettings.tv_show_episode_view || 'discover'
+            tv_show_episode_view: discoverSettings.tv_show_episode_view || 'discover',
+            hide_specials: discoverSettings.hide_specials !== false
         };
     } catch (error) {
         console.error('[Discover] Error loading settings:', error);
@@ -278,7 +312,9 @@ document.addEventListener('DOMContentLoaded', async function() {
             (savedFilters.excludedNetworks && savedFilters.excludedNetworks.length > 0) ||
             (savedFilters.selectedCompanies && savedFilters.selectedCompanies.length > 0) ||
             (savedFilters.excludedCompanies && savedFilters.excludedCompanies.length > 0) ||
-            savedFilters.runtimeMin > 0 || savedFilters.runtimeMax < 300;
+            savedFilters.runtimeMin > 0 || savedFilters.runtimeMax < 300 ||
+            savedFilters.seasonsMax > 0 ||
+            savedFilters.certificationMin || savedFilters.certificationMax;
         
         if (hasActiveFilters) {
             // Merge saved filters with current state (preserving any new filter properties)
@@ -323,11 +359,22 @@ document.addEventListener('DOMContentLoaded', async function() {
             window.history.replaceState({}, document.title, cleanUrl);
         }
     } else {
-   // Check for saved FlixPatrol or MDBList selections
+        // Restore persisted search term
+        const savedSearchTerm = localStorage.getItem('discoverSearchTerm');
+        if (savedSearchTerm) {
+            searchInput.value = savedSearchTerm;
+            handleSearch();
+            return;
+        }
+
+   // Check for saved FlixPatrol, MDBList, sidebar list, or personal list selections
         const savedFlixPatrol = localStorage.getItem('discoverFlixPatrol');
         const savedMDBList = localStorage.getItem('discoverMDBList');
-        
-        if (savedFlixPatrol || savedMDBList || hasRestoredFilters) {
+        const savedSidebarLists = localStorage.getItem('discoverSidebarLists');
+        const savedPersonal = localStorage.getItem('discoverPersonal');
+        const hasSavedSidebarLists = savedSidebarLists && JSON.parse(savedSidebarLists).length > 0;
+
+        if (savedFlixPatrol || savedMDBList || savedPersonal || hasRestoredFilters || hasSavedSidebarLists || isAdaptiveListEntry) {
             // Hide trending, show search results area immediately
             const trendingContent = document.getElementById('trending-content');
             const searchResults = document.getElementById('search-results');
@@ -337,6 +384,8 @@ document.addEventListener('DOMContentLoaded', async function() {
             // Only load trending if nothing is saved
             loadTrending();
         }
+        // Always sync tab active state after init, regardless of which path was taken
+        updateTabState();
     }
 });
 
@@ -394,6 +443,7 @@ function initializeElements() {
 
     state.runtimeMinInput = document.getElementById('runtime-min');
     state.runtimeMaxInput = document.getElementById('runtime-max');
+    state.seasonsMaxInput = document.getElementById('seasons-max');
 
     // Active Filters
     state.activeFiltersSection = document.getElementById('active-filters-section');
@@ -417,6 +467,10 @@ function initializeElements() {
     moviesGrid = document.getElementById('movies-grid');
     showsGrid = document.getElementById('shows-grid');
     animeGrid = document.getElementById('anime-grid');
+    // Recommendations
+    recommendationsContent = document.getElementById('recommendations-content');
+    recMoviesGrid = document.getElementById('rec-movies-grid');
+    recShowsGrid  = document.getElementById('rec-shows-grid');
 
     // Only restore UI if filters were actually loaded from storage
     if (window.discoverState.hasRestoredFilters) {
@@ -492,6 +546,7 @@ function bindEvents() {
     // Tab navigation
     tabButtons.forEach(btn => {
         btn.addEventListener('click', function() {
+            if (this.classList.contains('flixpatrol-dropdown-trigger') || this.classList.contains('mdblist-dropdown-trigger')) return;
             const tab = this.dataset.tab;
             switchTab(tab);
         });
@@ -604,6 +659,13 @@ function bindEvents() {
         });
     }
 
+    if (state.seasonsMaxInput) {
+        state.seasonsMaxInput.addEventListener('input', function() {
+            state.filters.seasonsMax = parseInt(this.value) || 0;
+            updateActiveFilters();
+        });
+    }
+
     // Media type filters (existing)
     document.addEventListener('click', function(e) {
         if (e.target.matches('[data-filter="type"]')) {
@@ -638,6 +700,19 @@ function bindEvents() {
         includeVideoCheckbox.addEventListener('change', (e) => {
             state.filters.includeVideo = e.target.checked;
             applyAdvancedFilters(false); // Keep sidebar open
+        });
+    }
+
+    // Merge with adaptive discover checkbox — re-runs the list load (capped at 5
+    // pages of TMDB Discover, same as the scheduled task) so the preview updates.
+    const mergeWithAdaptiveCheckbox = document.getElementById('merge-with-adaptive');
+    if (mergeWithAdaptiveCheckbox) {
+        mergeWithAdaptiveCheckbox.addEventListener('change', (e) => {
+            state.filters.mergeWithAdaptive = e.target.checked;
+            const listsState = window.sidebarListsState;
+            if (listsState && listsState.selectedLists && listsState.selectedLists.length > 0) {
+                loadAllSelectedLists();
+            }
         });
     }
 
@@ -697,22 +772,151 @@ function initializeSemanticUI() {
     if (watchRegionSelect) {
         watchRegionSelect.addEventListener('change', (e) => {
             state.filters.watchRegion = e.target.value;
+            loadCertifications(e.target.value);
+            loadProviders(e.target.value);
+            updateActiveFilters();
+        });
+        // Load certifications for initial region on page load
+        loadCertifications(watchRegionSelect.value);
+    }
+
+    // Initialize all chips input containers with include/exclude support.
+    // Pass getter functions so the handlers always read the live arrays from state.filters
+    // even after clearAllFilters() replaces the entire state.filters object.
+    initializeChipsInput('genres',
+        () => window.discoverState.filters.selectedGenres,
+        () => window.discoverState.filters.excludedGenres,
+        () => updateActiveFilters());
+    initializeChipsInput('language',
+        () => window.discoverState.filters.selectedLanguages,
+        () => window.discoverState.filters.excludedLanguages,
+        () => updateActiveFilters());
+    initializeChipsInput('country',
+        () => window.discoverState.filters.selectedCountries,
+        () => window.discoverState.filters.excludedCountries,
+        () => updateActiveFilters());
+    initializeChipsInput('provider',
+        () => window.discoverState.filters.selectedProviders,
+        () => window.discoverState.filters.excludedProviders,
+        () => updateActiveFilters());
+    loadProviders(state.filters.watchRegion || 'US');
+    initializeNetworkFilter();
+
+    // Initialize certification range selects
+    const certMinSelect = document.getElementById('certification-min-select');
+    const certMaxSelect = document.getElementById('certification-max-select');
+    if (certMinSelect) {
+        certMinSelect.addEventListener('change', function() {
+            state.filters.certificationMin = this.value;
             updateActiveFilters();
         });
     }
-
-    // Initialize all chips input containers with include/exclude support
-    initializeChipsInput('genres', state.filters.selectedGenres, state.filters.excludedGenres, () => updateActiveFilters());
-    initializeChipsInput('language', state.filters.selectedLanguages, state.filters.excludedLanguages, () => updateActiveFilters());
-    initializeChipsInput('country', state.filters.selectedCountries, state.filters.excludedCountries, () => updateActiveFilters());
-    initializeChipsInput('provider', state.filters.selectedProviders, state.filters.excludedProviders, () => updateActiveFilters());
-    initializeChipsInput('network', state.filters.selectedNetworks, state.filters.excludedNetworks, () => updateActiveFilters());
+    if (certMaxSelect) {
+        certMaxSelect.addEventListener('change', function() {
+            state.filters.certificationMax = this.value;
+            updateActiveFilters();
+        });
+    }
 
     // Initialize keyword filter with dynamic search
     initializeKeywordFilter();
     
     // Initialize company filter with dynamic search
     initializeCompanyFilter();
+}
+
+/**
+ * Load certifications based on selected watch region into range selects
+ */
+async function loadCertifications(region) {
+    const certMinSelect = document.getElementById('certification-min-select');
+    const certMaxSelect = document.getElementById('certification-max-select');
+    if (!certMinSelect || !certMaxSelect) return;
+
+    try {
+        let mediaType = window.discoverState.filters.mediaType || 'movie';
+
+        // For 'all', fetch both movie and TV certifications
+        if (mediaType === 'all') {
+            // Fetch both movie and TV certifications and combine them
+            const [movieResponse, tvResponse] = await Promise.all([
+                fetch(`/discover/api/certifications?region=${region}&type=movie`),
+                fetch(`/discover/api/certifications?region=${region}&type=tv`)
+            ]);
+
+            const movieData = movieResponse.ok ? await movieResponse.json() : { certifications: [] };
+            const tvData = tvResponse.ok ? await tvResponse.json() : { certifications: [] };
+
+            const movieCerts = (movieData.certifications || []).map(c => ({ ...c, type: 'Movie' }));
+            const tvCerts = (tvData.certifications || []).map(c => ({ ...c, type: 'TV' }));
+
+            // Combine and sort by order
+            const allCertifications = [...movieCerts, ...tvCerts].sort((a, b) => a.order - b.order);
+
+            // Populate both selects
+            populateCertificationSelects(certMinSelect, certMaxSelect, allCertifications, true);
+
+        } else {
+            // Single media type
+            const response = await fetch(`/discover/api/certifications?region=${region}&type=${mediaType}`);
+
+            if (!response.ok) {
+                console.warn('[Discover] Failed to load certifications');
+                return;
+            }
+
+            const data = await response.json();
+            const certifications = (data.certifications || []).sort((a, b) => a.order - b.order);
+
+            // Populate both selects
+            populateCertificationSelects(certMinSelect, certMaxSelect, certifications, false);
+        }
+
+    } catch (error) {
+        console.error('[Discover] Error loading certifications:', error);
+    }
+}
+
+/**
+ * Populate certification select dropdowns
+ */
+function populateCertificationSelects(minSelect, maxSelect, certifications, showType) {
+    const state = window.discoverState;
+
+    // Save current selections
+    const currentMin = state.filters.certificationMin;
+    const currentMax = state.filters.certificationMax;
+
+    // Blur and reset selects to prevent dropdown state issues
+    minSelect.blur();
+    maxSelect.blur();
+
+    // Clear existing options except "Any"
+    minSelect.innerHTML = '<option value="">Any</option>';
+    maxSelect.innerHTML = '<option value="">Any</option>';
+
+    // Populate options
+    certifications.forEach(cert => {
+        const label = showType ? `${cert.certification} (${cert.type})` : cert.certification;
+
+        const minOption = document.createElement('option');
+        minOption.value = cert.certification;
+        minOption.textContent = label;
+        minSelect.appendChild(minOption);
+
+        const maxOption = document.createElement('option');
+        maxOption.value = cert.certification;
+        maxOption.textContent = label;
+        maxSelect.appendChild(maxOption);
+    });
+
+    // Restore selections if they still exist in new list
+    if (currentMin && Array.from(minSelect.options).some(opt => opt.value === currentMin)) {
+        minSelect.value = currentMin;
+    }
+    if (currentMax && Array.from(maxSelect.options).some(opt => opt.value === currentMax)) {
+        maxSelect.value = currentMax;
+    }
 }
 
 /**
@@ -871,9 +1075,12 @@ function toggleKeyword(keywordId, keywordName, action, dropdownItem, chipsWrappe
         dropdownItem.classList.add('excluded');
     }
 
-    // Re-render chips
+    // Re-render chips and re-apply filters (needed for list mode client-side keyword filtering)
     renderKeywordChips(chipsWrapper);
     updateActiveFilters();
+    if (window.discoverState.listModeActive) {
+        applyAdvancedFilters(false);
+    }
 }
 
 /**
@@ -895,6 +1102,7 @@ function renderKeywordChips(chipsWrapper) {
             if (idx > -1) state.filters.selectedKeywords.splice(idx, 1);
             renderKeywordChips(chipsWrapper);
             updateActiveFilters();
+            applyAdvancedFilters(false);
         });
         chipsWrapper.appendChild(chip);
     });
@@ -911,6 +1119,7 @@ function renderKeywordChips(chipsWrapper) {
             if (idx > -1) state.filters.excludedKeywords.splice(idx, 1);
             renderKeywordChips(chipsWrapper);
             updateActiveFilters();
+            applyAdvancedFilters(false);
         });
         chipsWrapper.appendChild(chip);
     });
@@ -1123,7 +1332,7 @@ function renderCompanyChips(chipsWrapper) {
 /**
  * Initialize MDBlist-style chips input with include/exclude support
  */
-function initializeChipsInput(name, includeArray, excludeArray, onChange) {
+function initializeChipsInput(name, includeArrayOrGetter, excludeArrayOrGetter, onChange) {
     const container = document.getElementById(`${name}-container`);
     if (!container) {
         console.warn(`[Discover] Chips container not found: ${name}-container`);
@@ -1140,6 +1349,16 @@ function initializeChipsInput(name, includeArray, excludeArray, onChange) {
         console.warn(`[Discover] Missing elements for ${name}:`, { chipsWrapper: !!chipsWrapper, searchInput: !!searchInput, dropdown: !!dropdown });
         return;
     }
+
+    // Support both direct array refs (legacy) and getter functions.
+    // Getter functions are preferred: they always return the live array from state.filters
+    // even after clearAllFilters() replaces the entire state.filters object.
+    const getInclude = typeof includeArrayOrGetter === 'function'
+        ? includeArrayOrGetter
+        : () => includeArrayOrGetter;
+    const getExclude = typeof excludeArrayOrGetter === 'function'
+        ? excludeArrayOrGetter
+        : () => excludeArrayOrGetter;
 
     console.log(`[Discover] Initializing chips input: ${name}`);
 
@@ -1193,6 +1412,10 @@ function initializeChipsInput(name, includeArray, excludeArray, onChange) {
         if (value === 'match_all') return;
 
         e.stopPropagation();
+
+        // Always read the live arrays via getters so stale closure refs are never used
+        const includeArray = getInclude();
+        const excludeArray = getExclude();
 
         // Determine action: exclude button = exclude, otherwise include (button or item click)
         const isExclude = excludeBtn && !container.classList.contains('include-only');
@@ -1270,9 +1493,10 @@ function setupDropdownItemButtons(dropdown) {
         // Skip if already has buttons
         if (item.querySelector('.chips-item-actions')) return;
 
-        const label = item.textContent.trim();
+        const existingLabel = item.querySelector('.chips-item-label');
+        const labelHtml = existingLabel ? existingLabel.outerHTML : `<span class="chips-item-label">${item.textContent.trim()}</span>`;
         item.innerHTML = `
-            <span class="chips-item-label">${label}</span>
+            ${labelHtml}
             <div class="chips-item-actions">
                 <button type="button" class="chips-include-btn" title="Include">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -1401,6 +1625,9 @@ function clearChipsInput(name) {
     } else if (name === 'company') {
         state.filters.selectedCompanies = [];
         state.filters.excludedCompanies = [];
+    } else if (name === 'certification') {
+        state.filters.selectedCertifications = [];
+        state.filters.excludedCertifications = [];
     }
 
     // Clear chips display
@@ -1784,15 +2011,47 @@ function isIDSearch(searchTerm) {
 /**
  * Handle search input
  */
+/**
+ * Each load that replaces the results view (search, filters, lists, trending) takes a new
+ * generation and renders only if it is still the newest, so a slow list or an older search
+ * response can't overwrite what the user asked for last.
+ */
+function beginContentLoad() {
+    return ++window.discoverState.contentGen;
+}
+
+function isStaleContentLoad(gen) {
+    return gen !== window.discoverState.contentGen;
+}
+
+/** True once the user has typed a search, including while the input debounce is pending. */
+function searchIsActive() {
+    const input = searchInput || document.getElementById('search-input');
+    return !!(input && input.value.trim());
+}
+
 function handleSearch() {
     const query = searchInput.value.trim();
     window.discoverState.searchTerm = query;
 
     if (query.length === 0) {
         searchClearBtn.style.display = 'none';
-        loadTrending();
+        localStorage.removeItem('discoverSearchTerm');
+        beginContentLoad(); // drop any search still in flight
+        // Go back to the selected list if there is one, otherwise trending
+        const listsState = window.sidebarListsState;
+        const hasSidebarLists = listsState && listsState.selectedLists && listsState.selectedLists.length > 0;
+        if (window.discoverState.listModeActive && listsState && listsState.rawResults.length > 0) {
+            filterAndRenderListResults();
+        } else if (hasSidebarLists) {
+            loadAllSelectedLists();
+        } else {
+            loadTrending();
+        }
         return;
     }
+
+    localStorage.setItem('discoverSearchTerm', query);
 
     // ID searches (IMDb/TMDB) are now handled inline by the backend API
     // No page redirect needed - just proceed with normal search flow
@@ -1816,6 +2075,7 @@ function clearSearch() {
     searchClearBtn.style.display = 'none';
     window.discoverState.searchTerm = '';
     window.discoverState.filters.searchQuery = '';
+    localStorage.removeItem('discoverSearchTerm');
     updateActiveFilters();
     switchTab('trending'); // Fallback to trending
 }
@@ -1939,6 +2199,27 @@ function clearRuntimeFilter() {
     updateActiveFilters();
 }
 
+function clearSeasonsMaxFilter() {
+    const state = window.discoverState;
+    state.filters.seasonsMax = 0;
+    if (state.seasonsMaxInput) state.seasonsMaxInput.value = '';
+    updateActiveFilters();
+}
+
+/**
+ * Clear certification filter
+ */
+function clearCertificationFilter() {
+    const state = window.discoverState;
+    state.filters.certificationMin = '';
+    state.filters.certificationMax = '';
+    const certMinSelect = document.getElementById('certification-min-select');
+    const certMaxSelect = document.getElementById('certification-max-select');
+    if (certMinSelect) certMinSelect.value = '';
+    if (certMaxSelect) certMaxSelect.value = '';
+    updateActiveFilters();
+}
+
 /**
  * Clear production company filter
  */
@@ -1965,138 +2246,10 @@ function clearProductionCompanyFilter() {
  * Clear all filters
  */
 function clearAllFilters() {
-    const state = window.discoverState;
-
- // Set flag to prevent saving during clear
-    state.isClearing = true;
-    
-    // Reset restoration flag to prevent any filter restoration
-    state.hasRestoredFilters = false;
-    
-    // Cancel any pending live filter timeout to prevent automatic filter application
-    if (window.liveFilterTimeout) {
-        clearTimeout(window.liveFilterTimeout);
-        window.liveFilterTimeout = null;
-    }
-
-    // Reset all filter values (including excluded arrays)
-    state.filters = {
-        searchQuery: '',
-        sortBy: 'popularity',
-        sortOrder: 'desc',
-        mediaType: 'all',
-        yearFrom: '',
-        yearTo: '',
-        releasedWithin: '',
-        upcomingDays: '',
-        tmdbRatingMin: 0,
-        tmdbRatingMax: 10,
-        imdbRatingMin: 0,
-        imdbRatingMax: 10,
-        tmdbVotesMin: 0,
-        imdbVotesMin: 0,
-        selectedGenres: [],
-        excludedGenres: [],
-        selectedLanguages: [],
-        excludedLanguages: [],
-        selectedCountries: [],
-        excludedCountries: [],
-        selectedProviders: [],
-        excludedProviders: [],
-        watchRegion: 'US',
-        selectedNetworks: [],
-        excludedNetworks: [],
-        selectedCompanies: [],
-        excludedCompanies: [],
-        companyCache: {},
-        selectedKeywords: [],
-        excludedKeywords: [],
-        keywordCache: {},
-        runtimeMin: 0,
-        runtimeMax: 300,
-        activeFilters: []
-    };
-
-    // Clear saved filters from localStorage BEFORE updating UI
-    clearSavedFilters();
-    
-    // Clear sidebar lists selection
-    if (window.sidebarListsState) {
-        window.sidebarListsState.selectedLists = [];
-        window.sidebarListsState.rawResults = [];
-        renderSidebarListChips();
-        
-        // Clear dropdown visual state
-        const dropdown = document.getElementById('lists-dropdown');
-        if (dropdown) {
-            dropdown.querySelectorAll('.included').forEach(item => {
-                item.classList.remove('included');
-            });
-        }
-        
-        // Re-enable all filters
-        updateFilterAvailability();
-    }
-
-    // Reset UI elements
-    clearSearch();
-    clearYearFilter();
-    clearReleasedFilter();
-    clearUpcomingFilter();
-    clearTmdbRatingFilter();
-    clearRuntimeFilter();
-
-    // Clear all chips inputs
-    clearChipsInput('genres');
-    clearChipsInput('language');
-    clearChipsInput('country');
-    clearChipsInput('provider');
-    clearChipsInput('network');
-    clearChipsInput('company');
-
-    // Reset watch region select
-    const watchRegionSelect = document.getElementById('watch-region');
-    if (watchRegionSelect) {
-        watchRegionSelect.value = 'US';
-    }
-
-    // Reset sort select
-    if (state.sortBySelect) {
-        state.sortBySelect.value = 'popularity';
-    }
-
-    // Reset sort order toggle
-    if (state.sortOrderToggle) {
-        state.sortOrderToggle.setAttribute('data-order', 'desc');
-        const descIcon = state.sortOrderToggle.querySelector('.sort-icon-desc');
-        const ascIcon = state.sortOrderToggle.querySelector('.sort-icon-asc');
-        if (descIcon) descIcon.style.display = 'block';
-        if (ascIcon) ascIcon.style.display = 'none';
-    }
-
-    updateActiveFilters();
-
-    // Apply default filters (keep sidebar open)
-    applyAdvancedFilters(false);
-
-    // Clear search input
-    if (searchInput) {
-        searchInput.value = '';
-    }
-    if (searchClearBtn) {
-        searchClearBtn.style.display = 'none';
-    }
-    state.searchTerm = '';
-
-    // Return to trending view (all filters are cleared)
-    if (trendingContent) trendingContent.style.display = 'block';
-    if (searchResults) searchResults.style.display = 'none';
-
-    // Reload trending content
-    loadTrending();
-    
-     // Clear the flag
-    state.isClearing = false;
+    // Close the filter drawer first
+    if (typeof closeFilters === 'function') closeFilters();
+    // Delegate to the full clear implementation
+    clearFiltersAndReload();
 }
 
 /**
@@ -2106,6 +2259,49 @@ function clearAllFilters() {
 function applyAdvancedFilters(closeDrawer = true) {
     const state = window.discoverState;
     const listsState = window.sidebarListsState;
+    const currentTab = state.currentTab;
+
+    // In adaptive list edit/create mode: only allow client-side list re-filtering, no server fetches.
+    if (window.adaptiveListEditMode) {
+        if (state.listModeActive && listsState.rawResults && listsState.rawResults.length > 0) {
+            filterAndRenderListResults();
+        }
+        if (closeDrawer) closeFilters();
+        return;
+    }
+
+    // For tabs that show list content, re-fetch (respects mediaType) then client-side filter.
+    // MDBList and FlixPatrol re-call their loaders so mediaType is sent to the API.
+    if (currentTab === 'mdblist' && window.mdblistState && window.mdblistState.currentList) {
+        if (trendingContent) trendingContent.style.display = 'none';
+        if (searchResults) searchResults.style.display = 'block';
+        if (closeDrawer && typeof closeFilters === 'function') closeFilters();
+        loadMDBListContent(window.mdblistState.currentList.key);
+        return;
+    }
+    if (currentTab === 'flixpatrol' && window.flixpatrolState && window.flixpatrolState.currentPlatform) {
+        if (trendingContent) trendingContent.style.display = 'none';
+        if (searchResults) searchResults.style.display = 'block';
+        if (closeDrawer && typeof closeFilters === 'function') closeFilters();
+        loadFlixPatrolContent(window.flixpatrolState.currentPlatform.id, window.flixpatrolState.currentPeriod || 'today');
+        return;
+    }
+    if (currentTab === 'personal' && window.personalState && window.personalState.currentSelection) {
+        if (trendingContent) trendingContent.style.display = 'none';
+        if (searchResults) searchResults.style.display = 'block';
+        if (closeDrawer && typeof closeFilters === 'function') closeFilters();
+        loadPersonalContent();
+        return;
+    }
+
+    // If a preset is active and hasn't been modified yet, mark it dirty now.
+    // activePresetId is null during loadFilterPreset's own applyAdvancedFilters call
+    // (it's set to null at the top of loadFilterPreset), so this only triggers for
+    // subsequent user-initiated filter changes.
+    if (activePresetId && !presetDirty) {
+        presetDirty = true;
+        updatePresetButtonState();
+    }
 
     // Reset page and auto-load count for new filter application
     state.page = 1;
@@ -2119,42 +2315,43 @@ function applyAdvancedFilters(closeDrawer = true) {
     if (closeDrawer) {
         closeFilters();
     }
-    
-    // If lists are currently selected, re-filter the list results instead of doing API search
-    if (listsState.selectedLists && listsState.selectedLists.length > 0 && listsState.rawResults.length > 0) {
-        console.log('[Discover] Re-filtering list results with current filters');
-        
-        // Apply filters to stored raw results
-        const filteredResults = filterListResults(listsState.rawResults);
-        
-        // Clear and render filtered results
-        if (resultsGrid) {
-            resultsGrid.innerHTML = '';
+
+    // If sidebar lists are selected, never fall through to the TMDB discover API path.
+    // • rawResults populated → re-filter client-side now
+    // • rawResults empty (fetch in-flight) → bail; loadAllSelectedLists will apply current
+    //   filters via filterAndRenderListResults() once data arrives
+    if (listsState.selectedLists && listsState.selectedLists.length > 0) {
+        if (listsState.rawResults.length > 0) {
+            filterAndRenderListResults();
         }
-        
-        if (filteredResults && filteredResults.length > 0) {
-            renderResults(filteredResults);
-            hideError();
-            hideEmpty();
-            
-            // Update results info
-            updateResultsInfo({
-                total_results: filteredResults.length,
-                page: 1,
-                total_pages: 1
-            });
-        } else {
-            showEmpty();
-        }
-        
-        updatePagination();
-        clearLoadingFlag();
         return;  // Don't proceed to TMDB API search
     }
 
+    runDiscoverFilterQuery();
+}
+
+/**
+ * Build TMDB discover params from the current filter state and fetch results.
+ * This is the generic (non-list-mode, non-tab-specific) query path shared by
+ * applyAdvancedFilters() and the adaptive-list edit one-time initial load
+ * (see loadAdaptiveListForEdit) — the latter calls this directly to bypass
+ * applyAdvancedFilters()'s deliberate no-fetch-while-editing guard, since an
+ * initial load is a one-time fetch, not a live-tweak reaction.
+ */
+/**
+ * Build the full /discover/api/filter query params from the current advanced-filter
+ * state. Single source of truth for every field TMDB discover supports in this app —
+ * reused by both the normal Discover browsing path (runDiscoverFilterQuery) and the
+ * "merge with adaptive list" preview (loadAllSelectedLists), so the two can never
+ * drift apart by one hand-picking a subset of fields the other includes.
+ */
+function buildDiscoverFilterParams(page) {
+    const state = window.discoverState;
+
     // Build sort_by parameter - dropdown values already include order (e.g., "popularity.desc")
     // If sortBy already has the order, use it directly; otherwise combine with sortOrder
-    let sortByValue = state.filters.sortBy;
+    // 'none' is only meaningful for list mode; fall back to popularity for TMDB API
+    let sortByValue = (state.filters.sortBy === 'none') ? 'popularity' : state.filters.sortBy;
     if (sortByValue && !sortByValue.includes('.')) {
         sortByValue = `${sortByValue}.${state.filters.sortOrder}`;
     }
@@ -2168,10 +2365,9 @@ function applyAdvancedFilters(closeDrawer = true) {
     // Check if specific date filters are set (these take priority over year range)
     const hasDateFilter = state.filters.releasedWithin || state.filters.upcomingDays;
 
-    // Build query parameters
-    const params = new URLSearchParams({
+    return new URLSearchParams({
         type: mediaType,
-        page: state.page,
+        page: page,
         sort_by: sortByValue,
         // Basic filters - year range only applies if no specific date filter is set and user entered values
         year_from: !hasDateFilter && state.filters.yearFrom ? state.filters.yearFrom : '',
@@ -2203,10 +2399,21 @@ function applyAdvancedFilters(closeDrawer = true) {
         // Runtime
         runtime_min: state.filters.runtimeMin > 0 ? state.filters.runtimeMin : '',
         runtime_max: state.filters.runtimeMax < 300 ? state.filters.runtimeMax : '',
+        // Seasons max (TV only, client-side filter)
+        seasons_max: state.filters.seasonsMax > 0 ? state.filters.seasonsMax : '',
+        // Certification (range with gte/lte)
+        'certification.gte': state.filters.certificationMin || '',
+        'certification.lte': state.filters.certificationMax || '',
+        certification_country: state.filters.watchRegion || 'US',
         // Production Company (include and exclude)
         production_company: state.filters.selectedCompanies.join(','),
         production_company_exclude: state.filters.excludedCompanies.join(',')
     });
+}
+
+function runDiscoverFilterQuery() {
+    const state = window.discoverState;
+    const params = buildDiscoverFilterParams(state.page);
 
     // Clear results and state before fetching new results to prevent showing stale data
     state.currentResults = [];
@@ -2223,15 +2430,26 @@ function applyAdvancedFilters(closeDrawer = true) {
  */
 async function fetchAdvancedFilterResults(params) {
     const isInitialLoad = window.discoverState.page === 1;
+    const gen = isInitialLoad ? beginContentLoad() : window.discoverState.contentGen;
+    window.discoverState.listModeActive = false;
+
+    // Cancel any in-flight filter request before starting a new one
+    if (_filterFetchController) {
+        _filterFetchController.abort();
+    }
+    _filterFetchController = new AbortController();
+    const signal = _filterFetchController.signal;
+
     try {
         setLoadingFlag();
 
-        const response = await fetch(`/discover/api/filter?${params}`);
+        const response = await fetch(`/discover/api/filter?${params}`, { signal });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
 
         const data = await response.json();
+        if (isStaleContentLoad(gen)) return;
         window.discoverState.hasMore = data.page < data.total_pages;
 
         if (isInitialLoad) {
@@ -2263,6 +2481,7 @@ async function fetchAdvancedFilterResults(params) {
         }, 100);
 
     } catch (error) {
+        if (error.name === 'AbortError') return; // superseded by a newer request
         console.error('[Discover] Advanced filter error:', error);
         showError();
     } finally {
@@ -2275,6 +2494,7 @@ async function fetchAdvancedFilterResults(params) {
  */
 async function searchContent(query) {
     const isInitialLoad = window.discoverState.page === 1;
+    const gen = isInitialLoad ? beginContentLoad() : window.discoverState.contentGen;
     try {
         setLoadingFlag();
         
@@ -2306,6 +2526,7 @@ async function searchContent(query) {
         }
 
         const data = await response.json();
+        if (isStaleContentLoad(gen)) return; // a newer search or view replaced this one
         window.discoverState.hasMore = data.page < data.total_pages;
 
         if (isInitialLoad) {
@@ -2347,13 +2568,21 @@ async function searchContent(query) {
  * Load trending content into category rows (Movies, Shows, Anime)
  */
 async function loadTrending() {
+    // Don't override if list mode is active (sidebar lists take priority)
+    if (window.discoverState.listModeActive) return;
+    beginContentLoad();
+
+    // Show tab content regardless, even if already loaded
+    if (trendingContent) trendingContent.style.display = 'block';
+    if (searchResults) searchResults.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
+    window.discoverState.currentTab = 'trending';
+    updateTabState();
+
+    if (_trendingLoaded) return;
+
     try {
         setLoadingFlag();
-        window.discoverState.currentTab = 'trending';
-
-        // Show trending content, hide search results
-        if (trendingContent) trendingContent.style.display = 'block';
-        if (searchResults) searchResults.style.display = 'none';
 
         // Hybrid approach:
         // - Movies & Shows: Use trending/week endpoint for accurate weekly trending
@@ -2392,9 +2621,79 @@ async function loadTrending() {
         // Bind click events to all items
         bindResultEvents();
         updateTabState();
+        _trendingLoaded = true;
 
     } catch (error) {
         console.error('[Discover] Trending error:', error);
+        showError();
+    } finally {
+        clearLoadingFlag();
+    }
+}
+
+/**
+ * Load personalised recommendations from the best connected provider.
+ * The backend prefers Trakt and automatically falls back to Scrob For You.
+ */
+let _trendingLoaded = false; // Only fetch once per page load
+let _recLoaded = false;  // Only fetch once per page load
+
+async function loadRecommendations() {
+    beginContentLoad();
+    if (recommendationsContent) recommendationsContent.style.display = 'block';
+    if (trendingContent) trendingContent.style.display = 'none';
+    if (searchResults) searchResults.style.display = 'none';
+    window.discoverState.currentTab = 'recommendations';
+    updateTabState();
+
+    if (_recLoaded) return;
+
+    try {
+        setLoadingFlag();
+
+        const noProviderMsg = document.getElementById('rec-no-provider');
+        const noResultsMsg = document.getElementById('rec-no-results');
+
+        const resp = await fetch('/discover/api/recommendations?type=all');
+        if (!resp.ok) throw new Error('HTTP error fetching recommendations');
+        const data = await resp.json();
+
+        if (!data.success) {
+            if (noProviderMsg) noProviderMsg.style.display = 'block';
+            if (noResultsMsg) noResultsMsg.style.display = 'none';
+            if (document.getElementById('rec-movies-section')) document.getElementById('rec-movies-section').style.display = 'none';
+            if (document.getElementById('rec-shows-section'))  document.getElementById('rec-shows-section').style.display  = 'none';
+            _recLoaded = true;
+            return;
+        }
+
+        if (noProviderMsg) noProviderMsg.style.display = 'none';
+
+        const all    = filterValidResults(data.results || []);
+        if (all.length === 0) {
+            if (noResultsMsg) noResultsMsg.style.display = 'block';
+            if (document.getElementById('rec-movies-section')) document.getElementById('rec-movies-section').style.display = 'none';
+            if (document.getElementById('rec-shows-section')) document.getElementById('rec-shows-section').style.display = 'none';
+            _recLoaded = true;
+            return;
+        }
+
+        if (noResultsMsg) noResultsMsg.style.display = 'none';
+        if (document.getElementById('rec-movies-section')) document.getElementById('rec-movies-section').style.display = 'block';
+        if (document.getElementById('rec-shows-section')) document.getElementById('rec-shows-section').style.display = 'block';
+        const movies = all.filter(i => i.media_type === 'movie');
+        const shows  = all.filter(i => i.media_type === 'tv');
+
+        window.discoverState.currentResults = all;
+
+        renderCategoryGrid(recMoviesGrid, movies);
+        renderCategoryGrid(recShowsGrid,  shows);
+
+        bindResultEvents();
+        _recLoaded = true;
+
+    } catch (error) {
+        console.error('[Discover] Recommendations error:', error);
         showError();
     } finally {
         clearLoadingFlag();
@@ -2753,6 +3052,31 @@ function updateActiveFilters() {
         });
     }
 
+    if (state.filters.seasonsMax > 0) {
+        activeFilters.push({
+            key: 'seasons_max',
+            label: `Max Seasons: ${state.filters.seasonsMax}`,
+            removeFn: () => clearSeasonsMaxFilter()
+        });
+    }
+
+    // Certification Range
+    if (state.filters.certificationMin || state.filters.certificationMax) {
+        let label = 'Certification: ';
+        if (state.filters.certificationMin && state.filters.certificationMax) {
+            label += `${state.filters.certificationMin} to ${state.filters.certificationMax}`;
+        } else if (state.filters.certificationMin) {
+            label += `${state.filters.certificationMin} and above`;
+        } else {
+            label += `${state.filters.certificationMax} and below`;
+        }
+        activeFilters.push({
+            key: 'certification',
+            label: label,
+            removeFn: () => { clearCertificationFilter(); updateActiveFilters(); }
+        });
+    }
+
     if (state.filters.productionCompany) {
         const companyNames = {
             'universal': 'Universal Pictures',
@@ -2897,28 +3221,22 @@ function updateActiveFilters() {
     // Networks (included) - TV only
     if (state.filters.selectedNetworks.length > 0) {
         const networkNames = state.filters.selectedNetworks
-            .map(networkId => {
-                const network = state.availableNetworks?.find(n => n.id.toString() === networkId.toString());
-                return network ? network.name : networkId;
-            });
+            .map(networkId => state.filters.networkCache?.[networkId] || networkId);
         activeFilters.push({
             key: 'networks',
             label: `Networks: ${networkNames.join(', ')}`,
-            removeFn: () => { state.filters.selectedNetworks = []; updateActiveFilters(); }
+            removeFn: () => { state.filters.selectedNetworks = []; renderNetworkChipsFromState(); updateActiveFilters(); }
         });
     }
 
     // Networks (excluded) - TV only
     if (state.filters.excludedNetworks.length > 0) {
         const networkNames = state.filters.excludedNetworks
-            .map(networkId => {
-                const network = state.availableNetworks?.find(n => n.id.toString() === networkId.toString());
-                return network ? network.name : networkId;
-            });
+            .map(networkId => state.filters.networkCache?.[networkId] || networkId);
         activeFilters.push({
             key: 'excluded_networks',
             label: `Excluded Networks: ${networkNames.join(', ')}`,
-            removeFn: () => { state.filters.excludedNetworks = []; updateActiveFilters(); }
+            removeFn: () => { state.filters.excludedNetworks = []; renderNetworkChipsFromState(); updateActiveFilters(); }
         });
     }
 
@@ -3066,6 +3384,9 @@ function triggerLiveFiltering() {
     // Skip if live filtering is disabled
     if (!state.liveFilterEnabled) return;
 
+    // In adaptive list edit/create mode, skip entirely — applyAdvancedFilters handles list re-filtering directly
+    if (window.adaptiveListEditMode) return;
+
     // Check if any non-default filters are active (excluding sort which always has a value)
     const f = state.filters;
     const hasActiveFilters =
@@ -3092,19 +3413,28 @@ function triggerLiveFiltering() {
         f.selectedCompanies.length > 0 ||
         f.excludedCompanies.length > 0 ||
         f.runtimeMin > 0 ||
-        f.runtimeMax < 300;
+        f.runtimeMax < 300 ||
+        f.seasonsMax > 0 ||
+        f.certificationMin ||
+        f.certificationMax;
 
     // Clear any existing timeout
     if (window.liveFilterTimeout) {
         clearTimeout(window.liveFilterTimeout);
     }
 
-    // If lists are selected, re-filter the list results instead of doing TMDB search
-    if (listsState && listsState.selectedLists && listsState.selectedLists.length > 0 && listsState.rawResults.length > 0) {
-        // Debounce the list filtering (500ms delay)
-        window.liveFilterTimeout = setTimeout(() => {
-            filterAndRenderListResults();
-        }, 500);
+    // If lists are selected, never fall through to the TMDB discover API path.
+    // • rawResults already populated → re-filter client-side immediately
+    // • rawResults empty (list fetch in-flight) → bail out; loadAllSelectedLists will call
+    //   filterAndRenderListResults() once the data arrives, picking up current filter state.
+    if (listsState && listsState.selectedLists && listsState.selectedLists.length > 0) {
+        if (listsState.rawResults.length > 0) {
+            // Debounce the list filtering (500ms delay)
+            window.liveFilterTimeout = setTimeout(() => {
+                filterAndRenderListResults();
+            }, 500);
+        }
+        // Either way, do not proceed to TMDB API search
         return;
     }
 
@@ -3132,6 +3462,12 @@ function setMediaType(type) {
 
     // Update genre dropdown to show appropriate genres for this media type
     renderGenreFilters();
+
+    // Reload certifications for the new media type
+    const watchRegionSelect = document.getElementById('watch-region');
+    if (watchRegionSelect) {
+        loadCertifications(watchRegionSelect.value);
+    }
 
     // Update active filters display
     updateActiveFilters();
@@ -3237,6 +3573,15 @@ function switchTab(tab) {
     window.discoverState.currentTab = tab;
     window.discoverState.page = 1;
     window.discoverState.autoLoadCount = 0;
+    // Clear list mode when switching to non-list tabs so TMDB pagination works
+    if (tab === 'trending' || tab === 'recommendations') {
+        window.discoverState.listModeActive = false;
+        // Clear personal/list selections so refresh stays on this tab
+        localStorage.removeItem('discoverPersonal');
+        localStorage.removeItem('discoverMDBList');
+        localStorage.removeItem('discoverFlixPatrol');
+        if (window.personalState) { window.personalState.currentSelection = null; }
+    }
 
     // Update UI
     tabButtons.forEach(btn => {
@@ -3253,10 +3598,16 @@ function switchTab(tab) {
         resetFlixPatrolSelection();
     }
 
+    // Show/hide content sections
+    if (trendingContent) trendingContent.style.display = tab === 'trending' ? 'block' : 'none';
+    if (recommendationsContent) recommendationsContent.style.display = tab === 'recommendations' ? 'block' : 'none';
+
     if (tab === 'search' && window.discoverState.searchTerm) {
         searchContent(window.discoverState.searchTerm);
     } else if (tab === 'trending') {
         loadTrending();
+    } else if (tab === 'recommendations') {
+        loadRecommendations();
     }
 
     updateTabState();
@@ -3310,6 +3661,23 @@ function toggleFilterSection(section) {
  * Clear all filters and reload trending content
  */
 function clearFiltersAndReload() {
+    // If clearing while in adaptive list edit mode, exit edit mode and clean the URL
+    if (window.adaptiveListEditMode) {
+        window.adaptiveListEditMode = null;
+        if (window.history.replaceState) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+    }
+
+    // Clear active preset tracking
+    activePresetId = null;
+    activePresetName = null;
+    presetDirty = false;
+    updatePresetButtonState();
+    const presetSelectEl = document.getElementById('preset-select');
+    if (presetSelectEl) presetSelectEl.value = '';
+    if (typeof saveActivePresetToStorage === 'function') saveActivePresetToStorage();
+
     // Clear saved filters from localStorage FIRST
     clearSavedFilters();
     
@@ -3349,11 +3717,14 @@ function clearFiltersAndReload() {
         excludedLanguages: [],
         selectedCountries: [],
         excludedCountries: [],
+        certificationMin: '',
+        certificationMax: '',
         selectedProviders: [],
         excludedProviders: [],
         watchRegion: 'US',
         selectedNetworks: [],
         excludedNetworks: [],
+        networkCache: {},
         selectedCompanies: [],
         excludedCompanies: [],
         companyCache: {},
@@ -3362,8 +3733,27 @@ function clearFiltersAndReload() {
         keywordCache: {},
         runtimeMin: 0,
         runtimeMax: 300,
+        seasonsMax: 0,
+        titleFilter: '',
         activeFilters: []
     };
+
+    // Clear sidebar lists selection and list mode flag
+    state.listModeActive = false;
+    if (window.sidebarListsState) {
+        window.sidebarListsState.selectedLists = [];
+        window.sidebarListsState.rawResults = [];
+        if (typeof clearSavedSidebarLists === 'function') clearSavedSidebarLists();
+        renderSidebarListChips();
+        const listsDropdown = document.getElementById('lists-dropdown');
+        if (listsDropdown) {
+            listsDropdown.querySelectorAll('.included').forEach(item => item.classList.remove('included'));
+        }
+        updateFilterAvailability();
+    }
+
+    // Clear keyword ID cache
+    Object.keys(_listKeywordCache).forEach(k => delete _listKeywordCache[k]);
 
     // Reset UI elements
     resetFilterUI();
@@ -3395,7 +3785,7 @@ function clearFiltersAndReload() {
 
     // Reload trending
     loadTrending();
-    
+
     // Clear the flag
     state.isClearing = false;
 }
@@ -3407,7 +3797,7 @@ function resetFilterUI() {
     const state = window.discoverState;
 
     // Reset sort dropdown
-    if (state.sortByDropdown) state.sortByDropdown.value = 'popularity';
+    if (state.sortByDropdown) state.sortByDropdown.value = 'none';
 
     // Reset sort order toggle
     const sortOrderToggle = document.getElementById('sort-order-toggle');
@@ -3431,11 +3821,32 @@ function resetFilterUI() {
     // Reset other inputs
     if (state.releasedWithinInput) state.releasedWithinInput.value = '';
     if (state.upcomingDaysInput) state.upcomingDaysInput.value = '';
-    if (state.tmdbRatingMinInput) state.tmdbRatingMinInput.value = '0';
-    if (state.tmdbRatingMaxInput) state.tmdbRatingMaxInput.value = '10';
-    if (state.tmdbVotesMinInput) state.tmdbVotesMinInput.value = '0';
+    if (state.tmdbRatingMinInput) { state.tmdbRatingMinInput.value = '0'; state.tmdbRatingMinInput.dispatchEvent(new Event('input')); }
+    if (state.tmdbRatingMaxInput) { state.tmdbRatingMaxInput.value = '10'; state.tmdbRatingMaxInput.dispatchEvent(new Event('input')); }
+    if (state.tmdbVotesMinInput) { state.tmdbVotesMinInput.value = '0'; state.tmdbVotesMinInput.dispatchEvent(new Event('input')); }
+    if (state.imdbRatingMinInput) { state.imdbRatingMinInput.value = '0'; state.imdbRatingMinInput.dispatchEvent(new Event('input')); }
+    if (state.imdbRatingMaxInput) { state.imdbRatingMaxInput.value = '10'; state.imdbRatingMaxInput.dispatchEvent(new Event('input')); }
+    if (state.imdbVotesMinInput) { state.imdbVotesMinInput.value = '0'; state.imdbVotesMinInput.dispatchEvent(new Event('input')); }
     if (state.runtimeMinInput) state.runtimeMinInput.value = '0';
     if (state.runtimeMaxInput) state.runtimeMaxInput.value = '300';
+    if (state.seasonsMaxInput) state.seasonsMaxInput.value = '';
+
+    // Reset certification selects
+    const certMinSel = document.getElementById('certification-min-select');
+    if (certMinSel) certMinSel.value = '';
+    const certMaxSel = document.getElementById('certification-max-select');
+    if (certMaxSel) certMaxSel.value = '';
+
+    // Reset title filter
+    const titleFilterEl = document.getElementById('title-filter');
+    if (titleFilterEl) titleFilterEl.value = '';
+    state.filters.titleFilter = '';
+
+    // Reset company and network search inputs
+    const companySrch = document.getElementById('company-search');
+    if (companySrch) companySrch.value = '';
+    const networkSrch = document.getElementById('network-search');
+    if (networkSrch) networkSrch.value = '';
 
     // Clear all chips and dropdown states
     ['genres', 'keyword', 'language', 'country', 'provider', 'network', 'company'].forEach(type => {
@@ -3515,7 +3926,10 @@ function restoreFilterUI() {
     // Runtime inputs
     if (state.runtimeMinInput && f.runtimeMin) state.runtimeMinInput.value = f.runtimeMin;
     if (state.runtimeMaxInput && f.runtimeMax) state.runtimeMaxInput.value = f.runtimeMax;
-    
+    if (state.seasonsMaxInput && f.seasonsMax) state.seasonsMaxInput.value = f.seasonsMax;
+
+    // Revenue inputs
+
     // Watch region
     const watchRegionSelect = document.getElementById('watch-region');
     if (watchRegionSelect && f.watchRegion) {
@@ -3588,7 +4002,10 @@ function restoreChipsFromState() {
             applyChipsFromSavedFilters('provider', f.selectedProviders || [], f.excludedProviders || []);
         }
         if (f.selectedNetworks || f.excludedNetworks) {
-            applyChipsFromSavedFilters('network', f.selectedNetworks || [], f.excludedNetworks || []);
+            renderNetworkChipsFromState();
+        }
+        if (f.selectedCertifications || f.excludedCertifications) {
+            applyChipsFromSavedFilters('certification', f.selectedCertifications || [], f.excludedCertifications || []);
         }
     }
 }
@@ -3625,6 +4042,7 @@ function updateClearButtonVisibility() {
         f.excludedCompanies.length > 0 ||
         f.runtimeMin > 0 ||
         f.runtimeMax < 300 ||
+        f.seasonsMax > 0 ||
         f.sortBy !== 'popularity' ||
         f.sortOrder !== 'desc';
 
@@ -3707,6 +4125,9 @@ function filterValidResults(results) {
             }
         }
 
+        // Certification filters are handled entirely by TMDB API on backend
+        // No client-side filtering needed - TMDB returns pre-filtered results
+
         return true;
     });
 
@@ -3717,6 +4138,9 @@ function filterValidResults(results) {
  * Render results
  */
 function renderResults(results) {
+    if (!resultsGrid) resultsGrid = document.getElementById('results-grid');
+    if (!resultsGrid) return;
+
     // Store raw results for re-rendering when display options change
     window.discoverState.currentResults = results || [];
 
@@ -3864,7 +4288,9 @@ function createResultItemHTML(item) {
     const year = (item.release_date || item.first_air_date || '').substring(0, 4) || '';
     const releaseDate = item.release_date || item.first_air_date || '';
     const formattedDate = releaseDate ? formatReleaseDate(releaseDate) : '';
-    const posterUrl = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '/static/images/placeholder.png';
+    const posterUrl = item.poster_path
+        ? (item.poster_path.startsWith('http') ? item.poster_path : `https://image.tmdb.org/t/p/w342${item.poster_path}`)
+        : '/static/images/placeholder.png';
     const overview = item.overview || 'No overview available.';
     const rating = item.vote_average ? item.vote_average.toFixed(1) : '';
 
@@ -3937,16 +4363,22 @@ function createResultItemHTML(item) {
                     </span>
                 </div>
                 <p class="result-overview">${overview}</p>
+                <!-- Action buttons row -->
+                <div class="hover-action-bar" style="display:flex!important;flex-direction:row!important;flex-wrap:nowrap!important;gap:6px;align-items:center;justify-content:center;width:100%;position:absolute;bottom:8px;left:0;padding:0 8px;box-sizing:border-box;z-index:10">
+                    <button class="hover-action-btn request-icon" title="Request this content" style="width:32px;height:32px;min-width:32px;min-height:32px;border-radius:8px;border:1px solid rgba(74,222,128,0.35);background:rgba(10,10,10,0.7);color:#4ade80;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;flex-shrink:0;box-sizing:border-box;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="display:block;flex-shrink:0;pointer-events:none"><path d="M10 1H6V6L1 6V10H6V15H10V10H15V6L10 6V1Z" fill="currentColor"></path></svg>
+                    </button>
+                    ${hasAdminPermissions ? `<button class="hover-action-btn tester-icon" title="Test this content" style="width:32px;height:32px;min-width:32px;min-height:32px;border-radius:8px;border:1px solid rgba(251,191,36,0.35);background:rgba(10,10,10,0.7);color:#fbbf24;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;flex-shrink:0;box-sizing:border-box;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="display:block;flex-shrink:0;pointer-events:none"><path d="M9.74872 2.49415L18.1594 7.31987M9.74872 2.49415L8.91283 2M9.74872 2.49415L6.19982 8.61981M18.1594 7.31987L15.902 11.2163M18.1594 7.31987L19 7.80374M15.902 11.2163L14.1886 14.1738M15.902 11.2163L13.344 9.74451M14.1886 14.1738L12.5511 17.0003M14.1886 14.1738L9.98568 11.7556M12.5511 17.0003L11.0558 19.5813C9.7158 21.8942 6.74803 22.6867 4.42709 21.3513C2.10615 20.0159 1.31093 17.0584 2.65093 14.7455L3.95184 12.5M12.5511 17.0003L9.93838 15.4971" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path><path d="M22 14.9166C22 16.0672 21.1046 16.9999 20 16.9999C18.8954 16.9999 18 16.0672 18 14.9166C18 14.1967 18.783 13.2358 19.3691 12.6174C19.7161 12.2512 20.2839 12.2512 20.6309 12.6174C21.217 13.2358 22 14.1967 22 14.9166Z" stroke="currentColor" stroke-width="1.5"></path></svg>
+                    </button>` : ''}
+                    <button class="hover-action-btn magnet-assign-icon" title="Assign magnet" style="width:32px;height:32px;min-width:32px;min-height:32px;border-radius:8px;border:1px solid rgba(192,132,252,0.35);background:rgba(10,10,10,0.7);color:#c084fc;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;flex-shrink:0;box-sizing:border-box;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="display:block;flex-shrink:0;pointer-events:none;transform:rotate(270deg)"><path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    </button>
+                    <button class="hover-action-btn blacklist-icon" title="Add to manual blacklist" style="width:32px;height:32px;min-width:32px;min-height:32px;border-radius:8px;border:1px solid rgba(248,113,113,0.35);background:rgba(10,10,10,0.7);color:#f87171;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;flex-shrink:0;box-sizing:border-box;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease">
+                        <svg width="14" height="14" viewBox="0 -0.5 17 17" style="display:block;flex-shrink:0;pointer-events:none"><path d="M9.016,0.06 C4.616,0.06 1.047,3.629 1.047,8.029 C1.047,12.429 4.615,15.998 9.016,15.998 C13.418,15.998 16.985,12.429 16.985,8.029 C16.985,3.629 13.418,0.06 9.016,0.06 L9.016,0.06 Z M3.049,8.028 C3.049,4.739 5.726,2.062 9.016,2.062 C10.37,2.062 11.616,2.52 12.618,3.283 L4.271,11.631 C3.508,10.629 3.049,9.381 3.049,8.028 L3.049,8.028 Z M9.016,13.994 C7.731,13.994 6.544,13.583 5.569,12.889 L13.878,4.58 C14.571,5.555 14.982,6.743 14.982,8.028 C14.981,11.317 12.306,13.994 9.016,13.994 L9.016,13.994 Z" fill="currentColor"></path></svg>
+                    </button>
+                </div>
             </div>
-            <!-- Request icon - bottom right corner -->
-            <div class="request-icon" title="Request this content">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="12" y1="8" x2="12" y2="16"></line>
-                    <line x1="8" y1="12" x2="16" y2="12"></line>
-                </svg>
-            </div>
-            ${testerIconHtml}
         </div>
     `;
 }
@@ -4045,15 +4477,38 @@ function bindResultEvents() {
             window.location.href = targetPath;
         });
 
-        // Add click handlers for request and tester icons
+        // Hover scale + inset glow effect on action buttons
+        const btnGlowColors = {
+            'request-icon':      'rgba(74,222,128,0.45)',
+            'tester-icon':       'rgba(251,191,36,0.45)',
+            'magnet-assign-icon':'rgba(192,132,252,0.45)',
+            'blacklist-icon':    'rgba(248,113,113,0.45)',
+        };
+        item.querySelectorAll('.hover-action-btn').forEach(btn => {
+            const colorClass = Object.keys(btnGlowColors).find(c => btn.classList.contains(c));
+            const glow = btnGlowColors[colorClass] || 'rgba(255,255,255,0.2)';
+            btn.addEventListener('mouseenter', () => {
+                btn.style.transform = 'scale(1.13)';
+                btn.style.boxShadow = `inset 0 0 10px ${glow}, 0 0 8px ${glow}`;
+                btn.style.background = `rgba(10,10,10,0.85)`;
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.transform = '';
+                btn.style.boxShadow = '';
+                btn.style.background = 'rgba(10,10,10,0.7)';
+            });
+        });
+
+        // Add click handlers for action buttons
         const requestIcon = item.querySelector('.request-icon');
         const testerIcon = item.querySelector('.tester-icon');
+        const magnetIcon = item.querySelector('.magnet-assign-icon');
+        const blacklistIcon = item.querySelector('.blacklist-icon');
 
         if (requestIcon && resultItem) {
             requestIcon.addEventListener('click', function(e) {
-                e.stopPropagation(); // Prevent card click
+                e.stopPropagation();
                 e.preventDefault();
-
                 const content = {
                     id: resultItem.id,
                     title: resultItem.title || resultItem.name || 'Unknown',
@@ -4064,25 +4519,90 @@ function bindResultEvents() {
                     backdrop: resultItem.backdrop_path || '',
                     overview: resultItem.overview || ''
                 };
-
                 showVersionModal(content);
             });
         }
 
         if (testerIcon && resultItem) {
             testerIcon.addEventListener('click', function(e) {
-                e.stopPropagation(); // Prevent card click
+                e.stopPropagation();
                 e.preventDefault();
-
-                // Redirect directly to scraper_tester page with URL parameters
                 const params = new URLSearchParams({
                     title: resultItem.title || resultItem.name || 'Unknown',
                     id: resultItem.id,
                     year: (resultItem.release_date || resultItem.first_air_date || '').substring(0, 4) || '',
                     media_type: type
                 });
-
                 window.location.href = `/scraper/scraper_tester?${params.toString()}`;
+            });
+        }
+
+        if (magnetIcon && resultItem) {
+            magnetIcon.addEventListener('click', async function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                const title = resultItem.title || resultItem.name || 'Unknown';
+                const year = (resultItem.release_date || resultItem.first_air_date || '').substring(0, 4) || '';
+                let imdbId = resultItem.imdb_id || resultItem.external_ids?.imdb_id || null;
+                if (!imdbId) {
+                    try {
+                        const res = await fetch(`/discover/api/details/${resultItem.id}?type=${type}`);
+                        const data = await res.json();
+                        imdbId = data.imdb_id || null;
+                    } catch(err) {}
+                }
+                const params = new URLSearchParams({
+                    prefill_title: title,
+                    prefill_year: year,
+                    prefill_type: type === 'movie' ? 'movie' : 'show'
+                });
+                if (imdbId) params.set('prefill_id', imdbId);
+                window.location.href = `/magnet/assign_magnet?${params.toString()}`;
+            });
+        }
+
+        if (blacklistIcon && resultItem) {
+            blacklistIcon.addEventListener('click', async function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                const title = resultItem.title || resultItem.name || 'Unknown';
+                // Try imdb_id on item first, otherwise fetch from details API
+                let imdbId = resultItem.imdb_id || resultItem.external_ids?.imdb_id || null;
+                if (!imdbId) {
+                    try {
+                        const detailRes = await fetch(`/discover/api/details/${resultItem.id}?type=${type}`);
+                        const detailData = await detailRes.json();
+                        imdbId = detailData.imdb_id || null;
+                    } catch(err) {}
+                }
+                if (!imdbId) {
+                    showPopup({ type: 'warning', title: 'Required', message: `Cannot blacklist "${title}": no IMDb ID found for this item.` });
+                    return;
+                }
+                showPopup({
+                    type: 'confirm',
+                    title: 'Confirm Blacklist',
+                    message: `Add "${title}" (${imdbId}) to manual blacklist?`,
+                    onConfirm: async function() {
+                        try {
+                            const itemMediaType = resultItem.media_type || type;
+                            const fd = new FormData();
+                            fd.append('action', 'add');
+                            fd.append('imdb_id', imdbId);
+                            fd.append('media_type', itemMediaType === 'tv' ? 'episode' : 'movie');
+                            const res = await fetch('/debug/manual_blacklist', { method: 'POST', body: fd });
+                            if (res.ok) {
+                                blacklistIcon.style.color = '#22c55e';
+                                blacklistIcon.title = 'Added to blacklist';
+                            } else {
+                                showPopup({ type: 'error', title: 'Error', message: 'Failed to add to blacklist. Please try again.' });
+                            }
+                        } catch(err) {
+                            showPopup({ type: 'error', title: 'Error', message: 'Error adding to blacklist.' });
+                        }
+                    }
+                });
+                return;
             });
         }
     });
@@ -4141,6 +4661,14 @@ function loadMore() {
         return;
     }
 
+    // Never paginate via TMDB when list or personal content is showing (fully loaded at once)
+    const _listsState = window.sidebarListsState;
+    const _onPersonalTab = window.discoverState.currentTab === 'personal';
+    const _hasSidebarLists = _listsState && _listsState.selectedLists && _listsState.selectedLists.length > 0;
+    if (_hasSidebarLists || _onPersonalTab) {
+        return;
+    }
+
     window.discoverState.page++;
     console.log('[Discover] Loading more results, page:', window.discoverState.page);
 
@@ -4154,7 +4682,7 @@ function loadMore() {
         searchContent(state.searchTerm);
     } else if (searchResultsVisible) {
         // Filter mode - rebuild params and fetch more
-        let sortByValue = state.filters.sortBy;
+        let sortByValue = (state.filters.sortBy === 'none') ? 'popularity' : state.filters.sortBy;
         if (sortByValue && !sortByValue.includes('.')) {
             sortByValue = `${sortByValue}.${state.filters.sortOrder}`;
         }
@@ -4225,33 +4753,33 @@ function clearLoadingFlag() {
  * Show empty state
  */
 function showEmpty() {
-    resultsGrid.classList.add('hidden-state');
-    emptyState.classList.add('active');
-    errorState.classList.remove('active');
+    if (resultsGrid) resultsGrid.classList.add('hidden-state');
+    if (emptyState) emptyState.classList.add('active');
+    if (errorState) errorState.classList.remove('active');
 }
 
 /**
  * Hide empty state
  */
 function hideEmpty() {
-    resultsGrid.classList.remove('hidden-state');
-    emptyState.classList.remove('active');
+    if (resultsGrid) resultsGrid.classList.remove('hidden-state');
+    if (emptyState) emptyState.classList.remove('active');
 }
 
 /**
  * Show error state
  */
 function showError() {
-    resultsGrid.classList.add('hidden-state');
-    emptyState.classList.remove('active');
-    errorState.classList.add('active');
+    if (resultsGrid) resultsGrid.classList.add('hidden-state');
+    if (emptyState) emptyState.classList.remove('active');
+    if (errorState) errorState.classList.add('active');
 }
 
 /**
  * Hide error state
  */
 function hideError() {
-    errorState.classList.remove('active');
+    if (errorState) errorState.classList.remove('active');
 }
 
 /**
@@ -4264,11 +4792,13 @@ function updatePagination() {
     }
 
     // Only show "No more results" message when we've reached the end
-    if (!window.discoverState.hasMore && window.discoverState.page > 1) {
-        pagination.style.display = 'flex';
-        pagination.innerHTML = '<div class="end-of-results">No more results</div>';
-    } else {
-        pagination.style.display = 'none';
+    if (pagination) {
+        if (!window.discoverState.hasMore && window.discoverState.page > 1) {
+            pagination.style.display = 'flex';
+            pagination.innerHTML = '<div class="end-of-results">No more results</div>';
+        } else {
+            pagination.style.display = 'none';
+        }
     }
 }
 
@@ -4457,13 +4987,9 @@ async function filterContent() {
 // =============================================================================
 
 /**
- * Adaptive List state for edit mode
+ * Adaptive List state for edit mode — null when not editing, object when active
  */
-window.adaptiveListEditMode = {
-    isEditing: false,
-    editIndex: null,
-    sourceId: null
-};
+window.adaptiveListEditMode = null;
 
 /**
  * Initialize adaptive list functionality
@@ -4516,18 +5042,21 @@ function checkEditMode() {
         // Edit existing adaptive list - editSourceId is now the full source_id like "Adaptive List_1"
         loadAdaptiveListForEdit(editSourceId);
     } else if (mode === 'create_adaptive_list') {
-        // Create new adaptive list mode
+        // Create new adaptive list mode — set flag first so saves are blocked
         window.adaptiveListEditMode = {
             isEditing: false,
             sourceId: null  // Will be assigned when saved
         };
+
+        // Ensure localStorage is clean — nothing from this session should persist
+        clearSavedFilters();
 
         // Show notification
         showNotification('Configure your filters, then click "Save as Adaptive List" to save.', 'info');
 
         // Open the filter drawer after a short delay
         setTimeout(() => {
-            openFilterDrawer();
+            openFilters();
         }, 500);
     }
 }
@@ -4545,11 +5074,14 @@ async function loadAdaptiveListForEdit(sourceId) {
 
         const data = await response.json();
         if (data.success && data.list) {
-            // Set edit mode
+            // Set edit mode FIRST so all subsequent saves are blocked
             window.adaptiveListEditMode = {
                 isEditing: true,
                 sourceId: sourceId
             };
+
+            // Ensure localStorage is clean — nothing from this edit session should persist
+            clearSavedFilters();
 
             // Store the list name for later
             window.adaptiveListEditMode.originalName = data.list.name;
@@ -4607,7 +5139,7 @@ async function loadAdaptiveListForEdit(sourceId) {
 
             // Open the filter drawer
             setTimeout(() => {
-                openFilterDrawer();
+                openFilters();
             }, 300);
         }
     } catch (error) {
@@ -4718,6 +5250,11 @@ function applyFiltersToUI(filters) {
         if (runtimeMax) runtimeMax.value = filters.runtime_max;
         state.filters.runtimeMax = parseInt(filters.runtime_max);
     }
+    if (filters.seasons_max) {
+        const seasonsMax = document.getElementById('seasons-max');
+        if (seasonsMax) seasonsMax.value = filters.seasons_max;
+        state.filters.seasonsMax = parseInt(filters.seasons_max);
+    }
 
     // Genres - load into state and update UI
     if (filters.genres) {
@@ -4770,7 +5307,7 @@ function applyFiltersToUI(filters) {
     if (filters.network) {
         const networkIds = filters.network.split(',').filter(v => v);
         state.filters.selectedNetworks = networkIds;
-        applyChipsFromSavedFilters('network', networkIds, []);
+        renderNetworkChipsFromState();
     }
 
     // Companies
@@ -4778,6 +5315,16 @@ function applyFiltersToUI(filters) {
         const companyIds = filters.company.split(',').filter(v => v);
         state.filters.selectedCompanies = companyIds;
         applyChipsFromSavedFilters('company', companyIds, []);
+    }
+
+    // Merge with adaptive discover checkbox — set BEFORE loadSavedLists() below,
+    // since that asynchronously triggers loadAllSelectedLists(), which reads this flag.
+    if (filters.merge_with_adaptive) {
+        const mergeWithAdaptiveCheckbox = document.getElementById('merge-with-adaptive');
+        if (mergeWithAdaptiveCheckbox) {
+            mergeWithAdaptiveCheckbox.checked = true;
+        }
+        state.filters.mergeWithAdaptive = true;
     }
 
     // Lists filter (sidebar lists) - load array
@@ -4807,7 +5354,16 @@ function applyFiltersToUI(filters) {
 
     // Apply filters and update UI
     setTimeout(() => {
-        applyFilters();
+        // Adaptive-list edit/create mode has a deliberate guard (applyAdvancedFilters)
+        // that skips TMDB fetches on every filter tweak while editing, to avoid firing
+        // an API call per click. But loading a saved list for editing needs exactly one
+        // initial fetch so the results grid isn't blank — list-sourced lists (filters.lists)
+        // already get that via loadSavedLists() above, so only pure-filter lists need this.
+        if (window.adaptiveListEditMode && !filters.lists) {
+            runDiscoverFilterQuery();
+        } else {
+            applyFilters();
+        }
         updateActiveFilters();
     }, 100);
 }
@@ -4933,7 +5489,8 @@ function hasActiveFilters() {
         f.selectedCompanies.length > 0 ||
         f.excludedCompanies.length > 0 ||
         f.runtimeMin > 0 ||
-        f.runtimeMax < 300
+        f.runtimeMax < 300 ||
+        f.seasonsMax > 0
     );
 }
 
@@ -4956,7 +5513,7 @@ function openAdaptiveListModal() {
     }
 
     // Update modal for edit mode vs create mode
-    if (window.adaptiveListEditMode.isEditing) {
+    if (window.adaptiveListEditMode && window.adaptiveListEditMode.isEditing) {
         modalTitle.textContent = 'Update Adaptive List';
         saveText.textContent = 'Update Adaptive List';
         nameInput.value = window.adaptiveListEditMode.originalName || '';
@@ -5340,6 +5897,9 @@ function buildFiltersObject() {
     if (state.filters.runtimeMax) {
         filters.runtime_max = state.filters.runtimeMax;
     }
+    if (state.filters.seasonsMax > 0) {
+        filters.seasons_max = state.filters.seasonsMax;
+    }
 
     // Production company
     if (state.filters.selectedCompanies && state.filters.selectedCompanies.length > 0) {
@@ -5350,6 +5910,11 @@ function buildFiltersObject() {
     if (window.sidebarListsState && window.sidebarListsState.selectedLists && window.sidebarListsState.selectedLists.length > 0) {
         // Save as comma-separated "source:id" pairs
         filters.lists = window.sidebarListsState.selectedLists.map(l => `${l.source}:${l.listId}`).join(',');
+
+        // Merge with adaptive discover — only meaningful alongside a selected list.
+        if (state.filters.mergeWithAdaptive) {
+            filters.merge_with_adaptive = true;
+        }
     }
 
     // Include video filter
@@ -5376,10 +5941,101 @@ document.addEventListener('DOMContentLoaded', function() {
 // Filter Presets Functionality
 // =============================================================================
 
+// --- Preset active state tracking ---
+let activePresetId = null;
+let activePresetName = null;
+let presetDirty = false;
+
+const PRESET_STORAGE_KEY = 'discoverActivePreset';
+
+// Get the last non-empty text node from the button (the visible label, not whitespace before SVG)
+function getPresetBtnTextNode(btn) {
+    const textNodes = [...btn.childNodes].filter(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim() !== '');
+    return textNodes[textNodes.length - 1] || null;
+}
+
+function saveActivePresetToStorage() {
+    if (activePresetId) {
+        localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify({ id: activePresetId, name: activePresetName }));
+    } else {
+        localStorage.removeItem(PRESET_STORAGE_KEY);
+    }
+}
+
+function restoreActivePresetFromStorage() {
+    try {
+        const stored = localStorage.getItem(PRESET_STORAGE_KEY);
+        if (!stored) return;
+        const { id, name } = JSON.parse(stored);
+        if (!id) return;
+        // Verify the preset still exists in the dropdown (already populated at this point)
+        const presetSelect = document.getElementById('preset-select');
+        if (presetSelect && [...presetSelect.options].some(opt => opt.value === id)) {
+            activePresetId = id;
+            activePresetName = name;
+            presetDirty = false;
+            presetSelect.value = id;
+            const deleteBtn = document.getElementById('delete-preset-btn');
+            if (deleteBtn) deleteBtn.disabled = false;
+            updatePresetButtonState();
+        } else {
+            // Preset no longer exists — clear stale storage
+            localStorage.removeItem(PRESET_STORAGE_KEY);
+        }
+    } catch (e) {
+        localStorage.removeItem(PRESET_STORAGE_KEY);
+    }
+}
+
+function updatePresetButtonState() {
+    const btn = document.getElementById('save-preset-btn');
+    if (!btn) return;
+    const textNode = getPresetBtnTextNode(btn);
+    if (activePresetId && presetDirty) {
+        if (textNode) textNode.textContent = ' Update';
+        btn.title = 'Update loaded preset with current filters';
+    } else {
+        if (textNode) textNode.textContent = ' Preset';
+        btn.title = 'Save current filters as a preset';
+    }
+    saveActivePresetToStorage();
+}
+
+async function updateActivePreset() {
+    if (!activePresetId) return;
+    const filters = buildPresetFiltersObject();
+    const btn = document.getElementById('save-preset-btn');
+    const textNode = btn ? getPresetBtnTextNode(btn) : null;
+
+    if (btn) btn.disabled = true;
+    if (textNode) textNode.textContent = ' Saving...';
+
+    try {
+        const response = await fetch(`/discover/api/presets/${activePresetId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filters })
+        });
+        const data = await response.json();
+        if (data.success) {
+            presetDirty = false;
+            showNotification(`Preset "${activePresetName}" updated!`, 'success');
+        } else {
+            throw new Error(data.error || 'Failed to update preset');
+        }
+    } catch (error) {
+        showNotification(error.message || 'Failed to update preset', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+        updatePresetButtonState();
+    }
+}
+// --- End preset active state tracking ---
+
 /**
  * Initialize filter preset functionality
  */
-function initFilterPresets() {
+async function initFilterPresets() {
     const savePresetBtn = document.getElementById('save-preset-btn');
     const presetModal = document.getElementById('preset-modal');
     const presetCloseBtn = document.getElementById('preset-modal-close');
@@ -5388,9 +6044,15 @@ function initFilterPresets() {
     const presetSelect = document.getElementById('preset-select');
     const deletePresetBtn = document.getElementById('delete-preset-btn');
 
-    // Open preset save modal
+    // Open preset save modal, or update the active preset if one is loaded and dirty
     if (savePresetBtn) {
-        savePresetBtn.addEventListener('click', openPresetModal);
+        savePresetBtn.addEventListener('click', function() {
+            if (activePresetId && presetDirty) {
+                updateActivePreset();
+            } else {
+                openPresetModal();
+            }
+        });
     }
 
     // Close modal buttons
@@ -5435,8 +6097,9 @@ function initFilterPresets() {
         });
     }
 
-    // Load presets into dropdown
-    loadPresetsIntoDropdown();
+    // Load presets into dropdown, then restore active preset from localStorage
+    await loadPresetsIntoDropdown();
+    restoreActivePresetFromStorage();
 }
 
 /**
@@ -5705,6 +6368,22 @@ function buildPresetFiltersObject() {
     if (state.filters.excludedNetworks && state.filters.excludedNetworks.length > 0) {
         filters.network_exclude = state.filters.excludedNetworks.join(',');
     }
+    // Save network names for display on restore
+    if (state.filters.networkCache) {
+        const networkNames = {};
+        const allNetworkIds = [
+            ...(state.filters.selectedNetworks || []),
+            ...(state.filters.excludedNetworks || [])
+        ];
+        allNetworkIds.forEach(id => {
+            if (state.filters.networkCache[id]) {
+                networkNames[id] = state.filters.networkCache[id];
+            }
+        });
+        if (Object.keys(networkNames).length > 0) {
+            filters.network_names = networkNames;
+        }
+    }
 
     // Runtime
     if (state.filters.runtimeMin) {
@@ -5712,6 +6391,9 @@ function buildPresetFiltersObject() {
     }
     if (state.filters.runtimeMax && state.filters.runtimeMax < 300) {
         filters.runtime_max = state.filters.runtimeMax;
+    }
+    if (state.filters.seasonsMax > 0) {
+        filters.seasons_max = state.filters.seasonsMax;
     }
 
     // Production companies (include and exclude)
@@ -5747,6 +6429,12 @@ function buildPresetFiltersObject() {
  * Load a filter preset by ID
  */
 async function loadFilterPreset(presetId) {
+    // Reset active preset state immediately so that the applyAdvancedFilters call
+    // during loading doesn't trigger dirty marking.
+    activePresetId = null;
+    presetDirty = false;
+    updatePresetButtonState();
+
     try {
         const response = await fetch(`/discover/api/presets/${presetId}`);
         if (!response.ok) {
@@ -5792,11 +6480,25 @@ async function loadFilterPreset(presetId) {
             // Update active filters display
             updateActiveFilters();
 
+            // Cancel any live filter timeout triggered by updateActiveFilters above,
+            // since we're about to call applyAdvancedFilters directly.
+            if (window.liveFilterTimeout) {
+                clearTimeout(window.liveFilterTimeout);
+                window.liveFilterTimeout = null;
+            }
+
             showNotification(`Preset "${data.preset.name}" loaded!`, 'success');
 
             // Auto-apply filters to refresh results (keep sidebar open)
             console.log('[Presets] Applying filters with sidebar open - v3');
             applyAdvancedFilters(false);
+
+            // Set active preset state AFTER applyAdvancedFilters so the above call
+            // doesn't trigger dirty marking.
+            activePresetId = presetId;
+            activePresetName = data.preset.name;
+            presetDirty = false;
+            updatePresetButtonState();
         }
     } catch (error) {
         console.error('[Presets] Error loading preset:', error);
@@ -5933,6 +6635,11 @@ function applyPresetFiltersToUI(filters) {
         if (runtimeMax) runtimeMax.value = filters.runtime_max;
         state.filters.runtimeMax = parseInt(filters.runtime_max);
     }
+    if (filters.seasons_max) {
+        const seasonsMax = document.getElementById('seasons-max');
+        if (seasonsMax) seasonsMax.value = filters.seasons_max;
+        state.filters.seasonsMax = parseInt(filters.seasons_max);
+    }
 
     // Genres are already handled before this function is called
 
@@ -5989,11 +6696,19 @@ function applyPresetFiltersToUI(filters) {
     // Networks
     if (filters.network) {
         state.filters.selectedNetworks = filters.network.split(',').filter(v => v);
-        applyChipsFromSavedFilters('network', state.filters.selectedNetworks, state.filters.excludedNetworks || []);
+        // Restore network names from saved data
+        if (filters.network_names) {
+            state.filters.networkCache = { ...state.filters.networkCache, ...filters.network_names };
+        }
+        renderNetworkChipsFromState();
     }
     if (filters.network_exclude) {
         state.filters.excludedNetworks = filters.network_exclude.split(',').filter(v => v);
-        applyChipsFromSavedFilters('network', state.filters.selectedNetworks || [], state.filters.excludedNetworks);
+        // Restore network names from saved data
+        if (filters.network_names) {
+            state.filters.networkCache = { ...state.filters.networkCache, ...filters.network_names };
+        }
+        renderNetworkChipsFromState();
     }
 
     // Production companies
@@ -6071,6 +6786,10 @@ function clearAllFiltersQuietly() {
     // Clear company chips display
     const companyChips = document.getElementById('company-chips');
     if (companyChips) companyChips.innerHTML = '';
+
+    // Clear network chips display
+    const networkChips = document.getElementById('network-chips');
+    if (networkChips) networkChips.innerHTML = '';
 
     // Clear list selections
     if (window.sidebarListsState) {
@@ -6207,6 +6926,292 @@ function renderCompanyChipsFromState() {
 }
 
 /**
+ * Load streaming providers from TMDB API and populate the provider dropdown
+ */
+async function loadProviders(region) {
+    const state = window.discoverState;
+    const dropdown = document.getElementById('provider-dropdown');
+    if (!dropdown) return;
+
+    region = region || state.filters.watchRegion || 'US';
+
+    dropdown.innerHTML = '<div class="chips-dropdown-empty">Loading providers...</div>';
+
+    try {
+        const response = await fetch(`/discover/api/providers?region=${encodeURIComponent(region)}`);
+        if (!response.ok) throw new Error('Failed to load providers');
+
+        const data = await response.json();
+        const providers = data.providers || [];
+
+        dropdown.innerHTML = '';
+        providers.forEach(provider => {
+            const item = document.createElement('div');
+            item.className = 'chips-dropdown-item';
+            item.setAttribute('data-value', provider.id.toString());
+
+            const logoHtml = provider.logo_path
+                ? `<img src="https://image.tmdb.org/t/p/w45${provider.logo_path}" alt="" style="width:28px;height:18px;object-fit:contain;margin-right:6px;flex-shrink:0;border-radius:3px;">`
+                : `<span style="width:28px;margin-right:6px;flex-shrink:0;"></span>`;
+            item.innerHTML = `<span class="chips-item-label" style="display:flex;align-items:center;">${logoHtml}${provider.name}</span>`;
+
+            if (state.filters.selectedProviders.includes(provider.id.toString())) {
+                item.classList.add('included');
+            } else if (state.filters.excludedProviders.includes(provider.id.toString())) {
+                item.classList.add('excluded');
+            }
+
+            dropdown.appendChild(item);
+        });
+
+        // Setup +/- buttons on the newly added items
+        setupDropdownItemButtons(dropdown);
+
+    } catch (error) {
+        console.error('[Discover] Failed to load providers:', error);
+        dropdown.innerHTML = '<div class="chips-dropdown-empty">Failed to load providers</div>';
+    }
+}
+
+/**
+ * Initialize network filter with dynamic API search
+ */
+function initializeNetworkFilter() {
+    const container = document.getElementById('network-container');
+    if (!container) return;
+
+    const chipsWrapper = container.querySelector('#network-chips');
+    const searchInput = container.querySelector('#network-search');
+    const dropdown = container.querySelector('#network-dropdown');
+    const dropdownToggle = container.querySelector('#network-dropdown-toggle');
+
+    if (!chipsWrapper || !searchInput || !dropdown) return;
+
+    let searchTimeout = null;
+
+    // Toggle dropdown on button click
+    if (dropdownToggle) {
+        dropdownToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isShowing = dropdown.classList.toggle('show');
+            if (isShowing && searchInput.value.trim().length >= 2) {
+                positionDropdown(dropdown, container);
+            }
+        });
+    }
+
+    // Search networks on input with debounce
+    searchInput.addEventListener('input', (e) => {
+        const query = e.target.value.trim();
+
+        if (searchTimeout) clearTimeout(searchTimeout);
+
+        if (query.length < 2) {
+            dropdown.innerHTML = '<div class="chips-dropdown-empty">Type to search networks...</div>';
+            return;
+        }
+
+        dropdown.innerHTML = '<div class="chips-dropdown-empty">Searching...</div>';
+        dropdown.classList.add('show');
+        positionDropdown(dropdown, container);
+
+        searchTimeout = setTimeout(async () => {
+            try {
+                const response = await fetch(`/discover/api/networks?query=${encodeURIComponent(query)}`);
+                if (!response.ok) throw new Error('Search failed');
+
+                const data = await response.json();
+                renderNetworkDropdown(data.networks || [], dropdown, chipsWrapper);
+                positionDropdown(dropdown, container);
+            } catch (error) {
+                console.error('[Discover] Network search error:', error);
+                dropdown.innerHTML = '<div class="chips-dropdown-empty">Search failed</div>';
+            }
+        }, 300);
+    });
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!container.contains(e.target)) {
+            dropdown.classList.remove('show');
+        }
+    });
+}
+
+/**
+ * Render network search results in dropdown
+ */
+function renderNetworkDropdown(networks, dropdown, chipsWrapper) {
+    const state = window.discoverState;
+
+    if (networks.length === 0) {
+        dropdown.innerHTML = '<div class="chips-dropdown-empty">No networks found</div>';
+        return;
+    }
+
+    dropdown.innerHTML = '';
+
+    networks.forEach(network => {
+        const item = document.createElement('div');
+        item.className = 'chips-dropdown-item';
+        item.setAttribute('data-value', network.id.toString());
+
+        // Check if already selected/excluded
+        if (state.filters.selectedNetworks.includes(network.id.toString())) {
+            item.classList.add('included');
+        } else if (state.filters.excludedNetworks.includes(network.id.toString())) {
+            item.classList.add('excluded');
+        }
+
+        const logoHtml = network.logo_path
+            ? `<img src="https://image.tmdb.org/t/p/w45${network.logo_path}" alt="" class="network-logo" style="width:28px;height:18px;object-fit:contain;margin-right:6px;flex-shrink:0;">`
+            : `<span style="width:28px;margin-right:6px;flex-shrink:0;"></span>`;
+
+        item.innerHTML = `
+            <span class="chips-item-label" style="display:flex;align-items:center;">${logoHtml}${network.name}</span>
+            <div class="chips-item-actions">
+                <button type="button" class="chips-include-btn" title="Include">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                </button>
+                <button type="button" class="chips-exclude-btn" title="Exclude">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4" />
+                    </svg>
+                </button>
+            </div>
+        `;
+
+        // Include button
+        item.querySelector('.chips-include-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleNetwork(network.id.toString(), network.name, 'include', item, chipsWrapper);
+        });
+
+        // Exclude button
+        item.querySelector('.chips-exclude-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleNetwork(network.id.toString(), network.name, 'exclude', item, chipsWrapper);
+        });
+
+        dropdown.appendChild(item);
+    });
+}
+
+/**
+ * Toggle network selection (include/exclude)
+ */
+function toggleNetwork(networkId, networkName, action, dropdownItem, chipsWrapper) {
+    const state = window.discoverState;
+    const selectedArray = state.filters.selectedNetworks;
+    const excludedArray = state.filters.excludedNetworks;
+
+    // Cache the network name for display
+    state.filters.networkCache[networkId] = networkName;
+
+    // Remove from both arrays first
+    const selectedIdx = selectedArray.indexOf(networkId);
+    const excludedIdx = excludedArray.indexOf(networkId);
+    if (selectedIdx > -1) selectedArray.splice(selectedIdx, 1);
+    if (excludedIdx > -1) excludedArray.splice(excludedIdx, 1);
+
+    // Update dropdown item state
+    dropdownItem.classList.remove('included', 'excluded');
+
+    if (action === 'include' && selectedIdx === -1) {
+        selectedArray.push(networkId);
+        dropdownItem.classList.add('included');
+    } else if (action === 'exclude' && excludedIdx === -1) {
+        excludedArray.push(networkId);
+        dropdownItem.classList.add('excluded');
+    }
+
+    // Re-render chips
+    renderNetworkChips(chipsWrapper);
+    updateActiveFilters();
+}
+
+/**
+ * Render network chips
+ */
+function renderNetworkChips(chipsWrapper) {
+    const state = window.discoverState;
+    chipsWrapper.innerHTML = '';
+
+    // Render included networks
+    state.filters.selectedNetworks.forEach(networkId => {
+        const name = state.filters.networkCache[networkId] || networkId;
+        const chip = document.createElement('span');
+        chip.className = 'chip included';
+        chip.setAttribute('data-value', networkId);
+        chip.innerHTML = `${name} <button type="button" class="chip-remove">&times;</button>`;
+        chip.querySelector('.chip-remove').addEventListener('click', () => {
+            const idx = state.filters.selectedNetworks.indexOf(networkId);
+            if (idx > -1) state.filters.selectedNetworks.splice(idx, 1);
+            renderNetworkChips(chipsWrapper);
+            updateActiveFilters();
+        });
+        chipsWrapper.appendChild(chip);
+    });
+
+    // Render excluded networks
+    state.filters.excludedNetworks.forEach(networkId => {
+        const name = state.filters.networkCache[networkId] || networkId;
+        const chip = document.createElement('span');
+        chip.className = 'chip excluded';
+        chip.setAttribute('data-value', networkId);
+        chip.innerHTML = `${name} <button type="button" class="chip-remove">&times;</button>`;
+        chip.querySelector('.chip-remove').addEventListener('click', () => {
+            const idx = state.filters.excludedNetworks.indexOf(networkId);
+            if (idx > -1) state.filters.excludedNetworks.splice(idx, 1);
+            renderNetworkChips(chipsWrapper);
+            updateActiveFilters();
+        });
+        chipsWrapper.appendChild(chip);
+    });
+}
+
+/**
+ * Render network chips from state after loading preset/filters
+ */
+function renderNetworkChipsFromState() {
+    const state = window.discoverState;
+    const chipsWrapper = document.getElementById('network-chips');
+    if (!chipsWrapper || !state || !state.filters) return;
+
+    chipsWrapper.innerHTML = '';
+
+    state.filters.selectedNetworks.forEach(networkId => {
+        const networkName = state.filters.networkCache?.[networkId] || `Network ${networkId}`;
+        const chip = document.createElement('span');
+        chip.className = 'chip chip-include';
+        chip.innerHTML = `<span class="chip-icon">+</span>${networkName} <button type="button" class="chip-remove">&times;</button>`;
+        chip.querySelector('.chip-remove').addEventListener('click', () => {
+            const idx = state.filters.selectedNetworks.indexOf(networkId);
+            if (idx > -1) state.filters.selectedNetworks.splice(idx, 1);
+            renderNetworkChipsFromState();
+            updateActiveFilters();
+        });
+        chipsWrapper.appendChild(chip);
+    });
+
+    state.filters.excludedNetworks.forEach(networkId => {
+        const networkName = state.filters.networkCache?.[networkId] || `Network ${networkId}`;
+        const chip = document.createElement('span');
+        chip.className = 'chip chip-exclude';
+        chip.innerHTML = `<span class="chip-icon">-</span>${networkName} <button type="button" class="chip-remove">&times;</button>`;
+        chip.querySelector('.chip-remove').addEventListener('click', () => {
+            const idx = state.filters.excludedNetworks.indexOf(networkId);
+            if (idx > -1) state.filters.excludedNetworks.splice(idx, 1);
+            renderNetworkChipsFromState();
+            updateActiveFilters();
+        });
+        chipsWrapper.appendChild(chip);
+    });
+}
+
+/**
  * Delete the currently selected preset
  */
 async function deleteSelectedPreset() {
@@ -6220,33 +7225,44 @@ async function deleteSelectedPreset() {
 
     const presetName = presetSelect.options[presetSelect.selectedIndex]?.textContent || 'this preset';
 
-    if (!confirm(`Are you sure you want to delete "${presetName}"?`)) {
-        return;
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Confirm Delete',
+        message: `Are you sure you want to delete "${presetName}"?`,
+        onConfirm: async function() {
+            try {
+                const response = await fetch(`/discover/api/presets/${presetId}`, {
+                    method: 'DELETE'
+                });
 
-    try {
-        const response = await fetch(`/discover/api/presets/${presetId}`, {
-            method: 'DELETE'
-        });
+                const data = await response.json();
 
-        const data = await response.json();
+                if (data.success) {
+                    showNotification(`Preset "${presetName}" deleted!`, 'success');
 
-        if (data.success) {
-            showNotification(`Preset "${presetName}" deleted!`, 'success');
+                    // If the deleted preset was the active one, clear active preset state
+                    if (presetId === activePresetId) {
+                        activePresetId = null;
+                        activePresetName = null;
+                        presetDirty = false;
+                        updatePresetButtonState();
+                    }
 
-            // Refresh the dropdown
-            await loadPresetsIntoDropdown();
+                    // Refresh the dropdown
+                    await loadPresetsIntoDropdown();
 
-            // Disable delete button
-            const deleteBtn = document.getElementById('delete-preset-btn');
-            if (deleteBtn) deleteBtn.disabled = true;
-        } else {
-            throw new Error(data.error || 'Failed to delete preset');
+                    // Disable delete button
+                    const deleteBtn = document.getElementById('delete-preset-btn');
+                    if (deleteBtn) deleteBtn.disabled = true;
+                } else {
+                    throw new Error(data.error || 'Failed to delete preset');
+                }
+            } catch (error) {
+                console.error('[Presets] Delete error:', error);
+                showNotification(error.message || 'Failed to delete preset', 'error');
+            }
         }
-    } catch (error) {
-        console.error('[Presets] Delete error:', error);
-        showNotification(error.message || 'Failed to delete preset', 'error');
-    }
+    });
 }
 
 // Initialize filter presets when DOM is ready
@@ -6309,16 +7325,24 @@ async function loadMDBListOptions() {
         const data = await response.json();
 
         if (data.success && data.lists) {
-            window.mdblistState.availableLists = data.lists;
-            populateMDBListDropdown(data.lists);
-            
+            // Append static TMDB show lists
+            const tmdbShowLists = [
+                { key: 'tmdb_shows_popular',      name: 'TMDB Popular Shows',      icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'popular' },
+                { key: 'tmdb_shows_top_rated',    name: 'TMDB Top Rated Shows',    icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'top_rated' },
+                { key: 'tmdb_shows_airing_today', name: 'TMDB Airing Today',       icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'airing_today' },
+                { key: 'tmdb_shows_trending',     name: 'TMDB Trending Shows',     icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'trending' },
+            ];
+            const allLists = [...data.lists, ...tmdbShowLists];
+            window.mdblistState.availableLists = allLists;
+            populateMDBListDropdown(allLists);
+
             // Restore saved selection
             const saved = localStorage.getItem('discoverMDBList');
             if (saved) {
                 try {
                     const savedList = JSON.parse(saved);
-                    const list = data.lists.find(l => l.key === savedList.key);
-                    if (list) {
+                    const list = allLists.find(l => l.key === savedList.key);
+                    if (list && !searchIsActive()) {
                         await selectMDBList(list);
                     }
                 } catch (e) {
@@ -6346,11 +7370,12 @@ function populateMDBListDropdown(lists) {
         'streaming': 'Streaming Top Lists',
         'originals': 'Streaming Originals',
         'curated': 'Curated Collections',
+        'tmdb_shows': 'TMDB Shows',
         'other': 'Other'
     };
 
     // Define category order
-    const categoryOrder = ['mdblist', 'streaming', 'originals', 'curated', 'other'];
+    const categoryOrder = ['mdblist', 'streaming', 'originals', 'curated', 'tmdb_shows', 'other'];
 
     // Group lists by category
     const grouped = {};
@@ -6393,6 +7418,21 @@ function showMDBListDropdown() {
     }
 }
 
+function closeAllDropdowns(except) {
+    [
+        { btn: 'mdblist-dropdown-btn', menu: 'mdblist-dropdown-menu' },
+        { btn: 'personal-dropdown-btn', menu: 'personal-dropdown-menu' },
+        { btn: 'flixpatrol-dropdown-btn', menu: 'flixpatrol-dropdown-menu' }
+    ].forEach(({ btn, menu }) => {
+        const b = document.getElementById(btn);
+        const m = document.getElementById(menu);
+        if (b && m && b !== except) {
+            m.classList.remove('open');
+            b.classList.remove('open');
+        }
+    });
+}
+
 /**
  * Bind MDBList dropdown events
  */
@@ -6401,20 +7441,26 @@ function bindMDBListEvents() {
     const dropdownMenu = document.getElementById('mdblist-dropdown-menu');
 
     if (dropdownBtn && dropdownMenu) {
-        // Toggle dropdown on button click
         dropdownBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             const isOpen = dropdownMenu.classList.toggle('open');
             dropdownBtn.classList.toggle('open', isOpen);
-            dropdownBtn.classList.toggle('active', isOpen);
+            if (isOpen) {
+                closeAllDropdowns(dropdownBtn);
+                if (window.innerWidth <= 768) {
+                    const rect = dropdownBtn.getBoundingClientRect();
+                    dropdownMenu.style.top = (rect.bottom + 8) + 'px';
+                    const menuWidth = dropdownMenu.offsetWidth || 200;
+                    const left = Math.min(rect.left, window.innerWidth - menuWidth - 8);
+                    dropdownMenu.style.left = Math.max(8, left) + 'px';
+                }
+            }
         });
 
-        // Close dropdown when clicking outside
         document.addEventListener('click', (e) => {
             if (!dropdownBtn.contains(e.target) && !dropdownMenu.contains(e.target)) {
                 dropdownMenu.classList.remove('open');
                 dropdownBtn.classList.remove('open');
-                dropdownBtn.classList.remove('active');
             }
         });
     }
@@ -6425,10 +7471,12 @@ function bindMDBListEvents() {
  */
 async function selectMDBList(list) {
     window.mdblistState.currentList = list;
-    
-    // Save selection to localStorage and clear FlixPatrol
-    localStorage.setItem('discoverMDBList', JSON.stringify({key: list.key, name: list.name}));
-    localStorage.removeItem('discoverFlixPatrol');
+
+    // Save selection to localStorage and clear FlixPatrol (skip in adaptive list edit mode)
+    if (!window.adaptiveListEditMode) {
+        localStorage.setItem('discoverMDBList', JSON.stringify({key: list.key, name: list.name}));
+        localStorage.removeItem('discoverFlixPatrol');
+    }
 
     // Update dropdown label
     const label = document.getElementById('mdblist-dropdown-label');
@@ -6475,7 +7523,9 @@ async function selectMDBList(list) {
 async function loadMDBListContent(listKey) {
     if (window.mdblistState.isLoading) return;
 
+    window.discoverState.listModeActive = true;
     window.mdblistState.isLoading = true;
+    const gen = beginContentLoad();
     setLoadingFlag();
 
     // Clear existing results
@@ -6485,21 +7535,25 @@ async function loadMDBListContent(listKey) {
 
     try {
         const mediaType = window.discoverState.filters.mediaType || 'all';
-        const response = await fetch(`/discover/api/mdblist/list/${listKey}?type=${mediaType}&limit=40`);
+
+        // TMDB show lists use a different endpoint
+        const currentList = window.mdblistState.currentList;
+        let response;
+        if (currentList && currentList.source === 'tmdb_shows') {
+            response = await fetch(`/discover/api/tmdb/shows/${currentList.listType}`);
+        } else {
+            response = await fetch(`/discover/api/mdblist/list/${listKey}?type=${mediaType}&limit=40`);
+        }
         const data = await response.json();
+        if (isStaleContentLoad(gen)) return;
 
         if (data.success && data.results) {
-            renderResults(data.results);
+            // Store raw results for client-side filtering/sorting
+            window.sidebarListsState.rawResults = data.results;
+            window.sidebarListsState.listSource = 'mdblist';
+            window.sidebarListsState.listId = listKey;
 
-            // Update pagination info
-            window.discoverState.hasMore = false; // MDBList doesn't paginate the same way
-
-            // Update results info display
-            updateResultsInfo({
-                total_results: data.results.length,
-                page: 1,
-                total_pages: 1
-            });
+            await applyListFiltersAndRender(data.results);
         } else{
             console.error('[MDBList] API Error:', data.error);
             if (data.error && data.error.includes('API key not configured')) {
@@ -6551,6 +7605,7 @@ document.addEventListener('DOMContentLoaded', function() {
 window.flixpatrolState = {
     platforms: [],
     currentPlatform: null,
+    currentPeriod: 'today',
     isLoading: false
 };
 
@@ -6574,8 +7629,9 @@ async function initFlixPatrol() {
                 try {
                     const savedPlatform = JSON.parse(saved);
                     const platform = data.platforms.find(p => p.id === savedPlatform.id);
-                    if (platform) {
-                        await selectFlixPatrolPlatform(platform);
+                    // Skip if the user already started a search while the platforms loaded
+                    if (platform && !searchIsActive()) {
+                        await selectFlixPatrolPlatform(platform, savedPlatform.period || 'today');
                     }
                 } catch (e) {
                     console.error('[FlixPatrol] Failed to restore selection:', e);
@@ -6588,7 +7644,7 @@ async function initFlixPatrol() {
 }
 
 /**
- * Populate the FlixPatrol dropdown menu with available platforms
+ * Populate the FlixPatrol dropdown menu with available platforms (Today + Weekly)
  */
 function populateFlixPatrolDropdown(platforms) {
     const dropdown = document.getElementById('flixpatrol-dropdown-menu');
@@ -6596,22 +7652,41 @@ function populateFlixPatrolDropdown(platforms) {
 
     dropdown.innerHTML = '';
 
-    // Add header
-    const header = document.createElement('div');
-    header.className = 'flixpatrol-dropdown-header';
-    header.textContent = 'Streaming Top 10';
-    dropdown.appendChild(header);
+    // Today section
+    const todayHeader = document.createElement('div');
+    todayHeader.className = 'flixpatrol-dropdown-header';
+    todayHeader.textContent = 'Today Top 10';
+    dropdown.appendChild(todayHeader);
 
-    // Add platform items
     platforms.forEach(platform => {
         const item = document.createElement('div');
         item.className = 'flixpatrol-dropdown-item';
         item.dataset.platformId = platform.id;
+        item.dataset.period = 'today';
         item.innerHTML = `
             <span class="platform-icon platform-${platform.icon}"></span>
             <span class="platform-name">${platform.name}</span>
         `;
-        item.addEventListener('click', () => selectFlixPatrolPlatform(platform));
+        item.addEventListener('click', () => selectFlixPatrolPlatform(platform, 'today'));
+        dropdown.appendChild(item);
+    });
+
+    // Weekly section
+    const weeklyHeader = document.createElement('div');
+    weeklyHeader.className = 'flixpatrol-dropdown-header';
+    weeklyHeader.textContent = 'Weekly Top 10';
+    dropdown.appendChild(weeklyHeader);
+
+    platforms.forEach(platform => {
+        const item = document.createElement('div');
+        item.className = 'flixpatrol-dropdown-item';
+        item.dataset.platformId = platform.id;
+        item.dataset.period = 'weekly';
+        item.innerHTML = `
+            <span class="platform-icon platform-${platform.icon}"></span>
+            <span class="platform-name">${platform.name}</span>
+        `;
+        item.addEventListener('click', () => selectFlixPatrolPlatform(platform, 'weekly'));
         dropdown.appendChild(item);
     });
 }
@@ -6624,20 +7699,26 @@ function bindFlixPatrolEvents() {
     const dropdownMenu = document.getElementById('flixpatrol-dropdown-menu');
 
     if (dropdownBtn && dropdownMenu) {
-        // Toggle dropdown on button click
         dropdownBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             const isOpen = dropdownMenu.classList.toggle('open');
             dropdownBtn.classList.toggle('open', isOpen);
-            dropdownBtn.classList.toggle('active', isOpen);
+            if (isOpen) {
+                closeAllDropdowns(dropdownBtn);
+                if (window.innerWidth <= 768) {
+                    const rect = dropdownBtn.getBoundingClientRect();
+                    dropdownMenu.style.top = (rect.bottom + 8) + 'px';
+                    const menuWidth = dropdownMenu.offsetWidth || 200;
+                    const left = Math.min(rect.left, window.innerWidth - menuWidth - 8);
+                    dropdownMenu.style.left = Math.max(8, left) + 'px';
+                }
+            }
         });
 
-        // Close dropdown when clicking outside
         document.addEventListener('click', (e) => {
             if (!dropdownBtn.contains(e.target) && !dropdownMenu.contains(e.target)) {
                 dropdownMenu.classList.remove('open');
                 dropdownBtn.classList.remove('open');
-                dropdownBtn.classList.remove('active');
             }
         });
     }
@@ -6646,17 +7727,18 @@ function bindFlixPatrolEvents() {
 /**
  * Select a FlixPatrol platform and load its Top 10 content
  */
-async function selectFlixPatrolPlatform(platform) {
+async function selectFlixPatrolPlatform(platform, period = 'today') {
     window.flixpatrolState.currentPlatform = platform;
-    
+    window.flixpatrolState.currentPeriod = period;
+
     // Save selection to localStorage and clear MDBList
-    localStorage.setItem('discoverFlixPatrol', JSON.stringify({id: platform.id, name: platform.name}));
+    localStorage.setItem('discoverFlixPatrol', JSON.stringify({id: platform.id, name: platform.name, period}));
     localStorage.removeItem('discoverMDBList');
 
     // Update dropdown label
     const label = document.getElementById('flixpatrol-dropdown-label');
     if (label) {
-        label.textContent = platform.name + ' Top 10';
+        label.textContent = platform.name + (period === 'weekly' ? ' Weekly Top 10' : ' Top 10');
     }
 
     // Close dropdown
@@ -6689,16 +7771,18 @@ async function selectFlixPatrolPlatform(platform) {
     if (searchResults) searchResults.style.display = 'block';
 
     // Load the platform's Top 10 content
-    await loadFlixPatrolContent(platform.id);
+    await loadFlixPatrolContent(platform.id, period);
 }
 
 /**
  * Load Top 10 content from selected FlixPatrol platform
  */
-async function loadFlixPatrolContent(platformId) {
+async function loadFlixPatrolContent(platformId, period = 'today') {
     if (window.flixpatrolState.isLoading) return;
 
+    window.discoverState.listModeActive = true;
     window.flixpatrolState.isLoading = true;
+    const gen = beginContentLoad();
     setLoadingFlag();
 
     // Clear existing results
@@ -6708,21 +7792,20 @@ async function loadFlixPatrolContent(platformId) {
 
     try {
         const mediaType = window.discoverState.filters.mediaType || 'all';
-        const response = await fetch(`/discover/api/flixpatrol/top10/${platformId}?type=${mediaType}`);
+        const baseUrl = period === 'weekly'
+            ? `/discover/api/flixpatrol/top10/${platformId}/weekly`
+            : `/discover/api/flixpatrol/top10/${platformId}`;
+        const response = await fetch(`${baseUrl}?type=${mediaType}`);
         const data = await response.json();
+        if (isStaleContentLoad(gen)) return;
 
         if (data.success && data.results) {
-            renderResults(data.results);
+            // Store raw results for client-side filtering/sorting
+            window.sidebarListsState.rawResults = data.results;
+            window.sidebarListsState.listSource = 'flixpatrol';
+            window.sidebarListsState.listId = platformId;
 
-            // Update pagination info
-            window.discoverState.hasMore = false; // Top 10 doesn't paginate
-
-            // Update results info display
-            updateResultsInfo({
-                total_results: data.results.length,
-                page: 1,
-                total_pages: 1
-            });
+            await applyListFiltersAndRender(data.results);
         } else {
             console.error('[FlixPatrol] API Error:', data.error);
             showError(data.error || 'Failed to load Top 10');
@@ -6741,6 +7824,7 @@ async function loadFlixPatrolContent(platformId) {
  */
 function resetFlixPatrolSelection() {
     window.flixpatrolState.currentPlatform = null;
+    window.flixpatrolState.currentPeriod = 'today';
 
     const label = document.getElementById('flixpatrol-dropdown-label');
     if (label) {
@@ -6772,6 +7856,11 @@ window.sidebarListsState = {
     selectedLists: [],  // Array of {source, listId, listName}
     flixpatrolPlatforms: [],
     mdblistLists: [],
+    mdblistPersonalLists: [],
+    traktSpecialLists: [],
+    traktMyLists: [],
+    scrobSpecialLists: [],
+    scrobMyLists: [],
     rawResults: [],  // Store merged raw list results for client-side filtering
 };
 
@@ -6811,9 +7900,12 @@ async function initSidebarListsFilter() {
         
         // Update filter availability
         updateFilterAvailability();
-        
-        // Load the content
-        loadAllSelectedLists();
+
+        // Load the content, unless the user already started a search while the lists loaded
+        // (the list loads when the search is cleared, see handleSearch)
+        if (!searchIsActive()) {
+            loadAllSelectedLists();
+        }
     }
 
     // Toggle dropdown on button click
@@ -6872,8 +7964,77 @@ async function loadSidebarListsData() {
         const mdbResponse = await fetch('/discover/api/mdblist/lists');
         if (mdbResponse.ok) {
             const mdbData = await mdbResponse.json();
-            window.sidebarListsState.mdblistLists = mdbData.lists || [];
+            const tmdbShowLists = [
+                { key: 'tmdb_shows_popular',      name: 'TMDB Popular Shows',   icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'popular' },
+                { key: 'tmdb_shows_top_rated',    name: 'TMDB Top Rated Shows', icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'top_rated' },
+                { key: 'tmdb_shows_airing_today', name: 'TMDB Airing Today',    icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'airing_today' },
+                { key: 'tmdb_shows_trending',     name: 'TMDB Trending Shows',  icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'trending' },
+            ];
+            window.sidebarListsState.mdblistLists = [...(mdbData.lists || []), ...tmdbShowLists];
         }
+
+        // Load Trakt special lists (static, always available)
+        // Mirrors PERSONAL_SPECIAL_LISTS defined later in file — keep in sync if adding items
+        window.sidebarListsState.traktSpecialLists = [
+            { key: 'trending',        name: 'Trending' },
+            { key: 'popular',         name: 'Popular' },
+            { key: 'recommendations', name: 'Recommendations' },
+            { key: 'favorited',       name: 'Favorited' },
+            { key: 'played',          name: 'Played' },
+            { key: 'watched',         name: 'Watched' },
+            { key: 'collected',       name: 'Collected' },
+            { key: 'anticipated',     name: 'Anticipated' },
+            { key: 'boxoffice',       name: 'Box Office' },
+        ];
+
+        // Load Trakt My Lists (user-specific, may fail if not configured)
+        try {
+            const traktResp = await fetch('/discover/api/trakt/lists');
+            if (traktResp.ok) {
+                const traktData = await traktResp.json();
+                if (traktData.success) {
+                    window.sidebarListsState.traktMyLists = traktData.lists || [];
+                }
+            }
+        } catch (_e) {}
+
+        // Load MDBList Personal Lists (user-specific, requires API key)
+        try {
+            const mdbPersonalResp = await fetch('/discover/api/mdblist/personal-lists');
+            if (mdbPersonalResp.ok) {
+                const mdbPersonalData = await mdbPersonalResp.json();
+                if (mdbPersonalData.success) {
+                    window.sidebarListsState.mdblistPersonalLists = mdbPersonalData.lists || [];
+                }
+            }
+        } catch (_e) {}
+
+        // Load Scrob special lists (static, always available)
+        // Mirrors SCROB_SPECIAL_LISTS defined later in file — keep in sync if adding items
+        window.sidebarListsState.scrobSpecialLists = [
+            { key: 'Trending',         name: 'Trending' },
+            { key: 'Popular',          name: 'Popular' },
+            { key: 'Top Rated',        name: 'Top Rated' },
+            { key: 'Now Playing',      name: 'Now Playing' },
+            { key: 'Upcoming',         name: 'Upcoming' },
+            { key: 'On Air Today',     name: 'On Air Today' },
+            { key: 'On Air This Week', name: 'On Air This Week' },
+            { key: 'New Episodes',     name: 'New Episodes' },
+            { key: 'Hidden Gems',      name: 'Hidden Gems' },
+            { key: 'For You',          name: 'For You' },
+            { key: 'Recently Added',   name: 'Recently Added' },
+        ];
+
+        // Load Scrob My Lists (user-specific, requires Scrob to be configured)
+        try {
+            const scrobResp = await fetch('/discover/api/scrob/lists');
+            if (scrobResp.ok) {
+                const scrobData = await scrobResp.json();
+                if (scrobData.success) {
+                    window.sidebarListsState.scrobMyLists = scrobData.lists || [];
+                }
+            }
+        } catch (_e) {}
 
         window.sidebarListsState.isLoaded = true;
     } catch (error) {
@@ -6941,11 +8102,12 @@ function populateSidebarListsDropdown() {
             'mdblist': 'MDBList Popular',
             'streaming': 'Streaming Top Lists',
             'originals': 'Streaming Originals',
-            'curated': 'Curated Collections'
+            'curated': 'Curated Collections',
+            'tmdb_shows': 'TMDB Shows',
         };
 
         // Order categories
-        const categoryOrder = ['mdblist', 'streaming', 'originals', 'curated'];
+        const categoryOrder = ['mdblist', 'streaming', 'originals', 'curated', 'tmdb_shows'];
 
         categoryOrder.forEach(catKey => {
             if (categories[catKey] && categories[catKey].length > 0) {
@@ -6955,27 +8117,151 @@ function populateSidebarListsDropdown() {
                 dropdown.appendChild(catHeader);
 
                 categories[catKey].forEach(list => {
+                    const itemSource = list.source || 'mdblist';
                     const item = document.createElement('div');
                     item.className = 'chips-dropdown-item';
-                    item.dataset.value = `mdblist:${list.key}`;
-                    item.dataset.source = 'mdblist';
+                    item.dataset.value = `${itemSource}:${list.key}`;
+                    item.dataset.source = itemSource;
                     item.dataset.listId = list.key;
                     item.dataset.name = list.name;
-                    
+
                     // Check if already selected
-                    const isSelected = state.selectedLists.some(l => l.source === 'mdblist' && l.listId === list.key);
+                    const isSelected = state.selectedLists.some(l => l.source === itemSource && l.listId === list.key);
                     if (isSelected) item.classList.add('included');
-                    
+
                     item.innerHTML = `<span class="list-icon">${getPlatformIcon(list.icon)}</span> ${list.name}`;
-                    item.addEventListener('click', () => toggleSidebarList(item, 'mdblist', list.key, list.name));
+                    item.addEventListener('click', () => toggleSidebarList(item, itemSource, list.key, list.name));
                     dropdown.appendChild(item);
                 });
             }
         });
     }
 
-    // If no lists loaded
-    if (state.flixpatrolPlatforms.length === 0 && state.mdblistLists.length === 0) {
+    // Add Personal — Trakt Special Lists
+    if (state.traktSpecialLists.length > 0) {
+        const specialHeader = document.createElement('div');
+        specialHeader.className = 'chips-dropdown-header';
+        specialHeader.textContent = 'Personal — Special Lists';
+        dropdown.appendChild(specialHeader);
+
+        state.traktSpecialLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'chips-dropdown-item';
+            item.dataset.value = `trakt-special:${list.key}`;
+            item.dataset.source = 'trakt-special';
+            item.dataset.listId = list.key;
+            item.dataset.name = list.name;
+
+            const isSelected = state.selectedLists.some(l => l.source === 'trakt-special' && l.listId === list.key);
+            if (isSelected) item.classList.add('included');
+
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('trakt')}</span> ${list.name}`;
+            item.addEventListener('click', () => toggleSidebarList(item, 'trakt-special', list.key, list.name));
+            dropdown.appendChild(item);
+        });
+    }
+
+    // Add Personal — My Lists
+    if (state.traktMyLists.length > 0) {
+        const myHeader = document.createElement('div');
+        myHeader.className = 'chips-dropdown-header';
+        myHeader.textContent = 'Personal — My Lists';
+        dropdown.appendChild(myHeader);
+
+        state.traktMyLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'chips-dropdown-item';
+            item.dataset.value = `trakt-mylist:${list.slug}`;
+            item.dataset.source = 'trakt-mylist';
+            item.dataset.listId = list.slug;
+            item.dataset.name = list.name;
+
+            const isSelected = state.selectedLists.some(l => l.source === 'trakt-mylist' && l.listId === list.slug);
+            if (isSelected) item.classList.add('included');
+
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('trakt')}</span> ${list.name}`;
+            item.addEventListener('click', () => toggleSidebarList(item, 'trakt-mylist', list.slug, list.name));
+            dropdown.appendChild(item);
+        });
+    }
+
+    // Add Personal — MDBList Lists
+    if (state.mdblistPersonalLists.length > 0) {
+        const mdbPersonalHeader = document.createElement('div');
+        mdbPersonalHeader.className = 'chips-dropdown-header';
+        mdbPersonalHeader.textContent = 'Personal — MDBList';
+        dropdown.appendChild(mdbPersonalHeader);
+
+        state.mdblistPersonalLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'chips-dropdown-item';
+            item.dataset.value = `mdblist-personal:${list.id}`;
+            item.dataset.source = 'mdblist-personal';
+            item.dataset.listId = String(list.id);
+            item.dataset.name = list.name;
+
+            const isSelected = state.selectedLists.some(l => l.source === 'mdblist-personal' && l.listId === String(list.id));
+            if (isSelected) item.classList.add('included');
+
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('mdblist')}</span> ${list.name}`;
+            item.addEventListener('click', () => toggleSidebarList(item, 'mdblist-personal', String(list.id), list.name));
+            dropdown.appendChild(item);
+        });
+    }
+
+    // Add Scrob — Special Lists
+    if (state.scrobSpecialLists.length > 0) {
+        const scrobSpecialHeader = document.createElement('div');
+        scrobSpecialHeader.className = 'chips-dropdown-header';
+        scrobSpecialHeader.textContent = 'Scrob — Special Lists';
+        dropdown.appendChild(scrobSpecialHeader);
+
+        state.scrobSpecialLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'chips-dropdown-item';
+            item.dataset.value = `scrob-special:${list.key}`;
+            item.dataset.source = 'scrob-special';
+            item.dataset.listId = list.key;
+            item.dataset.name = list.name;
+
+            const isSelected = state.selectedLists.some(l => l.source === 'scrob-special' && l.listId === list.key);
+            if (isSelected) item.classList.add('included');
+
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('scrob')}</span> ${list.name}`;
+            item.addEventListener('click', () => toggleSidebarList(item, 'scrob-special', list.key, list.name));
+            dropdown.appendChild(item);
+        });
+    }
+
+    // Add Scrob — My Lists
+    if (state.scrobMyLists.length > 0) {
+        const scrobMyHeader = document.createElement('div');
+        scrobMyHeader.className = 'chips-dropdown-header';
+        scrobMyHeader.textContent = 'Scrob — My Lists';
+        dropdown.appendChild(scrobMyHeader);
+
+        state.scrobMyLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'chips-dropdown-item';
+            item.dataset.value = `scrob-mylist:${list.id}`;
+            item.dataset.source = 'scrob-mylist';
+            item.dataset.listId = String(list.id);
+            item.dataset.name = list.name;
+
+            const isSelected = state.selectedLists.some(l => l.source === 'scrob-mylist' && l.listId === String(list.id));
+            if (isSelected) item.classList.add('included');
+
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('scrob')}</span> ${list.name}`;
+            item.addEventListener('click', () => toggleSidebarList(item, 'scrob-mylist', String(list.id), list.name));
+            dropdown.appendChild(item);
+        });
+    }
+
+    // If no lists loaded at all
+    if (state.flixpatrolPlatforms.length === 0 && state.mdblistLists.length === 0 &&
+        state.mdblistPersonalLists.length === 0 &&
+        state.traktSpecialLists.length === 0 && state.traktMyLists.length === 0 &&
+        state.scrobSpecialLists.length === 0 && state.scrobMyLists.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'chips-dropdown-empty';
         empty.textContent = 'No lists available';
@@ -6987,23 +8273,63 @@ function populateSidebarListsDropdown() {
  * Get platform icon HTML
  */
 function getPlatformIcon(iconName) {
+    const base = '/api/overlays/logos/serve';
     const icons = {
-        'netflix': '🔴',
-        'disney': '🏰',
-        'amazon': '📦',
-        'hbo': '🟣',
-        'apple': '🍎',
-        'paramount': '⭐',
-        'hulu': '💚',
-        'peacock': '🦚',
-        'mdblist': '📋',
-        'rottentomatoes': '🍅',
-        'metacritic': '🎯',
-        'commonsense': '👨‍👩‍👧‍👦',
-        'bbc': '📺',
-        'discovery': '🔍'
+        'netflix':       `${base}/network/color/Netflix.png`,
+        'disney':        `${base}/network/color/Disney+.png`,
+        'amazon':        `${base}/network/color/Prime Video.png`,
+        'hbo':           `${base}/network/color/Max.png`,
+        'apple':         `${base}/network/color/Apple TV+.png`,
+        'paramount':     `${base}/network/color/Paramount+.png`,
+        'hulu':          `${base}/network/color/Hulu.png`,
+        'peacock':       `${base}/network/color/Peacock.png`,
+        'bbc':           `${base}/network/color/BBC.png`,
+        'discovery':     `${base}/network/color/discovery+.png`,
+        'mdblist':       `${base}/rating/MDBList.png`,
+        'tmdb':          `${base}/rating/TMDb.png`,
+        'rottentomatoes':`${base}/rating/RT-Crit-Fresh.png`,
+        'metacritic':    `${base}/rating/Metacritic.png`,
+        'commonsense':   `${base}/rating/common_sense.png`,
+        'trakt':         `${base}/rating/Trakt.png`,
     };
-    return icons[iconName] || '📋';
+    const src = icons[iconName];
+    if (src) {
+        return `<img src="${src}" alt="${iconName}" style="height:20px;width:auto;max-width:56px;object-fit:contain;vertical-align:middle;">`;
+    }
+    return '<span style="display:inline-block;width:20px;text-align:center;">📋</span>';
+}
+
+/**
+ * Select a list without needing the itemElement (for programmatic selection)
+ */
+function selectSidebarList(source, listId, listName) {
+    const state = window.sidebarListsState;
+
+    // Check if already selected
+    const existingIndex = state.selectedLists.findIndex(l => l.source === source && l.listId === listId);
+
+    if (existingIndex < 0) {
+        // Add to selection if not already present
+        state.selectedLists.push({ source, listId, listName });
+    }
+
+    // Update chips display
+    renderSidebarListChips();
+
+    // Update filter availability based on list selection
+    updateFilterAvailability();
+
+    // Update active filters display — suppress live filtering here: rawResults is still empty
+    // and the list load below will populate it and render correctly on its own.
+    window.discoverState.isClearing = true;
+    updateActiveFilters();
+    window.discoverState.isClearing = false;
+
+    // Save lists selection to localStorage
+    saveSidebarListsToStorage();
+
+    // Reload content with selected list
+    loadSidebarListContent(source, listId);
 }
 
 /**
@@ -7011,10 +8337,10 @@ function getPlatformIcon(iconName) {
  */
 function toggleSidebarList(itemElement, source, listId, listName) {
     const state = window.sidebarListsState;
-    
+
     // Check if already selected
     const existingIndex = state.selectedLists.findIndex(l => l.source === source && l.listId === listId);
-    
+
     if (existingIndex >= 0) {
         // Remove from selection
         state.selectedLists.splice(existingIndex, 1);
@@ -7024,19 +8350,22 @@ function toggleSidebarList(itemElement, source, listId, listName) {
         state.selectedLists.push({ source, listId, listName });
         itemElement.classList.add('included');
     }
-    
+
     // Update chips display
     renderSidebarListChips();
-    
+
     // Update filter availability based on list selection
     updateFilterAvailability();
-    
-    // Update active filters display
+
+    // Update active filters display — suppress live filtering here: rawResults is still empty
+    // and the list load below will populate it and render correctly on its own.
+    window.discoverState.isClearing = true;
     updateActiveFilters();
-    
+    window.discoverState.isClearing = false;
+
     // Save lists selection to localStorage
     saveSidebarListsToStorage();
-    
+
     // Reload content with all selected lists
     loadAllSelectedLists();
 }
@@ -7179,7 +8508,9 @@ function updateFilterAvailability() {
 async function loadAllSelectedLists() {
     const state = window.discoverState;
     const listsState = window.sidebarListsState;
-    
+
+    const gen = beginContentLoad();
+
     // If no lists selected, clear results
     if (listsState.selectedLists.length === 0) {
         const resultsGrid = document.getElementById('results-grid');
@@ -7188,22 +8519,26 @@ async function loadAllSelectedLists() {
         return;
     }
     
-    // Show search results area, hide trending
+    // Show search results area, hide trending — clear grid immediately so old results
+    // don't flash while the new list fetch is in-flight
     const trendingContent = document.getElementById('trending-content');
     const searchResults = document.getElementById('search-results');
     if (trendingContent) trendingContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
-    
+    window.discoverState.listModeActive = true;
+    const _earlyGrid = document.getElementById('results-grid');
+    if (_earlyGrid) _earlyGrid.innerHTML = '';
+
     // Reset page
     state.page = 1;
     state.autoLoadCount = 0;
-    
+
     setLoadingFlag();
-    
+
     try {
         const allResults = [];
         const seenIds = new Set();  // Track unique TMDB IDs to avoid duplicates
-        
+
         // Load each selected list
         for (const list of listsState.selectedLists) {
             try {
@@ -7215,6 +8550,36 @@ async function loadAllSelectedLists() {
                     data = await response.json();
                 } else if (list.source === 'mdblist') {
                     const response = await fetch(`/discover/api/mdblist/list/${list.listId}`);
+                    if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
+                    data = await response.json();
+                } else if (list.source === 'trakt-special') {
+                    const mediaType = window.discoverState.mediaType || 'all';
+                    const response = await fetch(`/discover/api/trakt/special/${list.listId}?type=${mediaType}`);
+                    if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
+                    data = await response.json();
+                } else if (list.source === 'trakt-mylist') {
+                    const mediaType = window.discoverState.mediaType || 'all';
+                    const response = await fetch(`/discover/api/trakt/mylist/${list.listId}?type=${mediaType}`);
+                    if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
+                    data = await response.json();
+                } else if (list.source === 'mdblist-personal') {
+                    const response = await fetch(`/discover/api/mdblist/personal-list/${list.listId}`);
+                    if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
+                    data = await response.json();
+                } else if (list.source === 'tmdb_shows') {
+                    const listMeta = window.sidebarListsState.mdblistLists.find(l => l.key === list.listId);
+                    const listType = listMeta ? listMeta.listType : list.listId.replace('tmdb_shows_', '');
+                    const response = await fetch(`/discover/api/tmdb/shows/${listType}`);
+                    if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
+                    data = await response.json();
+                } else if (list.source === 'scrob-special') {
+                    const mediaType = window.discoverState.mediaType || 'all';
+                    const response = await fetch(`/discover/api/scrob/special/${encodeURIComponent(list.listId)}?type=${mediaType}`);
+                    if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
+                    data = await response.json();
+                } else if (list.source === 'scrob-mylist') {
+                    const mediaType = window.discoverState.mediaType || 'all';
+                    const response = await fetch(`/discover/api/scrob/list/${list.listId}?type=${mediaType}`);
                     if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
                     data = await response.json();
                 }
@@ -7234,13 +8599,65 @@ async function loadAllSelectedLists() {
                 showNotification(`Failed to load ${list.listName}`, 'error');
             }
         }
-        
+
+        // "Merge with Adaptive List": also pull in TMDB Discover results (the same
+        // date-filtered query the scheduled adaptive-list task runs) and combine them
+        // with the list results above. Capped at 30 pages (600 items) to match
+        // fetch_from_tmdb_discover's own max_pages in content_checkers/adaptive_list.py —
+        // the scheduled task never fetches more than that either, so this is a
+        // byte-accurate preview, not an approximation. Pages are fetched concurrently
+        // (page 1 first to learn total_pages, then any remaining pages up to the cap
+        // in parallel) rather than sequentially, consistent with the existing
+        // ThreadPoolExecutor(max_workers=10) precedent for TMDB calls elsewhere in
+        // this codebase (content_checkers/adaptive_list.py's apply_list_filters).
+        if (state.filters.mergeWithAdaptive) {
+            try {
+                const MAX_PAGES = 30;
+                const firstResponse = await fetch(`/discover/api/filter?${buildDiscoverFilterParams(1)}`);
+                if (!firstResponse.ok) throw new Error('Failed to load Adaptive Discover results');
+                const firstData = await firstResponse.json();
+                const pagesToFetch = Math.min(MAX_PAGES, firstData.total_pages || 1);
+
+                const addResults = (results) => {
+                    (results || []).forEach(item => {
+                        const itemId = item.id || item.tmdb_id;
+                        if (itemId && !seenIds.has(itemId)) {
+                            seenIds.add(itemId);
+                            allResults.push(item);
+                        }
+                    });
+                };
+                addResults(firstData.results);
+
+                if (pagesToFetch > 1) {
+                    const remainingPages = [];
+                    for (let page = 2; page <= pagesToFetch; page++) {
+                        remainingPages.push(page);
+                    }
+                    const remainingResponses = await Promise.all(
+                        remainingPages.map(page => fetch(`/discover/api/filter?${buildDiscoverFilterParams(page)}`))
+                    );
+                    for (const response of remainingResponses) {
+                        if (response.ok) {
+                            const data = await response.json();
+                            addResults(data.results);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('[Lists] Error loading Adaptive Discover results:', error);
+                showNotification('Failed to load Adaptive Discover results', 'error');
+            }
+        }
+
+        if (isStaleContentLoad(gen)) return; // a search or another list load replaced this one
+
         // Store merged results for filtering
         listsState.rawResults = allResults;
 
         // Apply filters and render
-        filterAndRenderListResults();
-        
+        await filterAndRenderListResults();
+
     } catch (error) {
         console.error('[Lists] Load error:', error);
         showNotification('Failed to load lists', 'error');
@@ -7254,13 +8671,14 @@ async function loadAllSelectedLists() {
  */
 function clearSidebarListSelection() {
     const state = window.sidebarListsState;
-    
+
     // Clear saved lists from localStorage
     clearSavedSidebarLists();
-    
+
     // Clear all selections
     state.selectedLists = [];
     state.rawResults = [];
+    window.discoverState.listModeActive = false;
     
     // Clear dropdown item states
     const dropdown = document.getElementById('lists-dropdown');
@@ -7308,8 +8726,26 @@ async function loadSavedLists(listPairs) {
         } else if (source === 'mdblist') {
             const list = state.mdblistLists.find(l => l.key === listId);
             listName = list ? list.name : `MDBList ${listId}`;
+        } else if (source === 'trakt-special') {
+            const special = state.traktSpecialLists.find(l => l.key === listId);
+            listName = special ? special.name : listId;
+        } else if (source === 'trakt-mylist') {
+            const mylist = state.traktMyLists.find(l => l.slug === listId);
+            listName = mylist ? mylist.name : listId;
+        } else if (source === 'mdblist-personal') {
+            const personal = state.mdblistPersonalLists.find(l => String(l.id) === listId);
+            listName = personal ? personal.name : `MDBList ${listId}`;
+        } else if (source === 'tmdb_shows') {
+            const tmdbList = state.mdblistLists.find(l => l.key === listId && l.source === 'tmdb_shows');
+            listName = tmdbList ? tmdbList.name : listId;
+        } else if (source === 'scrob-special') {
+            const special = state.scrobSpecialLists.find(l => l.key === listId);
+            listName = special ? special.name : listId;
+        } else if (source === 'scrob-mylist') {
+            const mylist = state.scrobMyLists.find(l => String(l.id) === listId);
+            listName = mylist ? mylist.name : listId;
         }
-        
+
         if (listName) {
             state.selectedLists.push({ source, listId, listName });
         }
@@ -7347,19 +8783,22 @@ async function loadSidebarListContent(source, listId) {
     listsState.listSource = source;
     listsState.listId = listId;
     
-    // Show search results area, hide trending
+    // Show search results area, hide trending — clear grid immediately so old results
+    // don't flash while the new list fetch is in-flight
     if (trendingContent) trendingContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
-    
+    if (resultsGrid) resultsGrid.innerHTML = '';
+
     // Reset page
     state.page = 1;
     state.autoLoadCount = 0;
-    
+
+    const gen = beginContentLoad();
     setLoadingFlag();
-    
+
     try {
         let data;
-        
+
         if (source === 'flixpatrol') {
             // Load FlixPatrol list
             const response = await fetch(`/discover/api/flixpatrol/top10/${listId}`);
@@ -7373,7 +8812,8 @@ async function loadSidebarListContent(source, listId) {
         } else {
             throw new Error('Invalid list source');
         }
-        
+        if (isStaleContentLoad(gen)) return;
+
         // Store raw results for filtering
         listsState.rawResults = data.results || [];
         
@@ -7447,10 +8887,19 @@ function applySidebarListFilter(listValue) {
 /**
  * Filter and render list results (helper function)
  */
-function filterAndRenderListResults() {
+async function filterAndRenderListResults() {
     const state = window.discoverState;
     const listsState = window.sidebarListsState;
     const resultsGrid = document.getElementById('results-grid');
+    const filters = state.filters;
+    const hasKeywordFilter = (filters.selectedKeywords && filters.selectedKeywords.length > 0) ||
+                              (filters.excludedKeywords && filters.excludedKeywords.length > 0);
+
+    const gen = beginContentLoad();
+    if (hasKeywordFilter) {
+        await prefetchKeywordsForItems(listsState.rawResults);
+        if (isStaleContentLoad(gen)) return;
+    }
 
     // Apply current filters to list results
     const filteredResults = filterListResults(listsState.rawResults);
@@ -7459,26 +8908,66 @@ function filterAndRenderListResults() {
     if (resultsGrid) {
         resultsGrid.innerHTML = '';
     }
-    
+
     if (filteredResults && filteredResults.length > 0) {
         renderResults(filteredResults);
         hideError();
         hideEmpty();
-        
-        // Update results info display
-        updateResultsInfo({
-            total_results: filteredResults.length,
-            page: 1,
-            total_pages: 1
-        });
+        updateResultsInfo({ total_results: filteredResults.length, page: 1, total_pages: 1 });
     } else {
-        // No results after filtering
         showEmpty();
     }
-    
-    // Disable pagination/auto-load for list results (they're all loaded at once)
+
     state.hasMore = false;
     updatePagination();
+}
+
+/**
+ * Filter, (optionally prefetch keywords), render and update info for a list result set.
+ * Use this everywhere a list fetch ends and needs to be rendered.
+ */
+async function applyListFiltersAndRender(results) {
+    const filters = window.discoverState.filters;
+    const hasKeywordFilter = (filters.selectedKeywords && filters.selectedKeywords.length > 0) ||
+                              (filters.excludedKeywords && filters.excludedKeywords.length > 0);
+    const gen = beginContentLoad();
+    if (hasKeywordFilter) {
+        await prefetchKeywordsForItems(results);
+        if (isStaleContentLoad(gen)) return;
+    }
+    const filtered = filterListResults(results);
+    renderResults(filtered);
+    window.discoverState.hasMore = false;
+    updateResultsInfo({ total_results: filtered.length, page: 1, total_pages: 1 });
+    updatePagination();
+}
+
+/**
+ * Prefetch TMDB keyword IDs for a list of items (for keyword filtering in list mode).
+ * Populates _listKeywordCache. Returns a promise that resolves when done.
+ */
+async function prefetchKeywordsForItems(items) {
+    const uncached = items.filter(item => {
+        const key = `${item.id}_${item.media_type || 'movie'}`;
+        return item.id && !(key in _listKeywordCache);
+    });
+    if (!uncached.length) return;
+
+    await Promise.all(uncached.map(async item => {
+        const key = `${item.id}_${item.media_type || 'movie'}`;
+        const endpoint = item.media_type === 'tv' ? 'tv' : 'movie';
+        try {
+            const r = await fetch(`/discover/api/keywords/${endpoint}/${item.id}`);
+            if (r.ok) {
+                const data = await r.json();
+                _listKeywordCache[key] = (data.keywords || data.results || []).map(k => k.id);
+            } else {
+                _listKeywordCache[key] = [];
+            }
+        } catch (e) {
+            _listKeywordCache[key] = [];
+        }
+    }));
 }
 
 /**
@@ -7488,7 +8977,7 @@ function filterAndRenderListResults() {
  */
 function filterListResults(results) {
     if (!results || results.length === 0) return [];
-    
+
     const state = window.discoverState;
     const filters = state.filters;
 
@@ -7590,7 +9079,12 @@ function filterListResults(results) {
             if (filters.runtimeMin && item.runtime < filters.runtimeMin) return false;
             if (filters.runtimeMax && item.runtime > filters.runtimeMax) return false;
         }
-        
+
+        // Seasons max filter — TV only, only when number_of_seasons is present
+        if (filters.seasonsMax > 0 && item.media_type === 'tv' && item.number_of_seasons) {
+            if (item.number_of_seasons > filters.seasonsMax) return false;
+        }
+
         // Language filter (include) - only apply if item has language data
         if (filters.selectedLanguages && filters.selectedLanguages.length > 0) {
             const itemLang = item.original_language;
@@ -7646,14 +9140,61 @@ function filterListResults(results) {
             const itemCompanies = item.company_ids || [];
             // Only filter if item has company data
             if (itemCompanies.length > 0) {
-                const hasExcludedCompany = filters.excludedCompanies.some(companyId => 
+                const hasExcludedCompany = filters.excludedCompanies.some(companyId =>
                     itemCompanies.includes(parseInt(companyId))
                 );
                 if (hasExcludedCompany) return false;
             }
         }
-        
+
+        // Keyword filters — use pre-fetched cache populated by prefetchKeywordsForItems
+        const hasKeywordFilter = (filters.selectedKeywords && filters.selectedKeywords.length > 0) ||
+                                 (filters.excludedKeywords && filters.excludedKeywords.length > 0);
+        if (hasKeywordFilter) {
+            const cacheKey = `${item.id}_${item.media_type || 'movie'}`;
+            const itemKeywords = _listKeywordCache[cacheKey];
+            if (itemKeywords !== undefined) {
+                if (filters.excludedKeywords && filters.excludedKeywords.length > 0) {
+                    const excIds = filters.excludedKeywords.map(k => parseInt(k));
+                    if (excIds.some(k => itemKeywords.includes(k))) return false;
+                }
+                if (filters.selectedKeywords && filters.selectedKeywords.length > 0) {
+                    const incIds = filters.selectedKeywords.map(k => parseInt(k));
+                    if (!incIds.some(k => itemKeywords.includes(k))) return false;
+                }
+            }
+            // If not yet cached, allow item through (will be correct after prefetch re-renders)
+        }
+
         return true;
+    });
+
+    // Sort filtered results — skip if sortBy is 'none' to preserve original list order
+    const sortBy = filters.sortBy || 'popularity';
+    if (sortBy === 'none') return filtered;
+
+    const sortOrder = filters.sortOrder || 'desc';
+    const sortDir = sortOrder === 'asc' ? 1 : -1;
+
+    filtered.sort((a, b) => {
+        let aVal, bVal;
+        if (sortBy === 'vote_average') {
+            aVal = a.vote_average || 0;
+            bVal = b.vote_average || 0;
+        } else if (sortBy === 'vote_count') {
+            aVal = a.vote_count || 0;
+            bVal = b.vote_count || 0;
+        } else if (sortBy === 'primary_release_date') {
+            aVal = a.release_date || a.first_air_date || '';
+            bVal = b.release_date || b.first_air_date || '';
+        } else {
+            // popularity (default)
+            aVal = a.popularity || 0;
+            bVal = b.popularity || 0;
+        }
+        if (aVal < bVal) return -1 * sortDir;
+        if (aVal > bVal) return 1 * sortDir;
+        return 0;
     });
 
     return filtered;
@@ -7733,174 +9274,271 @@ function showScrapeVersionModal(content) {
 
     versionRadios.innerHTML = '';
 
-    availableVersions.forEach((version, index) => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox';
-        div.innerHTML = `
-            <input type="radio" id="scrape-version-${version}" name="scrape-versions" value="${version}" ${index === 0 ? 'checked' : ''}>
-            <label for="scrape-version-${version}">${version}</label>
-        `;
-        versionRadios.appendChild(div);
-    });
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Version to Scrape';
+    versionRadios.appendChild(titleEl);
 
-    // Add 'No Version' option
-    const noVersionDiv = document.createElement('div');
-    noVersionDiv.className = 'version-checkbox';
-    noVersionDiv.innerHTML = `
-        <input type="radio" id="scrape-version-No Version" name="scrape-versions" value="No Version">
-        <label for="scrape-version-No Version">No Version</label>
-    `;
-    versionRadios.appendChild(noVersionDiv);
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    const icon = content.mediaType === 'tv' ? 'fa-tv' : 'fa-film';
+    subEl.innerHTML = `<i class="fa-solid ${icon}"></i> ${content.title}${content.year ? ' (' + content.year + ')' : ''}`;
+    versionRadios.appendChild(subEl);
+
+    const verLabel = document.createElement('div');
+    verLabel.className = 'section-label';
+    verLabel.textContent = 'Version';
+    versionRadios.appendChild(verLabel);
+
+    const allVersions = [...availableVersions, 'No Version'];
+    allVersions.forEach((version, index) => {
+        const row = document.createElement('div');
+        row.className = 'option-row' + (index === 0 ? ' selected' : '');
+        row.dataset.value = version;
+        row.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => {
+            versionRadios.querySelectorAll('.option-row').forEach(r => r.classList.remove('selected'));
+            row.classList.add('selected');
+        });
+        versionRadios.appendChild(row);
+    });
 
     document.body.classList.add('modal-open');
     modal.style.display = 'flex';
 }
 
+// Episode Order picker of the open request dialog (TV only)
+let versionModalOrderPicker = null;
+
 // Show version selection modal for requests
 function showVersionModal(content) {
     selectedContent = content;
+    versionModalOrderPicker = null;
     const modal = document.getElementById('versionModal');
     const versionCheckboxes = document.getElementById('versionCheckboxes');
 
-    // Clear existing checkboxes
     versionCheckboxes.innerHTML = '';
 
-    // If this is a TV show, add options for whole show or seasons
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Versions to Request';
+    versionCheckboxes.appendChild(titleEl);
+
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    const icon = content.mediaType === 'tv' ? 'fa-tv' : 'fa-film';
+    subEl.innerHTML = `<i class="fa-solid ${icon}"></i> ${content.title}${content.year ? ' (' + content.year + ')' : ''}`;
+    versionCheckboxes.appendChild(subEl);
+
     if (content.mediaType === 'tv') {
-        // Add a heading for show selection
-        const showSelectionHeader = document.createElement('div');
-        showSelectionHeader.className = 'version-section-header';
-        showSelectionHeader.innerHTML = '<h4>Select Request Type:</h4>';
-        versionCheckboxes.appendChild(showSelectionHeader);
+        const typeLabel = document.createElement('div');
+        typeLabel.className = 'section-label';
+        typeLabel.textContent = 'Request Type';
+        versionCheckboxes.appendChild(typeLabel);
 
-        // Add radio buttons for selection type
-        const selectionTypeContainer = document.createElement('div');
-        selectionTypeContainer.className = 'selection-type-container';
-        selectionTypeContainer.innerHTML = `
-            <div class="selection-type-option">
-                <input type="radio" id="whole-show" name="selection-type" value="whole-show" checked>
-                <label for="whole-show">Whole Show</label>
-            </div>
-            <div class="selection-type-option">
-                <input type="radio" id="specific-seasons" name="selection-type" value="specific-seasons">
-                <label for="specific-seasons">Specific Seasons</label>
-            </div>
-        `;
-        versionCheckboxes.appendChild(selectionTypeContainer);
+        const wholeRow = document.createElement('div');
+        wholeRow.className = 'option-row selected';
+        wholeRow.id = 'opt-whole-show';
+        wholeRow.dataset.value = 'whole-show';
+        wholeRow.innerHTML = '<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">Whole Show</span>';
+        versionCheckboxes.appendChild(wholeRow);
 
-        // Container for season selection (initially hidden)
+        const seasonsRow = document.createElement('div');
+        seasonsRow.className = 'option-row';
+        seasonsRow.dataset.value = 'specific-seasons';
+        seasonsRow.innerHTML = '<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">Specific Seasons</span>';
+        versionCheckboxes.appendChild(seasonsRow);
+
         const seasonSelectionContainer = document.createElement('div');
-        seasonSelectionContainer.className = 'season-selection-container';
         seasonSelectionContainer.id = 'season-selection-container';
         seasonSelectionContainer.style.display = 'none';
-        seasonSelectionContainer.innerHTML = '<p>Loading seasons...</p>';
         versionCheckboxes.appendChild(seasonSelectionContainer);
 
-        // Add handlers for radio buttons
-        const wholeShowRadio = selectionTypeContainer.querySelector('#whole-show');
-        const specificSeasonsRadio = selectionTypeContainer.querySelector('#specific-seasons');
-
-        wholeShowRadio.addEventListener('change', function() {
-            if (this.checked) {
-                document.getElementById('season-selection-container').style.display = 'none';
-            }
-        });
-
-        specificSeasonsRadio.addEventListener('change', function() {
-            if (this.checked) {
-                document.getElementById('season-selection-container').style.display = 'block';
-                // Fetch seasons if not already loaded
-                if (document.getElementById('season-selection-container').innerHTML === '<p>Loading seasons...</p>') {
-                    fetchShowSeasons(content.id);
+        let pickedOrder = null;
+        const toggleTypeRow = (selectedRow) => {
+            [wholeRow, seasonsRow].forEach(r => r.classList.remove('selected'));
+            selectedRow.classList.add('selected');
+            if (selectedRow === seasonsRow) {
+                seasonSelectionContainer.style.display = 'block';
+                if (!seasonSelectionContainer.dataset.loaded) {
+                    fetchShowSeasons(content.id, pickedOrder);
                 }
+            } else {
+                seasonSelectionContainer.style.display = 'none';
             }
-        });
+        };
+        wholeRow.addEventListener('click', () => toggleTypeRow(wholeRow));
+        seasonsRow.addEventListener('click', () => toggleTypeRow(seasonsRow));
 
-        // Add a separator
-        const separator = document.createElement('hr');
-        versionCheckboxes.appendChild(separator);
+        // Seasons are numbered in the picked order (Dragon Ball Kai: 2 aired seasons, more on DVD)
+        versionModalOrderPicker = window.EpisodeOrderPicker
+            ? window.EpisodeOrderPicker.mount(versionCheckboxes, content.id, (order) => {
+                pickedOrder = order;
+                delete seasonSelectionContainer.dataset.loaded;
+                if (seasonSelectionContainer.style.display !== 'none') fetchShowSeasons(content.id, order);
+            })
+            : null;
+
+        const divider = document.createElement('div');
+        divider.className = 'vm-divider';
+        versionCheckboxes.appendChild(divider);
     }
 
-    // Add a heading for version selection
-    const versionHeader = document.createElement('div');
-    versionHeader.className = 'version-section-header';
-    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
-    versionCheckboxes.appendChild(versionHeader);
+    const verLabel = document.createElement('div');
+    verLabel.className = 'section-label';
+    verLabel.textContent = 'Version';
+    versionCheckboxes.appendChild(verLabel);
 
-    // Create checkboxes for each version
     availableVersions.forEach(version => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox';
-        div.innerHTML = `
-            <input type="checkbox" id="request-version-${version}" name="versions" value="${version}">
-            <label for="request-version-${version}">${version}</label>
-        `;
-        versionCheckboxes.appendChild(div);
-
-        // If there's only one version available, auto-select it
-        if (availableVersions.length === 1) {
-            div.querySelector('input[type="checkbox"]').checked = true;
-        }
+        const row = document.createElement('div');
+        row.className = 'option-row' + (availableVersions.length === 1 ? ' checked' : '');
+        row.dataset.value = version;
+        row.dataset.type = 'version';
+        row.innerHTML = `<div class="custom-cb"></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => row.classList.toggle('checked'));
+        versionCheckboxes.appendChild(row);
     });
+
+    // Folder dropdown — symlink mode only, loaded asynchronously
+    const folderContainer = document.createElement('div');
+    folderContainer.id = 'request-folder-container';
+    versionCheckboxes.appendChild(folderContainer);
+    (async () => {
+        try {
+            const fRes = await fetch('/scraper/get_symlink_folders');
+            const fData = await fRes.json();
+            if (!fData.enabled || !fData.folders || !fData.folders.length) return;
+
+            const genreList = (content.genres || []).map(g => String(g).trim().toLowerCase());
+            const fs = fData.folder_settings || {};
+            const isAnime = genreList.some(g => g.includes('anime') || g.includes('animation') || g === '16');
+            const isDoc = genreList.some(g => g.includes('documentary') || g === '99');
+            let autoFolder = null;
+            if (content.mediaType === 'movie') {
+                autoFolder = (isAnime && fs.enable_separate_anime_folders) ? fs.anime_movies_folder_name
+                    : (isDoc && fs.enable_separate_documentary_folders) ? fs.documentary_movies_folder_name
+                    : fs.movies_folder_name;
+            } else {
+                autoFolder = (isAnime && fs.enable_separate_anime_folders) ? fs.anime_tv_shows_folder_name
+                    : (isDoc && fs.enable_separate_documentary_folders) ? fs.documentary_tv_shows_folder_name
+                    : fs.tv_shows_folder_name;
+            }
+
+            const divider = document.createElement('div');
+            divider.className = 'vm-divider';
+            folderContainer.appendChild(divider);
+
+            const label = document.createElement('div');
+            label.className = 'section-label';
+            label.textContent = 'Folder';
+            folderContainer.appendChild(label);
+
+            // Filter folders by media type — same logic as scraper.js
+            const mediaType = content.mediaType === 'movie' ? 'movie' : 'tv';
+            const filteredFolders = fData.folders.filter(folder => {
+                if (folder.is_custom) return true; // custom folders show for both
+                const nameLower = folder.name.toLowerCase();
+                if (mediaType === 'movie') {
+                    return nameLower.includes('movie') || nameLower === (fs.movies_folder_name || '').toLowerCase();
+                } else {
+                    return nameLower.includes('show') || nameLower.includes('tv') || nameLower === (fs.tv_shows_folder_name || '').toLowerCase();
+                }
+            });
+            if (!filteredFolders.length) return;
+
+            const select = document.createElement('select');
+            select.id = 'request-folder-select';
+            select.style.cssText = 'width:100%;padding:8px 10px;background:#1a1a1a;color:#fff;border:1px solid #333;border-radius:6px;font-size:12px;margin-top:4px;';
+            filteredFolders.forEach(folder => {
+                const opt = document.createElement('option');
+                opt.value = folder.name;
+                opt.dataset.isCustom = folder.is_custom ? 'true' : 'false';
+                const displayName = folder.is_custom
+                    ? `${folder.name} (${mediaType === 'movie' ? fs.movies_folder_name : fs.tv_shows_folder_name})`
+                    : folder.name;
+                opt.textContent = displayName;
+                if (folder.name === autoFolder) opt.selected = true;
+                select.appendChild(opt);
+            });
+            folderContainer.appendChild(select);
+        } catch (e) {
+            // not symlink mode or fetch failed — silently ignore
+        }
+    })();
+
+    // Tags multi-select — Plex mode only
+    const tagsContainer = document.createElement('div');
+    tagsContainer.id = 'request-tags-container';
+    versionCheckboxes.appendChild(tagsContainer);
+    (async () => {
+        try {
+            const cfgR = await fetch('/settings/api/config');
+            const cfgD = await cfgR.json();
+            const globalTags = (cfgD['Tags'] || {})['tags_list'] || [];
+            const fileMode = (cfgD['File Management'] || {})['file_collection_management'] || '';
+            if (fileMode !== 'Plex' || !globalTags.length) return;
+            const divider = document.createElement('div'); divider.className = 'vm-divider'; tagsContainer.appendChild(divider);
+            const lbl = document.createElement('div'); lbl.className = 'section-label'; lbl.textContent = 'Tags'; tagsContainer.appendChild(lbl);
+            const pillWrap = document.createElement('div');
+            pillWrap.id = 'request-tags-pills';
+            pillWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;';
+            globalTags.forEach(tag => {
+                const pill = document.createElement('div');
+                pill.className = 'option-row';
+                pill.dataset.value = tag;
+                pill.dataset.type = 'tag';
+                pill.style.cssText = 'padding:5px 14px;border-radius:14px;cursor:pointer;font-size:12px;flex:none;';
+                pill.innerHTML = `<span class="option-label">${tag}</span>`;
+                pill.addEventListener('click', () => pill.classList.toggle('checked'));
+                pillWrap.appendChild(pill);
+            });
+            tagsContainer.appendChild(pillWrap);
+        } catch(e) {}
+    })();
 
     document.body.classList.add('modal-open');
     modal.style.display = 'flex';
 }
 
 // Function to fetch show seasons from the server
-async function fetchShowSeasons(tmdbId) {
+async function fetchShowSeasons(tmdbId, order = null) {
+    const seasonContainer = document.getElementById('season-selection-container');
+    seasonContainer.innerHTML = '<p style="padding:8px;opacity:0.6;">Loading seasons...</p>';
     try {
-        console.log(`Fetching seasons for TMDB ID: ${tmdbId}`);
-        const response = await fetch(`/content/show_seasons?tmdb_id=${tmdbId}`, {
-            method: 'GET'
-        });
-
-        console.log(`Show seasons fetch response status: ${response.status}`);
-
+        const orderParam = order ? `&order=${encodeURIComponent(order)}` : '';
+        const response = await fetch(`/content/show_seasons?tmdb_id=${tmdbId}${orderParam}`, { method: 'GET' });
         const data = await response.json();
-        console.log('Show seasons API response:', data);
 
         if (data.success && data.seasons && data.seasons.length > 0) {
-            // Update the season selection container
-            const seasonContainer = document.getElementById('season-selection-container');
-            seasonContainer.innerHTML = '<div class="seasons-list"></div>';
-            const seasonsList = seasonContainer.querySelector('.seasons-list');
-
-            // Sort seasons in numerical order
+            seasonContainer.innerHTML = '';
+            seasonContainer.dataset.loaded = '1';
             const seasons = data.seasons.sort((a, b) => a - b);
-            console.log(`Found ${seasons.length} seasons:`, seasons);
-
-            // Create checkbox for each season
+            const counts = data.episode_counts || {};
             seasons.forEach(season => {
-                const seasonDiv = document.createElement('div');
-                seasonDiv.className = 'season-checkbox';
-                seasonDiv.innerHTML = `
-                    <input type="checkbox" id="season-${season}" name="seasons" value="${season}">
-                    <label for="season-${season}">Season ${season}</label>
-                `;
-                seasonsList.appendChild(seasonDiv);
+                const row = document.createElement('div');
+                row.className = 'option-row';
+                row.dataset.value = season;
+                const count = counts[season] ? ` (${counts[season]} episodes)` : '';
+                row.innerHTML = `<div class="custom-cb"></div><span class="option-label">Season ${season}${count}</span>`;
+                row.addEventListener('click', () => row.classList.toggle('checked'));
+                seasonContainer.appendChild(row);
             });
         } else {
-            console.warn('No seasons found or invalid response format:', data);
-            let errorMessage = 'Could not load seasons. Please try again or request the whole show.';
-            if (data.error) {
-                console.error('API error message:', data.error);
-                errorMessage = `Error: ${data.error}`;
-            }
-            document.getElementById('season-selection-container').innerHTML = `<p>${errorMessage}</p>`;
+            const msg = data.error ? `Error: ${data.error}` : 'Could not load seasons. Please try again or request the whole show.';
+            seasonContainer.innerHTML = `<p style="padding:8px;opacity:0.6;">${msg}</p>`;
         }
     } catch (error) {
         console.error('Error fetching show seasons:', error);
-        document.getElementById('season-selection-container').innerHTML =
-            '<p>Error loading seasons. Please try again later.</p>';
+        seasonContainer.innerHTML = '<p style="padding:8px;opacity:0.6;">Error loading seasons. Please try again later.</p>';
     }
 }
 
 // Handle scrape version confirmation
 async function handleScrapeVersionConfirm() {
-    const selectedVersion = document.querySelector('#scrapeVersionRadios input[name="scrape-versions"]:checked')?.value;
+    const selectedRow = document.querySelector('#scrapeVersionRadios .option-row.selected');
+    const selectedVersion = selectedRow ? selectedRow.dataset.value : undefined;
     if (selectedVersion === undefined) {
-        alert('Please select a version.');
+        showPopup({ type: 'warning', title: 'Required', message: 'Please select a version.' });
         return;
     }
 
@@ -7929,45 +9567,53 @@ async function handleScrapeVersionConfirm() {
 
 // Handle version confirm for requests
 async function handleVersionConfirm() {
-    const versionCheckboxes = document.querySelectorAll('#versionCheckboxes input[name="versions"]:checked');
-    const selectedVersions = Array.from(versionCheckboxes).map(cb => cb.value);
+    const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes .option-row.checked[data-type="version"]'))
+        .map(row => row.dataset.value);
 
     if (selectedVersions.length === 0) {
-        alert('Please select at least one version');
+        showPopup({ type: 'warning', title: 'Required', message: 'Please select at least one version' });
         return;
     }
 
-    // Check if this is a TV show
     if (selectedContent.mediaType === 'tv') {
-        // Check if the whole-show radio button exists
-        const wholeShowRadio = document.querySelector('#whole-show');
+        const wholeShowRow = document.getElementById('opt-whole-show');
+        const wholeShowSelected = wholeShowRow ? wholeShowRow.classList.contains('selected') : true;
 
-        // If the radio buttons exist, process the selection
-        if (wholeShowRadio) {
-            const wholeShowSelected = wholeShowRadio.checked;
+        if (!wholeShowSelected) {
+            const selectedSeasons = Array.from(document.querySelectorAll('#season-selection-container .option-row.checked'))
+                .map(row => parseInt(row.dataset.value));
 
-            if (!wholeShowSelected) {
-                // Get selected seasons
-                const seasonCheckboxes = document.querySelectorAll('#versionCheckboxes input[name="seasons"]:checked');
-                const selectedSeasons = Array.from(seasonCheckboxes).map(cb => parseInt(cb.value));
-
-                if (selectedSeasons.length === 0) {
-                    alert('Please select at least one season or choose "Whole Show"');
-                    return;
-                }
-
-                // Add seasons to selectedContent
-                selectedContent.seasons = selectedSeasons;
+            if (selectedSeasons.length === 0) {
+                showPopup({ type: 'warning', title: 'Required', message: 'Please select at least one season or choose "Whole Show"' });
+                return;
             }
+
+            selectedContent.seasons = selectedSeasons;
+        } else {
+            delete selectedContent.seasons;
         }
+        const pickedOrder = versionModalOrderPicker ? versionModalOrderPicker.value() : null;
+        if (pickedOrder) selectedContent.episode_order = pickedOrder;
+        else delete selectedContent.episode_order;
     }
 
+    // Read folder selection if dropdown is present (symlink mode)
+    const folderSelect = document.getElementById('request-folder-select');
+    const selectedFolder = folderSelect ? folderSelect.value : null;
+    const selectedFolderIsCustom = folderSelect
+        ? (folderSelect.options[folderSelect.selectedIndex]?.dataset?.isCustom === 'true')
+        : false;
+
+    // Read tags selection if present (Plex mode)
+    const _tagPills = document.querySelectorAll('#request-tags-pills .option-row.checked[data-type="tag"]');
+    const selectedTags = _tagPills.length ? Array.from(_tagPills).map(p=>p.dataset.value).join(',') : null;
+
     closeVersionModal();
-    await requestContent(selectedContent, selectedVersions);
+    await requestContent(selectedContent, selectedVersions, selectedFolder, selectedFolderIsCustom, selectedTags);
 }
 
 // Request content from backend
-async function requestContent(content, selectedVersions) {
+async function requestContent(content, selectedVersions, selectedFolder = null, selectedFolderIsCustom = false, selectedTags = null) {
     showLoadingMessage('Requesting content, please wait...');
     try {
         const requestData = {
@@ -7980,6 +9626,20 @@ async function requestContent(content, selectedVersions) {
         // Add seasons if specified for TV shows
         if (content.mediaType === 'tv' && content.seasons) {
             requestData.seasons = content.seasons;
+        }
+        if (content.mediaType === 'tv' && content.episode_order) {
+            requestData.episode_order = content.episode_order;
+        }
+
+        // Add folder selection if provided (symlink mode)
+        if (selectedFolder) {
+            requestData.selected_folder = selectedFolder;
+            requestData.selected_folder_is_custom = selectedFolderIsCustom;
+        }
+
+        // Add tags if provided (Plex mode)
+        if (selectedTags) {
+            requestData.selected_tags = selectedTags;
         }
 
         const response = await fetch('/content/request', {
@@ -7994,14 +9654,14 @@ async function requestContent(content, selectedVersions) {
         hideLoadingMessage();
 
         if (result.success) {
-            alert(`Successfully requested ${content.title}`);
+            showPopup({ type: 'success', title: 'Success', message: result.message || `Successfully requested ${content.title}` });
         } else {
-            alert(result.error || 'Failed to request content');
+            showPopup({ type: 'error', title: 'Error', message: result.error || 'Failed to request content' });
         }
     } catch (error) {
         hideLoadingMessage();
         console.error('Error requesting content:', error);
-        alert('An error occurred while requesting content');
+        showPopup({ type: 'error', title: 'Error', message: 'An error occurred while requesting content' });
     }
 }
 
@@ -8059,3 +9719,316 @@ function initializeModalListeners() {
 fetchVersions();
 initializeModalListeners();
 
+// ── Personal Lists (Trakt special + personal) ─────────────────────────────────
+
+window.personalState = {
+    myLists: [],
+    scrobLists: [],
+    currentSelection: null,  // { type: 'special'|'mylist'|'scrob-special'|'scrob-mylist', key: string, name: string }
+    myListsLoaded: false,
+    isLoading: false,
+};
+
+const PERSONAL_SPECIAL_LISTS = [
+    { key: 'trending',      name: 'Trending' },
+    { key: 'popular',       name: 'Popular' },
+    { key: 'recommendations', name: 'Recommendations' },
+    { key: 'favorited',     name: 'Favorited' },
+    { key: 'played',        name: 'Played' },
+    { key: 'watched',       name: 'Watched' },
+    { key: 'collected',     name: 'Collected' },
+    { key: 'anticipated',   name: 'Anticipated' },
+    { key: 'boxoffice',     name: 'Box Office' },
+];
+
+// Keys must match SPECIAL_LIST_ENDPOINTS in content_checkers/scrob.py exactly
+// (case-sensitive — sent as-is to /discover/api/scrob/special/<key>).
+const SCROB_SPECIAL_LISTS = [
+    { key: 'Trending',         name: 'Trending' },
+    { key: 'Popular',          name: 'Popular' },
+    { key: 'Top Rated',        name: 'Top Rated' },
+    { key: 'Now Playing',      name: 'Now Playing' },
+    { key: 'Upcoming',         name: 'Upcoming' },
+    { key: 'On Air Today',     name: 'On Air Today' },
+    { key: 'On Air This Week', name: 'On Air This Week' },
+    { key: 'New Episodes',     name: 'New Episodes' },
+    { key: 'Hidden Gems',      name: 'Hidden Gems' },
+    { key: 'For You',          name: 'For You' },
+    { key: 'Recently Added',   name: 'Recently Added' },
+];
+
+function populatePersonalDropdown(myLists, mdblistPersonalLists, scrobLists) {
+    const menu = document.getElementById('personal-dropdown-menu');
+    if (!menu) return;
+    menu.innerHTML = '';
+
+    // Special Lists group (Trakt)
+    const specialHeader = document.createElement('div');
+    specialHeader.className = 'mdblist-dropdown-header';
+    specialHeader.textContent = 'Special Lists';
+    menu.appendChild(specialHeader);
+
+    PERSONAL_SPECIAL_LISTS.forEach(list => {
+        const item = document.createElement('div');
+        item.className = 'mdblist-dropdown-item';
+        item.dataset.key = list.key;
+        item.innerHTML = `<span class="list-name">${list.name}</span>`;
+        item.addEventListener('click', () => selectPersonalList({ type: 'special', key: list.key, name: list.name }));
+        menu.appendChild(item);
+    });
+
+    // Scrob Special Lists group — separate from Trakt's since several names
+    // overlap (Trending, Popular) but hit a different backend/results.
+    const scrobSpecialHeader = document.createElement('div');
+    scrobSpecialHeader.className = 'mdblist-dropdown-header';
+    scrobSpecialHeader.textContent = 'Scrob — Special Lists';
+    menu.appendChild(scrobSpecialHeader);
+
+    SCROB_SPECIAL_LISTS.forEach(list => {
+        const item = document.createElement('div');
+        item.className = 'mdblist-dropdown-item';
+        item.dataset.scrobSpecialKey = list.key;
+        item.innerHTML = `<span class="list-name">${list.name}</span>`;
+        item.addEventListener('click', () => selectPersonalList({ type: 'scrob-special', key: list.key, name: list.name }));
+        menu.appendChild(item);
+    });
+
+    // Trakt My Lists group — only if we have any
+    if (myLists && myLists.length > 0) {
+        const myHeader = document.createElement('div');
+        myHeader.className = 'mdblist-dropdown-header';
+        myHeader.textContent = 'Trakt — My Lists';
+        menu.appendChild(myHeader);
+
+        myLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'mdblist-dropdown-item';
+            item.dataset.slug = list.slug;
+            item.innerHTML = `<span class="list-name">${list.name}</span>`;
+            item.addEventListener('click', () => selectPersonalList({ type: 'mylist', key: list.slug, name: list.name }));
+            menu.appendChild(item);
+        });
+    }
+
+    // MDBList Personal Lists group — only if we have any
+    if (mdblistPersonalLists && mdblistPersonalLists.length > 0) {
+        const mdbHeader = document.createElement('div');
+        mdbHeader.className = 'mdblist-dropdown-header';
+        mdbHeader.textContent = 'MDBList — My Lists';
+        menu.appendChild(mdbHeader);
+
+        mdblistPersonalLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'mdblist-dropdown-item';
+            item.dataset.mdblistId = list.id;
+            item.innerHTML = `<span class="list-name">${list.name}</span>`;
+            item.addEventListener('click', () => selectPersonalList({ type: 'mdblist-personal', key: String(list.id), name: list.name }));
+            menu.appendChild(item);
+        });
+    }
+
+    // Scrob My Lists group — only if we have any
+    if (scrobLists && scrobLists.length > 0) {
+        const scrobHeader = document.createElement('div');
+        scrobHeader.className = 'mdblist-dropdown-header';
+        scrobHeader.textContent = 'Scrob — My Lists';
+        menu.appendChild(scrobHeader);
+
+        scrobLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'mdblist-dropdown-item';
+            item.dataset.scrobListId = list.id;
+            item.innerHTML = `<span class="list-name">${list.name}</span>`;
+            item.addEventListener('click', () => selectPersonalList({ type: 'scrob-mylist', key: String(list.id), name: list.name }));
+            menu.appendChild(item);
+        });
+    }
+}
+
+async function initPersonal() {
+    // Populate Special Lists immediately (static)
+    populatePersonalDropdown([], [], []);
+    bindPersonalEvents();
+
+    // Restore saved selection
+    const saved = localStorage.getItem('discoverPersonal');
+    if (saved) {
+        try {
+            const sel = JSON.parse(saved);
+            // Validate the saved object has required fields
+            if (sel && sel.type && sel.key && sel.name) {
+                // Defer until after page init so grid is ready
+                setTimeout(() => { if (!searchIsActive()) selectPersonalList(sel, true); }, 0);
+            } else {
+                localStorage.removeItem('discoverPersonal');
+            }
+        } catch (e) {
+            localStorage.removeItem('discoverPersonal');
+        }
+    }
+}
+
+async function loadPersonalMyLists() {
+    if (window.personalState.myListsLoaded) return;
+    try {
+        const [traktResp, mdbResp, scrobResp] = await Promise.allSettled([
+            fetch('/discover/api/trakt/lists'),
+            fetch('/discover/api/mdblist/personal-lists'),
+            fetch('/discover/api/scrob/lists'),
+        ]);
+
+        if (traktResp.status === 'fulfilled' && traktResp.value.ok) {
+            const data = await traktResp.value.json();
+            if (data.success && data.lists) {
+                window.personalState.myLists = data.lists;
+            }
+        }
+
+        let mdblistPersonalLists = [];
+        if (mdbResp.status === 'fulfilled' && mdbResp.value.ok) {
+            const data = await mdbResp.value.json();
+            if (data.success && data.lists) {
+                mdblistPersonalLists = data.lists;
+                window.personalState.mdblistPersonalLists = mdblistPersonalLists;
+            }
+        }
+
+        let scrobLists = [];
+        if (scrobResp.status === 'fulfilled' && scrobResp.value.ok) {
+            const data = await scrobResp.value.json();
+            if (data.success && data.lists) {
+                scrobLists = data.lists;
+                window.personalState.scrobLists = scrobLists;
+            }
+        }
+
+        window.personalState.myListsLoaded = true;
+        populatePersonalDropdown(window.personalState.myLists || [], mdblistPersonalLists, scrobLists);
+    } catch (e) {
+        console.error('[Personal] Failed to load my lists:', e);
+    }
+}
+
+async function selectPersonalList(sel, restoring = false) {
+    window.personalState.currentSelection = sel;
+
+    if (!restoring) {
+        localStorage.setItem('discoverPersonal', JSON.stringify(sel));
+        localStorage.removeItem('discoverMDBList');
+        localStorage.removeItem('discoverFlixPatrol');
+    }
+
+    // Update dropdown label
+    const label = document.getElementById('personal-dropdown-label');
+    if (label) label.textContent = sel.name;
+
+    // Close dropdown
+    const menu = document.getElementById('personal-dropdown-menu');
+    const btn  = document.getElementById('personal-dropdown-btn');
+    if (menu) menu.classList.remove('open');
+    if (btn)  { btn.classList.remove('open'); btn.classList.add('selected'); }
+
+    // Mark active tab
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+
+    // Reset other dropdowns
+    if (typeof resetFlixPatrolSelection === 'function') resetFlixPatrolSelection();
+    const mdbBtn = document.getElementById('mdblist-dropdown-btn');
+    if (mdbBtn) { mdbBtn.classList.remove('active', 'selected'); }
+    document.getElementById('mdblist-dropdown-label').textContent = 'Lists';
+
+    window.discoverState.currentTab = 'personal';
+    window.discoverState.page = 1;
+
+    if (trendingContent) trendingContent.style.display = 'none';
+    if (searchResults)   searchResults.style.display = 'block';
+
+    await loadPersonalContent();
+}
+
+async function loadPersonalContent() {
+    const sel = window.personalState.currentSelection;
+    if (!sel || window.personalState.isLoading) return;
+
+    if (!resultsGrid) resultsGrid = document.getElementById('results-grid');
+    window.discoverState.listModeActive = true;
+    window.personalState.isLoading = true;
+    const gen = beginContentLoad();
+    setLoadingFlag();
+    if (resultsGrid) resultsGrid.innerHTML = '';
+
+    try {
+        const mediaType = window.discoverState.filters.mediaType || 'all';
+        let url;
+        if (sel.type === 'special') {
+            url = `/discover/api/trakt/special/${sel.key}?type=${mediaType}`;
+        } else if (sel.type === 'mdblist-personal') {
+            url = `/discover/api/mdblist/personal-list/${sel.key}`;
+        } else if (sel.type === 'scrob-special') {
+            url = `/discover/api/scrob/special/${encodeURIComponent(sel.key)}?type=${mediaType}`;
+        } else if (sel.type === 'scrob-mylist') {
+            url = `/discover/api/scrob/list/${sel.key}?type=${mediaType}`;
+        } else {
+            url = `/discover/api/trakt/mylist/${sel.key}?type=${mediaType}`;
+        }
+
+        const resp = await fetch(url);
+        const data = await resp.json();
+        if (isStaleContentLoad(gen)) return;
+
+        if (data.success && data.results) {
+            // Store raw results for client-side filtering/sorting
+            window.sidebarListsState.rawResults = data.results;
+            window.sidebarListsState.listSource = 'personal';
+            window.sidebarListsState.listId = sel.key;
+
+            await applyListFiltersAndRender(data.results);
+        } else {
+            showError(data.error || 'Failed to load personal list');
+        }
+    } catch (e) {
+        console.error('[Personal] Load error:', e);
+        showError('Failed to load personal list');
+    } finally {
+        window.personalState.isLoading = false;
+        clearLoadingFlag();
+    }
+}
+
+function bindPersonalEvents() {
+    const btn  = document.getElementById('personal-dropdown-btn');
+    const menu = document.getElementById('personal-dropdown-menu');
+    if (!btn || !menu) return;
+
+    btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const isOpen = menu.classList.contains('open');
+        closeAllDropdowns(btn);
+
+        if (!isOpen) {
+            menu.classList.add('open');
+            btn.classList.add('open');
+            if (window.innerWidth <= 768) {
+                const rect = btn.getBoundingClientRect();
+                menu.style.top = (rect.bottom + 8) + 'px';
+                const menuWidth = menu.offsetWidth || 200;
+                const left = Math.min(rect.left, window.innerWidth - menuWidth - 8);
+                menu.style.left = Math.max(8, left) + 'px';
+            }
+            await loadPersonalMyLists();
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!btn.contains(e.target) && !menu.contains(e.target)) {
+            menu.classList.remove('open');
+            btn.classList.remove('open');
+        }
+    });
+}
+
+// Init on page load
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(initPersonal, 150);
+});

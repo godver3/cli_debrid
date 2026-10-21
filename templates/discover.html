@@ -8,7 +8,7 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const theme = getCurrentTheme();
-        const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_discover.css' : 'css/discover.css';
+        const cssFile = 'css/tangerine/tangerine_discover.css';
         const link = document.createElement('link');
         link.rel = 'stylesheet';
         link.href = '{{ url_for("static", filename="") }}' + cssFile + '?v={{ range(10000, 99999) | random }}';
@@ -87,8 +87,10 @@
     </div>
 
     <!-- Tab Navigation -->
+    <div class="discover-tabs-scroll-wrap">
     <div class="discover-tabs">
         <button type="button" class="tab-btn active" data-tab="trending">Trending</button>
+        <button type="button" class="tab-btn" data-tab="recommendations" id="recommendations-tab-btn">Recommendations</button>
         <!-- FlixPatrol dropdown - Top 10 streaming charts (no API key required) -->
         <div id="flixpatrol-tabs" class="flixpatrol-tabs-container">
             <div class="flixpatrol-dropdown-wrapper">
@@ -103,22 +105,39 @@
                 </div>
             </div>
         </div>
-        <!-- MDBList dropdown - dynamically shown if MDBList is configured -->
-        <div id="mdblist-tabs" class="mdblist-tabs-container" style="display: none;">
-            <div class="mdblist-dropdown-wrapper">
-                <button type="button" class="tab-btn mdblist-dropdown-trigger" id="mdblist-dropdown-btn">
-                    <span id="mdblist-dropdown-label">Lists</span>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="m6 9 6 6 6-6"/>
-                    </svg>
-                </button>
-                <div id="mdblist-dropdown-menu" class="mdblist-dropdown-menu">
-                    <!-- List options will be dynamically inserted here -->
+        <!-- Right-aligned group: Lists (MDBList) + Personal -->
+        <div class="mdblist-tabs-container" style="gap: 0;">
+            <!-- MDBList dropdown - dynamically shown if MDBList is configured -->
+            <div id="mdblist-tabs" style="display: none;">
+                <div class="mdblist-dropdown-wrapper">
+                    <button type="button" class="tab-btn mdblist-dropdown-trigger" id="mdblist-dropdown-btn">
+                        <span id="mdblist-dropdown-label">Lists</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="m6 9 6 6 6-6"/>
+                        </svg>
+                    </button>
+                    <div id="mdblist-dropdown-menu" class="mdblist-dropdown-menu">
+                        <!-- List options will be dynamically inserted here -->
+                    </div>
+                </div>
+            </div>
+            <!-- Personal dropdown - Trakt special lists + user's personal lists -->
+            <div id="personal-tabs">
+                <div class="mdblist-dropdown-wrapper">
+                    <button type="button" class="tab-btn mdblist-dropdown-trigger" id="personal-dropdown-btn">
+                        <span id="personal-dropdown-label">Personal</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="m6 9 6 6 6-6"/>
+                        </svg>
+                    </button>
+                    <div id="personal-dropdown-menu" class="mdblist-dropdown-menu">
+                        <!-- Populated by JS -->
+                    </div>
                 </div>
             </div>
         </div>
     </div>
-
+    </div><!-- end discover-tabs-scroll-wrap -->
     <!-- Filter Drawer -->
     <div id="filter-drawer" class="filter-drawer">
         <div class="filter-drawer-header">
@@ -175,7 +194,8 @@
                             <div class="sort-controls">
                                 <div class="sort-dropdown-wrapper">
                                     <select id="sort-by" class="sort-select">
-                                        <option value="popularity" selected>Popularity</option>
+                                        <option value="none" selected>None (default order)</option>
+                                        <option value="popularity">Popularity</option>
                                         <option value="vote_average">Rating</option>
                                         <option value="vote_count">Vote Count</option>
                                         <option value="primary_release_date">Release Date</option>
@@ -368,26 +388,100 @@
                             </svg>
                         </button>
                         <div class="chips-dropdown" id="language-dropdown">
-                            <div class="chips-dropdown-item" data-value="en">English</div>
-                            <div class="chips-dropdown-item" data-value="es">Spanish</div>
-                            <div class="chips-dropdown-item" data-value="fr">French</div>
-                            <div class="chips-dropdown-item" data-value="de">German</div>
-                            <div class="chips-dropdown-item" data-value="it">Italian</div>
-                            <div class="chips-dropdown-item" data-value="pt">Portuguese</div>
-                            <div class="chips-dropdown-item" data-value="ja">Japanese</div>
-                            <div class="chips-dropdown-item" data-value="ko">Korean</div>
-                            <div class="chips-dropdown-item" data-value="zh">Chinese</div>
-                            <div class="chips-dropdown-item" data-value="hi">Hindi</div>
-                            <div class="chips-dropdown-item" data-value="ru">Russian</div>
+                            <div class="chips-dropdown-item" data-value="af">Afrikaans</div>
+                            <div class="chips-dropdown-item" data-value="sq">Albanian</div>
+                            <div class="chips-dropdown-item" data-value="am">Amharic</div>
                             <div class="chips-dropdown-item" data-value="ar">Arabic</div>
-                            <div class="chips-dropdown-item" data-value="nl">Dutch</div>
-                            <div class="chips-dropdown-item" data-value="sv">Swedish</div>
-                            <div class="chips-dropdown-item" data-value="no">Norwegian</div>
+                            <div class="chips-dropdown-item" data-value="hy">Armenian</div>
+                            <div class="chips-dropdown-item" data-value="az">Azerbaijani</div>
+                            <div class="chips-dropdown-item" data-value="eu">Basque</div>
+                            <div class="chips-dropdown-item" data-value="be">Belarusian</div>
+                            <div class="chips-dropdown-item" data-value="bn">Bengali</div>
+                            <div class="chips-dropdown-item" data-value="bs">Bosnian</div>
+                            <div class="chips-dropdown-item" data-value="bg">Bulgarian</div>
+                            <div class="chips-dropdown-item" data-value="my">Burmese</div>
+                            <div class="chips-dropdown-item" data-value="ca">Catalan</div>
+                            <div class="chips-dropdown-item" data-value="zh">Chinese</div>
+                            <div class="chips-dropdown-item" data-value="hr">Croatian</div>
+                            <div class="chips-dropdown-item" data-value="cs">Czech</div>
                             <div class="chips-dropdown-item" data-value="da">Danish</div>
+                            <div class="chips-dropdown-item" data-value="nl">Dutch</div>
+                            <div class="chips-dropdown-item" data-value="en">English</div>
+                            <div class="chips-dropdown-item" data-value="eo">Esperanto</div>
+                            <div class="chips-dropdown-item" data-value="et">Estonian</div>
                             <div class="chips-dropdown-item" data-value="fi">Finnish</div>
+                            <div class="chips-dropdown-item" data-value="fr">French</div>
+                            <div class="chips-dropdown-item" data-value="gl">Galician</div>
+                            <div class="chips-dropdown-item" data-value="ka">Georgian</div>
+                            <div class="chips-dropdown-item" data-value="de">German</div>
+                            <div class="chips-dropdown-item" data-value="el">Greek</div>
+                            <div class="chips-dropdown-item" data-value="gu">Gujarati</div>
+                            <div class="chips-dropdown-item" data-value="he">Hebrew</div>
+                            <div class="chips-dropdown-item" data-value="hi">Hindi</div>
+                            <div class="chips-dropdown-item" data-value="hu">Hungarian</div>
+                            <div class="chips-dropdown-item" data-value="is">Icelandic</div>
+                            <div class="chips-dropdown-item" data-value="id">Indonesian</div>
+                            <div class="chips-dropdown-item" data-value="ga">Irish</div>
+                            <div class="chips-dropdown-item" data-value="it">Italian</div>
+                            <div class="chips-dropdown-item" data-value="ja">Japanese</div>
+                            <div class="chips-dropdown-item" data-value="jv">Javanese</div>
+                            <div class="chips-dropdown-item" data-value="kn">Kannada</div>
+                            <div class="chips-dropdown-item" data-value="kk">Kazakh</div>
+                            <div class="chips-dropdown-item" data-value="km">Khmer</div>
+                            <div class="chips-dropdown-item" data-value="ko">Korean</div>
+                            <div class="chips-dropdown-item" data-value="ku">Kurdish</div>
+                            <div class="chips-dropdown-item" data-value="ky">Kyrgyz</div>
+                            <div class="chips-dropdown-item" data-value="lo">Lao</div>
+                            <div class="chips-dropdown-item" data-value="la">Latin</div>
+                            <div class="chips-dropdown-item" data-value="lv">Latvian</div>
+                            <div class="chips-dropdown-item" data-value="lt">Lithuanian</div>
+                            <div class="chips-dropdown-item" data-value="lb">Luxembourgish</div>
+                            <div class="chips-dropdown-item" data-value="mk">Macedonian</div>
+                            <div class="chips-dropdown-item" data-value="ms">Malay</div>
+                            <div class="chips-dropdown-item" data-value="ml">Malayalam</div>
+                            <div class="chips-dropdown-item" data-value="mt">Maltese</div>
+                            <div class="chips-dropdown-item" data-value="mi">Maori</div>
+                            <div class="chips-dropdown-item" data-value="mr">Marathi</div>
+                            <div class="chips-dropdown-item" data-value="mn">Mongolian</div>
+                            <div class="chips-dropdown-item" data-value="ne">Nepali</div>
+                            <div class="chips-dropdown-item" data-value="no">Norwegian</div>
+                            <div class="chips-dropdown-item" data-value="nb">Norwegian Bokmål</div>
+                            <div class="chips-dropdown-item" data-value="nn">Norwegian Nynorsk</div>
+                            <div class="chips-dropdown-item" data-value="ps">Pashto</div>
+                            <div class="chips-dropdown-item" data-value="fa">Persian</div>
                             <div class="chips-dropdown-item" data-value="pl">Polish</div>
-                            <div class="chips-dropdown-item" data-value="tr">Turkish</div>
+                            <div class="chips-dropdown-item" data-value="pt">Portuguese</div>
+                            <div class="chips-dropdown-item" data-value="pa">Punjabi</div>
+                            <div class="chips-dropdown-item" data-value="ro">Romanian</div>
+                            <div class="chips-dropdown-item" data-value="ru">Russian</div>
+                            <div class="chips-dropdown-item" data-value="gd">Scottish Gaelic</div>
+                            <div class="chips-dropdown-item" data-value="sr">Serbian</div>
+                            <div class="chips-dropdown-item" data-value="si">Sinhala</div>
+                            <div class="chips-dropdown-item" data-value="sk">Slovak</div>
+                            <div class="chips-dropdown-item" data-value="sl">Slovenian</div>
+                            <div class="chips-dropdown-item" data-value="so">Somali</div>
+                            <div class="chips-dropdown-item" data-value="es">Spanish</div>
+                            <div class="chips-dropdown-item" data-value="sw">Swahili</div>
+                            <div class="chips-dropdown-item" data-value="sv">Swedish</div>
+                            <div class="chips-dropdown-item" data-value="tl">Tagalog</div>
+                            <div class="chips-dropdown-item" data-value="tg">Tajik</div>
+                            <div class="chips-dropdown-item" data-value="ta">Tamil</div>
+                            <div class="chips-dropdown-item" data-value="tt">Tatar</div>
+                            <div class="chips-dropdown-item" data-value="te">Telugu</div>
                             <div class="chips-dropdown-item" data-value="th">Thai</div>
+                            <div class="chips-dropdown-item" data-value="bo">Tibetan</div>
+                            <div class="chips-dropdown-item" data-value="tr">Turkish</div>
+                            <div class="chips-dropdown-item" data-value="tk">Turkmen</div>
+                            <div class="chips-dropdown-item" data-value="uk">Ukrainian</div>
+                            <div class="chips-dropdown-item" data-value="ur">Urdu</div>
+                            <div class="chips-dropdown-item" data-value="ug">Uyghur</div>
+                            <div class="chips-dropdown-item" data-value="uz">Uzbek</div>
+                            <div class="chips-dropdown-item" data-value="vi">Vietnamese</div>
+                            <div class="chips-dropdown-item" data-value="cy">Welsh</div>
+                            <div class="chips-dropdown-item" data-value="xh">Xhosa</div>
+                            <div class="chips-dropdown-item" data-value="yi">Yiddish</div>
+                            <div class="chips-dropdown-item" data-value="yo">Yoruba</div>
+                            <div class="chips-dropdown-item" data-value="zu">Zulu</div>
                         </div>
                     </div>
                     <input type="hidden" id="selected-language" name="language">
@@ -405,26 +499,134 @@
                             </svg>
                         </button>
                         <div class="chips-dropdown" id="country-dropdown">
-                            <div class="chips-dropdown-item" data-value="US">United States</div>
-                            <div class="chips-dropdown-item" data-value="GB">United Kingdom</div>
-                            <div class="chips-dropdown-item" data-value="CA">Canada</div>
+                            <div class="chips-dropdown-item" data-value="AF">Afghanistan</div>
+                            <div class="chips-dropdown-item" data-value="AL">Albania</div>
+                            <div class="chips-dropdown-item" data-value="DZ">Algeria</div>
+                            <div class="chips-dropdown-item" data-value="AR">Argentina</div>
+                            <div class="chips-dropdown-item" data-value="AM">Armenia</div>
                             <div class="chips-dropdown-item" data-value="AU">Australia</div>
-                            <div class="chips-dropdown-item" data-value="DE">Germany</div>
-                            <div class="chips-dropdown-item" data-value="FR">France</div>
-                            <div class="chips-dropdown-item" data-value="ES">Spain</div>
-                            <div class="chips-dropdown-item" data-value="IT">Italy</div>
-                            <div class="chips-dropdown-item" data-value="JP">Japan</div>
-                            <div class="chips-dropdown-item" data-value="KR">South Korea</div>
-                            <div class="chips-dropdown-item" data-value="CN">China</div>
-                            <div class="chips-dropdown-item" data-value="IN">India</div>
+                            <div class="chips-dropdown-item" data-value="AT">Austria</div>
+                            <div class="chips-dropdown-item" data-value="AZ">Azerbaijan</div>
+                            <div class="chips-dropdown-item" data-value="BH">Bahrain</div>
+                            <div class="chips-dropdown-item" data-value="BD">Bangladesh</div>
+                            <div class="chips-dropdown-item" data-value="BY">Belarus</div>
+                            <div class="chips-dropdown-item" data-value="BE">Belgium</div>
+                            <div class="chips-dropdown-item" data-value="BZ">Belize</div>
+                            <div class="chips-dropdown-item" data-value="BO">Bolivia</div>
+                            <div class="chips-dropdown-item" data-value="BA">Bosnia and Herzegovina</div>
                             <div class="chips-dropdown-item" data-value="BR">Brazil</div>
-                            <div class="chips-dropdown-item" data-value="MX">Mexico</div>
-                            <div class="chips-dropdown-item" data-value="RU">Russia</div>
-                            <div class="chips-dropdown-item" data-value="SE">Sweden</div>
-                            <div class="chips-dropdown-item" data-value="NO">Norway</div>
+                            <div class="chips-dropdown-item" data-value="BN">Brunei</div>
+                            <div class="chips-dropdown-item" data-value="BG">Bulgaria</div>
+                            <div class="chips-dropdown-item" data-value="KH">Cambodia</div>
+                            <div class="chips-dropdown-item" data-value="CM">Cameroon</div>
+                            <div class="chips-dropdown-item" data-value="CA">Canada</div>
+                            <div class="chips-dropdown-item" data-value="CL">Chile</div>
+                            <div class="chips-dropdown-item" data-value="CN">China</div>
+                            <div class="chips-dropdown-item" data-value="CO">Colombia</div>
+                            <div class="chips-dropdown-item" data-value="CR">Costa Rica</div>
+                            <div class="chips-dropdown-item" data-value="HR">Croatia</div>
+                            <div class="chips-dropdown-item" data-value="CU">Cuba</div>
+                            <div class="chips-dropdown-item" data-value="CY">Cyprus</div>
+                            <div class="chips-dropdown-item" data-value="CZ">Czech Republic</div>
                             <div class="chips-dropdown-item" data-value="DK">Denmark</div>
+                            <div class="chips-dropdown-item" data-value="DO">Dominican Republic</div>
+                            <div class="chips-dropdown-item" data-value="EC">Ecuador</div>
+                            <div class="chips-dropdown-item" data-value="EG">Egypt</div>
+                            <div class="chips-dropdown-item" data-value="SV">El Salvador</div>
+                            <div class="chips-dropdown-item" data-value="EE">Estonia</div>
+                            <div class="chips-dropdown-item" data-value="ET">Ethiopia</div>
+                            <div class="chips-dropdown-item" data-value="FI">Finland</div>
+                            <div class="chips-dropdown-item" data-value="FR">France</div>
+                            <div class="chips-dropdown-item" data-value="GE">Georgia</div>
+                            <div class="chips-dropdown-item" data-value="DE">Germany</div>
+                            <div class="chips-dropdown-item" data-value="GH">Ghana</div>
+                            <div class="chips-dropdown-item" data-value="GR">Greece</div>
+                            <div class="chips-dropdown-item" data-value="GT">Guatemala</div>
+                            <div class="chips-dropdown-item" data-value="HK">Hong Kong</div>
+                            <div class="chips-dropdown-item" data-value="HU">Hungary</div>
+                            <div class="chips-dropdown-item" data-value="IS">Iceland</div>
+                            <div class="chips-dropdown-item" data-value="IN">India</div>
+                            <div class="chips-dropdown-item" data-value="ID">Indonesia</div>
+                            <div class="chips-dropdown-item" data-value="IR">Iran</div>
+                            <div class="chips-dropdown-item" data-value="IQ">Iraq</div>
+                            <div class="chips-dropdown-item" data-value="IE">Ireland</div>
+                            <div class="chips-dropdown-item" data-value="IL">Israel</div>
+                            <div class="chips-dropdown-item" data-value="IT">Italy</div>
+                            <div class="chips-dropdown-item" data-value="JM">Jamaica</div>
+                            <div class="chips-dropdown-item" data-value="JP">Japan</div>
+                            <div class="chips-dropdown-item" data-value="JO">Jordan</div>
+                            <div class="chips-dropdown-item" data-value="KZ">Kazakhstan</div>
+                            <div class="chips-dropdown-item" data-value="KE">Kenya</div>
+                            <div class="chips-dropdown-item" data-value="KW">Kuwait</div>
+                            <div class="chips-dropdown-item" data-value="KG">Kyrgyzstan</div>
+                            <div class="chips-dropdown-item" data-value="LA">Laos</div>
+                            <div class="chips-dropdown-item" data-value="LV">Latvia</div>
+                            <div class="chips-dropdown-item" data-value="LB">Lebanon</div>
+                            <div class="chips-dropdown-item" data-value="LY">Libya</div>
+                            <div class="chips-dropdown-item" data-value="LT">Lithuania</div>
+                            <div class="chips-dropdown-item" data-value="LU">Luxembourg</div>
+                            <div class="chips-dropdown-item" data-value="MO">Macao</div>
+                            <div class="chips-dropdown-item" data-value="MK">Macedonia</div>
+                            <div class="chips-dropdown-item" data-value="MY">Malaysia</div>
+                            <div class="chips-dropdown-item" data-value="MV">Maldives</div>
+                            <div class="chips-dropdown-item" data-value="MT">Malta</div>
+                            <div class="chips-dropdown-item" data-value="MX">Mexico</div>
+                            <div class="chips-dropdown-item" data-value="MD">Moldova</div>
+                            <div class="chips-dropdown-item" data-value="MC">Monaco</div>
+                            <div class="chips-dropdown-item" data-value="MN">Mongolia</div>
+                            <div class="chips-dropdown-item" data-value="ME">Montenegro</div>
+                            <div class="chips-dropdown-item" data-value="MA">Morocco</div>
+                            <div class="chips-dropdown-item" data-value="MM">Myanmar</div>
+                            <div class="chips-dropdown-item" data-value="NP">Nepal</div>
                             <div class="chips-dropdown-item" data-value="NL">Netherlands</div>
                             <div class="chips-dropdown-item" data-value="NZ">New Zealand</div>
+                            <div class="chips-dropdown-item" data-value="NG">Nigeria</div>
+                            <div class="chips-dropdown-item" data-value="NO">Norway</div>
+                            <div class="chips-dropdown-item" data-value="OM">Oman</div>
+                            <div class="chips-dropdown-item" data-value="PK">Pakistan</div>
+                            <div class="chips-dropdown-item" data-value="PS">Palestine</div>
+                            <div class="chips-dropdown-item" data-value="PA">Panama</div>
+                            <div class="chips-dropdown-item" data-value="PY">Paraguay</div>
+                            <div class="chips-dropdown-item" data-value="PE">Peru</div>
+                            <div class="chips-dropdown-item" data-value="PH">Philippines</div>
+                            <div class="chips-dropdown-item" data-value="PL">Poland</div>
+                            <div class="chips-dropdown-item" data-value="PT">Portugal</div>
+                            <div class="chips-dropdown-item" data-value="PR">Puerto Rico</div>
+                            <div class="chips-dropdown-item" data-value="QA">Qatar</div>
+                            <div class="chips-dropdown-item" data-value="RO">Romania</div>
+                            <div class="chips-dropdown-item" data-value="RU">Russia</div>
+                            <div class="chips-dropdown-item" data-value="SA">Saudi Arabia</div>
+                            <div class="chips-dropdown-item" data-value="SN">Senegal</div>
+                            <div class="chips-dropdown-item" data-value="RS">Serbia</div>
+                            <div class="chips-dropdown-item" data-value="SG">Singapore</div>
+                            <div class="chips-dropdown-item" data-value="SK">Slovakia</div>
+                            <div class="chips-dropdown-item" data-value="SI">Slovenia</div>
+                            <div class="chips-dropdown-item" data-value="SO">Somalia</div>
+                            <div class="chips-dropdown-item" data-value="ZA">South Africa</div>
+                            <div class="chips-dropdown-item" data-value="KR">South Korea</div>
+                            <div class="chips-dropdown-item" data-value="ES">Spain</div>
+                            <div class="chips-dropdown-item" data-value="LK">Sri Lanka</div>
+                            <div class="chips-dropdown-item" data-value="SE">Sweden</div>
+                            <div class="chips-dropdown-item" data-value="CH">Switzerland</div>
+                            <div class="chips-dropdown-item" data-value="SY">Syria</div>
+                            <div class="chips-dropdown-item" data-value="TW">Taiwan</div>
+                            <div class="chips-dropdown-item" data-value="TJ">Tajikistan</div>
+                            <div class="chips-dropdown-item" data-value="TZ">Tanzania</div>
+                            <div class="chips-dropdown-item" data-value="TH">Thailand</div>
+                            <div class="chips-dropdown-item" data-value="TN">Tunisia</div>
+                            <div class="chips-dropdown-item" data-value="TR">Turkey</div>
+                            <div class="chips-dropdown-item" data-value="TM">Turkmenistan</div>
+                            <div class="chips-dropdown-item" data-value="UG">Uganda</div>
+                            <div class="chips-dropdown-item" data-value="UA">Ukraine</div>
+                            <div class="chips-dropdown-item" data-value="AE">United Arab Emirates</div>
+                            <div class="chips-dropdown-item" data-value="GB">United Kingdom</div>
+                            <div class="chips-dropdown-item" data-value="US">United States</div>
+                            <div class="chips-dropdown-item" data-value="UY">Uruguay</div>
+                            <div class="chips-dropdown-item" data-value="UZ">Uzbekistan</div>
+                            <div class="chips-dropdown-item" data-value="VE">Venezuela</div>
+                            <div class="chips-dropdown-item" data-value="VN">Vietnam</div>
+                            <div class="chips-dropdown-item" data-value="YE">Yemen</div>
+                            <div class="chips-dropdown-item" data-value="ZW">Zimbabwe</div>
                         </div>
                     </div>
                     <input type="hidden" id="selected-country" name="country">
@@ -438,21 +640,60 @@
                         <option value="GB">United Kingdom</option>
                         <option value="CA">Canada</option>
                         <option value="AU">Australia</option>
-                        <option value="DE">Germany</option>
+                        <option value="AT">Austria</option>
+                        <option value="BE">Belgium</option>
+                        <option value="BR">Brazil</option>
+                        <option value="CN">China</option>
+                        <option value="CZ">Czech Republic</option>
+                        <option value="DK">Denmark</option>
+                        <option value="FI">Finland</option>
                         <option value="FR">France</option>
-                        <option value="ES">Spain</option>
+                        <option value="DE">Germany</option>
+                        <option value="GR">Greece</option>
+                        <option value="HK">Hong Kong</option>
+                        <option value="HU">Hungary</option>
+                        <option value="IS">Iceland</option>
+                        <option value="IN">India</option>
+                        <option value="ID">Indonesia</option>
+                        <option value="IE">Ireland</option>
+                        <option value="IL">Israel</option>
                         <option value="IT">Italy</option>
                         <option value="JP">Japan</option>
                         <option value="KR">South Korea</option>
-                        <option value="BR">Brazil</option>
                         <option value="MX">Mexico</option>
-                        <option value="IN">India</option>
                         <option value="NL">Netherlands</option>
-                        <option value="SE">Sweden</option>
-                        <option value="NO">Norway</option>
-                        <option value="DK">Denmark</option>
                         <option value="NZ">New Zealand</option>
+                        <option value="NO">Norway</option>
+                        <option value="PL">Poland</option>
+                        <option value="PT">Portugal</option>
+                        <option value="RO">Romania</option>
+                        <option value="RU">Russia</option>
+                        <option value="SG">Singapore</option>
+                        <option value="ZA">South Africa</option>
+                        <option value="ES">Spain</option>
+                        <option value="SE">Sweden</option>
+                        <option value="CH">Switzerland</option>
+                        <option value="TW">Taiwan</option>
+                        <option value="TH">Thailand</option>
+                        <option value="TR">Turkey</option>
+                        <option value="AE">United Arab Emirates</option>
                     </select>
+                </div>
+
+                <!-- Certification Filter (Range) -->
+                <div class="filter-group">
+                    <label class="filter-label">Certification Range</label>
+                    <div class="year-range-controls">
+                        <select id="certification-min-select" class="filter-select">
+                            <option value="">Any</option>
+                            <!-- Will be populated dynamically -->
+                        </select>
+                        <div class="range-separator">to</div>
+                        <select id="certification-max-select" class="filter-select">
+                            <option value="">Any</option>
+                            <!-- Will be populated dynamically -->
+                        </select>
+                    </div>
                 </div>
 
                     </div>
@@ -488,6 +729,17 @@
                         </div>
                     </div>
                     <input type="hidden" id="selected-list" name="list">
+                </div>
+
+                <!-- Merge with Adaptive Discover Checkbox -->
+                <div class="filter-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="merge-with-adaptive" name="merge_with_adaptive">
+                        <span>Merge with Adaptive List (also include TMDB Discover results)</span>
+                    </label>
+                    <small style="color: #888; font-size: 0.85em; display: block; margin-top: 4px;">
+                        By default, selecting a list here replaces the Adaptive List's date-based Discover results. Check this to combine both.
+                    </small>
                 </div>
 
                     </div>
@@ -566,154 +818,7 @@
                             </svg>
                         </button>
                         <div class="chips-dropdown" id="provider-dropdown">
-                            <!-- Major Streaming Services -->
-                            <div class="chips-dropdown-item" data-value="8">Netflix</div>
-                            <div class="chips-dropdown-item" data-value="1796">Netflix Standard with Ads</div>
-                            <div class="chips-dropdown-item" data-value="175">Netflix Kids</div>
-                            <div class="chips-dropdown-item" data-value="337">Disney+</div>
-                            <div class="chips-dropdown-item" data-value="350">Apple TV+</div>
-                            <div class="chips-dropdown-item" data-value="9">Amazon Prime Video</div>
-                            <div class="chips-dropdown-item" data-value="613">Amazon Prime Video Free with Ads</div>
-                            <div class="chips-dropdown-item" data-value="10">Amazon Video</div>
-                            <div class="chips-dropdown-item" data-value="15">Hulu</div>
-                            <div class="chips-dropdown-item" data-value="1899">Max</div>
-                            <div class="chips-dropdown-item" data-value="386">Peacock Premium</div>
-                            <div class="chips-dropdown-item" data-value="531">Paramount+</div>
-                            <div class="chips-dropdown-item" data-value="520">Discovery+</div>
-                            <!-- Premium Cable Streaming -->
-                            <div class="chips-dropdown-item" data-value="43">Starz</div>
-                            <div class="chips-dropdown-item" data-value="34">MGM Plus</div>
-                            <div class="chips-dropdown-item" data-value="526">AMC+</div>
-                            <!-- Purchase/Rent -->
-                            <div class="chips-dropdown-item" data-value="2">Apple TV</div>
-                            <div class="chips-dropdown-item" data-value="3">Google Play Movies</div>
-                            <div class="chips-dropdown-item" data-value="7">Fandango At Home</div>
-                            <div class="chips-dropdown-item" data-value="332">Fandango at Home Free</div>
-                            <div class="chips-dropdown-item" data-value="192">YouTube</div>
-                            <div class="chips-dropdown-item" data-value="188">YouTube Premium</div>
-                            <div class="chips-dropdown-item" data-value="235">YouTube Free</div>
-                            <div class="chips-dropdown-item" data-value="2528">YouTube TV</div>
-                            <!-- Free Streaming -->
-                            <div class="chips-dropdown-item" data-value="300">Pluto TV</div>
-                            <div class="chips-dropdown-item" data-value="207">The Roku Channel</div>
-                            <div class="chips-dropdown-item" data-value="538">Plex</div>
-                            <div class="chips-dropdown-item" data-value="2077">Plex Channel</div>
-                            <div class="chips-dropdown-item" data-value="1963">Xumo Play</div>
-                            <div class="chips-dropdown-item" data-value="1971">DistroTV</div>
-                            <div class="chips-dropdown-item" data-value="1875">Runtime</div>
-                            <div class="chips-dropdown-item" data-value="1948">Reveel</div>
-                            <div class="chips-dropdown-item" data-value="2409">Fawesome</div>
-                            <!-- TV Networks -->
-                            <div class="chips-dropdown-item" data-value="83">The CW</div>
-                            <div class="chips-dropdown-item" data-value="79">NBC</div>
-                            <div class="chips-dropdown-item" data-value="328">Fox</div>
-                            <div class="chips-dropdown-item" data-value="80">AMC</div>
-                            <div class="chips-dropdown-item" data-value="318">Adult Swim</div>
-                            <div class="chips-dropdown-item" data-value="209">PBS</div>
-                            <div class="chips-dropdown-item" data-value="123">FXNow</div>
-                            <div class="chips-dropdown-item" data-value="211">Freeform</div>
-                            <div class="chips-dropdown-item" data-value="363">TNT</div>
-                            <div class="chips-dropdown-item" data-value="506">TBS</div>
-                            <div class="chips-dropdown-item" data-value="365">Bravo TV</div>
-                            <div class="chips-dropdown-item" data-value="156">A&E</div>
-                            <div class="chips-dropdown-item" data-value="157">Lifetime</div>
-                            <div class="chips-dropdown-item" data-value="397">BBC America</div>
-                            <div class="chips-dropdown-item" data-value="1964">National Geographic</div>
-                            <!-- Discovery Networks -->
-                            <div class="chips-dropdown-item" data-value="403">Discovery</div>
-                            <div class="chips-dropdown-item" data-value="406">HGTV</div>
-                            <div class="chips-dropdown-item" data-value="366">Food Network</div>
-                            <div class="chips-dropdown-item" data-value="412">TLC</div>
-                            <div class="chips-dropdown-item" data-value="408">Investigation Discovery</div>
-                            <div class="chips-dropdown-item" data-value="411">Science Channel</div>
-                            <div class="chips-dropdown-item" data-value="399">Animal Planet</div>
-                            <div class="chips-dropdown-item" data-value="413">Travel Channel</div>
-                            <!-- Specialty Streaming -->
-                            <div class="chips-dropdown-item" data-value="283">Crunchyroll</div>
-                            <div class="chips-dropdown-item" data-value="430">HiDive</div>
-                            <div class="chips-dropdown-item" data-value="344">Rakuten Viki</div>
-                            <div class="chips-dropdown-item" data-value="446">Retrocrush</div>
-                            <div class="chips-dropdown-item" data-value="514">AsianCrush</div>
-                            <div class="chips-dropdown-item" data-value="575">OnDemandKorea</div>
-                            <div class="chips-dropdown-item" data-value="99">Shudder</div>
-                            <div class="chips-dropdown-item" data-value="151">BritBox</div>
-                            <div class="chips-dropdown-item" data-value="87">Acorn TV</div>
-                            <div class="chips-dropdown-item" data-value="143">Sundance Now</div>
-                            <div class="chips-dropdown-item" data-value="11">MUBI</div>
-                            <div class="chips-dropdown-item" data-value="258">Criterion Channel</div>
-                            <div class="chips-dropdown-item" data-value="190">Curiosity Stream</div>
-                            <div class="chips-dropdown-item" data-value="551">Magellan TV</div>
-                            <div class="chips-dropdown-item" data-value="191">Kanopy</div>
-                            <div class="chips-dropdown-item" data-value="212">Hoopla</div>
-                            <div class="chips-dropdown-item" data-value="257">fuboTV</div>
-                            <div class="chips-dropdown-item" data-value="2383">Philo</div>
-                            <!-- Niche/Specialty -->
-                            <div class="chips-dropdown-item" data-value="251">ALLBLK</div>
-                            <div class="chips-dropdown-item" data-value="278">Pure Flix</div>
-                            <div class="chips-dropdown-item" data-value="417">Here TV</div>
-                            <div class="chips-dropdown-item" data-value="444">Dekkoo</div>
-                            <div class="chips-dropdown-item" data-value="473">Revry</div>
-                            <div class="chips-dropdown-item" data-value="546">WOW Presents Plus</div>
-                            <div class="chips-dropdown-item" data-value="260">WWE Network</div>
-                            <div class="chips-dropdown-item" data-value="264">MyOutdoorTV</div>
-                            <div class="chips-dropdown-item" data-value="475">DOCSVILLE</div>
-                            <div class="chips-dropdown-item" data-value="439">Shout! Factory TV</div>
-                            <div class="chips-dropdown-item" data-value="529">ARROW</div>
-                            <div class="chips-dropdown-item" data-value="692">Cultpix</div>
-                            <div class="chips-dropdown-item" data-value="427">Mhz Choice</div>
-                            <div class="chips-dropdown-item" data-value="438">Chai Flicks</div>
-                            <div class="chips-dropdown-item" data-value="555">The Oprah Winfrey Network</div>
-                            <div class="chips-dropdown-item" data-value="2129">BYUtv</div>
-                            <div class="chips-dropdown-item" data-value="1956">Angel Studios</div>
-                            <!-- Amazon Channels -->
-                            <div class="chips-dropdown-item" data-value="1825">HBO Max Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="582">Paramount+ Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="583">MGM+ Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="528">AMC+ Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="584">Discovery+ Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="1794">Starz Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="1968">Crunchyroll Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="196">AcornTV Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="197">BritBox Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="204">Shudder Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="205">Sundance Now Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="201">MUBI Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="289">Cinemax Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="290">Hallmark+ Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="293">PBS Kids Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="294">PBS Masterpiece Amazon Channel</div>
-                            <div class="chips-dropdown-item" data-value="343">Bet+ Amazon Channel</div>
-                            <!-- Apple TV Channels -->
-                            <div class="chips-dropdown-item" data-value="1853">Paramount Plus Apple TV Channel</div>
-                            <div class="chips-dropdown-item" data-value="1855">Starz Apple TV Channel</div>
-                            <div class="chips-dropdown-item" data-value="1854">AMC Plus Apple TV Channel</div>
-                            <div class="chips-dropdown-item" data-value="1852">Britbox Apple TV Channel</div>
-                            <!-- Roku Channels -->
-                            <div class="chips-dropdown-item" data-value="633">Paramount+ Roku Premium Channel</div>
-                            <div class="chips-dropdown-item" data-value="634">Starz Roku Premium Channel</div>
-                            <div class="chips-dropdown-item" data-value="635">AMC+ Roku Premium Channel</div>
-                            <div class="chips-dropdown-item" data-value="636">MGM Plus Roku Premium Channel</div>
-                            <!-- International -->
-                            <div class="chips-dropdown-item" data-value="457">VIX</div>
-                            <div class="chips-dropdown-item" data-value="309">Sun Nxt</div>
-                            <div class="chips-dropdown-item" data-value="315">Hoichoi</div>
-                            <div class="chips-dropdown-item" data-value="532">aha</div>
-                            <div class="chips-dropdown-item" data-value="581">iQIYI</div>
-                            <div class="chips-dropdown-item" data-value="1715">Shahid VIP</div>
-                            <div class="chips-dropdown-item" data-value="701">FilmBox+</div>
-                            <!-- Other -->
-                            <div class="chips-dropdown-item" data-value="486">Spectrum On Demand</div>
-                            <div class="chips-dropdown-item" data-value="508">DisneyNOW</div>
-                            <div class="chips-dropdown-item" data-value="507">tru TV</div>
-                            <div class="chips-dropdown-item" data-value="509">WeTV</div>
-                            <div class="chips-dropdown-item" data-value="422">VH1</div>
-                            <div class="chips-dropdown-item" data-value="458">Vice TV</div>
-                            <div class="chips-dropdown-item" data-value="1953">Ovation TV</div>
-                            <div class="chips-dropdown-item" data-value="1957">Cineverse</div>
-                            <div class="chips-dropdown-item" data-value="1960">Midnight Pulp</div>
-                            <div class="chips-dropdown-item" data-value="2285">JustWatch TV</div>
-                            <div class="chips-dropdown-item" data-value="2308">Darkroom</div>
-                            <div class="chips-dropdown-item" data-value="331">FlixFling</div>
+                            <div class="chips-dropdown-empty">Loading providers...</div>
                         </div>
                     </div>
                     <input type="hidden" id="selected-provider" name="watch_provider">
@@ -731,76 +836,7 @@
                             </svg>
                         </button>
                         <div class="chips-dropdown" id="network-dropdown">
-                            <!-- Premium Cable Networks -->
-                            <div class="chips-dropdown-item" data-value="49">HBO</div>
-                            <div class="chips-dropdown-item" data-value="67">Showtime</div>
-                            <div class="chips-dropdown-item" data-value="318">Starz</div>
-                            <div class="chips-dropdown-item" data-value="359">Cinemax</div>
-                            <!-- Major US Broadcast -->
-                            <div class="chips-dropdown-item" data-value="2">ABC</div>
-                            <div class="chips-dropdown-item" data-value="6">NBC</div>
-                            <div class="chips-dropdown-item" data-value="16">CBS</div>
-                            <div class="chips-dropdown-item" data-value="19">FOX</div>
-                            <div class="chips-dropdown-item" data-value="71">The CW</div>
-                            <div class="chips-dropdown-item" data-value="209">PBS</div>
-                            <!-- Cable Networks -->
-                            <div class="chips-dropdown-item" data-value="88">FX</div>
-                            <div class="chips-dropdown-item" data-value="174">AMC</div>
-                            <div class="chips-dropdown-item" data-value="77">Syfy</div>
-                            <div class="chips-dropdown-item" data-value="30">USA Network</div>
-                            <div class="chips-dropdown-item" data-value="41">TNT</div>
-                            <div class="chips-dropdown-item" data-value="68">TBS</div>
-                            <div class="chips-dropdown-item" data-value="43">National Geographic</div>
-                            <div class="chips-dropdown-item" data-value="64">Discovery</div>
-                            <div class="chips-dropdown-item" data-value="65">History</div>
-                            <div class="chips-dropdown-item" data-value="51">A&E</div>
-                            <div class="chips-dropdown-item" data-value="84">TLC</div>
-                            <div class="chips-dropdown-item" data-value="91">Animal Planet</div>
-                            <div class="chips-dropdown-item" data-value="47">Comedy Central</div>
-                            <div class="chips-dropdown-item" data-value="33">MTV</div>
-                            <div class="chips-dropdown-item" data-value="34">Lifetime</div>
-                            <div class="chips-dropdown-item" data-value="29">ESPN</div>
-                            <div class="chips-dropdown-item" data-value="24">BET</div>
-                            <div class="chips-dropdown-item" data-value="52">Investigation Discovery</div>
-                            <div class="chips-dropdown-item" data-value="80">Adult Swim</div>
-                            <div class="chips-dropdown-item" data-value="2739">Disney XD</div>
-                            <!-- Kids Networks -->
-                            <div class="chips-dropdown-item" data-value="56">Cartoon Network</div>
-                            <div class="chips-dropdown-item" data-value="13">Nickelodeon</div>
-                            <div class="chips-dropdown-item" data-value="54">Disney Channel</div>
-                            <div class="chips-dropdown-item" data-value="35">Nick Jr.</div>
-                            <div class="chips-dropdown-item" data-value="1267">PBS Kids</div>
-                            <!-- Streaming Networks -->
-                            <div class="chips-dropdown-item" data-value="213">Netflix</div>
-                            <div class="chips-dropdown-item" data-value="1024">Amazon</div>
-                            <div class="chips-dropdown-item" data-value="2552">Apple TV+</div>
-                            <div class="chips-dropdown-item" data-value="2739">Disney+</div>
-                            <div class="chips-dropdown-item" data-value="453">Hulu</div>
-                            <div class="chips-dropdown-item" data-value="4330">Paramount+</div>
-                            <div class="chips-dropdown-item" data-value="3353">Peacock</div>
-                            <!-- UK Networks -->
-                            <div class="chips-dropdown-item" data-value="4">BBC One</div>
-                            <div class="chips-dropdown-item" data-value="332">BBC Two</div>
-                            <div class="chips-dropdown-item" data-value="3">BBC Three</div>
-                            <div class="chips-dropdown-item" data-value="100">BBC Four</div>
-                            <div class="chips-dropdown-item" data-value="26">Channel 4</div>
-                            <div class="chips-dropdown-item" data-value="99">Channel 5</div>
-                            <div class="chips-dropdown-item" data-value="9">ITV</div>
-                            <div class="chips-dropdown-item" data-value="493">Sky Atlantic</div>
-                            <!-- Canadian Networks -->
-                            <div class="chips-dropdown-item" data-value="85">CBC</div>
-                            <div class="chips-dropdown-item" data-value="173">CTV</div>
-                            <div class="chips-dropdown-item" data-value="116">Showcase</div>
-                            <!-- Australian Networks -->
-                            <div class="chips-dropdown-item" data-value="18">ABC (AU)</div>
-                            <div class="chips-dropdown-item" data-value="78">SBS</div>
-                            <div class="chips-dropdown-item" data-value="11">Seven Network</div>
-                            <!-- Anime Networks -->
-                            <div class="chips-dropdown-item" data-value="94">TV Tokyo</div>
-                            <div class="chips-dropdown-item" data-value="98">Tokyo MX</div>
-                            <div class="chips-dropdown-item" data-value="614">Fuji TV</div>
-                            <div class="chips-dropdown-item" data-value="95">TV Asahi</div>
-                            <div class="chips-dropdown-item" data-value="2918">Crunchyroll</div>
+                            <div class="chips-dropdown-empty">Type to search networks...</div>
                         </div>
                     </div>
                     <input type="hidden" id="selected-network" name="network">
@@ -817,6 +853,14 @@
                         <div class="ui input">
                             <input type="number" id="runtime-max" placeholder="Max" min="0" value="300">
                         </div>
+                    </div>
+                </div>
+
+                <!-- Seasons Max (TV only) -->
+                <div class="filter-group">
+                    <label class="filter-label">Max Seasons (TV shows)</label>
+                    <div class="ui input">
+                        <input type="number" id="seasons-max" placeholder="e.g. 10" min="1" value="">
                     </div>
                 </div>
 
@@ -874,13 +918,14 @@
     <!-- Scrape Version Selection Modal -->
     <div id="scrapeVersionModal" class="version-modal">
         <div class="version-modal-content">
-            <h3>Select Scrape Version</h3>
-            <div id="scrapeVersionRadios">
-                <!-- Version radio buttons will be dynamically inserted here -->
+            <div class="dialog-body">
+                <div id="scrapeVersionRadios">
+                    <!-- Dynamically populated by JS -->
+                </div>
             </div>
-            <div class="version-modal-buttons">
-                <button id="confirmScrapeVersion">Scrape</button>
-                <button id="cancelScrapeVersion">Cancel</button>
+            <div class="dialog-footer">
+                <button id="confirmScrapeVersion" class="vm-btn vm-btn-accent"><i class="fa-solid fa-magnifying-glass"></i> Scrape</button>
+                <button id="cancelScrapeVersion" class="vm-btn vm-btn-ghost"><i class="fa-solid fa-xmark"></i> Cancel</button>
             </div>
         </div>
     </div>
@@ -888,13 +933,14 @@
     <!-- Request Version Selection Modal -->
     <div id="versionModal" class="version-modal">
         <div class="version-modal-content">
-            <h3>Select Versions</h3>
-            <div id="versionCheckboxes">
-                <!-- Version checkboxes will be dynamically inserted here -->
+            <div class="dialog-body">
+                <div id="versionCheckboxes">
+                    <!-- Dynamically populated by JS -->
+                </div>
             </div>
-            <div class="version-modal-buttons">
-                <button id="confirmVersions">Request</button>
-                <button id="cancelVersions">Cancel</button>
+            <div class="dialog-footer">
+                <button id="confirmVersions" class="vm-btn vm-btn-accent"><i class="fa-solid fa-paper-plane"></i> Request</button>
+                <button id="cancelVersions" class="vm-btn vm-btn-ghost"><i class="fa-solid fa-xmark"></i> Cancel</button>
             </div>
         </div>
     </div>
@@ -1045,6 +1091,36 @@
             </div>
         </div>
 
+        <!-- Recommendations content (hidden by default) -->
+        <div id="recommendations-content" style="display:none;">
+            <!-- Movies Row -->
+            <div class="category-section" id="rec-movies-section">
+                <div class="category-header">
+                    <h2 class="category-title">Movies</h2>
+                </div>
+                <div class="category-grid" id="rec-movies-grid"></div>
+            </div>
+            <!-- Shows Row -->
+            <div class="category-section" id="rec-shows-section">
+                <div class="category-header">
+                    <h2 class="category-title">Shows</h2>
+                </div>
+                <div class="category-grid" id="rec-shows-grid"></div>
+            </div>
+            <!-- No recommendation provider message -->
+            <div id="rec-no-provider" style="display:none; text-align:center; padding:40px; color:#888;">
+                <p>Recommendations require an authenticated Trakt account or a configured Scrob connection.</p>
+                <p>Connect either one—or both—in Settings → Additional Settings. No content-source entry is required.</p>
+                <p>For Scrob, customize Favourite Movie Genres and/or Favourite Show Genres in your profile. Content Language and Disliked Genres further refine the results.</p>
+                <p>To exclude your existing Plex library and watched titles, connect Plex under Scrob → Connections → Media Players, enable Plex → Scrob Collection Status and Watched Status, then run a manual pull or enable automatic pulls. Playback Events and the Plex webhook are optional and only needed for real-time activity.</p>
+            </div>
+            <div id="rec-no-results" style="display:none; text-align:center; padding:40px; color:#888;">
+                <p>No personalized recommendations are available yet.</p>
+                <p>For Scrob, confirm the connection and customize Favourite Movie Genres and/or Favourite Show Genres in your profile. Content Language and Disliked Genres further refine the results.</p>
+                <p>To exclude your existing Plex library and watched titles, connect Plex under Scrob → Connections → Media Players, enable Plex → Scrob Collection Status and Watched Status, then run a manual pull or enable automatic pulls. Playback Events and the Plex webhook are optional and only needed for real-time activity.</p>
+            </div>
+        </div>
+
         <!-- Search Results Grid (hidden by default, shown when searching) -->
         <div id="search-results" style="display: none;">
             <!-- Results Info Bar -->
@@ -1063,5 +1139,6 @@
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/discover.js') }}?v={{ range(10000, 99999) | random }}"></script>
+<script src="{{ url_for('static', filename='js/episode_order_picker.js') }}"></script>
+<script src="{{ url_for('static', filename='js/discover.js') }}"></script>
 {% endblock %}

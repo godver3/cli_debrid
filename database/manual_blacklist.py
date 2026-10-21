@@ -123,7 +123,7 @@ def get_manual_blacklist() -> Dict[str, Dict[str, str]]:
     try:
         with open(BLACKLIST_FILE, 'r') as f:
             blacklist = json.load(f)
-            # Sanitize data: ensure all titles and years are strings
+            # Sanitize data: ensure all titles and years are strings, seasons is a list
             for imdb_id, item in blacklist.items():
                 if 'title' in item and not isinstance(item['title'], str):
                     item['title'] = str(item['title']) if item['title'] is not None else 'Unknown'
@@ -131,6 +131,8 @@ def get_manual_blacklist() -> Dict[str, Dict[str, str]]:
                 if 'year' in item and not isinstance(item['year'], str):
                     item['year'] = str(item['year']) if item['year'] is not None else ''
                     logging.warning(f"Converted non-string year to string for IMDb ID {imdb_id}: {item['year']}")
+                if 'seasons' not in item:
+                    item['seasons'] = []
             return blacklist
     except FileNotFoundError:
         return {}

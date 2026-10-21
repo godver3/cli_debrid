@@ -89,7 +89,7 @@ Tests mixed formats where S/E contains absolute episode numbers (e.g., "Test.Ani
 Tests various fallback mechanisms when XEM mapping is involved:
 - Absolute episode fallback
 - Original episode fallback
-- Proper absolute episode calculation
+- Proper absolute episode calculation.
 
 #### 5. Pack Detection
 Tests season pack detection and filtering:

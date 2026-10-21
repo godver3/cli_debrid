@@ -300,7 +300,18 @@ class DeletionCommonClass {
             if (!skipConfirmation) {
                 // For custom endpoints with custom messages, show simple confirm
                 if (endpoint && confirmMessage) {
-                    const confirmed = confirm(confirmMessage);
+                    let resolveConfirm;
+                    const confirmPromise = new Promise(resolve => { resolveConfirm = resolve; });
+                    showPopup({
+                        type: 'confirm',
+                        title: 'Confirm',
+                        message: confirmMessage,
+                        confirmText: 'Confirm',
+                        cancelText: 'Cancel',
+                        onConfirm: function() { resolveConfirm(true); },
+                        onCancel: function() { resolveConfirm(false); }
+                    });
+                    const confirmed = await confirmPromise;
                     if (!confirmed) {
                         return { success: false, cancelled: true };
                     }
@@ -470,7 +481,11 @@ class DeletionCommonClass {
                 layerSummary.push(`${impact.layers.filesystem.files_count} file${impact.layers.filesystem.files_count > 1 ? 's' : ''}`);
             }
             if (impact.layers.debrid && impact.layers.debrid.torrents_count > 0) {
-                layerSummary.push(`${impact.layers.debrid.torrents_count} debrid torrent${impact.layers.debrid.torrents_count > 1 ? 's' : ''}`);
+                const d = impact.layers.debrid;
+                const parts = [];
+                if (d.torrent_only_count > 0) parts.push(`${d.torrent_only_count} debrid torrent${d.torrent_only_count > 1 ? 's' : ''}`);
+                if (d.nzb_count > 0) parts.push(`${d.nzb_count} usenet NZB${d.nzb_count > 1 ? 's' : ''}`);
+                if (parts.length) layerSummary.push(parts.join(' + '));
             }
             if (impact.layers.symlinks && impact.layers.symlinks.symlinks_count > 0) {
                 layerSummary.push(`${impact.layers.symlinks.symlinks_count} symlink${impact.layers.symlinks.symlinks_count > 1 ? 's' : ''}`);
@@ -697,8 +712,8 @@ export function buildDeletionReport(result, itemTitle = 'Item', mediaType = 'sho
                 reportLines.push('✓ Removed from media server (Plex/Jellyfin)');
             } else if (layer === 'Filesystem') {
                 reportLines.push('✓ Removed files from filesystem');
-            } else if (layer === 'Debrid') {
-                reportLines.push('✓ Removed from debrid provider');
+            } else if (layer && layer.startsWith('Debrid')) {
+                reportLines.push('✓ Removed from debrid/usenet provider');
             } else if (layer === 'Symlinks') {
                 reportLines.push('✓ Removed symlinks');
             } else if (layer === 'Cache') {
@@ -729,7 +744,7 @@ export function buildDeletionReport(result, itemTitle = 'Item', mediaType = 'sho
             } else if (source.startsWith('Trakt_Collection_') || source.startsWith('Trakt Collection_')) {
                 sourceName = 'Trakt Collection';
             } else if (source === 'Overseerr') {
-                sourceName = 'Overseerr';
+                sourceName = 'Seerr';
             } else if (source === 'Plex_Watchlist') {
                 sourceName = 'Plex Watchlist';
             // } else if (source.startsWith('MDBList_')) {

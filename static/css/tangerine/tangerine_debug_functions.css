@@ -379,7 +379,9 @@ body[data-theme="tangerine"] .debug_items {
 
 .queue-item {
     margin-bottom: 5px;
-    padding: 0.5rem;
+    display: flex;
+    gap: 8px;
+    padding: 0.2rem;
     border-radius: 6px;
     transition: background 0.2s ease;
 }
@@ -405,7 +407,7 @@ body[data-theme="tangerine"] .debug_items {
     display: flex;
     flex-wrap: wrap;
     gap: 15px;
-    margin-bottom: 15px;
+    /* margin-bottom: 15px; */
     padding: 1rem;
     background-color: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -475,15 +477,11 @@ body[data-theme="tangerine"] .debug_items {
     white-space: nowrap;
 }
 
-/* Token Status */
-.token-status-container {
-    margin-bottom: 1rem;
-}
 
 .token-status {
     background: rgba(255, 255, 255, 0.03);
     border-radius: 10px;
-    padding: 1rem;
+    /* padding: 1rem; */
     margin-bottom: 0.5rem;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-left: 4px solid transparent;
@@ -561,7 +559,6 @@ body[data-theme="tangerine"] .debug_items {
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
     padding: 15px;
-    max-height: 300px;
     overflow-y: auto;
     background-color: rgba(255, 255, 255, 0.02);
 }
@@ -706,13 +703,41 @@ body[data-theme="tangerine"] .debug-container .plex-labels-help-btn:active {
 @media (max-width: 768px) {
     .debug-container {
         padding: 1rem;
+        width: 100%;
+        box-sizing: border-box;
+        overflow-x: hidden;
     }
 
     .debug-grid {
         grid-template-columns: 1fr;
     }
 
+    body[data-theme="tangerine"] .debug-tabs {
+        gap: 0;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+    body[data-theme="tangerine"] .debug-tabs::-webkit-scrollbar {
+        display: none;
+    }
 
+    body[data-theme="tangerine"] .debug-tab {
+        width: auto;
+        flex-shrink: 0;
+        padding: 0.75rem 1rem;
+        font-size: 0.875rem;
+    }
+
+    body[data-theme="tangerine"] .grid,
+    body[data-theme="tangerine"] .debug_items {
+        grid-template-columns: 1fr;
+    }
+
+    .debug_item {
+        padding: 1.25rem !important;
+    }
 
     .tab,
     .debug-tab {
@@ -749,19 +774,7 @@ body[data-theme="tangerine"] .debug-container .plex-labels-help-btn:active {
     align-items: center;
 }
 
-.loading-content {
-    background: rgba(26, 26, 26, 0.95);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 20px;
-    border-radius: 20px;
-    text-align: center;
-}
-
-.loading-content p {
-    color: #e0e0e0;
-    margin-bottom: 15px;
-}
+/* Loading overlay styles defined in base.css */
 
 .loading-message {
     margin-bottom: 10px;
@@ -771,42 +784,6 @@ body[data-theme="tangerine"] .debug-container .plex-labels-help-btn:active {
     font-size: 14px;
     color: #ccc;
     margin-top: 10px;
-}
-
-.spinner {
-    border: 4px solid rgba(255, 255, 255, 0.1);
-    border-top: 4px solid #ff6b35;
-    border-radius: 50%;
-    width: 40px;
-    height: 40px;
-    animation: spin 1s linear infinite;
-    margin: 0 auto 10px;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-.close-loading {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-    color: white;
-    border: none;
-    padding: 12px 20px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 16px;
-    font-weight: 600;
-    margin: 4px 2px;
-    cursor: pointer;
-    border-radius: 12px;
-    transition: all 0.3s ease;
-}
-
-.close-loading:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(255, 107, 53, 0.4);
 }
 
 .loading-progress-bar-container {

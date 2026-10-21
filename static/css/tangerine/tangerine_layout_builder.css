@@ -1,0 +1,663 @@
+/* Layout Builder - Tangerine Theme */
+
+body[data-theme="tangerine"] .builder-container {
+    display: grid;
+    grid-template-columns: 250px 1fr 350px;
+    gap: 20px;
+    height: calc(100vh - 100px);
+    padding: 20px;
+    max-width: 1800px;
+    margin: 0 auto;
+}
+
+/* Left Panel - Element Palette */
+body[data-theme="tangerine"] .palette-panel {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 15px;
+    overflow-y: auto;
+}
+
+body[data-theme="tangerine"] .palette-section {
+    margin-bottom: 20px;
+}
+
+body[data-theme="tangerine"] .palette-section h3 {
+    font-size: 0.875rem;
+    margin-bottom: 10px;
+    color: #ff6b35;
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    padding-left: 8px;
+}
+
+body[data-theme="tangerine"] .palette-item {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+    cursor: move;
+    transition: all 0.3s;
+    color: #e0e0e0;
+}
+
+body[data-theme="tangerine"] .palette-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 107, 53, 0.5);
+    box-shadow: 0 2px 8px rgba(255, 107, 53, 0.2);
+    transform: translateX(4px);
+}
+
+body[data-theme="tangerine"] .palette-item i {
+    margin-right: 8px;
+    color: #ff6b35;
+}
+
+/* Center Panel - Canvas */
+body[data-theme="tangerine"] .canvas-panel {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+body[data-theme="tangerine"] .canvas-toolbar {
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 15px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+body[data-theme="tangerine"] .canvas-toolbar input,
+body[data-theme="tangerine"] .canvas-toolbar select {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: #fff;
+    padding: 8px 12px;
+    font-size: 0.875rem;
+}
+
+body[data-theme="tangerine"] .canvas-toolbar input:focus,
+body[data-theme="tangerine"] .canvas-toolbar select:focus {
+    outline: none;
+    border-color: #ff6b35;
+    box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+}
+
+body[data-theme="tangerine"] .canvas-container {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    overflow: auto;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+body[data-theme="tangerine"] .canvas-wrapper {
+    position: relative;
+    background: #1a1a1a;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+}
+
+body[data-theme="tangerine"] #preview-canvas {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
+
+body[data-theme="tangerine"] .canvas-element {
+    position: absolute;
+    border: 2px dashed transparent;
+    cursor: move;
+    transition: border-color 0.2s;
+}
+
+body[data-theme="tangerine"] .canvas-element:hover {
+    border-color: #ff6b35;
+}
+
+body[data-theme="tangerine"] .canvas-element.selected {
+    border-color: #ff6b35;
+    background: rgba(255, 107, 53, 0.15);
+}
+
+body[data-theme="tangerine"] .element-label {
+    position: absolute;
+    top: -20px;
+    left: 0;
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    color: white;
+    padding: 2px 8px;
+    font-size: 11px;
+    border-radius: 4px;
+    font-weight: 600;
+}
+
+body[data-theme="tangerine"] .resize-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: #ff6b35;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+body[data-theme="tangerine"] .resize-handle.nw { top: -5px; left: -5px; cursor: nw-resize; }
+body[data-theme="tangerine"] .resize-handle.ne { top: -5px; right: -5px; cursor: ne-resize; }
+body[data-theme="tangerine"] .resize-handle.sw { bottom: -5px; left: -5px; cursor: sw-resize; }
+body[data-theme="tangerine"] .resize-handle.se { bottom: -5px; right: -5px; cursor: se-resize; }
+
+/* Right Panel - Properties */
+body[data-theme="tangerine"] .properties-panel {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 15px;
+    overflow-y: auto;
+}
+
+body[data-theme="tangerine"] .properties-panel h2 {
+    color: #fff;
+    font-size: 1.125rem;
+    margin-bottom: 1rem;
+}
+
+body[data-theme="tangerine"] .properties-panel p {
+    color: #888;
+    font-size: 0.875rem;
+}
+
+body[data-theme="tangerine"] .properties-section {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+body[data-theme="tangerine"] .properties-section h3 {
+    font-size: 0.875rem;
+    margin-bottom: 15px;
+    color: #ff6b35;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding-bottom: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+body[data-theme="tangerine"] .form-group {
+    margin-bottom: 15px;
+}
+
+body[data-theme="tangerine"] .form-group label {
+    display: block;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    margin-bottom: 5px;
+    color: #aaa;
+}
+
+body[data-theme="tangerine"] .form-group input,
+body[data-theme="tangerine"] .form-group select,
+body[data-theme="tangerine"] .form-group textarea {
+    width: 100%;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    font-size: 0.8125rem;
+    color: #fff;
+    transition: all 0.3s ease;
+}
+
+body[data-theme="tangerine"] .form-group input:focus,
+body[data-theme="tangerine"] .form-group select:focus,
+body[data-theme="tangerine"] .form-group textarea:focus {
+    outline: none;
+    border-color: #ff6b35;
+    background: rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+}
+
+body[data-theme="tangerine"] .form-group input::placeholder,
+body[data-theme="tangerine"] .form-group textarea::placeholder {
+    color: #555;
+}
+
+body[data-theme="tangerine"] .form-group textarea {
+    resize: vertical;
+    min-height: 60px;
+    font-family: 'Courier New', monospace;
+}
+
+body[data-theme="tangerine"] .color-input-group {
+    display: flex;
+    gap: 10px;
+}
+
+body[data-theme="tangerine"] .color-input-group input[type="color"] {
+    width: 50px;
+    height: 38px;
+    padding: 2px;
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+/* Buttons */
+body[data-theme="tangerine"] .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.875rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #e0e0e0;
+}
+
+body[data-theme="tangerine"] .btn:active:not(:disabled) {
+    transform: scale(0.94) translateY(1px) !important;
+    transition: transform 0.08s ease !important;
+}
+
+body[data-theme="tangerine"] .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+body[data-theme="tangerine"] .btn-primary {
+    background: rgba(255, 107, 53, 0.1);
+    border-color: rgba(255, 107, 53, 0.4);
+    color: #ff6b35;
+}
+
+body[data-theme="tangerine"] .btn-primary:hover {
+    background: rgba(255, 107, 53, 0.2);
+    border-color: rgba(255, 107, 53, 0.7);
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.25);
+}
+
+body[data-theme="tangerine"] .btn-success {
+    background: rgba(255, 107, 53, 0.08);
+    border-color: rgba(255, 107, 53, 0.35);
+    color: #ff8c5a;
+}
+
+body[data-theme="tangerine"] .btn-success:hover {
+    background: rgba(255, 107, 53, 0.18);
+    border-color: rgba(255, 107, 53, 0.65);
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.2);
+}
+
+body[data-theme="tangerine"] .btn-danger {
+    background: rgba(220, 38, 38, 0.15);
+    border-color: rgba(220, 38, 38, 0.3);
+    color: #ff6b6b;
+}
+
+body[data-theme="tangerine"] .btn-danger:hover {
+    background: rgba(220, 38, 38, 0.25);
+    border-color: rgba(220, 38, 38, 0.5);
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+body[data-theme="tangerine"] .btn-secondary {
+    background: rgba(255, 255, 255, 0.05);
+    color: #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+body[data-theme="tangerine"] .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: translateY(-1px);
+}
+
+/* Element List */
+body[data-theme="tangerine"] .element-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+body[data-theme="tangerine"] .element-list-item {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.2s;
+    color: #e0e0e0;
+}
+
+body[data-theme="tangerine"] .element-list-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 107, 53, 0.5);
+}
+
+body[data-theme="tangerine"] .element-list-item.selected {
+    border-color: #ff6b35;
+    background: rgba(255, 107, 53, 0.15);
+}
+
+body[data-theme="tangerine"] .element-list-item-actions {
+    display: flex;
+    gap: 5px;
+}
+
+body[data-theme="tangerine"] .element-list-item-actions button {
+    padding: 4px 8px;
+    font-size: 11px;
+}
+
+body[data-theme="tangerine"] .badge-list-label {
+    color: #e0dbd5;
+    font-weight: 500;
+}
+
+body[data-theme="tangerine"] .badge-list-type {
+    color: #888;
+}
+
+/* Drag-to-reorder handle */
+body[data-theme="tangerine"] .element-list-item .drag-handle {
+    cursor: grab;
+    color: #ccc;
+    padding: 0 6px 0 0;
+    font-size: 11px;
+    letter-spacing: -2px;
+    flex-shrink: 0;
+    user-select: none;
+    opacity: 0.9;
+    line-height: 1;
+    font-family: monospace;
+}
+body[data-theme="tangerine"] .element-list-item .drag-handle:hover {
+    opacity: 1;
+    color: #ff6b35;
+}
+body[data-theme="tangerine"] .element-list-item .drag-handle:active {
+    cursor: grabbing;
+}
+body[data-theme="tangerine"] .element-list-item.drag-over {
+    border-color: #ff6b35 !important;
+    background: rgba(255,107,53,0.18) !important;
+}
+body[data-theme="tangerine"] .element-list-item.dragging {
+    opacity: 0.35;
+}
+
+/* Condition Builder */
+body[data-theme="tangerine"] .condition-builder {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 10px;
+    margin-top: 5px;
+}
+
+body[data-theme="tangerine"] .condition-row {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 5px;
+}
+
+body[data-theme="tangerine"] .condition-row select,
+body[data-theme="tangerine"] .condition-row input {
+    flex: 1;
+    padding: 6px 8px;
+    font-size: 0.75rem;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: #fff;
+}
+
+body[data-theme="tangerine"] .condition-row select:focus,
+body[data-theme="tangerine"] .condition-row input:focus {
+    outline: none;
+    border-color: #ff6b35;
+}
+
+/* Asset Browser */
+body[data-theme="tangerine"] .asset-browser {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 5px;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+body[data-theme="tangerine"] .asset-item {
+    padding: 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    color: #e0e0e0;
+    transition: all 0.2s;
+}
+
+body[data-theme="tangerine"] .asset-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 107, 53, 0.3);
+}
+
+body[data-theme="tangerine"] .asset-item.selected {
+    background: rgba(255, 107, 53, 0.15);
+    border-color: #ff6b35;
+}
+
+/* Scrollbar Styling */
+body[data-theme="tangerine"] .palette-panel::-webkit-scrollbar,
+body[data-theme="tangerine"] .properties-panel::-webkit-scrollbar,
+body[data-theme="tangerine"] .asset-browser::-webkit-scrollbar {
+    width: 8px;
+}
+
+body[data-theme="tangerine"] .palette-panel::-webkit-scrollbar-track,
+body[data-theme="tangerine"] .properties-panel::-webkit-scrollbar-track,
+body[data-theme="tangerine"] .asset-browser::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+}
+
+body[data-theme="tangerine"] .palette-panel::-webkit-scrollbar-thumb,
+body[data-theme="tangerine"] .properties-panel::-webkit-scrollbar-thumb,
+body[data-theme="tangerine"] .asset-browser::-webkit-scrollbar-thumb {
+    background: rgba(255, 107, 53, 0.5);
+    border-radius: 4px;
+}
+
+body[data-theme="tangerine"] .palette-panel::-webkit-scrollbar-thumb:hover,
+body[data-theme="tangerine"] .properties-panel::-webkit-scrollbar-thumb:hover,
+body[data-theme="tangerine"] .asset-browser::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 107, 53, 0.7);
+}
+
+/* ── Inline checkbox rows ── */
+body[data-theme="tangerine"] .db-inline-check-label {
+    color: #ccc;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    gap: 8px;
+}
+body[data-theme="tangerine"] .db-inline-check-label input[type="checkbox"] {
+    accent-color: #ff6b35;
+    width: 15px;
+    height: 15px;
+}
+body[data-theme="tangerine"] .db-inline-check-group .var-help {
+    color: #666;
+    padding-left: 23px;
+}
+
+/* ── section-header-row checkboxes ── */
+body[data-theme="tangerine"] .section-header-row {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+body[data-theme="tangerine"] .section-header-row h4 {
+    color: #ccc;
+    font-size: 0.8125rem;
+}
+body[data-theme="tangerine"] .section-enable-cb {
+    accent-color: #ff6b35;
+}
+
+/* ── Auto/px width toggle ── */
+body[data-theme="tangerine"] .db-auto-toggle {
+    color: #888;
+    font-size: 0.75rem;
+}
+body[data-theme="tangerine"] .db-auto-toggle input[type="checkbox"] {
+    accent-color: #ff6b35 !important;
+}
+
+/* ── Bold row ── */
+body[data-theme="tangerine"] .db-bold-row > label {
+    color: #ccc;
+}
+body[data-theme="tangerine"] .db-bold-row input[type="checkbox"] {
+    accent-color: #ff6b35 !important;
+}
+
+/* ── inline Text Line 1/2 separators ── */
+body[data-theme="tangerine"] .db-text-line-label {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    color: #ff6b35;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin: 10px 0 6px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.07);
+}
+
+/* ── Range / Opacity Sliders ── */
+body[data-theme="tangerine"] .form-group input[type="range"],
+body[data-theme="tangerine"] .properties-panel input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border: none;
+    border-radius: 2px;
+    padding: 0;
+    cursor: pointer;
+    outline: none;
+    /* Filled-left gradient driven by --val (0–100), defaults to 80 */
+    background: linear-gradient(
+        to right,
+        #ff6b35 0%,
+        #ff6b35 calc(var(--val, 80) * 1%),
+        rgba(255,255,255,0.15) calc(var(--val, 80) * 1%),
+        rgba(255,255,255,0.15) 100%
+    );
+}
+
+/* Thumb — WebKit */
+body[data-theme="tangerine"] .form-group input[type="range"]::-webkit-slider-thumb,
+body[data-theme="tangerine"] .properties-panel input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+    border: 2px solid #ff6b35;
+    margin-top: 0; /* track height already centred */
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+body[data-theme="tangerine"] .form-group input[type="range"]::-webkit-slider-thumb:hover,
+body[data-theme="tangerine"] .properties-panel input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+    box-shadow: 0 0 0 4px rgba(255, 107, 53, 0.25);
+}
+
+/* Thumb — Firefox */
+body[data-theme="tangerine"] .form-group input[type="range"]::-moz-range-thumb,
+body[data-theme="tangerine"] .properties-panel input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+    border: 2px solid #ff6b35;
+    cursor: pointer;
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+body[data-theme="tangerine"] .form-group input[type="range"]::-moz-range-thumb:hover,
+body[data-theme="tangerine"] .properties-panel input[type="range"]::-moz-range-thumb:hover {
+    transform: scale(1.2);
+    box-shadow: 0 0 0 4px rgba(255, 107, 53, 0.25);
+}
+
+/* Firefox needs these to remove default track styling */
+body[data-theme="tangerine"] .form-group input[type="range"]::-moz-range-track,
+body[data-theme="tangerine"] .properties-panel input[type="range"]::-moz-range-track {
+    background: transparent;
+    height: 4px;
+    border-radius: 2px;
+}
+
+/* Active / focus glow */
+body[data-theme="tangerine"] .form-group input[type="range"]:focus,
+body[data-theme="tangerine"] .properties-panel input[type="range"]:focus {
+    outline: none;
+    box-shadow: none;
+    border: none;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+    body[data-theme="tangerine"] .builder-container {
+        grid-template-columns: 200px 1fr 300px;
+    }
+}
+
+@media (max-width: 768px) {
+    body[data-theme="tangerine"] .builder-container {
+        grid-template-columns: 1fr;
+        height: auto;
+    }
+
+    body[data-theme="tangerine"] .palette-panel,
+    body[data-theme="tangerine"] .properties-panel {
+        max-height: 300px;
+    }
+}

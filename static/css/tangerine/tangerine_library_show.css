@@ -232,12 +232,18 @@
     justify-content: space-between;
 }
 
+.season-action-buttons {
+    display: inline-flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
 button.btn.btn-sm.btn-danger.delete-season-btn {
-    margin: 0px 0px 10px 0px;
     display: inline-flex;
     align-items: center;
     gap: 0.375rem;
-    padding: 0.5rem 0.75rem;
+    padding: 0.35rem 0.75rem;
     border: 1px solid rgba(255, 107, 53, 0.3);
     border-radius: 0.375rem;
     background: rgb(234 43 43 / 19%);
@@ -245,6 +251,69 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
     cursor: pointer;
     transition: all 0.2s ease;
     font-size: 0.875rem;
+}
+
+button.btn.btn-sm.not-wanted-magnet-season-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid rgba(232, 96, 28, 0.3);
+    border-radius: 0.375rem;
+    background: rgba(232, 96, 28, 0.08);
+    color: rgba(232, 96, 28, 0.8);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+button.btn.btn-sm.not-wanted-magnet-season-btn:hover {
+    background: rgba(232, 96, 28, 0.18);
+    border-color: rgba(232, 96, 28, 0.55);
+    color: #e8601c;
+    transform: translateY(-1px);
+}
+
+button.btn.btn-sm.replace-season-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.35rem 0.75rem;
+    border: 1px solid rgba(255, 165, 0, 0.3);
+    border-radius: 0.375rem;
+    background: rgba(255, 165, 0, 0.12);
+    color: #ffffff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.875rem;
+}
+
+button.btn.btn-sm.replace-season-btn:hover {
+    background: rgba(255, 165, 0, 0.25);
+    border-color: rgba(255, 165, 0, 0.5);
+    transform: translateY(-1px);
+}
+
+button.btn.btn-sm.replace-season-btn.replace-season-pending {
+    border-color: rgba(234, 179, 8, 0.4);
+    background: rgba(234, 179, 8, 0.15);
+}
+
+button.btn.btn-sm.replace-season-btn.replace-season-pending:hover {
+    background: rgba(234, 179, 8, 0.25);
+    border-color: rgba(234, 179, 8, 0.6);
+}
+
+.replace-pending-badge {
+    display: inline-block;
+    margin-left: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    background: rgba(234, 179, 8, 0.2);
+    border: 1px solid rgba(234, 179, 8, 0.4);
+    color: rgba(234, 179, 8, 0.9);
+    font-size: 0.75rem;
+    font-weight: 500;
+    vertical-align: middle;
 }
 
 .action-btn,
@@ -353,6 +422,11 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
 
 .progress-info span:last-child {
     opacity: 0.6;
+}
+
+body[data-theme="tangerine"] .progress-info span:last-child {
+    opacity: 1 !important;
+    /* color: #666 !important; */
 }
 
 .progress-bar {
@@ -646,15 +720,15 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
 
 .season-tab {
     flex-shrink: 0;
-    min-width: 140px;
-    padding: 0.75rem 1rem;
-    background: rgba(255, 107, 53, 0.05);
-    border: 1px solid rgba(255, 107, 53, 0.2);
-    border-radius: 0.375rem;
-    color: rgba(255, 255, 255, 0.7);
-    cursor: pointer;
-    transition: all 0.2s ease;
+    border: 1px solid #88888852;
     text-align: left;
+    border-radius: 7px;
+    padding: 9px 14px;
+    cursor: pointer;
+    transition: all .15s;
+    min-width: 100px;
+    background: rgba(255, 107, 53, 0.2);
+
 }
 
 .season-tab:hover {
@@ -703,6 +777,57 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
     transition: width 0.3s ease;
 }
 
+/* Phantom Season Tab Styling - Tangerine Theme */
+.season-tab.phantom-season-tab {
+    opacity: 0.7;
+    background: repeating-linear-gradient(
+        45deg,
+        rgba(50, 50, 50, 0.6),
+        rgba(50, 50, 50, 0.6) 10px,
+        rgba(30, 30, 30, 0.6) 10px,
+        rgba(30, 30, 30, 0.6) 20px
+    );
+    border-left: 3px dashed rgba(239, 68, 68, 0.5);
+}
+
+.season-tab.phantom-season-tab:hover {
+    opacity: 0.8;
+    background: repeating-linear-gradient(
+        45deg,
+        rgba(50, 50, 50, 0.7),
+        rgba(50, 50, 50, 0.7) 10px,
+        rgba(30, 30, 30, 0.7) 10px,
+        rgba(30, 30, 30, 0.7) 20px
+    );
+    border-left: 3px dashed rgba(239, 68, 68, 0.7);
+}
+
+.season-tab.phantom-season-tab.active {
+    opacity: 0.85;
+    background: repeating-linear-gradient(
+        45deg,
+        rgba(50, 50, 50, 0.8),
+        rgba(50, 50, 50, 0.8) 10px,
+        rgba(30, 30, 30, 0.8) 10px,
+        rgba(30, 30, 30, 0.8) 20px
+    );
+    border-left: 3px dashed rgba(239, 68, 68, 0.8);
+}
+
+.season-tab.phantom-season-tab .season-tab-title {
+    color: rgba(255, 255, 255, 0.4);
+    font-style: italic;
+}
+
+.season-tab.phantom-season-tab.active .season-tab-title {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.season-tab.phantom-season-tab .season-tab-stats {
+    color: rgba(255, 255, 255, 0.3);
+    font-style: italic;
+}
+
 /* ==========================================================================
    Season Panels (Tab Content)
    ========================================================================== */
@@ -711,8 +836,13 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
     padding: 1rem 1.5rem 1.5rem 1.5rem;
 }
 
+body[data-theme="tangerine"] .season-tabs-content {
+    padding: 0rem 1.5rem 1.5rem 1.5rem;
+}
+
 .season-panel {
     display: none;
+    padding: 0.75rem 0;
 }
 
 .season-panel.active {
@@ -754,6 +884,32 @@ ease;
     color: #ff9166;
     opacity: 0.8;
     flex-shrink: 0;
+}
+
+.episode-bulk-select-checkbox {
+    width: 1.1rem;
+    height: 1.1rem;
+    flex-shrink: 0;
+    accent-color: #ff6b35;
+    cursor: pointer;
+}
+
+.episode-bulk-action-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.6rem 1rem;
+    margin-bottom: 0.5rem;
+    background: rgba(255, 107, 53, 0.1);
+    border: 1px solid rgba(255, 107, 53, 0.4);
+    border-radius: 0.5rem;
+}
+
+.episode-bulk-selected-count {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #ff9166;
+    margin-right: auto;
 }
 
 .episode-status-icon {
@@ -819,6 +975,20 @@ ease;
     line-height: normal;
 }
 
+.episode-broken-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.5rem 0.2rem 0.5rem;
+    border-radius: 4px;
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    white-space: nowrap;
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: normal;
+}
+
 /* Broken File Icon */
 .broken-icon {
     width: 16px;
@@ -842,7 +1012,6 @@ ease;
     color: #ff9166;
     cursor: pointer;
     transition: all 0.2s ease;
-    margin-left: 0.5rem;
     flex-shrink: 0;
 }
 
@@ -868,6 +1037,18 @@ ease;
     height: 16px;
 }
 
+/* Magnet assign episode button - no rotation */
+.magnet-assign-episode-btn {
+    border-color: rgba(255, 145, 102, 0.3) !important;
+    color: #ff9166 !important;
+}
+
+.magnet-assign-episode-btn:hover {
+    background: rgba(255, 145, 102, 0.15) !important;
+    border-color: rgba(255, 145, 102, 0.5) !important;
+    transform: none !important;
+}
+
 /* Files Toggle Button */
 .files-toggle-btn {
     display: flex;
@@ -881,7 +1062,6 @@ ease;
     cursor: pointer;
     transition: all 0.2s ease;
     font-size: 0.875rem;
-    margin-left: 0.5rem;
     flex-shrink: 0;
 }
 
@@ -922,19 +1102,19 @@ ease;
 /* Files Panel (Slide-out) */
 .episode-files-panel {
     position: fixed;
-    right: 2rem;
-    margin-top: 105px;
-    transform: translate(calc(100% + 2rem), -50%);
+    top: 50%;
+    right: 0;
+    transform: translateY(-50%) translateX(120%);
+    opacity: 0;
     max-height: 80vh;
     width: auto;
     min-width: 400px;
     max-width: 600px;
     background: rgba(20, 20, 22, 0.98);
-    /* backdrop-filter: blur(20px); */
     border: none;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
     border-radius: 0.5rem;
-    transition: transform 0.2s ease;
+    transition: transform 0.2s ease, opacity 0.15s ease;
     z-index: 1000;
     overflow-y: auto;
     padding: 1.5rem;
@@ -942,7 +1122,8 @@ ease;
 }
 
 .episode-files-panel.open {
-    transform: translate(0, -50%);
+    transform: translateY(-50%) translateX(0);
+    opacity: 1;
     pointer-events: auto;
 }
 
@@ -1033,302 +1214,6 @@ ease;
     margin-top: 384px;
 } */
 
-/* ==========================================================================
-   Responsive Design
-   ========================================================================== */
-@media (max-width: 1200px) {
-    .show-main-grid {
-        grid-template-columns: 1.8fr 1fr;
-    }
-    .show-sidebar {
-        width: 100%;
-        max-width: fit-content;
-    }
-    .show-title {
-        font-size: 1.5rem;
-    }
-    .details-row {
-        gap: 0.5rem;
-        font-size: 0.845rem;
-    }
-    .status-badge {
-        font-size: 0.65rem;
-    }
-    .show-meta {
-        font-size: 0.745rem;
-    }
-    .episode-row {
-        display: block;
-    }
-    .episode-number {
-        display: inline;
-    }
-    .episode-status-icon {
-        vertical-align: sub;
-    }
-    .episode-info-section {
-        display: contents;
-    }
-    .episode-title {
-        display: inline;
-        line-height: 30px;
-    }
-    .episode-meta {
-        line-height: 5px;
-        padding-bottom: 10px;
-    }
-    .search-episode-btn, .refresh-btn {
-        display: inline-block;
-        margin-left: 0;
-        margin-right: 5px;
-        line-height: 0;
-        white-space: nowrap;
-    }
-    .files-toggle-btn {
-        display: inline-block;
-        padding: 0.5rem;
-        line-height: 0;
-        white-space: nowrap;
-    }
-    .action-btn, .delete-episode-btn {
-        display: inline-block;
-        padding: 0.5rem;
-        margin-left: 0;
-        margin-right: 5px;
-        line-height: 1;
-        white-space: nowrap;
-    }
-    .files-count {
-        vertical-align: 3px;
-    }
-    .episode-files-panel {
-        margin-top: -50px;
-        min-width: min-content;
-        max-width: max-content;
-    }
-    .files-panel-close {
-        display: block; /* Show on mobile */
-    }
-    .episode-files {
-        padding-top: 2rem; /* Make room for close button */
-    }
-
-}
-@media (max-width: 768px) {
-    .show-content-wrapper {
-        padding: 1rem;
-    }
-
-    .show-main-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .show-header-content {
-        grid-template-columns: 1fr;
-        text-align: center;
-    }
-
-    .show-poster-container {
-        margin: 0 auto;
-    }
-
-    .show-poster {
-        display: none;
-    }
-
-    .show-title {
-        font-size: 1.5rem;
-        justify-self: baseline;
-        margin: 0 0 1rem 0;
-    }
-
-    .show-stats {
-        justify-content: center;
-    }
-
-    .show-sidebar {
-        width: 100%;
-    }
-
-    .show-actions {
-        top: 0;
-    }
-
-    .episode-row {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.5rem;
-    }
-
-    .episode-files {
-        max-width: 100%;
-        width: 100%;
-    }
-
-    .season-tab {
-        min-width: 120px;
-    }
-    .details-row {
-        gap: 0.5rem;
-        font-size: 0.845rem;
-    }
-    .status-badge {
-        font-size: 0.65rem;
-    }
-    .show-meta {
-        font-size: 0.745rem;
-    }
-    .episode-row {
-        display: block;
-    }
-    .episode-number {
-        display: inline;
-    }
-    .episode-status-icon {
-        vertical-align: sub;
-    }
-    .episode-info-section {
-        display: contents;
-    }
-    .episode-title {
-        display: inline;
-        line-height: 30px;
-    }
-    .episode-meta {
-        line-height: 5px;
-        padding-bottom: 10px;
-    }
-    .search-episode-btn, .refresh-btn {
-        display: inline-block;
-        margin-left: 0;
-        margin-right: 5px;
-        line-height: 0;
-        white-space: nowrap;
-    }
-    .files-toggle-btn {
-        display: inline-block;
-        padding: 0.5rem;
-        line-height: 0;
-        white-space: nowrap;
-    }
-    .action-btn, .delete-episode-btn {
-        display: inline-block;
-        padding: 0.5rem;
-        margin-left: 0;
-        margin-right: 5px;
-        line-height: 1;
-        white-space: nowrap;
-    }
-    .episode-files-panel {
-        margin-top: -50px;
-        min-width: min-content;
-        max-width: max-content;
-    }
-    .files-panel-close {
-        display: block; /* Show on mobile */
-    }
-    .episode-files {
-        padding-top: 2rem; /* Make room for close button */
-    }
-    .files-count {
-        vertical-align: 3px;
-    }
-    .page-backdrop-overlay {
-                background: linear-gradient(to bottom, rgba(0, 0, 0, 0.90) 0%, rgba(0, 0, 0, 0.10) 20%, rgba(0, 0, 0, 0.60) 50%, rgba(0, 0, 0, 0.75) 100%);
-    }
-    .show-info {
-        margin-top: 100px;
-    }  
-}
-@media (max-width: 480px) {
-    .show-title {
-        font-size: 1.5rem;
-        justify-self: baseline;
-        margin: 0 0 1rem 0;
-    }
-
-    .season-tabs-content {
-        padding: 1rem;
-    }
-    .show-actions {
-        top: 0;
-    }
-    .show-poster {
-        display: none;
-    }
-    .details-row {
-        gap: 0.5rem;
-        font-size: 0.845rem;
-    }
-    .status-badge {
-        font-size: 0.65rem;
-    }
-    .show-meta {
-        font-size: 0.745rem;
-    }
-    .episode-row {
-        display: block;
-    }
-    .episode-number {
-        display: inline;
-    }
-    .episode-status-icon {
-        vertical-align: sub;
-    }
-    .episode-info-section {
-        display: contents;
-    }
-    .episode-title {
-        display: inline;
-        line-height: 30px;
-    }
-    .episode-meta {
-        line-height: 5px;
-        padding-bottom: 10px;
-    }
-    .search-episode-btn, .refresh-btn {
-        display: inline-block;
-        margin-left: 0;
-        margin-right: 5px;
-        line-height: 0;
-        white-space: nowrap;
-    }
-    .files-toggle-btn {
-        display: inline-block;
-        padding: 0.5rem;
-        line-height: 0;
-        white-space: nowrap;
-    }
-    .action-btn, .delete-episode-btn {
-        display: inline-block;
-        padding: 0.5rem;
-        margin-left: 0;
-        margin-right: 5px;
-        line-height: 1;
-        white-space: nowrap;
-    }
-    .episode-files-panel {
-        margin-top: -50px;
-        min-width: min-content;
-        max-width: max-content;
-    }
-    .files-panel-close {
-        display: block; /* Show on mobile */
-    }
-    .episode-files {
-        padding-top: 2rem; /* Make room for close button */
-    }
-    .files-count {
-        vertical-align: 3px;
-    }
-    .page-backdrop-overlay {
-        background: linear-gradient(to bottom, rgba(0, 0, 0, 0.0) 0%, rgba(0, 0, 0, 0.90) 50%, rgba(0, 0, 0, 0.55) 100%);
-    }
-    .show-info {
-        margin-top: 100px;
-    }
-       
-}
 
 /* Prevent scrolling when modal is open */
 body.modal-open {
@@ -1337,65 +1222,201 @@ body.modal-open {
 }
 
 /* Version Modal Styles */
+/* ==========================================================================
+   Version Request Modal — Tangerine Theme
+   ========================================================================== */
+
 .version-modal {
     display: none;
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.7);
-    z-index: 1000;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(6px);
+    z-index: 10000;
     align-items: center;
     justify-content: center;
 }
 
 .version-modal-content {
-    background-color: #333;
-    padding: 20px;
+    background: #1a1a1a;
+    border: 1px solid #3d3d3d;
+    border-top: 3px solid #e8601c;
+    border-radius: 10px;
+    width: 320px;
+    max-width: calc(100vw - 32px);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+.version-modal-content h3 { display: none; }
+
+.dialog-body { padding: 20px; }
+
+.dialog-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: #e0e0e0;
+    border-left: 3px solid #e8601c;
+    padding-left: 10px;
+    margin-bottom: 14px;
+    line-height: 1.3;
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+.dialog-sub {
+    font-size: 11px;
+    color: #e8601c;
+    font-weight: 500;
+    margin-bottom: 14px;
+    padding: 5px 9px;
+    background: rgba(232, 96, 28, 0.08);
+    border: 1px solid rgba(232, 96, 28, 0.25);
     border-radius: 5px;
-    width: 300px;
-    max-width: 90%;
-    color: white;
-}
-
-.version-modal h3 {
-    margin-top: 0;
-    margin-bottom: 15px;
-    text-align: center;
-}
-
-.version-checkbox {
-    margin-bottom: 10px;
-}
-
-.version-checkbox input[type="radio"],
-.version-checkbox input[type="checkbox"] {
-    margin-right: 10px;
-}
-
-.version-modal-buttons {
     display: flex;
-    justify-content: space-between;
-    margin-top: 20px;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Inter', system-ui, sans-serif;
 }
 
-.version-modal-buttons button {
-    padding: 8px 16px;
-    border: none;
-    border-radius: 4px;
+.dialog-sub i { font-size: 10px; }
+
+.section-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: #555;
+    margin-bottom: 8px;
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+.option-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 11px;
+    border-radius: 6px;
+    border: 1px solid #333;
+    background: #222;
     cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    margin-bottom: 6px;
+    user-select: none;
 }
 
-.version-modal-buttons button:first-child {
-    background-color: #2ecc71;
-    color: white;
+.option-row:last-child { margin-bottom: 0; }
+
+.option-row:hover { border-color: #3d3d3d; background: #2a2a2a; }
+
+.option-row.checked,
+.option-row.selected {
+    border-color: rgba(232, 96, 28, 0.25);
+    background: rgba(232, 96, 28, 0.08);
 }
 
-.version-modal-buttons button:last-child {
-    background-color: #7f8c8d;
-    color: white;
+.custom-radio {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1.5px solid #3d3d3d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: border-color 0.15s, background 0.15s;
 }
+
+.option-row.selected .custom-radio { border-color: #e8601c; background: #e8601c; }
+
+.custom-radio-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #fff;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.option-row.selected .custom-radio-dot { opacity: 1; }
+
+.custom-cb {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1.5px solid #3d3d3d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.option-row.checked .custom-cb { border-color: #e8601c; background: #e8601c; }
+
+.custom-cb i { font-size: 9px; color: #fff; opacity: 0; transition: opacity 0.15s; }
+
+.option-row.checked .custom-cb i { opacity: 1; }
+
+.option-label {
+    font-size: 13px;
+    color: #aaa;
+    font-weight: 500;
+    transition: color 0.15s;
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+.option-row.checked .option-label,
+.option-row.selected .option-label { color: #e0e0e0; }
+
+.vm-divider { height: 1px; background: #333; margin: 14px 0; }
+
+.season-selection-container {
+    margin: 8px 0 0;
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 8px;
+    background: rgba(232, 96, 28, 0.04);
+    border: 1px solid rgba(232, 96, 28, 0.15);
+    border-radius: 6px;
+}
+
+.seasons-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.dialog-footer {
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.vm-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'Inter', system-ui, sans-serif;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    white-space: nowrap;
+    flex: 1;
+    justify-content: center;
+    border: none;
+}
+
+.vm-btn i { font-size: 11px; }
+
+.vm-btn-accent { background: #e8601c; border: 1px solid #e8601c; color: #fff; }
+.vm-btn-accent:hover { background: #f07030; border-color: #f07030; }
+
+.vm-btn-ghost { background: #222; border: 1px solid #3d3d3d; color: #aaa; }
+.vm-btn-ghost:hover { background: #2a2a2a; border-color: #555; color: #e0e0e0; }
 
 /* Overlay Styles */
 .overlay {
@@ -1417,7 +1438,7 @@ body.modal-open {
 .overlay-content {
     position: relative;
     background-color: #1a1a1a;
-    padding: 0 20px 20px 20px;
+    /* padding: 0 20px 20px 20px; */
     border-radius: 8px;
     width: 85%;
     max-width: 1200px;
@@ -1529,19 +1550,7 @@ tr.filtered-out-item:hover {
     align-items: center;
 }
 
-.loading-content {
-    background: rgba(26, 26, 26, 0.95);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 20px;
-    border-radius: 20px;
-    text-align: center;
-}
-
-.loading-content p {
-    color: #e0e0e0;
-    margin-bottom: 15px;
-}
+/* Loading overlay styles defined in base.css */
 
 .loading-message {
     margin-bottom: 10px;
@@ -1569,27 +1578,6 @@ tr.filtered-out-item:hover {
     border-radius: 20px 0 0 0;
 }
 
-.close-loading {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-    color: white;
-    border: none;
-    padding: 12px 20px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 16px;
-    font-weight: 600;
-    margin: 4px 2px;
-    cursor: pointer;
-    border-radius: 12px;
-    transition: all 0.3s ease;
-}
-
-.close-loading:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(255, 107, 53, 0.4);
-}
-
 /* ========================================
    Torrent Overlay Styles (from tangerine_scraper.css)
    ======================================== */
@@ -1599,7 +1587,7 @@ tr.filtered-out-item:hover {
     background: rgba(26, 26, 26, 0.95);
     backdrop-filter: blur(20px);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 0 20px 20px 20px;
+    /* padding: 0 20px 20px 20px; */
     border-radius: 20px;
     width: 85%;
     max-width: 1200px;
@@ -1966,6 +1954,17 @@ td#scraper-source .source-badge {
     font-size: 0.85rem;
 }
 
+.file-selection-item--no-magnet {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
+.file-no-magnet {
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 0.8rem;
+    font-style: italic;
+}
+
 .file-selection-actions {
     display: flex;
     gap: 1rem;
@@ -2024,8 +2023,8 @@ td#scraper-source .source-badge {
     transform: translateY(0);
 }
 @media (max-width: 1045px) {
+    .close-btn { display: none !important; }
     .overlay-content {
-
         margin-top: 90px;
     }
     .overlay-content h3 {
@@ -2074,22 +2073,22 @@ td#scraper-source .source-badge {
         hyphens: none;
     }
     .torresult .assign-magnet-icon {
-        position: absolute;
-        bottom: 10px;
-        right: 10px;
-        width: 28px;
-        padding: 3px;
-        height: 28px;
-        background-color: #e17c52;
-        border: #c56b3d;
-        border-radius: 6px;
-        display: flex;
+        position: static;
+        flex-shrink: 0;
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        background: rgba(232,96,28,.08);
+        border: 1px solid rgba(232,96,28,.25);
+        border-radius: 5px;
+        color: #e8601c;
+        display: inline-flex;
         align-items: center;
         justify-content: center;
-        z-index: 10;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        z-index: auto;
+        box-shadow: none;
         cursor: pointer;
-        transition: all 0.2s ease;
+        transition: all .15s;
     }
     .torresult {
         width: 47% !important;
@@ -2111,11 +2110,7 @@ td#scraper-source .source-badge {
         margin: 0;
     }
 
-    #overlayContent {
-        padding: 12px;
-        width: 100%;
-        box-sizing: border-box;
-    }
+
 
     #overlayContent > div {
         display: flex;
@@ -2190,22 +2185,22 @@ td#scraper-source .source-badge {
         hyphens: none;
     }
     .torresult .assign-magnet-icon {
-        position: absolute;
-        bottom: 10px;
-        right: 10px;
-        width: 28px;
-        padding: 3px;
-        height: 28px;
-        background-color: #e17c52;
-        border: #c56b3d;
-        border-radius: 6px;
-        display: flex;
+        position: static;
+        flex-shrink: 0;
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        background: rgba(232,96,28,.08);
+        border: 1px solid rgba(232,96,28,.25);
+        border-radius: 5px;
+        color: #e8601c;
+        display: inline-flex;
         align-items: center;
         justify-content: center;
-        z-index: 10;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        z-index: auto;
+        box-shadow: none;
         cursor: pointer;
-        transition: all 0.2s ease;
+        transition: all .15s;
     }
     .torresult {
         width: 47% !important;
@@ -2256,4 +2251,914 @@ td#scraper-source .source-badge {
 
 .phantom-missing svg {
     stroke: rgba(239, 68, 68, 0.7);
+}
+
+@keyframes cal-ep-pulse {
+    0%   { background-color: rgba(225, 124, 82, 0.3); }
+    50%  { background-color: rgba(225, 124, 82, 0.05); }
+    100% { background-color: rgba(225, 124, 82, 0.3); }
+}
+.cal-episode-highlight {
+    animation: cal-ep-pulse 1s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   Tangerine Formula Overrides — scoped to tangerine theme
+   ========================================================================== */
+
+body[data-theme="tangerine"] {
+    --ts-accent: #e8601c;
+    --ts-accent-muted: rgba(232, 96, 28, 0.15);
+    --ts-accent-border: rgba(232, 96, 28, 0.3);
+    --ts-surface-1: #161616;
+    --ts-surface-2: #1e1e1e;
+    --ts-surface-3: #252525;
+    --ts-border: #3a3a3a;
+    --ts-text: #e8e8e8;
+    --ts-text-muted: rgba(232, 232, 232, 0.55);
+    --ts-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    --ts-sans: 'Inter', system-ui, sans-serif;
+    --ts-radius: 6px;
+}
+
+/* Fonts */
+body[data-theme="tangerine"] .show-title,
+body[data-theme="tangerine"] .seasons-title,
+body[data-theme="tangerine"] .info-box-title,
+body[data-theme="tangerine"] .show-meta,
+body[data-theme="tangerine"] .stat-label,
+body[data-theme="tangerine"] .episode-title,
+body[data-theme="tangerine"] .episode-meta,
+body[data-theme="tangerine"] .detail-label,
+body[data-theme="tangerine"] .detail-value,
+body[data-theme="tangerine"] .season-tab-title {
+    font-family: var(--ts-sans);
+}
+
+body[data-theme="tangerine"] .detail-code,
+body[data-theme="tangerine"] .episode-file {
+    font-family: var(--ts-mono);
+}
+
+/* Title sizes */
+body[data-theme="tangerine"] .show-title {
+    font-size: 1.6rem;
+    font-weight: 700;
+}
+
+body[data-theme="tangerine"] .seasons-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+body[data-theme="tangerine"] .info-box-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ts-text-muted);
+    padding-top: 4px;
+}
+
+/* Show header */
+body[data-theme="tangerine"] .show-title {
+    font-size: 1.375rem;
+    font-weight: 700;
+    font-family: var(--ts-sans);
+    letter-spacing: -0.01em;
+    color: #e0e0e0;
+    margin-bottom: 6px;
+}
+
+/* Status badge — coloured like the reference */
+body[data-theme="tangerine"] .status-badge {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+body[data-theme="tangerine"] .status-badge.status-returning-series {
+    background: rgba(20, 83, 45, 0.13);
+    color: #4ade80;
+    border: 1px solid rgba(20, 83, 45, 0.33);
+}
+body[data-theme="tangerine"] .status-badge.status-ended,
+body[data-theme="tangerine"] .status-badge.status-canceled {
+    background: rgba(127, 29, 29, 0.13);
+    color: #fca5a5;
+    border: 1px solid rgba(127, 29, 29, 0.33);
+}
+body[data-theme="tangerine"] .status-badge.status-airing {
+    background: rgba(20, 83, 45, 0.13);
+    color: #4ade80;
+    border: 1px solid rgba(20, 83, 45, 0.33);
+}
+
+/* Meta row */
+body[data-theme="tangerine"] .show-meta {
+    font-family: var(--ts-sans);
+    font-size: 12px;
+    color: #aaa;
+    gap: 8px;
+    margin-top: 8px;
+    align-items: center;
+}
+body[data-theme="tangerine"] .show-meta .separator {
+    color: #666;
+    opacity: 1;
+    font-size: 11px;
+}
+
+/* Rating — yellow star */
+body[data-theme="tangerine"] #show-rating-text {
+    color: #f59e0b;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+/* Progress stats line */
+body[data-theme="tangerine"] .progress-info {
+    font-family: var(--ts-sans);
+    font-size: 12px;
+    font-weight: 400;
+    color: #aaa;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+body[data-theme="tangerine"] #seasons-count,
+body[data-theme="tangerine"] #progress-text {
+    color: #e0e0e0;
+    font-weight: 400;
+}
+body[data-theme="tangerine"] .progress-info #progress-percent,
+body[data-theme="tangerine"] .progress-section #progress-percent {
+    font-weight: 400;
+    opacity: 1;
+}
+
+/* Progress bar */
+body[data-theme="tangerine"] .progress-bar {
+    height: 4px;
+    max-width: 340px;
+    background: #2a2a2a;
+    border-radius: 2px;
+    margin-top: 0;
+    margin-bottom: 4px;
+}
+body[data-theme="tangerine"] .progress-fill {
+    background: #e8601c;
+    border-radius: 2px;
+}
+
+/* Details row (Version / Path / Added) */
+body[data-theme="tangerine"] .details-row {
+    font-family: var(--ts-sans);
+    font-size: 12px;
+    gap: 16px;
+    margin: 0.5rem 0 0.75rem;
+    color: #666;
+}
+body[data-theme="tangerine"] .details-row .label {
+    color: #666;
+    font-weight: 400;
+    opacity: 1;
+}
+body[data-theme="tangerine"] .details-row span:last-child {
+    color: #aaa;
+    font-weight: 500;
+}
+
+/* Poster border */
+body[data-theme="tangerine"] .show-poster {
+    border-radius: var(--ts-radius);
+}
+
+/* Info boxes — replace warm brown with dark surface */
+body[data-theme="tangerine"] .info-box {
+    background: var(--ts-surface-2);
+    border: 1px solid var(--ts-border);
+    border-radius: var(--ts-radius);
+    backdrop-filter: none;
+}
+
+body[data-theme="tangerine"] .info-box:hover {
+    background: var(--ts-surface-3);
+    border-color: var(--ts-accent-border);
+    transform: none;
+}
+
+body[data-theme="tangerine"] .detail-row {
+    border-bottom-color: var(--ts-border);
+}
+
+body[data-theme="tangerine"] .detail-code {
+    background: var(--ts-surface-1);
+    border-radius: 4px;
+}
+
+/* Season tabs — replace warm brown with dark surface */
+body[data-theme="tangerine"] .season-tabs {
+    background: var(--ts-surface-2);
+    border: 1px solid var(--ts-border);
+    border-radius: var(--ts-radius);
+    backdrop-filter: none;
+}
+
+body[data-theme="tangerine"] .season-tab {
+    border-radius: 7px;
+}
+
+body[data-theme="tangerine"] .season-tab-title {
+    font-family: var(--ts-mono);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ts-text-muted);
+}
+
+body[data-theme="tangerine"] .season-tab.active .season-tab-title {
+    color: #e0e0e0;
+    font-family: var(--ts-mono);
+}
+
+body[data-theme="tangerine"] .season-tab-stats {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: #aaa;
+    letter-spacing: 0;
+}
+
+body[data-theme="tangerine"] .season-tab.active .season-tab-stats {
+    color: #e0e0e0;
+}
+
+/* Episode rows */
+body[data-theme="tangerine"] .episode-row {
+    background: var(--ts-surface-2);
+    border: 1px solid var(--ts-border);
+    border-radius: var(--ts-radius);
+}
+
+body[data-theme="tangerine"] .episode-row:hover {
+    background: var(--ts-surface-3);
+    border-color: rgba(255, 107, 53, 0.4);
+}
+
+/* Episode number — mono font */
+body[data-theme="tangerine"] .episode-number {
+    font-family: var(--ts-mono);
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #e8601c;
+    opacity: 1;
+}
+
+/* Episode title — Inter, slightly smaller */
+body[data-theme="tangerine"] .episode-title {
+    font-family: var(--ts-sans);
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #e0e0e0;
+}
+
+/* Episode meta row — Inter, 12px, muted */
+body[data-theme="tangerine"] .episode-meta {
+    font-family: var(--ts-sans);
+    font-size: 12px;
+    color: #aaa;
+    opacity: 1;
+    gap: 8px;
+}
+
+body[data-theme="tangerine"] .episode-meta span {
+    color: #aaa;
+}
+
+/* Version / size badges — mono for numbers, dark surface */
+body[data-theme="tangerine"] .episode-version {
+    font-family: var(--ts-mono);
+    font-size: 11px;
+    font-weight: 500;
+    font-variant: normal;
+    background: var(--ts-surface-3);
+    border: 1px solid var(--ts-border);
+    color: #aaa;
+    border-radius: 4px;
+    padding: 1px 6px;
+}
+
+body[data-theme="tangerine"] .episode-track-badge {
+    font-family: var(--ts-mono);
+    font-size: 11px;
+    font-weight: 500;
+    font-variant: normal;
+    background: var(--ts-surface-3);
+    border: 1px solid var(--ts-border);
+    color: #aaa;
+    border-radius: 4px;
+    padding: 1px 6px;
+}
+
+body[data-theme="tangerine"] .episode-broken-badge {
+    font-family: var(--ts-mono);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 1px 6px;
+    line-height: normal;
+}
+
+/* File count badge on toggle button — mono */
+body[data-theme="tangerine"] .files-count {
+    font-family: var(--ts-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+/* Season panel header "Season N" — label style */
+body[data-theme="tangerine"] .season-panel-header h3 {
+    font-family: var(--ts-sans);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #e0e0e0;
+    padding-top: 6px;
+}
+
+/* Action / toggle buttons — keep original colours, only fix radius */
+body[data-theme="tangerine"] .action-btn,
+body[data-theme="tangerine"] .delete-episode-btn,
+body[data-theme="tangerine"] .search-episode-btn,
+body[data-theme="tangerine"] .refresh-btn,
+body[data-theme="tangerine"] .files-toggle-btn,
+body[data-theme="tangerine"] button.btn.btn-sm.replace-season-btn {
+    font-family: var(--ts-sans);
+    font-size: 0.82rem;
+    font-weight: 500;
+    border-radius: var(--ts-radius);
+    height: 30px;
+    gap: 5px;
+    transition: background 0.15s, border-color 0.15s;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .action-btn:not(.primary-btn):not(.danger-btn):not(.ghost-btn):not(.success-btn) {
+    background: #1e1e1e;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #e8e8e8;
+}
+
+body[data-theme="tangerine"] .action-btn:not(.primary-btn):not(.danger-btn):not(.ghost-btn):not(.success-btn):hover {
+    background: #2a2a2a;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+body[data-theme="tangerine"] .action-btn:hover,
+body[data-theme="tangerine"] .search-episode-btn:hover,
+body[data-theme="tangerine"] .refresh-btn:hover,
+body[data-theme="tangerine"] .files-toggle-btn:hover,
+body[data-theme="tangerine"] button.btn.btn-sm.replace-season-btn:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .not-wanted-magnet-btn.refresh-btn {
+    color: rgba(232, 96, 28, 0.75);
+    border-color: rgba(232, 96, 28, 0.25);
+    background: rgba(232, 96, 28, 0.06);
+}
+
+body[data-theme="tangerine"] .not-wanted-magnet-btn.refresh-btn:hover {
+    color: #e8601c;
+    border-color: rgba(232, 96, 28, 0.5);
+    background: rgba(232, 96, 28, 0.14);
+}
+
+body[data-theme="tangerine"] .action-btn svg {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+}
+
+body[data-theme="tangerine"] .primary-btn {
+    background: #1e1e1e;
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+body[data-theme="tangerine"] .primary-btn:hover {
+    background: #2a2a2a;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+body[data-theme="tangerine"] .ghost-btn {
+    background: #1e1e1e;
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+body[data-theme="tangerine"] .ghost-btn:hover {
+    background: #1e1e1e;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+body[data-theme="tangerine"] .danger-btn {
+    background: #1e1e1e;
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+body[data-theme="tangerine"] .danger-btn:hover {
+    background: #2a2a2a;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* File list overlay */
+body[data-theme="tangerine"] .episode-files-panel {
+    background: rgba(20, 20, 22, 0.98);
+    border-radius: 0.5rem;
+}
+
+body[data-theme="tangerine"] .episode-file {
+    font-family: var(--ts-mono);
+}
+
+/* Loading progress bar */
+body[data-theme="tangerine"] .loading-progress-bar {
+    background-color: var(--ts-accent);
+}
+
+/* ── File selection popup — full tangerine redesign ─────── */
+body[data-theme="tangerine"] .file-selection-popup {
+    background: var(--ts-surface-2);
+    border: 1px solid var(--ts-border);
+    border-radius: var(--ts-radius);
+    padding: 1.5rem;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+body[data-theme="tangerine"] .file-selection-popup h3 {
+    font-family: var(--ts-sans);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--ts-text);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-left: 3px solid var(--ts-accent);
+    padding-left: 10px;
+    margin: 0 0 0.5rem 0;
+}
+
+body[data-theme="tangerine"] .file-selection-subtitle {
+    font-family: var(--ts-sans);
+    font-size: 0.82rem;
+    color: var(--ts-text-muted);
+    margin: 0 0 1.25rem 0;
+    padding-left: 13px;
+}
+
+body[data-theme="tangerine"] .file-selection-list {
+    margin-bottom: 1.25rem;
+}
+
+body[data-theme="tangerine"] .file-selection-item {
+    background: var(--ts-surface-3);
+    border: 1px solid var(--ts-border);
+    border-radius: var(--ts-radius);
+    padding: 0.625rem 0.75rem;
+    margin-bottom: 0.4rem;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+body[data-theme="tangerine"] .file-selection-item:hover {
+    background: #2a2a2a;
+    border-color: #4a4a4a;
+}
+
+body[data-theme="tangerine"] .file-selection-item input[type="checkbox"] {
+    accent-color: var(--ts-accent);
+    margin-top: 0.2rem;
+}
+
+body[data-theme="tangerine"] .file-number {
+    font-family: var(--ts-mono);
+    font-size: 0.82rem;
+    color: var(--ts-accent);
+    font-weight: 400;
+}
+
+body[data-theme="tangerine"] .file-name {
+    font-family: var(--ts-sans);
+    font-size: 12px;
+    color: var(--ts-text);
+    font-weight: 500;
+}
+
+body[data-theme="tangerine"] .file-version {
+    font-family: var(--ts-mono);
+    font-size: 0.75rem;
+    color: var(--ts-text-muted);
+}
+
+body[data-theme="tangerine"] .file-selection-actions {
+    border-top: 1px solid var(--ts-border);
+    padding-top: 1rem;
+    gap: 0.5rem;
+}
+
+body[data-theme="tangerine"] .file-selection-btn {
+    font-family: var(--ts-sans);
+    font-size: 0.82rem;
+    font-weight: 500;
+    border-radius: var(--ts-radius);
+    padding: 0 14px;
+    height: 32px;
+    text-transform: none;
+    letter-spacing: 0;
+    margin-top: 0;
+    width: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, border-color 0.15s;
+    transform: none;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .file-selection-btn:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .file-selection-btn:active {
+    transform: none;
+}
+
+body[data-theme="tangerine"] .file-selection-cancel {
+    background: var(--ts-surface-3);
+    border: 1px solid var(--ts-border);
+    color: var(--ts-text);
+}
+
+body[data-theme="tangerine"] .file-selection-cancel:hover {
+    background: #2a2a2a;
+    border-color: #4a4a4a;
+    transform: none;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .file-selection-delete {
+    background: var(--ts-accent);
+    border: 1px solid var(--ts-accent);
+    color: #fff;
+}
+
+body[data-theme="tangerine"] .file-selection-delete:hover {
+    background: #f07030;
+    border-color: #f07030;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Overlay content (torrent viewer) */
+body[data-theme="tangerine"] .overlay-content {
+    background: var(--ts-surface-2);
+    border: 1px solid var(--ts-border);
+    border-radius: var(--ts-radius);
+}
+
+body[data-theme="tangerine"] .overlay-content::before {
+    background: var(--ts-accent);
+}
+
+body[data-theme="tangerine"] .overlay-content h3,
+body[data-theme="tangerine"] .overlay-content thead {
+    background-color: var(--ts-surface-2);
+}
+
+body[data-theme="tangerine"] .overlay-content td button {
+    background-color: var(--ts-accent);
+    border-radius: var(--ts-radius);
+}
+
+body[data-theme="tangerine"] td#scraper-source .source-badge {
+    background: var(--ts-accent-muted);
+    border-color: var(--ts-accent-border);
+    border-radius: var(--ts-radius);
+}
+/* ==========================================================================
+   Responsive Design
+   ========================================================================== */
+@media (max-width: 1200px) {
+    .show-main-grid {
+        grid-template-columns: 1.8fr 1fr;
+    }
+    .show-sidebar {
+        width: 100%;
+        max-width: fit-content;
+    }
+    .show-title {
+        font-size: 1.5rem;
+    }
+    .details-row {
+        gap: 0.5rem;
+        font-size: 0.845rem;
+    }
+    .status-badge {
+        font-size: 0.65rem;
+    }
+    .show-meta {
+        font-size: 0.745rem;
+    }
+    .episode-row {
+        display: block;
+    }
+    .episode-number {
+        display: inline;
+    }
+    .episode-status-icon {
+        vertical-align: sub;
+    }
+    .episode-info-section {
+        display: contents;
+    }
+    .episode-title {
+        display: inline;
+        line-height: 30px;
+    }
+    .episode-meta {
+        line-height: 5px;
+        padding-bottom: 10px;
+    }
+    .search-episode-btn, .refresh-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: 0;
+        margin-right: 5px;
+        line-height: 0;
+        white-space: nowrap;
+    }
+    .files-toggle-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.5rem;
+        line-height: 0;
+        white-space: nowrap;
+    }
+    .action-btn, .delete-episode-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.5rem;
+        margin-left: 0;
+        margin-right: 5px;
+        line-height: 1;
+        white-space: nowrap;
+    }
+    .files-count {
+        vertical-align: 3px;
+    }
+    .episode-files-panel {
+        margin-top: -50px;
+        min-width: min-content;
+        max-width: max-content;
+    }
+    .files-panel-close {
+        display: block; /* Show on mobile */
+    }
+    .episode-files {
+        padding-top: 2rem; /* Make room for close button */
+    }
+
+}
+@media (max-width: 768px) {
+    .show-content-wrapper {
+        padding: 1rem;
+    }
+
+    .show-main-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .show-header-content {
+        grid-template-columns: 1fr;
+        text-align: center;
+    }
+
+    .show-poster-container {
+        margin: 0 auto;
+    }
+
+    .show-poster {
+        display: none;
+    }
+
+    .show-title {
+        font-size: 1.5rem;
+        justify-self: baseline;
+        margin: 0 0 1rem 0;
+    }
+
+    .show-stats {
+        justify-content: center;
+    }
+
+    .show-sidebar {
+        width: 100%;
+    }
+
+    .show-actions {
+        top: 0;
+    }
+
+    .episode-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .episode-files {
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .season-tab {
+        min-width: 120px;
+    }
+    .details-row {
+        gap: 0.5rem;
+        font-size: 0.845rem;
+    }
+    .status-badge {
+        font-size: 0.65rem;
+    }
+    .show-meta {
+        font-size: 0.745rem;
+    }
+    .episode-row {
+        display: block;
+    }
+    .episode-number {
+        display: inline;
+    }
+    .episode-status-icon {
+        vertical-align: sub;
+    }
+    .episode-info-section {
+        display: contents;
+    }
+    .episode-title {
+        display: inline;
+        line-height: 30px;
+    }
+    .episode-meta {
+        line-height: 5px;
+        padding-bottom: 10px;
+    }
+    .search-episode-btn, .refresh-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: 0;
+        margin-right: 5px;
+        line-height: 0;
+        white-space: nowrap;
+    }
+    .files-toggle-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.5rem;
+        line-height: 0;
+        white-space: nowrap;
+    }
+    .action-btn, .delete-episode-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.5rem;
+        margin-left: 0;
+        margin-right: 5px;
+        line-height: 1;
+        white-space: nowrap;
+    }
+    .episode-files-panel {
+        margin-top: -50px;
+        min-width: min-content;
+        max-width: max-content;
+    }
+    .files-panel-close {
+        display: block; /* Show on mobile */
+    }
+    .episode-files {
+        padding-top: 2rem; /* Make room for close button */
+    }
+    .files-count {
+        vertical-align: 3px;
+    }
+    .page-backdrop-overlay {
+                background: linear-gradient(to bottom, rgba(0, 0, 0, 0.90) 0%, rgba(0, 0, 0, 0.10) 20%, rgba(0, 0, 0, 0.60) 50%, rgba(0, 0, 0, 0.75) 100%);
+    }
+    .show-info {
+        margin-top: 100px;
+    }  
+}
+@media (max-width: 480px) {
+    .show-title {
+        font-size: 1.5rem;
+        justify-self: baseline;
+        margin: 0 0 1rem 0;
+    }
+
+    .season-tabs-content {
+        padding: 1rem;
+    }
+    .show-actions {
+        top: 0;
+    }
+    .show-poster {
+        display: none;
+    }
+    .details-row {
+        gap: 0.5rem;
+        font-size: 0.845rem;
+    }
+    .status-badge {
+        font-size: 0.65rem;
+    }
+    .show-meta {
+        font-size: 0.745rem;
+    }
+    .episode-row {
+        display: block;
+    }
+    .episode-number {
+        display: inline;
+    }
+    .episode-status-icon {
+        vertical-align: sub;
+    }
+    .episode-info-section {
+        display: contents;
+    }
+    .episode-title {
+        display: inline;
+        line-height: 30px;
+    }
+    .episode-meta {
+        line-height: 5px;
+        padding-bottom: 10px;
+    }
+    .search-episode-btn, .refresh-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: 0;
+        margin-right: 5px;
+        line-height: 0;
+        white-space: nowrap;
+    }
+    .files-toggle-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.5rem;
+        line-height: 0;
+        white-space: nowrap;
+    }
+    .action-btn, .delete-episode-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.5rem;
+        margin-left: 0;
+        margin-right: 5px;
+        line-height: 1;
+        white-space: nowrap;
+    }
+    .episode-files-panel {
+        margin-top: -50px;
+        min-width: min-content;
+        max-width: max-content;
+    }
+    .files-panel-close {
+        display: block; /* Show on mobile */
+    }
+    .episode-files {
+        padding-top: 2rem; /* Make room for close button */
+    }
+    .files-count {
+        vertical-align: 3px;
+    }
+    .page-backdrop-overlay {
+        background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6) 0%, rgb(0 0 0) 50%, rgba(0, 0, 0, 0.55) 100%);
+    }
+    .show-info {
+        margin-top: 100px;
+    }
+       
 }

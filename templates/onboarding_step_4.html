@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/inline.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_inline.css') }}">
 {% endblock %}
 {% block title %}Onboarding - Step 4{% endblock %}
 {% block content %}
@@ -13,7 +13,7 @@
             <i class="fas fa-chevron-down toggle-icon"></i>
         </div>
         <div class="advice-content">
-            I prefer Overseerr especially because you can set up a webhook to directly trigger Wanted item additions to the queue, and supports partial series requests. All sources can be configured on a per version basis within the settings menu.
+            I prefer Seerr especially because you can set up a webhook to directly trigger Wanted item additions to the queue, and supports partial series requests. All sources can be configured on a per version basis within the settings menu.
         </div>
     </div>
     <p class="info-message">Content source settings can only be configured when adding a new source. To modify settings, you'll need to delete the existing source and create a new one.</p>
@@ -34,7 +34,7 @@
                     {% if key != 'enabled' and key != 'versions' %}
                         <div class="setting-item">
                             <label class="onboarding-text">{{ key|capitalize }}:</label>
-                            <input type="text" id="content-source-{{ loop.parent.loop.index0 }}-{{ key }}" value="{{ value }}" readonly class="setting-value">
+                            <input type="text" id="content-source-{{ source }}-{{ key }}" value="{{ value }}" readonly class="setting-value">
                         </div>
                     {% endif %}
                 {% endfor %}
@@ -77,7 +77,7 @@ document.addEventListener('DOMContentLoaded', function() {
             message: 'Select the type of content source you want to add:',
             dropdownOptions: sourceTypes.map(type => ({ 
                 value: type, 
-                text: type === 'Overseerr' ? 'Overseerr/Jellyseerr' : type 
+                text: type === 'Overseerr' ? 'Seerr' : type
             })),
             confirmText: 'Next',
             cancelText: 'Cancel',

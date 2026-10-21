@@ -1,0 +1,804 @@
+{% extends "base.html" %}
+
+{% block title %}Badge Library{% endblock %}
+
+{% block head %}
+<script>
+    function loadBadgesCss() {
+        const theme = window.themeSwitcher?.getTheme() || 'tangerine';
+        if (theme === 'tangerine') {
+            const themeId = 'theme-tangerine-overlays';
+            if (!document.getElementById(themeId)) {
+                const link = document.createElement('link');
+                link.id = themeId;
+                link.rel = 'stylesheet';
+                link.href = "{{ url_for('static', filename='css/tangerine/tangerine_overlays.css') }}";
+                link.setAttribute('data-theme-css', 'tangerine');
+                document.head.appendChild(link);
+            }
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', loadBadgesCss);
+    } else {
+        loadBadgesCss();
+    }
+    document.addEventListener('themeChanged', loadBadgesCss);
+</script>
+<style>
+.badges-container {
+    padding: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+    color: var(--text-primary, #333);
+}
+
+.badges-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.badges-header h1 {
+    margin: 0;
+}
+
+.category-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    border-bottom: 2px solid var(--border-color, #ddd);
+    flex-wrap: wrap;
+}
+
+.category-tab {
+    padding: 10px 20px;
+    cursor: pointer;
+    background: var(--card-background, #f5f5f5);
+    border: none;
+    border-radius: 5px 5px 0 0;
+    font-size: 15px;
+    transition: all 0.2s;
+    color: var(--text-primary, #333);
+}
+
+.category-tab:hover {
+    background: var(--hover-background, #e0e0e0);
+}
+
+.category-tab.active {
+    background: var(--primary-color, #007bff);
+    color: white;
+}
+
+.category-content {
+    display: none;
+}
+
+.category-content.active {
+    display: block;
+}
+
+/* Badge type card */
+.badge-type-card {
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 10px;
+    margin-bottom: 28px;
+    background: var(--card-background, #fff);
+    overflow: hidden;
+}
+
+.badge-type-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: var(--card-background, #f8f9fa);
+    border-bottom: 1px solid var(--border-color, #ddd);
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.badge-type-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--text-primary, #333);
+    margin: 0;
+}
+
+.badge-type-meta {
+    font-size: 13px;
+    color: var(--text-secondary, #666);
+    margin-top: 3px;
+}
+
+.badge-type-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.fill-indicator {
+    font-size: 13px;
+    color: var(--text-secondary, #666);
+}
+
+/* Variation grid */
+.variations-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 14px;
+    padding: 20px;
+}
+
+/* Composite badge types get fewer, wider columns */
+.variations-grid.composite {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.variation-slot {
+    border: 2px dashed var(--border-color, #ccc);
+    border-radius: 8px;
+    padding: 12px;
+    padding-top: 22px; /* room for source tag */
+    text-align: center;
+    background: var(--card-background, #fafafa);
+    position: relative;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    min-height: 120px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.variation-slot:hover {
+    border-color: var(--primary-color, #007bff);
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.15);
+}
+
+.variation-slot.has-asset {
+    border-style: solid;
+    border-color: #28a745;
+    background: var(--card-background, #f0fff4);
+}
+
+.variation-slot.has-system-asset {
+    border-style: solid;
+    border-color: #007bff;
+    background: var(--card-background, #f0f4ff);
+}
+
+.variation-slot.custom-slot {
+    border-color: #6f42c1;
+}
+
+.asset-source-tag {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 5px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.user-tag   { background: #28a745; color: #fff; }
+.system-tag { background: #007bff; color: #fff; }
+
+.variation-badge-preview {
+    width: 100%;
+    max-height: 60px;
+    object-fit: contain;
+    border-radius: 4px;
+}
+
+.variation-placeholder {
+    width: 100%;
+    height: 60px;
+    background: var(--border-color, #e9ecef);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary, #999);
+    font-size: 24px;
+}
+
+.variation-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary, #333);
+    word-break: break-word;
+}
+
+.variation-key {
+    font-size: 10px;
+    color: var(--text-secondary, #999);
+    font-family: monospace;
+    word-break: break-all;
+}
+
+.variation-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+    flex-wrap: wrap;
+    width: 100%;
+}
+
+.btn {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.btn-primary   { background: #007bff; color: white; }
+.btn-primary:hover { background: #0056b3; }
+.btn-success   { background: #28a745; color: white; }
+.btn-success:hover { background: #218838; }
+.btn-danger    { background: #dc3545; color: white; }
+.btn-danger:hover { background: #c82333; }
+.btn-secondary { background: #6c757d; color: white; }
+.btn-secondary:hover { background: #545b62; }
+.btn-sm { padding: 4px 8px; font-size: 11px; }
+
+.btn-add-variation {
+    margin: 0 20px 20px 20px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.back-link {
+    text-decoration: none;
+    color: var(--primary-color, #007bff);
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.back-link:hover { text-decoration: underline; }
+
+.stats-bar {
+    display: flex;
+    gap: 20px;
+    background: var(--card-background, #f8f9fa);
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 8px;
+    padding: 14px 20px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+}
+
+.stat-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 80px;
+}
+
+.stat-num {
+    font-size: 24px;
+    font-weight: bold;
+    color: var(--primary-color, #007bff);
+}
+
+.stat-lbl {
+    font-size: 12px;
+    color: var(--text-secondary, #666);
+}
+
+.loading-msg {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-secondary, #666);
+    font-size: 15px;
+}
+
+.composite-badge { display: inline-block; background: #6f42c1; color: white; font-size: 10px; padding: 2px 6px; border-radius: 3px; margin-left: 6px; vertical-align: middle; }
+
+/* Hidden file input */
+input[type="file"].hidden-file-input { display: none; }
+
+/* Modal for add variation */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-overlay.active {
+    display: flex;
+}
+
+.modal-box {
+    background: var(--card-background, #fff);
+    border-radius: 10px;
+    padding: 28px;
+    min-width: 320px;
+    max-width: 480px;
+    width: 90%;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+}
+
+.modal-box h3 {
+    margin: 0 0 18px 0;
+    color: var(--text-primary, #333);
+}
+
+.form-group {
+    margin-bottom: 14px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: var(--text-primary, #333);
+}
+
+.form-group input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 4px;
+    font-size: 14px;
+    background: var(--input-background, white);
+    color: var(--text-primary, #333);
+    box-sizing: border-box;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 20px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="badges-container">
+
+    <!-- Header -->
+    <div class="badges-header">
+        <div>
+            <a href="/overlays" class="back-link">&#8592; Back to Overlays</a>
+            <h1 style="margin-top: 8px;">Badge Library</h1>
+        </div>
+    </div>
+
+    <!-- Stats bar -->
+    <div class="stats-bar" id="stats-bar">
+        <div class="stat-item">
+            <span class="stat-num" id="stat-types">-</span>
+            <span class="stat-lbl">Badge Types</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-num" id="stat-variations">-</span>
+            <span class="stat-lbl">Total Slots</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-num" id="stat-filled">-</span>
+            <span class="stat-lbl">Assets Uploaded</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-num" id="stat-empty">-</span>
+            <span class="stat-lbl">Missing Assets</span>
+        </div>
+    </div>
+
+    <!-- Category Tabs -->
+    <div class="category-tabs" id="category-tabs">
+        <button class="category-tab active" data-category="all">All</button>
+        <button class="category-tab" data-category="audio">Audio</button>
+        <button class="category-tab" data-category="video">Video</button>
+    </div>
+
+    <!-- Badge types content area -->
+    <div id="badge-types-container">
+        <div class="loading-msg">Loading badge library...</div>
+    </div>
+
+</div>
+
+<!-- Add Variation Modal -->
+<div class="modal-overlay" id="add-variation-modal">
+    <div class="modal-box">
+        <h3>Add Custom Variation</h3>
+        <div class="form-group">
+            <label for="new-variation-key">Variation Key</label>
+            <input type="text" id="new-variation-key" placeholder="e.g. truehd_atmos|7.1" autocomplete="off">
+        </div>
+        <div class="form-group">
+            <label for="new-variation-name">Display Name</label>
+            <input type="text" id="new-variation-name" placeholder="e.g. TrueHD Atmos 7.1" autocomplete="off">
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="closeAddVariationModal()">Cancel</button>
+            <button class="btn btn-success" onclick="submitAddVariation()">Add Slot</button>
+        </div>
+        <input type="hidden" id="add-variation-slug">
+    </div>
+</div>
+
+<!-- Hidden file inputs (created dynamically) -->
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let allBadgeTypes = [];
+let currentCategory = 'all';
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    loadStats();
+    loadBadgeTypes();
+
+    document.querySelectorAll('.category-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.category-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            currentCategory = tab.dataset.category;
+            renderBadgeTypes();
+        });
+    });
+});
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+async function loadStats() {
+    try {
+        const r = await fetch('/api/overlays/badges/stats');
+        const d = await r.json();
+        if (d.success) {
+            document.getElementById('stat-types').textContent      = d.stats.total_types;
+            document.getElementById('stat-variations').textContent = d.stats.total_variations;
+            document.getElementById('stat-filled').textContent     = d.stats.filled_variations;
+            document.getElementById('stat-empty').textContent      = d.stats.empty_variations;
+        }
+    } catch(e) { console.error('Stats failed:', e); }
+}
+
+// ── Load badge types ──────────────────────────────────────────────────────────
+async function loadBadgeTypes() {
+    const container = document.getElementById('badge-types-container');
+    try {
+        const r = await fetch('/api/overlays/badges/types');
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error);
+        allBadgeTypes = d.badge_types;
+        renderBadgeTypes();
+    } catch(e) {
+        container.innerHTML = `<div class="loading-msg" style="color:#dc3545;">Failed to load badge types: ${e.message}</div>`;
+    }
+}
+
+// ── Render badge type cards ───────────────────────────────────────────────────
+function renderBadgeTypes() {
+    const container = document.getElementById('badge-types-container');
+    const filtered = currentCategory === 'all'
+        ? allBadgeTypes
+        : allBadgeTypes.filter(t => t.category === currentCategory);
+
+    if (filtered.length === 0) {
+        container.innerHTML = '<div class="loading-msg">No badge types found for this category.</div>';
+        return;
+    }
+
+    container.innerHTML = filtered.map(t => renderBadgeTypeCard(t)).join('');
+
+    // Attach file-upload handlers
+    container.querySelectorAll('.variation-slot').forEach(slot => {
+        // Clicking the slot (or its preview/placeholder) triggers file upload
+        slot.addEventListener('click', (e) => {
+            if (e.target.closest('.variation-actions')) return; // handled by buttons
+            const vid = slot.dataset.variationId;
+            if (vid) triggerFileUpload(vid, slot.dataset.slug);
+        });
+    });
+}
+
+function renderBadgeTypeCard(t) {
+    const compositeClass = t.is_composite ? 'composite' : '';
+    const compositeBadge = t.is_composite ? '<span class="composite-badge">Composite</span>' : '';
+    const filled = t.filled_variations || 0;
+    const total  = t.total_variations  || 0;
+    return `
+    <div class="badge-type-card" id="type-card-${t.slug}">
+        <div class="badge-type-header">
+            <div>
+                <div class="badge-type-title">${t.display_name}${compositeBadge}</div>
+                <div class="badge-type-meta">Category: ${t.category} &nbsp;|&nbsp; Fields: ${(t.metadata_fields || []).join(', ')}</div>
+            </div>
+            <div class="badge-type-actions">
+                <span class="fill-indicator">${filled}/${total} assets uploaded</span>
+            </div>
+        </div>
+        <div class="variations-grid ${compositeClass}" id="grid-${t.slug}">
+            <div class="loading-msg" style="padding:20px; grid-column:1/-1;">Loading variations...</div>
+        </div>
+        <div>
+            <button class="btn btn-secondary btn-add-variation" onclick="openAddVariationModal('${t.slug}')">+ Add Custom Variation</button>
+        </div>
+    </div>`;
+}
+
+// ── Load variations for a type (lazy, triggered after render) ─────────────────
+async function loadVariations(slug) {
+    const grid = document.getElementById(`grid-${slug}`);
+    if (!grid) return;
+    try {
+        const r = await fetch(`/api/overlays/badges/types/${slug}/variations`);
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error);
+        renderVariationSlots(grid, slug, d.variations, d.badge_type?.is_composite);
+    } catch(e) {
+        if (grid) grid.innerHTML = `<div style="padding:16px;color:#dc3545;">Failed: ${e.message}</div>`;
+    }
+}
+
+function renderVariationSlots(grid, slug, variations, isComposite) {
+    if (variations.length === 0) {
+        grid.innerHTML = '<div style="padding:16px;color:var(--text-secondary)">No variations defined.</div>';
+        return;
+    }
+    grid.innerHTML = variations.map(v => renderSlot(slug, v)).join('');
+}
+
+function renderSlot(slug, v) {
+    const hasUserAsset   = v.has_asset;
+    const hasSystemAsset = v.has_system_asset;
+    const hasAnyAsset    = hasUserAsset || hasSystemAsset;
+
+    // Border: green = user upload, blue = system default only, dashed = nothing
+    let slotClass = 'variation-slot';
+    if (hasUserAsset)        slotClass += ' has-asset';           // green border
+    else if (hasSystemAsset) slotClass += ' has-system-asset';    // blue border
+    if (!v.is_default)       slotClass += ' custom-slot';
+
+    const preview = hasAnyAsset
+        ? `<img class="variation-badge-preview" src="/api/overlays/badges/variations/${v.id}/asset?t=${Date.now()}" alt="${v.display_name}" loading="lazy">`
+        : `<div class="variation-placeholder">+</div>`;
+
+    const sourceTag = hasUserAsset
+        ? `<span class="asset-source-tag user-tag">Custom</span>`
+        : hasSystemAsset
+            ? `<span class="asset-source-tag system-tag">Default</span>`
+            : '';
+
+    const deleteBtn = !v.is_default
+        ? `<button class="btn btn-danger btn-sm" onclick="deleteVariation(${v.id},'${slug}',event)">Del</button>`
+        : '';
+    const clearBtn = hasUserAsset
+        ? `<button class="btn btn-secondary btn-sm" onclick="clearAsset(${v.id},'${slug}',event)">Clear</button>`
+        : '';
+
+    return `
+    <div class="${slotClass}" data-variation-id="${v.id}" data-slug="${slug}" title="${hasSystemAsset && !hasUserAsset ? 'System default — upload to override' : 'Click to upload badge PNG'}">
+        ${preview}
+        ${sourceTag}
+        <div class="variation-name">${v.display_name}</div>
+        <div class="variation-key">${v.variation_key}</div>
+        <div class="variation-actions">
+            <button class="btn btn-primary btn-sm" onclick="triggerFileUpload(${v.id},'${slug}',event)">${hasUserAsset ? 'Replace' : 'Upload'}</button>
+            ${clearBtn}
+            ${deleteBtn}
+        </div>
+    </div>`;
+}
+
+// ── Observe when grids become visible and lazy-load their variations ───────────
+const observedSlugs = new Set();
+function observeGrids() {
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const slug = entry.target.id.replace('grid-', '');
+                if (!observedSlugs.has(slug)) {
+                    observedSlugs.add(slug);
+                    loadVariations(slug);
+                }
+            }
+        });
+    }, { threshold: 0.1 });
+
+    document.querySelectorAll('[id^="grid-"]').forEach(g => observer.observe(g));
+}
+
+// Override renderBadgeTypes to also set up observers
+const _origRender = renderBadgeTypes;
+window.renderBadgeTypes = function() {
+    observedSlugs.clear();
+    _origRender();
+    setTimeout(observeGrids, 50);
+};
+
+// ── Toast notification ────────────────────────────────────────────────────────
+function showToast(msg, duration = 4000) {
+    let t = document.getElementById('badge-toast');
+    if (!t) {
+        t = document.createElement('div');
+        t.id = 'badge-toast';
+        t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#28a745;color:#fff;padding:10px 20px;border-radius:6px;font-size:14px;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.3);transition:opacity .3s;';
+        document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.opacity = '1';
+    clearTimeout(t._hideTimer);
+    t._hideTimer = setTimeout(() => { t.style.opacity = '0'; }, duration);
+}
+
+// ── File upload ───────────────────────────────────────────────────────────────
+function triggerFileUpload(variationId, slug, event) {
+    if (event) event.stopPropagation();
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg,image/webp';
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+            const r = await fetch(`/api/overlays/badges/variations/${variationId}/asset`, {
+                method: 'POST', body: fd
+            });
+            const d = await r.json();
+            if (d.success) {
+                loadStats();
+                observedSlugs.delete(slug);
+                loadVariations(slug);
+                refreshTypeCard(slug);
+                const msg = d.reset_overlays > 0
+                    ? `Badge saved. ${d.reset_overlays} applied overlay(s) queued for regeneration.`
+                    : 'Badge saved.';
+                showToast(msg);
+            } else {
+                showPopup({ type: 'error', title: 'Error', message: 'Upload failed: ' + (d.error || 'Unknown error'), autoClose: 5000 });
+            }
+        } catch(e) {
+            showPopup({ type: 'error', title: 'Error', message: 'Upload failed: ' + e.message, autoClose: 5000 });
+        }
+    };
+    input.click();
+}
+
+async function clearAsset(variationId, slug, event) {
+    if (event) event.stopPropagation();
+    showPopup({
+        type: 'confirm',
+        title: 'Remove Asset',
+        message: 'Remove this badge asset? The slot will remain but the PNG will be deleted.',
+        confirmText: 'Remove',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            try {
+                const r = await fetch(`/api/overlays/badges/variations/${variationId}/asset`, { method: 'DELETE' });
+                const d = await r.json();
+                if (d.success) {
+                    loadStats();
+                    observedSlugs.delete(slug);
+                    loadVariations(slug);
+                    refreshTypeCard(slug);
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Clear failed: ' + (d.error || 'Unknown error'), autoClose: 5000 });
+                }
+            } catch(e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Clear failed: ' + e.message, autoClose: 5000 });
+            }
+        }
+    });
+}
+
+async function deleteVariation(variationId, slug, event) {
+    if (event) event.stopPropagation();
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Variation',
+        message: 'Delete this custom variation slot? This cannot be undone.',
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            try {
+                const r = await fetch(`/api/overlays/badges/variations/${variationId}`, { method: 'DELETE' });
+                const d = await r.json();
+                if (d.success) {
+                    loadStats();
+                    observedSlugs.delete(slug);
+                    loadVariations(slug);
+                    refreshTypeCard(slug);
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + (d.error || 'Unknown error'), autoClose: 5000 });
+                }
+            } catch(e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + e.message, autoClose: 5000 });
+            }
+        }
+    });
+}
+
+// Refresh just the fill indicator for a card header
+async function refreshTypeCard(slug) {
+    try {
+        const r = await fetch(`/api/overlays/badges/types/${slug}/variations`);
+        const d = await r.json();
+        if (!d.success) return;
+        const filled = d.variations.filter(v => v.has_asset).length;
+        const total  = d.variations.length;
+        const card = document.getElementById(`type-card-${slug}`);
+        if (card) {
+            const ind = card.querySelector('.fill-indicator');
+            if (ind) ind.textContent = `${filled}/${total} assets uploaded`;
+        }
+        // Update allBadgeTypes cache
+        const idx = allBadgeTypes.findIndex(t => t.slug === slug);
+        if (idx >= 0) {
+            allBadgeTypes[idx].filled_variations = filled;
+            allBadgeTypes[idx].total_variations  = total;
+        }
+    } catch(e) { /* ignore */ }
+}
+
+// ── Add variation modal ───────────────────────────────────────────────────────
+function openAddVariationModal(slug) {
+    document.getElementById('add-variation-slug').value = slug;
+    document.getElementById('new-variation-key').value  = '';
+    document.getElementById('new-variation-name').value = '';
+    document.getElementById('add-variation-modal').classList.add('active');
+    document.getElementById('new-variation-key').focus();
+}
+
+function closeAddVariationModal() {
+    document.getElementById('add-variation-modal').classList.remove('active');
+}
+
+async function submitAddVariation() {
+    const slug    = document.getElementById('add-variation-slug').value;
+    const key     = document.getElementById('new-variation-key').value.trim();
+    const name    = document.getElementById('new-variation-name').value.trim();
+    if (!key || !name) { showPopup({ type: 'warning', title: 'Required', message: 'Please fill in both fields.', autoClose: 4000 }); return; }
+
+    try {
+        const r = await fetch(`/api/overlays/badges/types/${slug}/variations`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({variation_key: key, display_name: name})
+        });
+        const d = await r.json();
+        if (d.success) {
+            closeAddVariationModal();
+            observedSlugs.delete(slug);
+            loadVariations(slug);
+            refreshTypeCard(slug);
+            loadStats();
+        } else {
+            showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (d.error || 'Unknown error'), autoClose: 5000 });
+        }
+    } catch(e) {
+        showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + e.message, autoClose: 5000 });
+    }
+}
+
+// Close modal on overlay click
+document.getElementById('add-variation-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeAddVariationModal();
+});
+</script>
+{% endblock %}

@@ -7,7 +7,7 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const theme = getCurrentTheme();
-        const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_library.css' : 'css/library.css';
+        const cssFile = 'css/tangerine/tangerine_library.css?v=2';
         const link = document.createElement('link');
         link.rel = 'stylesheet';
         link.href = '{{ url_for("static", filename="") }}' + cssFile;
@@ -114,6 +114,10 @@
                 <option value="duplicates">Duplicates</option>
                 <option value="upcoming">Upcoming</option>
                 <option value="upgraded">Upgraded</option>
+                <option value="broken">Broken</option>
+                {% if nas_paths %}
+                <option value="nas">NAS / Network</option>
+                {% endif %}
             </select>
 
             <select id="duplicates-state-filter" class="form-control filter-select" style="display: none;">
@@ -126,6 +130,15 @@
                 <option value="all">All Media</option>
                 <option value="movie">Movies</option>
                 <option value="show">TV Shows</option>
+            </select>
+
+            <select id="resolution-filter" class="form-control filter-select">
+                <option value="all">All Resolutions</option>
+                <option value="2160p">4K (2160p)</option>
+                <option value="1080p">1080p</option>
+                <option value="720p">720p</option>
+                <option value="480p">480p</option>
+                <option value="unknown">Unknown</option>
             </select>
 
             <select id="sort-select" class="form-control filter-select">

@@ -2,14 +2,31 @@
 
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/logs.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_logs.css') }}">
+<script>
+(function(){
+    var theme = localStorage.getItem('selectedTheme') || 'tangerine';
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = '/static/css/tangerine/tangerine_logs.css?v=7';
+    link.id = 'theme-tangerine-logs';
+    link.setAttribute('data-theme-css', 'tangerine');
+    if (theme === 'tangerine') {
+        document.head.appendChild(link);
+    }
+})();
+</script>
 {% endblock %}
 {% block title %}Logs{% endblock %}
 
 {% block content %}
 <div class="log-container">
-    <div id="pause-indicator">Logging paused...</div>
-    <button class="bottom-button" onclick="scrollToBottomAndResume()">⭳ Bottom</button>
+    {% if climount_available %}
+    <div class="log-source-tabs">
+        <button type="button" class="log-source-tab active" data-source="clidebrid">cli_debrid</button>
+        <button type="button" class="log-source-tab" data-source="climount">cli_mount</button>
+    </div>
+    {% endif %}
     <div class="log-controls">
         <select id="log-level-filter">
             <option value="all">All Levels</option>
@@ -19,34 +36,55 @@
             <option value="error">Error</option>
             <option value="critical">Critical</option>
         </select>
-        <div class="goto-container">
-            <button class="goto-btn" onclick="navigateToFirstMatch()">⭱ First</button>
-            <button class="goto-nav-button" id="prev-match" title="Previous match (Shift+Enter)" disabled>
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
-                </svg>
-            </button>
-            <input type="text" id="goto-search" placeholder="Go to... (Enter/Shift+Enter to navigate)" />
-            <button class="goto-nav-button" id="next-match" title="Next match (Enter)" disabled>
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                </svg>
-            </button>
-            <button class="goto-btn" onclick="navigateToLastMatch()">⭳ Last</button>
-            <span class="match-count"></span>
-        </div>
+        <select id="log-lines-select" title="Number of log lines to display">
+            <option value="100">100 lines</option>
+            <option value="500">500 lines</option>
+            <option value="1000" selected>1000 lines</option>
+            <option value="2000">2000 lines</option>
+            <option value="5000">5000 lines</option>
+        </select>
         <input type="text" id="log-search" placeholder="Filter logs...">
-        <button id="share-logs-btn" title="Share logs via transfer.sh">
-            Share Logs
-            <div class="share-progress" style="width: 0%"></div>
-        </button>
-        <a id="share-url" href="#" target="_blank" title="Click to open shared logs"></a>
-        <button id="copy-url-btn" title="Copy URL to clipboard">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-            </svg>
-        </button>
+        <div class="share-button-group">
+            <div class="share-item">
+                <button id="share-logs-btn" title="Share cli_debrid logs via paste.c-net.org. Includes app version and current settings (sensitive values like tokens/keys/usernames are redacted) so debugging doesn't require a separate settings screenshot.">
+                    Share cli_debrid Logs
+                    <div class="share-progress" style="width: 0%"></div>
+                </button>
+                <a id="share-url" class="share-result-url" href="#" target="_blank" title="Click to open shared logs"></a>
+                <button id="copy-url-btn" class="copy-url-btn" title="Copy URL to clipboard" data-target="share-url">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                    </svg>
+                </button>
+            </div>
+            {% if climount_available %}
+            <div class="share-item">
+                <button id="share-climount-logs-btn" title="Share cli_mount logs via paste.c-net.org">
+                    Share cli_mount Logs
+                    <div class="share-progress" style="width: 0%"></div>
+                </button>
+                <a id="share-url-climount" class="share-result-url" href="#" target="_blank" title="Click to open shared cli_mount logs"></a>
+                <button id="copy-url-climount-btn" class="copy-url-btn" title="Copy URL to clipboard" data-target="share-url-climount">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                    </svg>
+                </button>
+            </div>
+            <div class="share-item">
+                <button id="share-both-logs-btn" title="Share both cli_debrid and cli_mount logs">
+                    Share Both
+                    <div class="share-progress" style="width: 0%"></div>
+                </button>
+            </div>
+            {% endif %}
+        </div>
+        <button class="bottom-button" onclick="scrollToBottomAndResume()">⭳ Bottom</button>
+        <div id="pause-indicator">Logging paused...</div>
+        {% if climount_available %}
+        <span id="climount-last-polled" style="display:none;"></span>
+        {% endif %}
     </div>
+    <div id="log-filter-chips" class="log-filter-chips"></div>
     <div id="log-entries">
     {% for log in logs %}
     <div class="log-entry {{ log.level }}" data-level="{{ log.level }}">{{ log.timestamp }} - {{ log.level.upper() }} - {{ log.message }}</div>
@@ -63,13 +101,195 @@
 <script>
 let lastLogTimestamp = '';
 let currentLevel = 'all';
+let currentLines = 1000;
 let isPaused = false;
 let isScrolledToBottom = true;
-let isSearchActive = false;
-let currentMatches = [];
-let currentMatchIndex = -1;
-const MAX_LOGS = 1500;
+const MAX_LOGS = 5000;
 const renderedLogIds = new Set(); // Track rendered logs to prevent duplicates
+
+// ── CHIP FILTER STATE ──────────────────────────────────────────────────────
+const CHIP_COLORS = [
+    '#ffa657','#f2cc60','#7ee787','#a5d6ff',
+    '#d2a8ff','#ff7eb6','#79c0ff','#e8b4a0'
+];
+const MAX_VISIBLE_CHIPS = 20;
+
+const FILE_GROUPS = {
+    queues:   ['adding_queue','scraping_queue','checking_queue','unreleased_queue','queue_manager','zilean_upgrade','base_queue','wanted_queue','upgrading_queue','blacklisted_queue','sleeping_queue','pending_uncached_queue','pre_release_queue','final_check_queue'],
+    scraper:  ['scraper','scraper_manager','media_matcher','jackett','prowlarr','knightcrawler','mediafusion','torrentio','zilean','nyaa','rank_results','filter_results','deduplicate_results','reverse_parser','renderer','web_scraper','media_info'],
+    torrent:  ['torrent_processor','torrent_tracking','client','magnet','debrid_backup'],
+    database: ['database','database_writing','database_reading','collected_items','wanted_items','not_wanted_magnets','schema_management','migrations','phalanx_db_cache_manager','db_init','maintenance'],
+    plex:     ['plex_functions','plex_client','plex_label_manager','plex_db_functions','plex_matching_functions','plex_watchlist','plex_rss_watchlist','overlay_manager','badge_manager','poster_cache'],
+    trakt:    ['trakt','trakt_client','trakt_coordinator','trakt_auth'],
+    routes:   ['program_operation_routes','content_requestor_routes','web_server','scraper_routes','library_routes','settings_routes','debug_routes','database_routes','overlay_routes','queues_routes','api_summary_routes'],
+    system:   ['main','base','config_manager','settings','scheduled_tasks','notifications','post_processing','statistics','cache_cleanup','ai_health_monitor','symlink_verification','run_program','initialization'],
+};
+
+// Build reverse map: filename -> group
+const FILE_TO_GROUP = {};
+for (const [group, files] of Object.entries(FILE_GROUPS)) {
+    for (const f of files) FILE_TO_GROUP[f] = group;
+}
+
+// group -> { count, color, enabled }
+const chipState = new Map();
+let chipDropdownOpen = false;
+
+// Pre-assign stable colors to groups
+const GROUP_COLORS = {
+    queues:   '#ffa657',
+    scraper:  '#f2cc60',
+    torrent:  '#7ee787',
+    database: '#a5d6ff',
+    plex:     '#d2a8ff',
+    trakt:    '#ff7eb6',
+    routes:   '#79c0ff',
+    system:   '#e8b4a0',
+};
+
+function extractFuncName(log) {
+    // message format from parse_log_line: "file.py:func_name:lineno - actual message"
+    const m = log.message.match(/^([^.:]+)\.py:[^:]+:\d+/);
+    if (!m) return null;
+    const stem = m[1];
+    return FILE_TO_GROUP[stem] || stem; // fall back to stem if unmapped
+}
+
+// Groups not in GROUP_COLORS (e.g. cli_mount's [component] tags) get a
+// color assigned round-robin from CHIP_COLORS, remembered for consistency.
+let nextChipColorIndex = 0;
+const assignedChipColors = new Map();
+function colorForGroup(name) {
+    if (GROUP_COLORS[name]) return GROUP_COLORS[name];
+    if (assignedChipColors.has(name)) return assignedChipColors.get(name);
+    const color = CHIP_COLORS[nextChipColorIndex % CHIP_COLORS.length];
+    nextChipColorIndex++;
+    assignedChipColors.set(name, color);
+    return color;
+}
+
+function registerFuncName(funcName) {
+    if (!funcName) return;
+    if (chipState.has(funcName)) {
+        chipState.get(funcName).count++;
+    } else {
+        chipState.set(funcName, {
+            count: 1,
+            color: colorForGroup(funcName),
+            enabled: true
+        });
+    }
+}
+
+function renderChips() {
+    const bar = document.getElementById('log-filter-chips');
+    if (!bar) return;
+
+    // Sort by count desc, take top 5 + rest
+    const sorted = Array.from(chipState.entries())
+        .sort((a, b) => b[1].count - a[1].count);
+    const visible = sorted.slice(0, MAX_VISIBLE_CHIPS);
+    const overflow = sorted.slice(MAX_VISIBLE_CHIPS);
+
+    bar.innerHTML = '';
+
+    if (sorted.length === 0) {
+        bar.style.display = 'none';
+        return;
+    }
+    bar.style.display = 'flex';
+
+    visible.forEach(([name, data]) => {
+        const chip = document.createElement('button');
+        chip.className = 'log-chip' + (data.enabled ? '' : ' log-chip-disabled');
+        chip.style.setProperty('--chip-color', data.color);
+        chip.textContent = name;
+        chip.title = `${data.count} occurrences`;
+        chip.addEventListener('click', () => {
+            data.enabled = !data.enabled;
+            chip.classList.toggle('log-chip-disabled');
+            applyChipFilter();
+        });
+        bar.appendChild(chip);
+    });
+
+    // Toggle all/none button
+    const allEnabled = sorted.every(([, d]) => d.enabled);
+    const toggleAll = document.createElement('button');
+    toggleAll.className = 'log-chip log-chip-more';
+    toggleAll.textContent = allEnabled ? 'Hide all' : 'Show all';
+    toggleAll.title = allEnabled ? 'Disable all filters' : 'Enable all filters';
+    toggleAll.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const enable = !sorted.every(([, d]) => d.enabled);
+        sorted.forEach(([, d]) => { d.enabled = enable; });
+        applyChipFilter();
+        renderChips();
+    });
+    bar.appendChild(toggleAll);
+
+    if (overflow.length > 0) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'log-chip-more-wrapper';
+
+        const moreBtn = document.createElement('button');
+        moreBtn.className = 'log-chip log-chip-more';
+        moreBtn.textContent = `+${overflow.length} more`;
+        moreBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            chipDropdownOpen = !chipDropdownOpen;
+            if (chipDropdownOpen) {
+                const rect = moreBtn.getBoundingClientRect();
+                dropdown.style.top = (rect.bottom + 5) + 'px';
+                dropdown.style.left = rect.left + 'px';
+                dropdown.style.display = 'flex';
+            } else {
+                dropdown.style.display = 'none';
+            }
+        });
+
+        const dropdown = document.createElement('div');
+        dropdown.className = 'log-chip-dropdown';
+        dropdown.style.display = 'none';
+        overflow.forEach(([name, data]) => {
+            const item = document.createElement('button');
+            item.className = 'log-chip-dropdown-item' + (data.enabled ? '' : ' log-chip-disabled');
+            item.style.setProperty('--chip-color', data.color);
+            item.textContent = `${name} (${data.count})`;
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                data.enabled = !data.enabled;
+                item.classList.toggle('log-chip-disabled');
+                applyChipFilter();
+            });
+            dropdown.appendChild(item);
+        });
+
+        wrapper.appendChild(moreBtn);
+        wrapper.appendChild(dropdown);
+        bar.appendChild(wrapper);
+    }
+}
+
+function applyChipFilter() {
+    const logEntries = document.getElementById('log-entries');
+    const searchTerm = document.getElementById('log-search').value.toLowerCase();
+    logEntries.querySelectorAll('.log-entry').forEach(div => {
+        const funcName = div.dataset.func;
+        const chipOk = !funcName || !chipState.has(funcName) || chipState.get(funcName).enabled;
+        const searchOk = !searchTerm || div.textContent.toLowerCase().includes(searchTerm);
+        div.style.display = (chipOk && searchOk) ? '' : 'none';
+    });
+}
+
+document.addEventListener('click', () => {
+    if (chipDropdownOpen) {
+        chipDropdownOpen = false;
+        const dd = document.querySelector('.log-chip-dropdown');
+        if (dd) dd.style.display = 'none';
+    }
+});
+// ── END CHIP FILTER ────────────────────────────────────────────────────────
 
 function checkScrollPosition() {
     const logEntries = document.getElementById('log-entries');
@@ -111,14 +331,18 @@ function scrollToBottom(element) {
 
 function updateLogs(forceRefresh = false) {
     const levelFilter = document.getElementById('log-level-filter').value.toLowerCase();
+    const linesVal = parseInt(document.getElementById('log-lines-select').value, 10) || 1000;
 
-    // If forcing refresh or changing levels, reset and start new stream
-    if (levelFilter !== currentLevel || forceRefresh) {
+    // If forcing refresh or changing levels/lines, reset and start new stream
+    if (levelFilter !== currentLevel || linesVal !== currentLines || forceRefresh) {
         const logEntries = document.getElementById('log-entries');
         lastLogTimestamp = '';
         logEntries.innerHTML = ''; // Clear existing logs
         renderedLogIds.clear(); // Clear duplicate tracking
+        chipState.clear();
+        renderChips();
         currentLevel = levelFilter;
+        currentLines = linesVal;
         isPaused = false;
         document.getElementById('pause-indicator').style.display = 'none';
         
@@ -162,7 +386,6 @@ function updateLogs(forceRefresh = false) {
                     if (isPaused) return;
                     
                     const searchTerm = document.getElementById('log-search').value.toLowerCase();
-                    const gotoTerm = document.getElementById('goto-search').value.toLowerCase();
                     const logEntries = document.getElementById('log-entries');
                     let addedLogs = false;
                     
@@ -175,35 +398,30 @@ function updateLogs(forceRefresh = false) {
                         chunk.forEach(log => {
                             // Create unique ID for this log entry
                             const logId = `${log.timestamp}-${log.level}-${log.message}`;
-                            
+
                             // Skip if we've already rendered this exact log
                             if (renderedLogIds.has(logId)) {
                                 return; // Skip duplicate
                             }
-                            
+
                             // Mark this log as rendered
                             renderedLogIds.add(logId);
-                            
+
+                            // Track function name for chip filter
+                            const funcName = extractFuncName(log);
+                            registerFuncName(funcName);
+
                             // Create the log entry div
                             const div = createHighlightedLogEntry(log);
-                            
-                            // Apply filter - hide if doesn't match search term
+                            if (funcName) div.dataset.func = funcName;
+
+                            // Apply text search filter
                             const logText = `${log.timestamp} - ${log.level.toUpperCase()} - ${log.message}`.toLowerCase();
-                            if (searchTerm && !logText.includes(searchTerm)) {
+                            const chipOk = !funcName || !chipState.has(funcName) || chipState.get(funcName).enabled;
+                            if ((searchTerm && !logText.includes(searchTerm)) || !chipOk) {
                                 div.style.display = 'none';
                             }
-                            
-                            // If we're in search mode and this log matches the goto term
-                            if (isSearchActive && logText.includes(gotoTerm)) {
-                                currentMatches.push(div);
-                                // If this is a new match and we're at the end, highlight it
-                                if (currentMatchIndex === currentMatches.length - 2) {
-                                    navigateToMatch(currentMatches.length - 1);
-                                } else {
-                                    updateGotoNavButtons();
-                                }
-                            }
-                            
+
                             fragment.appendChild(div);
                             addedLogs = true;
                         });
@@ -214,21 +432,13 @@ function updateLogs(forceRefresh = false) {
                             // Remove old logs if we're over the limit
                             while (logEntries.children.length > MAX_LOGS) {
                                 logEntries.removeChild(logEntries.firstChild);
-                                // Update matches array if we removed a match
-                                if (currentMatches.length > 0 && currentMatches[0].parentNode !== logEntries) {
-                                    currentMatches.shift();
-                                    if (currentMatchIndex > 0) {
-                                        currentMatchIndex--;
-                                    }
-                                    updateGotoNavButtons();
-                                }
                             }
                         }
                     }
 
                     if (addedLogs) {
                         lastLogTimestamp = data.logs[data.logs.length - 1].timestamp;
-                        
+                        renderChips();
                         if (isScrolledToBottom) {
                             requestAnimationFrame(() => scrollToBottom(logEntries));
                         }
@@ -283,7 +493,7 @@ function updateLogs(forceRefresh = false) {
         };
 
         // Create new EventSource connection with current interval
-        window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}&interval=${window.lastPerformanceMetrics.interval}`);
+        window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}&lines=${linesVal}&interval=${window.lastPerformanceMetrics.interval}`);
         
         window.logStream.onopen = function() {
             console.log('Stream connected, waiting for first message...');
@@ -314,7 +524,7 @@ function reconnectStream(levelFilter, interval) {
     
     // Small delay to ensure old connection is fully closed
     setTimeout(() => {
-        window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}&interval=${interval}`);
+        window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}&lines=${currentLines}&interval=${interval}`);
         // Reattach event handlers from stored handlers
         window.logStream.onmessage = window.streamHandlers.onMessage;
         window.logStream.onerror = window.streamHandlers.onError;
@@ -323,23 +533,9 @@ function reconnectStream(levelFilter, interval) {
 }
 
 function filterLogs() {
-    // Apply filter client-side without restarting the stream
-    const searchTerm = document.getElementById('log-search').value.toLowerCase();
-    const logEntries = document.getElementById('log-entries');
-    const allEntries = logEntries.querySelectorAll('.log-entry');
-    
-    allEntries.forEach(entry => {
-        const logText = entry.textContent.toLowerCase();
-        if (!searchTerm || logText.includes(searchTerm)) {
-            entry.style.display = '';
-        } else {
-            entry.style.display = 'none';
-        }
-    });
-    
-    // Scroll to bottom if we were already there
+    applyChipFilter();
     if (isScrolledToBottom) {
-        scrollToBottom(logEntries);
+        scrollToBottom(document.getElementById('log-entries'));
     }
 }
 
@@ -348,11 +544,227 @@ function loadSavedLogLevel() {
     if (savedLevel) {
         document.getElementById('log-level-filter').value = savedLevel;
     }
+    const savedLines = localStorage.getItem('selectedLogLines');
+    if (savedLines) {
+        document.getElementById('log-lines-select').value = savedLines;
+    }
 }
 
 document.getElementById('log-level-filter').addEventListener('change', (event) => {
     localStorage.setItem('selectedLogLevel', event.target.value);
-    updateLogs(true);  // Force a refresh when the level changes
+    if (currentSource === 'clidebrid') {
+        updateLogs(true);
+    } else {
+        fetchClimountLogs();
+    }
+});
+
+document.getElementById('log-lines-select').addEventListener('change', (event) => {
+    localStorage.setItem('selectedLogLines', event.target.value);
+    if (currentSource === 'clidebrid') {
+        updateLogs(true);
+    } else {
+        fetchClimountLogs();
+    }
+});
+
+// ── LOG SOURCE TABS (cli_debrid live stream vs cli_mount polled logs) ──────
+let currentSource = 'clidebrid';
+let climountPollTimer = null;
+
+const CLIMOUNT_LEVEL_CLASS = {
+    DEBUG: 'debug', INFO: 'info', WARN: 'warning',
+    ERROR: 'error', FATAL: 'critical', PANIC: 'critical'
+};
+
+// Format: "2026-08-22 18:48:32 | INFO  | [component] rest of message key=value ..."
+const CLIMOUNT_LINE_RE = /^(\S+\s+\S+)\s*\|\s*(DEBUG|INFO|WARN|ERROR|FATAL|PANIC)\s*\|\s*(?:\[([^\]]+)\]\s*)?(.*)$/i;
+
+function extractClimountComponent(line) {
+    const m = line.match(CLIMOUNT_LINE_RE);
+    return m ? m[3] || null : null;
+}
+
+function renderClimountLogLine(line) {
+    const div = document.createElement('div');
+    const match = line.match(CLIMOUNT_LINE_RE);
+
+    if (!match) {
+        div.className = 'log-entry info';
+        div.textContent = line;
+        return div;
+    }
+
+    const [, timestamp, levelWord, component, rest] = match;
+    const level = CLIMOUNT_LEVEL_CLASS[levelWord.toUpperCase()] || 'info';
+    div.className = `log-entry ${level}`;
+
+    const tsSpan = document.createElement('span');
+    tsSpan.className = 'log-component log-timestamp';
+    tsSpan.textContent = timestamp;
+    div.appendChild(tsSpan);
+
+    div.appendChild(document.createTextNode(' | '));
+
+    const levelSpan = document.createElement('span');
+    levelSpan.className = `log-component log-level ${level}`;
+    levelSpan.textContent = levelWord.toUpperCase();
+    div.appendChild(levelSpan);
+
+    div.appendChild(document.createTextNode(' | '));
+
+    if (component) {
+        registerFuncName(component);
+        div.dataset.func = component;
+
+        const compSpan = document.createElement('span');
+        compSpan.className = 'log-component';
+        compSpan.style.color = colorForGroup(component);
+        compSpan.style.fontWeight = 'bold';
+        compSpan.textContent = `[${component}]`;
+        div.appendChild(compSpan);
+        div.appendChild(document.createTextNode(' '));
+    }
+
+    // Highlight key=value tokens (e.g. hash=..., ids=1) within the message
+    const msgSpan = document.createElement('span');
+    msgSpan.className = `log-component log-message ${level}`;
+    const kvRegex = /(\S+)=(\S+)/g;
+    let lastIndex = 0;
+    let kvMatch;
+    while ((kvMatch = kvRegex.exec(rest)) !== null) {
+        msgSpan.appendChild(document.createTextNode(rest.slice(lastIndex, kvMatch.index)));
+        const kv = document.createElement('span');
+        kv.className = 'log-component log-duration';
+        kv.textContent = kvMatch[0];
+        msgSpan.appendChild(kv);
+        lastIndex = kvMatch.index + kvMatch[0].length;
+    }
+    msgSpan.appendChild(document.createTextNode(rest.slice(lastIndex)));
+    div.appendChild(msgSpan);
+
+    return div;
+}
+
+function renderClimountMessage(message, cssClass) {
+    const logEntries = document.getElementById('log-entries');
+    logEntries.innerHTML = '';
+    const div = document.createElement('div');
+    div.className = `log-entry ${cssClass}`;
+    div.textContent = message;
+    logEntries.appendChild(div);
+}
+
+function fetchClimountLogs() {
+    const levelFilter = document.getElementById('log-level-filter').value.toLowerCase();
+    const linesVal = parseInt(document.getElementById('log-lines-select').value, 10) || 1000;
+
+    fetch(`/logs/api/climount/logs?lines=${linesVal}&level=${encodeURIComponent(levelFilter)}&_=${Date.now()}`, { cache: 'no-store' })
+    .then(response => response.json())
+    .then(data => {
+        if (currentSource !== 'climount') return; // tab switched away while this was in flight
+
+        const lastPolled = document.getElementById('climount-last-polled');
+        if (lastPolled) {
+            lastPolled.textContent = `cli_mount polled ${new Date().toLocaleTimeString()}`;
+            lastPolled.style.display = 'inline';
+        }
+
+        if (data.error) {
+            renderClimountMessage(data.error, 'error');
+            chipState.clear();
+            renderChips();
+            return;
+        }
+        const logEntries = document.getElementById('log-entries');
+        const wasAtBottom = isScrolledToBottom;
+
+        // Rebuild chip counts from this snapshot, but keep the user's
+        // enabled/disabled toggles from before this poll.
+        const previouslyDisabled = new Set(
+            Array.from(chipState.entries()).filter(([, d]) => !d.enabled).map(([name]) => name)
+        );
+        chipState.clear();
+
+        const fragment = document.createDocumentFragment();
+        (data.lines || []).forEach(line => {
+            fragment.appendChild(renderClimountLogLine(line));
+        });
+
+        previouslyDisabled.forEach(name => {
+            if (chipState.has(name)) chipState.get(name).enabled = false;
+        });
+
+        logEntries.innerHTML = '';
+        if (fragment.childNodes.length === 0) {
+            renderClimountMessage('No cli_mount log lines found.', 'info');
+            renderChips();
+        } else {
+            logEntries.appendChild(fragment);
+            renderChips();
+            applyChipFilter();
+            if (wasAtBottom && !isPaused) {
+                requestAnimationFrame(() => scrollToBottom(logEntries));
+            }
+        }
+    })
+    .catch(error => {
+        if (currentSource !== 'climount') return;
+        console.error('Error fetching cli_mount logs:', error);
+        renderClimountMessage('Failed to reach cli_mount log endpoint.', 'error');
+    });
+}
+
+function startClimountPolling() {
+    stopClimountPolling();
+    fetchClimountLogs();
+    climountPollTimer = setInterval(() => { if (!document.hidden) fetchClimountLogs(); }, 2000);
+}
+
+function stopClimountPolling() {
+    if (climountPollTimer) {
+        clearInterval(climountPollTimer);
+        climountPollTimer = null;
+    }
+}
+
+function stopClidebridStream() {
+    if (window.logStream) {
+        window.logStream.onmessage = null;
+        window.logStream.onerror = null;
+        window.logStream.onopen = null;
+        window.logStream.close();
+        window.logStream = null;
+    }
+}
+
+document.querySelectorAll('.log-source-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        const source = tab.dataset.source;
+        if (source === currentSource) return;
+        currentSource = source;
+
+        document.querySelectorAll('.log-source-tab').forEach(t => t.classList.toggle('active', t === tab));
+
+        const logEntries = document.getElementById('log-entries');
+        logEntries.innerHTML = '';
+        renderedLogIds.clear();
+        chipState.clear();
+        renderChips();
+        isPaused = false;
+        isScrolledToBottom = true;
+        document.getElementById('pause-indicator').style.display = 'none';
+
+        if (source === 'clidebrid') {
+            stopClimountPolling();
+            const lastPolled = document.getElementById('climount-last-polled');
+            if (lastPolled) lastPolled.style.display = 'none';
+            updateLogs(true);
+        } else {
+            stopClidebridStream();
+            startClimountPolling();
+        }
+    });
 });
 
 document.getElementById('log-entries').addEventListener('scroll', checkScrollPosition);
@@ -373,127 +785,206 @@ function initialLoad() {
 
 window.addEventListener('load', initialLoad);
 
-// Add share logs functionality
-document.getElementById('share-logs-btn').addEventListener('click', function() {
-    const button = this;
+// Generic share-logs flow. Kicks off a share task at `endpoint`, polls its
+// status, updates `button`/`urlLink`, and resolves with the resulting URL
+// (or rejects) so callers like "Share Both" can wait on multiple shares.
+function hideShareResult(urlLink) {
+    urlLink.style.display = 'none';
+    const copyBtn = document.querySelector(`.copy-url-btn[data-target="${urlLink.id}"]`);
+    if (copyBtn) copyBtn.style.display = 'none';
+}
+
+function shareLogs(endpoint, button, urlLink, defaultLabel) {
     const progressBar = button.querySelector('.share-progress');
-    const shareUrl = document.getElementById('share-url');
     button.disabled = true;
     button.textContent = 'Preparing...';
     progressBar.style.width = '0%';
-    shareUrl.style.display = 'none';
+    hideShareResult(urlLink);
 
-    // Function to format file size
-    function formatSize(bytes) {
-        if (bytes < 1024) return bytes + ' B';
-        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
-        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
-    }
-
-    fetch('/logs/api/logs/share', {
-        method: 'POST'
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success && data.task_id) {
-            // Start polling for updates
-            const statusCheckInterval = setInterval(() => {
-                checkUploadStatus(data.task_id, statusCheckInterval);
-            }, 1000);
-        } else {
-            throw new Error(data.error || 'Failed to start log sharing process');
-        }
-    })
-    .catch(error => {
-        console.error('Error initiating log sharing:', error);
-        shareUrl.style.display = 'none';
-        showPopup({
-            type: POPUP_TYPES.ERROR,
-            title: 'Error',
-            message: error.message || 'An error occurred while initiating log sharing',
-            autoClose: 5000
-        });
-        button.textContent = 'Share Logs';
-        button.disabled = false;
-        progressBar.style.width = '0%';
-    });
-
-    function checkUploadStatus(taskId, intervalId) {
-        fetch(`/logs/api/logs/share/status/${taskId}`)
+    return new Promise((resolve, reject) => {
+        fetch(endpoint, { method: 'POST' })
         .then(response => response.json())
-        .then(statusData => {
-            progressBar.style.width = statusData.progress + '%';
-            
-            // Update button text based on dynamic message from backend if available
-            if (statusData.message && statusData.status !== 'completed') { // Don't use backend message for button if completed
-                button.textContent = statusData.message.substring(0, 25); // Keep it short
-            } else if (statusData.status === 'collecting') {
-                button.textContent = 'Collecting...';
-            } else if (statusData.status === 'compressing') {
-                button.textContent = 'Compressing...';
-            } else if (statusData.status === 'uploading_to_pastebin') {
-                button.textContent = 'Uploading...';
-            } else if (statusData.status !== 'completed' && statusData.status !== 'failed') {
-                 button.textContent = 'Processing...'; // Generic fallback
-            }
-            
-            if (statusData.status === 'completed') {
-                clearInterval(intervalId);
-                
-                shareUrl.href = statusData.url; 
-                shareUrl.textContent = 'View Shared Log (paste.c-net.org)';
-                shareUrl.title = statusData.url; // Show full URL on hover
-                shareUrl.target = '_blank'; 
-                shareUrl.style.display = 'inline-block';
-
-                document.getElementById('copy-url-btn').style.display = 'inline-block';
-
-                showPopup({
-                    type: POPUP_TYPES.SUCCESS,
-                    title: 'Success!',
-                    message: `Logs uploaded successfully to paste.c-net.org! URL: ${statusData.url}`,
-                    autoClose: 10000 
-                });
-
-                button.textContent = 'Share Logs'; // Reset button text
-                button.disabled = false;
-
-            } else if (statusData.status === 'failed') {
-                clearInterval(intervalId);
-                shareUrl.style.display = 'none';
-                document.getElementById('copy-url-btn').style.display = 'none';
-                
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    title: 'Error Sharing Logs',
-                    message: statusData.error || 'An unknown error occurred during log sharing.',
-                    autoClose: 7000
-                });
-                button.textContent = 'Share Logs'; // Reset button text
-                button.disabled = false;
+        .then(data => {
+            if (data.success && data.task_id) {
+                const statusCheckInterval = setInterval(() => {
+                    checkUploadStatus(data.task_id, statusCheckInterval);
+                }, 1000);
+            } else {
+                throw new Error(data.error || 'Failed to start log sharing process');
             }
         })
         .catch(error => {
-            console.error('Error checking upload status:', error);
-            clearInterval(intervalId);
-            shareUrl.style.display = 'none';
-            document.getElementById('copy-url-btn').style.display = 'none';
+            console.error(`Error initiating log sharing (${endpoint}):`, error);
+            hideShareResult(urlLink);
+            button.textContent = defaultLabel;
+            button.disabled = false;
+            progressBar.style.width = '0%';
+            reject(error);
+        });
+
+        function checkUploadStatus(taskId, intervalId) {
+            fetch(`/logs/api/logs/share/status/${taskId}`)
+            .then(response => response.json())
+            .then(statusData => {
+                progressBar.style.width = statusData.progress + '%';
+
+                if (statusData.message && statusData.status !== 'completed') {
+                    button.textContent = statusData.message.substring(0, 25);
+                } else if (statusData.status === 'collecting') {
+                    button.textContent = 'Collecting...';
+                } else if (statusData.status === 'compressing') {
+                    button.textContent = 'Compressing...';
+                } else if (statusData.status === 'uploading_to_pastebin') {
+                    button.textContent = 'Uploading...';
+                } else if (statusData.status !== 'completed' && statusData.status !== 'failed') {
+                    button.textContent = 'Processing...';
+                }
+
+                if (statusData.status === 'completed') {
+                    clearInterval(intervalId);
+
+                    urlLink.href = statusData.url;
+                    urlLink.textContent = 'View Shared Log (paste.c-net.org)';
+                    urlLink.title = statusData.url;
+                    urlLink.target = '_blank';
+                    urlLink.style.display = 'inline-block';
+                    const copyBtn = document.querySelector(`.copy-url-btn[data-target="${urlLink.id}"]`);
+                    if (copyBtn) copyBtn.style.display = 'inline-block';
+
+                    button.textContent = defaultLabel;
+                    button.disabled = false;
+                    resolve(statusData.url);
+
+                } else if (statusData.status === 'failed') {
+                    clearInterval(intervalId);
+                    hideShareResult(urlLink);
+
+                    button.textContent = defaultLabel;
+                    button.disabled = false;
+                    reject(new Error(statusData.error || 'An unknown error occurred during log sharing.'));
+                }
+            })
+            .catch(error => {
+                console.error('Error checking upload status:', error);
+                clearInterval(intervalId);
+                hideShareResult(urlLink);
+                button.textContent = defaultLabel;
+                button.disabled = false;
+                reject(error);
+            });
+        }
+    });
+}
+
+document.getElementById('share-logs-btn').addEventListener('click', function() {
+    shareLogs('/logs/api/logs/share', this, document.getElementById('share-url'), 'Share cli_debrid Logs')
+        .then(url => {
+            showPopup({
+                type: POPUP_TYPES.SUCCESS,
+                title: 'Success!',
+                message: `cli_debrid logs uploaded successfully to paste.c-net.org! URL: ${url}`,
+                autoClose: 10000
+            });
+        })
+        .catch(error => {
             showPopup({
                 type: POPUP_TYPES.ERROR,
-                title: 'Connection Error',
-                message: 'Lost connection while checking share status.',
-                autoClose: 5000
+                title: 'Error Sharing Logs',
+                message: error.message,
+                autoClose: 7000
             });
-            button.textContent = 'Share Logs';
-            button.disabled = false;
         });
-    }
 });
 
-// Add copy button functionality (for paste.c-net.org URL)
-document.getElementById('copy-url-btn').addEventListener('click', function() {
-    const shareUrl = document.getElementById('share-url');
-    navigator.clipboard.writeText(shareUrl.href).then(() => {
+// cli_mount share buttons only exist in the DOM when cli_mount is
+// enabled/configured as the Usenet provider (see climount_available in the template).
+const shareClimountBtn = document.getElementById('share-climount-logs-btn');
+if (shareClimountBtn) {
+    shareClimountBtn.addEventListener('click', function() {
+        shareLogs('/logs/api/climount/logs/share', this, document.getElementById('share-url-climount'), 'Share cli_mount Logs')
+            .then(url => {
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success!',
+                    message: `cli_mount logs uploaded successfully to paste.c-net.org! URL: ${url}`,
+                    autoClose: 10000
+                });
+            })
+            .catch(error => {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error Sharing cli_mount Logs',
+                    message: error.message,
+                    autoClose: 7000
+                });
+            });
+    });
+}
+
+const shareBothBtn = document.getElementById('share-both-logs-btn');
+if (shareBothBtn) {
+    shareBothBtn.addEventListener('click', function() {
+        const bothButton = this;
+        bothButton.disabled = true;
+
+        const cliDebridShare = shareLogs('/logs/api/logs/share', document.getElementById('share-logs-btn'), document.getElementById('share-url'), 'Share cli_debrid Logs');
+        const climountShare = shareLogs('/logs/api/climount/logs/share', document.getElementById('share-climount-logs-btn'), document.getElementById('share-url-climount'), 'Share cli_mount Logs');
+
+        Promise.allSettled([cliDebridShare, climountShare]).then(([cliDebridResult, climountResult]) => {
+            bothButton.disabled = false;
+
+            const lines = [];
+            lines.push(cliDebridResult.status === 'fulfilled'
+                ? `cli_debrid: ${cliDebridResult.value}`
+                : `cli_debrid: FAILED (${cliDebridResult.reason.message})`);
+            lines.push(climountResult.status === 'fulfilled'
+                ? `cli_mount: ${climountResult.value}`
+                : `cli_mount: FAILED (${climountResult.reason.message})`);
+
+            const bothFailed = cliDebridResult.status === 'rejected' && climountResult.status === 'rejected';
+            showPopup({
+                type: bothFailed ? POPUP_TYPES.ERROR : POPUP_TYPES.SUCCESS,
+                title: bothFailed ? 'Error Sharing Logs' : 'Logs Shared',
+                message: lines.join('\n'),
+                autoClose: bothFailed ? 7000 : 12000
+            });
+        });
+    });
+}
+
+// Copy text to clipboard, falling back to a hidden-textarea + execCommand
+// when the async Clipboard API isn't available (e.g. plain HTTP over a LAN
+// IP, where navigator.clipboard is undefined outside secure contexts and
+// navigator.clipboard.writeText() would throw synchronously instead of
+// rejecting, silently skipping the .catch() handler).
+function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+    }
+    return new Promise((resolve, reject) => {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        try {
+            const success = document.execCommand('copy');
+            success ? resolve() : reject(new Error('execCommand copy failed'));
+        } catch (err) {
+            reject(err);
+        } finally {
+            document.body.removeChild(textarea);
+        }
+    });
+}
+
+// Add copy button functionality (for paste.c-net.org URL) — each copy
+// button carries data-target pointing at its own adjacent result link.
+document.querySelectorAll('.copy-url-btn').forEach(btn => btn.addEventListener('click', function() {
+    const urlLink = document.getElementById(this.dataset.target);
+    copyTextToClipboard(urlLink.href).then(() => {
         showPopup({
             type: POPUP_TYPES.SUCCESS,
             title: 'Success',
@@ -508,7 +999,7 @@ document.getElementById('copy-url-btn').addEventListener('click', function() {
             autoClose: 2000
         });
     });
-});
+}));
 
 // Add cleanup when leaving the page
 window.addEventListener('beforeunload', () => {
@@ -603,147 +1094,6 @@ function createHighlightedLogEntry(log) {
 
     return div;
 }
-
-// Add goto search functionality
-function performGotoSearch() {
-    const searchTerm = document.getElementById('goto-search').value.toLowerCase();
-    const logEntries = document.getElementById('log-entries');
-    currentMatches = [];
-    currentMatchIndex = -1;
-    isSearchActive = !!searchTerm;  // Set search active if we have a search term
-
-    // Clear previous highlights
-    logEntries.querySelectorAll('.highlight-match').forEach(el => {
-        el.classList.remove('highlight-match');
-    });
-
-    if (!searchTerm) {
-        updateGotoNavButtons();
-        return;
-    }
-
-    // Find all matching log entries
-    Array.from(logEntries.children).forEach((entry, index) => {
-        if (entry.textContent.toLowerCase().includes(searchTerm)) {
-            currentMatches.push(entry);
-        }
-    });
-
-    updateGotoNavButtons();
-    if (currentMatches.length > 0) {
-        navigateToMatch(0);
-    }
-}
-
-function updateGotoNavButtons() {
-    const prevButton = document.getElementById('prev-match');
-    const nextButton = document.getElementById('next-match');
-    const matchCount = document.querySelector('.match-count');
-    
-    prevButton.disabled = currentMatches.length === 0 || currentMatchIndex <= 0;
-    nextButton.disabled = currentMatches.length === 0 || currentMatchIndex >= currentMatches.length - 1;
-    
-    if (currentMatches.length > 0) {
-        matchCount.textContent = `${currentMatchIndex + 1}/${currentMatches.length}`;
-    } else {
-        matchCount.textContent = '';
-    }
-}
-
-function navigateToMatch(index) {
-    if (index < 0 || index >= currentMatches.length) return;
-
-    // Remove previous highlight
-    document.querySelectorAll('.highlight-match').forEach(el => {
-        el.classList.remove('highlight-match');
-    });
-
-    const match = currentMatches[index];
-    match.classList.add('highlight-match');
-    currentMatchIndex = index;
-    
-    // Scroll the match into view
-    match.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    updateGotoNavButtons();
-}
-
-function navigateToFirstMatch() {
-    if (currentMatches && currentMatches.length > 0) {
-        currentMatchIndex = 0;
-        navigateToMatch(currentMatchIndex);
-        updateGotoNavButtons();
-    }
-}
-
-function navigateToLastMatch() {
-    if (currentMatches && currentMatches.length > 0) {
-        currentMatchIndex = currentMatches.length - 1;
-        navigateToMatch(currentMatchIndex);
-        updateGotoNavButtons();
-    }
-}
-
-// Add event listeners for goto search
-document.getElementById('goto-search').addEventListener('input', (e) => {
-    if (e.target.value) {
-        isPaused = true;
-        document.getElementById('pause-indicator').style.display = 'block';
-    } else {
-        isPaused = false;
-        document.getElementById('pause-indicator').style.display = 'none';
-    }
-});
-
-document.getElementById('goto-search').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-        if (e.shiftKey) {
-            // Shift+Enter for previous
-            if (currentMatchIndex > 0) {
-                navigateToMatch(currentMatchIndex - 1);
-            }
-        } else {
-            // Enter for next
-            if (currentMatches.length === 0) {
-                performGotoSearch();
-            } else if (currentMatchIndex < currentMatches.length - 1) {
-                navigateToMatch(currentMatchIndex + 1);
-            }
-        }
-    }
-});
-
-document.getElementById('prev-match').addEventListener('click', () => {
-    if (currentMatchIndex > 0) {
-        navigateToMatch(currentMatchIndex - 1);
-    }
-});
-
-document.getElementById('next-match').addEventListener('click', () => {
-    if (currentMatches.length === 0) {
-        performGotoSearch();
-    } else if (currentMatchIndex < currentMatches.length - 1) {
-        navigateToMatch(currentMatchIndex + 1);
-    }
-});
-
-// Update the goto search event listener to perform searches as user types
-document.getElementById('goto-search').addEventListener('input', (e) => {
-    if (!e.target.value) {
-        isSearchActive = false;
-        currentMatches = [];
-        currentMatchIndex = -1;
-        document.querySelectorAll('.highlight-match').forEach(el => {
-            el.classList.remove('highlight-match');
-        });
-        updateGotoNavButtons();
-    } else {
-        // Debounce the search to avoid too many searches while typing
-        clearTimeout(window.searchTimeout);
-        window.searchTimeout = setTimeout(() => {
-            performGotoSearch();
-        }, 300);  // Wait 300ms after typing stops before searching
-    }
-});
 
 // Add function to scroll to bottom and resume logging
 function scrollToBottomAndResume() {

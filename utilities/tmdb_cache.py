@@ -255,12 +255,12 @@ def get_cached_episode_info(tmdb_ids):
                 tmdb_id,
                 COUNT(DISTINCT season_number) as distinct_seasons,
                 COUNT(DISTINCT season_number || '-' || episode_number) as total_episodes,
-                COUNT(DISTINCT CASE WHEN state = 'Collected' THEN season_number || '-' || episode_number END) as collected_episodes,
+                COUNT(DISTINCT CASE WHEN state IN ('Collected', 'Upgrading') THEN season_number || '-' || episode_number END) as collected_episodes,
                 COUNT(DISTINCT CASE WHEN state = 'Blacklisted' THEN season_number || '-' || episode_number END) as blacklisted_episodes,
                 COUNT(DISTINCT CASE WHEN state = 'Unreleased' THEN season_number || '-' || episode_number END) as unreleased_episodes,
                 COUNT(DISTINCT CASE WHEN state IN ('Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping') THEN season_number || '-' || episode_number END) as wanted_episodes
             FROM media_items
-            WHERE tmdb_id IN ({placeholders}) AND type = 'episode'
+            WHERE tmdb_id IN ({placeholders}) AND type = 'episode' AND season_number != 0
             GROUP BY tmdb_id
         """
 

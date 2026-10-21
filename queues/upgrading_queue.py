@@ -10,6 +10,7 @@ from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
 import os
 import pickle
 from pathlib import Path
+from utilities.atomic_io import atomic_write_bytes
 from database.database_writing import update_media_item
 from database.core import get_db_connection
 from difflib import SequenceMatcher
@@ -30,9 +31,11 @@ class UpgradingQueue:
         self.upgrades_file = Path(db_content_dir) / "upgrades.pkl"
         self.failed_upgrades_file = Path(db_content_dir) / "failed_upgrades.pkl"
         self.upgrade_states_file = Path(db_content_dir) / "upgrade_states.pkl"
+        self.upgrade_times_file = Path(db_content_dir) / "upgrade_times.pkl"
         self.upgrades_data = self.load_upgrades_data()
         self.failed_upgrades = self.load_failed_upgrades()
         self.upgrade_states = self.load_upgrade_states()
+        self.upgrade_times = self.load_upgrade_times()
         self.currently_processing_item_id: Optional[str] = None
         # Track last run date for the daily delayed-upgrade pass
         self._last_delayed_upgrade_run_date = None
@@ -64,8 +67,9 @@ class UpgradingQueue:
             return {}
 
     def save_upgrades_data(self):
-        with open(self.upgrades_file, 'wb') as f:
-            pickle.dump(self.upgrades_data, f)
+        # Atomic: a crash mid-write used to leave a truncated file, which the
+        # loader then treated as corrupt and replaced with empty data.
+        atomic_write_bytes(str(self.upgrades_file), pickle.dumps(self.upgrades_data))
 
     def load_failed_upgrades(self):
         try:
@@ -94,8 +98,7 @@ class UpgradingQueue:
             return {}
 
     def save_failed_upgrades(self):
-        with open(self.failed_upgrades_file, 'wb') as f:
-            pickle.dump(self.failed_upgrades, f)
+        atomic_write_bytes(str(self.failed_upgrades_file), pickle.dumps(self.failed_upgrades))
 
     def load_upgrade_states(self):
         try:
@@ -125,14 +128,26 @@ class UpgradingQueue:
 
     def save_upgrade_states(self):
         try:
-            with open(self.upgrade_states_file, 'wb') as f:
-                pickle.dump(self.upgrade_states, f)
-            # Optional: Add a debug log here if needed, but maybe too verbose
-            # logging.debug(f"Successfully saved upgrade states to {self.upgrade_states_file}")
+            atomic_write_bytes(str(self.upgrade_states_file), pickle.dumps(self.upgrade_states))
         except (IOError, pickle.PicklingError, EOFError) as e:
             logging.error(f"Failed to save upgrade states to {self.upgrade_states_file}: {str(e)}", exc_info=True)
-            # Depending on severity, you might want to raise the exception
-            # or implement a more robust backup/retry mechanism here.
+
+    def load_upgrade_times(self):
+        """Load persisted upgrade_times from disk so start_time survives restarts."""
+        try:
+            if self.upgrade_times_file.exists() and self.upgrade_times_file.stat().st_size > 0:
+                with open(self.upgrade_times_file, 'rb') as f:
+                    return pickle.load(f)
+        except (EOFError, pickle.UnpicklingError, Exception) as e:
+            logging.error(f"Error loading upgrade_times, starting fresh: {e}")
+        return {}
+
+    def save_upgrade_times(self):
+        """Persist upgrade_times to disk so start_time survives restarts."""
+        try:
+            atomic_write_bytes(str(self.upgrade_times_file), pickle.dumps(self.upgrade_times))
+        except (IOError, pickle.PicklingError, EOFError) as e:
+            logging.error(f"Failed to save upgrade_times: {str(e)}", exc_info=True)
 
     def save_item_state(self, item: Dict[str, Any]):
         """Save complete item state before attempting an upgrade"""
@@ -181,6 +196,19 @@ class UpgradingQueue:
             # self.save_upgrade_states()
             return False
 
+        # Scraper stats: the upgrade grab failed and the old file is coming back.
+        # Every failed-upgrade path (Adding, Checking, Scraping) restores here.
+        # Must run before the restore: writing state back to Collected fires
+        # scraper_grabs' collected trigger, which would settle the failed
+        # upgrade grab as collected.
+        try:
+            from database.scraper_grabs import mark_current_grab
+            mark_current_grab(item_id, 'failed', 'upgrade failed; previous file restored',
+                              only_trigger='upgrade')
+        except Exception:
+            pass  # scraper stats are best-effort
+
+        conn = None
         try:
             conn = get_db_connection()
             conn.execute('BEGIN TRANSACTION')
@@ -273,13 +301,32 @@ class UpgradingQueue:
     def update(self):
         from database import get_all_media_items
         self.items = [dict(row) for row in get_all_media_items(state="Upgrading")]
+        # Sort hub pre-seeded items first (they have a magnet ready — no scraping needed)
+        try:
+            from database.zilean_upgrade import _queued_magnets, _ensure_cache_initialized
+            _ensure_cache_initialized()
+            self.items.sort(key=lambda x: 0 if x['id'] in _queued_magnets else 1)
+        except Exception:
+            pass
+        changed = False
         for item in self.items:
             if item['id'] not in self.upgrade_times:
-                collected_at = item.get('original_collected_at', datetime.now())
+                # Use last_updated (when item was moved to Upgrading) as the queue-entry
+                # timestamp. Captured here on first registration and persisted to disk so
+                # it survives restarts without relying on the DB field (which gets
+                # overwritten by hourly update_media_item() calls).
+                _last_updated = item.get('last_updated')
+                if _last_updated:
+                    start_time = datetime.fromisoformat(_last_updated) if isinstance(_last_updated, str) else _last_updated
+                else:
+                    start_time = datetime.now()
                 self.upgrade_times[item['id']] = {
-                    'start_time': datetime.now(),
-                    'time_added': collected_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(collected_at, datetime) else str(collected_at)
+                    'start_time': start_time,
+                    'time_added': start_time.strftime('%Y-%m-%d %H:%M:%S')
                 }
+                changed = True
+        if changed:
+            self.save_upgrade_times()
 
     def get_contents(self):
         contents = []
@@ -300,12 +347,19 @@ class UpgradingQueue:
 
     def add_item(self, item: Dict[str, Any]):
         self.items.append(item)
-        collected_at = item.get('original_collected_at', datetime.now())
-        logging.info(f"collected_at: {collected_at}")
+        # Capture last_updated as the queue-entry timestamp before any subsequent
+        # update_media_item() calls reset it during hourly scrapes.
+        _last_updated = item.get('last_updated')
+        if _last_updated:
+            start_time = datetime.fromisoformat(_last_updated) if isinstance(_last_updated, str) else _last_updated
+        else:
+            start_time = datetime.now()
+        logging.info(f"upgrading queue start_time: {start_time}")
         self.upgrade_times[item['id']] = {
-            'start_time': datetime.now(),
-            'time_added': collected_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(collected_at, datetime) else str(collected_at)
+            'start_time': start_time,
+            'time_added': start_time.strftime('%Y-%m-%d %H:%M:%S')
         }
+        self.save_upgrade_times()
         self.last_scrape_times[item['id']] = datetime.now()
         self.upgrades_found[item['id']] = 0  # Initialize upgrades found count
         
@@ -328,17 +382,22 @@ class UpgradingQueue:
             self.save_upgrades_data()
 
     def clean_up_upgrade_times(self):
+        active_ids = {item['id'] for item in self.items}
+        changed = False
         for item_id in list(self.upgrade_times.keys()):
-            if item_id not in [item['id'] for item in self.items]:
+            if item_id not in active_ids:
                 del self.upgrade_times[item_id]
                 if item_id in self.last_scrape_times:
                     del self.last_scrape_times[item_id]
                 logging.debug(f"Cleaned up upgrade time for item ID: {item_id}")
+                changed = True
+        if changed:
+            self.save_upgrade_times()
         for item_id in list(self.upgrades_found.keys()):
-            if item_id not in [item['id'] for item in self.items]:
+            if item_id not in active_ids:
                 del self.upgrades_found[item_id]
         for item_id in list(self.upgrades_data.keys()):
-            if item_id not in [item['id'] for item in self.items]:
+            if item_id not in active_ids:
                 del self.upgrades_data[item_id]
         self.save_upgrades_data()
 
@@ -360,18 +419,46 @@ class UpgradingQueue:
         for item in self.items[:]:  # Create a copy of the list to iterate over
             try:
                 item_id = item['id']
-                upgrade_info = self.upgrade_times.get(item_id)
-                
-                if upgrade_info:
-                    collected_at = datetime.fromisoformat(item['original_collected_at']) if isinstance(item['original_collected_at'], str) else item['original_collected_at']
 
-                    # Skip if original_collected_at is None
-                    if collected_at is None:
-                        logging.warning(f"Item {item_id} has None for original_collected_at, skipping upgrade queue processing")
+                # Eject items that are no longer in Upgrading state in the DB
+                # (e.g. Blacklisted, Collected, or otherwise changed externally)
+                try:
+                    from database.core import get_db_connection as _get_conn
+                    _chk = _get_conn()
+                    _row = _chk.execute("SELECT state FROM media_items WHERE id = ?", (item_id,)).fetchone()
+                    _chk.close()
+                    if _row and _row['state'] != 'Upgrading':
+                        logging.warning(f"[UpgradingQueue] Item {item_id} has state '{_row['state']}' in DB — removing from Upgrading queue.")
+                        self.remove_item(item)
                         continue
+                except Exception as _chk_err:
+                    logging.debug(f"[UpgradingQueue] State check failed for item {item_id}: {_chk_err}")
+
+                upgrade_info = self.upgrade_times.get(item_id)
+
+                # upgrade_times is now persisted to disk, so a missing entry here means
+                # the pkl was lost or this is a brand-new item that somehow bypassed
+                # add_item/update. Use current_time as a safe fallback — the item gets
+                # a fresh window which is acceptable for this rare edge case.
+                if not upgrade_info:
+                    logging.warning(f"[UpgradingQueue] No upgrade_times entry for {item_id} — synthesizing with current time.")
+                    self.upgrade_times[item_id] = {
+                        'start_time': current_time,
+                        'time_added': current_time.strftime('%Y-%m-%d %H:%M:%S')
+                    }
+                    self.save_upgrade_times()
+                    upgrade_info = self.upgrade_times[item_id]
+
+                if upgrade_info:
+                    # Use start_time from upgrade_times — captured once when the item
+                    # first entered the queue (from last_updated at that moment).
+                    # We intentionally do NOT re-read last_updated from the item here
+                    # because update_media_item() resets last_updated on every hourly
+                    # scrape, which would make time_in_queue never exceed the timeout.
+                    collected_at = upgrade_info.get('start_time', current_time)
 
                     time_in_queue = current_time - collected_at
-                    
+
                     logging.info(f"Item {item_id} has been in the Upgrading queue for {time_in_queue}.")
 
                     # Get the configured duration from settings, default to 24 hours if blank or invalid
@@ -382,8 +469,34 @@ class UpgradingQueue:
                         queue_duration_hours = 24
                     max_duration = timedelta(hours=queue_duration_hours)
 
-                    # Perform the hourly scrape if due
-                    if self.should_perform_hourly_scrape(item_id, current_time):
+                    # Check for hub pre-seeded magnet BEFORE scraping (hourly_scrape pops it)
+                    _has_hub_magnet = False
+                    try:
+                        from database.zilean_upgrade import _queued_magnets, _ensure_cache_initialized
+                        _ensure_cache_initialized()
+                        _has_hub_magnet = item_id in _queued_magnets
+                    except Exception:
+                        pass
+
+                    # Process immediately if hub magnet is ready; otherwise respect hourly timer
+                    if _has_hub_magnet:
+                        logging.info(f"Item {item_id} has hub magnet ready — processing immediately (bypassing scrape timer).")
+                        self.hourly_scrape(item, queue_manager)
+                        self.last_scrape_times[item_id] = current_time
+                        if not any(i['id'] == item_id for i in self.items):
+                            logging.info(f"Item {item_id} was removed during hub-magnet processing (likely upgraded).")
+                        elif time_in_queue > max_duration:
+                            logging.info(f"Item {item_id} timed out after hub-magnet attempt (in queue > {queue_duration_hours} hours).")
+                            self.remove_item(item)
+                            from database import update_media_item_state
+                            update_media_item_state(item_id, state="Collected")
+                            logging.info(f"Moved item {item_id} to Collected state due to timeout.")
+                    elif not get_setting("Scraping", "enable_upgrading", default=False):
+                        logging.info(f"Item {item_id} is in the Upgrading queue but Scraping.enable_upgrading is disabled — reverting to Collected without scraping.")
+                        self.remove_item(item)
+                        from database import update_media_item_state
+                        update_media_item_state(item_id, state="Collected")
+                    elif self.should_perform_hourly_scrape(item_id, current_time):
                         logging.info(f"Performing hourly scrape for item {item_id} which has been in queue for {time_in_queue}.")
                         self.hourly_scrape(item, queue_manager) # This might remove the item if upgraded
                         self.last_scrape_times[item_id] = current_time
@@ -392,20 +505,22 @@ class UpgradingQueue:
                         if any(i['id'] == item_id for i in self.items):
                             if time_in_queue > max_duration:
                                 logging.info(f"Item {item_id} timed out after scrape attempt (in queue > {queue_duration_hours} hours).")
-                                # Remove the item due to timeout
                                 self.remove_item(item)
                                 from database import update_media_item_state
                                 update_media_item_state(item_id, state="Collected")
                                 logging.info(f"Moved item {item_id} to Collected state due to timeout.")
-                            # else: 
-                                # Optional: Log if item survived scrape and hasn't timed out
-                                # logging.debug(f"Item {item_id} survived scrape and has not timed out.")
                         else:
-                            # Item was removed during the scrape (upgraded)
                             logging.info(f"Item {item_id} was removed during hourly scrape (likely upgraded). Skipping timeout check.")
                     else:
-                        # This case is unlikely given the hourly task execution, but handles it
-                        logging.debug(f"Skipping scrape for item {item_id} - not time yet.")
+                        # Still check timeout even when skipping the hourly scrape
+                        if time_in_queue > max_duration:
+                            logging.info(f"Item {item_id} timed out (in queue > {queue_duration_hours} hours) while waiting for next scrape window.")
+                            self.remove_item(item)
+                            from database import update_media_item_state
+                            update_media_item_state(item_id, state="Collected")
+                            logging.info(f"Moved item {item_id} to Collected state due to timeout.")
+                        else:
+                            logging.debug(f"Skipping scrape for item {item_id} - not time yet.")
 
             except Exception as e:
                 logging.error(f"Error processing item {item.get('id', 'unknown')}: {str(e)}")
@@ -559,7 +674,7 @@ class UpgradingQueue:
         # Get version settings for scoring
         if not version_settings:
             from utilities.settings import get_setting
-            version_name = item.get('version', 'default')
+            version_name = (item.get('version', 'default') or 'default').rstrip('*').strip()
             try:
                 from queues.config_manager import load_config
                 config = load_config()
@@ -592,18 +707,19 @@ class UpgradingQueue:
         # Calculate score using rank_result_key
         try:
             score_key = rank_result_key(
-                current_result, 
+                current_result,
                 [current_result],  # Single item list
-                query_title, 
-                query_year, 
-                query_season, 
-                query_episode, 
-                multi, 
-                content_type, 
+                query_title,
+                query_year,
+                query_season,
+                query_episode,
+                multi,
+                content_type,
                 version_settings,
                 preferred_language=preferred_language,
                 translated_title=translated_title,
-                show_season_episode_counts=show_season_episode_counts
+                show_season_episode_counts=show_season_episode_counts,
+                upgrade_mode=True,
             )
             
             # Extract the total score from the result
@@ -652,10 +768,52 @@ class UpgradingQueue:
                  logging.error(f"No current title found for item {item_identifier}, cannot perform similarity check accurately.")
                  # Proceed without similarity title if needed, or handle error
 
-            # Get unfiltered results first
-            logging.info(f"[{item_identifier}] Calling scrape_with_fallback with is_multi_pack={is_multi_pack} to get results")
-            # Use skip_filter=False here - we want the scraper's default filtering initially
-            results, filtered_out = self.scraping_queue.scrape_with_fallback(item, is_multi_pack, queue_manager or self, skip_filter=False)
+            # Check for a pre-seeded Upgrade Hub candidate (skip scraping)
+            # Use .get() not .pop() — only consume the magnet after confirmed upgrade success
+            try:
+                from database.zilean_upgrade import _queued_magnets, delete_queued_magnet_from_db, _ensure_cache_initialized
+                _ensure_cache_initialized()  # ensure DB-persisted magnets are loaded after restarts
+                pre_candidate = _queued_magnets.get(item['id'], None)
+            except Exception:
+                pre_candidate = None
+
+            if pre_candidate and pre_candidate.get('new_magnet'):
+                logging.info(f"[{item_identifier}] Using pre-selected Upgrade Hub candidate "
+                             f"'{pre_candidate.get('new_title')}', skipping scrape")
+                # Use the best available score estimate for the hub candidate.
+                # stored new_score: calculated with full context during scan (reliable, may be stale).
+                # live recalc: same ranker as current_score (apples-to-apples, less context).
+                # Taking max() ensures the better estimate wins.
+                _hub_new_score = pre_candidate.get('new_score', 9999.0) or 9999.0
+                try:
+                    _mock = dict(item)
+                    _mock['filled_by_file'] = pre_candidate.get('new_title', '')
+                    _mock['original_scraped_torrent_title'] = None
+                    _recalc = self.calculate_current_item_score(_mock, {})
+                    if _recalc > 0:
+                        _hub_new_score = max(_hub_new_score, _recalc)
+                        logging.info(f"[{item_identifier}] Hub candidate score: stored={pre_candidate.get('new_score', 0):.2f} recalc={_recalc:.2f} using={_hub_new_score:.2f}")
+                except Exception as _e:
+                    logging.debug(f"[{item_identifier}] Hub candidate score recalc failed: {_e}")
+                _cand_protocol = pre_candidate.get('protocol', 'torrent')
+                _cand_magnet   = pre_candidate.get('new_magnet', '')
+                _cand_result = {
+                    'title': pre_candidate.get('new_title', ''),
+                    'magnet': _cand_magnet,
+                    'score_breakdown': {'total_score': _hub_new_score},
+                }
+                if _cand_protocol == 'nzb':
+                    _cand_result['protocol'] = 'nzb'
+                    _cand_result['nzb_url']  = _cand_magnet
+                results = [_cand_result]
+                filtered_out = []
+                # Hub-queued items bypass not_wanted check — user explicitly chose this torrent
+                _skip_not_wanted = True
+            else:
+                # Normal path: scrape for candidates
+                _skip_not_wanted = False
+                logging.info(f"[{item_identifier}] Calling scrape_with_fallback with is_multi_pack={is_multi_pack} to get results")
+                results, filtered_out = self.scraping_queue.scrape_with_fallback(item, is_multi_pack, queue_manager or self, skip_filter=False)
 
             if not results:
                  logging.info(f"No results returned from scrape_with_fallback for {item_identifier}")
@@ -667,7 +825,7 @@ class UpgradingQueue:
             current_score = item.get('current_score', 0)
             if current_score <= 0:
                 # Get version settings for scoring
-                version_name = item.get('version', 'default')
+                version_name = (item.get('version', 'default') or 'default').rstrip('*').strip()
                 try:
                     from queues.config_manager import load_config
                     config = load_config()
@@ -721,17 +879,18 @@ class UpgradingQueue:
             failed_magnets = {fu['magnet'] for fu in failed_upgrades}
 
             for result in results:
-                # 1. Check Not Wanted (unless disabled)
-                if not item.get('disable_not_wanted_check'):
-                    if is_magnet_not_wanted(result['magnet']):
+                # 1. Check Not Wanted (unless disabled or hub pre-seeded — user explicitly chose it)
+                if not item.get('disable_not_wanted_check') and not _skip_not_wanted:
+                    _result_id = result.get('magnet') or result.get('nzb_url')
+                    if is_magnet_not_wanted(_result_id):
                         logging.info(f"Result '{result.get('title', 'N/A')}' filtered out by not_wanted_magnets check")
                         continue
-                    if is_url_not_wanted(result['magnet']): # Assuming magnet field might contain URL for some reason? Or separate field? Adapt if needed.
+                    if is_url_not_wanted(_result_id):
                         logging.info(f"Result '{result.get('title', 'N/A')}' filtered out by not_wanted_urls check")
                         continue
 
-                # 2. Check Failed Upgrades
-                if result.get('magnet') in failed_magnets:
+                # 2. Check Failed Upgrades (hub pre-candidates bypass — user explicitly re-queued)
+                if not _skip_not_wanted and result.get('magnet') in failed_magnets:
                      logging.info(f"Result '{result.get('title', 'N/A')}' filtered out as a previously failed upgrade attempt.")
                      continue
 
@@ -767,13 +926,18 @@ class UpgradingQueue:
                         is_better_score = True
                         logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) is better than non-positive current score ({current_score:.2f}).")
                     else:
-                        # Check percentage increase threshold for positive scores
-                        score_increase_percent = (result_score - current_score) / current_score
-                        if score_increase_percent > upgrading_score_percentage_threshold:
+                        # Hub pre-candidates bypass the % threshold — user explicitly chose the upgrade
+                        if _skip_not_wanted:
                             is_better_score = True
-                            logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) meets score threshold ({score_increase_percent:+.2%} > {upgrading_score_percentage_threshold:.2%}) compared to current ({current_score:.2f}).")
+                            logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) accepted (hub pre-candidate bypasses % threshold).")
                         else:
-                            logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) score increase ({score_increase_percent:+.2%}) does NOT meet threshold ({upgrading_score_percentage_threshold:.2%}) compared to current ({current_score:.2f}).")
+                            # Check percentage increase threshold for positive scores
+                            score_increase_percent = (result_score - current_score) / current_score
+                            if score_increase_percent > upgrading_score_percentage_threshold:
+                                is_better_score = True
+                                logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) meets score threshold ({score_increase_percent:+.2%} > {upgrading_score_percentage_threshold:.2%}) compared to current ({current_score:.2f}).")
+                            else:
+                                logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) score increase ({score_increase_percent:+.2%}) does NOT meet threshold ({upgrading_score_percentage_threshold:.2%}) compared to current ({current_score:.2f}).")
 
                 if is_better_score:
                     better_results.append(result)
@@ -785,6 +949,15 @@ class UpgradingQueue:
 
             # Sort better_results by score descending to pick the best
             better_results.sort(key=lambda r: r.get('score_breakdown', {}).get('total_score', 0), reverse=True)
+
+            if not better_results and pre_candidate is not None:
+                logging.info(f"[{item_identifier}] Hub candidate did not score better than current — clearing stale hub magnet.")
+                try:
+                    from database.zilean_upgrade import _queued_magnets, delete_queued_magnet_from_db
+                    _queued_magnets.pop(item['id'], None)
+                    delete_queued_magnet_from_db(item['id'])
+                except Exception:
+                    pass
 
             if better_results:
                 best_result = better_results[0]
@@ -812,6 +985,15 @@ class UpgradingQueue:
                 }
                 # We might want to pass the best_result score explicitly if AddingQueue needs it immediately
                 # For now, assume AddingQueue recalculates or uses scrape_results
+
+                # If the current item was collected via NZB, clear filled_by_torrent_id
+                # before passing to AddingQueue. Otherwise the health check loop in
+                # adding_queue sees the old nzb:<job_id>, finds it complete in cli_mount,
+                # and moves straight to Checking without ever submitting the new NZB.
+                _original_torrent_id = str(item.get('filled_by_torrent_id') or '')
+                if _original_torrent_id.startswith('nzb:'):
+                    from database.database_writing import update_media_item as _umi
+                    _umi(item['id'], filled_by_torrent_id=None)
 
                 update_media_item_state(item['id'], **update_data)
                 updated_item = get_media_item_by_id(item['id']) # Reload item with updated state
@@ -841,18 +1023,80 @@ class UpgradingQueue:
                 # Check final state after AddingQueue processing
                 from database.core import get_db_connection
                 conn = get_db_connection()
-                cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item['id'],))
-                current_state_after_add = cursor.fetchone()['state']
+                row = conn.execute('SELECT state, filled_by_torrent_id FROM media_items WHERE id = ?', (item['id'],)).fetchone()
+                current_state_after_add = row['state']
+                _new_torrent_id = str(row['filled_by_torrent_id'] or '')
+                # A NEW NZB job was submitted if the torrent ID changed to a new nzb: value
+                # (covers both: previously torrent item now upgrading via NZB, and
+                #  previously NZB item upgrading to a different NZB job)
+                _nzb_submitted = (
+                    _new_torrent_id.startswith('nzb:') and
+                    _new_torrent_id != _original_torrent_id
+                )
                 conn.close()
 
-                if current_state_after_add == 'Checking':
-                    logging.info(f"Successfully initiated upgrade for item {item_identifier}. Item moved to Checking.")
+                # Success conditions:
+                #   Debrid: state moves to 'Checking' (torrent added to debrid service)
+                #   NZB:    state stays 'Adding' while cli_mount polls, but filled_by_torrent_id
+                #           changed to a new 'nzb:<job_id>' confirming the job was submitted
+                _upgrade_succeeded = (
+                    current_state_after_add == 'Checking' or
+                    (current_state_after_add == 'Adding' and _nzb_submitted)
+                )
+                if _upgrade_succeeded:
+                    logging.info(f"Successfully initiated upgrade for item {item_identifier}. Item moved to {current_state_after_add}.")
 
-                    # Update item data with the successful upgrade details, including the NEW score
-                    self.update_item_with_upgrade(item, adding_queue, best_result) # Pass best_result to get score
+                    # For NZB upgrades the adding_queue already set the correct state ('Adding'),
+                    # filled_by_torrent_id ('nzb:<job_id>'), and filled_by_file (nzb job name).
+                    # update_item_with_upgrade would overwrite state to 'Checking' and clobber
+                    # those values — skip it and just record upgrading_from + score directly.
+                    if _nzb_submitted:
+                        try:
+                            new_score = best_result.get('score_breakdown', {}).get('total_score', 0)
+                            upgrading_from = item.get('filled_by_file') or ''
+                            conn2 = get_db_connection()
+                            conn2.execute(
+                                "UPDATE media_items SET upgrading_from=?, current_score=?, upgraded=1, upgrading=0, upgrading_from_torrent_id=?, upgrading_from_version=? WHERE id=?",
+                                (upgrading_from, new_score, item.get('filled_by_torrent_id'), item.get('version'), item['id'])
+                            )
+                            conn2.commit()
+                            conn2.close()
+                            item['upgrading_from'] = upgrading_from
+                            item['current_score'] = new_score
+                        except Exception as _ue:
+                            logging.warning(f"[{item_identifier}] NZB upgrade DB update failed: {_ue}")
+                    else:
+                        # Update item data with the successful upgrade details, including the NEW score
+                        self.update_item_with_upgrade(item, adding_queue, best_result)
 
                     # Log success, record tracking etc. (combine logic from original code)
                     self.log_upgrade(item, adding_queue) # Needs updated item dict after update_item_with_upgrade?
+
+                    # Log upgrade initiated to Upgrade Hub activity.
+                    # Result is 'initiated' — true success is logged in collected_items.py
+                    # when the file is confirmed collected and the old version removed.
+                    try:
+                        from database.upgrade_hub_activity import log_hub_activity
+                        _hub_triggered_by = pre_candidate.get('triggered_by', 'manual') if pre_candidate else 'automatic'
+                        _hub_from_file = item.get('upgrading_from', '')
+                        _hub_to_file = best_result.get('title', '')
+                        _hub_label = item.get('title', str(item.get('id', '')))
+                        log_hub_activity(
+                            'upgrade_processed',
+                            triggered_by=_hub_triggered_by,
+                            result='initiated',
+                            title=f"{_hub_label} \u2192 {_hub_to_file}",
+                            stats={
+                                'item_id': item.get('id'),
+                                'title': _hub_label,
+                                'type': item.get('type'),
+                                'from_file': _hub_from_file,
+                                'to_file': _hub_to_file,
+                                'imdb_id': item.get('imdb_id'),
+                            },
+                        )
+                    except Exception:
+                        pass
                     # Record tracking based on best_result
                     hash_value = extract_hash_from_magnet(best_result.get('magnet')) if best_result.get('magnet') else None
                     if hash_value:
@@ -895,31 +1139,139 @@ class UpgradingQueue:
 
                     # Remove item from this queue as it's now handled by CheckingQueue
                     logging.info(f"[{item_identifier}] Removing item from upgrading queue after successful upgrade initiation.")
+                    # Consume the hub magnet now that upgrade is confirmed
+                    if pre_candidate is not None:
+                        try:
+                            from database.zilean_upgrade import _queued_magnets, delete_queued_magnet_from_db
+                            _queued_magnets.pop(item['id'], None)
+                            delete_queued_magnet_from_db(item['id'])
+                        except Exception:
+                            pass
                     self.remove_item(item)
 
                 else:
-                    logging.warning(f"Failed to upgrade item {item_identifier} - state after AddingQueue process: {current_state_after_add}")
+                    _protocol_label = 'NZB' if best_result.get('protocol') == 'nzb' else 'Torrent'
+                    _failure_reason = (updated_item.get('_upgrade_failure_reason') or
+                                       item.get('_upgrade_failure_reason') or
+                                       f'{_protocol_label} not added — tried: {best_result.get("title", "?")} (state: {current_state_after_add})')
+                    logging.warning(f"Failed to upgrade item {item_identifier} - {_failure_reason}")
                     from routes.notifications import send_upgrade_failed_notification
                     notification_data = {
                         'title': item.get('title', 'Unknown Title'),
                         'year': item.get('year', ''),
-                        'reason': f'Failed in AddingQueue (State: {current_state_after_add})'
+                        'reason': f'Adding Queue Failure: {_failure_reason}'
                     }
                     send_upgrade_failed_notification(notification_data)
 
-                    self.log_failed_upgrade(item, best_result.get('title', 'N/A'), f'Failed in AddingQueue (State: {current_state_after_add})')
+                    self.log_failed_upgrade(item, best_result.get('title', 'N/A'), _failure_reason)
+
+                    # ── collect side-effect info so it can be reflected in the activity log ──
+                    _hub_purged_count = 0
+                    _hub_not_wanted_added = False
+
+                    # Remove the failed hub magnet so the item falls back to normal scraping.
+                    # Also purge ALL other queued candidates sharing the same info hash —
+                    # multiple episodes pointing to the same season pack would otherwise
+                    # each retry the identical failing magnet in rapid succession.
+                    if pre_candidate is not None:
+                        try:
+                            from database.zilean_upgrade import _queued_magnets, delete_queued_magnet_from_db
+                            _failed_hash = pre_candidate.get('new_info_hash', '')
+                            _stale_ids = [item['id']]
+                            if _failed_hash:
+                                _stale_ids += [
+                                    _iid for _iid, _c in list(_queued_magnets.items())
+                                    if _iid != item['id'] and _c.get('new_info_hash') == _failed_hash
+                                ]
+                            for _sid in _stale_ids:
+                                _queued_magnets.pop(_sid, None)
+                                delete_queued_magnet_from_db(_sid)
+                            _hub_purged_count = len(_stale_ids) - 1  # exclude self
+                            if _hub_purged_count > 0:
+                                logging.info(f"[{item_identifier}] Purged {len(_stale_ids)} hub candidates sharing the same failed magnet hash.")
+                            else:
+                                logging.info(f"[{item_identifier}] Removed failed hub magnet — item will fall back to normal scraping.")
+                        except Exception:
+                            pass
+
+                    # Clean up the newly submitted job before restoring state.
+                    # If a new NZB or debrid torrent was submitted during the failed upgrade
+                    # attempt, remove it so it doesn't linger in cli_mount/RD.
+                    if _nzb_submitted and _new_torrent_id.startswith('nzb:'):
+                        try:
+                            from usenet import get_usenet_client as _guc_fail
+                            _uc_fail = _guc_fail()
+                            if _uc_fail:
+                                _uc_fail.remove_nzb(_new_torrent_id[4:], entry_name=best_result.get('title', ''))
+                                logging.info(f"[{item_identifier}] Removed failed new NZB job {_new_torrent_id} from cli_mount")
+                        except Exception as _nzb_cleanup_err:
+                            logging.warning(f"[{item_identifier}] Could not clean up failed NZB job {_new_torrent_id}: {_nzb_cleanup_err}")
+                    elif current_state_after_add == 'Checking' and _new_torrent_id and not _new_torrent_id.startswith('nzb:'):
+                        try:
+                            from debrid import get_debrid_provider as _gdp_fail
+                            _dp_fail = _gdp_fail()
+                            if _dp_fail:
+                                _dp_fail.remove_torrent(_new_torrent_id, removal_reason='Upgrade failed — rolling back')
+                                logging.info(f"[{item_identifier}] Removed failed new debrid torrent {_new_torrent_id} from RD")
+                        except Exception as _dt_cleanup_err:
+                            logging.warning(f"[{item_identifier}] Could not clean up failed debrid torrent {_new_torrent_id}: {_dt_cleanup_err}")
 
                     # Restore complete previous state
                     if self.restore_item_state(item):
                         # Track the failed upgrade attempt
                         self.add_failed_upgrade(item['id'], best_result) # Log the one we tried
                         logging.info(f"Restored previous state and added to failed upgrades list for {item_identifier}")
+                        # Add the failed magnet to not_wanted so it's filtered from future scans
+                        _failed_magnet = (
+                            (pre_candidate.get('new_magnet') if pre_candidate else None)
+                            or best_result.get('magnet', '')
+                        )
+                        if _failed_magnet:
+                            try:
+                                from database.not_wanted_magnets import add_to_not_wanted
+                                add_to_not_wanted(_failed_magnet)
+                                _hub_not_wanted_added = True
+                                logging.info(f"[{item_identifier}] Added failed magnet to not_wanted for future scan filtering.")
+                            except Exception as _nw_e:
+                                logging.warning(f"[{item_identifier}] Could not add failed magnet to not_wanted: {_nw_e}")
                         # Item remains in Upgrading queue, but state reset in DB
                         # We might need to update the 'upgrading' flag back to False if restore_item_state doesn't
                         update_media_item(item['id'], upgrading=False)
                     else:
-                        logging.error(f"Failed to restore previous state for {item_identifier}, manual intervention may be needed")
-                        # Item might be stuck, consider moving to a failed state?
+                        # No snapshot to restore; revert to Collected instead of leaving it stuck mid-upgrade.
+                        logging.error(f"Failed to restore previous state for {item_identifier}; reverting to Collected")
+                        update_media_item(item['id'], state='Collected', upgrading=False, upgrading_from=None)
+
+                    # Log failure to Upgrade Hub activity (after purge/not_wanted so we can include outcomes)
+                    if pre_candidate is not None:
+                        try:
+                            from database.upgrade_hub_activity import log_hub_activity
+                            _hub_label = item.get('title', str(item.get('id', '')))
+                            _hub_actions: list = []
+                            if _hub_not_wanted_added:
+                                _hub_actions.append('Added to not wanted — will be excluded from future scans')
+                            if _hub_purged_count > 0:
+                                _hub_actions.append(
+                                    f'Purged {_hub_purged_count} other queued candidate'
+                                    f'{"s" if _hub_purged_count != 1 else ""} sharing the same torrent'
+                                )
+                            log_hub_activity(
+                                'upgrade_processed',
+                                triggered_by=pre_candidate.get('triggered_by', 'manual'),
+                                result='failed',
+                                title=f"{_hub_label} \u2014 upgrade failed",
+                                stats={
+                                    'item_id': item.get('id'),
+                                    'title': _hub_label,
+                                    'type': item.get('type'),
+                                    'from_file': item.get('upgrading_from', ''),
+                                    'error': _failure_reason,
+                                    'imdb_id': item.get('imdb_id'),
+                                    'actions_taken': _hub_actions,
+                                },
+                            )
+                        except Exception:
+                            pass
 
         except Exception as e:
             logging.error(f"Error during hourly scrape for {item_identifier}: {e}", exc_info=True)
@@ -945,30 +1297,35 @@ class UpgradingQueue:
                 clean_version = new_values.get('version', '').strip('*') if new_values.get('version') else best_result.get('version', '').strip('*')
 
                 # Update the item in the database including the new score
-                conn.execute('''
+                _upg_seg_id = new_values.get('nzb_segment_id', '') or ''
+                _upg_seg_sql = ', nzb_segment_id = ?' if _upg_seg_id else ''
+                _upg_seg_vals = [_upg_seg_id] if _upg_seg_id else []
+                conn.execute(f'''
                     UPDATE media_items
                     SET upgrading_from = ?,
                         filled_by_file = ?,
                         filled_by_magnet = ?,
                         version = ?,
-                        current_score = ?,  -- Update the score
+                        current_score = ?,
                         last_updated = ?,
                         state = ?,
                         upgrading_from_torrent_id = ?,
                         upgraded = 1,
                         upgrading_from_version = ?,
-                        upgrading = 0 -- Reset upgrading flag as it's now Checking
+                        upgrading = 0
+                        {_upg_seg_sql}
                     WHERE id = ?
                 ''', (
                     upgrading_from,
                     new_values.get('filled_by_file'),
                     new_values.get('filled_by_magnet'),
                     clean_version,
-                    new_score, # Store the new score
+                    new_score,
                     datetime.now(),
-                    'Checking', # State confirmed by caller
-                    item['filled_by_torrent_id'], # Old torrent ID
-                    upgrading_from_version, # Old version
+                    'Checking',
+                    item['filled_by_torrent_id'],
+                    upgrading_from_version,
+                    *_upg_seg_vals,
                     item['id']
                 ))
 
@@ -979,7 +1336,9 @@ class UpgradingQueue:
                 item['upgrading_from'] = upgrading_from
                 item['filled_by_file'] = new_values.get('filled_by_file')
                 item['filled_by_magnet'] = new_values.get('filled_by_magnet')
-                item['upgrading_from_torrent_id'] = item.get('filled_by_torrent_id') # Store old ID
+                item['upgrading_from_torrent_id'] = item.get('filled_by_torrent_id')
+                if _upg_seg_id:
+                    item['nzb_segment_id'] = _upg_seg_id
                 item['version'] = clean_version
                 item['current_score'] = new_score # Update local score
                 item['last_updated'] = datetime.now()
@@ -1041,9 +1400,11 @@ class UpgradingQueue:
     @staticmethod
     def generate_identifier(item: Dict[str, Any]) -> str:
         if item['type'] == 'movie':
-            return f"movie_{item['title']}_{item['imdb_id']}_{'_'.join(item['version'].split())}"
+            return f"movie_{item['title']}_{item['imdb_id']}_{'_'.join((item['version'] or '').split())}"
         elif item['type'] == 'episode':
-            return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{'_'.join(item['version'].split())}"
+            s = item.get('season_number') or 0
+            e = item.get('episode_number') or 0
+            return f"episode_{item['title']}_{item['imdb_id']}_S{s:02d}E{e:02d}_{'_'.join((item['version'] or '').split())}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
 
@@ -1079,3 +1440,25 @@ def log_successful_upgrade(item: Dict[str, Any]):
     # Append the log entry to the file
     with open(log_file, 'a') as f:
         f.write(log_entry)
+
+    # Log true completion to Upgrade Hub activity (old file confirmed removed, new file collected)
+    try:
+        from database.upgrade_hub_activity import log_hub_activity
+        _label = item.get('title', item_identifier)
+        _from  = item.get('upgrading_from', '')
+        _to    = item.get('filled_by_file', '')
+        log_hub_activity(
+            'upgrade_processed',
+            triggered_by='system',
+            result='success',
+            title=f"{_label} \u2713 upgrade confirmed",
+            stats={
+                'title': _label,
+                'type': item.get('type'),
+                'from_file': _from,
+                'to_file': _to,
+                'imdb_id': item.get('imdb_id'),
+            },
+        )
+    except Exception:
+        pass

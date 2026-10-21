@@ -1,326 +1,551 @@
-.onboarding-container {
-    max-width: 600px;
+/* ============================================================
+   Tangerine Onboarding — dark surface, orange accent
+   All rules scoped to body[data-theme="tangerine"]
+   ============================================================ */
+
+body[data-theme="tangerine"] {
+    --ob-bg:      #0e0e0e;
+    --ob-surf:    #161616;
+    --ob-surf2:   #1e1e1e;
+    --ob-border:  #2e2e2e;
+    --ob-border2: #3a3a3a;
+    --ob-accent:  #e8601c;
+    --ob-accent-h:#f07030;
+    --ob-text:    #e8e8e8;
+    --ob-muted:   #888;
+    --ob-danger:  #e05252;
+    --ob-mono:    'JetBrains Mono', 'Courier New', monospace;
+    --ob-font:    'Inter', system-ui, sans-serif;
+    --ob-radius:  6px;
+}
+
+/* ── page background ─────────────────────────────────────── */
+body[data-theme="tangerine"] {
+    background-color: var(--ob-bg) !important;
+}
+
+/* ── main containers ─────────────────────────────────────── */
+body[data-theme="tangerine"] .onboarding-container {
+    max-width: 1200px;
     margin: 0 auto 20px;
-    padding: 20px;
-    background-color: rgba(255, 255, 255, 0.03);
-    border-radius: 10px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-    position: relative;
+    padding: 28px 32px;
+    background: var(--ob-surf);
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    box-shadow: 0 4px 24px rgba(0,0,0,.45);
+    font-family: var(--ob-font);
 }
 
-.onboarding-title {
-    color: #e0e0e0;
-    font-size: 24px;
-    margin-bottom: 20px;
+body[data-theme="tangerine"] .setup-container {
+    max-width: 1200px;
+    margin: 0 auto 20px;
+    padding: 28px 32px;
+    background: var(--ob-surf);
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    box-shadow: 0 4px 24px rgba(0,0,0,.45);
+    font-family: var(--ob-font);
 }
 
-.onboarding-text {
-    color: #d4d4d4;
+/* ── typography ──────────────────────────────────────────── */
+body[data-theme="tangerine"] .onboarding-title {
+    font-family: var(--ob-font);
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: var(--ob-text);
+    margin-bottom: 16px;
+    letter-spacing: -0.01em;
 }
 
-.onboarding-btn {
-    display: inline-block;
-    padding: 10px 20px;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-    color: white;
-    text-decoration: none;
-    border-radius: 10px;
-    transition: all 0.3s ease;
+body[data-theme="tangerine"] .onboarding-text {
+    font-family: var(--ob-font);
+    color: #aaa;
+    line-height: 1.6;
 }
 
-.onboarding-btn:hover {
-    background-color: #45a049;
-}
-
-.onboarding-btn:disabled {
-    background-color: #666;
-    cursor: not-allowed;
-}
-
-.onboarding-btn:disabled:hover {
-    background-color: #666;
-}
-
-.onboarding-form {
-    display: flex;
-    flex-direction: column;
-}
-
-.onboarding-label {
-    color: #e0e0e0;
-    margin-bottom: 5px;
-}
-
-.onboarding-input,
-.onboarding-select {
-    width: 100%;
-    padding: 8px;
-    margin-bottom: 15px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 10px;
-    background-color: rgba(255, 255, 255, 0.05);
-    color: #e0e0e0;
-}
-
-.onboarding-select[multiple] {
-    height: auto;
-    min-height: 100px;
-}
-
-.onboarding-submit {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 10px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-}
-
-.onboarding-submit:hover {
-    background-color: #45a049;
-}
-
-.onboarding-link {
-    color: #ff6b35;
-    text-decoration: none;
-}
-
-.onboarding-link:hover {
-    text-decoration: underline;
-}
-
-.navMenu {
-    display: none;
-}
-
-body[data-is-onboarding="true"] .navMenu {
-    display: none;
-}
-
-.onboarding-btn-delete {
-    background-color: #d9534f;
-    color: white;
-    border: none;
-    padding: 5px 10px;
-    border-radius: 10px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-}
-
-.onboarding-btn-delete:hover {
-    background-color: #c9302c;
-}
-
-.scraper-item,
-.content-source-item {
-    margin-bottom: 20px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
-    padding: 16px;
-    background-color: rgba(255, 255, 255, 0.05);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    transition: box-shadow 0.3s ease;
-}
-
-.scraper-item:hover,
-.content-source-item:hover {
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-}
-
-.scraper-header,
-.content-source-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.scraper-header .onboarding-text,
-.content-source-header .onboarding-text {
-    font-size: 1.2em;
-    font-weight: bold;
-}
-
-.onboarding-text-no-config {
-    color: #888;
+body[data-theme="tangerine"] .onboarding-text-no-config {
+    color: var(--ob-muted);
     font-style: italic;
 }
 
-.scraper-settings,
-.content-source-settings {
-    background-color: rgba(255, 255, 255, 0.03);
-    padding: 12px;
-    border-radius: 10px;
+body[data-theme="tangerine"] .onboarding-list {
+    color: #aaa;
+    padding-left: 20px;
+    line-height: 1.7;
+    margin-bottom: 20px;
 }
 
-.scraper-settings pre,
-.content-source-settings pre {
-    margin: 0;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-}
-
-.setting-item {
-    display: flex;
-    align-items: center;
+body[data-theme="tangerine"] .onboarding-list li {
     margin-bottom: 8px;
 }
 
-.setting-item label {
-    flex: 0 0 120px;
-    margin-right: 12px;
-    font-size: 0.9em;
-    color: #888;
+body[data-theme="tangerine"] .onboarding-link {
+    color: var(--ob-accent);
+    text-decoration: none;
+}
+body[data-theme="tangerine"] .onboarding-link:hover {
+    color: var(--ob-accent-h);
+    text-decoration: underline;
 }
 
-.setting-value {
-    flex: 1;
-    background-color: rgba(255, 255, 255, 0.05);
-    color: #e0e0e0;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    padding: 6px 8px;
-    border-radius: 10px;
-    font-size: 0.9em;
-}
-
-.onboarding-navigation {
-    max-width: 600px;
-    margin: 20px auto 0;
-    display: flex;
-    justify-content: space-between;
-    padding: 0;
-}
-
-.onboarding-navigation:only-child,
-.onboarding-navigation:first-of-type {
-    justify-content: center;
-}
-
-.onboarding-btn,
-.finish-setup-btn,
-.validate-btn {
-    padding: 10px 20px;
-    background-color: #3498db;  /* Blue color */
-    color: white;
+/* ── primary button ──────────────────────────────────────── */
+body[data-theme="tangerine"] .onboarding-btn,
+body[data-theme="tangerine"] .finish-setup-btn,
+body[data-theme="tangerine"] .validate-btn {
+    padding: 9px 20px;
+    background: var(--ob-accent);
+    color: #fff;
     border: none;
-    border-radius: 10px;
+    border-radius: var(--ob-radius);
     cursor: pointer;
-    transition: all 0.3s ease, opacity 0.3s;
-    font-size: 16px;
+    font-family: var(--ob-font);
+    font-size: 0.9rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    transition: background 0.15s, opacity 0.15s;
     min-width: 120px;
+    text-decoration: none;
+    display: inline-block;
+    margin-top: 24px;
 }
 
-.onboarding-btn:hover,
-.finish-setup-btn:hover {
-    background-color: #2980b9;  /* Darker blue on hover */
+body[data-theme="tangerine"] .onboarding-btn:hover,
+body[data-theme="tangerine"] .finish-setup-btn:hover,
+body[data-theme="tangerine"] .validate-btn:hover {
+    background: var(--ob-accent-h) !important;
+    color: #fff;
+    text-decoration: none;
 }
 
-.onboarding-btn:disabled,
-.finish-setup-btn:disabled {
-    background-color: #cccccc;  /* Grey when disabled */
-    opacity: 0.7;
+body[data-theme="tangerine"] .onboarding-btn:disabled,
+body[data-theme="tangerine"] .finish-setup-btn:disabled,
+body[data-theme="tangerine"] .validate-btn:disabled {
+    background: #2e2e2e !important;
+    color: var(--ob-muted);
+    opacity: 1;
     cursor: not-allowed;
     pointer-events: none;
 }
 
-.prev-step-btn {
-    margin-right: auto;
+/* skip button — ghost style */
+body[data-theme="tangerine"] .skip-onboarding-btn {
+    background: transparent !important;
+    color: var(--ob-muted) !important;
+    border: 1px solid var(--ob-border2) !important;
+    min-width: 0;
+}
+body[data-theme="tangerine"] .skip-onboarding-btn:hover {
+    background: rgba(255,255,255,.04) !important;
+    color: var(--ob-text) !important;
+    border-color: #4a4a4a !important;
 }
 
-.next-step-btn,
-.finish-setup-btn {
+/* delete buttons */
+body[data-theme="tangerine"] .onboarding-btn-delete,
+body[data-theme="tangerine"] .delete-content-source-btn {
+    background: transparent;
+    color: var(--ob-danger);
+    border: 1px solid rgba(224,82,82,.4);
+    padding: 5px 12px;
+    border-radius: var(--ob-radius);
+    cursor: pointer;
+    font-family: var(--ob-font);
+    font-size: 0.8rem;
+    transition: background 0.15s, border-color 0.15s;
+    min-width: 0;
+}
+body[data-theme="tangerine"] .onboarding-btn-delete:hover,
+body[data-theme="tangerine"] .delete-content-source-btn:hover {
+    background: rgba(224,82,82,.15);
+    border-color: var(--ob-danger);
+}
+
+/* ── forms ───────────────────────────────────────────────── */
+body[data-theme="tangerine"] .onboarding-form {
+    display: flex;
+    flex-direction: column;
+}
+
+body[data-theme="tangerine"] .onboarding-label {
+    font-family: var(--ob-font);
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: #aaa;
+    margin-bottom: 5px;
+    display: block;
+}
+
+body[data-theme="tangerine"] .onboarding-input,
+body[data-theme="tangerine"] .onboarding-select {
+    width: 100%;
+    padding: 8px 10px;
+    margin-bottom: 16px;
+    background: #1a1a1a;
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    color: var(--ob-text);
+    font-family: var(--ob-mono);
+    font-size: 0.85rem;
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+}
+body[data-theme="tangerine"] .onboarding-input:focus,
+body[data-theme="tangerine"] .onboarding-select:focus {
+    outline: none;
+    border-color: var(--ob-accent);
+}
+
+body[data-theme="tangerine"] .onboarding-submit {
+    background: var(--ob-accent);
+    color: #fff;
+    border: none;
+    padding: 9px 20px;
+    border-radius: var(--ob-radius);
+    cursor: pointer;
+    font-family: var(--ob-font);
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: background 0.15s;
+}
+body[data-theme="tangerine"] .onboarding-submit:hover {
+    background: var(--ob-accent-h);
+}
+
+/* bootstrap form controls used in step 5 */
+body[data-theme="tangerine"] .form-control {
+    background: #1a1a1a !important;
+    border: 1px solid var(--ob-border2) !important;
+    color: var(--ob-text) !important;
+    border-radius: var(--ob-radius) !important;
+    font-family: var(--ob-mono) !important;
+    font-size: 0.85rem !important;
+}
+body[data-theme="tangerine"] .form-control:focus {
+    border-color: var(--ob-accent) !important;
+    box-shadow: 0 0 0 2px rgba(232,96,28,.2) !important;
+}
+body[data-theme="tangerine"] .form-text {
+    color: var(--ob-muted) !important;
+    font-size: 0.78rem;
+}
+
+/* ── scraper / content-source cards ─────────────────────── */
+body[data-theme="tangerine"] .scraper-item,
+body[data-theme="tangerine"] .content-source-item {
+    background: var(--ob-surf2);
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: none;
+    transition: border-color 0.15s;
+}
+body[data-theme="tangerine"] .scraper-item:hover,
+body[data-theme="tangerine"] .content-source-item:hover {
+    border-color: #4a4a4a;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .scraper-header,
+body[data-theme="tangerine"] .content-source-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--ob-border);
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+}
+
+body[data-theme="tangerine"] .scraper-header .onboarding-text,
+body[data-theme="tangerine"] .content-source-header .onboarding-text {
+    color: var(--ob-text);
+    font-weight: 600;
+}
+
+body[data-theme="tangerine"] .scraper-settings,
+body[data-theme="tangerine"] .content-source-settings {
+    background: #111;
+    border-radius: 4px;
+    padding: 12px;
+}
+
+/* ── setting-item rows ───────────────────────────────────── */
+body[data-theme="tangerine"] .setting-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+}
+body[data-theme="tangerine"] .setting-item label {
+    flex: 0 0 120px;
+    font-size: 0.82rem;
+    color: var(--ob-muted);
+    margin-right: 12px;
+}
+body[data-theme="tangerine"] .setting-value {
+    flex: 1;
+    background: #1a1a1a;
+    color: var(--ob-text);
+    border: 1px solid var(--ob-border2);
+    padding: 5px 8px;
+    border-radius: 4px;
+    font-family: var(--ob-mono);
+    font-size: 0.82rem;
+}
+
+/* ── advice section ──────────────────────────────────────── */
+body[data-theme="tangerine"] .advice-section {
+    background: #1a1a1a;
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    overflow: hidden;
+    margin-bottom: 16px;
+}
+body[data-theme="tangerine"] .advice-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    cursor: pointer;
+    color: #aaa;
+    font-size: 0.85rem;
+    font-weight: 500;
+    user-select: none;
+}
+body[data-theme="tangerine"] .advice-header:hover {
+    color: var(--ob-text);
+}
+body[data-theme="tangerine"] .advice-content {
+    padding: 0 14px;
+    max-height: 0;
+    overflow: hidden;
+    color: #999;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    transition: max-height 0.25s, padding 0.25s;
+}
+body[data-theme="tangerine"] .advice-section.expanded .advice-content {
+    max-height: 400px;
+    padding: 0 14px 14px;
+}
+
+/* ── setup options (step 5) ──────────────────────────────── */
+body[data-theme="tangerine"] .setup-options-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+body[data-theme="tangerine"] .setup-option {
+    background: var(--ob-surf2);
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    padding: 16px 18px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+body[data-theme="tangerine"] .setup-option h3 {
+    color: var(--ob-text);
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin: 0 0 4px;
+}
+body[data-theme="tangerine"] .setup-option p {
+    color: #888;
+    font-size: 0.83rem;
+    margin: 0;
+}
+body[data-theme="tangerine"] .setup-option:hover {
+    border-color: rgba(232,96,28,.5);
+    background: rgba(232,96,28,.06);
+}
+body[data-theme="tangerine"] .setup-option.selected,
+body[data-theme="tangerine"] .setup-option.active {
+    border-color: var(--ob-accent);
+    background: rgba(232,96,28,.1);
+}
+
+body[data-theme="tangerine"] .setup-note {
+    background: rgba(232,96,28,.08);
+    border: 1px solid rgba(232,96,28,.25);
+    border-radius: var(--ob-radius);
+    padding: 10px 14px;
+    color: #ccc;
+    font-size: 0.83rem;
+    line-height: 1.55;
+    margin-bottom: 12px;
+}
+
+body[data-theme="tangerine"] .setup-description p,
+body[data-theme="tangerine"] .settings-description {
+    color: #999;
+    font-size: 0.88rem;
+    line-height: 1.55;
+    margin-bottom: 16px;
+}
+
+/* scan stats */
+body[data-theme="tangerine"] .scan-stats {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+body[data-theme="tangerine"] .scan-stats .stat-item {
+    background: var(--ob-surf2);
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    padding: 10px 16px;
+    text-align: center;
+    min-width: 100px;
+}
+body[data-theme="tangerine"] .scan-stats .stat-item .stat-value {
+    font-family: var(--ob-mono);
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: var(--ob-accent);
+}
+body[data-theme="tangerine"] .scan-stats .stat-item .stat-label {
+    font-size: 0.75rem;
+    color: var(--ob-muted);
+    margin-top: 2px;
+}
+
+/* info messages */
+body[data-theme="tangerine"] .info-message {
+    background: rgba(56,189,248,.07);
+    border: 1px solid rgba(56,189,248,.25);
+    border-radius: var(--ob-radius);
+    padding: 10px 14px;
+    color: #aad4e8;
+    font-size: 0.83rem;
+    line-height: 1.55;
+    margin-bottom: 12px;
+}
+
+/* ── navigation strip ────────────────────────────────────── */
+body[data-theme="tangerine"] .onboarding-navigation {
+    max-width: 640px;
+    margin: 20px auto 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 0;
+}
+
+body[data-theme="tangerine"] .prev-step-btn {
+    margin-right: auto;
+}
+body[data-theme="tangerine"] .next-step-btn,
+body[data-theme="tangerine"] .finish-setup-btn {
     margin-left: auto;
 }
 
-/* Adjustments for single button scenarios */
-.onboarding-navigation:only-child .onboarding-btn,
-.onboarding-navigation:only-child .finish-setup-btn {
-    margin: 0 auto;
-}
-
-#existing-scrapers,
-#existing-content-sources {
-    max-width: 800px;
+/* ── existing scrapers / sources list ────────────────────── */
+body[data-theme="tangerine"] #existing-scrapers,
+body[data-theme="tangerine"] #existing-content-sources {
+    max-width: 1200px;
     margin: 20px auto;
     padding: 0 20px;
 }
 
-.delete-content-source-btn {
-    background-color: #d9534f;
-    color: white;
-    border: none;
-    padding: 5px 10px;
-    border-radius: 10px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-}
-
-.delete-content-source-btn:hover {
-    background-color: #c9302c;
-}
-
-
-.onboarding-list {
-    color: #d4d4d4;
+/* ── version management (step 3a) ────────────────────────── */
+body[data-theme="tangerine"] .version-management-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
     margin-bottom: 20px;
-    padding-left: 20px;
 }
 
-.onboarding-list li {
-    margin-bottom: 10px;
+body[data-theme="tangerine"] .version-item {
+    background: var(--ob-surf2);
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    padding: 14px 16px;
+    margin-bottom: 12px;
+}
+body[data-theme="tangerine"] .version-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    color: var(--ob-text);
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--ob-border);
+}
+body[data-theme="tangerine"] .version-settings {
+    font-size: 0.83rem;
+    color: #999;
 }
 
-#welcome-message {
+body[data-theme="tangerine"] .filter-section {
+    margin-top: 10px;
+}
+body[data-theme="tangerine"] .filter-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0;
+    list-style: none;
+    margin: 6px 0 0;
+}
+body[data-theme="tangerine"] .filter-item {
+    background: rgba(232,96,28,.12);
+    border: 1px solid rgba(232,96,28,.3);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-family: var(--ob-mono);
+    font-size: 0.75rem;
+    color: #e8a87c;
+}
+
+/* ── plex auth / server cards ────────────────────────────── */
+body[data-theme="tangerine"] .plex-auth-section,
+body[data-theme="tangerine"] .plex-library-select {
+    background: var(--ob-surf2);
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    padding: 16px;
+    margin-bottom: 16px;
+}
+body[data-theme="tangerine"] .plex-server-card {
+    background: #1a1a1a;
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+body[data-theme="tangerine"] .plex-server-card:hover {
+    border-color: var(--ob-accent);
+}
+body[data-theme="tangerine"] .plex-server-card.selected {
+    border-color: var(--ob-accent);
+    background: rgba(232,96,28,.08);
+}
+
+/* ── welcome/start section ───────────────────────────────── */
+body[data-theme="tangerine"] #welcome-message {
     text-align: center;
 }
-
-#start-onboarding {
+body[data-theme="tangerine"] #start-onboarding {
     margin-top: 20px;
 }
 
-/* Add these new styles */
-.onboarding-step-container {
-    position: relative;
-    width: 100%;
-    overflow: hidden;
-}
-
-.onboarding-step {
-    position: absolute;
-    width: 100%;
-    transition: transform 0.5s ease-in-out;
-}
-
-.slide-in-right {
-    transform: translateX(100%);
-}
-
-.slide-in-left {
-    transform: translateX(-100%);
-}
-
-.slide-out-right {
-    transform: translateX(100%);
-}
-
-.slide-out-left {
-    transform: translateX(-100%);
-}
-
-.task-monitor-toggle {
+/* ── hidden utility classes (unchanged) ──────────────────── */
+body[data-theme="tangerine"] .task-monitor-toggle {
     display: none;
 }
-
-.rate-limits-section-toggle {
+body[data-theme="tangerine"] .rate-limits-section-toggle {
     display: none !important;
 }
 
-/* ========================================
-   Inline CSS from onboarding_navigation.html
-   ======================================== */
-.popup-content.confirm {
-        max-width: 50vw !important;
-    }
+/* ── finish-setup popup wider width ──────────────────────── */
+body[data-theme="tangerine"] .universal-popup .popup-content {
+    max-width: 688px !important;
+    width: 90vw !important;
+    max-height: 80vh !important;
+    overflow-y: auto !important;
+}

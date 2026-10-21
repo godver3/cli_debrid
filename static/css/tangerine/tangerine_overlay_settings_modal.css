@@ -1,0 +1,601 @@
+/**
+ * Tangerine Theme - Overlay Settings Modal Styles
+ * Quick-access modal for Overlay settings with Tangerine styling
+ */
+
+.overlay-settings-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: overlayModalFadeIn 0.2s ease-out;
+}
+
+@keyframes overlayModalFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.overlay-settings-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+}
+
+.overlay-settings-modal-content {
+    position: relative;
+    background-color: #1a1a1a;
+    border-radius: 16px;
+    border: 2px solid rgba(225, 124, 82, 0.2);
+    width: 90%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5),
+                0 0 20px rgba(225, 124, 82, 0.1);
+    animation: overlayModalSlideUp 0.3s ease-out;
+    display: flex;
+    flex-direction: column;
+}
+
+@keyframes overlayModalSlideUp {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.overlay-settings-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    border-bottom: 2px solid rgba(225, 124, 82, 0.3);
+    background: linear-gradient(135deg, rgba(225, 124, 82, 0.1) 0%, transparent 100%);
+}
+
+.overlay-settings-modal-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #e17c52;
+}
+
+.overlay-settings-modal-close {
+    background: none;
+    border: none;
+    font-size: 2rem;
+    line-height: 1;
+    color: #999;
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+.overlay-settings-modal-close:hover {
+    background-color: rgba(225, 124, 82, 0.2);
+    color: #e17c52;
+}
+
+.overlay-settings-modal-body {
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.overlay-setting-group {
+    margin-bottom: 24px;
+}
+
+.overlay-setting-group:last-child {
+    margin-bottom: 0;
+}
+
+.overlay-setting-group > label {
+    display: block;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e17c52;
+    margin-bottom: 8px;
+}
+
+.overlay-setting-group > label[for="overlaySettingsEnabled"] {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+
+.overlay-setting-description {
+    font-size: 0.85rem;
+    color: #aaa;
+    line-height: 1.5;
+    margin: 8px 0;
+}
+
+.overlay-setting-input {
+    width: 100%;
+    padding: 10px 14px;
+    background-color: #2a2a2a;
+    border: 2px solid rgba(225, 124, 82, 0.3);
+    border-radius: 12px;
+    color: #fff;
+    font-size: 0.95rem;
+    transition: all 0.2s ease;
+    box-sizing: border-box;
+}
+
+.overlay-setting-input:focus {
+    outline: none;
+    border-color: #e17c52;
+    box-shadow: 0 0 0 3px rgba(225, 124, 82, 0.1);
+    background-color: #2f2f2f;
+}
+
+.overlay-setting-input::placeholder {
+    color: #555;
+}
+
+.overlay-setting-checkbox {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: #e17c52;
+    flex-shrink: 0;
+}
+
+.overlay-settings-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px;
+    background: linear-gradient(0deg, rgba(225, 124, 82, 0.05) 0%, transparent 100%);
+}
+
+.overlay-settings-btn-cancel,
+.overlay-settings-btn-save {
+    padding: 10px 20px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.overlay-settings-btn-cancel {
+    background-color: transparent;
+    color: #999;
+    border: 2px solid rgba(225, 124, 82, 0.3);
+}
+
+.overlay-settings-btn-cancel:hover {
+    background-color: rgba(225, 124, 82, 0.1);
+    border-color: rgba(225, 124, 82, 0.5);
+    color: #e17c52;
+}
+
+.overlay-settings-btn-save {
+    background: linear-gradient(135deg, #e17c52 0%, #c96b47 100%);
+    color: #fff;
+    border: 2px solid transparent;
+    box-shadow: 0 2px 8px rgba(225, 124, 82, 0.3);
+}
+
+.overlay-settings-btn-save:hover:not(:disabled) {
+    background: linear-gradient(135deg, #f08c62 0%, #d97b57 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(225, 124, 82, 0.4);
+}
+
+.overlay-settings-btn-save:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Scrollbar styling */
+.overlay-settings-modal-body::-webkit-scrollbar {
+    width: 8px;
+}
+
+.overlay-settings-modal-body::-webkit-scrollbar-track {
+    background: #1a1a1a;
+    border-radius: 4px;
+}
+
+.overlay-settings-modal-body::-webkit-scrollbar-thumb {
+    background: rgba(225, 124, 82, 0.3);
+    border-radius: 4px;
+}
+
+.overlay-settings-modal-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(225, 124, 82, 0.5);
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+    .overlay-settings-modal-content {
+        width: 95%;
+        max-width: none;
+        border-radius: 16px 16px 0 0;
+        max-height: 80vh;
+        margin-top: auto;
+    }
+
+    .overlay-settings-modal-header {
+        padding: 16px 20px;
+    }
+
+    .overlay-settings-modal-header h2 {
+        font-size: 1.25rem;
+    }
+
+    .overlay-settings-modal-body {
+        padding: 20px;
+    }
+
+    .overlay-settings-modal-footer {
+        padding: 12px 20px;
+    }
+
+    .overlay-settings-btn-cancel,
+    .overlay-settings-btn-save {
+        flex: 1;
+    }
+}
+
+/* ── Tangerine: Poster Reset section ──────────────────────────────────────── */
+
+.overlay-setting-group--danger {
+    border-top: 1px solid rgba(255, 107, 53, 0.25);
+    padding-top: 18px;
+    margin-top: 4px;
+}
+
+/* Base size — match the modal's own Save/Cancel button dimensions */
+.overlay-reset-btn {
+    padding: 10px 20px !important;
+    border-radius: 12px !important;
+    font-size: 0.9rem !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    transition: all 0.2s ease !important;
+}
+
+/* "Reset All Posters" — danger style: red-tinted transparent like btn-danger */
+.overlay-reset-btn--all {
+    background: rgba(220, 38, 38, 0.15) !important;
+    border: 2px solid rgba(220, 38, 38, 0.35) !important;
+    color: #ff6b6b !important;
+}
+
+.overlay-reset-btn--all:hover {
+    background: rgba(220, 38, 38, 0.25) !important;
+    border-color: rgba(220, 38, 38, 0.55) !important;
+    color: #fff !important;
+    transform: translateY(-1px);
+    opacity: 1 !important;
+}
+
+/* "Review & Reset Selected" — primary style: orange-tinted transparent like btn-primary */
+.overlay-reset-btn--review {
+    background: rgba(255, 107, 53, 0.08) !important;
+    border: 2px solid rgba(255, 107, 53, 0.35) !important;
+    color: #ff8c5a !important;
+}
+
+.overlay-reset-btn--review:hover {
+    background: rgba(255, 107, 53, 0.18) !important;
+    border-color: rgba(255, 107, 53, 0.65) !important;
+    color: #fff !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.2);
+    opacity: 1 !important;
+}
+
+.overlay-reset-progress-bar {
+    background: #ff6b35 !important;
+}
+
+.poster-review-card--selected {
+    border-color: #ff6b35 !important;
+    box-shadow: 0 0 0 1px rgba(255, 107, 53, 0.3) !important;
+}
+
+.poster-review-checkbox { accent-color: #ff6b35; }
+
+/* Review grid "Reset Selected" button — danger style */
+.poster-review-reset-btn {
+    padding: 10px 20px !important;
+    font-size: 0.9rem !important;
+    font-weight: 600 !important;
+    border-radius: 10px !important;
+    cursor: pointer !important;
+    box-shadow: none !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: unset !important;
+    background: rgba(220, 38, 38, 0.15) !important;
+    border: 1px solid rgba(220, 38, 38, 0.35) !important;
+    color: #ff6b6b !important;
+    transition: all 0.2s ease !important;
+}
+
+.poster-review-reset-btn:not(:disabled):hover {
+    background: rgba(220, 38, 38, 0.25) !important;
+    border-color: rgba(220, 38, 38, 0.55) !important;
+    color: #fff !important;
+    opacity: 1 !important;
+    transform: translateY(-1px);
+}
+
+/* Ensure review modal always renders as a fixed fullscreen overlay when open.
+   Use attribute selector so display:none inline style is NOT overridden. */
+.poster-review-modal[style*="display: flex"],
+.poster-review-modal[style*="display:flex"] {
+    position: fixed !important;
+    inset: 0 !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    z-index: 20000 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: rgba(0,0,0,0.85) !important;
+}
+
+.poster-review-backdrop {
+    position: fixed !important;
+    inset: 0 !important;
+    background: rgba(0,0,0,0.75) !important;
+    z-index: -1 !important;
+}
+
+.poster-review-content {
+    position: relative !important;
+    z-index: 1 !important;
+    background: #1a1a1a !important;
+    border: 2px solid rgba(225, 124, 82, 0.2) !important;
+    width: 95vw !important;
+    max-width: 1200px !important;
+    height: 90vh !important;
+    border-radius: 16px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.6), 0 0 20px rgba(225, 124, 82, 0.1) !important;
+    animation: overlayModalSlideUp 0.3s ease-out;
+}
+
+.poster-review-header {
+    display: flex !important;
+    align-items: flex-start !important;
+    justify-content: space-between !important;
+    padding: 20px 24px 16px !important;
+    border-bottom: 2px solid rgba(225, 124, 82, 0.3) !important;
+    background: linear-gradient(135deg, rgba(225, 124, 82, 0.1) 0%, transparent 100%) !important;
+    flex-shrink: 0 !important;
+}
+
+.poster-review-title {
+    color: #e17c52 !important;
+    font-size: 1.3rem !important;
+    font-weight: 600 !important;
+    margin: 0 0 4px !important;
+}
+
+.poster-review-subtitle {
+    color: #999 !important;
+    font-size: 13px !important;
+    margin: 0 !important;
+}
+
+.poster-review-close {
+    background: none !important;
+    border: none !important;
+    font-size: 2rem !important;
+    color: #999 !important;
+    cursor: pointer !important;
+    line-height: 1 !important;
+    padding: 0 !important;
+    width: 32px !important;
+    height: 32px !important;
+    min-width: unset !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    transition: all 0.2s ease !important;
+}
+
+.poster-review-close:hover {
+    background: rgba(225, 124, 82, 0.2) !important;
+    color: #e17c52 !important;
+}
+
+.poster-review-toolbar {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    padding: 10px 24px !important;
+    border-bottom: 1px solid rgba(255,255,255,0.08) !important;
+    flex-shrink: 0 !important;
+    flex-wrap: wrap !important;
+    background: rgba(0,0,0,0.2) !important;
+}
+
+.poster-review-search-wrap { flex: 1 !important; min-width: 180px !important; }
+
+.poster-review-search {
+    width: 100% !important;
+    padding: 6px 12px !important;
+    border-radius: 8px !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    background: rgba(0,0,0,0.4) !important;
+    color: #e0e0e0 !important;
+    font-size: 13px !important;
+}
+
+.poster-review-search:focus {
+    outline: none !important;
+    border-color: rgba(225, 124, 82, 0.5) !important;
+}
+
+.poster-review-sel-btns { display: flex !important; gap: 6px !important; flex-wrap: wrap !important; }
+
+.poster-review-sel-btn {
+    padding: 5px 12px !important;
+    font-size: 12px !important;
+    border-radius: 8px !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    background: rgba(255,255,255,0.07) !important;
+    color: #e0e0e0 !important;
+    cursor: pointer !important;
+    box-shadow: none !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: unset !important;
+    font-weight: normal !important;
+    transition: all 0.2s ease !important;
+}
+
+.poster-review-sel-btn:hover {
+    background: rgba(225, 124, 82, 0.15) !important;
+    border-color: rgba(225, 124, 82, 0.5) !important;
+    color: #fff !important;
+}
+
+.poster-review-sel-count {
+    color: #888 !important;
+    font-size: 12px !important;
+    white-space: nowrap !important;
+}
+
+.poster-review-grid {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding: 12px 16px !important;
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)) !important;
+    gap: 6px !important;
+    align-content: start !important;
+}
+
+/* Keep all cards the same compact size */
+.poster-review-card {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+}
+
+.poster-review-img-wrap {
+    width: 100% !important;
+    aspect-ratio: 2/3 !important;
+    overflow: hidden !important;
+}
+
+.poster-review-img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    display: block !important;
+}
+
+.poster-review-img--placeholder {
+    width: 100% !important;
+    aspect-ratio: 2/3 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: rgba(255,255,255,0.05) !important;
+    font-size: 10px !important;
+    color: #666 !important;
+}
+
+.poster-review-info {
+    padding: 4px 4px 5px !important;
+}
+
+.poster-review-item-title {
+    font-size: 10px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    color: #e0e0e0 !important;
+}
+
+.poster-review-footer {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 14px 24px !important;
+    border-top: 2px solid rgba(225, 124, 82, 0.2) !important;
+    background: rgba(0,0,0,0.2) !important;
+    flex-shrink: 0 !important;
+}
+
+.poster-review-total-count {
+    color: #888 !important;
+    font-size: 13px !important;
+}
+
+/* Cancel button in footer */
+.poster-review-footer button:not(.poster-review-reset-btn) {
+    padding: 8px 18px !important;
+    border-radius: 10px !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    background: rgba(255,255,255,0.07) !important;
+    color: #e0e0e0 !important;
+    cursor: pointer !important;
+    font-size: 13px !important;
+    box-shadow: none !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: unset !important;
+    transition: all 0.2s ease !important;
+}
+
+.poster-review-footer button:not(.poster-review-reset-btn):hover {
+    background: rgba(255,255,255,0.12) !important;
+    border-color: rgba(255,255,255,0.25) !important;
+    color: #fff !important;
+}
+
+/* Card hover accent */
+.poster-review-card:hover {
+    border-color: rgba(225, 124, 82, 0.4) !important;
+}
+
+.poster-review-card--selected {
+    border-color: #e17c52 !important;
+    box-shadow: 0 0 0 1px rgba(225, 124, 82, 0.4) !important;
+}
+
+/* Scrollbar */
+.poster-review-grid {
+    scrollbar-width: thin !important;
+    scrollbar-color: rgba(225, 124, 82, 0.4) transparent !important;
+}

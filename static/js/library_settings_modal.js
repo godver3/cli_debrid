@@ -10,6 +10,7 @@
     let modal, overlay, closeBtn, cancelBtn, saveBtn, clearCacheBtn;
     let autoGhostlistInput;
     let removeFromContentSourcesInput;
+    let hideSeasonZeroInput;
     let currentSettings = null;
 
     // Initialize elements after DOM is ready
@@ -28,6 +29,7 @@
 
         autoGhostlistInput = document.getElementById('autoGhostlistDeleted');
         removeFromContentSourcesInput = document.getElementById('removeFromContentSources');
+        hideSeasonZeroInput = document.getElementById('hideSeasonZero');
 
         return true;
     }
@@ -63,6 +65,12 @@
                 removeFromContentSourcesInput.checked = libraryManager.remove_from_content_sources !== undefined
                     ? libraryManager.remove_from_content_sources
                     : true; // Default to true
+            }
+
+            if (hideSeasonZeroInput) {
+                hideSeasonZeroInput.checked = libraryManager.hide_season_zero !== undefined
+                    ? libraryManager.hide_season_zero
+                    : true; // Default to true (hidden)
             }
 
             // Show modal
@@ -110,6 +118,7 @@
 
             updatedSettings['Library Manager'].ghostlist_mode = autoGhostlistInput.checked;
             updatedSettings['Library Manager'].remove_from_content_sources = removeFromContentSourcesInput.checked;
+            updatedSettings['Library Manager'].hide_season_zero = hideSeasonZeroInput ? hideSeasonZeroInput.checked : true;
 
             // Send to same API endpoint as settings page
             const response = await fetch('/settings/api/settings', {

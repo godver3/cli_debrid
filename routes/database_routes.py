@@ -7,7 +7,7 @@ from routes.extensions import db
 from utilities.settings import get_setting
 import json
 from utilities.reverse_parser import get_version_settings, get_default_version, get_version_order, parse_filename_for_version
-from .models import admin_required
+from .models import admin_required, user_required
 from utilities.plex_removal_cache import cache_plex_removal
 from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
 from database.database_reading import get_media_item_by_id
@@ -21,7 +21,7 @@ from utilities.web_scraper import get_media_meta
 from queues.config_manager import get_content_source_display_names, load_config
 from database import update_media_item_state
 from utilities.local_library_scan import convert_item_to_symlink
-from database.database_writing import update_media_item
+from database.database_writing import update_media_item, RESET_COLLECTION_STATE_SQL
 from database.symlink_verification import add_symlinked_file_for_verification
 database_bp = Blueprint('database', __name__)
 
@@ -122,6 +122,42 @@ def queue_plex_removal_for_item(item_db_data, file_management, item_id):
         elif item_db_data['type'] == 'episode':
             cache_plex_removal(item_db_data['title'], path_to_remove, item_db_data.get('episode_title'))
         logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Symlinked/Local mode with Plex URL). Path: {path_to_remove}")
+
+
+def sync_queues_after_rescrape(item_ids):
+    """Drop rescrapped items from in-memory queues immediately after the DB reset.
+
+    Bulk rescrape only updates SQLite; without this, Checking/Adding can keep
+    processing stale filled_by_* fields until task_update_queue_views runs (~30s),
+    and sibling pack reuse can re-bind the old torrent on the very next tick.
+    """
+    if not item_ids:
+        return
+    id_set = {int(i) for i in item_ids}
+    try:
+        from routes.program_operation_routes import get_program_runner
+        runner = get_program_runner()
+        if not runner or not getattr(runner, 'queue_manager', None):
+            return
+        qm = runner.queue_manager
+        for queue_name in ('Checking', 'Adding', 'Scraping'):
+            queue = qm.queues.get(queue_name)
+            if not queue or not hasattr(queue, 'items'):
+                continue
+            for mem_item in list(queue.items):
+                if mem_item.get('id') in id_set:
+                    if hasattr(queue, 'remove_item'):
+                        queue.remove_item(mem_item)
+                    else:
+                        queue.items = [i for i in queue.items if i.get('id') not in id_set]
+        adding_queue = qm.queues.get('Adding')
+        if adding_queue and hasattr(adding_queue, '_nzb_submitted_ids'):
+            adding_queue._nzb_submitted_ids -= id_set
+        if hasattr(runner, 'task_update_queue_views'):
+            runner.task_update_queue_views()
+        logging.info(f"Rescrape: Synced in-memory queues after reset for item IDs: {sorted(id_set)}")
+    except Exception as exc:
+        logging.warning(f"Rescrape: Post-rescrape queue sync failed: {exc}")
 
 def get_item_size_gb(location_on_disk, original_path_for_symlink):
     file_path_to_check = None
@@ -554,15 +590,38 @@ def index():
                 final_where_clause = "WHERE (ghostlisted = FALSE OR ghostlisted IS NULL)"
         
         order_clause = ""
-        # SQL sorting only if not sorting by 'size' and sort_column is a real DB column
-        if sort_column_req != 'size' and sort_column_req in db_actual_columns:
+        if sort_column_req == 'size':
+            # Missing sizes sort as 0; ties keep row order (as the old stable
+            # Python sort did, in both directions)
+            if 'size' in db_actual_columns:
+                order_clause = f'ORDER BY COALESCE("size", 0.0) {sort_order_req}, rowid ASC'
+        elif sort_column_req in db_actual_columns:
             order_clause = f'ORDER BY "{sort_column_req}" {sort_order_req}'
-        
-        # Load all data immediately - no artificial limits
-        query = f"{base_query} {final_where_clause} {order_clause}"
-        logging.debug(f"Executing query: {query} with params: {final_params}")
+
+        # Paginate in SQL: this page used to fetch and convert every matching
+        # row on each infinite-scroll request, then slice one page out.
         timings['filter_processing_done'] = time.perf_counter()
-        cursor.execute(query, final_params)
+        cursor.execute(f"SELECT COUNT(*) FROM media_items {final_where_clause}", final_params)
+        total_count = cursor.fetchone()[0]
+        try:
+            page = int(request.args.get('page', 1))
+        except (ValueError, TypeError):
+            page = 1
+
+        _VALID_PER_PAGE = {100, 250, 500, 1000, 2000, 5000}
+        try:
+            per_page = int(request.args.get('per_page', PER_PAGE))
+            if per_page not in _VALID_PER_PAGE:
+                per_page = PER_PAGE
+        except (ValueError, TypeError):
+            per_page = PER_PAGE
+        total_pages = max(1, (total_count + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))  # Clamp to valid range
+        start_idx = (page - 1) * per_page
+
+        query = f"{base_query} {final_where_clause} {order_clause} LIMIT ? OFFSET ?"
+        logging.debug(f"Executing query: {query} with params: {final_params}")
+        cursor.execute(query, list(final_params) + [per_page, start_idx])
         items_from_db = cursor.fetchall()
         logging.debug(f"Fetched {len(items_from_db)} items from the database")
         timings['main_query_executed'] = time.perf_counter()
@@ -582,9 +641,7 @@ def index():
                     # Don't calculate from disk - it's too slow for remote filesystems
                     # Size will be populated when item is collected/processed
                     item_dict['size_gb'] = 0.0
-        
-        if sort_column_req == 'size':
-            items_dict_list.sort(key=lambda x: x.get('size_gb', 0.0), reverse=(sort_order_req == 'desc'))
+
         timings['item_data_processing_done'] = time.perf_counter()
 
         # OPTIMIZATION: Column values are now lazy-loaded on-demand via /database/get_column_values/<column>
@@ -593,20 +650,8 @@ def index():
         logging.info("Column values will be lazy-loaded on-demand (performance optimization)")
         timings['distinct_values_skipped'] = time.perf_counter()
 
-        # Pagination: items per page for infinite scroll
-        total_count = len(items_dict_list)
-        try:
-            page = int(request.args.get('page', 1))
-        except (ValueError, TypeError):
-            page = 1
-
-        per_page = PER_PAGE
-        total_pages = max(1, (total_count + per_page - 1) // per_page)
-        page = max(1, min(page, total_pages))  # Clamp to valid range
-
-        start_idx = (page - 1) * per_page
-        end_idx = min(start_idx + per_page, total_count)
-        paginated_items = items_dict_list[start_idx:end_idx]
+        end_idx = start_idx + len(items_dict_list)
+        paginated_items = items_dict_list
 
         logging.info(f"Pagination: page {page}/{total_pages}, items {start_idx+1}-{end_idx} of {total_count}")
 
@@ -865,6 +910,237 @@ def bulk_queue_action():
                     logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
                 finally:
                     conn.close()
+            elif action == 'assign_tags' and target_queue:  # target_queue contains the tag to assign in this case
+                logging.info("Entering 'assign_tags' block.")
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    new_tag = target_queue.strip()
+                    placeholders = ','.join('?' * len(batch))
+                    cursor.execute(
+                        f'SELECT id, tags, filled_by_torrent_id, filled_by_magnet FROM media_items WHERE id IN ({placeholders})',
+                        batch
+                    )
+                    rows = cursor.fetchall()
+                    now = datetime.now()
+                    pushed_hashes = []
+                    import re as _re_assign
+                    for row in rows:
+                        existing_tags = [t.strip() for t in (row['tags'] or '').split(',') if t.strip()]
+                        if new_tag in existing_tags:
+                            continue
+                        existing_tags.append(new_tag)
+                        updated_tags = ','.join(existing_tags)
+                        cursor.execute(
+                            'UPDATE media_items SET tags = ?, last_updated = ? WHERE id = ?',
+                            [updated_tags, now, row['id']]
+                        )
+                        total_processed += 1
+
+                        # Resolve this row's cli_mount info_hash (same convention used
+                        # elsewhere: nzb: prefix stripped, or infohash parsed from magnet)
+                        info_hash = ''
+                        torrent_id = str(row['filled_by_torrent_id'] or '')
+                        if torrent_id.startswith('nzb:'):
+                            info_hash = torrent_id[4:]
+                        else:
+                            magnet = row['filled_by_magnet'] or ''
+                            m = _re_assign.search(r'urn:btih:([0-9a-fA-F]{40})', magnet, _re_assign.IGNORECASE)
+                            if m:
+                                info_hash = m.group(1).lower()
+                        if info_hash:
+                            pushed_hashes.append((info_hash, updated_tags, row['id']))
+                    conn.commit()
+
+                    if pushed_hashes:
+                        try:
+                            from usenet.climount_client import get_climount_client as _get_dc_assign
+                            _dc_assign = _get_dc_assign()
+                            if _dc_assign and _dc_assign.is_enabled():
+                                for _ih, _tags, _row_id in pushed_hashes:
+                                    if _dc_assign.push_tags(_ih, _tags):
+                                        logging.info(f"[AssignTags] Pushed tags '{_tags}' to cli_mount for {_ih}")
+                                        cursor.execute(
+                                            'UPDATE media_items SET tags_pushed_at = ? WHERE id = ?',
+                                            [datetime.now(), _row_id]
+                                        )
+                                        conn.commit()
+                                    else:
+                                        logging.warning(f"[AssignTags] cli_mount tag push returned false for {_ih} (tags='{_tags}')")
+                            else:
+                                logging.warning('[AssignTags] cli_mount client disabled/not configured — tags not pushed')
+                        except Exception as _push_err:
+                            logging.warning(f'[AssignTags] cli_mount tag push error: {_push_err}')
+                    else:
+                        logging.info('[AssignTags] No pushable info_hash resolved for any updated row — nothing sent to cli_mount')
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e):
+                        logging.error("Database is locked during bulk assign_tags.")
+                        conn.rollback()
+                        return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                    else:
+                        error_count += 1
+                        conn.rollback()
+                        errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                except Exception as e:
+                    error_count += 1
+                    conn.rollback()
+                    errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                finally:
+                    conn.close()
+            elif action == 'update_tags' and target_queue:  # target_queue contains the tag; replaces all existing tags
+                logging.info("Entering 'update_tags' block.")
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    new_tag = target_queue.strip()
+                    placeholders = ','.join('?' * len(batch))
+                    cursor.execute(
+                        f'SELECT id, tags, filled_by_torrent_id, filled_by_magnet FROM media_items WHERE id IN ({placeholders})',
+                        batch
+                    )
+                    rows = cursor.fetchall()
+                    now = datetime.now()
+                    pushed_hashes = []
+                    import re as _re_update
+                    for row in rows:
+                        cursor.execute(
+                            'UPDATE media_items SET tags = ?, last_updated = ? WHERE id = ?',
+                            [new_tag, now, row['id']]
+                        )
+                        total_processed += 1
+
+                        info_hash = ''
+                        torrent_id = str(row['filled_by_torrent_id'] or '')
+                        if torrent_id.startswith('nzb:'):
+                            info_hash = torrent_id[4:]
+                        else:
+                            magnet = row['filled_by_magnet'] or ''
+                            m = _re_update.search(r'urn:btih:([0-9a-fA-F]{40})', magnet, _re_update.IGNORECASE)
+                            if m:
+                                info_hash = m.group(1).lower()
+                        if info_hash:
+                            pushed_hashes.append((info_hash, new_tag, row['id']))
+                    conn.commit()
+
+                    if pushed_hashes:
+                        try:
+                            from usenet.climount_client import get_climount_client as _get_dc_update
+                            _dc_update = _get_dc_update()
+                            if _dc_update and _dc_update.is_enabled():
+                                for _ih, _tags, _row_id in pushed_hashes:
+                                    if _dc_update.push_tags(_ih, _tags):
+                                        logging.info(f"[UpdateTags] Pushed tags '{_tags}' to cli_mount for {_ih}")
+                                        cursor.execute(
+                                            'UPDATE media_items SET tags_pushed_at = ? WHERE id = ?',
+                                            [datetime.now(), _row_id]
+                                        )
+                                        conn.commit()
+                                    else:
+                                        logging.warning(f"[UpdateTags] cli_mount tag push returned false for {_ih} (tags='{_tags}')")
+                            else:
+                                logging.warning('[UpdateTags] cli_mount client disabled/not configured — tags not pushed')
+                        except Exception as _push_err:
+                            logging.warning(f'[UpdateTags] cli_mount tag push error: {_push_err}')
+                    else:
+                        logging.info('[UpdateTags] No pushable info_hash resolved for any updated row — nothing sent to cli_mount')
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e):
+                        logging.error("Database is locked during bulk update_tags.")
+                        conn.rollback()
+                        return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                    else:
+                        error_count += 1
+                        conn.rollback()
+                        errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                except Exception as e:
+                    error_count += 1
+                    conn.rollback()
+                    errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                finally:
+                    conn.close()
+            elif action == 'remove_tags' and target_queue:  # target_queue contains the tag to remove
+                logging.info("Entering 'remove_tags' block.")
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    tag_to_remove = target_queue.strip()
+                    placeholders = ','.join('?' * len(batch))
+                    cursor.execute(
+                        f'SELECT id, tags, filled_by_torrent_id, filled_by_magnet FROM media_items WHERE id IN ({placeholders})',
+                        batch
+                    )
+                    rows = cursor.fetchall()
+                    now = datetime.now()
+                    pushed_hashes = []
+                    import re as _re_remove
+                    for row in rows:
+                        existing_tags = [t.strip() for t in (row['tags'] or '').split(',') if t.strip()]
+                        if tag_to_remove not in existing_tags:
+                            continue
+                        remaining_tags = [t for t in existing_tags if t != tag_to_remove]
+                        updated_tags = ','.join(remaining_tags)
+                        cursor.execute(
+                            'UPDATE media_items SET tags = ?, last_updated = ? WHERE id = ?',
+                            [updated_tags, now, row['id']]
+                        )
+                        total_processed += 1
+
+                        info_hash = ''
+                        torrent_id = str(row['filled_by_torrent_id'] or '')
+                        if torrent_id.startswith('nzb:'):
+                            info_hash = torrent_id[4:]
+                        else:
+                            magnet = row['filled_by_magnet'] or ''
+                            m = _re_remove.search(r'urn:btih:([0-9a-fA-F]{40})', magnet, _re_remove.IGNORECASE)
+                            if m:
+                                info_hash = m.group(1).lower()
+                        if info_hash:
+                            pushed_hashes.append((info_hash, tag_to_remove, row['id']))
+                    conn.commit()
+
+                    if pushed_hashes:
+                        try:
+                            from usenet.climount_client import get_climount_client as _get_dc_remove
+                            _dc_remove = _get_dc_remove()
+                            if _dc_remove and _dc_remove.is_enabled():
+                                for _ih, _tag, _row_id in pushed_hashes:
+                                    if _dc_remove.remove_tags(_ih, _tag):
+                                        logging.info(f"[RemoveTags] Removed tag '{_tag}' from cli_mount for {_ih}")
+                                        cursor.execute(
+                                            'UPDATE media_items SET tags_pushed_at = ? WHERE id = ?',
+                                            [datetime.now(), _row_id]
+                                        )
+                                        conn.commit()
+                                    else:
+                                        logging.warning(f"[RemoveTags] cli_mount tag removal returned false for {_ih} (tag='{_tag}')")
+                            else:
+                                logging.warning('[RemoveTags] cli_mount client disabled/not configured — tag not removed remotely')
+                        except Exception as _push_err:
+                            logging.warning(f'[RemoveTags] cli_mount tag removal error: {_push_err}')
+                    else:
+                        logging.info('[RemoveTags] No pushable info_hash resolved for any updated row — nothing sent to cli_mount')
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e):
+                        logging.error("Database is locked during bulk remove_tags.")
+                        conn.rollback()
+                        return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                    else:
+                        error_count += 1
+                        conn.rollback()
+                        errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                except Exception as e:
+                    error_count += 1
+                    conn.rollback()
+                    errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                finally:
+                    conn.close()
             elif action == 'early_release':
                 logging.info("Entering 'early_release' block.")
                 # Handle early release action
@@ -913,9 +1189,10 @@ def bulk_queue_action():
 
                     placeholders_select = ','.join('?' * len(batch)) # 'batch' here is the current chunk of item IDs
                     query_select = f"""
-                        SELECT id, state, location_on_disk, original_path_for_symlink, 
-                               filled_by_file, title, type, episode_title, version, original_scraped_torrent_title
-                        FROM media_items 
+                        SELECT id, state, location_on_disk, original_path_for_symlink,
+                               filled_by_file, title, type, episode_title, version, original_scraped_torrent_title,
+                               filled_by_torrent_id, filled_by_magnet
+                        FROM media_items
                         WHERE id IN ({placeholders_select})
                     """
                     cursor_rescape_batch.execute(query_select, batch)
@@ -964,12 +1241,61 @@ def bulk_queue_action():
                             'current_original_scraped_title': item_db_data.get('original_scraped_torrent_title') # Store for rescrape_original_torrent_title
                         })
 
-                    except Exception as e_indiv_item_proc: 
+                    except Exception as e_indiv_item_proc:
                         error_count += 1
                         error_msg = f"Error during file/Plex processing for item {item_id} (for rescrape): {str(e_indiv_item_proc)}"
                         errors.append(error_msg)
                         logging.error(f"Rescrape: {error_msg}", exc_info=True)
-                
+
+                # --- Remove cli_mount entries for torrents/NZBs no longer needed ---
+                # Collect unique torrent_ids from items being rescrapped that are in active states
+                batch_id_set = set(int(x) for x in batch)
+                torrent_ids_to_check = {}  # torrent_id -> infohash (or '' for NZBs using torrent_id directly)
+                for item_db_data in items_in_batch_details_raw:
+                    if item_db_data.get('state') not in ('Collected', 'Upgrading', 'Checking'):
+                        continue
+                    tid = item_db_data.get('filled_by_torrent_id') or ''
+                    if not tid:
+                        continue
+                    if tid not in torrent_ids_to_check:
+                        magnet = item_db_data.get('filled_by_magnet') or ''
+                        import re as _re
+                        m = _re.search(r'urn:btih:([0-9a-fA-F]{40})', magnet, _re.IGNORECASE)
+                        torrent_ids_to_check[tid] = m.group(1).lower() if m else ''
+
+                if torrent_ids_to_check:
+                    try:
+                        from usenet import get_usenet_client as _get_dc
+                        _dc = _get_dc()
+                        if _dc and _dc.is_enabled():
+                            tid_placeholders = ','.join('?' * len(torrent_ids_to_check))
+                            # Items outside this batch that still actively use these torrent IDs
+                            survivors = cursor_rescape_batch.execute(
+                                f"""SELECT filled_by_torrent_id FROM media_items
+                                    WHERE filled_by_torrent_id IN ({tid_placeholders})
+                                    AND state IN ('Collected','Upgrading','Checking')
+                                    AND id NOT IN ({','.join('?' * len(batch_id_set))})""",
+                                list(torrent_ids_to_check.keys()) + list(batch_id_set)
+                            ).fetchall()
+                            still_used = {r[0] for r in survivors}
+                            for tid, infohash in torrent_ids_to_check.items():
+                                if tid in still_used:
+                                    logging.info(f"Rescrape: Skipping cli_mount removal for {tid!r} — still used by other items")
+                                    continue
+                                if tid.startswith('nzb:'):
+                                    nzb_hash = tid[4:]
+                                    if nzb_hash:
+                                        _dc.remove_nzb(nzb_hash)
+                                        logging.info(f"Rescrape: Removed NZB {nzb_hash!r} from cli_mount")
+                                elif infohash:
+                                    _dc.remove_nzb(infohash)
+                                    logging.info(f"Rescrape: Removed debrid torrent {infohash!r} (RD id={tid!r}) from cli_mount")
+                                else:
+                                    logging.warning(f"Rescrape: Cannot remove {tid!r} from cli_mount — no infohash in magnet link")
+                    except Exception as _cm_err:
+                        logging.warning(f"Rescrape: cli_mount removal failed: {_cm_err}")
+                # --- End cli_mount removal ---
+
                 if prepared_items_for_db_update: 
                     try:
                         item_ids_for_update_clause = [item['id'] for item in prepared_items_for_db_update]
@@ -998,13 +1324,22 @@ def bulk_queue_action():
                         # MOVED DEFINITIONS UP
                         final_db_update_query = f"""UPDATE media_items 
                                SET state = 'Wanted', 
+                                   blacklisted_date = NULL,
+                                   ghostlisted = 0,
+                                   sleep_cycles = 0,
+                                   wake_count = 0,
                                    location_on_disk = NULL, 
                                    original_path_for_symlink = NULL, 
                                    filled_by_file = NULL,
                                    filled_by_title = NULL,
                                    filled_by_magnet = NULL,
                                    filled_by_torrent_id = NULL,
-                                   collected_at = NULL,
+                                   debrid_folder_name = NULL,
+                                   scrape_results = NULL,
+                                   nzb_segment_id = NULL,
+                                   real_debrid_original_title = NULL,
+                                   location_basename = NULL,
+                                   {RESET_COLLECTION_STATE_SQL},
                                    rescrape_original_torrent_title = {rescrape_title_case_final_sql},
                                    original_scraped_torrent_title = NULL,
                                    upgrading_from = NULL,
@@ -1023,6 +1358,7 @@ def bulk_queue_action():
                             conn_rescape_batch.commit()
                             total_processed += rows_affected_by_update
                             logging.info(f"Rescrape: Successfully committed DB update for {rows_affected_by_update} items for batch {i//batch_size + 1}.")
+                            sync_queues_after_rescrape(item_ids_for_update_clause)
                         else:
                             conn_rescape_batch.rollback()
                             mismatch_error_msg = f"Rescrape DB Update: Expected to affect {len(item_ids_for_update_clause)} items, but DB reported {rows_affected_by_update}. Rolled back changes for this group of items in batch {i//batch_size + 1}."
@@ -1237,6 +1573,9 @@ def bulk_queue_action():
                 "delete": "deleted",
                 "move": f"moved to {target_queue} queue",
                 "change_version": f"changed to version {target_queue}",
+                "assign_tags": f"tagged with '{target_queue}'",
+                "update_tags": f"tags set to '{target_queue}'",
+                "remove_tags": f"tag '{target_queue}' removed",
                 "early_release": "marked as early release and moved to Wanted queue",
                 "rescrape": "deleted files/Plex entries for and moved to Wanted queue", # Added rescrape message
                 "force_priority": "marked for forced priority",
@@ -1264,6 +1603,258 @@ def bulk_queue_action():
             program_runner.resume_queue() 
         elif program_runner and not bulk_action_paused_queue:
             logging.info("Queue was not paused by this bulk operation or program_runner not available/suitable for resume.")
+
+def rescrape_single_item(item_id):
+    """Reset a single media_items row back to Wanted, cleaning up its file/Plex/
+    cli_mount references first. Single-item counterpart to bulk_queue_action's
+    'rescrape' action (see that function for the batched/CASE-SQL version) —
+    kept in sync with the same side effects and safety checks:
+      - Plex/symlink removal is only queued for Collected/Upgrading items
+      - cli_mount torrent/NZB removal is skipped if another item still uses
+        the same filled_by_torrent_id in an active state
+      - version's '*' (primary-version marker) is stripped on rescrape
+
+    Returns {'success': True} on success, or {'success': False, 'error': str}.
+    Does not raise for expected failure modes (item not found, db locked).
+    """
+    from database import get_db_connection
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """SELECT id, state, location_on_disk, original_path_for_symlink,
+                      filled_by_file, title, type, episode_title, version,
+                      original_scraped_torrent_title, filled_by_torrent_id, filled_by_magnet
+               FROM media_items WHERE id = ?""",
+            (item_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {'success': False, 'error': f'Item {item_id} not found'}
+        columns = [c[0] for c in cursor.description]
+        item_db_data = dict(zip(columns, row))
+
+        file_management = get_setting('File Management', 'file_collection_management', 'Plex')
+
+        if item_db_data['state'] in ('Collected', 'Upgrading'):
+            queue_plex_removal_for_item(item_db_data, file_management, item_id)
+            if item_db_data.get('location_on_disk') or item_db_data.get('original_path_for_symlink'):
+                sleep(0.5)
+
+        current_version_val = item_db_data.get('version')
+        cleaned_version_val = current_version_val
+        if isinstance(current_version_val, str) and '*' in current_version_val:
+            cleaned_version_val = current_version_val.replace('*', '')
+
+        # cli_mount torrent/NZB removal — skip if another item still actively uses it
+        if item_db_data['state'] in ('Collected', 'Upgrading', 'Checking'):
+            tid = item_db_data.get('filled_by_torrent_id') or ''
+            if tid:
+                try:
+                    from usenet import get_usenet_client as _get_dc
+                    _dc = _get_dc()
+                    if _dc and _dc.is_enabled():
+                        still_used = cursor.execute(
+                            """SELECT 1 FROM media_items
+                               WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking')
+                               AND id != ?""",
+                            (tid, item_id)
+                        ).fetchone()
+                        if still_used:
+                            logging.info(f"Rescrape: Skipping cli_mount removal for {tid!r} — still used by another item")
+                        elif tid.startswith('nzb:'):
+                            nzb_hash = tid[4:]
+                            if nzb_hash:
+                                _dc.remove_nzb(nzb_hash)
+                                logging.info(f"Rescrape: Removed NZB {nzb_hash!r} from cli_mount")
+                        else:
+                            magnet = item_db_data.get('filled_by_magnet') or ''
+                            import re as _re
+                            m = _re.search(r'urn:btih:([0-9a-fA-F]{40})', magnet, _re.IGNORECASE)
+                            infohash = m.group(1).lower() if m else ''
+                            if infohash:
+                                _dc.remove_nzb(infohash)
+                                logging.info(f"Rescrape: Removed debrid torrent {infohash!r} (RD id={tid!r}) from cli_mount")
+                            else:
+                                logging.warning(f"Rescrape: Cannot remove {tid!r} from cli_mount — no infohash in magnet link")
+                except Exception as cm_err:
+                    logging.warning(f"Rescrape: cli_mount removal failed for item {item_id}: {cm_err}")
+
+        cursor.execute(
+            f"""UPDATE media_items
+               SET state = 'Wanted',
+                   location_on_disk = NULL,
+                   original_path_for_symlink = NULL,
+                   filled_by_file = NULL,
+                   filled_by_title = NULL,
+                   filled_by_magnet = NULL,
+                   filled_by_torrent_id = NULL,
+                   debrid_folder_name = NULL,
+                   scrape_results = NULL,
+                   nzb_segment_id = NULL,
+                   real_debrid_original_title = NULL,
+                   location_basename = NULL,
+                   {RESET_COLLECTION_STATE_SQL},
+                   rescrape_original_torrent_title = ?,
+                   original_scraped_torrent_title = NULL,
+                   upgrading_from = NULL,
+                   upgrading = NULL,
+                   version = ?,
+                   fall_back_to_single_scraper = 0,
+                   last_updated = ?
+               WHERE id = ?""",
+            (item_db_data.get('original_scraped_torrent_title'), cleaned_version_val, datetime.now(), item_id)
+        )
+
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return {'success': False, 'error': f'Expected to update 1 row for item {item_id}, DB reported {cursor.rowcount}'}
+
+        conn.commit()
+        logging.info(f"Rescrape: Successfully reset item {item_id} to Wanted.")
+        sync_queues_after_rescrape([item_id])
+        return {'success': True}
+
+    except sqlite3.OperationalError as e:
+        if conn:
+            conn.rollback()
+        if "database is locked" in str(e):
+            logging.error(f"Database is locked during rescrape of item {item_id}.")
+            return {'success': False, 'error': 'database is locked', 'database_locked': True}
+        logging.error(f"Operational error rescraping item {item_id}: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logging.error(f"Error rescraping item {item_id}: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+def _find_rescrape_candidates(ms_item_id, item_type, season_number=None, episode_number=None, filename=None):
+    """Resolve an external client's (ms_item_id, type[, season/episode], filename)
+    tuple down to matching media_items rows. ms_item_id alone cannot uniquely
+    identify a single version/file (see column comment in schema_management.py —
+    it's shared across every version of a movie, and for episodes it's the
+    *show's* ratingKey/ItemId, not the episode's), so this narrows by
+    ms_item_id + type [+ season/episode for episodes], then disambiguates by
+    filename (matched against location_basename, falling back to filled_by_file)
+    when more than one candidate remains.
+
+    Returns a list of dicts (each: id, title, version, state, filename/basename)
+    — empty if no match, one item if unambiguous, multiple if the caller needs
+    to prompt the user (e.g. multiple versions with no filename to disambiguate,
+    or filename didn't narrow it down).
+    """
+    from database import get_db_connection
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        query = """SELECT id, title, type, version, state, season_number, episode_number,
+                          location_basename, filled_by_file
+                   FROM media_items
+                   WHERE ms_item_id = ? AND type = ?"""
+        params = [ms_item_id, item_type]
+        if item_type == 'episode':
+            query += " AND season_number = ? AND episode_number = ?"
+            params += [season_number, episode_number]
+        cursor.execute(query, params)
+        columns = [c[0] for c in cursor.description]
+        rows = [dict(zip(columns, r)) for r in cursor.fetchall()]
+
+        if len(rows) <= 1 or not filename:
+            return rows
+
+        wanted_basename = os.path.basename(filename)
+        by_location = [r for r in rows if r.get('location_basename') == wanted_basename]
+        if by_location:
+            return by_location
+
+        by_filled = [r for r in rows if r.get('filled_by_file') and os.path.basename(r['filled_by_file']) == wanted_basename]
+        if by_filled:
+            return by_filled
+
+        return rows
+    finally:
+        conn.close()
+
+
+@database_bp.route('/rescrape_item', methods=['POST'])
+@user_required
+def rescrape_item():
+    """Move a single Collected/Upgrading item back to Wanted for re-request,
+    for use by external clients (e.g. the Plezy companion app) that only know
+    a media-server item id (Plex ratingKey / Jellyfin item id) and, optionally,
+    the on-disk filename of the specific version they want re-requested.
+
+    Request JSON:
+      item_id: int            — optional; if given, skips lookup and rescrapes
+                                 this media_items row directly (e.g. the row the
+                                 client already resolved via a version picker).
+      ms_item_id: str          — Plex ratingKey or Jellyfin item id.
+      type: 'movie'|'episode'
+      season_number, episode_number: int — required when type == 'episode'.
+      filename: str            — basename of the specific file/version to
+                                  disambiguate when ms_item_id matches more
+                                  than one version row.
+
+    Either item_id, or (ms_item_id + type [+ season/episode]), is required.
+
+    Response:
+      200 {"success": true} on success.
+      200 {"success": false, "error": "ambiguous", "candidates": [...]} when
+          more than one version matches and filename didn't disambiguate —
+          the client should prompt the user and retry with item_id set.
+      404 {"success": false, "error": "..."} when nothing matches.
+      400 {"success": false, "error": "..."} on a malformed request.
+    """
+    data = request.get_json(silent=True) or {}
+
+    item_id = data.get('item_id')
+    if item_id:
+        try:
+            item_id = int(item_id)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'item_id must be an integer'}), 400
+        result = rescrape_single_item(item_id)
+        status = 200 if result.get('success') else (503 if result.get('database_locked') else 400)
+        return jsonify(result), status
+
+    ms_item_id = data.get('ms_item_id')
+    item_type = data.get('type')
+    if not ms_item_id or item_type not in ('movie', 'episode'):
+        return jsonify({'success': False, 'error': 'ms_item_id and type (movie|episode) are required when item_id is not provided'}), 400
+
+    season_number = data.get('season_number')
+    episode_number = data.get('episode_number')
+    if item_type == 'episode' and (season_number is None or episode_number is None):
+        return jsonify({'success': False, 'error': 'season_number and episode_number are required when type is episode'}), 400
+
+    filename = data.get('filename')
+
+    candidates = _find_rescrape_candidates(ms_item_id, item_type, season_number, episode_number, filename)
+
+    if not candidates:
+        return jsonify({'success': False, 'error': 'No matching item found for the given ms_item_id'}), 404
+
+    if len(candidates) > 1:
+        return jsonify({
+            'success': False,
+            'error': 'ambiguous',
+            'message': 'Multiple versions match — retry with item_id set to the chosen candidate',
+            'candidates': candidates,
+        }), 200
+
+    result = rescrape_single_item(candidates[0]['id'])
+    status = 200 if result.get('success') else (503 if result.get('database_locked') else 400)
+    return jsonify(result), status
+
 
 @database_bp.route('/delete_item', methods=['POST'])
 @admin_required
@@ -1319,7 +1910,6 @@ def delete_item():
                             logging.warning(f"Delete item: Direct Plex removal failed for {item['title']}. Trying scan & empty trash...")
                             try:
                                 # Determine section type based on item type
-                                import os
                                 section_type = 'movie' if item.get('type') == 'movie' else 'show'
                                 scan_paths = [os.path.dirname(path_to_remove_from_plex)] if path_to_remove_from_plex else None
                                 scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
@@ -1390,9 +1980,8 @@ def delete_item():
                             logging.warning(f"Delete item: Direct Plex removal failed for {item['title']}. Trying scan & empty trash...")
                             try:
                                 # Determine section type based on item type
-                                import os
                                 section_type = 'movie' if item.get('type') == 'movie' else 'show'
-                                scan_paths = [os.path.dirname(path_to_remove_from_plex)] if path_to_remove_from_plex else None
+                                scan_paths = [os.path.dirname(path_for_plex_api_call)] if path_for_plex_api_call else None
                                 scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
                                 logging.info(f"Delete item: Triggered library scan and trash empty for {item['title']} (section_type={section_type}).")
                             except Exception as scan_err:
@@ -1401,6 +1990,45 @@ def delete_item():
                         logging.error(f"Delete item: Error during immediate Plex removal for {item['title']} ({path_for_plex_api_call}): {str(e)}.")
                 else:
                     logging.warning(f"Delete item: No suitable path found for Plex removal for item {item_id} ({item['title']}) (Symlinked/Local mode). Skipping Plex removal.")
+
+        # --- cli_mount removal ---
+        # Remove the entry from cli_mount (and RD) if no other live items share the same torrent.
+        # Must happen BEFORE DB deletion so we can still check siblings.
+        _torrent_id = item.get('filled_by_torrent_id') or ''
+        _magnet = item.get('filled_by_magnet') or ''
+        if _torrent_id and item.get('state') in ('Collected', 'Upgrading', 'Checking'):
+            try:
+                import re as _re_dh
+                from database import get_db_connection as _gdb_del
+                _conn_del = _gdb_del()
+                try:
+                    _sibs = _conn_del.execute(
+                        "SELECT COUNT(*) FROM media_items "
+                        "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                        (_torrent_id, item_id)
+                    ).fetchone()[0]
+                finally:
+                    _conn_del.close()
+                if _sibs == 0:
+                    from usenet import get_usenet_client as _get_dc_del
+                    _dc_del = _get_dc_del()
+                    if _dc_del and _dc_del.is_enabled():
+                        if _torrent_id.startswith('nzb:'):
+                            _nzb_hash = _torrent_id[4:]
+                            if _nzb_hash:
+                                _dc_del.remove_nzb(_nzb_hash)
+                                logging.info(f"Delete item: Removed NZB {_nzb_hash!r} from cli_mount for item {item_id}")
+                        else:
+                            _m = _re_dh.search(r'urn:btih:([0-9a-fA-F]{40})', _magnet, _re_dh.IGNORECASE)
+                            _infohash = _m.group(1).lower() if _m else ''
+                            if _infohash:
+                                _dc_del.remove_nzb(_infohash)
+                                logging.info(f"Delete item: Removed debrid torrent {_infohash!r} from cli_mount for item {item_id}")
+                else:
+                    logging.info(f"Delete item: Skipping cli_mount removal for {_torrent_id!r} — {_sibs} sibling(s) still active")
+            except Exception as _cm_del_err:
+                logging.warning(f"Delete item: cli_mount removal failed for item {item_id}: {_cm_del_err}")
+        # --- End cli_mount removal ---
 
         # Handle database operation based on blacklist flag
         if blacklist:
@@ -1504,7 +2132,7 @@ def reverse_parser():
 
         # Parse versions using parse_filename_for_version function
         for item in items:
-            parsed_version = parse_filename_for_version(item['filled_by_file'])
+            parsed_version = parse_filename_for_version(item['filled_by_file'], is_nzb=str(item.get('filled_by_torrent_id') or '').startswith('nzb:'))
             item['parsed_version'] = parsed_version
             logging.debug(f"Filename: {item['filled_by_file']}, Parsed Version: {parsed_version}")
 
@@ -1546,7 +2174,7 @@ def apply_parsed_versions():
 
     for item in items_to_update:
         if item['filled_by_file']:
-            parsed_version = parse_filename_for_version(item['filled_by_file'])
+            parsed_version = parse_filename_for_version(item['filled_by_file'], is_nzb=str(item.get('filled_by_torrent_id') or '').startswith('nzb:'))
             
             current_version = item.get('version') # Use .get() for safety
             if parsed_version != current_version:
@@ -1782,7 +2410,7 @@ def test_phalanx_hash():
         hash_value = request.form.get('hash', '').strip()
         if not hash_value:
             return jsonify({'error': 'No hash provided'}), 400
-            
+
         # Initialize cache manager
         phalanx_manager = PhalanxDBClassManager()
         

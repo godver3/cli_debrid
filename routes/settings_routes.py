@@ -74,6 +74,72 @@ def migrate_scraper_priorities():
     except Exception as e:
         logging.error(f"Error during scraper priority migration: {e}", exc_info=True)
 
+def migrate_clean_version_filter_keys():
+    """
+    Remove spurious scalar filter keys that were written to version configs by
+    older code. These keys are: 'preferred-filter-out-term',
+    'preferred-filter-out-weight', 'preferred-filter-in-term',
+    'preferred-filter-in-weight'. The correct data lives in the
+    'preferred_filter_out' / 'preferred_filter_in' list fields.
+    """
+    SPURIOUS_KEYS = {
+        'preferred-filter-out-term',
+        'preferred-filter-out-weight',
+        'preferred-filter-in-term',
+        'preferred-filter-in-weight',
+    }
+    try:
+        config = load_config()
+        versions = config.get('Scraping', {}).get('versions', {})
+        changed = False
+        for version_id, version_config in versions.items():
+            if not isinstance(version_config, dict):
+                continue
+            for k in SPURIOUS_KEYS & version_config.keys():
+                logging.info(f"Removing spurious key '{k}' from version '{version_id}'")
+                del version_config[k]
+                changed = True
+        if changed:
+            save_config(config)
+            logging.info("migrate_clean_version_filter_keys: cleaned and saved config")
+    except Exception as e:
+        logging.error(f"Error during version filter key cleanup migration: {e}", exc_info=True)
+
+def migrate_clean_stale_scraper_keys_from_versions():
+    """
+    Remove stale per-scraper score keys from version configs that belong to
+    scrapers that have been disabled or fully removed. These keys look like
+    'TorrentioScraper_1', 'Prowlarr_2', etc. and are written by the scraper
+    priority UI. Valid version config keys are those defined in the version
+    schema plus 'display_name' and currently active scraper IDs.
+    """
+    try:
+        config = load_config()
+        active_scraper_ids = {
+            k for k, v in config.get('Scrapers', {}).items()
+            if isinstance(v, dict) and v.get('enabled', False)
+        }
+        valid_keys = (
+            set(SETTINGS_SCHEMA.get('Scraping', {}).get('versions', {}).get('schema', {}).keys())
+            | {'display_name'}
+            | active_scraper_ids
+        )
+        versions = config.get('Scraping', {}).get('versions', {})
+        changed = False
+        for version_id, version_config in versions.items():
+            if not isinstance(version_config, dict):
+                continue
+            stale = [k for k in version_config if k not in valid_keys]
+            for k in stale:
+                logging.info(f"Removing stale key '{k}' from version '{version_id}'")
+                del version_config[k]
+                changed = True
+        if changed:
+            save_config(config)
+            logging.info("migrate_clean_stale_scraper_keys_from_versions: cleaned and saved config")
+    except Exception as e:
+        logging.error(f"Error during stale scraper key cleanup migration: {e}", exc_info=True)
+
 # Helper to reload components and restart if program was running
 def _reload_components_after_settings_change(change_type='full'):
     """
@@ -785,16 +851,25 @@ HARDCODED_DEFAULT_VERSIONS = {
 
 @settings_bp.route('/content-sources/content')
 def content_sources_content():
+    import json as _json
     config = load_config()
     source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
 
-    # Determine which template to use based on theme (from cookie or default to tangerine)
-    theme = request.cookies.get('selectedTheme', 'tangerine')
-    template_name = 'settings_tabs/content_sources_tangerine.html' if theme == 'tangerine' else 'settings_tabs/content_sources.html'
+    # Normalise plex_collection.libraries — may have been saved as a JSON string by older code
+    for src_cfg in config.get('Content Sources', {}).values():
+        if isinstance(src_cfg, dict):
+            pc = src_cfg.get('plex_collection')
+            if isinstance(pc, dict):
+                libs = pc.get('libraries', [])
+                if isinstance(libs, str):
+                    try:
+                        pc['libraries'] = _json.loads(libs)
+                    except Exception:
+                        pc['libraries'] = []
+
+    template_name = 'settings_tabs/content_sources.html'
 
     # Debug logging
-    current_app.logger.info(f"Content Sources route - All cookies: {dict(request.cookies)}")
-    current_app.logger.info(f"Content Sources route - Theme cookie: {theme}, Template: {template_name}")
 
     return render_template(template_name,
                           settings=config,
@@ -849,6 +924,50 @@ def get_trakt_friends():
     except Exception as e:
         logging.error(f"Error listing Trakt friends: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/content-sources/scrob-lists')
+def get_scrob_lists():
+    """Get the user's Scrob lists (id + name) for the multi-select picker."""
+    try:
+        from content_checkers.scrob import get_scrob_config, _scrob_get
+
+        if not get_scrob_config():
+            return jsonify({'success': False, 'error': 'Scrob URL/API key not configured in Additional Settings → Scrob'}), 400
+
+        data = _scrob_get('/lists')
+        if data is None:
+            return jsonify({'success': False, 'error': 'Failed to reach Scrob. Check the URL/API key in Additional Settings → Scrob.'}), 502
+
+        lists = [{'id': lst['id'], 'name': lst.get('name', f"List {lst['id']}"), 'item_count': lst.get('item_count', 0)}
+                 for lst in data.get('lists', [])]
+        return jsonify({'success': True, 'lists': lists})
+    except Exception as e:
+        logging.error(f"Error fetching Scrob lists: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/content-sources/overseerr-users')
+def get_overseerr_users():
+    from utilities.settings import get_setting, get_all_settings
+    source_id = request.args.get('source_id', '')
+    try:
+        all_settings = get_all_settings()
+        source_data = all_settings.get('Content Sources', {}).get(source_id, {})
+        url = source_data.get('url', '').rstrip('/')
+        api_key = source_data.get('api_key', '')
+        if not url or not api_key:
+            return jsonify({'success': False, 'error': 'URL or API key not configured', 'users': []})
+        import requests as req
+        resp = req.get(
+            f"{url}/api/v1/user?take=100&skip=0",
+            headers={'X-Api-Key': api_key},
+            timeout=10
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        users = data.get('results', [])
+        return jsonify({'success': True, 'users': users})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e), 'users': []})
 
 @settings_bp.route('/content_sources/add', methods=['POST'])
 @admin_required
@@ -954,12 +1073,9 @@ def scrapers_content():
         scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())
         scraper_settings = {scraper: list(SETTINGS_SCHEMA["Scrapers"]["schema"][scraper].keys()) for scraper in SETTINGS_SCHEMA["Scrapers"]["schema"]}
 
-        # Determine which template to use based on theme (from cookie or default to tangerine)
-        theme = request.cookies.get('selectedTheme', 'tangerine')
-        template_name = 'settings_tabs/scrapers_tangerine.html' if theme == 'tangerine' else 'settings_tabs/scrapers.html'
+        template_name = 'settings_tabs/scrapers.html'
 
         # Debug logging
-        current_app.logger.info(f"Scrapers route - Theme cookie: {theme}, Template: {template_name}")
 
         return render_template(template_name, settings=settings, scraper_types=scraper_types, scraper_settings=scraper_settings)
     except Exception as e:
@@ -970,11 +1086,8 @@ def get_scrapers():
     config = load_config()
     scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())
 
-    # Determine which template to use based on theme (from cookie or default to tangerine)
-    theme = request.cookies.get('selectedTheme', 'tangerine')
-    template_name = 'settings_tabs/scrapers_tangerine.html' if theme == 'tangerine' else 'settings_tabs/scrapers.html'
+    template_name = 'settings_tabs/scrapers.html'
 
-    current_app.logger.info(f"Scrapers GET route - Theme cookie: {theme}, Template: {template_name}")
 
     return render_template(template_name, settings=config, scraper_types=scraper_types)
 
@@ -1181,6 +1294,7 @@ def ensure_notification_defaults(notification_config):
         'scraping': False,
         'adding': False,
         'checking': False,
+        'downloading': False,
         'sleeping': False,
         'unreleased': False,
         'blacklisted': False,
@@ -1229,13 +1343,12 @@ def notifications_content():
             key=lambda x: (x[1]['type'], int(x[0].split('_')[-1]))
         )
 
-        # Determine which template to use based on theme
-        theme = request.cookies.get('selectedTheme', 'tangerine')
-        template_name = 'settings_tabs/notifications_tangerine.html' if theme == 'tangerine' else 'settings_tabs/notifications.html'
+        template_name = 'settings_tabs/notifications.html'
 
         html_content = render_template(
             template_name,
             notification_settings=dict(sorted_notifications),
+            settings=config,
             settings_schema=SETTINGS_SCHEMA
         )
         
@@ -1311,9 +1424,12 @@ def index():
         configured_scrapers = {}
         for scraper, scraper_config in config['Scrapers'].items():
             scraper_type = scraper.split('_')[0]  # Assuming format like 'Zilean_1'
+            # For custom-named scrapers (e.g. Newznab with user-given name), check the type field
+            if scraper_type not in scraper_settings and isinstance(scraper_config, dict):
+                scraper_type = scraper_config.get('type', scraper_type)
             if scraper_type in scraper_settings:
                 configured_scrapers[scraper] = scraper_config
-        
+
         config['Scrapers'] = configured_scrapers
 
         # Ensure 'UI Settings' exists in the config
@@ -1369,13 +1485,9 @@ def index():
         # Get environment mode from environment variable
         environment_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
 
-        # Determine which template to use based on theme (from cookie or default to tangerine)
-        theme = request.cookies.get('selectedTheme', 'tangerine')
-        template_name = 'settings_tangerine.html' if theme == 'tangerine' else 'settings_base.html'
+        template_name = 'settings.html'
 
         # Debug logging
-        current_app.logger.info(f"Settings route - All cookies: {dict(request.cookies)}")
-        current_app.logger.info(f"Settings route - Theme cookie: {theme}, Template: {template_name}")
 
         # Create response with template
         response = current_app.make_response(render_template(template_name,
@@ -1438,7 +1550,7 @@ def api_program_settings():
 
         # Merge defaults for each section
         program_settings = {}
-        sections_to_include = ['Scrapers', 'Content Sources', 'Debug', 'Plex', 'Metadata Battery', 'Debrid Provider']
+        sections_to_include = ['Scrapers', 'Content Sources', 'Debug', 'Plex', 'Metadata Battery', 'Debrid Provider', 'Usenet Provider']
         
         for section in sections_to_include:
             if section in SETTINGS_SCHEMA:
@@ -1464,9 +1576,21 @@ def get_scraping_settings():
 @user_required
 def get_full_config():
     """Get full configuration for modal/API access"""
+    import math
+
+    def sanitize(obj):
+        """Recursively replace non-JSON-serializable floats with None."""
+        if isinstance(obj, dict):
+            return {k: sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [sanitize(v) for v in obj]
+        if isinstance(obj, float) and (math.isinf(obj) or math.isnan(obj)):
+            return None
+        return obj
+
     try:
         config = load_config()
-        return jsonify(config)
+        return jsonify(sanitize(config))
     except Exception as e:
         logging.error(f"Error loading config: {str(e)}", exc_info=True)
         return jsonify({"error": "Failed to load configuration"}), 500
@@ -1484,12 +1608,54 @@ def update_settings():
 
         # Check for Content Sources changes
         if 'Content Sources' in new_settings:
-            requires_restart = True
-            restart_reasons.append('Content Sources')
+            # Poster-only fields are read live on every sync — no restart needed
+            _POSTER_ONLY_KEYS = {'poster_design', 'poster_accent', 'poster_eyebrow', 'poster_icon',
+                                 'collection_name_movies', 'collection_name_shows'}
+            _old_sources = config.get('Content Sources', {})
+            _new_sources = new_settings['Content Sources']
+            _needs_restart = False
+            for src_id, new_src in _new_sources.items():
+                old_src = _old_sources.get(src_id, {})
+                if not isinstance(new_src, dict) or not isinstance(old_src, dict):
+                    _needs_restart = True
+                    break
+                # Check plex_collection sub-dict
+                old_pc = old_src.get('plex_collection', {}) if isinstance(old_src, dict) else {}
+                new_pc = new_src.get('plex_collection', {}) if isinstance(new_src, dict) else {}
+                # Check non-plex_collection keys
+                old_rest = {k: v for k, v in old_src.items() if k != 'plex_collection'}
+                new_rest = {k: v for k, v in new_src.items() if k != 'plex_collection'}
+                if old_rest != new_rest:
+                    _needs_restart = True
+                    break
+                # Check plex_collection keys — only poster-only keys changed?
+                all_pc_keys = set(old_pc.keys()) | set(new_pc.keys())
+                non_poster_changed = any(
+                    k not in _POSTER_ONLY_KEYS and old_pc.get(k) != new_pc.get(k)
+                    for k in all_pc_keys
+                )
+                if non_poster_changed:
+                    _needs_restart = True
+                    break
+            # Also restart if sources were added or removed
+            if set(_old_sources.keys()) != set(_new_sources.keys()):
+                _needs_restart = True
+            if _needs_restart:
+                requires_restart = True
+                restart_reasons.append('Content Sources')
+            else:
+                logging.info("Content Sources: only poster settings changed — skipping restart")
 
         # Check for Debrid Provider changes
         if 'Debrid Provider' in new_settings:
             debrid_settings = new_settings['Debrid Provider']
+            # Parse fallback_providers JSON string if sent as string from hidden input
+            import json as _json
+            if 'fallback_providers' in debrid_settings and isinstance(debrid_settings['fallback_providers'], str):
+                try:
+                    debrid_settings['fallback_providers'] = _json.loads(debrid_settings['fallback_providers'])
+                except Exception:
+                    debrid_settings['fallback_providers'] = []
             # Check if actual values changed, not just presence
             current_debrid = config.get('Debrid Provider', {})
             for key, new_value in debrid_settings.items():
@@ -1504,7 +1670,7 @@ def update_settings():
 
         # Detect if ONLY UI settings are being changed (no restart/reload needed)
         # Compare new settings with current config to find what actually changed
-        ui_only_categories = {'Library Manager', 'Discover Settings'}
+        ui_only_categories = {'Library Manager', 'Discover Settings', 'Overlay Settings', 'AI Assistant'}
         actually_changed_categories = set()
 
         for category, values in new_settings.items():
@@ -1707,11 +1873,32 @@ def update_settings():
                      else:
                         update_nested_dict(current[key], value)
                 else:
+                    # Convert tags comma-string back to list when saving Content Sources
+                    if parent_key == 'Content Sources' and key == 'tags' and isinstance(value, str):
+                        value = [t.strip() for t in value.split(',') if t.strip()] if value.strip() else []
                     # Update or add the value
                     current[key] = value
 
+        # Preserve collections dict — managed separately, not via form inputs
+        _existing_colls = config.get('Plex Smart Collections', {}).get('collections', {})
+        if not isinstance(_existing_colls, dict):
+            _existing_colls = {}
+
         # Update the main config object with the new settings
         update_nested_dict(config, new_settings)
+
+        # Clearing either Trakt credential disables the integration. Remove
+        # OAuth state from both config.json and the legacy .pytrakt.json so a
+        # stale refresh token cannot keep running after the fields are blank.
+        from utilities.trakt_auth_cleanup import clear_stale_trakt_auth
+        trakt_config_changed, trakt_legacy_changed = clear_stale_trakt_auth(config)
+        if trakt_config_changed or trakt_legacy_changed:
+            logging.info("Cleared stale Trakt OAuth state because Trakt credentials are incomplete")
+
+        # Restore collections (prevent main save from overwriting with empty dict)
+        if 'Plex Smart Collections' in config:
+            if not isinstance(config['Plex Smart Collections'].get('collections'), dict) or not config['Plex Smart Collections'].get('collections'):
+                config['Plex Smart Collections']['collections'] = _existing_colls
 
         # --- Simplified Staleness Update (if needed, relies on update_nested_dict) ---
         # If 'Staleness Threshold' exists in new_settings, update_nested_dict should handle it.
@@ -1749,6 +1936,16 @@ def update_settings():
         save_config(config)
         logging.info("Main configuration saved successfully.")
 
+        # Clear smart collection poster hash if those settings changed
+        if 'Plex Smart Collections' in new_settings:
+            try:
+                from database.plex_smart_collections import _load_state, _save_state, _migrate_state
+                _sc_state = _migrate_state(_load_state())
+                _sc_state.setdefault('shared', {})['poster_hash'] = ''
+                _save_state(_sc_state)
+            except Exception:
+                pass
+
         # For no changes or UI-only changes, skip cache clearing and reinitialization
         if skip_restart:
             logging.info("Skipping cache clearing and component reinitialization.")
@@ -1762,7 +1959,9 @@ def update_settings():
         # Clear content source cache files
         try:
             from routes.debug_routes import get_cache_files
-            cache_files = get_cache_files()
+            cache_data = get_cache_files()
+            # get_cache_files now returns dict {'content_source': [(filename, label),...], 'other': [...]}
+            cache_files = cache_data.get('content_source', []) if isinstance(cache_data, dict) else cache_data
             if cache_files:
                 db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
                 for filename, _ in cache_files:  # Unpack tuple (filename, display_label)
@@ -1804,6 +2003,10 @@ def update_settings():
                     reset_provider()
                     logging.info("Debrid provider reset complete")
 
+                    from usenet import reset_usenet_client
+                    reset_usenet_client()
+                    logging.info("Usenet provider client reset complete")
+
                     from queues.queue_manager import QueueManager
                     QueueManager().reinitialize()
                     logging.info("QueueManager reinitialized")
@@ -1812,15 +2015,31 @@ def update_settings():
                     if was_program_running:
                         try:
                             # Stop the program first
-                            from routes.program_operation_routes import stop_program, _execute_start_program
+                            from routes.program_operation_routes import stop_program, _execute_start_program, _program_op_lock
                             logging.info("Stopping program before restart...")
                             stop_result = stop_program()
                             if stop_result.get("status") != "success":
                                 logging.warning(f"Stop returned non-success: {stop_result.get('message', 'Unknown')}")
 
-                            # Wait a moment for clean shutdown
+                            # Wait for stop_program to fully release _program_op_lock before
+                            # calling _execute_start_program. stop_program holds the lock during
+                            # scheduler.shutdown(wait=True), which can block for many seconds if
+                            # a Trakt job is mid-sleep. A fixed 2s sleep was too short; poll instead.
                             import time
-                            time.sleep(2)
+                            _lock_wait = 0.0
+                            _poll = 0.5
+                            _max_lock_wait = 60.0
+                            while _program_op_lock.locked() and _lock_wait < _max_lock_wait:
+                                time.sleep(_poll)
+                                _lock_wait += _poll
+                            if _program_op_lock.locked():
+                                logging.error(
+                                    f"_program_op_lock still held after {_max_lock_wait:.0f}s — "
+                                    "restart aborted; please start the program manually."
+                                )
+                                return
+                            if _lock_wait > 1.0:
+                                logging.info(f"Waited {_lock_wait:.1f}s for program_op_lock to free before restart")
 
                             # Start the program
                             logging.info("Starting program after settings change...")
@@ -1993,6 +2212,7 @@ def add_version():
         'similarity_threshold': 0.85,
         'similarity_threshold_anime': 0.80,
         'year_match_weight': 3,
+        'foreign_language_penalty': 30,
         'wake_count': None,
         'fallback_version': 'None',
         'anime_filter_mode': 'None',
@@ -2001,7 +2221,9 @@ def add_version():
         'filter_in': [],
         'filter_out': [],
         'require_physical_release': False,
-        'language_code': 'en'
+        'language_code': 'en',
+        'enable_spanish_episode_parsing': False,
+        'use_alternative_titles': False
     }
 
     save_config(config)
@@ -2157,6 +2379,157 @@ def import_default_versions():
         logging.error(f"Unexpected error importing default versions: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': f'Unexpected error: {str(e)}'}), 500
 
+@settings_bp.route('/versions/export', methods=['GET'])
+@admin_required
+def export_versions():
+    """Export one or all versions as a downloadable JSON file."""
+    try:
+        version_name = request.args.get('version')  # None = export all
+        config = load_config()
+        all_versions = config.get('Scraping', {}).get('versions', {})
+
+        if version_name:
+            if version_name not in all_versions:
+                return jsonify({'success': False, 'error': f"Version '{version_name}' not found"}), 404
+            export_data = {'versions': {version_name: all_versions[version_name]}}
+            filename = f"version_{version_name.replace(' ', '_')}.json"
+        else:
+            export_data = {'versions': all_versions}
+            filename = 'all_versions.json'
+
+        # json.dumps handles all native Python types; convert float inf to null for JSON compatibility
+        def _sanitize(obj):
+            if isinstance(obj, float):
+                import math
+                return None if math.isinf(obj) or math.isnan(obj) else obj
+            if isinstance(obj, dict):
+                return {k: _sanitize(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_sanitize(v) for v in obj]
+            return obj
+
+        safe_data = _sanitize(export_data)
+        json_str = json.dumps(safe_data, indent=2, ensure_ascii=False)
+
+        response = make_response(json_str)
+        response.headers['Content-Type'] = 'application/json'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+    except Exception as e:
+        logging.error(f"Error exporting versions: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/versions/import', methods=['POST'])
+@admin_required
+def import_versions():
+    """Import versions from an uploaded JSON file.
+
+    conflict_action (form field): 'skip' | 'rename' | 'overwrite'  (default: 'rename')
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+
+        f = request.files['file']
+        if not f.filename.endswith('.json'):
+            return jsonify({'success': False, 'error': 'File must be a .json file'}), 400
+
+        conflict_action = request.form.get('conflict_action', 'rename')
+        if conflict_action not in ('skip', 'rename', 'overwrite'):
+            conflict_action = 'rename'
+
+        try:
+            raw = json.loads(f.read().decode('utf-8'))
+        except (json.JSONDecodeError, UnicodeDecodeError) as je:
+            return jsonify({'success': False, 'error': f'Invalid JSON: {je}'}), 400
+
+        if not isinstance(raw, dict) or 'versions' not in raw:
+            return jsonify({'success': False, 'error': 'Invalid format — expected {"versions": {...}}'}), 400
+
+        incoming = raw['versions']
+        if not isinstance(incoming, dict) or not incoming:
+            return jsonify({'success': False, 'error': 'No versions found in file'}), 400
+
+        config = load_config()
+        if 'Scraping' not in config:
+            config['Scraping'] = {}
+        if 'versions' not in config['Scraping']:
+            config['Scraping']['versions'] = {}
+
+        existing = config['Scraping']['versions']
+
+        # Backfill missing fields using schema defaults
+        from utilities.settings_schema import SETTINGS_SCHEMA
+        version_schema = SETTINGS_SCHEMA.get('Scraping', {}).get('versions', {}).get('schema', {})
+
+        def _apply_defaults(version_cfg):
+            result = {}
+            for field, meta in version_schema.items():
+                if field in version_cfg:
+                    result[field] = version_cfg[field]
+                else:
+                    result[field] = meta.get('default')
+            # Keep any extra fields not in schema
+            for k, v in version_cfg.items():
+                if k not in result:
+                    result[k] = v
+            return result
+
+        imported, skipped, renamed, overwritten = [], [], [], []
+
+        for name, vcfg in incoming.items():
+            if not isinstance(vcfg, dict):
+                skipped.append(name)
+                continue
+
+            filled = _apply_defaults(vcfg)
+
+            if name not in existing:
+                existing[name] = filled
+                imported.append(name)
+            elif conflict_action == 'skip':
+                skipped.append(name)
+            elif conflict_action == 'overwrite':
+                existing[name] = filled
+                overwritten.append(name)
+            else:  # rename
+                base = name
+                counter = 1
+                new_name = f"{base} (imported)"
+                while new_name in existing:
+                    new_name = f"{base} (imported {counter})"
+                    counter += 1
+                existing[new_name] = filled
+                renamed.append((name, new_name))
+                imported.append(new_name)
+
+        if imported or overwritten:
+            save_config(config)
+
+        parts = []
+        if imported:
+            parts.append(f"Imported: {', '.join(imported)}")
+        if overwritten:
+            parts.append(f"Overwritten: {', '.join(overwritten)}")
+        if renamed:
+            parts.append(f"Renamed: {'; '.join(f'{o} → {n}' for o, n in renamed)}")
+        if skipped:
+            parts.append(f"Skipped: {', '.join(skipped)}")
+
+        message = ' | '.join(parts) if parts else 'Nothing to import.'
+        logging.info(f"Version import: {message}")
+        return jsonify({'success': True, 'message': message,
+                        'imported': imported, 'skipped': skipped,
+                        'overwritten': overwritten,
+                        'renamed': [{'from': o, 'to': n} for o, n in renamed]})
+
+    except Exception as e:
+        logging.error(f"Error importing versions: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @settings_bp.route('/versions/rename', methods=['POST'])
 @admin_required
 def rename_version():
@@ -2269,18 +2642,33 @@ def duplicate_version():
 
 @settings_bp.route('/scraping/content')
 def scraping_content():
+    migrate_clean_version_filter_keys()
+    migrate_clean_stale_scraper_keys_from_versions()
     config = load_config() # Initial load
-    # Add logging to see the config state within the route
-    logging.debug(f"[scraping_content] Loaded config: {config}")
+    # Log the shape of the config, never its contents — this dumped every
+    # API key and token into debug.log on each page load.
+    logging.debug(f"[scraping_content] Loaded config sections: {sorted(config.keys())}")
     schema = SETTINGS_SCHEMA
     # Explicitly reload config right before accessing versions
     config = load_config()
     version_names = list(config.get('Scraping', {}).get('versions', {}).keys())
     logging.debug(f"[scraping_content] Extracted version names: {version_names}") # Log extracted names
 
-    # Determine which template to use based on theme
-    theme = request.cookies.get('selectedTheme', 'tangerine')
-    template_name = 'settings_tabs/scraping_tangerine.html' if theme == 'tangerine' else 'settings_tabs/scraping.html'
+    # Fill in schema defaults for any missing keys in existing versions
+    # so new settings always appear in the UI even for pre-existing versions.
+    version_schema = SETTINGS_SCHEMA.get('Scraping', {}).get('versions', {}).get('schema', {})
+    _backfill_changed = False
+    for _ver_config in config.get('Scraping', {}).get('versions', {}).values():
+        if not isinstance(_ver_config, dict):
+            continue
+        for _field, _fschema in version_schema.items():
+            if _field not in _ver_config and 'default' in _fschema:
+                _ver_config[_field] = _fschema['default']
+                _backfill_changed = True
+    if _backfill_changed:
+        save_config(config)
+
+    template_name = 'settings_tabs/scraping.html'
 
     return render_template(template_name,
                            settings=config,
@@ -2526,6 +2914,7 @@ def add_default_version():
             'size_weight': version_schema['size_weight']['default'],
             'bitrate_weight': version_schema['bitrate_weight']['default'],
             'year_match_weight': version_schema['year_match_weight']['default'],
+            'foreign_language_penalty': version_schema['foreign_language_penalty']['default'],
             'preferred_filter_in': version_schema['preferred_filter_in']['default'],
             'preferred_filter_out': version_schema['preferred_filter_out']['default'],
             'filter_in': version_schema['filter_in']['default'],
@@ -2579,6 +2968,7 @@ def add_separate_versions():
             'size_weight': version_schema['size_weight']['default'],
             'bitrate_weight': version_schema['bitrate_weight']['default'],
             'year_match_weight': version_schema['year_match_weight']['default'],
+            'foreign_language_penalty': version_schema['foreign_language_penalty']['default'],
             'preferred_filter_in': [],
             'preferred_filter_out': [],
             'filter_in': [],
@@ -3045,11 +3435,11 @@ def get_enabled_content_sources_route():
     try:
         enabled_sources = get_enabled_content_sources()
         
-        # Manually add content_requestor and overseerr_webhook to the list for UI purposes
+        # Manually add content_requester and overseerr_webhook to the list for UI purposes
         enabled_sources.append({
-            'id': 'content_requestor',
+            'id': 'content_requester',
             'type': 'Internal', # Assign a placeholder type
-            'display_name': 'Content Requestor'
+            'display_name': 'Content Requester'
         })
 
         enabled_sources.append({
@@ -3071,8 +3461,8 @@ def save_content_source_order():
         if not isinstance(source_order_from_request, list):
              return jsonify({'success': False, 'error': 'Invalid order format provided'}), 400
 
-        # Filter out 'content_requestor' as it's not a real content source to be saved
-        filtered_source_order = [source_id for source_id in source_order_from_request if source_id != 'content_requestor']
+        # Filter out 'content_requester' as it's not a real content source to be saved
+        filtered_source_order = [source_id for source_id in source_order_from_request if source_id not in ('content_requester', 'content_requestor')]
         
         if not filtered_source_order:
             logging.info("Content source priority order is empty after filtering.")
@@ -3233,6 +3623,7 @@ def add_default_mdblists():
                 'similarity_threshold': 0.85,
                 'similarity_threshold_anime': 0.80,
                 'year_match_weight': 3,
+                'foreign_language_penalty': 30,
                 'wake_count': None,
                 'fallback_version': 'None',
                 'anime_filter_mode': 'None',
@@ -3253,6 +3644,7 @@ def add_default_mdblists():
         default_mdblists = {
             "MDBList_1": {
                 "enabled": True,
+                "source_mode": "json_url",
                 "urls": "https://mdblist.com/lists/hdlists/top-ten-pirated-movies-of-the-week-torrent-freak-com",
                 "versions": {
                     default_version: True
@@ -3267,6 +3659,7 @@ def add_default_mdblists():
             },
             "MDBList_2": {
                 "enabled": True,
+                "source_mode": "json_url",
                 "urls": "https://mdblist.com/lists/godver3/top-10-shows",
                 "versions": {
                     default_version: True
@@ -3291,4 +3684,401 @@ def add_default_mdblists():
         return jsonify({'success': True, 'message': f'Default MDBList sources added successfully using version: {default_version}'})
     except Exception as e:
         logging.error(f"Error adding default MDBLists: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ── Plex Collection Poster Routes ─────────────────────────────────────────────
+
+@settings_bp.route('/content-sources/collection-poster/previews')
+def get_collection_poster_previews():
+    """Return metadata for all 9 poster design previews (0=default, 1-8=custom)."""
+    try:
+        from database.collection_poster_renderer import DESIGNS, PREVIEW_DIR, generate_preview_images
+    except Exception as e:
+        logging.error(f"[CollectionPoster] Failed to import renderer: {e}")
+        return jsonify({'success': False, 'error': str(e), 'designs': []}), 200
+    try:
+        # Only trigger generation if design previews are missing (not on every call)
+        missing = any(
+            not (PREVIEW_DIR / info['preview']).exists()
+            for did, info in DESIGNS.items() if did > 0
+        )
+        if missing:
+            import threading
+            t = threading.Thread(target=generate_preview_images, daemon=True)
+            t.start()
+        designs = []
+        for design_id, info in DESIGNS.items():
+            preview_file = PREVIEW_DIR / info['preview']
+            designs.append({
+                'id': design_id,
+                'name': info['name'],
+                'preview_url': f"/settings/content-sources/collection-poster/preview/{design_id}",
+                'available': preview_file.exists(),
+            })
+    except Exception as e:
+        logging.error(f"[CollectionPoster] previews route error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e), 'designs': []}), 200
+    return jsonify({'success': True, 'designs': designs})
+
+
+@settings_bp.route('/content-sources/collection-poster/preview/<int:design_id>')
+def serve_collection_poster_preview(design_id):
+    """Serve a poster design preview image."""
+    from flask import send_file
+    from database.collection_poster_renderer import DESIGNS, PREVIEW_DIR, generate_preview_images
+    if design_id not in DESIGNS:
+        return jsonify({'error': 'Invalid design ID'}), 404
+    preview_file = PREVIEW_DIR / DESIGNS[design_id]['preview']
+    if not preview_file.exists() and design_id > 0:
+        # Generate just this one design
+        try:
+            from database.collection_poster_renderer import DESIGN_RENDERERS, SOURCE_ICONS, get_source_icon
+            renderer = DESIGN_RENDERERS.get(design_id)
+            if renderer:
+                img = renderer(
+                    collection_name='My Collection',
+                    eyebrow='COLLECTION',
+                    accent='#E6A800',
+                    icon_path=get_source_icon('Trakt Lists', ''),
+                    movie_thumbs=[None, None, None, None],
+                    source_type='Trakt Lists',
+                )
+                import io
+                buf = io.BytesIO()
+                img.convert('RGB').save(buf, format='JPEG', quality=88)
+                PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+                preview_file.write_bytes(buf.getvalue())
+        except Exception as e:
+            logging.error(f"[CollectionPoster] On-demand preview gen failed for design {design_id}: {e}", exc_info=True)
+    if preview_file.exists():
+        return send_file(str(preview_file), mimetype='image/jpeg')
+    return jsonify({'error': 'Preview not available'}), 404
+
+
+@settings_bp.route('/api/plex-smart-collections', methods=['GET'])
+@admin_required
+def get_plex_smart_collections():
+    """Get all smart collections from Plex with enabled state and shared poster settings."""
+    try:
+        from database.plex_smart_collections import get_all_smart_collections, _load_state, _migrate_state
+        collections = get_all_smart_collections()
+        _psc = load_config().get('Plex Smart Collections', {})
+        saved_colls = _psc.get('collections', {}) if isinstance(_psc, dict) else {}
+        if not isinstance(saved_colls, dict):
+            saved_colls = {}
+        for coll in collections:
+            rk = coll['ratingKey']
+            coll['enabled'] = saved_colls.get(rk, {}).get('enabled', False)
+        return jsonify({'success': True, 'collections': collections})
+    except Exception as e:
+        logging.error(f"Failed to get Plex smart collections: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-smart-collections', methods=['POST'])
+@admin_required
+def save_plex_smart_collections():
+    """Save per-collection enabled state to config.json under Plex Smart Collections.collections."""
+    try:
+        from queues.config_manager import save_config
+        data = request.json or {}
+        config = load_config()
+        if 'Plex Smart Collections' not in config:
+            config['Plex Smart Collections'] = {}
+        existing_colls = config['Plex Smart Collections'].get('collections', {})
+        for rk, cfg in data.get('collections', {}).items():
+            existing_colls[rk] = {
+                'enabled': cfg.get('enabled', False),
+                'title': cfg.get('title', existing_colls.get(rk, {}).get('title', '')),
+                'section': cfg.get('section', existing_colls.get(rk, {}).get('section', '')),
+                'type': cfg.get('type', existing_colls.get(rk, {}).get('type', 'movie')),
+            }
+        config['Plex Smart Collections']['collections'] = existing_colls
+        save_config(config)
+        # Clear cached hash so task re-renders on next run
+        try:
+            from database.plex_smart_collections import _load_state, _save_state, _migrate_state
+            state = _migrate_state(_load_state())
+            state.setdefault('shared', {})['poster_hash'] = ''
+            _save_state(state)
+        except Exception:
+            pass
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Failed to save Plex smart collections: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-smart-collections/settings', methods=['POST'])
+@admin_required
+def save_plex_smart_collection_settings():
+    """Save shared poster design settings to config.json."""
+    try:
+        from queues.config_manager import save_config
+        data = request.json or {}
+        config = load_config()
+        if 'Plex Smart Collections' not in config:
+            config['Plex Smart Collections'] = {}
+        config['Plex Smart Collections'].update({
+            'poster_design': int(data.get('poster_design', 0)),
+            'poster_accent': data.get('poster_accent', ''),
+            'poster_eyebrow': data.get('poster_eyebrow', ''),
+            'poster_icon': data.get('poster_icon', ''),
+            'poster_overlay_opacity': int(data.get('poster_overlay_opacity', 60)),
+            'poster_glow_opacity': int(data.get('poster_glow_opacity', 80)),
+            'poster_glow_radius': int(data.get('poster_glow_radius', 55)),
+        })
+        save_config(config)
+        # Clear cached hash so task re-renders on next run
+        try:
+            from database.plex_smart_collections import _load_state, _save_state, _migrate_state
+            state = _migrate_state(_load_state())
+            state.setdefault('shared', {})['poster_hash'] = ''
+            _save_state(state)
+        except Exception:
+            pass
+        logging.info(f"[SmartCollections] Saved poster settings: design={data.get('poster_design')}")
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Failed to save smart collection settings: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-smart-collections/run', methods=['POST'])
+@admin_required
+def run_plex_smart_collections():
+    """Manually trigger the smart collection poster task."""
+    try:
+        import threading
+        from database.plex_smart_collections import apply_smart_collection_posters
+        t = threading.Thread(target=apply_smart_collection_posters, daemon=True)
+        t.start()
+        return jsonify({'success': True, 'message': 'Smart collection poster task started'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-smart-collections/status', methods=['GET'])
+@admin_required
+def get_plex_smart_collections_status():
+    """Return enabled smart collections list for the Manage Posters modal."""
+    try:
+        from utilities.settings import get_all_settings as _gas
+        _psc = _gas().get('Plex Smart Collections', {})
+        colls = _psc.get('collections', {}) if isinstance(_psc, dict) else {}
+        if not isinstance(colls, dict):
+            colls = {}
+        collections = [
+            {'id': rk, 'name': cfg.get('title', rk)}
+            for rk, cfg in colls.items()
+            if isinstance(cfg, dict) and cfg.get('enabled', False)
+        ]
+        collections.sort(key=lambda x: x['name'].lower())
+        return jsonify({'success': True, 'collections': collections})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-smart-collections/reset-collection', methods=['POST'])
+@admin_required
+def reset_smart_collection_poster():
+    """Immediately reapply the poster for a single smart collection."""
+    try:
+        data = request.get_json() or {}
+        rk = str(data.get('collection_id', '')).strip()
+        if not rk:
+            return jsonify({'success': False, 'error': 'collection_id required'}), 400
+        from database.plex_smart_collections import reapply_single_collection_poster
+        result = reapply_single_collection_poster(rk)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-boxsets/status', methods=['GET'])
+@admin_required
+def get_plex_boxsets_status():
+    """Return current box sets state: last run time, collections managed, and per-collection list."""
+    try:
+        import json, os
+        state_file = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'plex_boxsets_state.json')
+        state = {}
+        try:
+            with open(state_file, 'r') as f:
+                state = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        from utilities.settings import get_setting as _gs
+        fingerprints = state.get('collection_fingerprints', {})
+        names = state.get('collection_names', {})
+        collections = [
+            {'id': cid, 'name': names.get(cid, cid)}
+            for cid in fingerprints
+        ]
+        collections.sort(key=lambda x: x['name'].lower())
+        return jsonify({
+            'success': True,
+            'last_run': state.get('last_run'),
+            'collections_managed': len(fingerprints),
+            'collections': collections,
+            'enabled': _gs('Plex Movie Box Sets', 'enabled', False),
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-boxsets/reset-collection', methods=['POST'])
+@admin_required
+def reset_boxset_collection_poster():
+    """Immediately reapply the poster for a single collection."""
+    try:
+        data = request.get_json() or {}
+        coll_id = str(data.get('collection_id', '')).strip()
+        if not coll_id:
+            return jsonify({'success': False, 'error': 'collection_id required'}), 400
+        from database.plex_movie_boxsets import reapply_single_collection_poster
+        result = reapply_single_collection_poster(coll_id)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-boxsets/run', methods=['POST'])
+@admin_required
+def run_plex_movie_boxsets():
+    """Manually trigger the Plex movie box sets task."""
+    try:
+        import threading
+        from database.plex_movie_boxsets import run_plex_movie_boxsets as _run
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        return jsonify({'success': True, 'message': 'Plex movie box sets task started'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-boxsets/settings', methods=['POST'])
+@admin_required
+def save_plex_boxsets_settings():
+    """Save Plex Movie Box Sets settings."""
+    try:
+        data = request.get_json() or {}
+        config = load_config()
+        if 'Plex Movie Box Sets' not in config:
+            config['Plex Movie Box Sets'] = {}
+        for key in ('enabled', 'grab_missing', 'grab_version', 'collection_name_pattern'):
+            if key in data:
+                config['Plex Movie Box Sets'][key] = data[key]
+        save_config(config)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-libraries', methods=['GET'])
+@admin_required
+def get_plex_libraries():
+    """Return all Plex movie/show library sections for the library picker UI."""
+    try:
+        from database.plex_collections import _get_plex_credentials, _get_library_sections
+        plex_url, plex_token = _get_plex_credentials()
+        sections = _get_library_sections(plex_url, plex_token)
+        libraries = [
+            {'key': key, 'title': info['title'], 'type': info['type']}
+            for key, info in sorted(sections.items(), key=lambda x: int(x[0]))
+        ]
+        return jsonify({'success': True, 'libraries': libraries})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/content-sources/collection-poster/regenerate', methods=['POST'])
+def regenerate_collection_poster_previews():
+    """Force regeneration of all poster preview images."""
+    try:
+        from database.collection_poster_renderer import regenerate_all_previews
+        import threading
+        t = threading.Thread(target=regenerate_all_previews, daemon=True)
+        t.start()
+        return jsonify({'success': True, 'message': 'Preview regeneration started'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/create_virtual_folder', methods=['POST'])
+@admin_required
+def create_virtual_folder():
+    """Create cli_mount virtual folder(s) from tags in config.json."""
+    try:
+        import json as _json
+        import os as _os
+
+        data = request.json or {}
+        folder_name = (data.get('folder_name') or '').strip()
+        tags = data.get('tags', [])  # list of tag strings
+        mode = data.get('mode', 'per_tag')  # 'per_tag' or 'combined'
+
+        if not folder_name and mode == 'combined':
+            return jsonify({'success': False, 'error': 'Folder name required'}), 400
+        if not tags:
+            return jsonify({'success': False, 'error': 'At least one tag required'}), 400
+
+        # Get cli_mount data_path
+        config = load_config()
+        data_path = (config.get('Usenet Provider', {}).get('data_path') or '').strip()
+        if not data_path:
+            return jsonify({'success': False, 'error': 'cli_mount data path not configured in Usenet Provider settings'}), 400
+
+        dc_config_path = _os.path.join(data_path, 'config.json')
+        if not _os.path.exists(dc_config_path):
+            return jsonify({'success': False, 'error': f'cli_mount config.json not found at {dc_config_path}'}), 400
+
+        with open(dc_config_path, 'r') as f:
+            dc_config = _json.load(f)
+
+        if 'custom_folders' not in dc_config:
+            dc_config['custom_folders'] = {}
+
+        created = []
+        skipped = []
+
+        if mode == 'per_tag':
+            # One folder per tag, folder name = tag name
+            for tag in tags:
+                tag = tag.strip()
+                if not tag:
+                    continue
+                fname = tag
+                if fname in dc_config['custom_folders']:
+                    skipped.append(fname)
+                    continue
+                dc_config['custom_folders'][fname] = {
+                    'filters': {
+                        'tags': tag
+                    }
+                }
+                created.append(fname)
+        else:
+            # One combined folder for all selected tags
+            if folder_name in dc_config['custom_folders']:
+                return jsonify({'success': False, 'error': f'Folder "{folder_name}" already exists'}), 400
+            tag_value = ','.join(tag.strip() for tag in tags if tag.strip())
+            dc_config['custom_folders'][folder_name] = {
+                'filters': {
+                    'tags': tag_value
+                }
+            }
+            created.append(folder_name)
+
+        with open(dc_config_path, 'w') as f:
+            _json.dump(dc_config, f, indent=2)
+
+        msg = f'Created: {", ".join(created)}'
+        if skipped:
+            msg += f'. Skipped (already exist): {", ".join(skipped)}'
+        return jsonify({'success': True, 'message': msg, 'created': created, 'skipped': skipped})
+
+    except Exception as e:
+        logging.error(f'create_virtual_folder error: {e}', exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500

@@ -4,6 +4,7 @@ and addition to debrid service accounts.
 """
 
 import logging
+import re
 import time
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
@@ -15,6 +16,7 @@ import hashlib
 import inspect
 from datetime import datetime, timedelta
 
+from debrid import get_debrid_providers
 from debrid.base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
 from debrid.common import (
     extract_hash_from_magnet,
@@ -24,8 +26,10 @@ from debrid.common import (
     download_and_extract_hash
 )
 from debrid.status import TorrentStatus
-from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls, is_magnet_not_wanted
+from database.scraper_grabs import record_grab, queue_grab_trigger
 from utilities.settings import get_setting
+from utilities.rescrape_helpers import rescrape_blocks_any_pack_reuse, rescrape_blocks_pack_reuse
 
 class TorrentProcessingError(Exception):
     """Base exception for torrent processing errors"""
@@ -39,19 +43,30 @@ class TorrentAdditionError(TorrentProcessingError):
     """Raised when a torrent fails to be added to the debrid service"""
     pass
 
+# Returned by _process_nzb_result when the result's indexer is cooling down after
+# refusing downloads: the result is kept (not dropped from scrape_results) and
+# the next one is tried.
+NZB_DEFERRED_INDEXER_COOLDOWN = object()
+
 class TorrentProcessor:
     """Handles torrent file/magnet processing and caching checks"""
-    
+
     def __init__(self, debrid_provider: DebridProvider):
         """
-        Initialize the processor
-        
-        Args:
-            debrid_provider: Debrid service provider to use
+        Initialize the processor.
+
+        debrid_provider is the primary provider (kept for backward compat).
+        The full ordered provider chain is loaded via get_debrid_providers().
         """
         self.debrid_provider = debrid_provider
         self._last_direct_checks = {}
-        self._direct_check_interval = timedelta(minutes=5)  # Configurable
+        self._direct_check_interval = timedelta(minutes=5)
+
+    @property
+    def _providers(self):
+        """Ordered list of providers: primary first, then fallbacks."""
+        from utilities.acquisition_health import provider_available
+        return [p for p in get_debrid_providers() if provider_available(p)]
         
     def _should_direct_check(self, hash_value: str) -> bool:
         """
@@ -70,7 +85,7 @@ class TorrentProcessor:
         self._last_direct_checks[hash_value] = now
         return True
         
-    def check_cache_status(self, magnet_or_url: str, temp_file: Optional[str] = None, remove_cached: bool = False, item: Optional[Dict] = None) -> Tuple[bool, str]:
+    def check_cache_status(self, magnet_or_url: str, temp_file: Optional[str] = None, remove_cached: bool = False, item: Optional[Dict] = None, provider: Optional[DebridProvider] = None) -> Tuple[bool, str]:
         """
         Enhanced cache status checking with forced verification for uncached items
         
@@ -90,7 +105,14 @@ class TorrentProcessor:
         """
         try:
             logging.debug(f"Starting enhanced cache_status check with remove_uncached=True and remove_cached={remove_cached}")
-            
+
+            # Use passed provider or fall back to self.debrid_provider
+            _provider = provider if provider is not None else self.debrid_provider
+            # usenet-only setup: no debrid provider to cache-check against. Treat
+            # as not-cached rather than dereferencing None.
+            if _provider is None:
+                return (False, 'no_provider')
+
             # Extract imdb_id and title from item
             imdb_id = item.get('imdb_id') if item else None
             result_title = item.get('title') if item else None
@@ -104,7 +126,7 @@ class TorrentProcessor:
                 
             if not hash_value:
                 logging.warning("Could not extract hash for cache check, falling back to direct check")
-                direct_check = self.debrid_provider.is_cached_sync(
+                direct_check = _provider.is_cached_sync(
                     magnet_or_url if not temp_file else "",
                     temp_file,
                     remove_uncached=True,
@@ -113,22 +135,20 @@ class TorrentProcessor:
                     imdb_id=imdb_id
                 )
                 return direct_check, 'direct_check'
-            
+
             # Check if phalanx db is enabled using settings
             phalanx_enabled = get_setting('UI Settings', 'enable_phalanx_db', default=False)
-            
+
             # Check if we have a cached status
-            if phalanx_enabled and hasattr(self.debrid_provider, 'get_cached_status'):
-                db_cache_status = self.debrid_provider.get_cached_status(hash_value)
-                
+            if phalanx_enabled and hasattr(_provider, 'get_cached_status'):
+                db_cache_status = _provider.get_cached_status(hash_value)
+
                 if db_cache_status:
                     if db_cache_status.get('is_cached', False):
-                        # Trust cached status
                         return True, 'db_cached'
                     else:
-                        # For uncached status, verify if rate limiting allows
                         if self._should_direct_check(hash_value):
-                            direct_check = self.debrid_provider.is_cached_sync(
+                            direct_check = _provider.is_cached_sync(
                                 magnet_or_url if not temp_file else "",
                                 temp_file,
                                 remove_uncached=True,
@@ -136,17 +156,15 @@ class TorrentProcessor:
                                 result_title=result_title,
                                 imdb_id=imdb_id
                             )
-                            
                             if direct_check != db_cache_status.get('is_cached', False):
-                                if phalanx_enabled and hasattr(self.debrid_provider, 'update_cached_status'):
-                                    self.debrid_provider.update_cached_status(hash_value, direct_check)
-                            
+                                if phalanx_enabled and hasattr(_provider, 'update_cached_status'):
+                                    _provider.update_cached_status(hash_value, direct_check)
                             return direct_check, 'db_uncached_verified'
                         else:
                             return False, 'rate_limited'
-            
-            # If no cached status or provider doesn't support caching or phalanx is disabled
-            direct_check = self.debrid_provider.is_cached_sync(
+
+            # Direct check
+            direct_check = _provider.is_cached_sync(
                 magnet_or_url if not temp_file else "",
                 temp_file,
                 remove_uncached=True,
@@ -154,17 +172,15 @@ class TorrentProcessor:
                 result_title=result_title,
                 imdb_id=imdb_id
             )
-            
-            # Store the result if provider supports it and phalanx is enabled
-            if phalanx_enabled and hasattr(self.debrid_provider, 'update_cached_status'):
-                self.debrid_provider.update_cached_status(hash_value, direct_check)
-            
+
+            if phalanx_enabled and hasattr(_provider, 'update_cached_status'):
+                _provider.update_cached_status(hash_value, direct_check)
+
             return direct_check, 'direct_check'
-            
+
         except Exception as e:
             logging.error(f"Error in enhanced cache check: {str(e)}", exc_info=True)
-            # Fall back to direct check on error
-            direct_check = self.debrid_provider.is_cached_sync(
+            direct_check = _provider.is_cached_sync(
                 magnet_or_url if not temp_file else "",
                 temp_file,
                 remove_uncached=True,
@@ -392,163 +408,1128 @@ class TorrentProcessor:
             logging.error(f"Error checking cache: {str(e)}", exc_info=True)
             return None
         
-    def add_to_account(self, magnet_or_url: str) -> Optional[Dict]:
-        """
-        Add a magnet or torrent to the debrid account
-        
-        Args:
-            magnet_or_url: Magnet link or torrent URL to add
-            
-        Returns:
-            Torrent info if successful, None otherwise
-        """
-        torrent_id = None
-        info = None
-        # Retries for get_torrent_info (original)
-        get_info_max_retries = 3
-        get_info_retry_delay = 2  # seconds
-        temp_file = None
+    def add_to_account(self, magnet_or_url: str, preferred_provider: Optional[DebridProvider] = None) -> Optional[Dict]:
+        """Add a magnet/torrent to the debrid account, trying each provider in order.
 
-        # Get caller information
+        Tries the primary provider first with 429 retry logic, or preferred_provider when
+        given (the provider whose cache check found it cached, so the cached copy is used
+        rather than an uncached download on the primary).
+        On 451 (DMCA) or exhausted retries it moves on to the next fallback provider.
+        Returns torrent info dict from whichever provider succeeded, or None.
+        """
+        temp_file = None
+        # A several-hundred-GB complete-series pack can take far longer than
+        # ~6s for the debrid provider to hash/index before its file list is
+        # ready - the original budget was tuned for small single-episode
+        # torrents and gives up on big packs long before they are actually
+        # indexed. Capped at ~24s rather than longer: this loop blocks the
+        # Adding queue, and dead/uncached torrents never produce a file list,
+        # so every bad candidate in a row costs the full budget.
+        get_info_max_retries = 8
+        get_info_retry_delay = 3
+
         caller_frame = inspect.currentframe().f_back
         caller_info = f"{caller_frame.f_code.co_filename}:{caller_frame.f_code.co_name}:{caller_frame.f_lineno}"
         logging.info(f"TorrentProcessor.add_to_account called from {caller_info}")
-        
+
         try:
-            # Process torrent to get magnet or temp_file path
-            # This temp_file is cleaned up in the finally block
             magnet, temp_file = self.process_torrent(magnet_or_url)
-
             if not magnet and not temp_file:
-                logging.warning(f"Could not process {magnet_or_url} into a magnet or torrent file. Aborting add_to_account.")
+                logging.warning(f"Could not process {magnet_or_url}. Aborting add_to_account.")
                 return None
 
-            # Retry logic for adding the torrent
-            add_max_retries = 3
-            add_retry_delay_seconds = 5  # Start with 5 seconds delay
-            
-            add_response = None # To store the response from add_torrent
+            providers = self._providers
+            if preferred_provider is not None and preferred_provider in providers:
+                providers = [preferred_provider] + [p for p in providers if p is not preferred_provider]
+            last_error = None
 
-            for attempt in range(add_max_retries):
-                try:
-                    logging.info(f"Attempt {attempt + 1}/{add_max_retries} to add torrent to debrid account: {magnet_or_url}")
-                    add_response = self.debrid_provider.add_torrent(magnet if magnet else None, temp_file)
-                    
-                    # Assuming add_response is the torrent_id or can be evaluated for success.
-                    # The original code directly assigned this to torrent_id.
-                    if add_response: # If provider returns a truthy value (e.g., torrent_id string)
-                        torrent_id = add_response 
-                        logging.info(f"Successfully added torrent (ID: {torrent_id}) on attempt {attempt + 1}.")
-                        break # Break from retry loop on success
-                    else:
-                        # Provider returned a falsy value without raising an exception, treat as non-retryable failure for this attempt.
-                        logging.error(f"Attempt {attempt + 1}: Failed to add torrent - provider returned no ID or error indication.")
-                        # If it's the last attempt, torrent_id will remain None, handled after loop.
-                        if attempt == add_max_retries - 1:
-                            logging.error("All attempts to add torrent failed as provider returned no ID.")
-                            return None # Explicitly return None if all attempts yield no ID
+            for provider in providers:
+                torrent_id = None
+                info = None
+                add_max_retries = 3
+                add_retry_delay_seconds = 5
 
-                except ProviderUnavailableError as pue:
-                    if "429" in str(pue) and attempt < add_max_retries - 1:
-                        wait_time = add_retry_delay_seconds * (2 ** attempt)  # Exponential backoff
-                        logging.warning(
-                            f"Add torrent attempt {attempt + 1}/{add_max_retries} failed with 429 error. "
-                            f"Waiting {wait_time}s before next retry. Error: {str(pue)}"
-                        )
-                        time.sleep(wait_time)
-                    else: # Exhausted retries for 429, or a different ProviderUnavailableError
-                        logging.error(
-                            f"Failed to add torrent after {attempt + 1} attempts due to ProviderUnavailableError: {str(pue)}",
-                            exc_info=True
-                        )
-                        return None # Failed to add
-                except Exception as ex: # Catch any other unexpected error during add_torrent call
-                    logging.error(
-                        f"Unexpected error during add_torrent attempt {attempt + 1}/{add_max_retries}: {str(ex)}",
-                        exc_info=True
-                    )
-                    if attempt == add_max_retries - 1: # If it's the last attempt
-                        return None # Failed to add
-                    # For non-ProviderUnavailableError, decide if retry is appropriate or break.
-                    # For now, let's be conservative and not retry unknown errors immediately.
-                    # However, the user specifically mentioned 429s, so let's assume other errors are fatal for this operation.
-                    return None
+                logging.info(f"[add_to_account] Trying provider: {provider.PROVIDER_NAME}")
 
+                for attempt in range(add_max_retries):
+                    try:
+                        add_response = provider.add_torrent(magnet if magnet else None, temp_file)
+                        if add_response:
+                            torrent_id = add_response
+                            logging.info(f"[{provider.PROVIDER_NAME}] Added torrent (ID: {torrent_id}) on attempt {attempt + 1}.")
+                            break
+                        else:
+                            logging.error(f"[{provider.PROVIDER_NAME}] Attempt {attempt + 1}: no torrent ID returned.")
+                            if attempt == add_max_retries - 1:
+                                last_error = "no ID returned"
+                    except ProviderUnavailableError as pue:
+                        err_str = str(pue)
+                        if "451" in err_str:
+                            logging.warning(f"[{provider.PROVIDER_NAME}] 451 DMCA block — trying next provider.")
+                            last_error = f"451 DMCA ({provider.PROVIDER_NAME})"
+                            break  # Skip remaining retries, move to next provider
+                        elif "429" in err_str and attempt < add_max_retries - 1:
+                            wait_time = add_retry_delay_seconds * (2 ** attempt)
+                            logging.warning(f"[{provider.PROVIDER_NAME}] 429 rate limit, waiting {wait_time}s.")
+                            time.sleep(wait_time)
+                        else:
+                            logging.error(f"[{provider.PROVIDER_NAME}] ProviderUnavailableError: {err_str}", exc_info=True)
+                            last_error = err_str
+                            break
+                    except Exception as ex:
+                        err_str = str(ex)
+                        if "space is full" in err_str.lower():
+                            # Account-storage exhaustion — an action only the user can take
+                            # (free up space / upgrade plan), not a code-level failure. A full
+                            # traceback here is just noise; a short warning is enough to act on.
+                            logging.warning(f"[{provider.PROVIDER_NAME}] Account storage is full — cannot add torrent. Free up space or upgrade your plan.")
+                        else:
+                            logging.error(f"[{provider.PROVIDER_NAME}] Unexpected error: {ex}", exc_info=True)
+                        last_error = err_str
+                        break
 
-            if not torrent_id:
-                logging.error(f"Failed to add torrent after {add_max_retries} attempts - no torrent ID was obtained.")
-                return None
-                
-            # Original logic for get_torrent_info
-            for attempt in range(get_info_max_retries): # Using original retry variables for get_info
-                info = self.debrid_provider.get_torrent_info(torrent_id)
-                
-                if not info or len(info.get('files', [])) == 0:
-                    time.sleep(get_info_retry_delay) # Using original delay for get_info
+                if not torrent_id:
+                    logging.warning(f"[{provider.PROVIDER_NAME}] Failed to add torrent, trying next provider.")
                     continue
-                
-                return info # Successfully got info
-            
-            # If loop finished and info is still not satisfactory
-            if not info:
-                logging.error(f"Failed to get info for torrent {torrent_id} after {get_info_max_retries} attempts")
-            else: # info exists but has no files
-                logging.error(f"No files found in torrent {torrent_id} after {get_info_max_retries} attempts")
-            # The finally block below will attempt to clean up this torrent_id if it has no files.
-            return info # Return info, which might be empty or None
-            
-        except Exception as e:
-            # This is the general catch-all for errors outside the add_torrent retry loop,
-            # or for errors from process_torrent.
-            logging.error(f"Error in add_to_account for {magnet_or_url}: {str(e)}", exc_info=True)
+
+                # Got a torrent_id — fetch info
+                try:
+                    for attempt in range(get_info_max_retries):
+                        info = provider.get_torrent_info(torrent_id)
+                        if info and len(info.get('files', [])) > 0:
+                            # Tag info with which provider handled this
+                            info['_provider'] = provider.PROVIDER_NAME
+                            # Update primary provider reference so checking queue uses same provider
+                            self.debrid_provider = provider
+                            logging.info(f"[{provider.PROVIDER_NAME}] Successfully got torrent info.")
+                            return info
+                        time.sleep(get_info_retry_delay)
+
+                    # Info fetched but empty/bad
+                    if torrent_id:
+                        try:
+                            provider.remove_torrent(torrent_id, removal_reason="Empty torrent during processing")
+                        except Exception:
+                            pass
+                    logging.warning(f"[{provider.PROVIDER_NAME}] Torrent added but no files found.")
+                except Exception as e:
+                    logging.error(f"[{provider.PROVIDER_NAME}] Error fetching torrent info: {e}", exc_info=True)
+
+            logging.error(f"All providers failed to add torrent. Last error: {last_error}")
             return None
-            
+
+        except Exception as e:
+            logging.error(f"Error in add_to_account for {magnet_or_url}: {e}", exc_info=True)
+            return None
+
         finally:
-            if temp_file and os.path.exists(temp_file): # Check os.path.exists for safety
+            if temp_file and os.path.exists(temp_file):
                 try:
                     os.unlink(temp_file)
                 except Exception as e:
-                    logging.error(f"Error cleaning up temp file {temp_file}: {str(e)}")
-            
-            # Cleanup for empty/failed torrents
-            if torrent_id and (not info or len(info.get('files', [])) == 0):
-                try:
-                    logging.info(f"Attempting to remove empty/failed torrent {torrent_id} (info state: {'exists' if info else 'None'})")
-                    self.debrid_provider.remove_torrent(
-                        torrent_id,
-                        removal_reason="Empty or failed torrent during processing"
-                    )
-                    logging.info(f"Successfully removed empty/failed torrent {torrent_id}")
-                except Exception as e:
-                    logging.error(f"Error cleaning up empty/failed torrent {torrent_id}: {str(e)}", exc_info=True)
+                    logging.error(f"Error cleaning up temp file {temp_file}: {e}")
                     
+    def _check_sibling_debrid_pack(self, item: Optional[Dict] = None, adding_queue_items: Optional[list] = None) -> Optional[Tuple]:
+        """If another episode of the same show/season/version already has a debrid season-pack
+        job, reuse it instead of independently scraping and adding a duplicate pack.
+
+        Mirrors _process_nzb_result's sibling-reuse logic, adapted for the debrid path, which
+        previously had no equivalent check at all - every episode of a whole-show/whole-season
+        request scraped and submitted completely independently, and since a successful add
+        immediately blacklists that release's hash via add_to_not_wanted(), each subsequent
+        sibling's scrape fell through to the next-best *distinct* pack (often a different
+        release group) instead of reusing the one already grabbed. Confirmed live: this
+        downloaded ~12 different season-pack torrents for one anime show before this fix.
+
+        Unlike NZB reuse (which returns an empty files list and defers resolution to a separate
+        reconciliation task), debrid's get_torrent_info() is synchronous and already returns the
+        full file listing - so this returns a real, populated torrent_info dict and rides the
+        existing _parse_file_info -> find_best_match_from_parsed -> find_related_items pipeline
+        in adding_queue.py completely unmodified to resolve this episode's own file.
+        """
+        if not item or item.get('type') != 'episode':
+            return None
+        if rescrape_blocks_any_pack_reuse(item):
+            return None
+        _imdb = item.get('imdb_id')
+        _season = item.get('season_number')
+        if not _imdb or _season is None:
+            return None
+
+        import re as _re_sib
+        from debrid.common import is_likely_season_pack
+        _item_version = (item.get('version') or '').rstrip('*')
+
+        _episode = item.get('episode_number')
+        _ep_pattern = (
+            _re_sib.compile(rf'[Ss]{_season:02d}[Ee]{_episode:02d}(?!\d)')
+            if _episode is not None else None
+        )
+
+        def _try_reuse(torrent_id: str, check_title: str, magnet: Optional[str],
+                       filled_by_title: str = '') -> Optional[Tuple]:
+            # Check every available identity field (display title, filled_by_title),
+            # not just check_title alone - a provider can serve an obfuscated
+            # filename while the episode marker survives only in filled_by_title.
+            if not is_likely_season_pack(check_title, filled_by_title):
+                return None
+            if rescrape_blocks_pack_reuse(item, check_title):
+                return None
+            from utilities.session_bad_torrents import is_torrent_known_unplayable
+            for provider in self._providers:
+                try:
+                    info = provider.get_torrent_info(torrent_id)
+                except Exception as e:
+                    logging.debug(f"[{provider.PROVIDER_NAME}] get_torrent_info failed for sibling reuse {torrent_id}: {e}")
+                    continue
+                if not (info and info.get('files')):
+                    continue
+                # Verify this specific episode is actually present in the candidate pack before
+                # reusing it - some season "packs" only cover part of the season (e.g. a
+                # "Part 1"/"Part 2" split, common for long anime seasons). Blindly reusing a
+                # pack that doesn't contain this episode stuck it in a permanent loop: every
+                # retry re-hit this same sibling check, got pointed at the same non-containing
+                # pack again, failed to match, and never got a chance to scrape fresh for the
+                # pack that actually has it.
+                if _ep_pattern is not None:
+                    _files = info.get('files', [])
+                    _matched_file = None
+                    for f in _files:
+                        _fpath = f.get('path') or f.get('filename') or ''
+                        if _ep_pattern.search(_fpath):
+                            _matched_file = _fpath
+                            break
+                    if _matched_file is None:
+                        logging.info(f"[{item.get('title', 'Unknown')}] Sibling pack {torrent_id} does not "
+                                     f"contain S{_season:02d}E{_episode:02d} — not reusing, trying next candidate")
+                        return None
+                    # Per-file, not per-torrent: a season pack can be a mix of playable
+                    # and broken files, so only skip the specific file already proven
+                    # dead this session - a different file in the same torrent may be
+                    # completely fine.
+                    if is_torrent_known_unplayable(torrent_id, _matched_file):
+                        logging.info(f"[{item.get('title', 'Unknown')}] Sibling pack {torrent_id}'s "
+                                     f"S{_season:02d}E{_episode:02d} file already confirmed unplayable "
+                                     f"this session — not reusing, trying next candidate")
+                        return None
+                self.debrid_provider = provider
+                info = dict(info)
+                info['original_scraped_torrent_title'] = check_title
+                # Stamp explicitly with the provider this sibling pack was actually found on,
+                # same reasoning as _process_results_inner's cache-hit/existing-reuse paths.
+                info['_provider'] = provider.PROVIDER_NAME
+                # debrid_folder_name must reflect the provider's OWN real mount folder name
+                # (info['filename']/'original_filename'), not the indexer's cosmetic display
+                # title (check_title) - those two frequently differ (e.g. a release named
+                # "[Fuchs] Mushoku Tensei - S02 (BD 1080p HEVC Opus 2.0)..." by the indexer but
+                # actually stored on the mount as "Mushoku.Tensei.S02.1080p.BluRay...-Fuchs" by
+                # whoever uploaded it). check_local_file_for_item's first folder-name guess
+                # (debrid_folder_name) needs the real one to succeed without depending on the
+                # other, title-based fallback guesses also happening to match by luck.
+                # A provider that already derived the real folder (TorBox, from its file
+                # paths) keeps it - its 'filename' can be one episode's name, and reuse
+                # would copy that wrong folder onto every sibling (#515).
+                info['debrid_folder_name'] = (info.get('debrid_folder_name') or info.get('filename')
+                                              or info.get('original_filename') or check_title)
+                logging.info(f"[{item.get('title', 'Unknown')}] Season pack already submitted for "
+                             f"S{_season:02d} (torrent_id={torrent_id}) — reusing instead of duplicate submission")
+                # chosen_result_info must reflect THIS reused torrent's own title, not None -
+                # adding_queue.py falls back to results[0] (the fresh scrape's top candidate,
+                # unrelated to what we're actually reusing) whenever this is falsy, which writes
+                # a mismatched title into original_scraped_torrent_title. That's usually masked by
+                # debrid_folder_name (set separately from this torrent's own info) still letting
+                # check_local_file_for_item resolve the file via a different fallback attempt, but
+                # not always - live-reproduced as "not found in any checked location" recurring
+                # once something else also disrupted that fallback.
+                chosen_result_info = {
+                    'title': check_title,
+                    'original_scraped_torrent_title': check_title,
+                }
+                return info, magnet, chosen_result_info
+            return None
+
+        # Complete-series / multi-season packs span seasons, so a sibling on a
+        # *different* season may already hold this episode. Without this, the first
+        # episode of every new season fell through to a fresh scrape, found the pack
+        # already not-wanted (blacklisted by an earlier season's successful add), and
+        # rejected a release that was already sitting in the account. Cross-season
+        # candidates are limited to titles that look multi-season, so ordinary
+        # single-season packs from other seasons don't each cost a provider API call
+        # per episode per tick; _try_reuse still proves per-episode containment.
+        _multi_season_re = _re_sib.compile(
+            r'\bcomplete\b'
+            r'|\bS\d{1,2}\s*(?:-|to|~)\s*S?\d{1,2}\b'
+            r'|\bseasons?\s*\d{1,2}\s*(?:-|to|~|&|and)\s*\d{1,2}\b'
+            r'|\bS\d{1,2}[ ._]S\d{1,2}\b',
+            _re_sib.IGNORECASE,
+        )
+
+        def _looks_multi_season(*titles: str) -> bool:
+            return any(t and _multi_season_re.search(t) for t in titles)
+
+        # In-memory check first: catches a sibling submitted this same tick, before it's
+        # written back to the DB. Same-season siblings first, then multi-season packs
+        # from other seasons.
+        if adding_queue_items:
+            _mem_same, _mem_cross = [], []
+            for _mem_item in adding_queue_items:
+                if (_mem_item.get('id') == item.get('id') or
+                        _mem_item.get('imdb_id') != _imdb or
+                        (_mem_item.get('version') or '').rstrip('*') != _item_version):
+                    continue
+                _mem_torrent_id = _mem_item.get('filled_by_torrent_id')
+                if not _mem_torrent_id or str(_mem_torrent_id).startswith('nzb:'):
+                    continue
+                _mem_check_title = _mem_item.get('original_scraped_torrent_title') or _mem_item.get('filled_by_file') or ''
+                _mem_filled_by_title = _mem_item.get('filled_by_title') or ''
+                if _mem_item.get('season_number') == _season:
+                    _mem_same.append((_mem_torrent_id, _mem_check_title, _mem_item.get('filled_by_magnet'), _mem_filled_by_title))
+                elif _ep_pattern is not None and _looks_multi_season(_mem_check_title, _mem_filled_by_title):
+                    _mem_cross.append((_mem_torrent_id, _mem_check_title, _mem_item.get('filled_by_magnet'), _mem_filled_by_title))
+            _tried = set()
+            for _tid, _title, _magnet, _fbt in _mem_same + _mem_cross:
+                if _tid in _tried:
+                    continue
+                _tried.add(_tid)
+                reused = _try_reuse(_tid, _title, _magnet, filled_by_title=_fbt)
+                if reused:
+                    return reused
+
+        # DB check second - covers siblings resolved on a prior tick.
+        try:
+            from database import get_db_connection as _gdb
+            _conn = _gdb()
+            try:
+                # Dedup by filled_by_torrent_id via a MIN(id)-per-group subquery, not a bare
+                # GROUP BY on the outer SELECT - SQLite does not guarantee that non-aggregated
+                # ("bare") columns in a GROUP BY come from the same physical row as the grouped
+                # column, so filled_by_file/original_scraped_torrent_title/filled_by_magnet could
+                # end up mismatched against a *different* row's torrent_id than the one actually
+                # being reused. Confirmed live: this silently wrote a completely different
+                # release's title onto the correct, already-working torrent_id, breaking the
+                # downstream folder-name guess in check_local_file_for_item for every episode
+                # that inherited the wrong title.
+                _sibling_sql = (
+                    "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title, filled_by_magnet, "
+                    "filled_by_title "
+                    "FROM media_items "
+                    "WHERE id IN ("
+                    "  SELECT MIN(id) FROM media_items "
+                    "  WHERE imdb_id=? AND {season_clause} AND type='episode' "
+                    "  AND id!=? AND filled_by_torrent_id IS NOT NULL AND filled_by_torrent_id NOT LIKE 'nzb:%' "
+                    "  AND REPLACE(COALESCE(version,''),'*','')=? "
+                    "  AND state IN ('Adding','Checking','Collected','Upgrading') "
+                    "  GROUP BY filled_by_torrent_id"
+                    "){limit}"
+                )
+                _siblings = _conn.execute(
+                    _sibling_sql.format(season_clause="season_number=?", limit=" LIMIT 5"),
+                    (_imdb, _season, item.get('id', -1), _item_version)
+                ).fetchall()
+                _cross_siblings = []
+                if _ep_pattern is not None:
+                    # No LIMIT in SQL: the multi-season title filter runs here in Python
+                    # (no API calls), and only its survivors are capped, so an arbitrary
+                    # LIMIT can't hide the one complete pack behind ordinary season packs.
+                    _cross_rows = _conn.execute(
+                        _sibling_sql.format(season_clause="season_number!=?", limit=""),
+                        (_imdb, _season, item.get('id', -1), _item_version)
+                    ).fetchall()
+                    _cross_siblings = [
+                        r for r in _cross_rows
+                        if _looks_multi_season(r[2] or '', r[1] or '', r[4] or '')
+                    ][:5]
+            finally:
+                _conn.close()
+        except Exception as e:
+            logging.debug(f"Sibling debrid-pack DB check failed: {e}")
+            return None
+
+        # Evaluate all distinct candidates rather than stopping at the first that contains the
+        # target episode - prefer the most complete pack (most files) when more than one
+        # legitimately covers this episode, so a still-pending episode lands on the bigger of two
+        # known sibling packs instead of whichever was found first.
+        def _best_of(candidates):
+            best, best_file_count = None, -1
+            for _sib in candidates:
+                _sib_check_title = _sib[2] or _sib[1] or ''
+                reused = _try_reuse(_sib[0], _sib_check_title, _sib[3], filled_by_title=_sib[4] or '')
+                if reused:
+                    file_count = len(reused[0].get('files', []))
+                    if file_count > best_file_count:
+                        best, best_file_count = reused, file_count
+            return best
+
+        return _best_of(_siblings) or _best_of(_cross_siblings)
+
+    def _consolidate_covered_siblings(self, item: Optional[Dict], torrent_info: Dict) -> None:
+        """If the torrent just finalized for `item` also fully covers other episodes that are
+        already Collected on a smaller/different torrent (e.g. a wide pack scraped after those
+        episodes already landed on single-episode releases), repoint those episodes' symlinks
+        onto this torrent live, in this same tick, and remove the old torrent once nothing else
+        references it.
+
+        Deliberately reuses check_local_file_for_item for the actual file-resolution + symlink
+        swap (it already does source_file resolution and create_symlink's own safe "existing
+        symlink pointing elsewhere -> unlink and recreate" handling, unconditionally, regardless
+        of upgrade status) rather than any new path logic. `upgrading_from` is deliberately left
+        unset on the synthetic item so check_local_file_for_item's upgrade-cleanup block (which
+        removes the old torrent unconditionally, no sibling-owner check) never runs - old-torrent
+        removal here is instead done explicitly, once, after every covered sibling is swapped.
+        """
+        if not item or item.get('type') != 'episode':
+            return
+        if get_setting('File Management', 'file_collection_management') != 'Symlinked/Local':
+            return
+        _imdb = item.get('imdb_id')
+        _season = item.get('season_number')
+        _new_torrent_id = torrent_info.get('id')
+        if not _imdb or _season is None or not _new_torrent_id:
+            return
+        _item_version = (item.get('version') or '').rstrip('*')
+        _files = torrent_info.get('files', [])
+        if not _files:
+            return
+
+        import re as _re_con
+
+        def _filename_for_episode(episode_number: int) -> Optional[str]:
+            pattern = _re_con.compile(rf'[Ss]{_season:02d}[Ee]{episode_number:02d}(?!\d)')
+            for f in _files:
+                path = f.get('path') or f.get('filename') or ''
+                if pattern.search(path):
+                    return os.path.basename(path)
+            return None
+
+        try:
+            from database import get_db_connection as _gdb_con
+            conn = _gdb_con()
+            try:
+                siblings = conn.execute(
+                    "SELECT id, episode_number, filled_by_torrent_id FROM media_items "
+                    "WHERE imdb_id=? AND season_number=? AND type='episode' "
+                    "AND id!=? AND state='Collected' AND filled_by_torrent_id IS NOT NULL "
+                    "AND filled_by_torrent_id NOT LIKE 'nzb:%' AND filled_by_torrent_id!=? "
+                    "AND REPLACE(COALESCE(version,''),'*','')=?",
+                    (_imdb, _season, item.get('id', -1), _new_torrent_id, _item_version)
+                ).fetchall()
+            finally:
+                conn.close()
+        except Exception as e:
+            logging.debug(f"Sibling consolidation DB lookup failed: {e}")
+            return
+        if not siblings:
+            return
+
+        from database import get_media_item_by_id as _gmi_con
+        from utilities.local_library_scan import check_local_file_for_item as _clffi_con
+
+        new_debrid_folder_name = (
+            torrent_info.get('debrid_folder_name')
+            or torrent_info.get('filename')
+            or torrent_info.get('original_filename')
+            or torrent_info.get('title')
+        )
+        old_torrent_ids_touched = set()
+
+        for sib in siblings:
+            sib_filename = _filename_for_episode(sib['episode_number'])
+            if not sib_filename:
+                continue
+            sib_item = _gmi_con(sib['id'])
+            if not sib_item or sib_item.get('state') != 'Collected':
+                continue  # re-check live state; skip if it moved (e.g. into Upgrading) since the query ran
+            old_torrent_id = sib_item.get('filled_by_torrent_id')
+            synthetic_item = dict(sib_item)
+            synthetic_item['filled_by_torrent_id'] = _new_torrent_id
+            synthetic_item['filled_by_file'] = sib_filename
+            synthetic_item['filled_by_magnet'] = torrent_info.get('magnet') or synthetic_item.get('filled_by_magnet')
+            synthetic_item['original_scraped_torrent_title'] = new_debrid_folder_name
+            synthetic_item['debrid_folder_name'] = new_debrid_folder_name
+            synthetic_item.pop('upgrading_from', None)
+            synthetic_item.pop('upgrading_from_torrent_id', None)
+            try:
+                swapped = _clffi_con(synthetic_item, skip_multifile_scan=True)
+            except Exception as e:
+                logging.warning(f"Consolidation swap failed for sibling {sib['id']} (S{_season:02d}E{sib['episode_number']:02d}): {e}")
+                continue
+            if swapped:
+                logging.info(f"[{item.get('title', 'Unknown')}] Consolidated S{_season:02d}E{sib['episode_number']:02d} "
+                             f"onto torrent {_new_torrent_id} (was {old_torrent_id})")
+                if old_torrent_id:
+                    old_torrent_ids_touched.add(old_torrent_id)
+            else:
+                logging.debug(f"Consolidation swap did not confirm success for sibling {sib['id']}; leaving as-is")
+
+        for old_torrent_id in old_torrent_ids_touched:
+            try:
+                from database import get_db_connection as _gdb_con2
+                conn2 = _gdb_con2()
+                try:
+                    still_used = conn2.execute(
+                        "SELECT 1 FROM media_items WHERE filled_by_torrent_id=? "
+                        "AND state IN ('Adding','Checking','Collected','Upgrading') LIMIT 1",
+                        (old_torrent_id,)
+                    ).fetchone()
+                finally:
+                    conn2.close()
+                if still_used:
+                    logging.debug(f"Old torrent {old_torrent_id} still referenced after consolidation — not removing")
+                    continue
+                for provider in self._providers:
+                    try:
+                        provider.remove_torrent(old_torrent_id, removal_reason="Consolidated onto a wider sibling pack")
+                        logging.info(f"Removed consolidated-away torrent {old_torrent_id} (superseded by {_new_torrent_id})")
+                        break
+                    except Exception as e:
+                        logging.debug(f"[{provider.PROVIDER_NAME}] remove_torrent failed for {old_torrent_id}: {e}")
+            except Exception as e:
+                logging.warning(f"Error removing consolidated-away torrent {old_torrent_id}: {e}")
+
+    def _process_nzb_result(self, result: Dict, item: Optional[Dict] = None, adding_queue_items: Optional[list] = None) -> Optional[Tuple]:
+        """Submit an NZB result to the configured Usenet provider and return a synthetic torrent_info tuple."""
+        from usenet import get_usenet_client, reset_usenet_client
+        from utilities.session_bad_torrents import has_any_known_unplayable_file
+        reset_usenet_client()
+        client = get_usenet_client()
+
+        if not client.is_enabled():
+            logging.debug('[NZB] Usenet provider not enabled, skipping NZB result')
+            return None
+
+        nzb_url = result.get('nzb_url') or result.get('magnet') or ''
+        title = result.get('title', '')
+        item_identifier = item.get('title', 'Unknown') if item else 'Unknown'
+
+        if not nzb_url:
+            logging.warning(f'[{item_identifier}] NZB result has no URL, skipping')
+            return None
+
+        # Indexers can list the exact same underlying release under a different
+        # GUID (re-indexed upload, duplicate indexer feed) — the not-wanted store
+        # is per-GUID, so a fresh GUID for a release already confirmed dead this
+        # session would otherwise repeat the same expensive cli_mount submission.
+        from usenet.nzb_dead_release_cache import is_release_known_dead
+        if is_release_known_dead(title):
+            logging.info(f'[{item_identifier}] Skipping {title!r} — already confirmed missing segments '
+                         f'this session under a different GUID')
+            try:
+                from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nw_dup
+                _add_nw_dup(nzb_url)
+            except Exception:
+                pass
+            if item:
+                item['_nzb_all_missing_segments'] = True
+            return None
+
+        # Equivalent of debrid's _all_torrent_ids check: if another episode of the same
+        # show/season already has an NZB job (in any active or completed state), reuse it
+        # instead of submitting a duplicate season pack NZB.
+        if item and item.get('type') == 'episode' and not rescrape_blocks_any_pack_reuse(item):
+            _imdb = item.get('imdb_id')
+            _season = item.get('season_number')
+            _parsed = result.get('parsed_info', {}) or {}
+            _is_pack = bool(_parsed.get('seasons')) and not _parsed.get('episodes')
+            if _imdb and _season is not None:
+                # In-memory check: scan Adding queue items for same imdb+season with nzb: job.
+                # This catches jobs submitted this tick before they're written to DB.
+                from debrid.common import is_likely_season_pack as _is_likely_season_pack_mem
+                if adding_queue_items:
+                    _item_version = (item or {}).get('version', 'Default')
+                    for _mem_item in adding_queue_items:
+                        if (_mem_item.get('id') == item.get('id') or
+                                _mem_item.get('imdb_id') != _imdb or
+                                _mem_item.get('season_number') != _season or
+                                _mem_item.get('version', 'Default') != _item_version or
+                                not str(_mem_item.get('filled_by_torrent_id', '')).startswith('nzb:')):
+                            continue
+                        # Prefer the original scraped release title over filled_by_file, which
+                        # is frequently an obfuscated hex string for single-episode usenet
+                        # releases and was wrongly read as "not a normal episode filename,
+                        # must be an unresolved pack".
+                        _mem_check_title = _mem_item.get('original_scraped_torrent_title') or _mem_item.get('filled_by_file') or ''
+                        # An empty identity here usually means this sibling's own submission
+                        # (earlier this same tick) hasn't been reflected back into this
+                        # in-memory snapshot yet - not evidence it's a pack. Defaulting to
+                        # "is a pack" in that case caused a different episode's individual
+                        # NZB job to be reused here, symlinking the wrong file to this item.
+                        # Checks filled_by_title too, not just the title/filename precedence
+                        # above - a provider can obfuscate the filename while the episode
+                        # marker survives only in filled_by_title.
+                        _mem_is_pack = _is_likely_season_pack_mem(_mem_check_title, _mem_item.get('filled_by_title') or '')
+                        _mem_job = _mem_item.get('filled_by_torrent_id')
+                        _mem_id = _mem_job[4:] if _mem_job and _mem_job.startswith('nzb:') else _mem_job
+                        if _mem_is_pack:
+                            if rescrape_blocks_pack_reuse(item, _mem_check_title):
+                                continue
+                            # Verify the shared pack job is still actually queryable on the
+                            # provider before reusing it - a job that completed and was since
+                            # cleaned up (or never existed) will ghost every retry forever if
+                            # reused blindly, since nothing else ever re-checks it afterward.
+                            try:
+                                from usenet import is_nzb_job_alive as _is_job_alive
+                                if not _is_job_alive(_mem_id):
+                                    logging.warning(f'[{item_identifier}] [Memory] Sibling job {_mem_job} no longer alive on provider - not reusing')
+                                    continue
+                            except Exception:
+                                pass  # unknown due to error - don't block a legitimate reuse
+                        if (_is_pack and _mem_is_pack) or (not _is_pack and _mem_is_pack):
+                            # Job-level check, not per-file: unlike the debrid reuse path, the
+                            # specific file within this job for THIS episode isn't resolved yet
+                            # at this point (that happens later, downstream) - so this can only
+                            # block reuse of the whole job, not a single file within it.
+                            if has_any_known_unplayable_file(_mem_job):
+                                logging.info(f'[{item_identifier}] [Memory] Sibling job {_mem_job} has a file already '
+                                             f'confirmed unplayable this session — not reusing')
+                            elif _is_pack:
+                                logging.info(f'[{item_identifier}] [Memory] Season pack already submitted for S{_season:02d} '
+                                             f'(job={_mem_job}) — reusing')
+                                return {'id': _mem_id, 'filename': title, 'original_title': title,
+                                        'status': 'downloading', 'files': [], 'progress': 0,
+                                        '_provider': 'cli_mount', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                            else:
+                                logging.info(f'[{item_identifier}] [Memory] Season pack already submitted for S{_season:02d} '
+                                             f'(job={_mem_job}) — skipping individual episode submission')
+                                return {'id': _mem_id, 'filename': title, 'original_title': title,
+                                        'status': 'downloading', 'files': [], 'progress': 0,
+                                        '_provider': 'cli_mount', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                        elif _is_pack and not _mem_is_pack:
+                            # New result is a pack, existing job is individual — fall through to submit pack
+                            break
+
+                try:
+                    from database import get_db_connection as _gdb
+                    from debrid.common import is_likely_season_pack as _is_likely_season_pack_db
+                    _conn = _gdb()
+                    # Matches SQL's REPLACE(COALESCE(version,''),'*','') exactly — fall back
+                    # to '' (not a literal like 'Default') so NULL/empty version rows still compare equal.
+                    _sibling_ver = (item.get('version') or '').rstrip('*')
+                    try:
+                        _sibling = _conn.execute(
+                            "SELECT filled_by_torrent_id, filled_by_file, original_scraped_torrent_title, filled_by_title "
+                            "FROM media_items "
+                            "WHERE imdb_id=? AND season_number=? AND type='episode' "
+                            "AND id!=? AND filled_by_torrent_id LIKE 'nzb:%' "
+                            "AND REPLACE(COALESCE(version,''),'*','')=? "
+                            "AND state IN ('Adding','Checking','Collected','Upgrading') LIMIT 1",
+                            (_imdb, _season, item.get('id', -1), _sibling_ver)
+                        ).fetchone()
+                    finally:
+                        _conn.close()
+                    if _sibling:
+                        # Prefer the original scraped release title (not obfuscated) over
+                        # filled_by_file, which is frequently an obfuscated hex string for
+                        # single-episode usenet releases and was wrongly read as "not a normal
+                        # episode filename, must be an unresolved pack".
+                        _sibling_check_title = _sibling[2] or _sibling[1] or ''
+                        # Empty identity is not evidence of a pack - see matching comment in the
+                        # in-memory check above. Defaulting True here risks the same wrong-job-reuse.
+                        # Also checks filled_by_title, which can carry the episode marker even
+                        # when the title/filename precedence above doesn't.
+                        _sibling_is_pack = _is_likely_season_pack_db(_sibling_check_title, _sibling[3] or '')
+                        if _sibling_is_pack:
+                            if rescrape_blocks_pack_reuse(item, _sibling_check_title):
+                                _sibling_is_pack = False
+                            else:
+                                # Verify the shared pack job is still actually queryable on the
+                                # provider before reusing it - a job that completed and was since
+                                # cleaned up (or never existed) will ghost every retry forever if
+                                # reused blindly, since nothing else ever re-checks it afterward.
+                                try:
+                                    from usenet import is_nzb_job_alive as _is_job_alive
+                                    _sib_job_hash = _sibling[0][4:] if _sibling[0].startswith('nzb:') else _sibling[0]
+                                    if not _is_job_alive(_sib_job_hash):
+                                        logging.warning(f'[{item_identifier}] Sibling job {_sibling[0]} no longer alive on provider - not reusing, submitting fresh')
+                                        _sibling_is_pack = False
+                                except Exception:
+                                    pass  # unknown due to error - don't block a legitimate reuse
+                        if (_is_pack and _sibling_is_pack) or (not _is_pack and _sibling_is_pack):
+                            _existing_job = _sibling[0]
+                            # Job-level check, not per-file — see matching comment in the
+                            # in-memory check above.
+                            if has_any_known_unplayable_file(_existing_job):
+                                logging.info(f'[{item_identifier}] Sibling job {_existing_job} has a file already '
+                                             f'confirmed unplayable this session — not reusing, submitting fresh')
+                            elif _is_pack:
+                                # New result is a pack, existing job is a pack — reuse existing
+                                _existing_file = title
+                                _existing_id = _existing_job[4:] if _existing_job.startswith('nzb:') else _existing_job
+                                logging.info(f'[{item_identifier}] Season pack already submitted for S{_season:02d} '
+                                             f'(job={_existing_job}) — reusing instead of duplicate submission')
+                                return {'id': _existing_id, 'filename': _existing_file,
+                                        'original_title': _existing_file, 'status': 'downloading',
+                                        'files': [], 'progress': 0,
+                                        '_provider': 'cli_mount', '_is_nzb': True,
+                                        '_nzb_url': nzb_url}, nzb_url, result
+                            else:
+                                # New result is individual episode, existing job is a season pack — skip individual
+                                _existing_id = _existing_job[4:] if _existing_job.startswith('nzb:') else _existing_job
+                                logging.info(f'[{item_identifier}] Season pack already submitted for S{_season:02d} '
+                                             f'(job={_existing_job}) — skipping individual episode submission')
+                                return {'id': _existing_id, 'filename': title,
+                                        'original_title': title, 'status': 'downloading',
+                                        'files': [], 'progress': 0,
+                                        '_provider': 'cli_mount', '_is_nzb': True,
+                                        '_nzb_url': nzb_url}, nzb_url, result
+                        elif _is_pack and not _sibling_is_pack:
+                            # New result is a pack, existing jobs are individual episodes.
+                            # Cancel the individual cli_mount jobs so we don't end up with
+                            # both individual files AND a season pack folder on disk.
+                            try:
+                                from database import get_db_connection as _gdb2
+                                _conn2 = _gdb2()
+                                try:
+                                    _individuals = _conn2.execute(
+                                        "SELECT id, filled_by_torrent_id FROM media_items "
+                                        "WHERE imdb_id=? AND season_number=? AND type='episode' "
+                                        "AND filled_by_torrent_id LIKE 'nzb:%' "
+                                        "AND REPLACE(COALESCE(version,''),'*','')=? "
+                                        "AND state IN ('Adding','Checking')",
+                                        (_imdb, _season, _sibling_ver)
+                                    ).fetchall()
+                                finally:
+                                    _conn2.close()
+                                if _individuals:
+                                    from usenet import get_usenet_client as _get_dc
+                                    _dc = _get_dc()
+                                    _cancelled = set()
+                                    for _ind_id, _ind_tid in _individuals:
+                                        _ind_hash = _ind_tid[4:] if _ind_tid.startswith('nzb:') else _ind_tid
+                                        if _ind_hash not in _cancelled:
+                                            try:
+                                                _dc.remove_nzb(_ind_hash)
+                                                _cancelled.add(_ind_hash)
+                                                logging.info(f'[{item_identifier}] Cancelled individual episode job {_ind_hash} — season pack will replace it')
+                                            except Exception:
+                                                pass
+                            except Exception as _ce:
+                                logging.debug(f'[{item_identifier}] Could not cancel individual jobs: {_ce}')
+                            # Fall through to submit the pack
+                except Exception as _se:
+                    logging.debug(f'[{item_identifier}] Season pack DB dedup check failed: {_se}')
+
+        # Build structured job title if NZB naming is enabled.
+        # Must happen BEFORE the dedup check so we check the actual submitted name.
+        try:
+            from routes.scraper_routes import _build_nzb_title
+            _item_type = (item or {}).get('type', '')
+            _media_type = 'tv' if _item_type == 'episode' else _item_type
+            # Season packs (one NZB for whole season) must NOT include SxxExx in the job title.
+            # All episodes in Scraping that share the same pack NZB must produce the identical
+            # cli_mount job name so they land in a single folder and the dedup check fires.
+            # Detection: parsed_info has seasons but no episodes (PTT leaves episodes empty for packs).
+            _parsed = result.get('parsed_info', {}) or {}
+            _parsed_seasons = _parsed.get('seasons') or []
+            _parsed_episodes = _parsed.get('episodes') or []
+            _is_season_pack = bool(_parsed_seasons) and not _parsed_episodes
+            job_title = _build_nzb_title(
+                title=(item or {}).get('title', '') or title,
+                year=(item or {}).get('year', ''),
+                imdb_id=(item or {}).get('imdb_id'),
+                version=(item or {}).get('version', ''),
+                original_scraped_torrent_title=title,
+                media_type=_media_type,
+                season=(item or {}).get('season_number'),
+                episode=None if _is_season_pack else (item or {}).get('episode_number'),
+                episode_title=None if _is_season_pack else (item or {}).get('episode_title'),
+                tags=(item or {}).get('tags') or None,
+            ) or title
+        except Exception as _bnt_exc:
+            # Falling back to the raw scraped title silently here means the
+            # resulting cli_mount entry has no imdb tag, no version tag, and no
+            # structured name at all — indistinguishable from naming being
+            # disabled. Log it so a real bug (bad settings lookup, unexpected
+            # season/episode type, etc.) is visible instead of masquerading as
+            # "naming worked but produced a plain title".
+            logging.warning(f'[{item_identifier}] _build_nzb_title failed, falling back to raw title: {_bnt_exc}', exc_info=True)
+            job_title = title
+
+        # Check if same NZB title already in cli_mount/NzbDAV to avoid duplicates.
+        # Two match levels:
+        #   1. Exact title match — catches same release resubmitted
+        #   2. Prefix match — catches same show/episode submitted with a different
+        #      release group (e.g. RAWR vs Kitsune). The structured title format is:
+        #      "Show (year) - SxxExx - Title - {imdb-ttXXX} - Version - (release.title)"
+        #      Stripping the trailing " - (release.title)" gives a stable prefix.
+        import re as _re_dc
+        def _title_prefix(t):
+            return _re_dc.sub(r'\s*-\s*\([^)]*\)\s*$', '', t).strip()
+
+        _job_prefix = _title_prefix(job_title)
+
+        # GUID blacklist, checked here too and not only at scrape time: the Adding
+        # queue submits from scrape results stored before an earlier attempt at
+        # the same release failed and was blacklisted.
+        if not (item or {}).get('disable_not_wanted_check'):
+            from database.not_wanted_magnets import is_nzb_guid_not_wanted
+            _guid_src = (result.get('parsed_info') or {}).get('guid') or nzb_url
+            if _guid_src and is_nzb_guid_not_wanted(_guid_src):
+                logging.info(f'[{item_identifier}] Skipping NZB {title!r} — guid in not-wanted list')
+                return None
+
+        # Fetch NZB XML once for segment blacklist checks on reuse and submit paths.
+        _nzb_xml = None
+        # Set when this indexer refused downloads for a limit, now or moments ago.
+        # Reusing an in-flight job (below) doesn't need the indexer, so only a
+        # fresh submission is blocked.
+        from usenet.nzb_fetch_cooldown import (
+            classify_refusal, cooldown_reason, first_skip_this_window, record_indexer_limit,
+        )
+        _indexer_refusal = cooldown_reason(nzb_url)
+        if not _indexer_refusal:
+            try:
+                from routes.api_tracker import api as _nzb_api_early
+                _nr_early = _nzb_api_early.get(nzb_url, timeout=15, allow_redirects=True)
+                if _nr_early.status_code == 200 and '<nzb' in _nr_early.text.lower():
+                    _nzb_xml = _nr_early.text
+                    from database.not_wanted_magnets import is_nzb_segment_not_wanted
+                    if is_nzb_segment_not_wanted(_nzb_xml):
+                        logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
+                        return None
+                else:
+                    _cooldown_s = classify_refusal(_nr_early.status_code, getattr(_nr_early, 'headers', None),
+                                                   _nr_early.text[:2000])
+                    if _cooldown_s:
+                        # cli_mount's URL fetch and the direct-upload fallback would hit
+                        # the same refusal, so don't send either.
+                        record_indexer_limit(nzb_url, _cooldown_s)
+                        _indexer_refusal = (f'indexer refused the download (HTTP {_nr_early.status_code}); '
+                                            f'skipping its NZBs for {max(1, _cooldown_s // 60)} min')
+            except Exception as _nzb_early_err:
+                logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_early_err}')
+
+        def _blocked_nzb_job_reuse(existing_hash: str) -> bool:
+            """True when an existing cli_mount job must not be reused for this result."""
+            if is_magnet_not_wanted(existing_hash):
+                logging.warning(
+                    f'[{item_identifier}] Matched job {existing_hash} is in not-wanted list - not reusing'
+                )
+                return True
+            if has_any_known_unplayable_file(f'nzb:{existing_hash}'):
+                logging.info(
+                    f'[{item_identifier}] Matched job nzb:{existing_hash} has a file already '
+                    f'confirmed unplayable this session — not reusing'
+                )
+                return True
+            return False
+
+        # DB-level dedup: check if same item already in Adding/Checking with nzb: torrent ID.
+        # Works for both cli_mount and NzbDAV since it uses the DB, not provider API.
+        # Version-scoped: different versions (e.g. 1080p vs 4k) of the same movie/episode
+        # must never be treated as duplicates of each other — reusing another version's
+        # job id corrupts both DB rows and can lead to one version's file being deleted
+        # when the other's lifecycle (health check, cleanup, repair) acts on that job id.
+        try:
+            from database.core import get_db_connection as _get_dbc_dd
+            _item_imdb = (item or {}).get('imdb_id')
+            _item_type = (item or {}).get('type', '')
+            _item_id = (item or {}).get('id', -1)
+            # Matches SQL's REPLACE(COALESCE(version,''),'*','') exactly.
+            _item_ver = ((item or {}).get('version') or '').rstrip('*')
+            if _item_imdb and _item_type:
+                _dd_q = ("SELECT filled_by_torrent_id FROM media_items "
+                         "WHERE imdb_id=? AND type=? AND state IN ('Adding','Checking') "
+                         "AND filled_by_torrent_id LIKE 'nzb:%' "
+                         "AND REPLACE(COALESCE(version,''),'*','')=? AND id!=?")
+                _dd_p = (_item_imdb, _item_type, _item_ver, _item_id)
+                if _item_type == 'episode':
+                    _dd_q = ("SELECT filled_by_torrent_id FROM media_items "
+                             "WHERE imdb_id=? AND type=? AND season_number=? AND episode_number=? "
+                             "AND state IN ('Adding','Checking') AND filled_by_torrent_id LIKE 'nzb:%' "
+                             "AND REPLACE(COALESCE(version,''),'*','')=? AND id!=?")
+                    _dd_p = (_item_imdb, _item_type,
+                             (item or {}).get('season_number'), (item or {}).get('episode_number'),
+                             _item_ver, _item_id)
+                with _get_dbc_dd() as _dbc:
+                    _dd_row = _dbc.execute(_dd_q, _dd_p).fetchone()
+                if _dd_row:
+                    _existing_nzb_id = _dd_row[0][4:]  # strip 'nzb:'
+                    if _blocked_nzb_job_reuse(_existing_nzb_id):
+                        pass  # fall through to fresh submission / title match
+                    else:
+                        logging.info(f'[{item_identifier}] NZB already in-flight (DB dedup): {_existing_nzb_id} — reusing job')
+                        return {'id': _existing_nzb_id, 'filename': job_title, 'original_title': job_title,
+                                'status': 'downloading', 'files': [], 'progress': 0,
+                                '_provider': 'Usenet', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+        except Exception:
+            pass
+
+        # cli_mount-only: also check provider queue by title for exact/prefix match.
+        # NzbDAV has no /api/torrents endpoint — silently skipped via except.
+        try:
+            from routes.api_tracker import api as _check_api
+            from utilities.settings import get_setting as _gs_check
+            _dcy_url = _gs_check('Usenet Provider', 'url', default='').rstrip('/')
+            _dcy_token = _gs_check('Usenet Provider', 'api_token', default='')
+            _ch = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+            _page_dc = 1
+            _found_dc = False
+            while not _found_dc:
+                _er = _check_api.get(f'{_dcy_url}/api/torrents', headers=_ch,
+                                     params={'page': _page_dc, 'limit': 100,
+                                             'sort_by': 'added_on', 'sort_order': 'desc'},
+                                     timeout=5)
+                if _er.status_code != 200:
+                    break
+                _data_dc = _er.json()
+                _torrents_dc = _data_dc.get('torrents', [])
+                for _t in _torrents_dc:
+                    _t_name = _t.get('name', '')
+                    _exact = (_t_name == job_title or _t.get('original_filename', '') == job_title)
+                    _prefix = (bool(_job_prefix) and _title_prefix(_t_name) == _job_prefix)
+                    if _exact or _prefix:
+                        _existing_hash = _t.get('info_hash', '')
+                        # Verify the matched job is still actually alive on the provider
+                        # before reusing it - a title match against cli_mount's listing can
+                        # still be a stale/completed-and-cleaned-up entry, and reusing it
+                        # blindly ghosts every retry forever (same failure class the Aug 18
+                        # is_nzb_job_alive() fix closed for the sibling-pack reuse sites,
+                        # just not here).
+                        try:
+                            from usenet import is_nzb_job_alive as _is_job_alive
+                            if not _is_job_alive(_existing_hash):
+                                logging.warning(f'[{item_identifier}] Matched job {_existing_hash} in cli_mount listing no longer alive on provider - not reusing')
+                                continue
+                        except Exception:
+                            pass  # unknown due to error - don't block a legitimate reuse
+                        # A job can be alive on the provider yet permanently stuck (e.g. the
+                        # "folder never appeared" health-check failure) - is_nzb_job_alive()
+                        # only proves it still exists, not that it's healthy. Once a job's
+                        # hash has been blacklisted, reusing it here just re-enters the same
+                        # stuck job and defeats the health-check's not-wanted list entirely.
+                        if _blocked_nzb_job_reuse(_existing_hash):
+                            continue
+                        _match_type = 'exact' if _exact else 'prefix'
+                        logging.info(f'[{item_identifier}] NZB already in cli_mount ({_match_type} match): {_t_name} (hash={_existing_hash}) — reusing job')
+                        _found_dc = True
+                        return {'id': _existing_hash, 'filename': job_title, 'original_title': job_title,
+                                'status': _t.get('status', 'downloading'), 'files': [], 'progress': 0,
+                                '_provider': 'cli_mount', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                if not _data_dc.get('has_next'):
+                    break
+                _page_dc += 1
+        except Exception:
+            pass
+
+        _item = item or {}
+        # Derive is_anime: prefer trigger_is_anime DB flag, fall back to genres
+        # genres may be a list or a JSON string from the DB
+        _genres_raw = _item.get('genres') or _item.get('trigger_genres') or []
+        if isinstance(_genres_raw, str):
+            try:
+                import json as _json
+                _genres_raw = _json.loads(_genres_raw)
+            except Exception:
+                _genres_raw = [_genres_raw]
+        _is_anime = bool(_item.get('trigger_is_anime')) or any(
+            'anime' in (g or '').lower() for g in _genres_raw
+        )
+        _item_media_type = _item.get('type', '')
+        _tags = _item.get('tags') or None
+        # tags_exclusive: check content source config
+        _tags_exclusive = False
+        try:
+            from utilities.settings import get_setting as _gs_tags
+            _cs_id = _item.get('content_source', '')
+            if _cs_id:
+                _cs_cfg = (_gs_tags('Content Sources') or {}).get(_cs_id, {})
+                _tags_exclusive = bool(_cs_cfg.get('tags_exclusive', False))
+        except Exception:
+            pass
+
+        if _indexer_refusal:
+            if first_skip_this_window((item or {}).get('id'), nzb_url):
+                logging.warning(f'[{item_identifier}] Not submitting NZB {title!r} — {_indexer_refusal}; '
+                                f'keeping it for later and trying the next result')
+            return NZB_DEFERRED_INDEXER_COOLDOWN
+
+        logging.info(f'[{item_identifier}] Submitting NZB to cli_mount: {job_title}')
+        if _nzb_xml:
+            job_id = client.add_nzb_content(nzb_content=_nzb_xml, title=job_title,
+                                            is_anime=_is_anime, media_type=_item_media_type,
+                                            tags=_tags, tags_exclusive=_tags_exclusive)
+            if not job_id and client.last_missing_segments:
+                logging.warning(f'[{item_identifier}] cli_mount server missing segments for {job_title!r} — adding NZB URL to not-wanted')
+                try:
+                    from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nw_seg
+                    if nzb_url:
+                        _add_nw_seg(nzb_url)
+                        logging.info(f'[{item_identifier}] Added missing-segments NZB URL to not-wanted')
+                except Exception:
+                    pass
+                from usenet.nzb_dead_release_cache import mark_release_dead
+                mark_release_dead(title)
+                # Flag on item so adding_queue knows this was a missing-segments failure
+                if item:
+                    item['_nzb_all_missing_segments'] = True
+                return None
+        else:
+            job_id = client.add_nzb(nzb_url=nzb_url, title=job_title,
+                                    is_anime=_is_anime, media_type=_item_media_type,
+                                    tags=_tags, tags_exclusive=_tags_exclusive)
+
+        if not job_id:
+            # Fallback: download NZB and upload directly
+            logging.info(f'[{item_identifier}] URL submission failed, trying direct upload: {job_title}')
+            try:
+                from routes.api_tracker import api as _nzb_api
+                _r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
+                if _r.status_code == 200 and '<nzb' in _r.text.lower():
+                    job_id = client.add_nzb_content(nzb_content=_r.text, title=job_title,
+                                                    is_anime=_is_anime, media_type=_item_media_type,
+                                                    tags=_tags, tags_exclusive=_tags_exclusive)
+                    if not job_id and client.last_missing_segments:
+                        logging.warning(f'[{item_identifier}] cli_mount server missing segments on fallback for {job_title!r}')
+                        from usenet.nzb_dead_release_cache import mark_release_dead
+                        mark_release_dead(title)
+                        if item:
+                            item['_nzb_all_missing_segments'] = True
+                        return None
+                    if job_id:
+                        logging.info(f'[{item_identifier}] Direct upload succeeded: {job_title}')
+            except Exception as _fe:
+                logging.warning(f'[{item_identifier}] Direct upload fallback failed: {_fe}')
+
+        if not job_id:
+            logging.warning(f'[{item_identifier}] cli_mount rejected NZB: {title}')
+            return None
+
+        # Verify job is actually in cli_mount's queue — brief wait for processing
+        time.sleep(1)
+        status = client.get_job_status(job_id)
+        if status and status.get('state') == 'failed':
+            logging.warning(f'[{item_identifier}] cli_mount failed NZB immediately after submission: {title} (job_id={job_id})')
+            return None
+
+        logging.info(f'[{item_identifier}] NZB submitted successfully, job_id={job_id}')
+
+        # Extract segment ID for not-wanted fingerprinting
+        _segment_id = ''
+        if _nzb_xml:
+            try:
+                from database.not_wanted_magnets import extract_nzb_segment_id
+                _segment_id = extract_nzb_segment_id(_nzb_xml)
+            except Exception:
+                pass
+
+        # Return a synthetic torrent_info dict so the caller can treat this like a torrent result
+        torrent_info = {
+            'id': job_id,
+            'filename': job_title,
+            'original_title': title,  # original NZB release name preserved for reference
+            'status': 'downloading',
+            'files': [],
+            'progress': 0,
+            '_provider': 'cli_mount',
+            '_is_nzb': True,
+            '_nzb_url': nzb_url,
+            '_nzb_segment_id': _segment_id,
+        }
+        return torrent_info, nzb_url, result
+
     def process_results(
         self,
         results: list[Dict],
         accept_uncached: bool = False,
-        item: Optional[Dict] = None
+        item: Optional[Dict] = None,
+        adding_queue_items: Optional[list] = None,
+    ) -> Tuple[Optional[Dict], Optional[str], Optional[Dict]]:
+        """Thin wrapper around _process_results_inner that also consolidates any already-Collected
+        siblings the finalized torrent happens to cover onto it, live, in the same tick - see
+        _consolidate_covered_siblings for details."""
+        torrent_info, magnet, chosen_result = self._process_results_inner(
+            results, accept_uncached=accept_uncached, item=item, adding_queue_items=adding_queue_items,
+        )
+        if torrent_info:
+            # Stamp which provider actually holds this torrent. add_to_account tags
+            # its own successes, but the cached-hit, existing-torrent-reuse and
+            # sibling-pack paths return info straight from whichever provider
+            # answered without tagging it -- self.debrid_provider is the one thing
+            # every path updates, so it is the reliable fallback. The Adding queue
+            # persists this onto the item and the Checking queue polls that provider
+            # instead of the primary: polling the primary for a torrent a fallback
+            # holds 404s on the very first check and is misread as a missing torrent,
+            # which sends the item back to Wanted and regrabs the next release.
+            if not torrent_info.get('_provider') and self.debrid_provider is not None:
+                torrent_info['_provider'] = self.debrid_provider.PROVIDER_NAME
+            try:
+                self._consolidate_covered_siblings(item, torrent_info)
+            except Exception as e:
+                logging.warning(f"Sibling pack consolidation failed (non-fatal): {e}", exc_info=True)
+        return torrent_info, magnet, chosen_result
+
+    def _process_results_inner(
+        self,
+        results: list[Dict],
+        accept_uncached: bool = False,
+        item: Optional[Dict] = None,
+        adding_queue_items: Optional[list] = None,
     ) -> Tuple[Optional[Dict], Optional[str], Optional[Dict]]:
         """
         Process a list of results to find the best match
-        
+
         Args:
             results: List of results to process
             accept_uncached: Whether to accept uncached results
             item: Optional media item for tracking successful results
-            
+
         Returns:
             Tuple of (torrent_info, magnet_link, chosen_result) if successful, (None, None, None) otherwise
         """
         item_identifier = item.get('title', 'Unknown') if item else 'Unknown'
         logging.info(f"[{item_identifier}] Starting to process {len(results)} results (accept_uncached={accept_uncached})")
-        
+
+        sibling_pack = self._check_sibling_debrid_pack(item, adding_queue_items=adding_queue_items)
+        if sibling_pack:
+            return sibling_pack
+
         for idx, result in enumerate(results, 1):
             chosen_result_for_return = None # Initialize variable to hold the chosen result
             try:
+                # NZB results are handled by cli_mount, not debrid — route them separately
+                if result.get('protocol') == 'nzb' or result.get('nzb_url'):
+                    nzb_result = self._process_nzb_result(result, item, adding_queue_items=adding_queue_items)
+                    if nzb_result is NZB_DEFERRED_INDEXER_COOLDOWN:
+                        # Its indexer is refusing downloads for now. Keep the result for
+                        # a later tick and try the next one; if every remaining result is
+                        # cooling down, the item just stays in Adding with them intact.
+                        continue
+                    if nzb_result:
+                        return nzb_result
+                    # NZB rejected — pop this result from scrape_results in DB so the next
+                    # tick tries the next candidate, then return so the Adding queue can
+                    # move on to other items immediately (one attempt per item per tick).
+                    # Pop the attempted result itself: earlier ones may have been kept
+                    # above because their indexer is cooling down.
+                    if item:
+                        try:
+                            import json as _json_tp
+                            from database.database_writing import update_media_item as _umi_tp
+                            _sr = item.get('scrape_results', [])
+                            if isinstance(_sr, str):
+                                _sr = _json_tp.loads(_sr)
+                            # Not found means it was already dropped (Hybrid mode runs this
+                            # a second time with the original list); drop nothing else.
+                            # Match by URL + title: the Adding queue adds fields to its
+                            # copy of the results, so whole dicts don't compare equal.
+                            def _result_key(r):
+                                return ((r.get('nzb_url') or r.get('magnet') or r.get('link') or ''),
+                                        r.get('title', '')) if isinstance(r, dict) else None
+                            _want = _result_key(result)
+                            _drop = next((i for i, r in enumerate(_sr) if _result_key(r) == _want), None) \
+                                if isinstance(_sr, list) else None
+                            if _drop is not None:
+                                _sr = _sr[:_drop] + _sr[_drop + 1:]
+                                item['scrape_results'] = _sr
+                                _umi_tp(item['id'], scrape_results=_json_tp.dumps(_sr))
+                        except Exception:
+                            pass
+                    return None, None, None
+
                 original_link = result.get('magnet') or result.get('link')
                 if not original_link:
                     continue
-                    
+
                 result_title = result.get('title', 'Unknown title')
                 logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Processing: {result_title}")
                 logging.debug(f"[{item_identifier}] [Result {idx}/{len(results)}] Raw result data: {result}")
@@ -559,18 +1540,62 @@ class TorrentProcessor:
                     continue
                     
                 logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Cache Check - Starting cache status check")
-                
+
                 # Create a temporary item dict for passing to check_cache_status
                 temp_item_for_check = item.copy() if item else {}
-                temp_item_for_check['title'] = result_title # Use the title from the current scrape result
+                temp_item_for_check['title'] = result_title
                 if 'imdb_id' not in temp_item_for_check and item and item.get('imdb_id'):
                     temp_item_for_check['imdb_id'] = item.get('imdb_id')
 
-                is_cached, cache_source = self.check_cache_status(
-                    magnet if not temp_file else "",
-                    temp_file,
-                    item=temp_item_for_check
-                )
+                # Check cache across all providers in parallel — use first hit
+                from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+                providers = self._providers
+                is_cached = False
+                cache_source = 'direct_check'
+                winning_provider = self.debrid_provider  # default to primary
+
+                def _check_one(prov):
+                    try:
+                        cached, src = self.check_cache_status(
+                            magnet if not temp_file else "",
+                            temp_file,
+                            item=temp_item_for_check,
+                            provider=prov,
+                        )
+                        return prov, cached, src
+                    except Exception as _e:
+                        logging.warning(f"[{prov.PROVIDER_NAME}] cache check error: {_e}")
+                        return prov, None, 'error'
+
+                if not providers:
+                    # usenet-only setup: no debrid provider to cache-check a
+                    # torrent result. Leave is_cached False (ThreadPoolExecutor
+                    # would raise on max_workers=0).
+                    is_cached = False
+                elif len(providers) == 1:
+                    winning_provider, is_cached, cache_source = _check_one(providers[0])
+                else:
+                    _outcomes = {}
+                    with ThreadPoolExecutor(max_workers=len(providers)) as _ex:
+                        _futures = {_ex.submit(_check_one, p): p for p in providers}
+                        for _fut in _as_completed(_futures):
+                            _prov, _cached, _src = _fut.result()
+                            logging.info(f"[{_prov.PROVIDER_NAME}] cache={_cached} src={_src}")
+                            _outcomes[id(_prov)] = (_cached, _src)
+                    # Every check has finished by now, so take the first cached provider
+                    # in the configured order rather than whichever answered first.
+                    for _prov in providers:
+                        _cached, _src = _outcomes.get(id(_prov), (None, None))
+                        if _cached:
+                            is_cached = True
+                            cache_source = _src
+                            winning_provider = _prov
+                            # Update processor's active provider so add_to_account uses same one
+                            self.debrid_provider = _prov
+                            break
+
+                if is_cached:
+                    logging.info(f"[{item_identifier}] Cached on {winning_provider.PROVIDER_NAME}")
                     
                 if is_cached is None:
                     logging.warning(f"[{item_identifier}] [Result {idx}/{len(results)}] Cache check returned None, skipping result")
@@ -594,6 +1619,8 @@ class TorrentProcessor:
                                     filled_by_title=result.get('title', ''))
                                 item['filled_by_magnet'] = original_link
                                 item['filled_by_title'] = result.get('title', '')
+                                record_grab(item, result, kind='torrent', trigger=queue_grab_trigger(item),
+                                            release_title=result.get('title', ''))
                             # Return None, original_link, AND the result that triggered this
                             return None, original_link, result
                     except TooManyDownloadsError:
@@ -605,6 +1632,8 @@ class TorrentProcessor:
                                 filled_by_title=result.get('title', ''))
                             item['filled_by_magnet'] = original_link
                             item['filled_by_title'] = result.get('title', '')
+                            record_grab(item, result, kind='torrent', trigger=queue_grab_trigger(item),
+                                        release_title=result.get('title', ''))
                         # Return None, original_link, AND the result that triggered this
                         return None, original_link, result
                     except Exception as e:
@@ -626,6 +1655,14 @@ class TorrentProcessor:
                             logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Info Fetch - Getting info for cached torrent")
                             info = self.debrid_provider.get_torrent_info(torrent_id)
                             torrent_title = self.debrid_provider.get_cached_torrent_title(hash_value)
+                            # Stamp explicitly with winning_provider (this result's own cache-check
+                            # outcome) rather than relying on self.debrid_provider still matching it
+                            # by the time process_results' fallback stamp runs — self.debrid_provider
+                            # is shared, mutable state across every item this long-lived
+                            # TorrentProcessor processes, so a future edit between here and that
+                            # fallback could otherwise silently mis-stamp a different item.
+                            if info is not None:
+                                info['_provider'] = winning_provider.PROVIDER_NAME
                 
                 if not info:
                     try:
@@ -642,11 +1679,27 @@ class TorrentProcessor:
                             existing_torrent_id = self.debrid_provider._all_torrent_ids.get(hash_value)
                             
                         if existing_torrent_id:
-                            logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Reusing existing torrent ID: {existing_torrent_id}")
-                            info = self.debrid_provider.get_torrent_info(existing_torrent_id)
+                            existing_info = self.debrid_provider.get_torrent_info(existing_torrent_id)
+                            existing_status = existing_info.get('status') if existing_info else None
+                            _error_statuses = ('error', 'magnet_error', 'virus', 'dead')
+                            if existing_status in _error_statuses:
+                                logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Existing torrent {existing_torrent_id} has status '{existing_status}', removing and re-adding")
+                                try:
+                                    self.debrid_provider.remove_torrent(existing_torrent_id, removal_reason=f"Error status '{existing_status}', re-adding")
+                                except Exception as remove_err:
+                                    logging.warning(f"[{item_identifier}] Could not remove errored torrent {existing_torrent_id}: {remove_err}")
+                                logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service (after removing errored torrent)")
+                                info = self.add_to_account(original_link, preferred_provider=winning_provider if is_cached else None)
+                            else:
+                                logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Reusing existing torrent ID: {existing_torrent_id}")
+                                info = existing_info
+                                # Stamp explicitly with the provider this lookup was actually
+                                # performed against, same reasoning as the cache-hit path above.
+                                if info is not None:
+                                    info['_provider'] = self.debrid_provider.PROVIDER_NAME
                         else:
                             logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service")
-                            info = self.add_to_account(original_link)
+                            info = self.add_to_account(original_link, preferred_provider=winning_provider if is_cached else None)
                         
                         if info:
                             # Extract hash after successful addition
@@ -784,6 +1837,123 @@ class TorrentProcessor:
                         
                         elif item and not definitive_hash:
                              logging.warning(f"[{item_identifier}] [Result {idx}/{len(results)}] No definitive_hash in torrent info. Skipping not_wanted and tracking. Original link: {original_link if original_link else 'N/A'}")
+
+                        # Debrid File Naming: rename the cli_mount DFS folder using
+                        # the structured CLI name if the setting is enabled.
+                        # Runs asynchronously so it doesn't block the adding flow.
+                        # Retries up to 3 times with 30s delay to handle cli_mount's
+                        # periodic sync window (default 10 min).
+                        if item and definitive_hash:
+                            try:
+                                from utilities.settings import get_setting as _dbn_gs
+                                if _dbn_gs('Debrid Provider', 'enable_debrid_naming', False):
+                                    from routes.scraper_routes import _build_debrid_title
+                                    _dbn_type = item.get('type', '')
+                                    _dbn_media_type = 'tv' if _dbn_type == 'episode' else _dbn_type
+                                    _parsed_dbn = result.get('parsed_info', {}) or {}
+                                    _dbn_seasons = _parsed_dbn.get('seasons') or []
+                                    _dbn_episodes = _parsed_dbn.get('episodes') or []
+                                    _dbn_is_pack = bool(_dbn_seasons) and not _dbn_episodes
+                                    # Fallback: if no parsed_info (e.g. upgrade hub candidate),
+                                    # detect season pack by checking if title has SXX but no SXXEXX
+                                    if not _dbn_is_pack and not _parsed_dbn and _dbn_type == 'episode':
+                                        import re as _re_dbn
+                                        _t = result.get('title') or result.get('original_title') or ''
+                                        if _re_dbn.search(r'[Ss]\d{2}(?![Ee]\d)', _t):
+                                            _dbn_is_pack = True
+                                    _dbn_title = _build_debrid_title(
+                                        title=item.get('title', '') or result_title,
+                                        year=item.get('year', ''),
+                                        imdb_id=item.get('imdb_id'),
+                                        version=item.get('version', ''),
+                                        original_scraped_torrent_title=result.get('original_title') or result_title,
+                                        media_type=_dbn_media_type,
+                                        season=item.get('season_number'),
+                                        episode=None if _dbn_is_pack else item.get('episode_number'),
+                                        episode_title=None if _dbn_is_pack else item.get('episode_title'),
+                                        tags=item.get('tags') or None,
+                                        content_source_display_name=item.get('content_source_detail') or item.get('content_source'),
+                                    )
+                                    logging.info(f'[DebridNaming] title={_dbn_title!r} orig={result.get("original_title") or result_title!r} will_rename={bool(_dbn_title and _dbn_title != (result.get("original_title") or result_title))}')
+                                    if _dbn_title and _dbn_title != (result.get('original_title') or result_title):
+                                        import threading as _dbn_threading
+                                        _dbn_hash = definitive_hash
+                                        _dbn_name = _dbn_title
+                                        _dbn_id = item_identifier
+                                        _dbn_item_id = item.get('id')
+                                        def _do_debrid_rename(h, name, ident, item_id):
+                                            import time as _t
+                                            logging.info(f'[DebridNaming] Thread started for {ident!r} hash={h!r}')
+                                            try:
+                                                from usenet import get_usenet_client
+                                                _dc = get_usenet_client()
+                                                if not hasattr(_dc, 'rename_nzb'):
+                                                    logging.info(f'[DebridNaming] Client has no rename_nzb for {ident!r}')
+                                                    return  # active usenet provider (e.g. nzbdav) has no rename semantics
+                                                # cli_mount only registers an entry as queryable-by-hash after its
+                                                # own periodic sync (default ~10 min) — a 404 in the first several
+                                                # attempts is expected, not proof the entry is gone. Only treat 404
+                                                # as final once it's persisted for that long (20 attempts x 30s).
+                                                _consecutive_404 = 0
+                                                _confirmed_gone_after = 20
+                                                for _attempt in range(100):
+                                                    _renamed, _not_found = _dc.rename_nzb_with_status(h, name)
+                                                    if _not_found:
+                                                        _consecutive_404 += 1
+                                                        if _consecutive_404 >= _confirmed_gone_after:
+                                                            logging.warning(f'[DebridNaming] {h!r} not found in cli_mount (404) for {_consecutive_404} consecutive attempts — giving up for {ident}')
+                                                            return
+                                                    else:
+                                                        _consecutive_404 = 0
+                                                    if _renamed:
+                                                        logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} for {ident}')
+                                                        if item_id:
+                                                            try:
+                                                                from database.database_writing import update_media_item as _umi
+                                                                _umi(item_id, debrid_folder_name=name, filled_by_title=name)
+                                                            except Exception as _db_err:
+                                                                logging.debug(f'[DebridNaming] DB update failed for {ident}: {_db_err}')
+                                                        # Register cli_debrid IDs for all siblings sharing this torrent
+                                                        try:
+                                                            from database.core import get_db_connection as _gdb_dn
+                                                            import os as _os_dn
+                                                            _VIDEO_EXTS_DN = {'.mkv','.mp4','.avi','.mov','.wmv','.m4v','.ts'}
+                                                            with _gdb_dn() as _dbc:
+                                                                # Find all live items sharing this torrent by provider_id
+                                                                _torrent_id_val = None
+                                                                _r = _dbc.execute(
+                                                                    'SELECT filled_by_torrent_id FROM media_items WHERE id=?', (item_id,)
+                                                                ).fetchone()
+                                                                if _r:
+                                                                    _torrent_id_val = _r[0]
+                                                                if _torrent_id_val:
+                                                                    _sibs = _dbc.execute(
+                                                                        "SELECT id, filled_by_file FROM media_items "
+                                                                        "WHERE filled_by_torrent_id=? AND state IN ('Checking','Collected','Upgrading')",
+                                                                        (_torrent_id_val,)
+                                                                    ).fetchall()
+                                                                    _cli_ids_dn = {
+                                                                        s[1]: s[0]
+                                                                        for s in _sibs
+                                                                        if s[1] and _os_dn.path.splitext(s[1])[1].lower() in _VIDEO_EXTS_DN
+                                                                    }
+                                                                    if _cli_ids_dn:
+                                                                        _dc.register_cli_ids(h, _cli_ids_dn)
+                                                                        logging.info(f'[DebridNaming] Registered {len(_cli_ids_dn)} cli_debrid IDs for {h!r}')
+                                                            if item_id:
+                                                                _dc.push_tags_for_item(h, item_id)
+                                                        except Exception as _reg_dn_err:
+                                                            logging.debug(f'[DebridNaming] cli_ids registration error: {_reg_dn_err}')
+                                                        return
+                                                    _t.sleep(30)
+                                                logging.warning(f'[DebridNaming] Could not rename {h!r} after 100 attempts for {ident}')
+                                            except Exception as _dbn_err:
+                                                logging.info(f'[DebridNaming] Rename error for {ident}: {_dbn_err}')
+                                        _dbn_threading.Thread(target=_do_debrid_rename, args=(_dbn_hash, _dbn_name, _dbn_id, _dbn_item_id), daemon=True).start()
+                                        logging.info(f'[DebridNaming] Thread launched for {item_identifier!r} hash={definitive_hash!r}')
+                            except Exception as _dbn_ex:
+                                import traceback as _dbn_tb
+                                logging.info(f'[DebridNaming] Setup error for {item_identifier}: {_dbn_ex}\n{_dbn_tb.format_exc()}')
 
                         logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Successfully processed and added")
                         chosen_result_for_return = result # Store the successful result

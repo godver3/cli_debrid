@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, flash, redirect, url_for
 import requests
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from utilities.settings import get_setting, get_all_settings
 from typing import Dict, List, Any
 from content_checkers.trakt import ensure_trakt_auth, get_trakt_headers, make_trakt_request, parse_trakt_list_url
@@ -11,6 +11,15 @@ import logging
 import feedparser # Keep import for RSS
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+
+# --- Connection status cache ---
+_connections_cache = {
+    'results': None,
+    'timestamp': None,
+    'refreshing': False,
+}
+_connections_cache_lock = threading.Lock()
+_CACHE_TTL = timedelta(seconds=60)  # Serve cached results for up to 60s
 
 # Attempt to import DirectAPI - adjust path if necessary based on your project structure
 try:
@@ -49,6 +58,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 from .models import user_required # Added import
+from utilities.jellyfin_auth import jellyfin_auth_headers
 
 # Settings cache to avoid repeated config loading
 _settings_cache = {}
@@ -71,74 +81,26 @@ def get_cached_setting(section, key=None, default=None):
     return _settings_cache[cache_key]
 
 def check_cli_battery_connection():
-    """Check connection to cli_battery service using environment variables."""
+    """Check cli_battery module status via DirectAPI (in-process, no HTTP)."""
     try:
-        battery_url_from_settings = get_setting('Metadata Battery', 'url')
-        if not battery_url_from_settings:
-            log.error("CLI Battery connection check failed: Battery URL not configured in settings.")
-            return {
-                'name': 'cli_battery',
-                'connected': False,
-                'error': 'Battery URL not configured in settings.',
-                'details': {}
-            }
-
-        # Extract port for details, default if not in URL (though it should be)
-        parsed_url = urlparse(battery_url_from_settings)
-        battery_port_from_url = parsed_url.port if parsed_url.port else int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
-
-
-        response = requests.get(battery_url_from_settings, timeout=5) # Use the full URL from settings
+        from cli_battery.app.direct_api import DirectAPI
+        result = DirectAPI.check_trakt_auth()
         return {
             'name': 'cli_battery',
-            'connected': response.status_code == 200,
-            'error': None if response.status_code == 200 else f'Status code: {response.status_code}',
+            'connected': True,  # Module is reachable if we get here
+            'error': None,
             'details': {
-                'url': battery_url_from_settings,
-                'port': battery_port_from_url
-            }
-        }
-    except requests.Timeout:
-        battery_url_display = get_setting('Metadata Battery', 'url', f'http://{os.environ.get("CLI_DEBRID_BATTERY_HOST", "localhost")}:{os.environ.get("CLI_DEBRID_BATTERY_PORT", "5001")}/')
-        log.warning(f"CLI Battery connection check failed: Timeout while trying to connect to {battery_url_display}")
-        parsed_url_display = urlparse(battery_url_display)
-        battery_port_display = parsed_url_display.port if parsed_url_display.port else int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
-        return {
-            'name': 'cli_battery',
-            'connected': False,
-            'error': 'Connection timed out',
-            'details': {
-                'url': battery_url_display,
-                'port': battery_port_display
-            }
-        }
-    except requests.ConnectionError:
-        battery_url_display = get_setting('Metadata Battery', 'url', f'http://{os.environ.get("CLI_DEBRID_BATTERY_HOST", "localhost")}:{os.environ.get("CLI_DEBRID_BATTERY_PORT", "5001")}/')
-        log.warning(f"CLI Battery connection check failed: Connection refused by {battery_url_display}")
-        parsed_url_display = urlparse(battery_url_display)
-        battery_port_display = parsed_url_display.port if parsed_url_display.port else int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
-        return {
-            'name': 'cli_battery',
-            'connected': False,
-            'error': 'Connection refused',
-            'details': {
-                'url': battery_url_display,
-                'port': battery_port_display
+                'trakt_status': result.get('status', 'unknown'),
+                'mode': 'in-process',
             }
         }
     except Exception as e:
-        battery_url_display = get_setting('Metadata Battery', 'url', f'http://{os.environ.get("CLI_DEBRID_BATTERY_HOST", "localhost")}:{os.environ.get("CLI_DEBRID_BATTERY_PORT", "5001")}/')
-        log.error(f"CLI Battery connection check failed: An unexpected error occurred while trying to connect to {battery_url_display}. Error: {str(e)}", exc_info=True)
-        parsed_url_display = urlparse(battery_url_display)
-        battery_port_display = parsed_url_display.port if parsed_url_display.port else int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
+        log.error(f"CLI Battery connection check failed: {e}", exc_info=True)
         return {
             'name': 'cli_battery',
             'connected': False,
             'error': str(e),
-            'details': {
-                'url': battery_url_display,
-                'port': battery_port_display
-            }
+            'details': {}
         }
 
 def check_plex_connection():
@@ -315,7 +277,7 @@ def check_jellyfin_connection():
         system_info_url = f"{jellyfin_url}System/Info"
         
         headers = {
-            'X-Emby-Token': jellyfin_token,
+            **jellyfin_auth_headers(jellyfin_token),
             'Accept': 'application/json'
         }
         
@@ -562,6 +524,95 @@ def check_phalanx_db_connection():
             }
         }
 
+def check_tvdb_connection():
+    """Check TVDB API key if configured."""
+    api_key = get_setting('TVDB', 'api_key', '').strip()
+    if not api_key:
+        return None
+    try:
+        import requests as _req
+        r = _req.post('https://api4.thetvdb.com/v4/login',
+                      json={'apikey': api_key}, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            token = data.get('data', {}).get('token') or data.get('token')
+            return {'name': 'TVDB', 'connected': bool(token), 'error': None,
+                    'details': {'status': 'API key valid'}}
+        return {'name': 'TVDB', 'connected': False,
+                'error': f'HTTP {r.status_code}', 'details': {}}
+    except Exception as e:
+        return {'name': 'TVDB', 'connected': False, 'error': str(e), 'details': {}}
+
+
+def check_tmdb_connection():
+    """Check TMDB API key if configured."""
+    api_key = get_setting('TMDB', 'api_key', '').strip()
+    if not api_key:
+        return None
+    try:
+        import requests as _req
+        r = _req.get(f'https://api.themoviedb.org/3/configuration?api_key={api_key}', timeout=10)
+        if r.status_code == 200:
+            return {'name': 'TMDB', 'connected': True, 'error': None,
+                    'details': {'status': 'API key valid'}}
+        return {'name': 'TMDB', 'connected': False,
+                'error': f'HTTP {r.status_code}', 'details': {}}
+    except Exception as e:
+        return {'name': 'TMDB', 'connected': False, 'error': str(e), 'details': {}}
+
+
+def check_trakt_connection():
+    """Check Trakt auth status. Only shown when Trakt has been authorized."""
+    try:
+        from cli_battery.app.direct_api import DirectAPI
+        result = DirectAPI.check_trakt_auth()
+        status = result.get('status')
+        if status != 'authorized':
+            return None  # Not connected/authorized - don't show the card
+        return {'name': 'Trakt', 'connected': True, 'error': None, 'details': {}}
+    except Exception as e:
+        log.error(f"Trakt connection check failed: {e}", exc_info=True)
+        return None
+
+
+def check_scrob_connection():
+    """Check Scrob connection if URL and API key are configured."""
+    from content_checkers.scrob import get_scrob_config, _scrob_get
+    config = get_scrob_config()
+    if not config:
+        return None
+    try:
+        data = _scrob_get('/lists')
+        if data is not None:
+            return {'name': 'Scrob', 'connected': True, 'error': None,
+                    'details': {'url': config['base_url']}}
+        return {'name': 'Scrob', 'connected': False,
+                'error': 'Failed to connect to Scrob API', 'details': {}}
+    except Exception as e:
+        return {'name': 'Scrob', 'connected': False, 'error': str(e), 'details': {}}
+
+
+def check_climount_connection():
+    """Check usenet provider connection if usenet is enabled and URL is set.
+
+    Uses the provider factory so NzbDAV is checked (and its ensure_categories()
+    side-effect runs) when NzbDAV is the active provider.
+    """
+    enabled = get_setting('Usenet Provider', 'enabled', default=False)
+    url = get_setting('Usenet Provider', 'url', '').strip().rstrip('/')
+    if not enabled or not url:
+        return None
+    try:
+        from usenet import get_usenet_client, get_usenet_provider_display_name
+        client = get_usenet_client()
+        ok, err = client.check_connectivity()
+        display_name = get_usenet_provider_display_name()
+        return {'name': display_name, 'connected': ok,
+                'error': err, 'details': {'url': url}}
+    except Exception as e:
+        return {'name': 'Usenet Provider', 'connected': False, 'error': str(e), 'details': {}}
+
+
 def check_scraper_connection(scraper_id, scraper_config):
     """Check connection to a specific scraper."""
     scraper_type = scraper_config.get('type')
@@ -699,6 +750,39 @@ def check_scraper_connection(scraper_id, scraper_config):
             base_response['details'].update({
                 'url': url,
                 'tags': scraper_config.get('tags', '')
+            })
+
+        elif scraper_type == 'Newznab':
+            url = scraper_config.get('url', '').strip().rstrip('/')
+            api_key = scraper_config.get('api_key', '').strip()
+
+            if not url:
+                base_response['error'] = 'URL not configured'
+                return base_response
+
+            try:
+                params = {'t': 'caps'}
+                if api_key:
+                    params['apikey'] = api_key
+                response = requests.get(f"{url}/api", params=params, timeout=8)
+                if response.status_code == 200 and '<caps' in response.text:
+                    base_response['connected'] = True
+                elif response.status_code == 200:
+                    base_response['connected'] = True
+                else:
+                    base_response['connected'] = False
+                    base_response['error'] = f'Status code: {response.status_code}'
+            except requests.exceptions.Timeout:
+                base_response['error'] = 'Connection timed out'
+            except requests.exceptions.ConnectionError:
+                base_response['error'] = 'Connection refused'
+            except Exception as e:
+                base_response['error'] = str(e)
+
+            base_response['details'].update({
+                'url': url,
+                'subscription_expiry_date': scraper_config.get('subscription_expiry_date', ''),
+                'auto_renew': scraper_config.get('auto_renew', False)
             })
 
         elif scraper_type == 'AIOStreams':
@@ -958,6 +1042,57 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
     try:
         # --- MDBList ---
         if source_type == 'MDBList':
+            source_mode = (source_config.get('source_mode') or 'json_url').strip() or 'json_url'
+
+            # API modes talk to api.mdblist.com directly and need the configured API key
+            if source_mode != 'json_url':
+                from content_checkers.mdb_list import build_mdblist_api_url
+
+                api_key = (get_setting('MDBList', 'api_key', '') or '').strip()
+                if not api_key:
+                    base_response['error'] = 'MDBList API key not configured (Additional Settings -> MDBList)'
+                    base_response['connected'] = False
+                    return base_response
+
+                try:
+                    # Only the first list ID needs testing to prove the endpoint works
+                    endpoint = build_mdblist_api_url(
+                        source_mode,
+                        username=source_config.get('username'),
+                        listname=source_config.get('listname'),
+                        list_id=str(source_config.get('list_id') or '').split(',')[0]
+                    )
+                except ValueError as e:
+                    base_response['error'] = str(e)
+                    base_response['connected'] = False
+                    return base_response
+
+                try:
+                    response = requests.get(
+                        endpoint,
+                        params={'apikey': api_key, 'limit': 1},
+                        headers={'Accept': 'application/json'},
+                        timeout=10
+                    )
+                    if response.status_code == 200:
+                        base_response['connected'] = True
+                        base_response['error'] = f'Successfully connected to {endpoint}'
+                    elif response.status_code in (401, 403):
+                        base_response['error'] = 'MDBList authentication failed - check your API key'
+                    elif response.status_code == 404:
+                        base_response['error'] = f'MDBList list not found: {endpoint}'
+                    else:
+                        base_response['error'] = f'MDBList API returned status {response.status_code}'
+                except requests.exceptions.RequestException as e:
+                    base_response['error'] = f'MDBList API error: {str(e)}'
+
+                base_response['details'].update({
+                    'source_mode': source_mode,
+                    'endpoint': endpoint,
+                    'versions': source_config.get('versions', {'Default': True})
+                })
+                return base_response
+
             urls = source_config.get('urls', '').strip()
             if not urls:
                 base_response['error'] = 'URLs not configured'
@@ -1008,6 +1143,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 base_response['error'] = f'Successfully connected to all {len(successful_urls)} URLs'
                 
             base_response['details'].update({
+                'source_mode': source_mode,
                 'successful_urls': successful_urls,
                 'failed_urls': failed_urls,
                 'total_urls': len(url_list),
@@ -1100,9 +1236,17 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 # Try to connect with the token
                 account = MyPlexAccount(token=token) # Instantiate account
 
+                # Managed Plex Home users have no plex.tv username; their profile
+                # title stands in (same fallback as the watchlist fetch).
+                token_owner = account.username or account.title
+
+                # Imported here, not at module level: plex_watchlist imports database -> routes, so a
+                # top-level import of a name defined late in plex_watchlist is a circular import
+                # when plex_watchlist is the first of the two to load (as in main.py).
+                from content_checkers.plex_watchlist import plex_token_matches_username
                 # For Other Plex Watchlist, verify username matches
-                if source_type == 'Other Plex Watchlist' and account.username != username:
-                    base_response['error'] = f'Token does not match username. Expected: {username}, Got: {account.username}'
+                if source_type == 'Other Plex Watchlist' and not plex_token_matches_username(account, username):
+                    base_response['error'] = f'Token does not match username. Expected: {username}, Got: {token_owner}'
                     base_response['connected'] = False
                     # No need to return here, let it fall through to sample fetch attempt if desired,
                     # but mark as disconnected
@@ -1110,7 +1254,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                     # If we get here, connection was successful
                     base_response['connected'] = True
                     base_response['details'].update({
-                        'username': account.username,
+                        'username': token_owner,
                         'email': account.email
                     })
 
@@ -1145,6 +1289,22 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
             # Sample data fetching removed to improve performance
             # Connection check should only verify connectivity, not fetch data
 
+        # --- Plex Friends Watchlist (community API, main token) ---
+        elif source_type == 'Plex Friends Watchlist':
+            token = get_setting('Plex', 'token') or get_setting('File Management', 'plex_token_for_symlink')
+            if not token:
+                base_response['error'] = 'Plex token not configured'
+                base_response['connected'] = False
+                return base_response
+            try:
+                from content_checkers.plex_watchlist import get_plex_friends
+                friends = get_plex_friends(token)
+                base_response['connected'] = True
+                base_response['details'].update({'friends': len(friends)})
+            except Exception as e:
+                base_response['error'] = f'Failed to load Plex friends: {e}'
+                base_response['connected'] = False
+
         # --- Adaptive List ---
         elif source_type == 'Adaptive List':
             # Adaptive lists are internal TMDB-based dynamic lists
@@ -1174,6 +1334,31 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
 
             except Exception as e:
                 base_response['error'] = f'TMDB API error: {str(e)}'
+                base_response['connected'] = False
+
+        # --- Scrob Sources (Lists, Collection, Special Lists) ---
+        elif source_type in ['Scrob Lists', 'Scrob Collection', 'Special Scrob Lists']:
+            from content_checkers.scrob import get_scrob_config, _scrob_get
+
+            scrob_config = get_scrob_config()
+            if not scrob_config:
+                base_response['error'] = 'Scrob URL or API key not configured in Additional Settings'
+                base_response['connected'] = False
+                return base_response
+
+            try:
+                data = _scrob_get('/lists')
+                if data is not None:
+                    base_response['connected'] = True
+                    base_response['details'].update({
+                        'url': scrob_config['base_url'],
+                        'list_count': len(data.get('lists', []))
+                    })
+                else:
+                    base_response['error'] = 'Failed to connect to Scrob API'
+                    base_response['connected'] = False
+            except Exception as e:
+                base_response['error'] = f'Scrob API error: {str(e)}'
                 base_response['connected'] = False
 
         # --- Agregarr ---
@@ -1271,89 +1456,310 @@ def get_trakt_sources() -> Dict[str, List[Dict[str, Any]]]:
         'friend_watchlist': friend_watchlist_sources
     }
 
-@connections_bp.route('/')
+@connections_bp.route('/api/check/system')
 @user_required
-def index():
-    """Render the connections status page with a timeout."""
-    start_time = datetime.now()
-    
-    # Initialize all statuses to None
+def api_check_system():
+    """Check cli_battery, plex/jellyfin, mounted files, phalanx db."""
+    from flask import jsonify
+    jellyfin_url = get_cached_setting('Debug', 'emby_jellyfin_url')
+    jellyfin_token = get_cached_setting('Debug', 'emby_jellyfin_token')
+    tasks = {
+        'cli_battery_status': check_cli_battery_connection,
+        'mounted_files_status': check_mounted_files_connection,
+        'phalanx_db_status': check_phalanx_db_connection,
+    }
+    if jellyfin_url and jellyfin_token:
+        tasks['jellyfin_status'] = check_jellyfin_connection
+    else:
+        tasks['plex_status'] = check_plex_connection
+    tasks['tvdb_status'] = check_tvdb_connection
+    tasks['tmdb_status'] = check_tmdb_connection
+    tasks['climount_status'] = check_climount_connection
+    tasks['scrob_status'] = check_scrob_connection
+    tasks['trakt_status'] = check_trakt_connection
+    results = {}
+    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        future_to_task = {executor.submit(func): name for name, func in tasks.items()}
+        try:
+            for future in as_completed(future_to_task, timeout=10):
+                name = future_to_task[future]
+                try:
+                    results[name] = future.result()
+                except Exception as exc:
+                    results[name] = {'name': name, 'connected': False, 'error': str(exc), 'details': {}}
+        except TimeoutError:
+            pass
+    results.setdefault('plex_status', None)
+    results.setdefault('jellyfin_status', None)
+    results.setdefault('mounted_files_status', None)
+    results.setdefault('phalanx_db_status', None)
+    results.setdefault('cli_battery_status', None)
+    results.setdefault('tvdb_status', None)
+    results.setdefault('tmdb_status', None)
+    results.setdefault('climount_status', None)
+    results.setdefault('scrob_status', None)
+    results.setdefault('trakt_status', None)
+    return jsonify(results)
+
+
+@connections_bp.route('/api/check/scrapers')
+@user_required
+def api_check_scrapers():
+    """Check all scraper connections."""
+    from flask import jsonify
+    results = {'scraper_statuses': []}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(check_nyaa_scrapers_only): 'nyaa',
+                   executor.submit(check_non_nyaa_scrapers): 'non_nyaa'}
+        try:
+            for future in as_completed(futures, timeout=15):
+                try:
+                    results['scraper_statuses'].extend(future.result())
+                except Exception as exc:
+                    log.error(f"Scraper check error: {exc}")
+        except TimeoutError:
+            pass
+    return jsonify(results)
+
+
+@connections_bp.route('/api/check/content-sources')
+@user_required
+def api_check_content_sources():
+    """Check all content source connections."""
+    from flask import jsonify
+    try:
+        statuses = check_content_sources_connections()
+    except Exception as exc:
+        log.error(f"Content sources check error: {exc}")
+        statuses = []
+    return jsonify({'content_source_statuses': statuses})
+
+
+@connections_bp.route('/api/stream/scrapers')
+@user_required
+def api_stream_scrapers():
+    """SSE stream: emits each scraper result as it completes."""
+    import json
+    from flask import Response
+
+    def generate():
+        try:
+            from queues.config_manager import load_config
+            config = load_config()
+            scrapers = config.get('Scrapers', {})
+            all_scrapers = [
+                (sid, cfg) for sid, cfg in scrapers.items()
+                if cfg.get('enabled', False)
+            ]
+        except Exception:
+            all_scrapers = []
+
+        if not all_scrapers:
+            yield "event: done\ndata: {}\n\n"
+            return
+
+        with ThreadPoolExecutor(max_workers=min(5, len(all_scrapers))) as executor:
+            future_to_scraper = {
+                executor.submit(check_scraper_connection, sid, cfg): (sid, cfg)
+                for sid, cfg in all_scrapers
+            }
+            try:
+                for future in as_completed(future_to_scraper, timeout=30):
+                    try:
+                        result = future.result()
+                        if result:
+                            yield f"event: scraper\ndata: {json.dumps(result)}\n\n"
+                    except Exception as exc:
+                        sid, cfg = future_to_scraper[future]
+                        scraper_type = cfg.get('type', sid)
+                        name = f"{scraper_type} ({sid})"
+                        yield f"event: scraper\ndata: {json.dumps({'name': name, 'connected': False, 'error': str(exc)})}\n\n"
+            except TimeoutError:
+                pass
+        yield "event: done\ndata: {}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+@connections_bp.route('/api/stream/content-sources')
+@user_required
+def api_stream_content_sources():
+    """SSE stream: emits each content source result as it completes."""
+    import json
+    from flask import Response
+
+    def generate():
+        all_sources = []
+        try:
+            all_settings = get_all_settings()
+            content_sources = all_settings.get('Content Sources', {})
+            all_sources = [
+                (sid, cfg) for sid, cfg in content_sources.items()
+                if cfg.get('enabled', False) and cfg.get('type') != 'Collected'
+            ]
+        except Exception:
+            pass
+
+        if not all_sources:
+            yield "event: done\ndata: {}\n\n"
+            return
+
+        with ThreadPoolExecutor(max_workers=min(10, len(all_sources))) as executor:
+            future_to_source = {
+                executor.submit(check_content_source_connection, sid, cfg): (sid, cfg)
+                for sid, cfg in all_sources
+            }
+            try:
+                for future in as_completed(future_to_source, timeout=60):
+                    try:
+                        result = future.result()
+                        if result:
+                            yield f"event: source\ndata: {json.dumps(result)}\n\n"
+                    except Exception as exc:
+                        sid, cfg = future_to_source[future]
+                        display_name = cfg.get('display_name')
+                        name = f"{display_name} ({sid})" if display_name else sid
+                        yield f"event: source\ndata: {json.dumps({'name': name, 'connected': False, 'error': str(exc), 'details': {}})}\n\n"
+            except TimeoutError:
+                pass
+        yield "event: done\ndata: {}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+def _run_all_connection_checks():
+    """Run all connection checks and return results dict. Used by cache refresh."""
     results = {
         'cli_battery_status': None,
         'plex_status': None,
         'jellyfin_status': None,
         'mounted_files_status': None,
         'phalanx_db_status': None,
+        'trakt_status': None,
         'scraper_statuses': [],
         'content_source_statuses': [],
     }
 
-    # Determine which media server check to run (use cached settings)
     jellyfin_url = get_cached_setting('Debug', 'emby_jellyfin_url')
     jellyfin_token = get_cached_setting('Debug', 'emby_jellyfin_token')
 
-    # Define tasks for ALL connection checks (including Nyaa scrapers now)
-    # Running Nyaa in parallel reduces total time despite potential proxy conflicts
     tasks = {
         'cli_battery_status': check_cli_battery_connection,
         'mounted_files_status': check_mounted_files_connection,
         'phalanx_db_status': check_phalanx_db_connection,
+        'trakt_status': check_trakt_connection,
         'nyaa_scraper_statuses': check_nyaa_scrapers_only,
         'non_nyaa_scraper_statuses': check_non_nyaa_scrapers,
         'content_source_statuses': check_content_sources_connections,
     }
-    
+
     if jellyfin_url and jellyfin_token:
         tasks['jellyfin_status'] = check_jellyfin_connection
     else:
         tasks['plex_status'] = check_plex_connection
 
-    # Run all other connection checks in parallel with fixed worker limit
     with ThreadPoolExecutor(max_workers=min(6, len(tasks))) as executor:
         future_to_task = {executor.submit(func): name for name, func in tasks.items()}
-
         try:
-            # Wait for all futures to complete, with a total timeout of 25 seconds
             for future in as_completed(future_to_task, timeout=25):
                 task_name = future_to_task[future]
                 try:
                     task_result = future.result()
                     if task_name in ['nyaa_scraper_statuses', 'non_nyaa_scraper_statuses']:
-                        # Add scraper results to the scraper_statuses list
                         results['scraper_statuses'].extend(task_result)
                     else:
                         results[task_name] = task_result
                 except Exception as exc:
                     log.error(f"Task {task_name} generated an exception: {exc}", exc_info=True)
-                    # Optionally create an error status for the failed task
                     if task_name not in ['nyaa_scraper_statuses', 'non_nyaa_scraper_statuses', 'content_source_statuses']:
                         results[task_name] = {'name': task_name, 'connected': False, 'error': str(exc), 'details': {}}
-
         except TimeoutError:
-            log.warning("Connections page render timed out after 25 seconds. Rendering with available data.")
-            # The loop is broken, results will contain only completed tasks.
+            log.warning("Connections check timed out after 25 seconds.")
 
-    # Collect failing connections from the results we have
+    return results
+
+
+def _refresh_connections_cache():
+    """Run checks in background and update cache. Ensures only one refresh runs at a time."""
+    with _connections_cache_lock:
+        if _connections_cache['refreshing']:
+            return
+        _connections_cache['refreshing'] = True
+
+    try:
+        results = _run_all_connection_checks()
+        with _connections_cache_lock:
+            _connections_cache['results'] = results
+            _connections_cache['timestamp'] = datetime.now()
+    except Exception as exc:
+        log.error(f"Background connection cache refresh failed: {exc}", exc_info=True)
+    finally:
+        with _connections_cache_lock:
+            _connections_cache['refreshing'] = False
+
+
+@connections_bp.route('/')
+@user_required
+def index():
+    """Render the connections status page instantly with skeleton cards."""
+    # Build skeleton cards from config using exact SSE name format
+    skeleton_scrapers = []
+    skeleton_sources = []
+    try:
+        from queues.config_manager import load_config
+        _cfg = load_config()
+        for sid, scfg in _cfg.get('Scrapers', {}).items():
+            if scfg.get('enabled', False):
+                scraper_type = scfg.get('type', sid)
+                name = f"{scraper_type} ({sid})"
+                details = {}
+                if scraper_type == 'Newznab':
+                    details['subscription_expiry_date'] = scfg.get('subscription_expiry_date', '')
+                    details['auto_renew'] = scfg.get('auto_renew', False)
+                skeleton_scrapers.append({'name': name, 'connected': None, 'details': details})
+        for sid, scfg in _cfg.get('Content Sources', {}).items():
+            if scfg.get('enabled', False) and scfg.get('type') != 'Collected':
+                display_name = scfg.get('display_name')
+                name = f"{display_name} ({sid})" if display_name else sid
+                skeleton_sources.append({'name': name, 'connected': None, 'details': {}})
+    except Exception:
+        pass
+
+    results = {
+        'cli_battery_status': None, 'plex_status': None,
+        'jellyfin_status': None, 'mounted_files_status': None,
+        'phalanx_db_status': None,
+        'tvdb_status': None, 'tmdb_status': None, 'climount_status': None,
+        'scrob_status': None, 'trakt_status': None,
+        'scraper_statuses': skeleton_scrapers,
+        'content_source_statuses': skeleton_sources,
+    }
+    cache_info = None
+
+    # Collect failing connections
     failing_connections = []
     for key, status in results.items():
-        if not status: # Skip if status is None or empty list
+        if not status:
             continue
-
         if key in ['scraper_statuses', 'content_source_statuses']:
             failing_connections.extend([s for s in status if not s.get('connected')])
         elif isinstance(status, dict) and not status.get('connected'):
             failing_connections.append(status)
 
-    # Add a flash message if the page timed out
-    if (datetime.now() - start_time).total_seconds() >= 25:
-        flash("Some connection checks timed out and may not be displayed. The page was loaded with available data.", "warning")
-
-    return render_template('connections.html', 
+    return render_template('connections.html',
                          cli_battery_status=results['cli_battery_status'],
                          plex_status=results['plex_status'],
                          jellyfin_status=results['jellyfin_status'],
                          mounted_files_status=results['mounted_files_status'],
                          phalanx_db_status=results['phalanx_db_status'],
+                         tvdb_status=results['tvdb_status'],
+                         tmdb_status=results['tmdb_status'],
+                         climount_status=results['climount_status'],
+                         scrob_status=results['scrob_status'],
+                         trakt_status=results['trakt_status'],
                          scraper_statuses=results['scraper_statuses'],
                          content_source_statuses=results['content_source_statuses'],
-                         failing_connections=failing_connections)
+                         failing_connections=failing_connections,
+                         cache_info=cache_info)

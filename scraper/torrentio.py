@@ -203,6 +203,7 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                 'title': name,
                 'size': round(size, 2),
                 'source': f'{instance}{f" - {source_site}" if source_site else ""}', # Append source site if found
+                'indexer': source_site or '',
                 'magnet': magnet_link,
                 'seeders': seeders,
                 'info_hash': info_hash,

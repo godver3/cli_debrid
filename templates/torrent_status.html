@@ -3,7 +3,7 @@
 {% block title %}Torrent Status{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/torrent_status.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_torrent_status.css') }}">
 {% endblock %}
 
 {% block content %}
@@ -148,6 +148,6 @@ document.getElementById('expand-completed').addEventListener('click', function()
 
 // Update status every 5 seconds
 updateTorrentStatus();
-setInterval(updateTorrentStatus, 5000);
+setInterval(() => { if (!document.hidden) updateTorrentStatus(); }, 5000);
 </script>
 {% endblock %}

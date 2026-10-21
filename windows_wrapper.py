@@ -74,7 +74,12 @@ def log_system_resources():
         
         resource_logger.info(f"Memory usage: {mem_info.rss / (1024 * 1024):.2f} MB")
         resource_logger.info(f"CPU usage: {process.cpu_percent(interval=0.1)}%")
-        resource_logger.info(f"Open files: {len(process.open_files())}")
+        if sys.platform == 'win32':
+            # open_files() inspects every handle and holds the GIL while it does;
+            # it froze this launcher (and the web UI tunnel it runs) for minutes.
+            resource_logger.info(f"Open handles: {process.num_handles()}")
+        else:
+            resource_logger.info(f"Open files: {len(process.open_files())}")
         resource_logger.info(f"Active threads: {threading.active_count()}")
         resource_logger.info(f"Active connections: {len(active_connections)}")
         

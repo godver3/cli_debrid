@@ -212,6 +212,32 @@ function createQualityBadge(tag) {
 }
 
 /**
+ * Generate multi-provider cache badge HTML
+ * Shows a small provider abbreviation badge for each provider that has it cached.
+ * Falls back to single icon when only one provider is configured.
+ * @param {string} status - Overall cache status
+ * @param {Object} cacheProviders - Per-provider cache status {ProviderName: 'Yes'/'No'/'Error'}
+ * @returns {string} HTML string
+ */
+function createMultiProviderCacheIcon(status, cacheProviders) {
+    if (!cacheProviders || Object.keys(cacheProviders).length <= 1) {
+        return createCacheIcon(status);
+    }
+    const abbrev = {
+        'Real-Debrid': 'RD', 'AllDebrid': 'AD', 'Torbox': 'TB',
+        'Premiumize': 'PM', 'Debrid-Link': 'DL',
+    };
+    const badges = Object.entries(cacheProviders).map(([name, st]) => {
+        const ab = abbrev[name] || name.slice(0, 2).toUpperCase();
+        const cached = st === 'Yes';
+        const cls = cached ? 'cp-badge cp-cached' : 'cp-badge cp-uncached';
+        const title = `${name}: ${st}`;
+        return `<span class="${cls}" title="${title}">${ab}</span>`;
+    }).join('');
+    return `<div class="cache-providers-wrap">${badges}</div>`;
+}
+
+/**
  * Generate cache status icon HTML
  * @param {string} status - Cache status (Yes/No/Unknown/etc)
  * @returns {string} HTML string for cache icon
@@ -244,6 +270,31 @@ function createCacheIcon(status) {
             </div>
         `;
     }
+}
+
+const _CP_ABBREV = {'Real-Debrid':'RD','AllDebrid':'AD','Torbox':'TB','Premiumize':'PM','Debrid-Link':'DL'};
+// Known provider priority order — primary first, fallbacks after
+const _CP_ORDER = ['Real-Debrid','AllDebrid','Torbox','Premiumize','Debrid-Link'];
+
+function createCacheProviderBadges(torrent) {
+    const cpData = torrent.cache_providers || {};
+    const keys = Object.keys(cpData);
+    if (!keys.length) return null;
+    // Sort by known order, unknown providers appended at end
+    const sorted = [...keys].sort((a, b) => {
+        const ai = _CP_ORDER.indexOf(a), bi = _CP_ORDER.indexOf(b);
+        if (ai === -1 && bi === -1) return 0;
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+    });
+    const badges = sorted.map(k => {
+        const v = cpData[k];
+        const cls = v === 'Yes' ? 'cp-cached' : v === 'No' ? 'cp-uncached' : v === 'N/A' ? 'cp-na' : 'cp-not-checked';
+        const abbrev = _CP_ABBREV[k] || k.slice(0,2).toUpperCase();
+        return `<span class="cp-badge ${cls}" title="${k}: ${v}">${abbrev}</span>`;
+    }).join('');
+    return `<span class="cp-badges">${badges}</span>`;
 }
 
 /**
@@ -315,6 +366,18 @@ function createSearchIcon() {
     return `
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd" />
+        </svg>
+    `;
+}
+
+/**
+ * Create folder icon SVG
+ * @returns {string} SVG HTML
+ */
+function createFolderIcon() {
+    return `
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M3.75 3A1.75 1.75 0 002 4.75v3.26a3.235 3.235 0 011.75-.51h12.5c.644 0 1.245.188 1.75.51V6.75A1.75 1.75 0 0016.25 5h-4.836a.25.25 0 01-.177-.073L9.823 3.513A1.75 1.75 0 008.586 3H3.75zM3.75 9A1.75 1.75 0 002 10.75v4.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0018 15.25v-4.5A1.75 1.75 0 0016.25 9H3.75z" />
         </svg>
     `;
 }

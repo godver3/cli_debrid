@@ -120,6 +120,12 @@ def download_and_extract_hash(url: str, max_redirects: int = 5) -> Optional[str]
                 logging.debug(f"Content of {current_url} started like a magnet but full text was not. Proceeding as torrent file.")
 
 
+        # Check if content is an NZB file (XML) — not a torrent, return None
+        content_type = response.headers.get('Content-Type', '').lower()
+        if '<nzb' in content_preview.lower() or 'application/x-nzb' in content_type or 'nzb' in content_type:
+            logging.debug(f"URL {current_url} returned NZB content — no hash to extract")
+            return None
+
         # If none of the above, assume it's torrent file content
         logging.debug(f"Processing content of {current_url} as a torrent file.")
         with tempfile.NamedTemporaryFile(suffix='.torrent', delete=False) as temp_file:
@@ -154,33 +160,76 @@ def download_and_extract_hash(url: str, max_redirects: int = 5) -> Optional[str]
         logging.error(f"Error extracting hash from URL {current_url}: {str(e)}", exc_info=True)
         return None
 
+def resolve_to_magnet(url: str, max_redirects: int = 5) -> Optional[str]:
+    """
+    Resolve a URL to a magnet link by following redirects or downloading torrent files.
+    Handles Jackett URLs, direct magnet links, and torrent file URLs.
+
+    Args:
+        url: URL to resolve (can be magnet link, HTTP URL that redirects to magnet, or torrent file URL)
+        max_redirects: Maximum number of redirects to follow
+
+    Returns:
+        Magnet link string or None if resolution fails
+    """
+    if max_redirects <= 0:
+        logging.error(f"Max redirects reached for URL: {url}")
+        return None
+
+    current_url = url.strip()
+
+    # If already a magnet link, return it
+    if current_url.startswith('magnet:'):
+        return current_url
+
+    try:
+        # Follow redirects manually to handle magnet links
+        response = requests.get(current_url, timeout=30, allow_redirects=False)
+
+        # Handle redirects
+        if response.is_redirect or response.is_permanent_redirect:
+            location = response.headers.get('Location')
+            if location:
+                location = location.strip()
+                logging.info(f"URL {current_url} redirected to: {location}")
+                # Recursively resolve the redirect
+                return resolve_to_magnet(location, max_redirects=max_redirects - 1)
+
+        response.raise_for_status()
+
+        # Check if response body is a magnet link
+        content_preview = response.content[:256].decode('utf-8', errors='ignore').strip()
+        if content_preview.startswith('magnet:'):
+            full_text = response.text.strip()
+            if full_text.startswith('magnet:'):
+                logging.info(f"URL content is a magnet link")
+                return full_text
+
+        # Otherwise, treat as torrent file and convert to magnet
+        logging.info(f"Processing URL as torrent file: {current_url}")
+        with tempfile.NamedTemporaryFile(suffix='.torrent', delete=False) as temp_file:
+            try:
+                temp_file.write(response.content)
+                temp_file.flush()
+                return torrent_to_magnet(temp_file.name)
+            finally:
+                try:
+                    os.unlink(temp_file.name)
+                except:
+                    pass
+
+    except Exception as e:
+        logging.error(f"Error resolving URL to magnet: {str(e)}")
+        return None
+
 def download_and_convert_to_magnet(url: str) -> Optional[str]:
     """
     Download a torrent file from a URL and convert it to a magnet link.
     Returns None if the download or conversion fails.
+
+    DEPRECATED: Use resolve_to_magnet() instead for better redirect handling.
     """
-    with tempfile.NamedTemporaryFile(suffix='.torrent', delete=False) as temp_file:
-        try:
-            # Download the torrent file
-            response = requests.get(url)
-            response.raise_for_status()
-            
-            temp_file.write(response.content)
-            temp_file.flush()
-        
-            # Convert to magnet
-            return torrent_to_magnet(temp_file.name)
-            
-        except Exception as e:
-            logging.error(f"Error converting torrent to magnet: {str(e)}")
-            return None
-            
-        finally:
-            # Clean up the temporary file
-            try:
-                os.unlink(temp_file.name)
-            except Exception as e:
-                logging.error(f"Error cleaning up temporary file: {str(e)}")
+    return resolve_to_magnet(url)
 
 def extract_hash_from_file(file_path: str) -> Optional[str]:
     """
