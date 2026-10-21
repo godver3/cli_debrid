@@ -28,6 +28,25 @@ def format_bytes(size):
 _dcy_nzbs_size_cache = {'size': 'N/A', 'last_update': 0}
 
 
+def resolve_stats_mode():
+    """Return 'debrid', 'usenet' or 'combined' for the Statistics page.
+
+    Auto picks combined when both a debrid key and cli_mount are configured,
+    so the Library size counts usenet content too instead of only the debrid
+    account. Shared by the stats cache and the Library refresh endpoint so the
+    two never pick different sources.
+    """
+    priority = get_setting('UI Settings', 'stats_provider_priority', default='auto').strip()
+    if priority in ('debrid', 'usenet', 'combined'):
+        return priority
+    if not get_setting('Debrid Provider', 'api_key', default='').strip():
+        return 'usenet'
+    if (get_setting('Usenet Provider', 'enabled', default=False)
+            and get_setting('Usenet Provider', 'url', default='').strip()):
+        return 'combined'
+    return 'debrid'
+
+
 def _fetch_climount_debug_stats(timeout=10):
     """Fetch cli_mount's /debug/stats. Returns the parsed JSON dict, or None if
     cli_mount is disabled/unreachable/erroring. Shared by the usenet, debrid,
@@ -172,10 +191,9 @@ def _refresh_download_stats_blocking():
         logging.debug("Download stats cache expired, fetching fresh data...")
         
         # Determine which provider stats to show based on user preference
-        _stats_priority = get_setting('UI Settings', 'stats_provider_priority', default='auto').strip()
-        _debrid_api_key = get_setting('Debrid Provider', 'api_key', default='').strip()
-        _use_usenet = (_stats_priority == 'usenet') or (_stats_priority == 'auto' and not _debrid_api_key)
-        _use_combined = (_stats_priority == 'combined')
+        _stats_mode = resolve_stats_mode()
+        _use_usenet = (_stats_mode == 'usenet')
+        _use_combined = (_stats_mode == 'combined')
         if _use_combined:
             # Combined mode reads cli_mount's /debug/stats directly: 'content'
             # is already a server-side sum across every debrid provider plus

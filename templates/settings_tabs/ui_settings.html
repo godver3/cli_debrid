@@ -195,7 +195,7 @@
             <label for="ui-settings-stats_provider_priority" class="settings-title">Stats Provider Priority:</label>
             <select id="ui-settings-stats_provider_priority" name="UI Settings.stats_provider_priority"
                     class="settings-input" data-section="UI Settings" data-key="stats_provider_priority">
-                <option value="auto" {% if settings.get('UI Settings', {}).get('stats_provider_priority', 'auto') == 'auto' %}selected{% endif %}>Auto (debrid if configured, otherwise usenet)</option>
+                <option value="auto" {% if settings.get('UI Settings', {}).get('stats_provider_priority', 'auto') == 'auto' %}selected{% endif %}>Auto (combined if both are configured, otherwise whichever is)</option>
                 <option value="debrid" {% if settings.get('UI Settings', {}).get('stats_provider_priority') == 'debrid' %}selected{% endif %}>Debrid</option>
                 <option value="usenet" {% if settings.get('UI Settings', {}).get('stats_provider_priority') == 'usenet' %}selected{% endif %}>Usenet</option>
                 <option value="combined" {% if settings.get('UI Settings', {}).get('stats_provider_priority') == 'combined' %}selected{% endif %}>Combined (debrid + usenet)</option>

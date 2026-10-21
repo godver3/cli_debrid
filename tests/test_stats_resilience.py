@@ -158,5 +158,42 @@ class TestSubscriptionResilience(unittest.TestCase):
         self.assertIsNone(sub['error'])
 
 
+class TestResolveStatsMode(unittest.TestCase):
+    def _mode(self, priority='auto', api_key='', usenet_enabled=False, usenet_url=''):
+        values = {
+            ('UI Settings', 'stats_provider_priority'): priority,
+            ('Debrid Provider', 'api_key'): api_key,
+            ('Usenet Provider', 'enabled'): usenet_enabled,
+            ('Usenet Provider', 'url'): usenet_url,
+        }
+        orig = st.get_setting
+        st.get_setting = lambda section, key, default=None: values.get((section, key), default)
+        try:
+            return st.resolve_stats_mode()
+        finally:
+            st.get_setting = orig
+
+    def test_auto_with_debrid_and_usenet_is_combined(self):
+        self.assertEqual(self._mode(api_key='k', usenet_enabled=True, usenet_url='http://cm:8383'), 'combined')
+
+    def test_auto_debrid_only(self):
+        self.assertEqual(self._mode(api_key='k'), 'debrid')
+        self.assertEqual(self._mode(api_key='k', usenet_enabled=True), 'debrid')  # no URL
+        self.assertEqual(self._mode(api_key='k', usenet_url='http://cm:8383'), 'debrid')  # disabled
+
+    def test_auto_without_debrid_is_usenet(self):
+        self.assertEqual(self._mode(), 'usenet')
+        self.assertEqual(self._mode(usenet_enabled=True, usenet_url='http://cm:8383'), 'usenet')
+
+    def test_explicit_choice_wins(self):
+        both = dict(api_key='k', usenet_enabled=True, usenet_url='http://cm:8383')
+        self.assertEqual(self._mode('debrid', **both), 'debrid')
+        self.assertEqual(self._mode('usenet', **both), 'usenet')
+        self.assertEqual(self._mode('combined'), 'combined')
+
+    def test_unknown_value_falls_back_to_auto(self):
+        self.assertEqual(self._mode('bogus', api_key='k'), 'debrid')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

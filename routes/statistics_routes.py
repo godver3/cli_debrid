@@ -1580,14 +1580,14 @@ def get_library_size_api():
     is_cached_value = False
     calculation_error = None # Store the specific error if calculation fails
 
-    from utilities.settings import get_setting as _gs_lib
-    _stats_priority = _gs_lib('UI Settings', 'stats_provider_priority', default='auto').strip()
+    from database.statistics import resolve_stats_mode
+    _stats_mode = resolve_stats_mode()
 
     # Combined mode: always the combined debrid+usenet total from cli_mount,
     # regardless of whether a debrid provider is configured — same source
     # _refresh_download_stats_blocking uses for the toggle-bar Library value,
     # so the on-demand refresh button and the cached value never disagree.
-    if _stats_priority == 'combined':
+    if _stats_mode == 'combined':
         try:
             from database.statistics import download_stats_cache
             download_stats_cache['last_update'] = 0  # force stats re-fetch
@@ -1599,7 +1599,7 @@ def get_library_size_api():
         return jsonify({'total_library_size': size_str})
 
     # cli_mount mode — reset nzbs size cache and re-run statvfs
-    if not _gs_lib('Debrid Provider', 'api_key', default='').strip():
+    if _stats_mode == 'usenet':
         try:
             from database.statistics import _dcy_nzbs_size_cache, download_stats_cache
             _dcy_nzbs_size_cache['last_update'] = 0  # force refresh
