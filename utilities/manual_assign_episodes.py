@@ -66,22 +66,34 @@ def absolute_numbers(seasons: Optional[Dict[Any, Any]]) -> Dict[Tuple[int, int],
 # A title ending in a bare number: "Gintama 003" (PTT reads no episode there)
 _TRAILING_NUMBER_RE = re.compile(r'^(?P<prefix>.*?\S)[\s._-]+(?P<number>\d{1,4})$')
 
-# Creditless OP/ED extras: "NCED 01", "NCOP16", "NCOP 16a". PTT reads the
-# trailing number as an episode, which collides with the real SxxExx file.
+# Numbered BD/fansub extras whose trailing digits PTT (or Phase 2) can read as
+# an episode: NCED/NCOP, OP/ED, Menu, PV, CM, CleanOP/ED. Not OVA/Special —
+# those are often real assignable content (season 0 / specials).
 _ANIME_OP_ED_RE = re.compile(
-    r'(?<![a-z0-9])(?:nc\s*op|nc\s*ed)(?![a-z])|'
+    r'(?<![a-z0-9])(?:nc\s*op|nc\s*ed|clean\s*op|clean\s*ed)(?![a-z])|'
     r'(?<![a-z0-9])(?:opening|ending)\s*\d|'
-    r'(?<![a-z0-9])(?:op|ed)\d',
+    r'(?<![a-z0-9])(?:op|ed|menu|pv|cm)\s*\d',
     re.IGNORECASE,
 )
 
 
 def is_anime_op_ed_extra(filename: Optional[str]) -> bool:
-    """True for creditless OP/ED extras that must not auto-assign to episodes."""
+    """True for numbered anime OP/ED/menu/PV extras that must not auto-assign."""
     if not filename:
         return False
     stem = os.path.splitext(os.path.basename(filename.replace('\\', '/')))[0]
     return bool(_ANIME_OP_ED_RE.search(stem))
+
+
+def phase2_title_too_weak(cleaned_filename: str, series_title: Optional[str]) -> bool:
+    """True when Phase 2 fuzzy match would only see the show name (or nothing).
+
+    After S/E tags are stripped, leftovers like "gintama" token_set_ratio-match
+    every episode title that contains the show name at 100.
+    """
+    cleaned = re.sub(r'[\s._-]+', ' ', (cleaned_filename or '').strip().lower()).strip()
+    series = re.sub(r'[\s._-]+', ' ', (series_title or '').strip().lower()).strip()
+    return not cleaned or (bool(series) and cleaned == series)
 
 
 def pack_bare_numbers(parsed_files: List[Dict[str, Any]]) -> Dict[int, int]:
