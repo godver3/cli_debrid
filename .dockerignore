@@ -17,3 +17,4 @@ phalanx_db_hyperswarm/node_modules
 Dockerfile
 docker-compose.yml
 *.log
+docs
