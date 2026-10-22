@@ -63,7 +63,7 @@ Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> L
 
 - **plex_debrid:** cli_debrid is its successor. It does the same job (watchlists in, cached releases out, Plex library kept up to date) with a web interface, a local database of what you have, and automatic upgrades and repairs.
 - **Sonarr/Radarr with a debrid downloader:** cli_debrid takes the place of the *arr apps and the download client. It scrapes, ranks releases against your Versions, sends them to your debrid service or Usenet provider, and builds the library. Bazarr can still connect to it as if it were Sonarr/Radarr.
-- **Usenet with SABnzbd or NZBGet:** NZBs are streamed from your news server through the mount, with nothing downloaded first. See [Usenet migration](https://godver3.github.io/cli_docs/features/usenet-migration/).
+- **Usenet with SABnzbd or NZBGet:** NZBs are streamed from your news server through the mount, with nothing downloaded first. See the [cli_mount setup guide](https://godver3.github.io/cli_docs/integrations/cli_mount/).
 
 ## Key Features
 
@@ -106,7 +106,7 @@ cli_debrid can use Usenet as a source alongside, or instead of, a debrid service
 2. Set up a Usenet provider. **[cli_mount](https://github.com/mash2k3/decypharr/tree/dev)** is recommended ([setup guide](https://godver3.github.io/cli_docs/integrations/cli_mount/)), and NzbDAV and Zurg are also supported. cli_mount streams NZBs straight from your news server through the same mount it uses for debrid, so nothing is downloaded first.
 3. Enable Usenet under **Settings → Required Settings → Usenet Provider**.
 
-NZB results are ranked with your torrent results using the same Versions. Releases with missing articles are caught and replaced automatically. Coming from another Usenet setup? See [Usenet migration](https://godver3.github.io/cli_docs/features/usenet-migration/).
+NZB results are ranked with your torrent results using the same Versions. Releases with missing articles are caught and replaced automatically.
 
 ## Firefox Extension
 
