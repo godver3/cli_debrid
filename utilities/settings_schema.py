@@ -491,14 +491,6 @@ SETTINGS_SCHEMA = {
             "default": False
         }
     },
-    "Metadata Battery": {
-        "tab": "Required Settings",
-        "url": {
-            "type": "string",
-            "description": "Metadata Battery URL. Leave as default unless you have set up the Metadata Battery in a different location.",
-            "default": "http://localhost:50051"
-        }
-    },
     "Queue": {
         "tab": "Additional Settings",
         "queue_sort_order": {

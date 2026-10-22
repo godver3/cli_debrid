@@ -1550,7 +1550,7 @@ def api_program_settings():
 
         # Merge defaults for each section
         program_settings = {}
-        sections_to_include = ['Scrapers', 'Content Sources', 'Debug', 'Plex', 'Metadata Battery', 'Debrid Provider', 'Usenet Provider']
+        sections_to_include = ['Scrapers', 'Content Sources', 'Debug', 'Plex', 'Debrid Provider', 'Usenet Provider']
         
         for section in sections_to_include:
             if section in SETTINGS_SCHEMA:
@@ -2764,7 +2764,6 @@ def update_required_settings(form_data):
     config['Plex']['shows_libraries'] = form_data.get('shows_libraries')
     config['Plex']['movies_libraries'] = form_data.get('movies_libraries')
     config['RealDebrid']['api_key'] = form_data.get('realdebrid_api_key')
-    config['Metadata Battery']['url'] = form_data.get('metadata_battery_url')
     save_config(config)
 
 @settings_bp.route('/notifications/enabled', methods=['GET'])

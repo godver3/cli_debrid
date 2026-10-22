@@ -764,18 +764,6 @@ export function updateSettings() {
     } else {
     }
 
-    const metadataBatteryUrl = document.getElementById('metadata battery-url');
-    
-    if (metadataBatteryUrl) {
-        // Ensure 'Metadata Battery' object exists in settingsData
-        if (!settingsData['Metadata Battery']) {
-            settingsData['Metadata Battery'] = {};
-        }
-        settingsData['Metadata Battery']['url'] = metadataBatteryUrl.value;
-    
-    } else {
-    }
-
     const sortByUncachedStatus = document.getElementById('debug-sort_by_uncached_status');
     
     if (sortByUncachedStatus) {

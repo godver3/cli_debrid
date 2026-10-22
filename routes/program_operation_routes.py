@@ -873,7 +873,6 @@ def check_program_conditions():
     required_settings = [
         ('Plex', 'url'),
         ('Plex', 'token'),
-        ('Metadata Battery', 'url')
     ]
 
     missing_fields = []
