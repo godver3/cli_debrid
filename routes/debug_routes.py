@@ -1961,7 +1961,7 @@ def get_available_tasks():
         {'id': 'task_analyze_library', 'display_name': 'Analyze Library'},
         {'id': 'task_overlay_sync', 'display_name': 'Overlay Sync'},
         {'id': 'task_overlay_cleanup', 'display_name': 'Overlay State Maintenance (cleanup orphaned DB records)'},
-        {'id': 'task_backfill_nzb_torrent_ids', 'display_name': 'Backfill NZB Torrent IDs (Usenet migration)'},
+        {'id': 'task_backfill_nzb_torrent_ids', 'display_name': 'Backfill NZB Torrent IDs'},
     ]
     
     # Get content sources from program runner for content source tasks

@@ -28,6 +28,25 @@ def format_bytes(size):
 _dcy_nzbs_size_cache = {'size': 'N/A', 'last_update': 0}
 
 
+def resolve_stats_mode():
+    """Return 'debrid', 'usenet' or 'combined' for the Statistics page.
+
+    Auto picks combined when both a debrid key and cli_mount are configured,
+    so the Library size counts usenet content too instead of only the debrid
+    account. Shared by the stats cache and the Library refresh endpoint so the
+    two never pick different sources.
+    """
+    priority = get_setting('UI Settings', 'stats_provider_priority', default='auto').strip()
+    if priority in ('debrid', 'usenet', 'combined'):
+        return priority
+    if not get_setting('Debrid Provider', 'api_key', default='').strip():
+        return 'usenet'
+    if (get_setting('Usenet Provider', 'enabled', default=False)
+            and get_setting('Usenet Provider', 'url', default='').strip()):
+        return 'combined'
+    return 'debrid'
+
+
 def _fetch_climount_debug_stats(timeout=10):
     """Fetch cli_mount's /debug/stats. Returns the parsed JSON dict, or None if
     cli_mount is disabled/unreachable/erroring. Shared by the usenet, debrid,
@@ -49,6 +68,34 @@ def _fetch_climount_debug_stats(timeout=10):
     except Exception as _exc:
         logging.debug(f"cli_mount /debug/stats fetch failed: {_exc}")
         return None
+
+
+def _fetch_climount_broken_split(total_broken, timeout=10):
+    """Split cli_mount's broken-entry count into (nzb, debrid).
+
+    /debug/stats only reports one total across both protocols, so ask the
+    repair API for the broken entries themselves. If that fails, return
+    (total_broken, None): the page then shows the plain total, unlabelled.
+    """
+    if not total_broken:
+        return 0, 0
+    try:
+        _dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
+        _dcy_token = get_setting('Usenet Provider', 'api_token', default='').strip()
+        import requests as _rq
+        _headers = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+        _r = _rq.get(f'{_dcy_url}/api/repair/health', params={'status': 'broken'},
+                     headers=_headers, timeout=timeout)
+        if _r.status_code != 200:
+            return total_broken, None
+        _entries = _r.json() or []
+        # Records without a protocol predate the field; count them as debrid
+        # so the two numbers still add up to the total.
+        _nzb = sum(1 for e in _entries if e.get('protocol') == 'nzb')
+        return _nzb, len(_entries) - _nzb
+    except Exception as _exc:
+        logging.debug(f"cli_mount broken split fetch failed: {_exc}")
+        return total_broken, None
 
 # Cache for download stats
 download_stats_cache = {
@@ -172,10 +219,9 @@ def _refresh_download_stats_blocking():
         logging.debug("Download stats cache expired, fetching fresh data...")
         
         # Determine which provider stats to show based on user preference
-        _stats_priority = get_setting('UI Settings', 'stats_provider_priority', default='auto').strip()
-        _debrid_api_key = get_setting('Debrid Provider', 'api_key', default='').strip()
-        _use_usenet = (_stats_priority == 'usenet') or (_stats_priority == 'auto' and not _debrid_api_key)
-        _use_combined = (_stats_priority == 'combined')
+        _stats_mode = resolve_stats_mode()
+        _use_usenet = (_stats_mode == 'usenet')
+        _use_combined = (_stats_mode == 'combined')
         if _use_combined:
             # Combined mode reads cli_mount's /debug/stats directly: 'content'
             # is already a server-side sum across every debrid provider plus
@@ -202,6 +248,7 @@ def _refresh_download_stats_blocking():
                 _content = _data.get('content', {}) or {}
                 _total_size = _content.get('total_size', 0)
                 _broken = _data.get('repair', {}).get('health', {}).get('broken', 0)
+                _broken_nzbs, _broken_debrid = _fetch_climount_broken_split(_broken)
 
                 download_stats_cache['active_downloads'] = {
                     'count': _active,
@@ -212,7 +259,8 @@ def _refresh_download_stats_blocking():
                     'error': None,
                     'source': 'combined',
                     'library_size': format_bytes(_total_size),
-                    'broken_nzbs': _broken,
+                    'broken_nzbs': _broken_nzbs,
+                    'broken_debrid': _broken_debrid,
                 }
                 download_stats_cache['usage_stats'] = {
                     'used': str(_used),
@@ -277,8 +325,9 @@ def _refresh_download_stats_blocking():
                             except Exception as _le:
                                 logging.info(f"[LibSize] nzbs size check failed: {_le}")
 
-                        # Broken NZBs from repair health
+                        # Broken entries from repair health, split NZB / debrid
                         _broken = _data.get('repair', {}).get('health', {}).get('broken', 0)
+                        _broken_nzbs, _broken_debrid = _fetch_climount_broken_split(_broken)
 
                         download_stats_cache['active_downloads'] = {
                             'count': _active,
@@ -289,7 +338,8 @@ def _refresh_download_stats_blocking():
                             'error': None,
                             'source': 'climount',
                             'library_size': _library_size_str,
-                            'broken_nzbs': _broken,
+                            'broken_nzbs': _broken_nzbs,
+                            'broken_debrid': _broken_debrid,
                         }
                         download_stats_cache['usage_stats'] = {
                             'used': str(_used),

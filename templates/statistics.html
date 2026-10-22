@@ -111,18 +111,23 @@
             <span class="tb-val">{{ stats.timezone }}</span>
         </div>
         <div class="tb-break"></div>
+        {% if _stats_source != 'climount' %}
         <div class="tb-pill">
-            {% if _is_dcy %}
-                {% set _broken = stats.active_downloads_data.get('broken_nzbs', 0) %}
-                <i class="fas fa-triangle-exclamation" style="color:{% if _broken > 0 %}var(--st-red){% else %}var(--st-yellow){% endif %};line-height:1;display:flex;align-items:center"></i>
-                <span class="tb-label">Broken:</span>
-                <span class="tb-val {% if _broken > 0 %}critical{% endif %}" id="subscription-days-toggle">{{ _broken }}</span>
-            {% else %}
-                <i class="fas fa-crown" style="color:var(--st-yellow)"></i>
-                <span class="tb-label">Sub:</span>
-                <span class="tb-val {% if stats.subscription_status and stats.subscription_status.days_remaining is not none and stats.subscription_status.days_remaining < 10 %}critical{% endif %}" id="subscription-days-toggle">{% if stats.subscription_status and stats.subscription_status.days_remaining is not none %}{{ stats.subscription_status.days_remaining }} days{% else %}N/A{% endif %}</span>
-            {% endif %}
+            <i class="fas fa-crown" style="color:var(--st-yellow)"></i>
+            <span class="tb-label">Sub:</span>
+            <span class="tb-val {% if stats.subscription_status and stats.subscription_status.days_remaining is not none and stats.subscription_status.days_remaining < 10 %}critical{% endif %}" id="subscription-days-toggle">{% if stats.subscription_status and stats.subscription_status.days_remaining is not none %}{{ stats.subscription_status.days_remaining }} days{% else %}N/A{% endif %}</span>
         </div>
+        {% endif %}
+        {% if _is_dcy %}
+        {% set _broken_nzbs = stats.active_downloads_data.get('broken_nzbs') or 0 %}
+        {% set _broken_debrid = stats.active_downloads_data.get('broken_debrid') %}
+        {% set _broken = _broken_nzbs + (_broken_debrid or 0) %}
+        <div class="tb-pill">
+            <i class="fas fa-triangle-exclamation" id="broken-count-icon" style="color:{% if _broken > 0 %}var(--st-red){% else %}var(--st-yellow){% endif %};line-height:1;display:flex;align-items:center"></i>
+            <span class="tb-label">Broken:</span>
+            <span class="tb-val {% if _broken > 0 %}critical{% endif %}" id="broken-count-toggle">{% if _broken_debrid is none %}{{ _broken_nzbs }}{% else %}{{ _broken_nzbs }} NZB · {{ _broken_debrid }} debrid{% endif %}</span>
+        </div>
+        {% endif %}
         <div class="tb-sep"></div>
         {% endif %}
         <div class="tb-toggle-wrap">
@@ -602,37 +607,35 @@
             } catch (e) {}
         }
 
-        // Updates the shared #subscription-days-toggle element with either the
-        // broken count (usenet/combined stats_provider_priority mode) or
-        // subscription days remaining (debrid mode). The element is reused for
-        // both meanings (see templates/statistics.html's toggle-bar markup),
-        // so any refresh path touching it must check
-        // active_downloads_data.source first — writing "N days" over what is
-        // currently showing "Broken: N" (or vice versa) is the bug this
-        // guards against.
+        // Updates the toggle-bar Sub and Broken pills. Each has its own
+        // element: Combined mode shows both, usenet mode only Broken and
+        // debrid mode only Sub, so a missing element is simply skipped.
         function updateStatsToggleBarPill(data) {
-            const subToggle = document.getElementById('subscription-days-toggle');
-            if (!subToggle) return;
-
             const activeDownloadsData = data.active_downloads_data ||
                                       (data.stats && data.stats.active_downloads_data) ||
                                       null;
             const source = activeDownloadsData && activeDownloadsData.source;
 
-            if (source === 'climount' || source === 'combined') {
-                const broken = activeDownloadsData.broken_nzbs || 0;
-                subToggle.textContent = `${broken}`;
-                subToggle.classList.toggle('critical', broken > 0);
-                return;
+            const brokenToggle = document.getElementById('broken-count-toggle');
+            if (brokenToggle && (source === 'climount' || source === 'combined')) {
+                const nzbs = activeDownloadsData.broken_nzbs || 0;
+                const debrid = activeDownloadsData.broken_debrid;
+                const total = nzbs + (debrid || 0);
+                brokenToggle.textContent = (debrid === null || debrid === undefined)
+                    ? `${nzbs}`
+                    : `${nzbs} NZB \u00b7 ${debrid} debrid`;
+                brokenToggle.classList.toggle('critical', total > 0);
+                const brokenIcon = document.getElementById('broken-count-icon');
+                if (brokenIcon) brokenIcon.style.color = total > 0 ? 'var(--st-red)' : 'var(--st-yellow)';
             }
 
-            // Debrid mode (or unknown/absent source): fall back to
-            // subscription days, matching the pill's original behavior.
+            const subToggle = document.getElementById('subscription-days-toggle');
+            if (!subToggle) return;
             const subData = data.subscription_status || (data.stats && data.stats.subscription_status) || null;
             if (subData && subData.days_remaining !== null && subData.days_remaining !== undefined) {
                 subToggle.textContent = `${subData.days_remaining} days`;
                 subToggle.classList.toggle('critical', Number(subData.days_remaining) < 10);
-            } else {
+            } else if (subData) {
                 subToggle.textContent = 'N/A';
                 subToggle.classList.remove('critical');
             }

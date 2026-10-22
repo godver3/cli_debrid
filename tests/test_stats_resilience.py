@@ -158,5 +158,76 @@ class TestSubscriptionResilience(unittest.TestCase):
         self.assertIsNone(sub['error'])
 
 
+class TestResolveStatsMode(unittest.TestCase):
+    def _mode(self, priority='auto', api_key='', usenet_enabled=False, usenet_url=''):
+        values = {
+            ('UI Settings', 'stats_provider_priority'): priority,
+            ('Debrid Provider', 'api_key'): api_key,
+            ('Usenet Provider', 'enabled'): usenet_enabled,
+            ('Usenet Provider', 'url'): usenet_url,
+        }
+        orig = st.get_setting
+        st.get_setting = lambda section, key, default=None: values.get((section, key), default)
+        try:
+            return st.resolve_stats_mode()
+        finally:
+            st.get_setting = orig
+
+    def test_auto_with_debrid_and_usenet_is_combined(self):
+        self.assertEqual(self._mode(api_key='k', usenet_enabled=True, usenet_url='http://cm:8383'), 'combined')
+
+    def test_auto_debrid_only(self):
+        self.assertEqual(self._mode(api_key='k'), 'debrid')
+        self.assertEqual(self._mode(api_key='k', usenet_enabled=True), 'debrid')  # no URL
+        self.assertEqual(self._mode(api_key='k', usenet_url='http://cm:8383'), 'debrid')  # disabled
+
+    def test_auto_without_debrid_is_usenet(self):
+        self.assertEqual(self._mode(), 'usenet')
+        self.assertEqual(self._mode(usenet_enabled=True, usenet_url='http://cm:8383'), 'usenet')
+
+    def test_explicit_choice_wins(self):
+        both = dict(api_key='k', usenet_enabled=True, usenet_url='http://cm:8383')
+        self.assertEqual(self._mode('debrid', **both), 'debrid')
+        self.assertEqual(self._mode('usenet', **both), 'usenet')
+        self.assertEqual(self._mode('combined'), 'combined')
+
+    def test_unknown_value_falls_back_to_auto(self):
+        self.assertEqual(self._mode('bogus', api_key='k'), 'debrid')
+
+
+class TestBrokenSplit(unittest.TestCase):
+    def _split(self, total, status=200, entries=None, exc=None):
+        class _Resp:
+            status_code = status
+            def json(self):
+                return entries
+        def _get(*a, **k):
+            if exc:
+                raise exc
+            return _Resp()
+        requests_stub = types.ModuleType('requests')
+        requests_stub.get = _get
+        orig = sys.modules.get('requests')
+        sys.modules['requests'] = requests_stub
+        try:
+            return st._fetch_climount_broken_split(total)
+        finally:
+            if orig is not None:
+                sys.modules['requests'] = orig
+            else:
+                sys.modules.pop('requests', None)
+
+    def test_splits_by_protocol(self):
+        entries = [{'protocol': 'torrent'}] * 5 + [{'protocol': 'nzb'}] * 2 + [{}]
+        self.assertEqual(self._split(8, entries=entries), (2, 6))  # no protocol counts as debrid
+
+    def test_zero_total_skips_request(self):
+        self.assertEqual(self._split(0, exc=AssertionError('should not be called')), (0, 0))
+
+    def test_failure_falls_back_to_unlabelled_total(self):
+        self.assertEqual(self._split(7, status=404), (7, None))
+        self.assertEqual(self._split(7, exc=ConnectionError()), (7, None))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

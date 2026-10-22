@@ -969,6 +969,7 @@ body[data-theme="tangerine"] .recently-upgraded-section .stats-poster-hover .fil
     .tb-pill:has(.fas.fa-globe)          { flex: 1 1 calc(40% - 5px); min-width: 0; }
     /* Row 2: Sub + 24h shrink to content, Theme fills rest */
     .tb-pill:has(#subscription-days-toggle) { flex: 0 0 auto; }
+    .tb-pill:has(#broken-count-toggle) { flex: 0 0 auto; }
     .tb-toggle-wrap { flex: 0 0 auto; }
     .tb-theme { flex: 1 1 auto; }
     .hide-mobile-text { display: none; }
