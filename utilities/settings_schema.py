@@ -168,7 +168,7 @@ SETTINGS_SCHEMA = {
         },
         "stats_provider_priority": {
             "type": "string",
-            "description": "Choose which provider's stats to display on the Statistics page. Auto shows Combined when both debrid and usenet are configured, otherwise whichever one is. Select Usenet to always show cli_mount/usenet stats even when a debrid provider is also configured. Select Combined to show the total size and broken count across every debrid provider and usenet together (no subscription days, since that's account-specific).",
+            "description": "Choose which provider's stats to display on the Statistics page. Auto shows Combined when both debrid and usenet are configured, otherwise whichever one is. Select Usenet to always show cli_mount/usenet stats even when a debrid provider is also configured. Select Combined to show the total size across every debrid provider and usenet together, the debrid subscription days, and broken entries split into NZB and debrid.",
             "default": "auto",
             "choices": ["auto", "debrid", "usenet", "combined"]
         }

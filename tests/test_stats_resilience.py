@@ -195,5 +195,39 @@ class TestResolveStatsMode(unittest.TestCase):
         self.assertEqual(self._mode('bogus', api_key='k'), 'debrid')
 
 
+class TestBrokenSplit(unittest.TestCase):
+    def _split(self, total, status=200, entries=None, exc=None):
+        class _Resp:
+            status_code = status
+            def json(self):
+                return entries
+        def _get(*a, **k):
+            if exc:
+                raise exc
+            return _Resp()
+        requests_stub = types.ModuleType('requests')
+        requests_stub.get = _get
+        orig = sys.modules.get('requests')
+        sys.modules['requests'] = requests_stub
+        try:
+            return st._fetch_climount_broken_split(total)
+        finally:
+            if orig is not None:
+                sys.modules['requests'] = orig
+            else:
+                sys.modules.pop('requests', None)
+
+    def test_splits_by_protocol(self):
+        entries = [{'protocol': 'torrent'}] * 5 + [{'protocol': 'nzb'}] * 2 + [{}]
+        self.assertEqual(self._split(8, entries=entries), (2, 6))  # no protocol counts as debrid
+
+    def test_zero_total_skips_request(self):
+        self.assertEqual(self._split(0, exc=AssertionError('should not be called')), (0, 0))
+
+    def test_failure_falls_back_to_unlabelled_total(self):
+        self.assertEqual(self._split(7, status=404), (7, None))
+        self.assertEqual(self._split(7, exc=ConnectionError()), (7, None))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
