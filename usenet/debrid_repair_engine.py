@@ -1016,7 +1016,7 @@ def _reset_item_to_wanted(item_id) -> bool:
     except Exception:
         pass  # scraper stats are best-effort
     try:
-        from routes.debug_routes import move_item_to_wanted
+        from database.database_writing import move_item_to_wanted
         move_item_to_wanted(item_id, None)
         return True
     except Exception as reset_err:

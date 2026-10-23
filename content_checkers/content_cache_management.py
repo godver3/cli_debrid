@@ -1,3 +1,4 @@
+import glob
 import logging
 import os
 import pickle
@@ -211,3 +212,80 @@ def update_cache_for_item(item: Dict[str, Any], source_id: str, cache: Dict[str,
         'data': item.copy()  # Store a copy of the full item data
     }
     logging.debug(f"Updated cache for {cache_key}")
+
+
+def get_cache_files():
+    """Returns a dict with content source cache files and other cache files."""
+    from utilities.settings import get_all_settings
+
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    user_config_dir = os.environ.get('USER_CONFIG', '/user/config')
+
+    # ── Content source cache files ────────────────────────────────────────────
+    content_source_files = []
+    try:
+        if os.path.isdir(db_content_dir):
+            pattern = os.path.join(db_content_dir, 'content_source_*.pkl')
+            cache_files = [os.path.basename(f) for f in glob.glob(pattern)]
+            content_sources = get_all_settings().get('Content Sources', {})
+            for filename in sorted(cache_files):
+                if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
+                    source_id = filename[15:-10]
+                    display_label = None
+                    for source_key, source_config in content_sources.items():
+                        safe_source_key = source_key.replace('/', '_').replace('\\', '_')
+                        if source_id == safe_source_key or source_id.startswith(safe_source_key + '_'):
+                            if isinstance(source_config, dict):
+                                display_name = source_config.get('display_name', source_key)
+                                display_label = f"{display_name} ({source_id})"
+                                break
+                    if not display_label:
+                        display_label = f"{source_id} ({source_id})"
+                    content_source_files.append((filename, display_label))
+    except Exception as e:
+        logging.error(f"Error getting content source cache files: {e}", exc_info=True)
+
+    # ── Other cache files ─────────────────────────────────────────────────────
+    OTHER_CACHE_FILES = [
+        # (filename, base_dir, display_label, description)
+        ('plex_collection_state.json', user_config_dir,
+         'Plex Collection State',
+         'Clears sync state for all Plex collections — forces full re-sync on next trigger'),
+        ('plex_smart_collection_state.json', user_config_dir,
+         'Plex Smart Collection State',
+         'Clears Smart Collection Posters state — forces poster re-apply on next trigger'),
+        ('plex_boxsets_state.json', user_config_dir,
+         'Plex Box Sets State',
+         'Clears Box Sets fingerprints — forces poster re-apply for all box sets on next trigger'),
+        ('trakt_lists_cache.pkl', db_content_dir,
+         'Trakt Lists Cache',
+         'Cached Trakt list data — forces re-fetch from Trakt API'),
+        ('trakt_imdb_id_cache.pkl', db_content_dir,
+         'Trakt IMDb ID Cache',
+         'IMDb↔Trakt ID mappings — re-fetches on next Trakt API call'),
+        ('trakt_watchlist_cache.pkl', db_content_dir,
+         'Trakt Watchlist Cache',
+         'Cached Trakt watchlist — forces re-sync with Trakt'),
+        ('adaptive_list_imdb_cache.pkl', db_content_dir,
+         'Adaptive List IMDb Cache',
+         'Cached IMDb data for Adaptive Lists — forces re-fetch'),
+        ('poster_cache.pkl', db_content_dir,
+         'Poster Cache',
+         'Cached TMDB poster URLs — forces fresh API calls for artwork'),
+        ('failed_upgrades.pkl', db_content_dir,
+         'Failed Upgrades History',
+         'Failed upgrade attempt history — allows retry of previously failed items'),
+    ]
+
+    other_files = []
+    for filename, base_dir, label, desc in OTHER_CACHE_FILES:
+        exists = os.path.exists(os.path.join(base_dir, filename))
+        other_files.append({
+            'filename': filename,
+            'base_dir': base_dir,
+            'label': label,
+            'description': desc,
+            'exists': exists,
+        })
+
+    return {'content_source': content_source_files, 'other': other_files}

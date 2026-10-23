@@ -393,9 +393,9 @@ def scan_mount_for_external_adds() -> Dict:
     logging.info(f"[ExternalScan] {len(new_folders)} mount entries with no database record; "
                  f"importing up to {MAX_IMPORTS_PER_RUN} this run.")
 
-    # Imported lazily: routes.debug_routes pulls in a large chunk of the app,
-    # and importing it at module level from utilities risks a circular import.
-    from routes.debug_routes import _run_rclone_to_symlink_task, rclone_scan_progress
+    # Imported lazily: mount_import pulls in a large chunk of the app, and
+    # importing it at module level from utilities risks a circular import.
+    from utilities.mount_import import _run_rclone_to_symlink_task, rclone_scan_progress
 
     for name in new_folders[:MAX_IMPORTS_PER_RUN]:
         entry = state.get(name) or {'first_seen': now}

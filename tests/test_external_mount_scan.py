@@ -7,12 +7,11 @@ only new folders, retry-cap enforcement, pruning of removed folders, no
 state-file write on a no-op run, and a clean skip outside Symlinked/Local
 mode.
 
-scan_mount_for_external_adds() lazily imports routes.debug_routes for
+scan_mount_for_external_adds() lazily imports utilities.mount_import for
 _run_rclone_to_symlink_task/rclone_scan_progress (the same functions the
-rclone webhook uses). routes/__init__.py imports flask, which isn't
-installed in this test environment, so real imports of that package fail
--- worked around by injecting fake 'routes' / 'routes.debug_routes' module
-objects into sys.modules before exercising any import path.
+rclone webhook uses). That module pulls in most of the app, so a fake
+'utilities.mount_import' module object is injected into sys.modules before
+exercising any import path.
 
 _already_tracked() similarly lazily imports database.database_reading,
 whose package __init__ pulls in cli_battery -> sqlalchemy, also unavailable
@@ -74,16 +73,16 @@ class ExternalMountScanTestBase(unittest.TestCase):
         self._is_rejected_patch = patch.object(ems, '_is_rejected', return_value=False)
         self._is_rejected_patch.start()
 
-        # Stub out routes.debug_routes so the lazy import inside
-        # scan_mount_for_external_adds() never touches the real (flask-
-        # dependent) module. import_result records every call for assertions.
+        # Stub out utilities.mount_import so the lazy import inside
+        # scan_mount_for_external_adds() never touches the real module.
+        # import_result records every call for assertions.
         self.import_calls = []
         self.import_user_initiated = []
         self.import_result = {'items_added_to_db': 0, 'symlinks_created': 0}
-        self._install_debug_routes_stub()
+        self._install_mount_import_stub()
 
     def tearDown(self):
-        self._restore_debug_routes_stub()
+        self._restore_mount_import_stub()
         self._is_rejected_patch.stop()
         self._rejected_sets_patch.stop()
         self._already_tracked_patch.stop()
@@ -93,34 +92,27 @@ class ExternalMountScanTestBase(unittest.TestCase):
         self.db_content_dir.cleanup()
         self.symlink_dir.cleanup()
 
-    def _install_debug_routes_stub(self):
-        self._saved_routes = sys.modules.get('routes')
-        self._saved_debug_routes = sys.modules.get('routes.debug_routes')
+    def _install_mount_import_stub(self):
+        self._saved_mount_import = sys.modules.get('utilities.mount_import')
 
-        fake_routes_pkg = types.ModuleType('routes')
-        fake_debug_routes = types.ModuleType('routes.debug_routes')
-        fake_debug_routes.rclone_scan_progress = {}
+        fake_mount_import = types.ModuleType('utilities.mount_import')
+        fake_mount_import.rclone_scan_progress = {}
 
         def fake_run_task(scan_path, symlink_base_path, dry_run, task_id, trigger_plex_update_on_success=False, assumed_item_title_from_path=None, user_initiated=False):
             self.import_calls.append(scan_path)
             self.import_user_initiated.append(user_initiated)
-            fake_debug_routes.rclone_scan_progress[task_id] = dict(self.import_result)
+            fake_mount_import.rclone_scan_progress[task_id] = dict(self.import_result)
 
-        fake_debug_routes._run_rclone_to_symlink_task = fake_run_task
+        fake_mount_import._run_rclone_to_symlink_task = fake_run_task
 
-        sys.modules['routes'] = fake_routes_pkg
-        sys.modules['routes.debug_routes'] = fake_debug_routes
-        self._fake_debug_routes = fake_debug_routes
+        sys.modules['utilities.mount_import'] = fake_mount_import
+        self._fake_mount_import = fake_mount_import
 
-    def _restore_debug_routes_stub(self):
-        if self._saved_routes is not None:
-            sys.modules['routes'] = self._saved_routes
+    def _restore_mount_import_stub(self):
+        if self._saved_mount_import is not None:
+            sys.modules['utilities.mount_import'] = self._saved_mount_import
         else:
-            sys.modules.pop('routes', None)
-        if self._saved_debug_routes is not None:
-            sys.modules['routes.debug_routes'] = self._saved_debug_routes
-        else:
-            sys.modules.pop('routes.debug_routes', None)
+            sys.modules.pop('utilities.mount_import', None)
 
     def _mkfolder(self, name):
         os.makedirs(os.path.join(self.mount_dir.name, name), exist_ok=True)

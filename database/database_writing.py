@@ -1569,3 +1569,69 @@ def cleanup_show_metadata(imdb_id: str) -> bool:
     finally:
         if conn:
             conn.close()
+
+
+def move_item_to_wanted(item_id, current_original_scraped_title=None):
+    """Reset an item to Wanted, clearing its file/torrent fields, so it is scraped again.
+
+    The release it had is kept in rescrape_original_torrent_title so scraping
+    can skip it next time.
+    """
+    source = caller_source()
+    conn = get_db_connection()
+    try:
+        # If no current_original_scraped_title was supplied, fetch it from the database so that we
+        # can preserve it in the rescrape_original_torrent_title field. This helps later scraping
+        # logic to avoid re-adding the same bad release.
+        if current_original_scraped_title is None:
+            # Prefer the title of the release we actually collected (filled_by_title) and fall back
+            # to the stored original_scraped_torrent_title if that is not present. This gives the
+            # scraping queue the best chance of recognising and skipping the bad release next time.
+            try:
+                cur_lookup = conn.cursor()
+                cur_lookup.execute(
+                    "SELECT filled_by_title, original_scraped_torrent_title FROM media_items WHERE id = ?",
+                    (item_id,)
+                )
+                row = cur_lookup.fetchone()
+                if row:
+                    filled_title, scraped_title = row
+                    current_original_scraped_title = filled_title or scraped_title
+            except Exception as _fetch_err:
+                logging.warning(
+                    f"move_item_to_wanted: failed to fetch fallback titles for item {item_id}: {_fetch_err}"
+                )
+            finally:
+                if 'cur_lookup' in locals():
+                    cur_lookup.close()
+
+        old_row = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_id,)).fetchone()
+        cursor = conn.cursor()
+        cursor.execute(f'''
+            UPDATE media_items
+            SET state = 'Wanted',
+                filled_by_file = NULL,
+                filled_by_title = NULL,
+                filled_by_magnet = NULL,
+                filled_by_torrent_id = NULL,
+                {RESET_COLLECTION_STATE_SQL},
+                last_updated = ?,
+                location_on_disk = NULL,
+                original_path_for_symlink = NULL,
+                rescrape_original_torrent_title = ?,
+                original_scraped_torrent_title = NULL,
+                upgrading_from = NULL,
+                version = TRIM(version, '*'),
+                upgrading = NULL,
+                fall_back_to_single_scraper = 0,
+                upgraded = NULL
+            WHERE id = ?
+        ''', (datetime.now(), current_original_scraped_title, item_id))
+        if old_row:
+            tag_transition(conn, item_id, old_row['state'], 'Wanted', source)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()

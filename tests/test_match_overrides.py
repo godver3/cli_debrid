@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEBUG_ROUTES_PATH = os.path.join(PROJECT_ROOT, 'routes', 'debug_routes.py')
+MOUNT_IMPORT_PATH = os.path.join(PROJECT_ROOT, 'utilities', 'mount_import.py')
 
 
 def _load_match_overrides():
@@ -150,15 +150,15 @@ class TestMatchOverrideStore(unittest.TestCase):
 
 class TestResolverHonoursOverrides(unittest.TestCase):
     """
-    routes/debug_routes.py cannot be imported here, so the wiring is checked
+    utilities/mount_import.py cannot be imported here, so the wiring is checked
     against the source of the function that resolves an import to an ID.
     """
 
     @staticmethod
     def _resolver_source():
-        with open(DEBUG_ROUTES_PATH, encoding='utf-8') as handle:
+        with open(MOUNT_IMPORT_PATH, encoding='utf-8') as handle:
             source = handle.read()
-        tree = ast.parse(source, filename=DEBUG_ROUTES_PATH)
+        tree = ast.parse(source, filename=MOUNT_IMPORT_PATH)
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name == '_run_rclone_to_symlink_task':
                 return ast.get_source_segment(source, node)

@@ -178,7 +178,7 @@ def plex_collection_update(skip_initial_plex_update):
         return False, False  # Plex error occurred
 
 def get_all_wanted_from_enabled_sources(runner=None):
-    from routes.debug_routes import get_and_add_wanted_content
+    from content_checkers.wanted_content_runner import get_and_add_wanted_content
 
     content_sources = get_all_settings().get('Content Sources', {})
 

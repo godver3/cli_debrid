@@ -1958,7 +1958,7 @@ def update_settings():
 
         # Clear content source cache files
         try:
-            from routes.debug_routes import get_cache_files
+            from content_checkers.content_cache_management import get_cache_files
             cache_data = get_cache_files()
             # get_cache_files now returns dict {'content_source': [(filename, label),...], 'other': [...]}
             cache_files = cache_data.get('content_source', []) if isinstance(cache_data, dict) else cache_data
@@ -1973,7 +1973,7 @@ def update_settings():
                         except Exception as e:
                             logging.error(f"Failed to remove cache file {file_path}: {e}")
         except ImportError:
-            logging.warning("Could not import get_cache_files from routes.debug_routes to clear cache.")
+            logging.warning("Could not import get_cache_files from content_checkers.content_cache_management to clear cache.")
         except Exception as e:
             logging.error(f"An error occurred while clearing content source cache files: {e}")
         

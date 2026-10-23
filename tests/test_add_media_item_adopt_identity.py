@@ -17,7 +17,7 @@ Two callers were affected:
     user_initiated=True. On the adopt path that filename was dropped and the
     item went to Checking hunting for the previous row's file.
 
-  * routes/debug_routes.py's rclone/external-add import adds with state
+  * utilities/mount_import.py's rclone/external-add import adds with state
     'Collected' and a known location_on_disk, so an adopted row advertised a
     file the import had just replaced -- breaking symlink verification,
     deletion and the reconcile audit, which all read location_on_disk.
@@ -150,7 +150,7 @@ class TestMagnetAssignShape(unittest.TestCase):
 
 
 class TestExternalImportShape(unittest.TestCase):
-    """debug_routes: external mount import adds a Collected item with a path."""
+    """mount_import: external mount import adds a Collected item with a path."""
 
     ITEM = {
         'state': 'Collected',

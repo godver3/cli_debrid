@@ -52,7 +52,7 @@ def _const(node):
 
 class TestTaskTakesAnExplicitFlag(unittest.TestCase):
     def setUp(self):
-        self.fn = _find_function(_parse('routes/debug_routes.py'), TASK)
+        self.fn = _find_function(_parse('utilities/mount_import.py'), TASK)
 
     def test_user_initiated_is_a_parameter(self):
         args = [a.arg for a in self.fn.args.args]

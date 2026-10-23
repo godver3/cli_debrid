@@ -629,7 +629,7 @@ def run_plex_library_maintenance():
     try:
         from utilities.settings import get_setting
         from utilities.plex_removal_cache import cache_plex_removal
-        from routes.debug_routes import move_item_to_wanted
+        from database.database_writing import move_item_to_wanted
         import os
         
         # Check if mount location is configured and enabled
@@ -1178,7 +1178,7 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links):
                     # No other items with this version, move to rescrape
                     logging.info(f"  No other items with version {clean_version}, moving to rescrape")
                     try:
-                        from routes.debug_routes import move_item_to_wanted
+                        from database.database_writing import move_item_to_wanted
                         move_item_to_wanted(item_id, None)
                         logging.info(f"  Successfully moved item to Wanted state for rescraping")
                     except Exception as e:

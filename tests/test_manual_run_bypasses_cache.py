@@ -48,7 +48,7 @@ class TestTriggerTaskBypassesCacheForContentSources(unittest.TestCase):
 
 class TestDebugManualIngestionRoutePassesUnblacklist(unittest.TestCase):
     def setUp(self):
-        self.source = _read("routes/debug_routes.py")
+        self.source = _read("content_checkers/wanted_content_runner.py")
 
     def test_reads_unblacklist_setting_from_source_data(self):
         self.assertIn(

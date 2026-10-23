@@ -10,7 +10,7 @@ from pathlib import Path
 # Assuming these can be imported based on project structure
 # If running standalone, PYTHONPATH might need adjustment or use absolute imports if project is a package
 from utilities.settings import get_setting
-from routes.debug_routes import move_item_to_wanted
+from database.database_writing import move_item_to_wanted
 from utilities.plex_removal_cache import cache_plex_removal
 
 ANALYSIS_VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}

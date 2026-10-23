@@ -144,7 +144,7 @@ class TestReplaceEntryKeepsSharedTorrent(unittest.TestCase):
         self._patch('database.nzb_repair_activity', 'log_repair_activity', lambda **k: None)
         self._patch('usenet.repair_engine', '_junk_nzb_source_reason', lambda *a, **k: None)
         self._patch(
-            'routes.debug_routes', 'move_item_to_wanted',
+            'database.database_writing', 'move_item_to_wanted',
             lambda item_id, title: self.moved.append(item_id),
         )
 
