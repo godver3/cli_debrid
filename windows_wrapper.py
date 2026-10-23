@@ -23,16 +23,12 @@ import errno  # For socket error constants
 DEFAULT_PORTS = {
     'win32': {
         'main': 40000,
-        'battery': 40001,
         'tunnel_main': 40000,
-        'tunnel_battery': 40001,
         'phalanx': 8888  # Added Phalanx default for Windows
     },
     'default': {
         'main': 5000,
-        'battery': 5001,
         'tunnel_main': 5000,
-        'tunnel_battery': 5001,
         'phalanx': 8888  # Added Phalanx default for others
     }
 }
@@ -111,14 +107,8 @@ def setup_environment():
     ports = DEFAULT_PORTS.get(sys.platform, DEFAULT_PORTS['default'])
     if 'CLI_DEBRID_PORT' not in os.environ:
         os.environ['CLI_DEBRID_PORT'] = str(ports['main'])
-    if 'CLI_DEBRID_BATTERY_PORT' not in os.environ:
-        os.environ['CLI_DEBRID_BATTERY_PORT'] = str(ports['battery'])
-    if 'CLI_DEBRID_BATTERY_HOST' not in os.environ:
-        os.environ['CLI_DEBRID_BATTERY_HOST'] = '127.0.0.1'
     if 'CLI_DEBRID_TUNNEL_PORT' not in os.environ:
         os.environ['CLI_DEBRID_TUNNEL_PORT'] = str(ports['tunnel_main'])
-    if 'CLI_DEBRID_BATTERY_TUNNEL_PORT' not in os.environ:
-        os.environ['CLI_DEBRID_BATTERY_TUNNEL_PORT'] = str(ports['tunnel_battery'])
     # Set Phalanx port env var if not already set (command line args override later)
     if 'CLI_DEBRID_PHALANX_PORT' not in os.environ:
         os.environ['CLI_DEBRID_PHALANX_PORT'] = str(ports['phalanx'])
@@ -398,7 +388,7 @@ def create_tunnel(remote_port, local_port, buffer_size=4096):
     tunnel_thread.start()
     return tunnel_thread
 
-def run_script(script_name, port=None, battery_port=None, host=None):
+def run_script(script_name, port=None, host=None):
     script_path = get_script_path(script_name)
     logging.info(f"Running script: {script_path}")
     try:
@@ -413,8 +403,6 @@ def run_script(script_name, port=None, battery_port=None, host=None):
         # Set environment variables for ports and host
         if port:
             os.environ['CLI_DEBRID_PORT'] = str(port)
-        if battery_port:
-            os.environ['CLI_DEBRID_BATTERY_PORT'] = str(battery_port)
         if host:
             os.environ['CLI_DEBRID_HOST'] = host
             
@@ -670,7 +658,8 @@ def run_main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', '--cli-port', type=int, help='Port for remote access to main service (tunnels to local service)')
-    parser.add_argument('--battery-port', '--cli-battery-port', type=int, help='Port for remote access to battery service (tunnels to local service)')
+    # The battery runs inside main.py now; still accepted so old shortcuts keep working
+    parser.add_argument('--battery-port', '--cli-battery-port', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--phalanx-port', type=int, help='Port for the Phalanx DB service')
     parser.add_argument('--phalanx-url', type=str, help='Base URL for the Phalanx DB service (e.g., http://localhost)')
     parser.add_argument('--no-tunnel', action='store_true', help='Disable automatic tunneling')
@@ -739,26 +728,18 @@ def run_main():
         
     # Local service ports (always on localhost)
     main_port = ports['main']
-    battery_port = ports['battery']
     
     # Check if local ports are available and find alternatives if needed
     if not is_port_available(main_port):
         logging.warning(f"Local port {main_port} is not available")
         main_port = find_available_port(main_port + 1)
         logging.info(f"Using alternative local port {main_port} for main server")
-        
-    if not is_port_available(battery_port):
-        logging.warning(f"Local port {battery_port} is not available")
-        battery_port = find_available_port(battery_port + 1)
-        logging.info(f"Using alternative local port {battery_port} for battery server")
     
     # Always bind to localhost for security
     main_host = '127.0.0.1'
-    battery_host = '127.0.0.1'
     
     # Update environment with actual local ports
     os.environ['CLI_DEBRID_PORT'] = str(main_port)
-    os.environ['CLI_DEBRID_BATTERY_PORT'] = str(battery_port)
     
     # Start services
     processes = []
@@ -773,71 +754,44 @@ def run_main():
         process.start()
         logging.info("Started phalanx_db process")
 
-    # Start both processes in parallel with appropriate ports
-    script_names = ['main.py', os.path.join('cli_battery', 'main.py')]
-    for script_name in script_names:
-        if 'cli_battery' in script_name:
-            process = multiprocessing.Process(
-                target=run_script, 
-                args=(script_name,),
-                kwargs={
-                    'battery_port': battery_port,
-                    'host': battery_host
-                },
-                name=f"Process-{script_name}"
-            )
-            logging.info(f"Starting battery process on {battery_host}:{battery_port}")
-        else:
-            process = multiprocessing.Process(
-                target=run_script, 
-                args=(script_name,),
-                kwargs={
-                    'port': main_port,
-                    'host': main_host
-                },
-                name=f"Process-{script_name}"
-            )
-            logging.info(f"Starting main process on {main_host}:{main_port}")
-        
-        processes.append(process)
-        process.start()
+    # Start the main app (the metadata battery runs inside it)
+    process = multiprocessing.Process(
+        target=run_script, 
+        args=('main.py',),
+        kwargs={
+            'port': main_port,
+            'host': main_host
+        },
+        name="Process-main.py"
+    )
+    logging.info(f"Starting main process on {main_host}:{main_port}")
+    processes.append(process)
+    process.start()
 
     # Wait for services to be ready
     logging.info("Waiting for services to be ready...")
     main_ready = is_service_ready(main_port)
-    battery_ready = is_service_ready(battery_port)
     
     if not main_ready:
         logging.error(f"Main service failed to start on port {main_port}")
-    if not battery_ready:
-        logging.error(f"Battery service failed to start on port {battery_port}")
     
     # Set up tunnels only if services are ready
     tunnel_threads = []
-    if not args.no_tunnel and (main_ready or battery_ready):
+    if not args.no_tunnel and main_ready:
         # Use provided ports or defaults for tunneling
         tunnel_main_port = args.port if args.port else ports['tunnel_main']
-        tunnel_battery_port = args.battery_port if args.battery_port else ports['tunnel_battery']
         
         # Update environment with tunnel ports
         os.environ['CLI_DEBRID_TUNNEL_PORT'] = str(tunnel_main_port)
-        os.environ['CLI_DEBRID_BATTERY_TUNNEL_PORT'] = str(tunnel_battery_port)
         
         if main_ready and is_port_available(tunnel_main_port):
             tunnel_threads.append(create_tunnel(tunnel_main_port, main_port))
             logging.info(f"Created tunnel from port {tunnel_main_port} to main service on {main_port}")
         else:
             logging.error(f"Cannot create tunnel for main service: Service ready: {main_ready}, Port available: {is_port_available(tunnel_main_port)}")
-            
-        if battery_ready and is_port_available(tunnel_battery_port):
-            tunnel_threads.append(create_tunnel(tunnel_battery_port, battery_port))
-            logging.info(f"Created tunnel from port {tunnel_battery_port} to battery service on {battery_port}")
-        else:
-            logging.error(f"Cannot create tunnel for battery service: Service ready: {battery_ready}, Port available: {is_port_available(tunnel_battery_port)}")
     else:
         # If tunneling is disabled, remove tunnel port environment variables
         os.environ.pop('CLI_DEBRID_TUNNEL_PORT', None)
-        os.environ.pop('CLI_DEBRID_BATTERY_TUNNEL_PORT', None)
 
     # Set up process monitoring
     def monitor_processes():

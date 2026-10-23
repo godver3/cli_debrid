@@ -892,8 +892,7 @@ def setup_tray_icon():
         image = Image.open(icon_path)
         import socket
         ip_address = socket.gethostbyname(socket.gethostname())
-        battery_host = os.environ.get('CLI_DEBRID_BATTERY_HOST', 'localhost')
-        icon = pystray.Icon("CLI Debrid", image, f"CLI Debrid\nMain app: localhost:{os.environ.get('CLI_DEBRID_PORT', '5000')}\nBattery: {battery_host}:{os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001')}", menu)
+        icon = pystray.Icon("CLI Debrid", image, f"CLI Debrid\nMain app: localhost:{os.environ.get('CLI_DEBRID_PORT', '5000')}", menu)
         
         # Set up double-click handler
         icon.on_activate = restore_from_tray

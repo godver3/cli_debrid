@@ -20,6 +20,9 @@
         </div>
     </div>
     <p class="info-message">Versions determine what quality and type of releases cli_debrid will look for. Versions can be customized in the Settings page under Scraping. Make sure to remove any that you don't plan on using.</p>
+    {% if added_default_version %}
+    <p class="info-message">We added the <b>Default</b> version for you: 1080p, with sensible size and quality filters. Click <b>Next Step</b> to keep it, or pick one of the options below to replace it.</p>
+    {% endif %}
 
     <div class="version-management-buttons">
         <button id="add-default-version-btn" class="onboarding-btn">Use Default Version</button>

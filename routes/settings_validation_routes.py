@@ -6,6 +6,7 @@ import requests
 from urllib.parse import urlparse
 from trakt.core import get_device_code
 from utilities.jellyfin_auth import jellyfin_auth_headers
+from routes.models import admin_required
 
 settings_validation_bp = Blueprint('settings_validation', __name__)
 
@@ -28,8 +29,12 @@ def validate_plex_settings(plex_url, plex_token):
     except Exception as e:
         return False, f"Error connecting to Plex: {str(e)}"
 
-def validate_path_exists(path):
-    """Validate if a path exists and is accessible."""
+def validate_path_exists(path, require_writable=True):
+    """Validate if a path exists and is accessible.
+
+    Debrid/usenet mounts are normally read-only, so pass require_writable=False
+    for the original files path.
+    """
     try:
         if not path:
             return False, "Path cannot be empty"
@@ -45,7 +50,7 @@ def validate_path_exists(path):
             return False, "Path exists but is not a directory"
         if not is_readable:
             return False, "Path exists but is not readable"
-        if not is_writable:
+        if require_writable and not is_writable:
             return False, "Path exists but is not writable"
         
         return True, "Path exists and is accessible"
@@ -57,7 +62,7 @@ def validate_symlink_setup(original_path, symlink_path):
     if not original_path or not symlink_path:
         return False, "Both original and symlink paths must be provided"
         
-    original_valid, original_msg = validate_path_exists(original_path)
+    original_valid, original_msg = validate_path_exists(original_path, require_writable=False)
     if not original_valid:
         return False, f"Original files path invalid: {original_msg}"
     
@@ -238,10 +243,126 @@ def validate_trakt_credentials(client_id, client_secret):
         else:
             return False, f"Error validating Trakt credentials: {error_msg} - Please ensure your Client ID and Secret are correct"
 
+USENET_BACKEND_NAMES = {'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg'}
+
+
+def validate_usenet_provider(backend, url, token=''):
+    """Check that the chosen usenet backend answers at url, and that the token works."""
+    backend = (backend or 'climount').strip().lower()
+    name = USENET_BACKEND_NAMES.get(backend, 'Usenet provider')
+    url = (url or '').strip().rstrip('/')
+    if not url:
+        return False, f"{name} URL is required"
+    parsed = urlparse(url)
+    if not (parsed.scheme and parsed.netloc):
+        return False, f"Invalid {name} URL. Include http:// and the port, e.g. http://192.168.1.50:8282"
+
+    if backend == 'climount':
+        headers = {'Authorization': f'Bearer {token}'} if token else {}
+        try:
+            r = requests.get(f"{url}/version", headers=headers, timeout=10)
+        except requests.RequestException as e:
+            return False, f"Could not connect to cli_mount: {e}"
+        if r.status_code in (401, 403):
+            return False, "cli_mount rejected the API token"
+        if r.status_code != 200:
+            return False, f"cli_mount returned HTTP {r.status_code}"
+        return True, "Connected to cli_mount"
+
+    # NzbDAV and Zurg speak the SABnzbd API.
+    if url.endswith('/api'):
+        url = url[:-4].rstrip('/')
+    try:
+        r = requests.get(f"{url}/api", params={'mode': 'version'}, timeout=10)
+        version = r.json().get('version') if r.status_code == 200 else None
+    except (requests.RequestException, ValueError) as e:
+        return False, f"Could not connect to {name}: {e}"
+    if not version:
+        return False, f"{name} did not answer the SABnzbd version call (HTTP {r.status_code}). Check the URL and port."
+    try:
+        r = requests.get(f"{url}/api", params={'mode': 'get_cats', 'apikey': token}, timeout=10)
+        key_ok = r.status_code == 200 and isinstance((r.json() or {}).get('categories'), list)
+    except (requests.RequestException, ValueError):
+        key_ok = False
+    if not key_ok:
+        return False, f"Connected to {name} {version}, but it rejected the API key"
+    return True, f"Connected to {name} {version}"
+
+
+def validate_tvdb_api_key(api_key):
+    """Log in to TVDB v4 with the key."""
+    api_key = (api_key or '').strip()
+    if not api_key:
+        return False, "TVDB API key is required"
+    try:
+        r = requests.post("https://api4.thetvdb.com/v4/login", json={'apikey': api_key}, timeout=10)
+    except requests.RequestException as e:
+        return False, f"Could not reach TVDB: {e}"
+    if r.status_code == 200:
+        return True, "TVDB API key is valid"
+    if r.status_code == 401:
+        return False, "TVDB rejected the API key"
+    return False, f"TVDB returned HTTP {r.status_code}"
+
+
+def validate_tmdb_api_key(api_key):
+    """Check a TMDB v3 API key against the configuration endpoint."""
+    api_key = (api_key or '').strip()
+    if not api_key:
+        return False, "TMDB API key is required"
+    if api_key.startswith('eyJ'):
+        return False, "That looks like the TMDB 'API Read Access Token'. Use the shorter 'API Key' instead"
+    try:
+        r = requests.get("https://api.themoviedb.org/3/configuration", params={'api_key': api_key}, timeout=10)
+    except requests.RequestException as e:
+        return False, f"Could not reach TMDB: {e}"
+    if r.status_code == 200:
+        return True, "TMDB API key is valid"
+    if r.status_code == 401:
+        return False, "TMDB rejected the API key"
+    return False, f"TMDB returned HTTP {r.status_code}"
+
+
+def check_mount_path(path):
+    """Look at the folder cli_debrid reads media from.
+
+    Returns (ok, message, warning). warning is True when the path works but
+    something looks off, such as an empty folder or a parent of __all__.
+    """
+    path = (path or '').strip()
+    if not path:
+        return False, "Path cannot be empty", False
+    if not os.path.exists(path):
+        return False, ("Path does not exist inside cli_debrid. Check that the mount is running and "
+                       "that your docker volumes map it to this path"), False
+    if not os.path.isdir(path):
+        return False, "Path exists but is not a folder", False
+    try:
+        entries = os.listdir(path)
+    except OSError as e:
+        return False, f"Path exists but cannot be read: {e}", False
+    if '__all__' in entries and os.path.basename(path.rstrip('/')) != '__all__':
+        return True, (f"This folder has an __all__ subfolder. Point cli_debrid at "
+                      f"{os.path.join(path, '__all__')} instead"), True
+    if not entries:
+        return True, ("Path exists but is empty. Is the mount running? "
+                      "(A new usenet-only setup stays empty until the first download.)"), True
+    return True, f"Mount is readable ({len(entries)} items)", False
+
+
+def _is_on(value):
+    return value in (True, 'on', 'true', 'True', '1', 1)
+
+
 @settings_validation_bp.route('/onboarding-settings', methods=['POST'])
+@admin_required
 def validate_onboarding_settings():
-    """Validate settings based on the selected management type."""
-    data = request.get_json()
+    """Validate the onboarding step 2 form before the user moves on.
+
+    Every check has a name, valid and message. Checks marked warning=True are
+    shown but don't stop the user from continuing.
+    """
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({
             'valid': False,
@@ -254,199 +375,114 @@ def validate_onboarding_settings():
 
     management_type = data.get('management_type', '')
     settings_data = data.get('settings', {})
-    validation_checks = []
-    all_valid = True
+    checks = []
+
+    def add(name, valid, message, blocking=True, warning=False):
+        checks.append({'name': name, 'valid': valid, 'message': message,
+                       'warning': warning or (not valid and not blocking)})
 
     if management_type == 'skip':
-        return jsonify({
-            'valid': True,
-            'checks': [{
-                'name': 'Skip Validation',
-                'valid': True,
-                'message': 'Library management setup skipped'
-            }]
-        })
+        add('Skip Validation', True, 'Library management setup skipped')
+        return jsonify({'valid': True, 'checks': checks})
 
-    # Common checks for all non-skip options
-    # Check if update_plex_on_file_discovery is enabled
-    update_plex = settings_data.get('Plex.update_plex_on_file_discovery') == 'on'
-    original_path = settings_data.get('original_files_path', '')
+    # --- Debrid / usenet provider -------------------------------------------------
+    use_debrid = _is_on(settings_data.get('use_debrid'))
+    use_usenet = _is_on(settings_data.get('use_usenet'))
+    if 'use_debrid' not in settings_data and 'use_usenet' not in settings_data:
+        # Older form: one provider_type tab.
+        use_usenet = settings_data.get('provider_type') == 'usenet'
+        use_debrid = not use_usenet
+    if not use_debrid and not use_usenet:
+        add('Provider', False, 'Choose a debrid provider, a usenet provider, or both')
+    if use_debrid:
+        ok, msg = validate_debrid_api_key(settings_data.get('debrid_api_key', ''),
+                                          settings_data.get('debrid_provider', 'RealDebrid'))
+        add('Debrid Provider', ok, msg)
+    if use_usenet:
+        backend = settings_data.get('usenet_backend', 'climount')
+        ok, msg = validate_usenet_provider(backend, settings_data.get('usenet_url', ''),
+                                           settings_data.get('usenet_api_token', ''))
+        add(f"Usenet Provider ({USENET_BACKEND_NAMES.get(backend, backend)})", ok, msg)
 
-    # If update_plex_on_file_discovery is enabled, original_files_path is required
-    if update_plex:
-        if not original_path:
-            validation_checks.append({
-                'name': 'Original Files Path',
-                'valid': False,
-                'message': 'Original files path is required when "Update Plex on file discovery" is enabled'
-            })
-            all_valid = False
+    # --- Mount ----------------------------------------------------------------------
+    original_path = (settings_data.get('original_files_path') or '').strip()
+    update_plex = _is_on(settings_data.get('Plex.update_plex_on_file_discovery'))
+    is_symlink = management_type in ('plex_symlink', 'Local', 'Symlinked/Local')
+    if is_symlink or update_plex or original_path:
+        if original_path:
+            ok, msg, warn = check_mount_path(original_path)
         else:
-            original_valid, original_message = validate_path_exists(original_path)
-            validation_checks.append({
-                'name': 'Original Files Path',
-                'valid': original_valid,
-                'message': original_message
-            })
-            all_valid = all_valid and original_valid
-    # If update_plex_on_file_discovery is not enabled, original_files_path is optional
-    # during onboarding — skip validation even if a default value is pre-filled
+            ok, msg, warn = False, 'Enter the folder where your mount shows your media', False
+        # In Plex mode the path is only needed for "Update Plex on file discovery".
+        add('Mount Path', ok, msg, blocking=is_symlink or update_plex, warning=warn)
 
-    if management_type in ['plex_direct', 'plex_symlink', 'Plex']:
-        # Validate Plex settings
-        plex_url = settings_data.get('plex_url', '')
-        plex_token = settings_data.get('plex_token', '')
-        
-        plex_valid, plex_message = validate_plex_settings(plex_url, plex_token)
-        validation_checks.append({
-            'name': 'Plex Connection',
-            'valid': plex_valid,
-            'message': plex_message
-        })
-        all_valid = all_valid and plex_valid
-
-        # Validate libraries if Plex connection is valid
+    # --- Library / media server -----------------------------------------------------
+    if management_type in ('plex_direct', 'plex_symlink', 'Plex'):
+        plex_valid, plex_message = validate_plex_settings(settings_data.get('plex_url', ''),
+                                                          settings_data.get('plex_token', ''))
+        add('Plex Connection', plex_valid, plex_message)
         if plex_valid:
             movie_libraries = settings_data.get('movie_libraries', '')
             shows_libraries = settings_data.get('shows_libraries', '')
-            
             if movie_libraries:
-                movie_valid, movie_message = validate_plex_libraries(movie_libraries)
-                validation_checks.append({
-                    'name': 'Movie Libraries',
-                    'valid': movie_valid,
-                    'message': movie_message
-                })
-                all_valid = all_valid and movie_valid
-            
+                add('Movie Libraries', *validate_plex_libraries(movie_libraries))
             if shows_libraries:
-                shows_valid, shows_message = validate_plex_libraries(shows_libraries)
-                validation_checks.append({
-                    'name': 'TV Show Libraries',
-                    'valid': shows_valid,
-                    'message': shows_message
-                })
-                all_valid = all_valid and shows_valid
-            
+                add('TV Show Libraries', *validate_plex_libraries(shows_libraries))
             if not movie_libraries and not shows_libraries:
-                validation_checks.append({
-                    'name': 'Libraries Configuration',
-                    'valid': False,
-                    'message': 'At least one movie or TV show library must be specified'
-                })
-                all_valid = False
+                add('Libraries Configuration', False, 'At least one movie or TV show library must be specified')
 
-    if management_type in ['plex_symlink', 'Local', 'Symlinked/Local']:
-        # Validate symlink settings
-        symlink_path = settings_data.get('symlinked_files_path', '')
+    if is_symlink:
+        symlink_path = (settings_data.get('symlinked_files_path') or '').strip()
+        if not symlink_path:
+            add('Symlink Folder', False, 'Symlinked files path is required')
+        elif original_path and os.path.abspath(original_path) == os.path.abspath(symlink_path):
+            add('Symlink Folder', False, 'The symlink folder must be different from the mount path')
+        else:
+            parent_ok, parent_msg = validate_path_exists(os.path.dirname(symlink_path.rstrip('/')) or '/')
+            add('Symlink Folder', parent_ok,
+                'Symlink folder can be created here' if parent_ok else f'Parent folder: {parent_msg}')
 
-        if symlink_path and original_path:
-            symlink_valid, symlink_message = validate_symlink_setup(original_path, symlink_path)
-            validation_checks.append({
-                'name': 'Symlink Configuration',
-                'valid': symlink_valid,
-                'message': symlink_message
-            })
-            all_valid = all_valid and symlink_valid
-        elif symlink_path:
-            validation_checks.append({
-                'name': 'Symlink Configuration',
-                'valid': True,
-                'message': 'Symlink path is configured'
-            })
-
-        # Check which media server is configured (optional)
-        symlink_media_server = settings_data.get('symlink_media_server', 'none')
-
-        if symlink_media_server == 'plex':
+        # The media server is optional in symlink mode, so it never blocks.
+        media_server = settings_data.get('symlink_media_server', 'none')
+        if media_server == 'plex':
             plex_url = settings_data.get('plex_url_for_symlink', '')
             plex_token = settings_data.get('plex_token_for_symlink', '')
             if plex_url and plex_token:
-                plex_valid, plex_message = validate_plex_settings(plex_url, plex_token)
-                validation_checks.append({
-                    'name': 'Plex Connection',
-                    'valid': plex_valid,
-                    'message': plex_message
-                })
-                # Don't affect all_valid — media server is optional
-        elif symlink_media_server == 'jellyfin':
+                add('Plex Connection', *validate_plex_settings(plex_url, plex_token), blocking=False)
+        elif media_server == 'jellyfin':
             jellyfin_url = settings_data.get('emby_jellyfin_url', '')
             jellyfin_token = settings_data.get('emby_jellyfin_token', '')
             if jellyfin_url and jellyfin_token:
                 try:
-                    import requests as _req
-                    resp = _req.get(f"{jellyfin_url.rstrip('/')}/System/Info",
-                                    headers=jellyfin_auth_headers(jellyfin_token), timeout=5)
+                    resp = requests.get(f"{jellyfin_url.rstrip('/')}/System/Info",
+                                        headers=jellyfin_auth_headers(jellyfin_token), timeout=5)
                     jf_valid = resp.status_code == 200
                     jf_message = 'Jellyfin connection successful' if jf_valid else f'Jellyfin returned status {resp.status_code}'
                 except Exception as e:
                     jf_valid = False
                     jf_message = f'Error connecting to Jellyfin: {str(e)}'
-                validation_checks.append({
-                    'name': 'Jellyfin Connection',
-                    'valid': jf_valid,
-                    'message': jf_message
-                })
-                # Don't affect all_valid — media server is optional
-        else:
-            # Fallback: check old-style plex_url_for_symlink fields (backwards compat)
-            plex_url = settings_data.get('plex_url_for_symlink', '')
-            plex_token = settings_data.get('plex_token_for_symlink', '')
-            if plex_url and plex_token:
-                plex_valid, plex_message = validate_plex_settings(plex_url, plex_token)
-                validation_checks.append({
-                    'name': 'Plex Integration (Optional)',
-                    'valid': plex_valid,
-                    'message': plex_message
-                })
+                add('Jellyfin Connection', jf_valid, jf_message, blocking=False)
 
-    # Validate Debrid or Usenet provider
-    provider_type = settings_data.get('provider_type', 'debrid')
-    if provider_type == 'usenet':
-        usenet_url = settings_data.get('usenet_url', '').strip()
-        if usenet_url:
-            try:
-                usenet_token = settings_data.get('usenet_api_token', '')
-                headers = {'Authorization': f'Bearer {usenet_token}'} if usenet_token else {}
-                r = requests.get(f"{usenet_url.rstrip('/')}/version", headers=headers, timeout=10)
-                if r.status_code == 200:
-                    provider_valid, provider_message = True, "Successfully connected to cli_mount"
-                else:
-                    provider_valid, provider_message = False, f"cli_mount returned HTTP {r.status_code}"
-            except Exception as e:
-                provider_valid, provider_message = False, f"Could not connect to cli_mount: {str(e)}"
-        else:
-            provider_valid, provider_message = False, "cli_mount URL is required"
-        validation_checks.append({
-            'name': 'Usenet Provider (cli_mount)',
-            'valid': provider_valid,
-            'message': provider_message
-        })
-    else:
-        debrid_provider = settings_data.get('debrid_provider', 'RealDebrid')
-        debrid_api_key = settings_data.get('debrid_api_key', '')
-        provider_valid, provider_message = validate_debrid_api_key(debrid_api_key, debrid_provider)
-        validation_checks.append({
-            'name': 'Debrid Provider',
-            'valid': provider_valid,
-            'message': provider_message
-        })
-    all_valid = all_valid and provider_valid
-
-    # Validate Trakt settings — Trakt is optional, so only validate (and gate
-    # all_valid on) it if the user actually entered credentials.
-    trakt_client_id = settings_data.get('trakt_client_id', '')
-    trakt_client_secret = settings_data.get('trakt_client_secret', '')
+    # --- Metadata -------------------------------------------------------------------
+    # Shows and movies are looked up on TVDB when a TVDB key is set, otherwise on
+    # Trakt, so one of the two is required.
+    tvdb_key = (settings_data.get('tvdb_api_key') or '').strip()
+    tmdb_key = (settings_data.get('tmdb_api_key') or '').strip()
+    trakt_client_id = (settings_data.get('trakt_client_id') or '').strip()
+    trakt_client_secret = (settings_data.get('trakt_client_secret') or '').strip()
+    if tvdb_key:
+        add('TVDB', *validate_tvdb_api_key(tvdb_key))
     if trakt_client_id or trakt_client_secret:
-        trakt_valid, trakt_message = validate_trakt_credentials(trakt_client_id, trakt_client_secret)
-        validation_checks.append({
-            'name': 'Trakt Configuration',
-            'valid': trakt_valid,
-            'message': trakt_message
-        })
-        all_valid = all_valid and trakt_valid
+        add('Trakt Configuration', *validate_trakt_credentials(trakt_client_id, trakt_client_secret),
+            blocking=not tvdb_key)
+    if not tvdb_key and not (trakt_client_id and trakt_client_secret):
+        add('Metadata', False, 'Add a TVDB API key (recommended) or Trakt credentials. '
+            'cli_debrid needs one of them to look up shows and movies')
+    if tmdb_key:
+        add('TMDB', *validate_tmdb_api_key(tmdb_key))
+    else:
+        add('TMDB', False, 'No TMDB API key. Posters, digital/physical release dates and Discover '
+            'need one, so adding it is recommended', blocking=False)
 
-    return jsonify({
-        'valid': all_valid,
-        'checks': validation_checks
-    }) 
+    all_valid = all(c['valid'] or c['warning'] for c in checks)
+    return jsonify({'valid': all_valid, 'checks': checks})

@@ -5,6 +5,7 @@ from utilities.settings import load_config, get_setting, save_config
 from utilities.settings_schema import SETTINGS_SCHEMA
 from queues.config_manager import add_scraper, add_content_source, load_config
 import logging
+import os
 import platform
 from routes.trakt_routes import check_trakt_auth_status
 import json
@@ -15,34 +16,143 @@ from .models import admin_required
 
 onboarding_bp = Blueprint('onboarding', __name__)
 
+USENET_BACKENDS = ('climount', 'nzbdav', 'zurg')
+# New configs get this placeholder debrid key; it doesn't mean debrid is set up.
+DEBRID_PLACEHOLDER_KEY = 'demo_key'
+
+def _real_debrid_key(config):
+    key = (config.get('Debrid Provider', {}).get('api_key') or '').strip()
+    return '' if key == DEBRID_PLACEHOLDER_KEY else key
+
+def _debrid_configured():
+    return bool(get_setting('Debrid Provider', 'provider') and _real_debrid_key(load_config()))
+
+def _usenet_configured():
+    return bool(get_setting('Usenet Provider', 'enabled') and get_setting('Usenet Provider', 'url'))
+
 def _media_provider_configured():
     """Return True if either a debrid provider or usenet provider is configured."""
-    debrid_ok = bool(get_setting('Debrid Provider', 'provider') and get_setting('Debrid Provider', 'api_key'))
-    usenet_ok = bool(get_setting('Usenet Provider', 'enabled') and get_setting('Usenet Provider', 'url'))
-    return debrid_ok or usenet_ok
+    return _debrid_configured() or _usenet_configured()
+
+def _metadata_configured():
+    """Shows and movies are looked up on TVDB when a key is set, otherwise on Trakt."""
+    return bool(get_setting('TVDB', 'api_key') or get_setting('Trakt', 'client_id'))
+
+def _required_settings_complete():
+    """True when everything step 2 asks for has been saved."""
+    if not (_media_provider_configured() and _metadata_configured()):
+        return False
+    if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+        return bool(get_setting('File Management', 'symlinked_files_path')
+                    and get_setting('File Management', 'original_files_path'))
+    return bool(get_setting('Plex', 'url') and get_setting('Plex', 'token')
+                and (get_setting('Plex', 'movie_libraries') or get_setting('Plex', 'shows_libraries')))
+
+def _save_required_settings(form):
+    """Save the step 2 form.
+
+    Values are merged into the existing sections so keys the form doesn't
+    show (set earlier in Settings, or by a previous run of onboarding) are kept.
+    """
+    config = load_config()
+    file_management_type = form.get('file_collection_management', 'Plex')
+    original_files_path = form.get('original_files_path', '').strip()
+    is_symlink = file_management_type == 'Symlinked/Local'
+    media_server = form.get('symlink_media_server', 'none') if is_symlink else 'plex'
+
+    # Plex mode fills plex_url/plex_token; symlink mode fills the *_for_symlink fields.
+    plex_url = (form.get('plex_url_for_symlink', '') if is_symlink else form.get('plex_url', '')).strip().rstrip('/')
+    plex_token = (form.get('plex_token_for_symlink', '') if is_symlink else form.get('plex_token', '')).strip()
+
+    file_management = config.setdefault('File Management', {})
+    file_management.update({
+        'file_collection_management': file_management_type,
+        'original_files_path': original_files_path,
+        'symlinked_files_path': form.get('symlinked_files_path', '/mnt/symlinked').strip(),
+        # Filled in Plex mode too: Debrid Manager's Plex views read these in either mode.
+        'plex_url_for_symlink': plex_url if media_server == 'plex' else '',
+        'plex_token_for_symlink': plex_token if media_server == 'plex' else '',
+    })
+    if is_symlink:
+        file_management['media_server_type'] = 'jellyfin' if media_server == 'jellyfin' else 'plex'
+    file_management.setdefault('symlink_organize_by_type', True)
+
+    def _libraries(name):
+        return ','.join(lib.strip() for lib in form.get(name, '').split(',') if lib.strip())
+
+    plex = config.setdefault('Plex', {})
+    plex['mounted_file_location'] = original_files_path
+    plex['update_plex_on_file_discovery'] = form.get('Plex.update_plex_on_file_discovery') == 'on'
+    if media_server == 'plex' and plex_url and plex_token:
+        plex['url'] = plex_url
+        plex['token'] = plex_token
+    if not is_symlink:
+        plex['movie_libraries'] = _libraries('movie_libraries')
+        plex['shows_libraries'] = _libraries('shows_libraries')
+
+    if is_symlink:
+        debug = config.setdefault('Debug', {})
+        if media_server == 'jellyfin':
+            debug['emby_jellyfin_url'] = form.get('emby_jellyfin_url', '').strip().rstrip('/')
+            debug['emby_jellyfin_token'] = form.get('emby_jellyfin_token', '').strip()
+        else:
+            debug['emby_jellyfin_url'] = ''
+            debug['emby_jellyfin_token'] = ''
+
+    if 'use_debrid' in form or 'use_usenet' in form:
+        use_debrid = form.get('use_debrid') == 'on'
+        use_usenet = form.get('use_usenet') == 'on'
+    else:
+        use_usenet = form.get('provider_type') == 'usenet'
+        use_debrid = not use_usenet
+
+    debrid = config.setdefault('Debrid Provider', {})
+    if use_debrid:
+        debrid['provider'] = form.get('debrid_provider', 'RealDebrid')
+        debrid['api_key'] = form.get('debrid_api_key', '').strip()
+    elif debrid.get('api_key') == DEBRID_PLACEHOLDER_KEY:
+        debrid['api_key'] = ''
+
+    usenet = config.setdefault('Usenet Provider', {})
+    usenet['enabled'] = use_usenet
+    if use_usenet:
+        backend = form.get('usenet_backend', 'climount').strip().lower()
+        usenet['provider'] = backend if backend in USENET_BACKENDS else 'climount'
+        usenet['url'] = form.get('usenet_url', '').strip().rstrip('/')
+        usenet['api_token'] = form.get('usenet_api_token', '').strip()
+
+    for section, field in (('TVDB', 'tvdb_api_key'), ('TMDB', 'tmdb_api_key')):
+        if field in form:
+            config.setdefault(section, {})['api_key'] = form.get(field, '').strip()
+
+    # Trakt is optional — only save if the user provided credentials.
+    trakt_client_id = form.get('trakt_client_id', '').strip()
+    trakt_client_secret = form.get('trakt_client_secret', '').strip()
+    if trakt_client_id or trakt_client_secret:
+        trakt = config.setdefault('Trakt', {})
+        trakt['client_id'] = trakt_client_id
+        trakt['client_secret'] = trakt_client_secret
+
+    save_config(config)
+
+    if use_usenet:
+        try:
+            from usenet import reset_usenet_client
+            reset_usenet_client()
+        except Exception as e:
+            logging.debug(f"Could not reset usenet client after onboarding save: {e}")
 
 def get_next_onboarding_step():
+    """The first onboarding step that still needs doing, so a returning user resumes there."""
     # Load the current configuration
     config = load_config()
-    
+
     # Step 1: Check if the admin user is set up
     if current_user.is_default:
         return 1
-    
+
     # Step 2: Check if required settings are configured
-    # Trakt is an optional integration and is intentionally not part of this list.
-    required_settings = [
-        ('Plex', 'url'),
-        ('Plex', 'token'),
-        ('Plex', 'shows_libraries'),
-        ('Plex', 'movie_libraries'),
-    ]
-
-    for category, key in required_settings:
-        if not get_setting(category, key):
-            return 2
-
-    if not _media_provider_configured():
+    if not _required_settings_complete():
         return 2
 
     # Step 3: Check if at least one scraper is configured
@@ -71,6 +181,7 @@ def onboarding():
 
 @onboarding_bp.route('/step/<step>', methods=['GET', 'POST'])
 @login_required
+@admin_required
 def onboarding_step(step):
     from routes.auth_routes import db
 
@@ -95,7 +206,8 @@ def onboarding_step(step):
         return render_template('onboarding_step_6.html', 
                              current_step=step_num, 
                              can_proceed=can_proceed, 
-                             is_onboarding=True)
+                             is_onboarding=True,
+                             summary=_onboarding_summary(config))
 
     # Handle other steps...
     if step_num == 1:
@@ -130,128 +242,23 @@ def onboarding_step(step):
                                is_onboarding=True)
        
     elif step_num == 2:
-        # Trakt is an optional integration and is intentionally not required here.
-        required_settings = []
-
-        # Check if platform is Windows
         is_windows = platform.system() == 'Windows'
 
         if request.method == 'POST':
             try:
-                config = load_config()
-                
-                # Handle file management type
-                file_management_type = request.form.get('file_collection_management', 'Plex')
-                original_files_path = request.form.get('original_files_path', '/mnt/zurg/__all__')
-                
-                # Get Plex URL and token - try both regular and symlink fields
-                plex_url = request.form.get('plex_url_for_symlink', '') or request.form.get('plex_url', '')
-                plex_token = request.form.get('plex_token_for_symlink', '') or request.form.get('plex_token', '')
-                
-                # Debug logging
-                logging.info("Form data received:")
-                logging.info(f"file_management_type: {file_management_type}")
-                logging.info(f"plex_url from regular field: {request.form.get('plex_url', '')}")
-                logging.info(f"plex_url from symlink field: {request.form.get('plex_url_for_symlink', '')}")
-                logging.info(f"plex_token from regular field: {request.form.get('plex_token', '')}")
-                logging.info(f"plex_token from symlink field: {request.form.get('plex_token_for_symlink', '')}")
-                logging.info(f"Final plex_url: {plex_url}")
-                logging.info(f"Final plex_token: {plex_token}")
-                
-                # Set up File Management section with all fields
-                config['File Management'] = {
-                    'file_collection_management': file_management_type,
-                    'original_files_path': original_files_path,
-                    'symlinked_files_path': request.form.get('symlinked_files_path', '/mnt/symlinked'),
-                    'symlink_organize_by_type': True,
-                    'plex_url_for_symlink': plex_url,
-                    'plex_token_for_symlink': plex_token
-                }
-
-                # Process Plex library strings
-                raw_movie_libraries = request.form.get('movie_libraries', '')
-                processed_movie_libraries = ','.join([lib.strip() for lib in raw_movie_libraries.split(',') if lib.strip()]) if raw_movie_libraries else ''
-                
-                raw_shows_libraries = request.form.get('shows_libraries', '')
-                processed_shows_libraries = ','.join([lib.strip() for lib in raw_shows_libraries.split(',') if lib.strip()]) if raw_shows_libraries else ''
-
-                # Set up Plex section with all fields
-                config['Plex'] = {
-                    'url': plex_url,
-                    'token': plex_token,
-                    'shows_libraries': processed_shows_libraries,
-                    'movie_libraries': processed_movie_libraries,
-                    'update_plex_on_file_discovery': request.form.get('Plex.update_plex_on_file_discovery', 'false') == 'on',
-                    'mounted_file_location': original_files_path
-                }
-
-                # Add required settings based on mode
-                if file_management_type == 'Symlinked/Local':
-                    required_settings.extend([
-                        ('File Management', 'symlinked_files_path'),
-                        ('File Management', 'original_files_path')
-                    ])
-                
-                # Add Plex-specific required settings if we have Plex URL and token
-                if plex_url and plex_token:
-                    required_settings.extend([
-                        ('Plex', 'url'),
-                        ('Plex', 'token')
-                    ])
-                    if file_management_type == 'Plex':
-                        required_settings.extend([
-                            ('Plex', 'shows_libraries'),
-                            ('Plex', 'movie_libraries')
-                        ])
-                
-                # Handle debrid or usenet provider selection
-                provider_type = request.form.get('provider_type', 'debrid')
-                if provider_type == 'usenet':
-                    usenet_url = request.form.get('usenet_url', '').rstrip('/')
-                    usenet_token = request.form.get('usenet_api_token', '')
-                    if 'Usenet Provider' not in config:
-                        config['Usenet Provider'] = {}
-                    config['Usenet Provider']['enabled'] = True
-                    config['Usenet Provider']['url'] = usenet_url
-                    if usenet_token:
-                        config['Usenet Provider']['api_token'] = usenet_token
-                else:
-                    provider = request.form.get('debrid_provider', 'RealDebrid')
-                    api_key = request.form.get('debrid_api_key', '')
-                    config['Debrid Provider'] = {
-                        'provider': provider,
-                        'api_key': api_key
-                    }
-                
-                # Trakt is optional — only save if the user provided credentials.
-                trakt_client_id = request.form.get('trakt_client_id', '')
-                trakt_client_secret = request.form.get('trakt_client_secret', '')
-                if trakt_client_id or trakt_client_secret:
-                    config['Trakt'] = {
-                        'client_id': trakt_client_id,
-                        'client_secret': trakt_client_secret
-                    }
-
-                save_config(config)
-                
-                # Check if all required settings are now present
-                can_proceed = all(get_setting(category, key) for category, key in required_settings) and _media_provider_configured()
-
-                return jsonify({'success': True, 'can_proceed': can_proceed})
+                _save_required_settings(request.form)
+                return jsonify({'success': True, 'can_proceed': _required_settings_complete()})
             except Exception as e:
+                logging.error(f"Error saving onboarding settings: {e}", exc_info=True)
                 return jsonify({'success': False, 'error': str(e)})
-        
-        # For GET requests, load existing settings if any
+
         config = load_config()
-        can_proceed = all(get_setting(category, key) for category, key in required_settings) and _media_provider_configured()
-        is_windows = platform.system() == 'Windows'  # Proper platform detection
-        
-        # Get Trakt auth status
+        can_proceed = _required_settings_complete()
         trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))
-        
-        # Determine if Windows symlinks are allowed
         allow_windows_symlinks_value = config.get('Debug', {}).get('use_symlinks_on_windows', False)
-        
+        usenet = config.get('Usenet Provider', {})
+        usenet_backend = (usenet.get('provider') or 'climount').strip().lower()
+
         return render_template('onboarding_step_2.html', 
                                current_step=step_num, 
                                can_proceed=can_proceed, 
@@ -259,25 +266,51 @@ def onboarding_step(step):
                                trakt_status=trakt_status,
                                is_onboarding=True,
                                is_windows=is_windows,
-                               allow_windows_symlinks=allow_windows_symlinks_value)
+                               allow_windows_symlinks=allow_windows_symlinks_value,
+                               use_debrid=bool(_real_debrid_key(config)),
+                               debrid_api_key=_real_debrid_key(config),
+                               use_usenet=bool(usenet.get('enabled')),
+                               usenet_backend=usenet_backend if usenet_backend in USENET_BACKENDS else 'climount')
 
     elif step_num == 3:
         config = load_config()
+        # Debrid users get Torrentio (no account or URL needed) so they can just
+        # click Next. Only once per session, so deleting it on purpose sticks.
+        added_recommended = False
+        if (not config.get('Scrapers') and _debrid_configured()
+                and not session.get('onboarding_recommended_scraper_added')):
+            add_scraper('Torrentio', {'enabled': True})
+            session['onboarding_recommended_scraper_added'] = True
+            added_recommended = True
+            config = load_config()
         can_proceed = 'Scrapers' in config and bool(config['Scrapers'])
-        return render_template('onboarding_step_3.html', 
-                               current_step=step_num, 
-                               can_proceed=can_proceed, 
-                               settings=config, 
-                               SETTINGS_SCHEMA=SETTINGS_SCHEMA, is_onboarding=True)
+        return render_template('onboarding_step_3.html',
+                               current_step=step_num,
+                               can_proceed=can_proceed,
+                               settings=config,
+                               SETTINGS_SCHEMA=SETTINGS_SCHEMA, is_onboarding=True,
+                               added_recommended_scraper=added_recommended,
+                               use_debrid=_debrid_configured(),
+                               use_usenet=_usenet_configured())
 
     elif step_num == '3a':
         config = load_config()
+        # Start everyone on the 1080p Default version so Next works right away.
+        added_default = False
+        if (not config.get('Scraping', {}).get('versions')
+                and not session.get('onboarding_default_version_added')):
+            from routes.settings_routes import build_default_version
+            config.setdefault('Scraping', {})['versions'] = {'Default': build_default_version()}
+            save_config(config)
+            session['onboarding_default_version_added'] = True
+            added_default = True
         can_proceed = 'Scraping' in config and 'versions' in config['Scraping'] and bool(config['Scraping']['versions'])
-        return render_template('onboarding_step_3a.html', 
-                               current_step=step_num, 
-                               can_proceed=can_proceed, 
-                               settings=config, 
-                               is_onboarding=True)
+        return render_template('onboarding_step_3a.html',
+                               current_step=step_num,
+                               can_proceed=can_proceed,
+                               settings=config,
+                               is_onboarding=True,
+                               added_default_version=added_default)
 
     elif step_num == 4:
         config = load_config()
@@ -397,8 +430,6 @@ def setup_admin():
 @onboarding_bp.route('/content_sources/add', methods=['POST'])
 @admin_required
 def add_onboarding_content_source():
-    from routes.auth_routes import db
-
     data = request.json
     source_type = data.get('type')
     source_config = data.get('config')
@@ -427,12 +458,6 @@ def add_onboarding_content_source():
              source_config['versions'] = list(source_config.get('versions', [])) # Attempt conversion or default
 
         new_source_id = add_content_source(source_type, source_config)
-        
-        # Mark onboarding as complete
-        current_user.onboarding_complete = True
-        db.session.commit()
-
-        # Log the addition of the new content source
 
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
@@ -489,6 +514,7 @@ def add_onboarding_scraper():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @onboarding_bp.route('/scrapers/get', methods=['GET'])
+@admin_required  # returns every scraper's config, including indexer API keys
 def get_onboarding_scrapers():
     config = load_config()
     scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())
@@ -496,6 +522,245 @@ def get_onboarding_scrapers():
         'scrapers': config.get('Scrapers', {}),
         'scraper_types': scraper_types
     })
+
+def _coerce_to_schema(values, schema, skip=('type',)):
+    """Turn popup form values into the types the schema expects.
+
+    Checkboxes arrive as 'on' or are left out entirely, numbers arrive as strings.
+    Keys the schema doesn't know are dropped.
+    """
+    result = {}
+    for key, field in schema.items():
+        if key in skip:
+            continue
+        field_type = field.get('type')
+        if field_type == 'boolean':
+            result[key] = values.get(key) in (True, 'on', 'true', '1')
+        elif key not in values:
+            continue
+        elif field_type == 'integer':
+            try:
+                result[key] = int(values[key])
+            except (TypeError, ValueError):
+                continue
+        elif field_type == 'float':
+            try:
+                result[key] = float(values[key])
+            except (TypeError, ValueError):
+                continue
+        else:
+            result[key] = values[key]
+    return result
+
+@onboarding_bp.route('/scrapers/update', methods=['POST'])
+@admin_required
+def update_onboarding_scraper():
+    data = request.get_json(silent=True) or {}
+    scraper_id = data.get('scraper_id')
+    config = load_config()
+    scraper = config.get('Scrapers', {}).get(scraper_id)
+    if not scraper:
+        return jsonify({'success': False, 'error': 'Scraper not found'}), 404
+    schema = SETTINGS_SCHEMA['Scrapers']['schema'].get(scraper.get('type'), {})
+    # 'enabled' isn't in the edit form, so keep whatever it was.
+    scraper.update(_coerce_to_schema(data.get('config') or {}, schema, skip=('type', 'enabled')))
+    save_config(config)
+    return jsonify({'success': True})
+
+@onboarding_bp.route('/content_sources/update', methods=['POST'])
+@admin_required
+def update_onboarding_content_source():
+    data = request.get_json(silent=True) or {}
+    source_id = data.get('source_id')
+    values = data.get('config') or {}
+    config = load_config()
+    source = config.get('Content Sources', {}).get(source_id)
+    if not source:
+        return jsonify({'success': False, 'error': 'Content source not found'}), 404
+    schema = SETTINGS_SCHEMA['Content Sources']['schema'].get(source.get('type'), {})
+    source.update(_coerce_to_schema(values, schema, skip=('type', 'enabled', 'versions')))
+    if 'display_name' in values:
+        source['display_name'] = values['display_name']
+    if isinstance(values.get('versions'), list):
+        source['versions'] = values['versions']
+    save_config(config)
+    return jsonify({'success': True})
+
+@onboarding_bp.route('/test/<what>', methods=['POST'])
+@admin_required
+def onboarding_test(what):
+    """The step 2 "Test" buttons: check one thing without saving anything."""
+    from routes.settings_validation_routes import (
+        validate_usenet_provider, validate_tvdb_api_key, validate_tmdb_api_key, check_mount_path)
+    data = request.get_json(silent=True) or {}
+    warning = False
+    if what == 'usenet':
+        ok, message = validate_usenet_provider(data.get('backend'), data.get('url'), data.get('token', ''))
+    elif what == 'tvdb':
+        ok, message = validate_tvdb_api_key(data.get('api_key'))
+    elif what == 'tmdb':
+        ok, message = validate_tmdb_api_key(data.get('api_key'))
+    elif what == 'mount':
+        ok, message, warning = check_mount_path(data.get('path'))
+    else:
+        abort(404)
+    return jsonify({'success': ok, 'message': message, 'warning': warning})
+
+def _onboarding_summary(config):
+    """What onboarding set up, in plain words, for the final step."""
+    file_management = config.get('File Management', {})
+    mode = file_management.get('file_collection_management', 'Plex')
+    usenet = config.get('Usenet Provider', {})
+    debrid = config.get('Debrid Provider', {})
+    providers = []
+    if _real_debrid_key(config):
+        providers.append(debrid.get('provider', 'RealDebrid'))
+    if usenet.get('enabled') and usenet.get('url'):
+        backend = (usenet.get('provider') or 'climount').lower()
+        providers.append({'climount': 'cli_mount', 'nzbdav': 'NzbDAV', 'zurg': 'Zurg'}.get(backend, backend)
+                         + ' (usenet)')
+    if mode == 'Symlinked/Local':
+        if config.get('Debug', {}).get('emby_jellyfin_url'):
+            media_server = 'Jellyfin / Emby'
+        elif file_management.get('plex_url_for_symlink'):
+            media_server = 'Plex'
+        else:
+            media_server = 'None'
+    else:
+        media_server = 'Plex'
+    if config.get('TVDB', {}).get('api_key'):
+        metadata = 'TVDB' + (' + TMDB' if config.get('TMDB', {}).get('api_key') else '')
+    elif config.get('Trakt', {}).get('client_id'):
+        metadata = 'Trakt'
+    else:
+        metadata = 'Not set'
+    rows = [
+        ('Library mode', 'Symlinks' if mode == 'Symlinked/Local' else 'Plex (direct mount)'),
+        ('Downloads from', ', '.join(providers) or 'Not set'),
+        ('Media server', media_server),
+        ('Metadata', metadata),
+        ('Mount path', file_management.get('original_files_path') or 'Not set'),
+    ]
+    if mode == 'Symlinked/Local':
+        rows.append(('Symlink folder', file_management.get('symlinked_files_path') or 'Not set'))
+    else:
+        libraries = ', '.join(filter(None, [config.get('Plex', {}).get('movie_libraries'),
+                                            config.get('Plex', {}).get('shows_libraries')]))
+        rows.append(('Plex libraries', libraries or 'Not set'))
+    rows += [
+        ('Scrapers', ', '.join(config.get('Scrapers', {}).keys()) or 'None'),
+        ('Versions', ', '.join(config.get('Scraping', {}).get('versions', {}).keys()) or 'None'),
+        ('Content sources', ', '.join(
+            s.get('display_name') or sid for sid, s in config.get('Content Sources', {}).items()) or 'None'),
+    ]
+    return rows
+
+def _scraper_reachable(scraper):
+    """Quick check that a scraper's server answers. None when there's nothing to check."""
+    scraper_type = scraper.get('type')
+    url = scraper.get('url') or scraper.get('base_url')
+    if scraper_type == 'Torrentio':
+        url = 'https://torrentio.strem.fun/manifest.json'
+    elif scraper_type in ('Nyaa', 'OldNyaa'):
+        url = 'https://nyaa.si'
+    if not url:
+        return None
+    try:
+        r = requests.get(url, timeout=10)
+    except requests.RequestException as e:
+        return False, f"Could not reach {url}: {e}"
+    if r.status_code >= 500:
+        return False, f"{url} returned HTTP {r.status_code}"
+    return True, f"Reachable ({url})"
+
+@onboarding_bp.route('/health', methods=['GET'])
+@admin_required
+def onboarding_health():
+    """Test everything onboarding set up, for the final step."""
+    from routes.settings_validation_routes import (
+        validate_plex_settings, validate_debrid_api_key, validate_usenet_provider,
+        validate_tvdb_api_key, validate_tmdb_api_key, check_mount_path, validate_path_exists)
+    config = load_config()
+    checks = []
+
+    def add(name, ok, message, warning=False):
+        checks.append({'name': name, 'valid': ok, 'message': message, 'warning': warning})
+
+    debrid = config.get('Debrid Provider', {})
+    usenet = config.get('Usenet Provider', {})
+    if _real_debrid_key(config):
+        add(f"Debrid ({debrid.get('provider', 'RealDebrid')})",
+            *validate_debrid_api_key(_real_debrid_key(config), debrid.get('provider', 'RealDebrid')))
+    if usenet.get('enabled') and usenet.get('url'):
+        add('Usenet provider', *validate_usenet_provider(usenet.get('provider'), usenet['url'],
+                                                         usenet.get('api_token', '')))
+    if not checks:
+        add('Provider', False, 'No debrid or usenet provider is set up (step 2)')
+
+    file_management = config.get('File Management', {})
+    mount_path = file_management.get('original_files_path')
+    if mount_path:
+        ok, message, warning = check_mount_path(mount_path)
+        add('Mount', ok, message, warning)
+    else:
+        add('Mount', False, 'No mount path set. cli_debrid can\'t see your files without one (step 2)', True)
+
+    if file_management.get('file_collection_management') == 'Symlinked/Local':
+        symlink_path = file_management.get('symlinked_files_path', '')
+        if os.path.isdir(symlink_path):
+            add('Symlink folder', *validate_path_exists(symlink_path))
+        else:
+            parent_ok, parent_msg = validate_path_exists(os.path.dirname(symlink_path.rstrip('/')) or '/')
+            add('Symlink folder', parent_ok,
+                'Will be created on first start' if parent_ok else f'Parent folder: {parent_msg}')
+        jellyfin_url = config.get('Debug', {}).get('emby_jellyfin_url')
+        plex_url = file_management.get('plex_url_for_symlink')
+        if plex_url:
+            add('Plex', *validate_plex_settings(plex_url, file_management.get('plex_token_for_symlink', '')))
+        elif jellyfin_url:
+            from utilities.jellyfin_auth import jellyfin_auth_headers
+            try:
+                r = requests.get(f"{jellyfin_url.rstrip('/')}/System/Info", timeout=5,
+                                 headers=jellyfin_auth_headers(config['Debug'].get('emby_jellyfin_token', '')))
+                add('Jellyfin / Emby', r.status_code == 200,
+                    'Connected' if r.status_code == 200 else f'Returned HTTP {r.status_code}')
+            except requests.RequestException as e:
+                add('Jellyfin / Emby', False, f'Could not connect: {e}')
+        else:
+            add('Media server', True, 'None set, so new files won\'t trigger a library scan', True)
+    else:
+        plex = config.get('Plex', {})
+        add('Plex', *validate_plex_settings(plex.get('url', ''), plex.get('token', '')))
+
+    tvdb_key = config.get('TVDB', {}).get('api_key')
+    tmdb_key = config.get('TMDB', {}).get('api_key')
+    if tvdb_key:
+        add('TVDB', *validate_tvdb_api_key(tvdb_key))
+    elif config.get('Trakt', {}).get('client_id'):
+        add('Metadata', True, 'Using Trakt (a TVDB key is recommended instead)', True)
+    else:
+        add('Metadata', False, 'No TVDB key or Trakt credentials (step 2)')
+    if tmdb_key:
+        add('TMDB', *validate_tmdb_api_key(tmdb_key))
+    else:
+        add('TMDB', False, 'Not set. Posters, release dates and Discover need it', True)
+
+    scrapers = config.get('Scrapers', {})
+    if not scrapers:
+        add('Scrapers', False, 'No scrapers (step 3)')
+    for scraper_id, scraper in scrapers.items():
+        result = _scraper_reachable(scraper)
+        if result:
+            add(f'Scraper: {scraper_id}', *result)
+        else:
+            add(f'Scraper: {scraper_id}', True, 'Added')
+    if not config.get('Scraping', {}).get('versions'):
+        add('Versions', False, 'No versions (step 3a)')
+    if not config.get('Content Sources'):
+        add('Content sources', False, 'No content sources, so nothing will be requested yet (step 4)', True)
+
+    blocking = [c for c in checks if not c['valid'] and not c['warning']]
+    return jsonify({'ok': not blocking, 'checks': checks})
 
 @onboarding_bp.route('/settings/api/update', methods=['POST'])
 @admin_required
@@ -525,7 +790,7 @@ def update_settings():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @onboarding_bp.route('/settings/validate/onboarding-settings', methods=['POST'])
-@login_required
+@admin_required
 def validate_onboarding_settings():
     try:
         data = request.json
@@ -644,7 +909,7 @@ def validate_onboarding_settings():
         }), 500
 
 @onboarding_bp.route('/plex/discover', methods=['GET'])
-@login_required
+@admin_required
 def discover_plex_servers():
     """Discover available Plex servers using X-Plex-Token."""
     try:
@@ -710,7 +975,7 @@ def discover_plex_servers():
         }), 500
 
 @onboarding_bp.route('/plex/libraries', methods=['GET'])
-@login_required
+@admin_required
 def get_plex_libraries():
     """Get available libraries from a Plex server."""
     try:

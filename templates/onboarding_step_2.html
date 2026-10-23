@@ -6,256 +6,267 @@
 {% block title %}Onboarding - Step 2{% endblock %}
 {% block content %}
 <div class="onboarding-container">
-    <h2 class="onboarding-title">Step 2: Required Settings</h2>
+    <h2 class="onboarding-title">Step 2: Connect Your Services</h2>
+    <p class="ob-section-intro">Fill in the four parts below, then click <b>Save &amp; Validate</b>. Every connection is tested before you can move on.</p>
     <form id="settings-form" class="onboarding-form">
-        <!-- File Management Type Selection -->
-        <label for="file_collection_management" class="onboarding-label">File Collection Management:</label>
 
-        <select id="file_collection_management" name="file_collection_management" required class="onboarding-input">
-            <option value="Plex" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Plex' %}selected{% endif %}>Plex</option>
-            <option value="Symlinked/Local" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Symlinked/Local' %}selected{% endif %} {% if is_windows and not allow_windows_symlinks %}disabled{% endif %}>Symlinked/Local</option>
-        </select>
-        
-        {% if is_windows %}
-        <div class="windows-override-section" style="margin-top: 10px; padding: 10px; border-radius: 5px; background-color: #e9ecef; border: 1px solid #ced4da;">
-            <input type="checkbox" id="windows_symlink_override" style="margin-right: 5px;">
-            <label for="windows_symlink_override" style="color: #495057; font-weight: normal;">Allow Symlinks on Windows (Requires Admin/Developer Mode)</label>
-            <p style="font-size: 0.8em; color: #6c757d; margin-top: 5px; margin-bottom: 0;">Overrides the default behavior which uses hard links. Enable this only if you have the necessary permissions.</p>
-        </div>
-        
-        <div id="windows-symlink-warning" class="windows-warning" {% if allow_windows_symlinks %}style="display: none;"{% endif %}>
-            <strong>Warning:</strong> Symlinked/Local management is normally disabled on Windows due to Plex limitations and permission requirements. Use the override above if you understand the implications.
-        </div>
-        {% endif %}
+        <!-- 1. Debrid and/or usenet -->
+        <div class="ob-section">
+            <h3>1. Where your media comes from</h3>
+            <p class="ob-section-intro">cli_debrid needs a debrid service, a usenet provider, or both. Pick the ones you use.</p>
+            <div class="ob-choice-row">
+                <label class="ob-choice">
+                    <input type="checkbox" id="use_debrid" name="use_debrid" {% if use_debrid or not use_usenet %}checked{% endif %}>
+                    <span>Debrid<small>Real-Debrid, AllDebrid, Premiumize, Torbox, Debrid-Link</small></span>
+                </label>
+                <label class="ob-choice">
+                    <input type="checkbox" id="use_usenet" name="use_usenet" {% if use_usenet %}checked{% endif %}>
+                    <span>Usenet<small>cli_mount, NzbDAV or Zurg 2.0</small></span>
+                </label>
+            </div>
 
-        <div id="plex-description" class="settings-description">
-            Plex management will integrate with your Plex Media Server to manage and organize your media files.
-        </div>
-        <div id="local-description" class="settings-description" style="display: none;">
-            Symlinked/Local management will organize files in your local filesystem using symbolic links.
-        </div>
-        <div class="advice-section">
-            <div class="advice-header">
-                💡 Want my advice?
-                <i class="fas fa-chevron-down toggle-icon"></i>
+            <div id="panel-debrid">
+                <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
+                <select id="debrid_provider" name="debrid_provider" class="onboarding-input">
+                    {% for value, label in [('RealDebrid', 'RealDebrid'), ('AllDebrid', 'AllDebrid'), ('Premiumize', 'Premiumize'), ('Torbox', 'Torbox'), ('DebridLink', 'Debrid-Link')] %}
+                    <option value="{{ value }}" {% if settings.get('Debrid Provider', {}).get('provider', '') == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+                <label for="debrid_api_key" class="onboarding-label">Debrid API Key:</label>
+                <div class="settings-description">From your debrid provider's account page (Real-Debrid: <a href="https://real-debrid.com/apitoken" target="_blank" rel="noopener">real-debrid.com/apitoken</a>).</div>
+                <input type="text" id="debrid_api_key" name="debrid_api_key" class="onboarding-input" autocomplete="off" value="{{ debrid_api_key }}">
             </div>
-            <div class="advice-content">
-                If you are starting fresh - I recommend using a Symlinked library if you are on Linux, otherwise you will need to use a Plex Library (especially if you are watching Anime content).<br><br>
-                If you already have an rclone mounted library in Plex and are not having issues - continue using it.<br><br>
-                If you are having issues with an rclone mounted library (items not scanning in, Anime not recognized by Plex) consider either starting a new Symlinked library or converting your library to Symlinks (done later in Step 5)
-            </div>
-        </div>
 
-        <!-- Plex Authentication Section -->
-        <div class="plex-auth-section">
-            <h3>Plex Authentication</h3>
-            <p class="settings-description">Connect to your Plex Media Server by signing in with your Plex account.</p>
-            <button type="button" id="plex-auth-btn" class="plex-auth-btn">
-                <img src="https://www.plex.tv/wp-content/themes/plex/assets/img/plex-logo.svg" alt="Plex Logo">
-                Sign in to Plex
-            </button>
-
-            <div id="plex-auth-failure-note" style="margin-top: 10px;">
-                <em style="color: #b94a48;">
-                    If Plex authorization fails to connect using this method, try using your direct IP and Plex token in the section below. Plex cannot always navigate networking automatically.
-                </em>
-            </div>
-            
-            <div id="plex-server-select" class="plex-server-select">
-                <h4>Select Your Plex Server</h4>
-                <div id="plex-servers-list"></div>
-            </div>
-            
-            <div id="plex-libraries-section" class="plex-libraries-section">
-                <h4>Select Your Libraries</h4>
-                <div class="plex-library-select">
-                    <label for="movie_libraries">Movie Libraries:</label>
-                    <select id="movie_libraries" name="movie_libraries" multiple>
-                    </select>
+            <div id="panel-usenet" style="display:none;">
+                <label for="usenet_backend" class="onboarding-label">Usenet Provider:</label>
+                <select id="usenet_backend" name="usenet_backend" class="onboarding-input">
+                    <option value="climount" {% if usenet_backend == 'climount' %}selected{% endif %}>cli_mount (recommended)</option>
+                    <option value="nzbdav" {% if usenet_backend == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
+                    <option value="zurg" {% if usenet_backend == 'zurg' %}selected{% endif %}>Zurg 2.0</option>
+                </select>
+                <label for="usenet_url" class="onboarding-label">URL:</label>
+                <div class="settings-description" id="usenet-url-hint"></div>
+                <input type="text" id="usenet_url" name="usenet_url" class="onboarding-input" value="{{ settings.get('Usenet Provider', {}).get('url', '') }}">
+                <label for="usenet_api_token" class="onboarding-label" id="usenet-token-label">API Token:</label>
+                <div class="settings-description" id="usenet-token-hint"></div>
+                <div class="ob-inline">
+                    <input type="text" id="usenet_api_token" name="usenet_api_token" class="onboarding-input" autocomplete="off" value="{{ settings.get('Usenet Provider', {}).get('api_token', '') }}">
+                    <button type="button" class="ob-test-btn" data-test="usenet">Test connection</button>
                 </div>
-                <div class="plex-library-select">
-                    <label for="shows_libraries">TV Show Libraries:</label>
-                    <select id="shows_libraries" name="shows_libraries" multiple>
-                    </select>
+                <div class="ob-test-result" data-result="usenet"></div>
+                <div id="nzbdav-helper-wrap" style="display:none;">
+                    {% include '_nzbdav_setup_helper.html' %}
                 </div>
             </div>
         </div>
 
-        <!-- Plex-specific fields -->
-        <div id="plex-fields" class="conditional-fields">
-            <label for="plex_url" class="onboarding-label">Plex URL:</label>
-            <div id="plex-url-description" class="settings-description">
-                Plex URL is the URL of your Plex Media Server. Remove trailing slashes. e.g. http://192.168.1.100:32400
+        <!-- 2. Mount -->
+        <div class="ob-section">
+            <h3>2. Your mount</h3>
+            <div class="ob-callout">
+                <b>cli_debrid doesn't download or store files.</b> A mount tool shows your debrid/usenet files as a normal folder, and both cli_debrid and your media server read from that folder. Set one up first if you haven't:
+                <a href="https://godver3.github.io/cli_docs/getting-started/mount/" target="_blank" rel="noopener">mount setup guide</a>.
             </div>
-            <input type="text" id="plex_url" name="plex_url" class="onboarding-input" value="{{ settings.get('Plex', {}).get('url', '') }}">
-
-            <label for="plex_token" class="onboarding-label">Plex Token:</label>
-            <div id="plex-token-description" class="settings-description">
-                Plex Token is the token for your Plex Media Server. This can be found by selecting an item in Plex, choosing Get Info, choosing Get XML at the bottom left, and selecting the token found after "X-Plex-Token="
+            <label for="mount_tool" class="onboarding-label">Mount tool:</label>
+            <select id="mount_tool" class="onboarding-input">
+                <option value="climount">cli_mount (debrid + usenet, recommended)</option>
+                <option value="decypharr">Decypharr</option>
+                <option value="zurg">Zurg + rclone</option>
+                <option value="nzbdav">NzbDAV + rclone</option>
+                <option value="other">Something else</option>
+            </select>
+            <label for="original_files_path" class="onboarding-label">Mount Path:</label>
+            <div class="settings-description" id="mount-path-hint"></div>
+            <div class="ob-inline">
+                <input type="text" id="original_files_path" name="original_files_path" class="onboarding-input" value="{{ settings.get('File Management', {}).get('original_files_path', '') }}">
+                <button type="button" class="ob-test-btn" data-test="mount">Check path</button>
             </div>
-            <input type="text" id="plex_token" name="plex_token" class="onboarding-input" value="{{ settings.get('Plex', {}).get('token', '') }}">
-
-            <label for="movie_libraries" class="onboarding-label">Movie Libraries:</label>
-            <div id="movie-libraries-description" class="settings-description">
-                Movie Libraries are the libraries in Plex that contain movies. Comma separated, and can use either the Library's name or ID
+            <div class="ob-test-result" data-result="mount"></div>
+            <div class="advice-section">
+                <div class="advice-header">
+                    💡 cli_debrid can't see the path?
+                    <i class="fas fa-chevron-down toggle-icon"></i>
+                </div>
+                <div class="advice-content">
+                    The path is checked from inside cli_debrid's container, so it has to be mapped in your docker-compose.yml. cli_debrid and your media server must see the mount (and the symlink folder) at exactly the same path. The easiest way is to pass<br><br>
+                    <code style="background: #1a1a1a; padding: 8px; border-radius: 4px; display: block;">/mnt:/mnt</code><br>
+                    into both containers.
+                </div>
             </div>
-            <input type="text" id="movie_libraries" name="movie_libraries" class="onboarding-input" value="{{ settings.get('Plex', {}).get('movie_libraries', '') }}">
-
-            <label for="shows_libraries" class="onboarding-label">TV Libraries:</label>
-            <div id="shows-libraries-description" class="settings-description">
-                TV Libraries are the libraries in Plex that contain TV shows. Comma separated, and can use either the Library's name or ID
-            </div>
-            <input type="text" id="shows_libraries" name="shows_libraries" class="onboarding-input" value="{{ settings.get('Plex', {}).get('shows_libraries', '') }}">
-
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <label for="update_plex_on_file_discovery" class="onboarding-label" style="margin-bottom: 0;">Update Plex on file discovery (Optional):</label>
-                <input type="checkbox" id="update_plex_on_file_discovery" name="Plex.update_plex_on_file_discovery" {% if settings.get('Plex', {}).get('update_plex_on_file_discovery', False) %}checked{% endif %}>
-            </div>
-            <div class="settings-description">Update Plex on file discovery using the Plex API</div>
         </div>
 
-        <!-- Local/Symlinked-specific fields -->
-        <div id="local-fields" class="conditional-fields">
-
-            <label class="onboarding-label">Media Server (Optional):</label>
-            <div class="settings-description">Select your media server for automatic library updates when new files are added.</div>
-            <select id="symlink_media_server" name="symlink_media_server" class="onboarding-input">
-                <option value="none">None</option>
-                <option value="plex" {% if settings.get('File Management', {}).get('plex_url_for_symlink') %}selected{% endif %}>Plex</option>
-                <option value="jellyfin" {% if settings.get('Debug', {}).get('emby_jellyfin_url') %}selected{% endif %}>Jellyfin / Emby</option>
+        <!-- 3. Library -->
+        <div class="ob-section">
+            <h3>3. Your library</h3>
+            <label for="file_collection_management" class="onboarding-label">File Collection Management:</label>
+            <select id="file_collection_management" name="file_collection_management" required class="onboarding-input">
+                <option value="Plex" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Plex' %}selected{% endif %}>Plex</option>
+                <option value="Symlinked/Local" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Symlinked/Local' %}selected{% endif %} {% if is_windows and not allow_windows_symlinks %}disabled{% endif %}>Symlinked/Local</option>
             </select>
 
-            <!-- Plex fields for symlink -->
-            <div id="symlink-plex-fields" style="display:none;">
-                <label for="plex_url_for_symlink" class="onboarding-label">Plex URL:</label>
-                <div class="settings-description">Plex server URL e.g. http://192.168.1.100:32400</div>
-                <input type="text" id="plex_url_for_symlink" name="plex_url_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_url_for_symlink', '') }}">
-
-                <label for="plex_token_for_symlink" class="onboarding-label">Plex Token:</label>
-                <div class="settings-description">Plex authentication token</div>
-                <input type="text" id="plex_token_for_symlink" name="plex_token_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_token_for_symlink', '') }}">
+            {% if is_windows %}
+            <div class="windows-override-section" style="margin-top: 10px; padding: 10px; border-radius: 5px; background-color: #e9ecef; border: 1px solid #ced4da;">
+                <input type="checkbox" id="windows_symlink_override" style="margin-right: 5px;">
+                <label for="windows_symlink_override" style="color: #495057; font-weight: normal;">Allow Symlinks on Windows (Requires Admin/Developer Mode)</label>
+                <p style="font-size: 0.8em; color: #6c757d; margin-top: 5px; margin-bottom: 0;">Overrides the default behavior which uses hard links. Enable this only if you have the necessary permissions.</p>
             </div>
 
-            <!-- Jellyfin fields for symlink -->
-            <div id="symlink-jellyfin-fields" style="display:none;">
-                <label for="emby_jellyfin_url" class="onboarding-label">Jellyfin / Emby URL:</label>
-                <div class="settings-description">URL of your Jellyfin or Emby server e.g. http://192.168.1.100:8096</div>
-                <input type="text" id="emby_jellyfin_url" name="emby_jellyfin_url" class="onboarding-input" value="{{ settings.get('Debug', {}).get('emby_jellyfin_url', '') }}">
-
-                <label for="emby_jellyfin_token" class="onboarding-label">Jellyfin / Emby API Token:</label>
-                <div class="settings-description">API key from your Jellyfin/Emby server (Dashboard → API Keys)</div>
-                <input type="text" id="emby_jellyfin_token" name="emby_jellyfin_token" class="onboarding-input" value="{{ settings.get('Debug', {}).get('emby_jellyfin_token', '') }}">
+            <div id="windows-symlink-warning" class="windows-warning" {% if allow_windows_symlinks %}style="display: none;"{% endif %}>
+                <strong>Warning:</strong> Symlinked/Local management is normally disabled on Windows due to Plex limitations and permission requirements. Use the override above if you understand the implications.
             </div>
+            {% endif %}
 
+            <div id="plex-description" class="settings-description">
+                Plex reads straight from your mount, and cli_debrid uses Plex to track what's in your library. Plex only.
+            </div>
+            <div id="local-description" class="settings-description" style="display: none;">
+                cli_debrid makes a tidy folder of symlinks pointing into your mount, and your media server scans that folder. Works with Plex, Jellyfin and Emby.
+            </div>
             <div class="advice-section">
                 <div class="advice-header">
                     💡 Want my advice?
                     <i class="fas fa-chevron-down toggle-icon"></i>
                 </div>
                 <div class="advice-content">
-                    Connect your media server so cli_debrid can automatically trigger library scans when new files are added, ensuring your content appears immediately.
+                    If you are starting fresh - I recommend using a Symlinked library if you are on Linux, otherwise you will need to use a Plex Library (especially if you are watching Anime content).<br><br>
+                    If you already have an rclone mounted library in Plex and are not having issues - continue using it.<br><br>
+                    If you are having issues with an rclone mounted library (items not scanning in, Anime not recognized by Plex) consider either starting a new Symlinked library or converting your library to Symlinks (done later in Step 5)
                 </div>
             </div>
 
-            <label for="symlinked_files_path" class="onboarding-label">Symlinked Files Path:</label>
-            <div class="settings-description">Path to the destination folder (where you want your files symlinked to). cli_debrid will create a Movies and TV Shows folder within this location</div>
-            <input type="text" id="symlinked_files_path" name="symlinked_files_path" class="onboarding-input" value="{{ settings.get('File Management', {}).get('symlinked_files_path', '/mnt/symlinked') }}">
-        </div>
-
-        <!-- Common fields -->
-        <label for="original_files_path" class="onboarding-label">Original Files Path (Optional):</label>
-        <div id="original-files-path-description" class="settings-description">
-            Path to the original files (in Zurg use the /__all__ folder). cli_debrid must be able to access this location - review your Docker container settings
-        </div>
-        <input type="text" id="original_files_path" name="original_files_path" class="onboarding-input" value="{{ settings.get('File Management', {}).get('original_files_path', '/mnt/zurg/__all__') }}">
-
-        <div class="advice-section">
-            <div class="advice-header">
-                💡 Want my advice?
-                <i class="fas fa-chevron-down toggle-icon"></i>
-            </div>
-            <div class="advice-content">
-                Having a hard time getting cli_debrid to see these locations? Verify your docker_compose.yml mount points and make sure that cli_debrid and Plex can see both symlinked and original mount locations the exact same way. Best practice is to pass:<br><br>
-                <code style="background: #1a1a1a; padding: 8px; border-radius: 4px; display: block;">/mnt:/mnt</code><br>
-                ...into both containers.
-            </div>
-        </div>
-
-        <!-- Debrid or Usenet Provider Section -->
-        <div style="margin-top: 20px;">
-            <h3 style="margin-bottom: 4px;">Debrid or Usenet Provider</h3>
-            <p class="settings-description">cli_debrid requires either a debrid provider or a Usenet provider (cli_mount or NzbDAV) to download media.</p>
-
-            <div style="display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid #444;">
-                <button type="button" id="tab-debrid" onclick="switchProviderTab('debrid')"
-                    style="padding: 8px 20px; background: none; border: none; border-bottom: 2px solid #e67e22; margin-bottom: -2px; color: #e67e22; font-weight: bold; cursor: pointer; font-size: 0.95em;">
-                    Debrid
+            <!-- Plex Authentication Section -->
+            <div class="plex-auth-section">
+                <h3>Plex Authentication</h3>
+                <p class="settings-description">Connect to your Plex Media Server by signing in with your Plex account.</p>
+                <button type="button" id="plex-auth-btn" class="plex-auth-btn">
+                    <img src="https://www.plex.tv/wp-content/themes/plex/assets/img/plex-logo.svg" alt="Plex Logo">
+                    Sign in to Plex
                 </button>
-                <button type="button" id="tab-usenet" onclick="switchProviderTab('usenet')"
-                    style="padding: 8px 20px; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; color: #aaa; cursor: pointer; font-size: 0.95em;">
-                    Usenet
-                </button>
+
+                <div id="plex-auth-failure-note" style="margin-top: 10px;">
+                    <em style="color: #b94a48;">
+                        If Plex authorization fails to connect using this method, try using your direct IP and Plex token in the section below. Plex cannot always navigate networking automatically.
+                    </em>
+                </div>
             </div>
 
-            <input type="hidden" id="provider_type" name="provider_type" value="{{ 'usenet' if settings.get('Usenet Provider', {}).get('enabled') and not settings.get('Debrid Provider', {}).get('api_key') else 'debrid' }}">
+            <!-- Plex-specific fields -->
+            <div id="plex-fields" class="conditional-fields">
+                <label for="plex_url" class="onboarding-label">Plex URL:</label>
+                <div id="plex-url-description" class="settings-description">
+                    Plex URL is the URL of your Plex Media Server. Remove trailing slashes. e.g. http://192.168.1.100:32400
+                </div>
+                <input type="text" id="plex_url" name="plex_url" class="onboarding-input" value="{{ settings.get('Plex', {}).get('url', '') }}">
 
-            <!-- Debrid tab -->
-            <div id="panel-debrid">
-                <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
-                <div class="settings-description">Select your debrid provider.</div>
-                <select id="debrid_provider" name="debrid_provider" class="onboarding-input">
-                    <option value="RealDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'RealDebrid' %}selected{% endif %}>RealDebrid</option>
-                    <option value="AllDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'AllDebrid' %}selected{% endif %}>AllDebrid</option>
-                    <option value="Premiumize" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'Premiumize' %}selected{% endif %}>Premiumize</option>
-                    <option value="Torbox" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'Torbox' %}selected{% endif %}>Torbox</option>
-                    <option value="DebridLink" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'DebridLink' %}selected{% endif %}>Debrid-Link</option>
+                <label for="plex_token" class="onboarding-label">Plex Token:</label>
+                <div id="plex-token-description" class="settings-description">
+                    Plex Token is the token for your Plex Media Server. This can be found by selecting an item in Plex, choosing Get Info, choosing Get XML at the bottom left, and selecting the token found after "X-Plex-Token="
+                </div>
+                <input type="text" id="plex_token" name="plex_token" class="onboarding-input" value="{{ settings.get('Plex', {}).get('token', '') }}">
+
+                <label for="movie_libraries" class="onboarding-label">Movie Libraries:</label>
+                <div id="movie-libraries-description" class="settings-description">
+                    Movie Libraries are the libraries in Plex that contain movies. Comma separated, and can use either the Library's name or ID
+                </div>
+                <input type="text" id="movie_libraries" name="movie_libraries" class="onboarding-input" value="{{ settings.get('Plex', {}).get('movie_libraries', '') }}">
+
+                <label for="shows_libraries" class="onboarding-label">TV Libraries:</label>
+                <div id="shows-libraries-description" class="settings-description">
+                    TV Libraries are the libraries in Plex that contain TV shows. Comma separated, and can use either the Library's name or ID
+                </div>
+                <input type="text" id="shows_libraries" name="shows_libraries" class="onboarding-input" value="{{ settings.get('Plex', {}).get('shows_libraries', '') }}">
+
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <label for="update_plex_on_file_discovery" class="onboarding-label" style="margin-bottom: 0;">Update Plex on file discovery (Optional):</label>
+                    <input type="checkbox" id="update_plex_on_file_discovery" name="Plex.update_plex_on_file_discovery" {% if settings.get('Plex', {}).get('update_plex_on_file_discovery', False) %}checked{% endif %}>
+                </div>
+                <div class="settings-description">Update Plex on file discovery using the Plex API. Needs the mount path above.</div>
+            </div>
+
+            <!-- Local/Symlinked-specific fields -->
+            <div id="local-fields" class="conditional-fields">
+                <label for="symlinked_files_path" class="onboarding-label">Symlinked Files Path:</label>
+                <div class="settings-description">Where cli_debrid puts its symlinks. It creates Movies and TV Shows folders inside. Point your media server's libraries at those folders.</div>
+                <input type="text" id="symlinked_files_path" name="symlinked_files_path" class="onboarding-input" value="{{ settings.get('File Management', {}).get('symlinked_files_path', '/mnt/symlinked') }}">
+
+                <label class="onboarding-label">Media Server (Optional):</label>
+                <div class="settings-description">Lets cli_debrid start a library scan when new files are added.</div>
+                <select id="symlink_media_server" name="symlink_media_server" class="onboarding-input">
+                    <option value="none">None</option>
+                    <option value="plex" {% if settings.get('File Management', {}).get('plex_url_for_symlink') %}selected{% endif %}>Plex</option>
+                    <option value="jellyfin" {% if settings.get('Debug', {}).get('emby_jellyfin_url') %}selected{% endif %}>Jellyfin / Emby</option>
                 </select>
-                <label for="debrid_api_key" class="onboarding-label">Debrid API Key:</label>
-                <div class="settings-description">API key from your debrid provider.</div>
-                <input type="text" id="debrid_api_key" name="debrid_api_key" class="onboarding-input" value="{{ settings.get('Debrid Provider', {}).get('api_key', '') }}">
-            </div>
 
-            <!-- Usenet tab -->
-            <div id="panel-usenet" style="display:none;">
-                <label for="usenet_url" class="onboarding-label">Usenet Provider URL:</label>
-                <div class="settings-description">URL of your usenet backend — cli_mount (default :8888) or NzbDAV (default :3000), e.g. http://192.168.1.x:8888</div>
-                <input type="text" id="usenet_url" name="usenet_url" class="onboarding-input" value="{{ settings.get('Usenet Provider', {}).get('url', '') }}">
-                <label for="usenet_api_token" class="onboarding-label">API Token (optional):</label>
-                <div class="settings-description">Only required if your usenet backend has authentication enabled.</div>
-                <input type="text" id="usenet_api_token" name="usenet_api_token" class="onboarding-input" value="{{ settings.get('Usenet Provider', {}).get('api_token', '') }}">
-                {% include '_nzbdav_setup_helper.html' %}
-            </div>
-        </div>
+                <!-- Plex fields for symlink -->
+                <div id="symlink-plex-fields" style="display:none;">
+                    <label for="plex_url_for_symlink" class="onboarding-label">Plex URL:</label>
+                    <div class="settings-description">Plex server URL e.g. http://192.168.1.100:32400</div>
+                    <input type="text" id="plex_url_for_symlink" name="plex_url_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_url_for_symlink', '') }}">
 
-        <p class="settings-description">Trakt is an <b>optional</b> integration used for Trakt-based content sources and as a metadata fallback — you can skip this and configure it later in Settings. If you'd like to enable it now, create an application at <a href="https://trakt.tv/oauth/applications/" target="_blank" style="color: #3498db;">Trakt Applications</a>. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p>
-        <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
+                    <label for="plex_token_for_symlink" class="onboarding-label">Plex Token:</label>
+                    <div class="settings-description">Plex authentication token</div>
+                    <input type="text" id="plex_token_for_symlink" name="plex_token_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_token_for_symlink', '') }}">
+                </div>
 
-        <label for="trakt_client_id" class="onboarding-label"><br>Trakt Client ID (optional):</label>
-        <div id="trakt-client-id-description" class="settings-description">
-            Trakt Client ID is the Client ID for your Trakt application.
-        </div>
-        <input type="text" id="trakt_client_id" name="trakt_client_id" class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_id', '') }}">
+                <!-- Jellyfin fields for symlink -->
+                <div id="symlink-jellyfin-fields" style="display:none;">
+                    <label for="emby_jellyfin_url" class="onboarding-label">Jellyfin / Emby URL:</label>
+                    <div class="settings-description">URL of your Jellyfin or Emby server e.g. http://192.168.1.100:8096</div>
+                    <input type="text" id="emby_jellyfin_url" name="emby_jellyfin_url" class="onboarding-input" value="{{ settings.get('Debug', {}).get('emby_jellyfin_url', '') }}">
 
-        <label for="trakt_client_secret" class="onboarding-label">Trakt Client Secret (optional):</label>
-        <div id="trakt-client-secret-description" class="settings-description">
-            Trakt Client Secret is the Client Secret for your Trakt application.
-        </div>
-        <input type="text" id="trakt_client_secret" name="trakt_client_secret" class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_secret', '') }}">
-
-        <button type="submit" class="onboarding-submit">Save Settings</button>
-        <br>
-        <div class="settings-section">
-            <div class="settings-section-content">
-                <p class="settings-description">After entering the above information click Save Settings. Then, click the button below to authorize Trakt. 
-                </p>
-                <button id="trakt-auth-btn" class="settings-button">Authorize Trakt</button>
-                <div id="trakt-auth-status" class="trakt-status"></div>
-                <div id="trakt-auth-code" class="trakt-auth-code" style="display: none;">
-                    <p>Your authorization code is: <strong id="trakt-code"></strong></p>
-                    <p>Please visit <a id="trakt-activate-link" href="https://trakt.tv/activate" target="_blank">https://trakt.tv/activate</a> to enter this code and complete the authorization process.</p>
+                    <label for="emby_jellyfin_token" class="onboarding-label">Jellyfin / Emby API Token:</label>
+                    <div class="settings-description">API key from your Jellyfin/Emby server (Dashboard → API Keys)</div>
+                    <input type="text" id="emby_jellyfin_token" name="emby_jellyfin_token" class="onboarding-input" value="{{ settings.get('Debug', {}).get('emby_jellyfin_token', '') }}">
                 </div>
             </div>
         </div>
+
+        <!-- 4. Metadata -->
+        <div class="ob-section">
+            <h3>4. Metadata</h3>
+            <p class="ob-section-intro">cli_debrid looks up shows, seasons, episodes and release dates. Both keys are free.</p>
+            <label for="tvdb_api_key" class="onboarding-label">TVDB API Key (required unless you use Trakt):</label>
+            <div class="settings-description">Create one at <a href="https://thetvdb.com/api-information" target="_blank" rel="noopener">thetvdb.com/api-information</a>.</div>
+            <div class="ob-inline">
+                <input type="text" id="tvdb_api_key" name="tvdb_api_key" class="onboarding-input" autocomplete="off" value="{{ settings.get('TVDB', {}).get('api_key', '') }}">
+                <button type="button" class="ob-test-btn" data-test="tvdb">Test key</button>
+            </div>
+            <div class="ob-test-result" data-result="tvdb"></div>
+
+            <label for="tmdb_api_key" class="onboarding-label">TMDB API Key (recommended):</label>
+            <div class="settings-description">Used for posters, digital/physical release dates and Discover. Get it at <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org/settings/api</a>. Use the short <b>API Key</b>, not the long "API Read Access Token".</div>
+            <div class="ob-inline">
+                <input type="text" id="tmdb_api_key" name="tmdb_api_key" class="onboarding-input" autocomplete="off" value="{{ settings.get('TMDB', {}).get('api_key', '') }}">
+                <button type="button" class="ob-test-btn" data-test="tmdb">Test key</button>
+            </div>
+            <div class="ob-test-result" data-result="tmdb"></div>
+
+            <details class="ob-details" {% if settings.get('Trakt', {}).get('client_id') and not settings.get('TVDB', {}).get('api_key') %}open{% endif %}>
+                <summary>Use Trakt instead (optional)</summary>
+                <p class="settings-description">Without a TVDB key, cli_debrid looks shows and movies up on Trakt instead. Trakt is also needed for Trakt-based content sources. Create an application at <a href="https://trakt.tv/oauth/applications/" target="_blank" style="color: #3498db;">Trakt Applications</a>. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p>
+                <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
+
+                <label for="trakt_client_id" class="onboarding-label"><br>Trakt Client ID:</label>
+                <input type="text" id="trakt_client_id" name="trakt_client_id" class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_id', '') }}">
+
+                <label for="trakt_client_secret" class="onboarding-label">Trakt Client Secret:</label>
+                <input type="text" id="trakt_client_secret" name="trakt_client_secret" class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_secret', '') }}">
+
+                <div class="settings-section">
+                    <div class="settings-section-content">
+                        <p class="settings-description">Click the button below to authorize Trakt.</p>
+                        <button id="trakt-auth-btn" class="settings-button" type="button">Authorize Trakt</button>
+                        <div id="trakt-auth-status" class="trakt-status"></div>
+                        <div id="trakt-auth-code" class="trakt-auth-code" style="display: none;">
+                            <p>Your authorization code is: <strong id="trakt-code"></strong></p>
+                            <p>Please visit <a id="trakt-activate-link" href="https://trakt.tv/activate" target="_blank">https://trakt.tv/activate</a> to enter this code and complete the authorization process.</p>
+                        </div>
+                    </div>
+                </div>
+            </details>
+        </div>
+
+        <button type="submit" class="onboarding-submit">Save &amp; Validate</button>
     </form>
 </div>
 
@@ -307,7 +318,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const symlinkMediaServer = document.getElementById('symlink_media_server');
     if (symlinkMediaServer) {
         toggleSymlinkMediaServerFields(symlinkMediaServer.value);
-        symlinkMediaServer.addEventListener('change', (e) => toggleSymlinkMediaServerFields(e.target.value));
+        symlinkMediaServer.addEventListener('change', (e) => {
+            toggleSymlinkMediaServerFields(e.target.value);
+            document.querySelector('.plex-auth-section').style.display = e.target.value === 'plex' ? 'block' : 'none';
+        });
     }
     const settingsForm = document.getElementById('settings-form');
     const nextStepBtn = document.querySelector('.next-step-btn');
@@ -337,9 +351,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const isWindows = window.ONBOARDING_CONFIG.isWindows;
     let allowWindowsSymlinks = window.ONBOARDING_CONFIG.allowWindowsSymlinks;
 
-    // Change next step button text to "Validate Settings" and set next step URL
+    // Change next step button text to "Save & Validate" and set next step URL
     if (nextStepBtn) {
-        nextStepBtn.textContent = 'Validate Settings';
+        nextStepBtn.textContent = 'Save & Validate';
         nextStepBtn.classList.add('validate-btn');
         nextStepBtn.classList.add('onboarding-btn');
         nextStepBtn.disabled = false;
@@ -377,7 +391,7 @@ document.addEventListener('DOMContentLoaded', function() {
             plexDescription.style.display = 'block';
             localDescription.style.display = 'none';
             if (originalFilesPathLabel) {
-                originalFilesPathLabel.textContent = 'Original Files Path (Optional):';
+                originalFilesPathLabel.textContent = 'Mount Path (optional in Plex mode):';
             }
         } else {
             plexFields.classList.remove('active');
@@ -385,11 +399,13 @@ document.addEventListener('DOMContentLoaded', function() {
             plexDescription.style.display = 'none';
             localDescription.style.display = 'block';
             if (originalFilesPathLabel) {
-                originalFilesPathLabel.textContent = 'Original Files Path:';
+                originalFilesPathLabel.textContent = 'Mount Path:';
             }
         }
-        // Always show Plex auth section
-        document.querySelector('.plex-auth-section').style.display = 'block';
+        // The Plex sign-in is only useful when Plex is the media server.
+        const mediaServer = document.getElementById('symlink_media_server');
+        const usesPlex = managementType === 'Plex' || (mediaServer && mediaServer.value === 'plex');
+        document.querySelector('.plex-auth-section').style.display = usesPlex ? 'block' : 'none';
         updateRequiredFields(managementType);
     }
 
@@ -790,16 +806,25 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize Trakt authorization
     initializeTraktAuthorization();
 
-    async function validateSettings() {
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : String(text);
+        return div.innerHTML;
+    }
+
+    // Checkboxes are left out of FormData when unticked, so send both explicitly.
+    function collectFormData() {
         const formData = new FormData(settingsForm);
+        formData.set('use_debrid', document.getElementById('use_debrid').checked ? 'on' : 'off');
+        formData.set('use_usenet', document.getElementById('use_usenet').checked ? 'on' : 'off');
+        return formData;
+    }
+
+    async function validateSettings() {
+        const formData = collectFormData();
         const managementType = formData.get('file_collection_management');
-        
-        // Convert form data to a proper object
         const settings = Object.fromEntries(formData.entries());
-        
-        // Handle checkbox value properly
-        settings.update_plex_on_file_discovery = formData.get('Plex.update_plex_on_file_discovery') === 'on';
-        
+
         try {
             const response = await fetch('/settings_validation/onboarding-settings', {
                 method: 'POST',
@@ -824,59 +849,83 @@ document.addEventListener('DOMContentLoaded', function() {
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 title: 'Error',
-                message: 'Failed to validate settings: ' + error.message,
+                message: 'Failed to validate settings: ' + escapeHtml(error.message),
             });
             return false;
         }
     }
 
     function renderValidationResults(results) {
-        // Create a formatted message for the popup
         const validationMessage = results.checks.map(check => `
-            <div class="validation-check ${check.valid ? 'success' : 'error'}">
-                <strong>${check.name}</strong>
-                <div class="validation-message">${check.message}</div>
+            <div class="validation-check ${check.valid && !check.warning ? 'success' : (check.warning ? 'warning' : 'error')}">
+                <strong>${escapeHtml(check.name)}</strong>
+                <div class="validation-message">${escapeHtml(check.message)}</div>
             </div>
         `).join('');
 
-        // Show the popup with validation results
         showPopup({
             type: results.valid ? POPUP_TYPES.SUCCESS : POPUP_TYPES.ERROR,
-            title: results.valid ? 'Validation Successful' : 'Validation Failed',
+            title: results.valid ? 'Everything checks out' : 'Some settings need fixing',
             message: validationMessage,
-            autoClose: results.valid ? 8000 : false // Auto close only if validation passed
+            autoClose: false
         });
 
-        // Update next step button based on validation results
         if (nextStepBtn) {
             if (results.valid) {
                 nextStepBtn.textContent = 'Next Step';
                 nextStepBtn.classList.remove('validate-btn');
-                nextStepBtn.disabled = false;
             } else {
-                nextStepBtn.textContent = 'Validate Settings';
+                nextStepBtn.textContent = 'Save & Validate';
                 nextStepBtn.classList.add('validate-btn');
-                nextStepBtn.disabled = false;
             }
+            nextStepBtn.disabled = false;
         }
     }
 
-    // Handle next step button click
+    // Save first, then validate, so "Next Step" never moves on with unsaved changes.
+    async function saveAndValidate() {
+        try {
+            const response = await fetch('{{ url_for("onboarding.onboarding_step", step=2) }}', {
+                method: 'POST',
+                body: collectFormData()
+            });
+            const data = await response.json();
+            if (!data.success) {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'Error saving settings: ' + escapeHtml(data.error),
+                });
+                return false;
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'An unexpected error occurred while saving.',
+            });
+            return false;
+        }
+        return validateSettings();
+    }
+
+    // Any edit after a successful validation has to be saved and validated again.
+    settingsForm.addEventListener('input', () => {
+        if (nextStepBtn && !nextStepBtn.classList.contains('validate-btn')) {
+            nextStepBtn.textContent = 'Save & Validate';
+            nextStepBtn.classList.add('validate-btn');
+        }
+    });
+
     if (nextStepBtn) {
         nextStepBtn.addEventListener('click', async function(event) {
-            // Always prevent default navigation first
             event.preventDefault();
-            event.stopPropagation();  // Stop event from bubbling up
-            
+            event.stopPropagation();
+
             if (nextStepBtn.classList.contains('validate-btn')) {
-                // If it's in validate mode, perform validation
-                const isValid = await validateSettings();
-                if (!isValid) {
-                    // If validation fails, don't proceed
-                    return;
-                }
+                await saveAndValidate();
             } else {
-                // If it's in "Next Step" mode (validation already passed), allow navigation
                 window.location.href = nextStepBtn.getAttribute('data-next-step-url');
             }
         }, true);  // Use capture phase to ensure this handler runs first
@@ -884,55 +933,130 @@ document.addEventListener('DOMContentLoaded', function() {
 
     settingsForm.addEventListener('submit', async function(event) {
         event.preventDefault();
-        const formData = new FormData(settingsForm);
-        
-        // Add the provider's API key to the correct provider section based on selection
-        const provider = formData.get('debrid_provider');
-        const apiKey = formData.get('debrid_api_key');
+        await saveAndValidate();
+    });
 
-        if (provider === 'RealDebrid') {
-            formData.set('realdebrid_api_key', apiKey);
-        } else if (provider === 'AllDebrid') {
-            formData.set('alldebrid_api_key', apiKey);
-        } else if (provider === 'Premiumize') {
-            formData.set('premiumize_api_key', apiKey);
-        } else if (provider === 'Torbox') {
-            formData.set('torbox_api_key', apiKey);
-        } else if (provider === 'DebridLink') {
-            formData.set('debridlink_api_key', apiKey);
+    // --- Provider choice ---------------------------------------------------------
+    const useDebrid = document.getElementById('use_debrid');
+    const useUsenet = document.getElementById('use_usenet');
+    const usenetBackend = document.getElementById('usenet_backend');
+    const USENET_HINTS = {
+        climount: {
+            url: 'cli_mount\'s web UI address, e.g. http://192.168.1.50:8282 (not Phalanx DB on :8888).',
+            token: 'Only needed if you turned on authentication in cli_mount.',
+            placeholder: 'http://192.168.1.50:8282',
+        },
+        nzbdav: {
+            url: 'NzbDAV\'s address, e.g. http://192.168.1.50:3000.',
+            token: 'The SABnzbd API key from NzbDAV → Settings → SABnzbd.',
+            placeholder: 'http://192.168.1.50:3000',
+        },
+        zurg: {
+            url: 'Zurg 2.0\'s address, e.g. http://192.168.1.50:9999. cli_debrid uses its SABnzbd-compatible API.',
+            token: 'The SABnzbd API key from your Zurg config.',
+            placeholder: 'http://192.168.1.50:9999',
+        },
+    };
+
+    function updateProviderPanels() {
+        document.getElementById('panel-debrid').style.display = useDebrid.checked ? 'block' : 'none';
+        document.getElementById('panel-usenet').style.display = useUsenet.checked ? 'block' : 'none';
+        const backend = usenetBackend.value;
+        const hints = USENET_HINTS[backend] || USENET_HINTS.climount;
+        document.getElementById('usenet-url-hint').textContent = hints.url;
+        document.getElementById('usenet-token-hint').textContent = hints.token;
+        document.getElementById('usenet-token-label').textContent =
+            backend === 'climount' ? 'API Token (optional):' : 'SABnzbd API Key:';
+        document.getElementById('usenet_url').placeholder = hints.placeholder;
+        document.getElementById('nzbdav-helper-wrap').style.display = backend === 'nzbdav' ? 'block' : 'none';
+    }
+
+    useDebrid.addEventListener('change', updateProviderPanels);
+    useUsenet.addEventListener('change', () => {
+        updateProviderPanels();
+        if (useUsenet.checked) {
+            // Point the mount picker at the matching tool.
+            mountTool.value = usenetBackend.value === 'nzbdav' ? 'nzbdav'
+                : usenetBackend.value === 'zurg' ? 'zurg' : 'climount';
+            updateMountHint();
         }
-        
-        try {
-            const response = await fetch('{{ url_for("onboarding.onboarding_step", step=2) }}', {
-                method: 'POST',
-                body: formData
-            });
-            
-            const data = await response.json();
-            if (data.success) {
-                showPopup({
-                    type: POPUP_TYPES.SUCCESS,
-                    title: 'Success',
-                    message: 'Settings saved successfully!',
-                    autoClose: 3000
+    });
+    usenetBackend.addEventListener('change', () => {
+        updateProviderPanels();
+        mountTool.value = usenetBackend.value === 'nzbdav' ? 'nzbdav'
+            : usenetBackend.value === 'zurg' ? 'zurg' : 'climount';
+        updateMountHint();
+    });
+
+    // --- Mount -------------------------------------------------------------------
+    const mountTool = document.getElementById('mount_tool');
+    const mountPath = document.getElementById('original_files_path');
+    const MOUNT_HINTS = {
+        climount: ['The folder you mapped to /mnt in the cli_mount container, plus /__all__. Debrid and usenet files both show up there.', '/mnt/climount/__all__'],
+        decypharr: ['Decypharr\'s mount folder for your debrid service, ending in /__all__.', '/mnt/decypharr/__all__'],
+        zurg: ['Your rclone mount of Zurg, ending in /__all__.', '/mnt/zurg/__all__'],
+        nzbdav: ['Your rclone mount of NzbDAV\'s WebDAV share.', '/mnt/nzbdav'],
+        other: ['The folder where your debrid/usenet files appear inside cli_debrid\'s container.', ''],
+    };
+
+    function guessMountTool() {
+        const path = (mountPath.value || '').toLowerCase();
+        for (const tool of ['zurg', 'decypharr', 'nzbdav', 'climount']) {
+            if (path.includes(tool)) return tool;
+        }
+        if (useUsenet.checked && usenetBackend.value !== 'climount') return usenetBackend.value;
+        return path ? 'other' : 'climount';
+    }
+
+    function updateMountHint() {
+        const [hint, example] = MOUNT_HINTS[mountTool.value] || MOUNT_HINTS.other;
+        document.getElementById('mount-path-hint').textContent = hint + (example ? ` Example: ${example}` : '');
+        mountPath.placeholder = example;
+    }
+
+    mountTool.value = guessMountTool();
+    mountTool.addEventListener('change', updateMountHint);
+    updateMountHint();
+    updateProviderPanels();
+
+    // --- Test buttons --------------------------------------------------------------
+    const TEST_PAYLOADS = {
+        usenet: () => ({
+            backend: usenetBackend.value,
+            url: document.getElementById('usenet_url').value,
+            token: document.getElementById('usenet_api_token').value,
+        }),
+        mount: () => ({ path: mountPath.value }),
+        tvdb: () => ({ api_key: document.getElementById('tvdb_api_key').value }),
+        tmdb: () => ({ api_key: document.getElementById('tmdb_api_key').value }),
+    };
+
+    document.querySelectorAll('.ob-test-btn[data-test]').forEach(button => {
+        button.addEventListener('click', async () => {
+            const what = button.dataset.test;
+            const result = document.querySelector(`.ob-test-result[data-result="${what}"]`);
+            const label = button.textContent;
+            button.disabled = true;
+            button.textContent = 'Testing…';
+            result.className = 'ob-test-result';
+            result.textContent = '';
+            try {
+                const response = await fetch(`/onboarding/test/${what}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(TEST_PAYLOADS[what]()),
                 });
-                // After saving, validate the settings
-                await validateSettings();
-            } else {
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    title: 'Error',
-                    message: 'Error: ' + data.error,
-                });
+                const data = await response.json();
+                result.classList.add(data.success ? (data.warning ? 'ob-warn' : 'ob-ok') : 'ob-err');
+                result.textContent = (data.success ? (data.warning ? '⚠ ' : '✓ ') : '✗ ') + data.message;
+            } catch (error) {
+                result.classList.add('ob-err');
+                result.textContent = '✗ Test failed: ' + error.message;
+            } finally {
+                button.disabled = false;
+                button.textContent = label;
             }
-        } catch (error) {
-            console.error('Error:', error);
-            showPopup({
-                type: POPUP_TYPES.ERROR,
-                title: 'Error',
-                message: 'An unexpected error occurred.',
-            });
-        }
+        });
     });
 });
 
@@ -1039,40 +1163,6 @@ function pollTraktAuthStatus(device_code) {
             });
     }, 5000); // Check every 5 seconds
 }
-
-window.switchProviderTab = function switchProviderTab(tab) {
-    const debridPanel = document.getElementById('panel-debrid');
-    const usenetPanel = document.getElementById('panel-usenet');
-    const tabDebrid = document.getElementById('tab-debrid');
-    const tabUsenet = document.getElementById('tab-usenet');
-    const providerType = document.getElementById('provider_type');
-
-    if (tab === 'usenet') {
-        debridPanel.style.display = 'none';
-        usenetPanel.style.display = 'block';
-        tabDebrid.style.borderBottomColor = 'transparent';
-        tabDebrid.style.color = '#aaa';
-        tabUsenet.style.borderBottomColor = '#e67e22';
-        tabUsenet.style.color = '#e67e22';
-        providerType.value = 'usenet';
-    } else {
-        debridPanel.style.display = 'block';
-        usenetPanel.style.display = 'none';
-        tabDebrid.style.borderBottomColor = '#e67e22';
-        tabDebrid.style.color = '#e67e22';
-        tabUsenet.style.borderBottomColor = 'transparent';
-        tabUsenet.style.color = '#aaa';
-        providerType.value = 'debrid';
-    }
-}
-
-// Initialize correct tab on page load
-document.addEventListener('DOMContentLoaded', function() {
-    const providerType = document.getElementById('provider_type');
-    if (providerType && providerType.value === 'usenet') {
-        switchProviderTab('usenet');
-    }
-});
 
 function checkTraktAuthStatus() {
     const traktAuthStatus = document.getElementById('trakt-auth-status');

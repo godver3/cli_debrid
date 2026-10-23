@@ -30,7 +30,6 @@ from .base_routes import base_bp  # Add this import
 from .library_management_routes import library_management
 from .library_routes import library_bp
 from .show_options_routes import show_options_bp
-from .cors_testing_routes import cors_testing_bp
 from .magnet_routes import magnet_bp
 from .performance_routes import performance_bp
 from .torrent_status_routes import torrent_status_bp
@@ -162,7 +161,6 @@ def register_blueprints(app):
         (library_management, '/library_management'),
         (library_bp, '/library'),
         (show_options_bp, '/library/show_options'),
-        (cors_testing_bp, '/cors_testing'),
         (magnet_bp, '/magnet'),
         (performance_bp, '/performance'),
         (torrent_status_bp, '/torrent_status'),

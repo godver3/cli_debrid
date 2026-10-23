@@ -217,7 +217,8 @@ def login():
             session.modified = True
 
             if not user.onboarding_complete:
-                response = make_response(redirect(url_for('onboarding.onboarding_step', step=1)))
+                # Pick up where they left off instead of starting over at step 1.
+                response = make_response(redirect(url_for('onboarding.onboarding_step', step=get_next_onboarding_step())))
             else:
                 response = make_response(redirect(url_for('root.root')))
 
