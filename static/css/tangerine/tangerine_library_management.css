@@ -35,7 +35,7 @@
     border-radius: 12px;
     padding: 1.25rem;
     margin-bottom: 1rem;
-    color: #e0e0e0;
+    color: var(--tng-text);
     transition: all 0.3s ease;
 }
 
@@ -66,17 +66,17 @@
 }
 
 .library-show-item .imdb-link a {
-    color: #888; /* Subdued color for IMDb link */
+    color: var(--tng-text-3); /* Subdued color for IMDb link */
     text-decoration: none;
     font-size: 0.9em;
 }
 .library-show-item .imdb-link a:hover {
-    color: #888;
+    color: var(--tng-text-3);
     text-decoration: underline;
 }
 
 .library-show-item .show-details-content { /* Wrapper for the actual details, for hide/show */
-    /* border-top: 1px dashed #555; /* Separator line from header */
+    /* border-top: 1px dashed var(--tng-text-5); /* Separator line from header */
     /* padding-top: 0.75rem; */
     /* margin-top: 0.75rem; */ /* Space above details if header doesn't have bottom border */
     display: none; /* Initially hidden */
@@ -104,14 +104,14 @@
 }
 
 .library-show-item ul li strong {
-    color: #e0e0e0; /* Brighter color for the version name */
+    color: var(--tng-text); /* Brighter color for the version name */
 }
 
 /* Toggle icon for expand/collapse */
 .library-show-item .toggle-icon {
     margin-left: 10px;
     transition: all 0.3s ease;
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 .library-show-item .show-header.expanded .toggle-icon {
@@ -173,7 +173,7 @@
 
 .alphabet-pagination a,
 .alphabet-pagination span.active-letter {
-    color: #e0e0e0;
+    color: var(--tng-text);
     padding: 10px 14px;
     text-decoration: none;
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -252,7 +252,7 @@
     border-radius: 12px;
     cursor: pointer;
     font-weight: 500;
-    color: #e0e0e0;
+    color: var(--tng-text);
     background: rgba(255, 255, 255, 0.03);
     transition: all 0.3s ease;
     user-select: none;
@@ -309,7 +309,7 @@
     border-radius: 12px;
     cursor: pointer;
     font-weight: 500;
-    color: #e0e0e0;
+    color: var(--tng-text);
     background: rgba(255, 255, 255, 0.03);
     transition: all 0.3s ease;
     user-select: none;
@@ -328,7 +328,7 @@ h2::before {
     content: '';
     width: 4px;
     height: 28px;
-    border-left: 3px solid #e8601c;
+    border-left: 3px solid var(--tng-accent);
 }
 
 h2 {
@@ -609,7 +609,7 @@ h2 {
     padding: 8px;
     border: 1px solid var(--border-color);
     border-radius: 10px;
-    background: #1a1a1a;
+    background: var(--tng-surface);
     color: var(--text-color);
 }
 
@@ -629,7 +629,7 @@ h2 {
 .show-details-placeholder {
     .list-group-item {
     background-color: rgba(255, 255, 255, 0.03);
-    color: #e0e0e0;
+    color: var(--tng-text);
     margin-bottom: 4px;
     border-radius: 10px;
     font-family: monospace;

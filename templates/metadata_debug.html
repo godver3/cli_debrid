@@ -13,11 +13,11 @@ body:not(.tangerine-theme) #tngMeta { display: none !important; }
 
 /* ── Tangerine metadata debug styles ── */
 body.tangerine-theme {
-  --tmd-bg:#111;--tmd-surface:#1a1a1a;--tmd-surface2:#222;--tmd-surface3:#2a2a2a;
-  --tmd-border:#2d2d2d;--tmd-border2:#3d3d3d;
-  --tmd-accent:#e8601c;--tmd-accent-h:#f07030;
-  --tmd-text:#e0e0e0;--tmd-text2:#aaa;--tmd-text3:#555;
-  --tmd-green:#22c55e;--tmd-red:#ef4444;--tmd-blue:#3b82f6;--tmd-yellow:#f59e0b;
+  --tmd-bg:var(--tng-bg);--tmd-surface:var(--tng-surface);--tmd-surface2:var(--tng-surface-2);--tmd-surface3:var(--tng-surface-3);
+  --tmd-border:var(--tng-border);--tmd-border2:var(--tng-border-2);
+  --tmd-accent:var(--tng-accent);--tmd-accent-h:var(--tng-accent-hover);
+  --tmd-text:var(--tng-text);--tmd-text2:var(--tng-text-2);--tmd-text3:var(--tng-text-5);
+  --tmd-green:var(--tng-green);--tmd-red:var(--tng-red);--tmd-blue:var(--tng-blue);--tmd-yellow:var(--tng-yellow);
 }
 #tngMeta { max-width:1200px; margin:0 auto; padding:1.5rem 1.25rem; font-family:'Inter',sans-serif; font-size:13px; color:var(--tmd-text); }
 .tmd-title { font-size:20px; font-weight:700; color:var(--tmd-text); border-left:3px solid var(--tmd-accent); padding-left:10px; margin-bottom:5px; }
@@ -174,7 +174,7 @@ body.tangerine-theme {
         <button id="deleteBtn" class="danger">Recreate</button>
         <button id="deleteOnlyBtn" class="danger">Delete</button>
     </div>
-    <div id="status" style="margin-top: 0.5rem; color: #888;"></div>
+    <div id="status" style="margin-top: 0.5rem; color: var(--tng-text-3);"></div>
 
 </div>
 

@@ -653,7 +653,7 @@
         <!-- Unavailable Warning -->
         <div class="settings-form-group">
             <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 15px; border-radius: 8px;">
-                <p style="margin: 0; font-weight: bold; color: #ef4444;"><i class="fas fa-exclamation-triangle"></i> Not Available</p>
+                <p style="margin: 0; font-weight: bold; color: var(--tng-red);"><i class="fas fa-exclamation-triangle"></i> Not Available</p>
                 <p style="margin: 10px 0 0 0; color: var(--text-primary);">
                     Bazarr Integration requires <strong>Symlinked/Local</strong> file collection management mode.
                 </p>
@@ -719,7 +719,7 @@
         <!-- Connection Info Box -->
         <div class="settings-form-group">
             <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); padding: 15px; border-radius: 8px; margin-top: 10px;">
-                <p style="margin: 0 0 10px 0; font-weight: bold; color: #3b82f6;"><i class="fas fa-info-circle"></i> Bazarr Configuration</p>
+                <p style="margin: 0 0 10px 0; font-weight: bold; color: var(--tng-blue);"><i class="fas fa-info-circle"></i> Bazarr Configuration</p>
                 <p style="margin: 5px 0; font-family: monospace; color: var(--text-primary);">URL: <span id="bazarr-url">http://your-host:5000</span></p>
                 <p style="margin: 5px 0; font-family: monospace; color: var(--text-secondary);">API Key: (copy from above)</p>
                 <p style="margin: 10px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">
@@ -898,7 +898,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
             </div>
             
-            <p class="settings-description" style="margin: 0; font-size: 0.85em; color: #aaa;">
+            <p class="settings-description" style="margin: 0; font-size: 0.85em; color: var(--tng-text-2);">
                 <i class="fas fa-info-circle" style="margin-right: 5px;"></i>
                 <strong>Important:</strong> Including <code>{imdb_id}</code> in templates is highly recommended for symlink recovery and media server integration.
             </p>
@@ -1960,10 +1960,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 <h3 style="margin:0;font-size:1rem;font-weight:600;">Smart Collection Posters</h3>
                 <button id="smartcoll-manage-close" style="background:none;border:none;color:var(--text-color,#fff);font-size:1.4rem;cursor:pointer;line-height:1;">&times;</button>
             </div>
-            <p style="margin:0;font-size:0.82em;color:#aaa;">Force reapply the poster for an individual enabled smart collection immediately.</p>
+            <p style="margin:0;font-size:0.82em;color:var(--tng-text-2);">Force reapply the poster for an individual enabled smart collection immediately.</p>
             <input id="smartcoll-manage-search" type="text" placeholder="Search collections..." style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.88em;outline:none;">
             <div id="smartcoll-manage-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;">
-                <span style="color:#aaa;font-size:0.85em;">Loading...</span>
+                <span style="color:var(--tng-text-2);font-size:0.85em;">Loading...</span>
             </div>
         </div>
     </div>
@@ -1980,7 +1980,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <p class="settings-description" style="margin-bottom:10px;">Select a custom poster for all enabled smart collections. Leave on "None" to use Plex's default.</p>
         <div class="plex-collection-poster-picker" data-source-id="__smart__"
              style="display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scrollbar-width:thin;min-height:380px;">
-            <div class="poster-loading-placeholder" style="color:#888;font-size:0.85em;padding:8px;">Loading designs...</div>
+            <div class="poster-loading-placeholder" style="color:var(--tng-text-3);font-size:0.85em;padding:8px;">Loading designs...</div>
         </div>
         <input type="hidden" id="content-sources-__smart__-plex_collection-poster_design" name="Plex Smart Collections.poster_design" data-section="Plex Smart Collections" data-key="poster_design" value="{{ settings.get('Plex Smart Collections', {}).get('poster_design', 0) }}">
     </div>
@@ -1991,7 +1991,7 @@ document.addEventListener('DOMContentLoaded', function() {
             {% set _sa = settings.get('Plex Smart Collections', {}).get('poster_accent', '') %}
             <input type="color" id="smart-poster-accent" name="Plex Smart Collections.poster_accent" data-section="Plex Smart Collections" data-key="poster_accent" value="{{ _sa or '#000000' }}"
                    style="width:44px;height:36px;border:none;background:none;cursor:pointer;border-radius:6px;{% if not _sa %}opacity:0.4;{% endif %}">
-            <span id="smart-poster-accent-label" style="font-size:0.85em;color:#888;">{{ _sa or 'Design default' }}</span>
+            <span id="smart-poster-accent-label" style="font-size:0.85em;color:var(--tng-text-3);">{{ _sa or 'Design default' }}</span>
             <button type="button" id="smart-poster-accent-clear"
                     style="display:{% if _sa %}inline-block{% else %}none{% endif %};font-size:0.75em;padding:3px 8px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:#aaa;cursor:pointer;">
                 Use default
@@ -2178,7 +2178,7 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
     </div>
     <div class="settings-section-content" style="display:none;">
-        <p style="color:#aaa;font-size:0.9em;margin-bottom:15px;">
+        <p style="color:var(--tng-text-2);font-size:0.9em;margin-bottom:15px;">
             Automatically creates Plex collections for movie box sets using TMDB collection data.
             Applies TMDB collection posters (or a rendered fallback) and optionally queues missing movies.
         </p>
@@ -2279,7 +2279,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     class="btn btn-secondary" style="white-space:nowrap;">
                 Manage Posters
             </button>
-            <span id="boxsets-status" style="color:#aaa;font-size:0.85em;"></span>
+            <span id="boxsets-status" style="color:var(--tng-text-2);font-size:0.85em;"></span>
         </div>
 
     </div>
@@ -2292,10 +2292,10 @@ document.addEventListener('DOMContentLoaded', function() {
             <h3 style="margin:0;font-size:1rem;font-weight:600;">Box Set Posters</h3>
             <button id="boxsets-manage-close" style="background:none;border:none;color:var(--text-color,#fff);font-size:1.4rem;cursor:pointer;line-height:1;">&times;</button>
         </div>
-        <p style="margin:0;font-size:0.82em;color:#aaa;">Force a collection to reapply its poster on the next run. This only clears the fingerprint — run the task manually or wait for the scheduled run.</p>
+        <p style="margin:0;font-size:0.82em;color:var(--tng-text-2);">Force a collection to reapply its poster on the next run. This only clears the fingerprint — run the task manually or wait for the scheduled run.</p>
         <input id="boxsets-manage-search" type="text" placeholder="Search collections..." style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.88em;outline:none;">
         <div id="boxsets-manage-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;">
-            <span style="color:#aaa;font-size:0.85em;">Loading...</span>
+            <span style="color:var(--tng-text-2);font-size:0.85em;">Loading...</span>
         </div>
     </div>
 </div>

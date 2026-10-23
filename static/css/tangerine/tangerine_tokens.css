@@ -1,0 +1,45 @@
+/*
+ * Tangerine design tokens.
+ *
+ * The one place the app's colours, fonts and radii are defined. Page
+ * stylesheets use these through var(--tng-*) instead of hard-coded values,
+ * so a palette change (or a light mode) is an edit to this file only.
+ * Loaded before every other stylesheet by base.html.
+ */
+:root {
+    /* Surfaces, darkest to lightest */
+    --tng-bg: #111;
+    --tng-surface: #1a1a1a;
+    --tng-surface-2: #222;
+    --tng-surface-3: #2a2a2a;
+
+    /* Borders */
+    --tng-border: #2d2d2d;
+    --tng-border-2: #3d3d3d;
+
+    /* Text, strongest to faintest */
+    --tng-text: #e0e0e0;
+    --tng-text-2: #aaa;
+    --tng-text-3: #888;
+    --tng-text-4: #666;
+    --tng-text-5: #555;
+
+    /* Brand accent */
+    --tng-accent: #e8601c;
+    --tng-accent-hover: #f07030;
+
+    /* Status colours */
+    --tng-green: #22c55e;
+    --tng-red: #ef4444;
+    --tng-yellow: #f59e0b;
+    --tng-blue: #3b82f6;
+
+    /* Type */
+    --tng-sans: 'Inter', system-ui, sans-serif;
+    --tng-mono: 'JetBrains Mono', monospace;
+
+    /* Shape */
+    --tng-radius-sm: 4px;
+    --tng-radius: 6px;
+    --tng-radius-lg: 8px;
+}

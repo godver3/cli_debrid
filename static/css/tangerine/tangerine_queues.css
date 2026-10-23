@@ -6,9 +6,9 @@
 body.tangerine-theme .container > h1 {
     font-size: 20px;
     font-weight: 700;
-    border-left: 3px solid #e8601c;
+    border-left: 3px solid var(--tng-accent);
     padding-left: 10px;
-    color: #e0e0e0;
+    color: var(--tng-text);
     display: block;
     margin-bottom: 16px;
     padding-bottom: 0;
@@ -16,23 +16,23 @@ body.tangerine-theme .container > h1 {
 
 /* Processing stats bar */
 body.tangerine-theme .processing-stats {
-    background: #1a1a1a;
-    border: 1px solid #2d2d2d;
+    background: var(--tng-surface);
+    border: 1px solid var(--tng-border);
     border-radius: 4px;
     padding: 8px 14px;
-    color: #aaa;
+    color: var(--tng-text-2);
     font-size: 12px;
     font-family: 'JetBrains Mono', monospace;
     margin-bottom: 12px;
 }
 
 body.tangerine-theme .processing-stats strong {
-    color: #e8601c;
+    color: var(--tng-accent);
     font-weight: 600;
 }
 
 body.tangerine-theme .processing-stats span {
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 /* Queue container */
@@ -44,8 +44,8 @@ body.tangerine-theme .queue-container {
 
 /* Queue card */
 body.tangerine-theme .queue {
-    background: #1a1a1a;
-    border: 1px solid #2d2d2d;
+    background: var(--tng-surface);
+    border: 1px solid var(--tng-border);
     border-radius: 6px;
     padding: 12px 16px;
     margin: 0;
@@ -61,12 +61,12 @@ body.tangerine-theme .queue::before {
     left: 0;
     right: 0;
     height: 2px;
-    background: linear-gradient(90deg, #e8601c, #f97316);
+    background: linear-gradient(90deg, var(--tng-accent), #f97316);
     opacity: 0.7;
 }
 
 body.tangerine-theme .queue:hover {
-    border-color: #3d3d3d;
+    border-color: var(--tng-border-2);
     transform: none;
 }
 
@@ -74,7 +74,7 @@ body.tangerine-theme .queue:hover {
 body.tangerine-theme .queue-title {
     font-size: 13px;
     font-weight: 600;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-family: 'Inter', sans-serif;
     letter-spacing: 0.02em;
     transition: color 0.15s;
@@ -85,7 +85,7 @@ body.tangerine-theme .queue-title {
 }
 
 body.tangerine-theme .queue-title:hover {
-    color: #e8601c;
+    color: var(--tng-accent);
 }
 
 body.tangerine-theme .queue[data-queue-name="Collected"] .queue-title,
@@ -97,7 +97,7 @@ body.tangerine-theme .queue[data-queue-name="Blacklisted"] .queue-title {
 body.tangerine-theme .queue[data-queue-name="Collected"] .queue-title:hover,
 body.tangerine-theme .queue[data-queue-name="Unreleased"] .queue-title:hover,
 body.tangerine-theme .queue[data-queue-name="Blacklisted"] .queue-title:hover {
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 /* Item count badge */
@@ -105,7 +105,7 @@ body.tangerine-theme .queue-count {
     font-size: 11px;
     font-family: 'JetBrains Mono', monospace;
     color: #e17c52;
-    background: #222;
+    background: var(--tng-surface-2);
     border: 1px solid #e17c52;
     border-radius: 20px;
     padding: 2px 10px;
@@ -116,7 +116,7 @@ body.tangerine-theme .queue-count {
 body.tangerine-theme .queue-items {
     margin-top: 10px;
     padding-top: 10px;
-    border-top: 1px solid #2d2d2d;
+    border-top: 1px solid var(--tng-border);
 }
 
 /* Individual queue item */
@@ -124,7 +124,7 @@ body.tangerine-theme .item {
     padding: 5px 8px;
     margin-left: 0;
     margin-bottom: 4px;
-    border-left: 2px solid #2d2d2d;
+    border-left: 2px solid var(--tng-border);
     border-radius: 0 3px 3px 0;
     font-size: 12px;
     font-family: 'JetBrains Mono', monospace;
@@ -139,17 +139,17 @@ body.tangerine-theme .item {
 
 body.tangerine-theme .item:hover {
     background-color: rgba(232, 96, 28, 0.05);
-    border-left-color: #e8601c;
+    border-left-color: var(--tng-accent);
     transform: none;
 }
 
 body.tangerine-theme .item.is-processing {
     background-color: rgba(232, 96, 28, 0.08);
-    border-left-color: #e8601c;
+    border-left-color: var(--tng-accent);
 }
 
 body.tangerine-theme .item.force-priority-item {
-    border-left: 2px solid #f59e0b;
+    border-left: 2px solid var(--tng-yellow);
     padding-left: 8px;
 }
 
@@ -164,7 +164,7 @@ body.tangerine-theme .item.copied {
 
 /* Item text elements */
 body.tangerine-theme .item-title {
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-weight: 600;
 }
 
@@ -179,23 +179,23 @@ body.tangerine-theme .item-label {
 }
 
 body.tangerine-theme .item-version {
-    color: #e8601c;
+    color: var(--tng-accent);
     font-size: 0.9em;
 }
 
 body.tangerine-theme .item-source {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.85em;
     font-style: italic;
 }
 
 body.tangerine-theme .item-release {
-    color: #f59e0b;
+    color: var(--tng-yellow);
     font-size: 0.9em;
 }
 
 body.tangerine-theme .item-time {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.9em;
 }
 
@@ -205,23 +205,23 @@ body.tangerine-theme .item-checking-file {
 }
 
 body.tangerine-theme .item-magnet {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.85em;
 }
 
 body.tangerine-theme .item-scrape-time {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.85em;
 }
 
 body.tangerine-theme .item-checking-tiq {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.85em;
 }
 
 /* Processing spinner */
 body.tangerine-theme .processing-indicator {
-    color: #e8601c;
+    color: var(--tng-accent);
     margin-left: 6px;
     display: inline-block;
 }
@@ -233,13 +233,13 @@ body.tangerine-theme .processing-indicator .fa-spin {
 /* Checking / download group headers */
 body.tangerine-theme .checking-group h5,
 body.tangerine-theme .download-group h5 {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 11px;
     font-family: 'Inter', sans-serif;
     font-weight: 600;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    border-bottom: 1px solid #2d2d2d;
+    border-bottom: 1px solid var(--tng-border);
     padding-bottom: 5px;
     margin-bottom: 8px;
     padding-left: 0;
@@ -253,14 +253,14 @@ body.tangerine-theme .download-group h5::before {
 
 /* Progress bar */
 body.tangerine-theme .progress {
-    background-color: #222;
-    border: 1px solid #3d3d3d;
+    background-color: var(--tng-surface-2);
+    border: 1px solid var(--tng-border-2);
     border-radius: 3px;
     height: 16px;
 }
 
 body.tangerine-theme .progress-bar {
-    background: linear-gradient(90deg, #e8601c, #f97316);
+    background: linear-gradient(90deg, var(--tng-accent), #f97316);
     border-radius: 2px;
     transition: width 0.3s ease;
 }
@@ -275,8 +275,8 @@ body.tangerine-theme .progress-text {
 /* Filename toggle */
 body.tangerine-theme .filename-toggle {
     margin-left: 10px;
-    background: #222;
-    border: 1px solid #3d3d3d;
+    background: var(--tng-surface-2);
+    border: 1px solid var(--tng-border-2);
     border-radius: 4px;
     padding: 4px;
     font-size: 0.8em;
@@ -290,40 +290,40 @@ body.tangerine-theme .filename-toggle {
 }
 
 body.tangerine-theme .filename-toggle:hover {
-    border-color: #e8601c;
-    background: #222;
+    border-color: var(--tng-accent);
+    background: var(--tng-surface-2);
 }
 
 body.tangerine-theme .filename-toggle.active {
     background: rgba(232, 96, 28, 0.15);
-    border-color: #e8601c;
+    border-color: var(--tng-accent);
 }
 
 body.tangerine-theme .filename-toggle.active i {
-    color: #e8601c;
+    color: var(--tng-accent);
 }
 
 body.tangerine-theme .filename-content {
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 /* Hidden items summary */
 body.tangerine-theme .hidden-items-summary {
-    background: #1a1a1a;
-    border: 1px solid #2d2d2d;
+    background: var(--tng-surface);
+    border: 1px solid var(--tng-border);
     border-radius: 6px;
     padding: 12px 16px;
     margin-top: 12px;
 }
 
 body.tangerine-theme .hidden-items-summary h5 {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 11px;
     font-family: 'Inter', sans-serif;
     font-weight: 600;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    border-bottom: 1px solid #2d2d2d;
+    border-bottom: 1px solid var(--tng-border);
     padding-bottom: 5px;
     margin-bottom: 10px;
     padding-left: 0;
@@ -343,9 +343,9 @@ body.tangerine-theme .hidden-items-summary li {
 
 /* Copy tooltip */
 body.tangerine-theme .copy-tooltip {
-    background: #222;
-    border: 1px solid #3d3d3d;
-    color: #e0e0e0;
+    background: var(--tng-surface-2);
+    border: 1px solid var(--tng-border-2);
+    color: var(--tng-text);
     font-size: 11px;
     font-family: 'JetBrains Mono', monospace;
     border-radius: 4px;
@@ -355,7 +355,7 @@ body.tangerine-theme .copy-tooltip {
 /* Connection status toasts */
 body.tangerine-theme .connection-status.reconnecting {
     background-color: rgba(245, 158, 11, 0.15);
-    color: #f59e0b;
+    color: var(--tng-yellow);
     border: 1px solid rgba(245, 158, 11, 0.3);
     font-size: 12px;
     font-family: 'JetBrains Mono', monospace;
@@ -385,10 +385,10 @@ body.tangerine-theme .connection-status.success {
 
 /* Init status alert override */
 body.tangerine-theme #initialization-status.alert-info {
-    background: #1a1a1a;
-    border: 1px solid #2d2d2d;
+    background: var(--tng-surface);
+    border: 1px solid var(--tng-border);
     border-radius: 6px;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-size: 13px;
     font-family: 'Inter', sans-serif;
 }
@@ -406,10 +406,10 @@ body.tangerine-theme .pagination-controls {
 }
 
 body.tangerine-theme .pagination-controls button {
-    background: #222;
-    border: 1px solid #3d3d3d;
+    background: var(--tng-surface-2);
+    border: 1px solid var(--tng-border-2);
     border-radius: 4px;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-size: 12px;
     font-family: 'Inter', sans-serif;
     padding: 4px 12px;
@@ -418,42 +418,42 @@ body.tangerine-theme .pagination-controls button {
 }
 
 body.tangerine-theme .pagination-controls button:hover:not(:disabled) {
-    border-color: #e8601c;
-    color: #e8601c;
-    background: #222;
+    border-color: var(--tng-accent);
+    color: var(--tng-accent);
+    background: var(--tng-surface-2);
     box-shadow: none;
 }
 
 body.tangerine-theme .pagination-controls button:disabled {
     opacity: 0.4;
     cursor: not-allowed;
-    background: #222;
+    background: var(--tng-surface-2);
 }
 
 body.tangerine-theme .pagination-info {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 12px;
     font-family: 'JetBrains Mono', monospace;
 }
 
 /* Loading indicator */
 body.tangerine-theme #loading-indicator {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 13px;
     font-family: 'Inter', sans-serif;
 }
 
 body.tangerine-theme #loading-indicator p {
-    color: #666;
+    color: var(--tng-text-4);
 }
 
 body.tangerine-theme #loading-indicator i {
-    color: #e8601c;
+    color: var(--tng-accent);
 }
 
 /* Empty state paragraphs */
 body.tangerine-theme .queue-container > p {
-    color: #666;
+    color: var(--tng-text-4);
     font-size: 13px;
     font-family: 'Inter', sans-serif;
     text-align: center;
@@ -462,15 +462,15 @@ body.tangerine-theme .queue-container > p {
 
 /* Error details */
 body.tangerine-theme .error-details {
-    background: #1a1a1a;
-    border: 1px solid #2d2d2d;
+    background: var(--tng-surface);
+    border: 1px solid var(--tng-border);
     border-radius: 4px;
     margin-top: 8px;
     padding: 10px;
 }
 
 body.tangerine-theme .error-details pre {
-    background: #111;
+    background: var(--tng-bg);
     border-radius: 4px;
     color: #ccc;
     font-size: 11px;
@@ -490,7 +490,7 @@ body.tangerine-theme .parse-error {
 }
 
 body.tangerine-theme .physical-release {
-    color: #888;
+    color: var(--tng-text-3);
     font-style: italic;
     margin-left: 5px;
 }
@@ -501,7 +501,7 @@ body.tangerine-theme .item.force-priority-item::after {
     font-size: 10px;
     font-family: 'Inter', sans-serif;
     font-weight: 600;
-    color: #f59e0b;
+    color: var(--tng-yellow);
     background: rgba(245, 158, 11, 0.12);
     border: 1px solid rgba(245, 158, 11, 0.3);
     border-radius: 3px;
@@ -513,13 +513,13 @@ body.tangerine-theme .item.force-priority-item::after {
 
 /* ── 5. Empty / stopped state ───────────────────────────────────────────── */
 body.tangerine-theme .queue-container > p {
-    color: #555;
+    color: var(--tng-text-5);
     font-size: 13px;
     font-family: 'Inter', sans-serif;
     text-align: center;
     padding: 48px 0 40px;
-    background: #1a1a1a;
-    border: 1px solid #2d2d2d;
+    background: var(--tng-surface);
+    border: 1px solid var(--tng-border);
     border-radius: 6px;
     margin: 0;
 }

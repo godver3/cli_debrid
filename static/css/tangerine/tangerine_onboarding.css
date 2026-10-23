@@ -9,10 +9,10 @@ body[data-theme="tangerine"] {
     --ob-surf2:   #1e1e1e;
     --ob-border:  #2e2e2e;
     --ob-border2: #3a3a3a;
-    --ob-accent:  #e8601c;
-    --ob-accent-h:#f07030;
+    --ob-accent:  var(--tng-accent);
+    --ob-accent-h:var(--tng-accent-hover);
     --ob-text:    #e8e8e8;
-    --ob-muted:   #888;
+    --ob-muted:   var(--tng-text-3);
     --ob-danger:  #e05252;
     --ob-mono:    'JetBrains Mono', 'Courier New', monospace;
     --ob-font:    'Inter', system-ui, sans-serif;
@@ -59,7 +59,7 @@ body[data-theme="tangerine"] .onboarding-title {
 
 body[data-theme="tangerine"] .onboarding-text {
     font-family: var(--ob-font);
-    color: #aaa;
+    color: var(--tng-text-2);
     line-height: 1.6;
 }
 
@@ -69,7 +69,7 @@ body[data-theme="tangerine"] .onboarding-text-no-config {
 }
 
 body[data-theme="tangerine"] .onboarding-list {
-    color: #aaa;
+    color: var(--tng-text-2);
     padding-left: 20px;
     line-height: 1.7;
     margin-bottom: 20px;
@@ -170,7 +170,7 @@ body[data-theme="tangerine"] .onboarding-label {
     font-family: var(--ob-font);
     font-size: 0.82rem;
     font-weight: 500;
-    color: #aaa;
+    color: var(--tng-text-2);
     margin-bottom: 5px;
     display: block;
 }
@@ -180,7 +180,7 @@ body[data-theme="tangerine"] .onboarding-select {
     width: 100%;
     padding: 8px 10px;
     margin-bottom: 16px;
-    background: #1a1a1a;
+    background: var(--tng-surface);
     border: 1px solid var(--ob-border2);
     border-radius: var(--ob-radius);
     color: var(--ob-text);
@@ -213,7 +213,7 @@ body[data-theme="tangerine"] .onboarding-submit:hover {
 
 /* bootstrap form controls used in step 5 */
 body[data-theme="tangerine"] .form-control {
-    background: #1a1a1a !important;
+    background: var(--tng-surface) !important;
     border: 1px solid var(--ob-border2) !important;
     color: var(--ob-text) !important;
     border-radius: var(--ob-radius) !important;
@@ -264,7 +264,7 @@ body[data-theme="tangerine"] .content-source-header .onboarding-text {
 
 body[data-theme="tangerine"] .scraper-settings,
 body[data-theme="tangerine"] .content-source-settings {
-    background: #111;
+    background: var(--tng-bg);
     border-radius: 4px;
     padding: 12px;
 }
@@ -283,7 +283,7 @@ body[data-theme="tangerine"] .setting-item label {
 }
 body[data-theme="tangerine"] .setting-value {
     flex: 1;
-    background: #1a1a1a;
+    background: var(--tng-surface);
     color: var(--ob-text);
     border: 1px solid var(--ob-border2);
     padding: 5px 8px;
@@ -294,7 +294,7 @@ body[data-theme="tangerine"] .setting-value {
 
 /* ── advice section ──────────────────────────────────────── */
 body[data-theme="tangerine"] .advice-section {
-    background: #1a1a1a;
+    background: var(--tng-surface);
     border: 1px solid var(--ob-border2);
     border-radius: var(--ob-radius);
     overflow: hidden;
@@ -306,7 +306,7 @@ body[data-theme="tangerine"] .advice-header {
     justify-content: space-between;
     padding: 10px 14px;
     cursor: pointer;
-    color: #aaa;
+    color: var(--tng-text-2);
     font-size: 0.85rem;
     font-weight: 500;
     user-select: none;
@@ -350,7 +350,7 @@ body[data-theme="tangerine"] .setup-option h3 {
     margin: 0 0 4px;
 }
 body[data-theme="tangerine"] .setup-option p {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.83rem;
     margin: 0;
 }
@@ -510,7 +510,7 @@ body[data-theme="tangerine"] .plex-library-select {
     margin-bottom: 16px;
 }
 body[data-theme="tangerine"] .plex-server-card {
-    background: #1a1a1a;
+    background: var(--tng-surface);
     border: 1px solid var(--ob-border2);
     border-radius: var(--ob-radius);
     padding: 12px 14px;
@@ -649,7 +649,7 @@ body[data-theme="tangerine"] details.ob-details {
 }
 body[data-theme="tangerine"] details.ob-details > summary {
     cursor: pointer;
-    color: #aaa;
+    color: var(--tng-text-2);
     font-size: 0.85rem;
 }
 body[data-theme="tangerine"] details.ob-details[open] > summary { margin-bottom: 10px; }

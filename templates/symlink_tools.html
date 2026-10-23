@@ -8,11 +8,11 @@ body:not(.tangerine-theme) #stTng{display:none!important}
 body.tangerine-theme #stClassic{display:none!important}
 
 :root{
-  --st-surface:#1a1a1a;--st-surface2:#222;--st-surface3:#2a2a2a;
-  --st-border:#2d2d2d;--st-border2:#3d3d3d;
-  --st-accent:#e8601c;
-  --st-text:#e0e0e0;--st-text2:#aaa;--st-text3:#555;
-  --st-green:#22c55e;--st-red:#ef4444;--st-yellow:#f59e0b;
+  --st-surface:var(--tng-surface);--st-surface2:var(--tng-surface-2);--st-surface3:var(--tng-surface-3);
+  --st-border:var(--tng-border);--st-border2:var(--tng-border-2);
+  --st-accent:var(--tng-accent);
+  --st-text:var(--tng-text);--st-text2:var(--tng-text-2);--st-text3:var(--tng-text-5);
+  --st-green:var(--tng-green);--st-red:var(--tng-red);--st-yellow:var(--tng-yellow);
   --st-mono:'JetBrains Mono',monospace;--st-sans:'Inter',sans-serif;
 }
 .st-wrap{max-width:1000px;margin:0 auto;padding:1.25rem;font-family:var(--st-sans);font-size:13px;color:var(--st-text)}
@@ -37,9 +37,9 @@ body.tangerine-theme #stClassic{display:none!important}
 .st-form-group:last-child{margin-bottom:0}
 .st-label{font-size:11px;color:var(--st-text2);font-weight:500}
 .st-label .req{color:var(--st-accent)}
-.st-input,.st-select{background:#222;border:1px solid #3d3d3d;border-radius:4px;padding:6px 9px;font-size:12px;font-family:var(--st-mono);color:#e0e0e0;outline:none;transition:border-color .15s;width:100%;height:32px}
+.st-input,.st-select{background:var(--tng-surface-2);border:1px solid var(--tng-border-2);border-radius:4px;padding:6px 9px;font-size:12px;font-family:var(--st-mono);color:var(--tng-text);outline:none;transition:border-color .15s;width:100%;height:32px}
 .st-input:focus,.st-select:focus{border-color:var(--st-accent)}
-.st-input::placeholder{color:#555;font-size:12px}
+.st-input::placeholder{color:var(--tng-text-5);font-size:12px}
 .st-select option{background:var(--st-surface2)}
 
 /* File input group */

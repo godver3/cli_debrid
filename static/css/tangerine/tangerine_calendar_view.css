@@ -29,7 +29,7 @@
 
 .calendar-event.event-type-movie.status-collected .event-title {
     text-decoration: line-through;
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 
@@ -68,13 +68,13 @@
     cursor: pointer;
     font-size: 0.85em;
     font-weight: 500;
-    background: #2a2a2a !important;
-    color: #aaa !important;
+    background: var(--tng-surface-3) !important;
+    color: var(--tng-text-2) !important;
     transition: background 0.15s, color 0.15s;
 }
 .cal-toggle-btn.active {
     background: #e17c52 !important;
-    color: #1a1a1a !important;
+    color: var(--tng-surface) !important;
 }
 
 /* ======================================================
@@ -110,7 +110,7 @@
     border-radius: 50%;
     background: #e17c52 !important;
     border: none !important;
-    color: #1a1a1a !important;
+    color: var(--tng-surface) !important;
     font-size: 1.2em;
     line-height: 32px;
     padding: 0;
@@ -160,7 +160,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 
 /* Column headers */
 .cal-adv-th {
-    background: #1a1a1a !important;
+    background: var(--tng-surface) !important;
     border: 1px solid #333 !important;
     padding: 10px 6px 8px !important;
     text-align: center !important;
@@ -174,7 +174,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 .cal-th-dayname {
     display: block;
     font-size: 0.72em;
-    color: #888 !important;
+    color: var(--tng-text-3) !important;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     margin-bottom: 4px;
@@ -192,7 +192,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 }
 .cal-today-pill {
     background: #e17c52;
-    color: #1a1a1a;
+    color: var(--tng-surface);
 }
 .cal-th-month {
     display: block;
@@ -206,7 +206,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
     vertical-align: top;
 }
 .cal-adv-cell {
-    border: 1px solid #2d2d2d !important;
+    border: 1px solid var(--tng-border) !important;
     padding: 6px !important;
     vertical-align: top !important;
     min-height: 120px;
@@ -226,7 +226,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 
 .cal-adv-event {
     background: #252525 !important;
-    border-left: 3px solid #555;
+    border-left: 3px solid var(--tng-text-5);
     border-radius: 4px;
     padding: 5px 7px;
     margin-bottom: 5px;
@@ -251,7 +251,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 
 .cal-adv-event-time {
     font-size: 0.78em;
-    color: #888 !important;
+    color: var(--tng-text-3) !important;
     font-weight: 500;
     margin-bottom: 2px;
 }
@@ -292,7 +292,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 .cal-adv-event-status.status-upcoming-uncollected   { background: #5dade2; }
 .cal-adv-event-status.status-upcoming-collected     { background: #27ae60; }
 .cal-adv-event-status.status-upcoming               { background: #3498db; }
-.cal-adv-event-status.status-uncollected            { background: #555; }
+.cal-adv-event-status.status-uncollected            { background: var(--tng-text-5); }
 
 /* ======================================================
    Advanced calendar: mobile single-day view
@@ -325,7 +325,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 }
 .cal-mobile-no-events {
     text-align: center;
-    color: #666;
+    color: var(--tng-text-4);
     font-style: italic;
     padding: 30px 0;
 }

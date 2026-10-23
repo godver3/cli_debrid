@@ -35,7 +35,7 @@
 }
 
 .overlay-tab:hover {
-    background: var(--hover-background, #e0e0e0);
+    background: var(--hover-background, var(--tng-text));
 }
 
 .overlay-tab.active {
@@ -226,7 +226,7 @@
     max-width: 95vw;
     position: relative;
     box-shadow: 0 8px 40px rgba(0,0,0,0.6);
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 .poster-picker-modal h3 {
     margin: 0 0 14px;
@@ -236,7 +236,7 @@
 }
 .poster-picker-close {
     position: absolute; top: 10px; right: 12px;
-    background: none; border: none; color: #aaa;
+    background: none; border: none; color: var(--tng-text-2);
     font-size: 20px; cursor: pointer; line-height: 1;
 }
 .poster-picker-close:hover { color: #fff; }
@@ -256,7 +256,7 @@
 .poster-nav-btn:disabled { opacity: 0.3; cursor: default; }
 .poster-picker-img-wrap {
     flex: 1; aspect-ratio: 2/3;
-    background: #111; border-radius: 6px; overflow: hidden;
+    background: var(--tng-bg); border-radius: 6px; overflow: hidden;
     position: relative;
     min-height: 180px;
 }
@@ -267,10 +267,10 @@
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
     background: rgba(0,0,0,0.5);
-    font-size: 13px; color: #aaa;
+    font-size: 13px; color: var(--tng-text-2);
 }
 .poster-picker-info {
-    text-align: center; font-size: 12px; color: #aaa; margin-top: 8px;
+    text-align: center; font-size: 12px; color: var(--tng-text-2); margin-top: 8px;
 }
 .poster-picker-actions {
     margin-top: 14px; display: flex; gap: 8px;
@@ -283,7 +283,7 @@
     transition: background 0.15s;
 }
 .poster-picker-apply-btn:hover { background: #218838; }
-.poster-picker-apply-btn:disabled { background: #555; cursor: default; }
+.poster-picker-apply-btn:disabled { background: var(--tng-text-5); cursor: default; }
 
 .card-version-badge {
     position: absolute;
@@ -387,7 +387,7 @@
     border: none;
     font-size: 20px;
     cursor: pointer;
-    color: var(--text-secondary, #666);
+    color: var(--text-secondary, var(--tng-text-4));
     line-height: 1;
     padding: 0 4px;
 }
@@ -483,7 +483,7 @@
 }
 
 .media-year {
-    color: var(--text-secondary, #666);
+    color: var(--text-secondary, var(--tng-text-4));
     font-size: 12px;
 }
 
@@ -566,7 +566,7 @@
 
 .stat-breakdown-item {
     font-size: 11px;
-    color: var(--text-secondary, #666);
+    color: var(--text-secondary, var(--tng-text-4));
     display: inline-flex;
     align-items: center;
     gap: 3px;
@@ -579,7 +579,7 @@
 }
 
 .stat-breakdown-sep {
-    color: var(--text-secondary, #aaa);
+    color: var(--text-secondary, var(--tng-text-2));
     font-size: 11px;
     opacity: 0.5;
 }
@@ -590,7 +590,7 @@
     right: 6px;
     background: none;
     border: none;
-    color: #555;
+    color: var(--tng-text-5);
     font-size: 11px;
     padding: 3px 5px;
     cursor: pointer;
@@ -622,7 +622,7 @@
     border-radius: 4px;
     cursor: pointer;
     padding: 3px 6px;
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.8em;
     line-height: 1;
     display: flex;
@@ -632,7 +632,7 @@
 
 .backup-action-btn:hover {
     color: #ccc;
-    border-color: #888;
+    border-color: var(--tng-text-3);
     background: rgba(255,255,255,0.06);
     transform: translateY(-1px);
 }
@@ -654,14 +654,14 @@
 }
 
 .stat-label {
-    color: var(--text-secondary, #666);
+    color: var(--text-secondary, var(--tng-text-4));
     margin-top: 5px;
 }
 
 .loading {
     text-align: center;
     padding: 40px;
-    color: var(--text-secondary, #666);
+    color: var(--text-secondary, var(--tng-text-4));
 }
 
 .search-box {
@@ -702,7 +702,7 @@
 .overlays-subtitle {
     margin: 0;
     font-size: 0.875rem;
-    color: var(--text-secondary, #666);
+    color: var(--text-secondary, var(--tng-text-4));
 }
 
 .overlays-actions {
@@ -721,7 +721,7 @@
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 8px;
     background: rgba(255,255,255,0.07);
-    color: var(--text-primary, #e0e0e0);
+    color: var(--text-primary, var(--tng-text));
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
@@ -778,9 +778,9 @@
                     <span class="hidden sm:inline">Regenerate All</span>
                 </button>
                 <div id="regenerate-scope-menu" style="display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:9999;min-width:180px;background:rgba(28,28,40,0.98);border:1px solid rgba(255,255,255,0.12);border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.5);overflow:hidden;">
-                    <button type="button" style="display:block;width:100%;text-align:left;padding:9px 16px;font-size:0.875rem;font-weight:500;color:#e0e0e0;background:transparent;border:none;cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='transparent'" onclick="toggleRegenerateMenu(); regenerateLibrary('all');">All (Movies &amp; Shows)</button>
-                    <button type="button" style="display:block;width:100%;text-align:left;padding:9px 16px;font-size:0.875rem;font-weight:500;color:#e0e0e0;background:transparent;border:none;cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='transparent'" onclick="toggleRegenerateMenu(); regenerateLibrary('movie');">Movies only</button>
-                    <button type="button" style="display:block;width:100%;text-align:left;padding:9px 16px;font-size:0.875rem;font-weight:500;color:#e0e0e0;background:transparent;border:none;cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='transparent'" onclick="toggleRegenerateMenu(); regenerateLibrary('tv');">Shows only</button>
+                    <button type="button" style="display:block;width:100%;text-align:left;padding:9px 16px;font-size:0.875rem;font-weight:500;color:var(--tng-text);background:transparent;border:none;cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='transparent'" onclick="toggleRegenerateMenu(); regenerateLibrary('all');">All (Movies &amp; Shows)</button>
+                    <button type="button" style="display:block;width:100%;text-align:left;padding:9px 16px;font-size:0.875rem;font-weight:500;color:var(--tng-text);background:transparent;border:none;cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='transparent'" onclick="toggleRegenerateMenu(); regenerateLibrary('movie');">Movies only</button>
+                    <button type="button" style="display:block;width:100%;text-align:left;padding:9px 16px;font-size:0.875rem;font-weight:500;color:var(--tng-text);background:transparent;border:none;cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='transparent'" onclick="toggleRegenerateMenu(); regenerateLibrary('tv');">Shows only</button>
                 </div>
             </div>
             <button type="button" class="action-btn action-btn-danger action-btn-sm gap-2" id="remove-all-overlays-btn" title="Remove All Overlays" onclick="removeAllOverlays()">
@@ -831,7 +831,7 @@
             <button class="stat-reset-btn" onclick="resetCleanupStats(event)" title="Reset cleanup counter"><i class="fas fa-undo"></i></button>
             <div class="stat-value" id="stat-cleaned">-</div>
             <div class="stat-label">Cleaned Up</div>
-            <div class="stat-breakdown" id="stat-cleaned-breakdown" style="font-size:11px;color:#888;margin-top:2px;">-</div>
+            <div class="stat-breakdown" id="stat-cleaned-breakdown" style="font-size:11px;color:var(--tng-text-3);margin-top:2px;">-</div>
         </div>
         <div class="stat-card stat-card-clickable" onclick="filterByStatus('failed')" style="position:relative;" title="Show failed items">
             <button class="stat-reset-btn" onclick="resetFailedStats(event)" title="Retry all failed items"><i class="fas fa-undo"></i></button>
@@ -875,10 +875,10 @@
             </div>
             <div style="padding:1.5rem 1.75rem 1.25rem;">
                 <div style="display:flex;align-items:center;gap:0.85rem;margin-bottom:0.9rem;">
-                    <i class="fas fa-circle-notch fa-spin" style="color:#888;font-size:1.1rem;flex-shrink:0;"></i>
+                    <i class="fas fa-circle-notch fa-spin" style="color:var(--tng-text-3);font-size:1.1rem;flex-shrink:0;"></i>
                     <div id="task-progress-title" style="font-size:0.95rem;font-weight:600;color:#e8e8e8;"></div>
                 </div>
-                <div id="task-progress-msg" style="font-size:0.82rem;color:#888;margin-left:1.95rem;line-height:1.4;"></div>
+                <div id="task-progress-msg" style="font-size:0.82rem;color:var(--tng-text-3);margin-left:1.95rem;line-height:1.4;"></div>
                 <div id="task-progress-counter" style="font-size:0.82rem;color:#ff8c5a;font-weight:600;margin-left:1.95rem;margin-bottom:1.1rem;margin-top:0.3rem;letter-spacing:0.01em;"></div>
                 <div style="display:flex;justify-content:flex-end;">
                     <button onclick="_hideProgress()" style="padding:0.4rem 1rem;font-size:0.82rem;background:rgba(255,107,53,0.12);border:1px solid rgba(255,107,53,0.35);color:#ff8c5a;border-radius:6px;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.background='rgba(255,107,53,0.22)';this.style.borderColor='rgba(255,107,53,0.6)';this.style.color='#fff'" onmouseout="this.style.background='rgba(255,107,53,0.12)';this.style.borderColor='rgba(255,107,53,0.35)';this.style.color='#ff8c5a'">
@@ -901,7 +901,7 @@
         <button class="btn btn-secondary" id="sync-library-btn" onclick="syncLibrary()" style="white-space:nowrap;">
             <i class="fas fa-sync-alt"></i> Sync Library
         </button>
-        <span id="sync-library-status" style="font-size:13px; color:#aaa;">
+        <span id="sync-library-status" style="font-size:13px; color:var(--tng-text-2);">
             Click to match library items to your media server (required before generating overlays).
         </span>
     </div>
@@ -970,7 +970,7 @@
     <!-- Badges Tab -->
     <div class="tab-content" id="badges-tab">
         <h3>Badge Library</h3>
-        <p style="color: var(--text-secondary, #666); margin-bottom: 20px;">
+        <p style="color: var(--text-secondary, var(--tng-text-4)); margin-bottom: 20px;">
             Manage badge PNG assets for each badge type and variation. Badges are auto-selected at poster render time based on the media item's metadata (codec, resolution, HDR format, etc.).
         </p>
         <div style="display: flex; gap: 12px; margin-bottom: 20px;">
@@ -1026,7 +1026,7 @@
         </div>
         <div id="activity-pagination" style="display: none; margin-top: 16px; text-align: center; gap: 8px;">
             <button class="btn" id="activity-prev-btn" onclick="activityPage(-1)" style="padding: 6px 14px; font-size: 13px;">← Previous</button>
-            <span id="activity-page-info" style="font-size: 13px; color: var(--text-secondary, #666); padding: 0 10px;"></span>
+            <span id="activity-page-info" style="font-size: 13px; color: var(--text-secondary, var(--tng-text-4)); padding: 0 10px;"></span>
             <button class="btn" id="activity-next-btn" onclick="activityPage(1)" style="padding: 6px 14px; font-size: 13px;">Next →</button>
         </div>
     </div>
@@ -1066,7 +1066,7 @@
         </div>
 
         <div class="poster-review-footer">
-            <span id="posterReviewTotalCount" style="font-size:13px;color:var(--text-secondary,#888);"></span>
+            <span id="posterReviewTotalCount" style="font-size:13px;color:var(--text-secondary,var(--tng-text-3));"></span>
             <div style="display:flex;gap:10px;align-items:center;">
                 <button class="poster-review-cancel-btn" onclick="closePosterReviewGrid()">Cancel</button>
                 <button class="poster-review-reset-btn" id="posterReviewResetBtn" onclick="submitReviewReset()" disabled>

@@ -37,7 +37,7 @@
 
 .library-settings-modal-content {
     position: relative;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     border-radius: 16px;
     border: 2px solid rgba(225, 124, 82, 0.2);
     width: 90%;
@@ -131,7 +131,7 @@
 
 .library-setting-description {
     font-size: 0.85rem;
-    color: #aaa;
+    color: var(--tng-text-2);
     line-height: 1.5;
     margin: 8px 0;
 }
@@ -139,7 +139,7 @@
 .library-setting-input {
     width: 100%;
     padding: 10px 14px;
-    background-color: #2a2a2a;
+    background-color: var(--tng-surface-3);
     border: 2px solid rgba(225, 124, 82, 0.3);
     border-radius: 12px;
     color: #fff;
@@ -243,7 +243,7 @@
 }
 
 .library-settings-modal-body::-webkit-scrollbar-track {
-    background: #1a1a1a;
+    background: var(--tng-surface);
     border-radius: 4px;
 }
 

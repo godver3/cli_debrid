@@ -56,7 +56,7 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-size: 0.95rem;
     transition: all 0.3s ease;
 }
@@ -94,7 +94,7 @@
 }
 
 .controls button.danger {
-    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    background: linear-gradient(135deg, var(--tng-red) 0%, #dc2626 100%);
     color: #fff;
 }
 
@@ -141,7 +141,7 @@
     font-family: 'Courier New', Courier, monospace;
     font-size: 0.875rem;
     line-height: 1.6;
-    color: #e0e0e0;
+    color: var(--tng-text);
     white-space: pre-wrap;
     word-wrap: break-word;
     max-height: 500px;

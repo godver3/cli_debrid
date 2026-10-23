@@ -6,10 +6,10 @@
 <style>
 *{box-sizing:border-box}
 :root{
-  --bl-bg:#111;--bl-surface:#1a1a1a;--bl-surface2:#222;--bl-surface3:#2a2a2a;
-  --bl-border:#333;--bl-border2:#3d3d3d;--bl-accent:#e8601c;
-  --bl-text:#e0e0e0;--bl-text2:#aaa;--bl-text3:#666;
-  --bl-green:#22c55e;--bl-red:#ef4444;--bl-blue:#3b82f6;--bl-yellow:#f59e0b;
+  --bl-bg:var(--tng-bg);--bl-surface:var(--tng-surface);--bl-surface2:var(--tng-surface-2);--bl-surface3:var(--tng-surface-3);
+  --bl-border:#333;--bl-border2:var(--tng-border-2);--bl-accent:var(--tng-accent);
+  --bl-text:var(--tng-text);--bl-text2:var(--tng-text-2);--bl-text3:var(--tng-text-4);
+  --bl-green:var(--tng-green);--bl-red:var(--tng-red);--bl-blue:var(--tng-blue);--bl-yellow:var(--tng-yellow);
   --bl-sans:'Inter',system-ui,sans-serif;
 }
 
@@ -26,8 +26,8 @@
   background:transparent;
 }
 .bl-btn svg{width:13px;height:13px;flex-shrink:0}
-.bl-btn-green{border:1px solid #166534;color:#22c55e}
-.bl-btn-green:hover{background:#16653422;border-color:#22c55e}
+.bl-btn-green{border:1px solid #166534;color:var(--tng-green)}
+.bl-btn-green:hover{background:#16653422;border-color:var(--tng-green)}
 .bl-btn-blue{border:1px solid #1e40af;color:#60a5fa}
 .bl-btn-blue:hover{background:#1e40af22;border-color:#60a5fa}
 
@@ -94,10 +94,10 @@
 .bl-del-btn{
   width:28px;height:28px;border-radius:5px;
   border:1px solid #7f1d1d;background:transparent;
-  color:#ef4444;cursor:pointer;
+  color:var(--tng-red);cursor:pointer;
   display:flex;align-items:center;justify-content:center;transition:all .15s;
 }
-.bl-del-btn:hover{background:#7f1d1d22;border-color:#ef4444}
+.bl-del-btn:hover{background:#7f1d1d22;border-color:var(--tng-red)}
 .bl-del-btn svg{width:13px;height:13px}
 
 /* Table footer */

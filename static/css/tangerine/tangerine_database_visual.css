@@ -7,7 +7,7 @@ body {
 }
 
 #visual-browser-title {
-    color: #e0e0e0; /* Match base.css */
+    color: var(--tng-text); /* Match base.css */
     text-align: center;
     margin-top: 20px; /* Add some top margin */
     margin-bottom: 30px;
@@ -27,7 +27,7 @@ body {
     padding: 15px;
     cursor: pointer;
     transition: all 0.2s ease;
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 .card:hover {
@@ -54,7 +54,7 @@ body {
 .card p {
     margin: 0;
     font-size: 0.9em;
-    color: #888; /* Lighter secondary text color */
+    color: var(--tng-text-3); /* Lighter secondary text color */
 }
 
 /* NEW styles for the poster image */
@@ -95,7 +95,7 @@ body {
     border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.05);
     background-color: rgba(255, 255, 255, 0.03);
-    color: #e0e0e0;
+    color: var(--tng-text);
     transition: all 0.2s ease;
 }
 
@@ -107,5 +107,5 @@ body {
 }
 
 #visual-search-input::placeholder {
-    color: #888;
+    color: var(--tng-text-3);
 } 

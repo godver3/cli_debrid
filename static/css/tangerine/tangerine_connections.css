@@ -62,14 +62,14 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
     margin-right: 1rem;
     width: 24px;
     text-align: center;
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 .connection-title {
     flex-grow: 1;
     font-weight: 500;
     font-size: 1.1rem;
-    color: #e0e0e0;
+    color: var(--tng-text);
     margin-right: 10px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -108,7 +108,7 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
 }
 
 .status-text {
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 .status-text.connected {
@@ -129,11 +129,11 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
 
 .status-message {
     margin-bottom: 0.5rem;
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 .status-message strong {
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 .details-info ul {
@@ -154,7 +154,7 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
 }
 
 .details-info li strong {
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 .details-info li:last-child {
@@ -258,7 +258,7 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
 }
 
 .error-message strong {
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 .debug-info {
@@ -271,7 +271,7 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
 }
 
 .debug-info strong {
-    color: #888;
+    color: var(--tng-text-3);
     margin-right: 5px;
 }
 
@@ -334,7 +334,7 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
 }
 
 .sample-data-container strong {
-    color: #888;
+    color: var(--tng-text-3);
     display: block;
     margin-bottom: 5px;
 }

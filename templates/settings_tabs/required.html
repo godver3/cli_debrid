@@ -47,7 +47,7 @@
             Sign in to Plex
         </button>
 
-        <div id="plex-auth-failure-note" style="margin-top: 8px; font-size: 11px; color: #e8601c;">
+        <div id="plex-auth-failure-note" style="margin-top: 8px; font-size: 11px; color: var(--tng-accent);">
             If Plex authorization fails to connect using this method, try using your direct IP and Plex token in the section below. Plex cannot always navigate networking automatically.
         </div>
 
@@ -492,7 +492,7 @@
                    placeholder="Leave empty if auth is disabled">
         </div>
         <div class="settings-form-group">
-            <label for="usenet_provider-download_folder" class="settings-title"><span data-provider-only="nzbdav,zurg">Fallback Category <span style="color:#888;font-size:0.85em;">(rarely used)</span></span><span data-provider-only="climount">Download Folder / Category</span>:</label>
+            <label for="usenet_provider-download_folder" class="settings-title"><span data-provider-only="nzbdav,zurg">Fallback Category <span style="color:var(--tng-text-3);font-size:0.85em;">(rarely used)</span></span><span data-provider-only="climount">Download Folder / Category</span>:</label>
             <input type="text" id="usenet_provider-download_folder" name="Usenet Provider.download_folder"
                    value="{{ settings.get('Usenet Provider', {}).get('download_folder', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="download_folder"
@@ -518,7 +518,7 @@
             <p class="settings-description" data-provider-only="zurg">Path inside <em>this</em> container where the Zurg rclone-mount appears. Zurg's mount is flat — content lives directly at <code>&lt;this path&gt;/&lt;job name&gt;/</code>, with no per-category subfolder — so folder lookups resolve the job name directly under this path instead of walking a category layout. Bind-mount Zurg's rclone mount into the cli-debrid container and point this at its <code>__all__</code> folder (e.g. <code>/mnt/zurg/__all__</code>, or <code>Z:\__all__</code> on Windows) — that is the folder holding the release folders, so it is used as-is and not stripped. Effectively required when provider is Zurg.</p>
         </div>
         <div class="settings-form-group" data-provider-only="nzbdav,zurg">
-            <label for="usenet_provider-owned_categories" class="settings-title">Repair: Owned Categories <span style="color: #888; font-size: 0.85em;">(advanced)</span>:</label>
+            <label for="usenet_provider-owned_categories" class="settings-title">Repair: Owned Categories <span style="color: var(--tng-text-3); font-size: 0.85em;">(advanced)</span>:</label>
             <input type="text" id="usenet_provider-owned_categories" name="Usenet Provider.owned_categories"
                    value="{{ settings.get('Usenet Provider', {}).get('owned_categories', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="owned_categories"
@@ -526,7 +526,7 @@
             <p class="settings-description">Comma-separated categories the broken-NZB repair tool may act on. History on a shared instance can include other SAB clients (e.g. Lidarr music) — repair only re-acquires content cli-debrid manages, so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (plus the Download Folder fallback). Set only if your category names differ.</p>
         </div>
         <div class="settings-form-group" data-provider-only="nzbdav,zurg">
-            <label for="usenet_provider-exclude_categories" class="settings-title">Repair: Exclude Categories <span style="color: #888; font-size: 0.85em;">(advanced)</span>:</label>
+            <label for="usenet_provider-exclude_categories" class="settings-title">Repair: Exclude Categories <span style="color: var(--tng-text-3); font-size: 0.85em;">(advanced)</span>:</label>
             <input type="text" id="usenet_provider-exclude_categories" name="Usenet Provider.exclude_categories"
                    value="{{ settings.get('Usenet Provider', {}).get('exclude_categories', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="exclude_categories"

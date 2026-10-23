@@ -42,7 +42,7 @@ body[data-theme="tangerine"] .palette-item {
     margin-bottom: 10px;
     cursor: move;
     transition: all 0.3s;
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 body[data-theme="tangerine"] .palette-item:hover {
@@ -106,7 +106,7 @@ body[data-theme="tangerine"] .canvas-container {
 
 body[data-theme="tangerine"] .canvas-wrapper {
     position: relative;
-    background: #1a1a1a;
+    background: var(--tng-surface);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
@@ -178,7 +178,7 @@ body[data-theme="tangerine"] .properties-panel h2 {
 }
 
 body[data-theme="tangerine"] .properties-panel p {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.875rem;
 }
 
@@ -210,7 +210,7 @@ body[data-theme="tangerine"] .form-group label {
     font-size: 0.8125rem;
     font-weight: 500;
     margin-bottom: 5px;
-    color: #aaa;
+    color: var(--tng-text-2);
 }
 
 body[data-theme="tangerine"] .form-group input,
@@ -237,7 +237,7 @@ body[data-theme="tangerine"] .form-group textarea:focus {
 
 body[data-theme="tangerine"] .form-group input::placeholder,
 body[data-theme="tangerine"] .form-group textarea::placeholder {
-    color: #555;
+    color: var(--tng-text-5);
 }
 
 body[data-theme="tangerine"] .form-group textarea {
@@ -272,7 +272,7 @@ body[data-theme="tangerine"] .btn {
     transition: all 0.2s ease;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 body[data-theme="tangerine"] .btn:active:not(:disabled) {
@@ -329,7 +329,7 @@ body[data-theme="tangerine"] .btn-danger:hover {
 
 body[data-theme="tangerine"] .btn-secondary {
     background: rgba(255, 255, 255, 0.05);
-    color: #e0e0e0;
+    color: var(--tng-text);
     border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
@@ -357,7 +357,7 @@ body[data-theme="tangerine"] .element-list-item {
     justify-content: space-between;
     align-items: center;
     transition: all 0.2s;
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 body[data-theme="tangerine"] .element-list-item:hover {
@@ -386,7 +386,7 @@ body[data-theme="tangerine"] .badge-list-label {
 }
 
 body[data-theme="tangerine"] .badge-list-type {
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 /* Drag-to-reorder handle */
@@ -466,7 +466,7 @@ body[data-theme="tangerine"] .asset-item {
     margin-bottom: 4px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.05);
-    color: #e0e0e0;
+    color: var(--tng-text);
     transition: all 0.2s;
 }
 
@@ -520,7 +520,7 @@ body[data-theme="tangerine"] .db-inline-check-label input[type="checkbox"] {
     height: 15px;
 }
 body[data-theme="tangerine"] .db-inline-check-group .var-help {
-    color: #666;
+    color: var(--tng-text-4);
     padding-left: 23px;
 }
 
@@ -538,7 +538,7 @@ body[data-theme="tangerine"] .section-enable-cb {
 
 /* ── Auto/px width toggle ── */
 body[data-theme="tangerine"] .db-auto-toggle {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.75rem;
 }
 body[data-theme="tangerine"] .db-auto-toggle input[type="checkbox"] {

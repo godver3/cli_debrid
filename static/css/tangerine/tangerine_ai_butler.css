@@ -60,7 +60,7 @@
     width: 380px;
     max-height: 560px;
     min-height: 200px;
-    background: #1a1a1a;
+    background: var(--tng-surface);
     border: 1px solid #3a2a1a;
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
@@ -85,7 +85,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-weight: 600;
     font-size: 14px;
 }
@@ -96,7 +96,7 @@
 }
 
 .ai-butler-title {
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 .ai-butler-beta-badge {
@@ -118,12 +118,12 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #aaa;
+    background: var(--tng-text-2);
     flex-shrink: 0;
 }
 .ai-butler-status.online { background: #48bb78; }
 .ai-butler-status.offline { background: #fc8181; }
-.ai-butler-status.disabled { background: #aaa; }
+.ai-butler-status.disabled { background: var(--tng-text-2); }
 
 .ai-butler-header-right {
     display: flex;
@@ -149,7 +149,7 @@
 .ai-butler-close-btn {
     background: none;
     border: none;
-    color: #888;
+    color: var(--tng-text-3);
     cursor: pointer;
     padding: 4px 6px;
     border-radius: 4px;
@@ -162,7 +162,7 @@
 .ai-butler-settings-btn:hover { color: #d0b090; background: rgba(208, 176, 144, 0.1); }
 .ai-butler-expand-btn:hover { color: #d0b090; background: rgba(208, 176, 144, 0.1); }
 .ai-butler-clear-btn:hover { color: #fc8181; background: rgba(252, 129, 129, 0.1); }
-.ai-butler-close-btn:hover { color: #e0e0e0; background: rgba(255, 255, 255, 0.08); }
+.ai-butler-close-btn:hover { color: var(--tng-text); background: rgba(255, 255, 255, 0.08); }
 
 /* --- Settings Modal (Tangerine) --- */
 
@@ -178,7 +178,7 @@
 }
 
 .ai-butler-modal {
-    background: #1a1a1a;
+    background: var(--tng-surface);
     border: 1px solid #3a2a1a;
     border-radius: 12px;
     box-shadow: 0 8px 40px rgba(0, 0, 0, 0.7);
@@ -208,7 +208,7 @@
 .ai-butler-modal-close {
     background: none;
     border: none;
-    color: #888;
+    color: var(--tng-text-3);
     cursor: pointer;
     font-size: 14px;
     padding: 2px 6px;
@@ -224,7 +224,7 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    background: #1a1a1a;
+    background: var(--tng-surface);
 }
 
 .ai-butler-modal-body::-webkit-scrollbar { width: 4px; }
@@ -332,7 +332,7 @@
     flex-direction: column;
     gap: 10px;
     scroll-behavior: smooth;
-    background: #1a1a1a;
+    background: var(--tng-surface);
 }
 
 .ai-butler-messages::-webkit-scrollbar { width: 4px; }
@@ -467,10 +467,10 @@
 .ai-butler-input {
     flex: 1;
     resize: none;
-    background: #1a1a1a;
+    background: var(--tng-surface);
     border: 1px solid #3a2a1a;
     border-radius: 8px;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-size: 13px;
     line-height: 1.5;
     padding: 7px 10px;
@@ -490,7 +490,7 @@
 }
 
 .ai-butler-input::placeholder {
-    color: #666;
+    color: var(--tng-text-4);
 }
 
 .ai-butler-send-btn {

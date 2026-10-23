@@ -37,7 +37,7 @@
 
 .discover-settings-modal-content {
     position: relative;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     border-radius: 16px;
     border: 2px solid rgba(225, 124, 82, 0.2);
     width: 90%;
@@ -129,7 +129,7 @@
 
 .discover-setting-description {
     font-size: 0.85rem;
-    color: #aaa;
+    color: var(--tng-text-2);
     line-height: 1.5;
     margin: 8px 0 0 0;
 }

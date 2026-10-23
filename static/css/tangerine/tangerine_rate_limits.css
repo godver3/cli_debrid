@@ -33,7 +33,7 @@
 }
 
 .rate-limits-toggle {
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     padding: 10px 15px;
     border-radius: 0 0 4px 4px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
@@ -42,7 +42,7 @@
     min-width: 150px;
     justify-content: space-between;
     align-items: center;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-weight: 600;
     text-align: center;
     line-height: 0.6;
@@ -60,19 +60,19 @@
 .rate-limits-refresh {
     background: none;
     border: none;
-    color: #888;
+    color: var(--tng-text-3);
     cursor: pointer;
     padding: 5px;
     transition: color 0.2s ease;
 }
 
 .rate-limits-refresh:hover {
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 .rate-limits-container {
     position: relative;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     border-radius: 12px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     width: 300px;
@@ -94,13 +94,13 @@
     border-bottom: 1px solid #333;
     position: sticky;
     top: 0;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     z-index: 1;
 }
 
 .rate-limits-title {
     font-weight: 600;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-size: 1.1em;
 }
 
@@ -124,7 +124,7 @@
 
 .domain-rate-limit h5 {
     margin: 0 0 5px 0;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-weight: 500;
 }
 
@@ -144,18 +144,18 @@
 }
 
 .rate-limits-container::-webkit-scrollbar-track {
-    background: #1a1a1a;
+    background: var(--tng-surface);
     border-radius: 12px;
 }
 
 .rate-limits-container::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.05);
     border-radius: 12px;
-    border: 2px solid #1a1a1a;
+    border: 2px solid var(--tng-surface);
 }
 
 .rate-limits-container::-webkit-scrollbar-thumb:hover {
-    background: #555;
+    background: var(--tng-text-5);
 }
 
 /* Mobile responsiveness */
@@ -214,8 +214,8 @@
     position: fixed;
     top: 50px;
     right: calc(10px + env(safe-area-inset-right, 0px)); /* Position it to the left of the task monitor toggle */
-    background-color: #1a1a1a;
-    color: #888;
+    background-color: var(--tng-surface);
+    color: var(--tng-text-3);
     border: none;
     padding: 8px;
     border-radius: 0 0 4px 4px;
@@ -229,7 +229,7 @@
 }
 
 .rate-limits-section-toggle:hover {
-    color: #e0e0e0;
+    color: var(--tng-text);
     background-color: rgba(255, 255, 255, 0.03);
 }
 

@@ -1295,12 +1295,12 @@
 </script>
 
 <style>
-    .cs-tags-pill-input{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:38px;padding:6px 10px;background:#1a1a1a;border:1px solid #444;border-radius:6px;cursor:text;}
+    .cs-tags-pill-input{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:38px;padding:6px 10px;background:var(--tng-surface);border:1px solid #444;border-radius:6px;cursor:text;}
     .cs-tag-pill{display:inline-flex;align-items:center;gap:4px;background:#e8651a;color:#fff;border-radius:12px;padding:2px 10px;font-size:12px;}
     .cs-tag-pill button{background:none;border:none;color:#fff;cursor:pointer;padding:0;font-size:14px;line-height:1;opacity:.8;}.cs-tag-pill button:hover{opacity:1;}
     .cs-tags-input-wrapper{position:relative;flex:1;min-width:120px;}
     .cs-tags-search{width:100%;background:transparent;border:none;outline:none;color:#fff;font-size:13px;padding:2px 0;}
-    .cs-tags-dropdown{position:absolute;top:100%;left:0;right:0;z-index:9999;background:#222;border:1px solid #444;border-radius:6px;max-height:160px;overflow-y:auto;margin-top:4px;}
+    .cs-tags-dropdown{position:absolute;top:100%;left:0;right:0;z-index:9999;background:var(--tng-surface-2);border:1px solid #444;border-radius:6px;max-height:160px;overflow-y:auto;margin-top:4px;}
     .cs-tags-dd-item{padding:8px 12px;cursor:pointer;font-size:13px;color:#ddd;}.cs-tags-dd-item:hover{background:#333;}
     .cs-tags-dd-create{color:#e8651a;font-style:italic;}
     /* Add your custom styles here */
@@ -1311,7 +1311,7 @@
         overflow-y: auto;
         margin-bottom: 15px;
         padding: 5px;
-        border: 1px solid #555;
+        border: 1px solid var(--tng-text-5);
         border-radius: 4px;
     }
     
@@ -1465,11 +1465,11 @@
                             <div style="margin-top: 10px; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
                                 <div style="display: flex; align-items: center; justify-content: space-between;">
                                     <div>
-                                        <span style="color: #888; font-size: 0.85em;">
+                                        <span style="color: var(--tng-text-3); font-size: 0.85em;">
                                             Media Type: <strong style="color: #f4f4f4;">{{ config.get('media_type', 'movie')|capitalize }}</strong>
                                         </span>
                                         {% if filters %}
-                                            <div style="font-size: 0.8em; color: #aaa; margin-top: 4px;">
+                                            <div style="font-size: 0.8em; color: var(--tng-text-2); margin-top: 4px;">
                                                 {% set filter_count = filters|length %}
                                                 {{ filter_count }} filter{{ 's' if filter_count != 1 else '' }} configured
                                                 {% if filters.released_within %}
@@ -1522,7 +1522,7 @@
                                                 {% endif %}
                                             </div>
                                         {% else %}
-                                            <div style="font-size: 0.8em; color: #f59e0b; margin-top: 4px;">
+                                            <div style="font-size: 0.8em; color: var(--tng-yellow); margin-top: 4px;">
                                                 ⚠️ No filters configured
                                             </div>
                                         {% endif %}
@@ -2364,7 +2364,7 @@
                                  data-source-id="{{ source_id }}"
                                  style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">
                             </div>
-                            <p class="settings-description" id="overseerr-requesters-status-{{ source_id }}" style="margin-top:6px;font-style:italic;color:#888;">Loading users from Overseerr...</p>
+                            <p class="settings-description" id="overseerr-requesters-status-{{ source_id }}" style="margin-top:6px;font-style:italic;color:var(--tng-text-3);">Loading users from Overseerr...</p>
                             <p class="settings-description" style="margin-top:4px;">Select which Overseerr users' requests this source should process. <strong>All users (normal behavior)</strong> processes every request. Each user group with a different version preference should have its own content source.</p>
                         </div>
                         {% endif %}
@@ -2606,7 +2606,7 @@
                                     <div class="plex-collection-poster-picker" data-source-id="{{ source_id }}"
                                          style="display:flex; gap:10px; overflow-x:auto; padding:6px 2px 12px; scrollbar-width:thin; min-height:380px;">
                                         {# Designs 0-8 rendered by JS after previews load #}
-                                        <div class="poster-loading-placeholder" style="color:#888; font-size:0.85em; padding:8px;">Loading designs...</div>
+                                        <div class="poster-loading-placeholder" style="color:var(--tng-text-3); font-size:0.85em; padding:8px;">Loading designs...</div>
                                     </div>
                                     <input type="hidden"
                                            id="content-sources-{{ source_id }}-plex_collection-poster_design"
@@ -2627,11 +2627,11 @@
                                                data-key="{{ source_id }}.plex_collection.poster_accent"
                                                value="{{ plex_coll_config.get('poster_accent', '') }}"
                                                style="width:44px; height:36px; border:none; background:none; cursor:pointer; border-radius:6px;{% if not plex_coll_config.get('poster_accent') %} opacity:0.4;{% endif %}">
-                                        <span style="font-size:0.85em; color:#888;">{{ plex_coll_config.get('poster_accent', '') or 'Design default' }}</span>
+                                        <span style="font-size:0.85em; color:var(--tng-text-3);">{{ plex_coll_config.get('poster_accent', '') or 'Design default' }}</span>
                                         {% if plex_coll_config.get('poster_accent') %}
                                         <button type="button"
                                                 onclick="(function(){var inp=document.getElementById('content-sources-{{ source_id }}-plex_collection-poster_accent'); inp.value=''; inp.dispatchEvent(new Event('input',{bubbles:true})); inp.dispatchEvent(new Event('change',{bubbles:true})); inp.style.opacity='0.4'; inp.nextElementSibling.textContent='Design default'; this.style.display='none';}).call(this)"
-                                                style="font-size:0.75em; padding:3px 8px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#aaa; cursor:pointer;">
+                                                style="font-size:0.75em; padding:3px 8px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:var(--tng-text-2); cursor:pointer;">
                                             Use default
                                         </button>
                                         {% endif %}
@@ -2781,7 +2781,7 @@
                         </button>
                     </div>
                 </div>
-                <div class="settings-section-content" style="display: none; color: #aaa;">
+                <div class="settings-section-content" style="display: none; color: var(--tng-text-2);">
                     <p>This content source configuration is incomplete or invalid (missing 'type'). Please delete it or correct it manually in your settings file.</p>
                     <pre>{{ config | tojson(indent=2) }}</pre>
                 </div>
@@ -2790,10 +2790,10 @@
     {% endfor %}
 {# Virtual Folder Creator Modal #}
 <div id="cs-vf-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10000;align-items:center;justify-content:center;">
-    <div style="background:#1a1a1a;border:1px solid #444;border-radius:12px;padding:24px;width:min(460px,95vw);max-height:85vh;overflow-y:auto;">
+    <div style="background:var(--tng-surface);border:1px solid #444;border-radius:12px;padding:24px;width:min(460px,95vw);max-height:85vh;overflow-y:auto;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
             <h4 style="margin:0;color:#fff;font-size:16px;">Create cli_mount Virtual Folder</h4>
-            <button onclick="csVfClose()" style="background:none;border:none;color:#aaa;font-size:20px;cursor:pointer;">&times;</button>
+            <button onclick="csVfClose()" style="background:none;border:none;color:var(--tng-text-2);font-size:20px;cursor:pointer;">&times;</button>
         </div>
         <div class="vm-divider"></div>
 
@@ -2807,7 +2807,7 @@
 
         <div id="cs-vf-name-row" style="margin-top:12px;">
             <div class="section-label">Folder Name</div>
-            <input type="text" id="cs-vf-name" placeholder="e.g. SciFi" style="width:100%;padding:8px 10px;background:#111;color:#fff;border:1px solid #444;border-radius:6px;font-size:13px;margin-top:6px;box-sizing:border-box;">
+            <input type="text" id="cs-vf-name" placeholder="e.g. SciFi" style="width:100%;padding:8px 10px;background:var(--tng-bg);color:#fff;border:1px solid #444;border-radius:6px;font-size:13px;margin-top:6px;box-sizing:border-box;">
         </div>
 
         <div class="section-label" style="margin-top:16px;">Tags</div>

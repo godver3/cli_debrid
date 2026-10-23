@@ -12,17 +12,17 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
 
 /* ── Tangerine debug styles ── */
 #tngDebug {
-  --bg:#111;--surface:#1a1a1a;--surface2:#222;--surface3:#2a2a2a;
-  --border:#2d2d2d;--border2:#3d3d3d;
-  --accent:#e8601c;--accent-h:#f07030;
-  --text:#e0e0e0;--text2:#aaa;--text3:#555;
-  --green:#22c55e;--red:#ef4444;--blue:#3b82f6;--yellow:#f59e0b;
+  --bg:var(--tng-bg);--surface:var(--tng-surface);--surface2:var(--tng-surface-2);--surface3:var(--tng-surface-3);
+  --border:var(--tng-border);--border2:var(--tng-border-2);
+  --accent:var(--tng-accent);--accent-h:var(--tng-accent-hover);
+  --text:var(--tng-text);--text2:var(--tng-text-2);--text3:var(--tng-text-5);
+  --green:var(--tng-green);--red:var(--tng-red);--blue:var(--tng-blue);--yellow:var(--tng-yellow);
   --sans:'Inter',sans-serif;
   max-width:1300px;margin:0 auto;padding:1.25rem;font-family:var(--sans);font-size:13px;color:var(--text);
 }
 /* Page title */
 #tngDebug .tdb-title{font-size:20px;font-weight:700;border-left:3px solid var(--accent);padding-left:10px;margin-bottom:1.25rem;color:var(--text)}
-#tngDebug .tdb-warn{background:#1a1200;border:1px solid #7c5c00;border-radius:6px;padding:10px 14px;font-size:12px;color:#f59e0b;margin-bottom:1.25rem;display:flex;align-items:center;gap:8px}
+#tngDebug .tdb-warn{background:#1a1200;border:1px solid #7c5c00;border-radius:6px;padding:10px 14px;font-size:12px;color:var(--tng-yellow);margin-bottom:1.25rem;display:flex;align-items:center;gap:8px}
 
 /* Toolbar */
 #tngDebug .toolbar{display:flex;align-items:center;gap:10px;margin-bottom:1.25rem;flex-wrap:wrap}
@@ -313,7 +313,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
 #tngDebug select option{background:var(--surface2);color:var(--text)}
 
 /* Toast */
-#tngDebug-toast{position:fixed;bottom:1.25rem;right:1.25rem;background:var(--surface);border:1px solid var(--border2);border-radius:7px;padding:9px 14px;font-size:12px;color:var(--text);z-index:999;opacity:0;transform:translateY(6px);transition:all .2s;pointer-events:none;display:flex;align-items:center;gap:7px;--surface:#1a1a1a;--border2:#3d3d3d;--text:#e0e0e0}
+#tngDebug-toast{position:fixed;bottom:1.25rem;right:1.25rem;background:var(--surface);border:1px solid var(--border2);border-radius:7px;padding:9px 14px;font-size:12px;color:var(--text);z-index:999;opacity:0;transform:translateY(6px);transition:all .2s;pointer-events:none;display:flex;align-items:center;gap:7px;--surface:var(--tng-surface);--border2:var(--tng-border-2);--text:var(--tng-text)}
 #tngDebug-toast.show{opacity:1;transform:translateY(0)}
 #tngDebug-toast .toast-dot{width:6px;height:6px;border-radius:50%}
 
@@ -1012,7 +1012,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                 {% if nas_paths %}
                 <div class="form-group" style="margin-top: 10px;">
                     <label for="remove_dup_nas_filter">NAS / Network Filter:</label>
-                    <select id="remove_dup_nas_filter" name="nas_filter" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                    <select id="remove_dup_nas_filter" name="nas_filter" style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid #444; border-radius: 4px;">
                         <option value="all">All items (no NAS filter)</option>
                         <option value="exclude_nas">Exclude NAS items</option>
                         <option value="only_nas">Only NAS items</option>
@@ -1096,7 +1096,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                 </div>
                 <div class="form-group">
                     <label for="keep_action">Keep Action:</label>
-                    <select id="keep_action" name="keep_action" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                    <select id="keep_action" name="keep_action" style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid #444; border-radius: 4px;">
                         <option value="keep_collected" selected>Keep collected, delete blacklisted (for failed upgrades)</option>
                         <option value="keep_blacklisted">Keep blacklisted, delete collected (for blacklist bug)</option>
                         <option value="keep_collected_delete_ghostlisted">Keep collected, delete ghostlisted</option>
@@ -1107,7 +1107,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                 </div>
                 <div class="form-group">
                     <label for="version_match">Version Match:</label>
-                    <select id="version_match" name="version_match" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                    <select id="version_match" name="version_match" style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid #444; border-radius: 4px;">
                         <option value="all" selected>Delete all versions (any version)</option>
                         <option value="same">Delete only versions with same version field</option>
                     </select>
@@ -1116,15 +1116,15 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                     <label for="exclude_patterns">Exclude from deletion (optional):</label>
                     <input type="text" id="exclude_patterns" name="exclude_patterns"
                            placeholder="e.g., REMUX, IMAX, Director's Cut, FraMeSToR"
-                           style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
-                    <small style="color: #888; font-size: 0.85em; display: block; margin-top: 5px;">
+                           style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid #444; border-radius: 4px;">
+                    <small style="color: var(--tng-text-3); font-size: 0.85em; display: block; margin-top: 5px;">
                         Enter comma or pipe-separated patterns. Items with filenames containing any of these patterns will be protected from deletion.
                     </small>
                 </div>
                 {% if nas_paths %}
                 <div class="form-group">
                     <label for="upgrades_nas_filter">NAS / Network Filter:</label>
-                    <select id="upgrades_nas_filter" name="nas_filter" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                    <select id="upgrades_nas_filter" name="nas_filter" style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid #444; border-radius: 4px;">
                         <option value="all">All items (no NAS filter)</option>
                         <option value="exclude_nas">Exclude NAS items</option>
                         <option value="only_nas">Only NAS items</option>
@@ -1139,7 +1139,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                         <span id="upgrades-progress-message">Scanning for failed upgrades...</span>
                     </div>
                     <div style="margin-top: 10px;">
-                        <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+                        <div style="background: var(--tng-surface-3); border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
                             <div id="upgrades-progress-bar" style="background: #4ecdc4; height: 6px; width: 0%; transition: width 0.3s;"></div>
                         </div>
                         <div id="upgrades-elapsed-time" style="color: #95a5a6; font-size: 12px;">Elapsed: 0s</div>
@@ -1177,7 +1177,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                         <span id="episode-progress-message">Processing episodes...</span>
                     </div>
                     <div style="margin-top: 10px;">
-                        <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+                        <div style="background: var(--tng-surface-3); border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
                             <div id="episode-progress-bar" style="background: #4ecdc4; height: 6px; width: 100%; transition: width 0.3s;"></div>
                         </div>
                         <div id="episode-elapsed-time" style="color: #95a5a6; font-size: 12px;">Elapsed: 0s</div>
@@ -1448,13 +1448,13 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
 
                         {% if other_cache_files %}
                         <hr style="border-color: #444; margin: 12px 0;">
-                        <p style="font-size: 0.85em; color: #aaa; margin-bottom: 8px;">Other Cache Files:</p>
+                        <p style="font-size: 0.85em; color: var(--tng-text-2); margin-bottom: 8px;">Other Cache Files:</p>
                         {% for item in other_cache_files %}
                             <div class="cache-file-item" {% if not item.exists %}style="opacity: 0.5;"{% endif %}>
                                 <input type="checkbox" name="selected_files" value="{{ item.filename }}"
                                        id="other_cache_{{ loop.index }}" {% if not item.exists %}disabled{% endif %}>
                                 <label for="other_cache_{{ loop.index }}" title="{{ item.description }}">
-                                    {{ item.label }}{% if not item.exists %} <em style="color:#888;">(not found)</em>{% endif %}
+                                    {{ item.label }}{% if not item.exists %} <em style="color:var(--tng-text-3);">(not found)</em>{% endif %}
                                 </label>
                             </div>
                         {% endfor %}
@@ -1602,16 +1602,16 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
             <div class="form-group" style="margin-bottom:10px">
                 <label for="dcy-db-path">DB Path:</label>
                 <input type="text" id="dcy-db-path" placeholder="/cli_mount_data/db" style="width:300px;font-family:monospace;font-size:12px">
-                <span style="font-size:11px;color:#888;margin-left:6px">path to cli_mount's db/ folder inside container</span>
+                <span style="font-size:11px;color:var(--tng-text-3);margin-left:6px">path to cli_mount's db/ folder inside container</span>
             </div>
             <div class="form-group" style="margin-bottom:12px">
                 <label>
                     <input type="checkbox" id="dcy-dry-run" checked>
-                    <strong>Dry Run</strong> <span style="font-size:12px;color:#888">(scan only, no changes)</span>
+                    <strong>Dry Run</strong> <span style="font-size:12px;color:var(--tng-text-3)">(scan only, no changes)</span>
                 </label>
             </div>
             <button type="button" id="dcy-run-btn" onclick="dcyRunCleanup()">Run Cleanup</button>
-            <div id="dcy-status" style="margin-top:10px;padding:8px;background:#1a1a1a;border-radius:4px;display:none;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:120px;overflow-y:auto"></div>
+            <div id="dcy-status" style="margin-top:10px;padding:8px;background:var(--tng-surface);border-radius:4px;display:none;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:120px;overflow-y:auto"></div>
         </div>
 
         <div class="debug_item" id="backfill-nzb-names-card">
@@ -1620,17 +1620,17 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
             <div class="form-group" style="margin-bottom:10px">
                 <label>
                     <input type="checkbox" id="backfill-nzb-dry-run">
-                    <strong>Dry Run</strong> <span style="font-size:12px;color:#888">(preview only, no changes)</span>
+                    <strong>Dry Run</strong> <span style="font-size:12px;color:var(--tng-text-3)">(preview only, no changes)</span>
                 </label>
             </div>
             <div class="form-group" style="margin-bottom:10px">
                 <label>
                     <input type="checkbox" id="backfill-nzb-force">
-                    <strong>Force</strong> <span style="font-size:12px;color:#888">(re-process even if already named)</span>
+                    <strong>Force</strong> <span style="font-size:12px;color:var(--tng-text-3)">(re-process even if already named)</span>
                 </label>
             </div>
             <button type="button" id="backfill-nzb-run-btn" onclick="backfillNzbNamesRun()">Run Backfill</button>
-            <div id="backfill-nzb-status" style="margin-top:10px;padding:8px;background:#1a1a1a;border-radius:4px;display:none;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:120px;overflow-y:auto"></div>
+            <div id="backfill-nzb-status" style="margin-top:10px;padding:8px;background:var(--tng-surface);border-radius:4px;display:none;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:120px;overflow-y:auto"></div>
         </div>
 
         </div>
@@ -6163,7 +6163,7 @@ if (document.readyState === 'loading') {
 
     .episode-modal-content {
         position: relative;
-        background: #1a1a1a;
+        background: var(--tng-surface);
         border: 1px solid #333;
         border-radius: 8px;
         width: 90%;
@@ -6187,8 +6187,8 @@ if (document.readyState === 'loading') {
         margin: 0;
         font-size: 16px;
         font-weight: 700;
-        color: #e0e0e0;
-        border-left: 3px solid #e8601c;
+        color: var(--tng-text);
+        border-left: 3px solid var(--tng-accent);
         padding-left: 10px;
     }
 
@@ -6196,7 +6196,7 @@ if (document.readyState === 'loading') {
         background: none;
         border: none;
         font-size: 24px;
-        color: #aaa;
+        color: var(--tng-text-2);
         cursor: pointer;
         padding: 0;
         width: 28px;
@@ -6209,7 +6209,7 @@ if (document.readyState === 'loading') {
         transition: color .15s;
     }
 
-    .episode-modal-close:hover { color: #e0e0e0; }
+    .episode-modal-close:hover { color: var(--tng-text); }
 
     .episode-modal-body {
         padding: 18px;
@@ -6217,17 +6217,17 @@ if (document.readyState === 'loading') {
         flex: 1;
         font-family: 'Inter', system-ui, sans-serif;
         font-size: 13px;
-        color: #e0e0e0;
+        color: var(--tng-text);
     }
 
     .episode-modal-body::-webkit-scrollbar { width: 6px; }
-    .episode-modal-body::-webkit-scrollbar-track { background: #1a1a1a; }
-    .episode-modal-body::-webkit-scrollbar-thumb { background: #3d3d3d; border-radius: 3px; }
-    .episode-modal-body::-webkit-scrollbar-thumb:hover { background: #555; }
+    .episode-modal-body::-webkit-scrollbar-track { background: var(--tng-surface); }
+    .episode-modal-body::-webkit-scrollbar-thumb { background: var(--tng-border-2); border-radius: 3px; }
+    .episode-modal-body::-webkit-scrollbar-thumb:hover { background: var(--tng-text-5); }
 
     /* Results summary styling */
     .episode-results-summary {
-        background: #222;
+        background: var(--tng-surface-2);
         border: 1px solid #333;
         border-radius: 6px;
         padding: 14px 16px;
@@ -6236,7 +6236,7 @@ if (document.readyState === 'loading') {
 
     .episode-results-summary h4 {
         margin: 0 0 10px;
-        color: #e8601c;
+        color: var(--tng-accent);
         font-size: 13px;
         font-weight: 700;
         text-transform: uppercase;
@@ -6246,10 +6246,10 @@ if (document.readyState === 'loading') {
     .episode-results-summary p {
         margin: 5px 0;
         font-size: 13px;
-        color: #aaa;
+        color: var(--tng-text-2);
     }
 
-    .episode-results-summary p strong { color: #e0e0e0; }
+    .episode-results-summary p strong { color: var(--tng-text); }
 
     /* Table styling in modal */
     .episode-modal-body table {
@@ -6260,14 +6260,14 @@ if (document.readyState === 'loading') {
     }
 
     .episode-modal-body table th {
-        background: #222;
+        background: var(--tng-surface-2);
         padding: 8px 10px;
         text-align: left;
         font-size: 11px;
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: .04em;
-        color: #aaa;
+        color: var(--tng-text-2);
         border-bottom: 1px solid #333;
         position: sticky;
         top: -18px;
@@ -6277,8 +6277,8 @@ if (document.readyState === 'loading') {
 
     .episode-modal-body table td {
         padding: 8px 10px;
-        border-bottom: 1px solid #2a2a2a;
-        color: #e0e0e0;
+        border-bottom: 1px solid var(--tng-surface-3);
+        color: var(--tng-text);
         vertical-align: top;
     }
 
@@ -6296,12 +6296,12 @@ if (document.readyState === 'loading') {
         max-width: 350px;
         overflow: hidden;
         text-overflow: ellipsis;
-        color: #888;
+        color: var(--tng-text-3);
     }
 
     .episode-modal-body h4 {
         margin: 18px 0 10px;
-        color: #e8601c;
+        color: var(--tng-accent);
         font-size: 12px;
         font-weight: 700;
         text-transform: uppercase;
@@ -6309,7 +6309,7 @@ if (document.readyState === 'loading') {
     }
 
     .episode-modal-body .info-text {
-        color: #666;
+        color: var(--tng-text-4);
         font-size: 12px;
         margin-bottom: 10px;
     }
@@ -6352,36 +6352,36 @@ if (document.readyState === 'loading') {
 
 <!-- API Summary Modal -->
 <div id="api-summary-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;padding:1rem;padding-top:calc(1rem + 30px)">
-  <div style="width:100%;max-width:900px;max-height:90vh;background:#1a1a1a;border:1px solid #333;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+  <div style="width:100%;max-width:900px;max-height:90vh;background:var(--tng-surface);border:1px solid #333;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #333;flex-shrink:0">
-      <div style="font-size:15px;font-weight:700;color:#e0e0e0;border-left:3px solid #e8601c;padding-left:10px">API Summary</div>
+      <div style="font-size:15px;font-weight:700;color:var(--tng-text);border-left:3px solid var(--tng-accent);padding-left:10px">API Summary</div>
       <div style="display:flex;align-items:center;gap:10px">
-        <select id="api-summary-timeframe" style="background:#222;border:1px solid #3d3d3d;color:#e0e0e0;border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer">
+        <select id="api-summary-timeframe" style="background:var(--tng-surface-2);border:1px solid var(--tng-border-2);color:var(--tng-text);border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer">
           <option value="hour">By Hour</option>
           <option value="day" selected>By Day</option>
           <option value="month">By Month</option>
         </select>
-        <button id="api-summary-close" style="background:transparent;border:none;color:#aaa;font-size:20px;cursor:pointer;line-height:1">&times;</button>
+        <button id="api-summary-close" style="background:transparent;border:none;color:var(--tng-text-2);font-size:20px;cursor:pointer;line-height:1">&times;</button>
       </div>
     </div>
-    <div id="api-summary-modal-body" style="padding:18px;font-family:'Inter',sans-serif;font-size:13px;color:#e0e0e0;overflow-y:auto;flex:1"></div>
+    <div id="api-summary-modal-body" style="padding:18px;font-family:'Inter',sans-serif;font-size:13px;color:var(--tng-text);overflow-y:auto;flex:1"></div>
   </div>
 </div>
 
 <!-- Real Time API Modal -->
 <div id="realtime-api-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;padding:1rem;padding-top:calc(1rem + 30px)">
-  <div style="width:100%;max-width:1000px;max-height:90vh;background:#1a1a1a;border:1px solid #333;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+  <div style="width:100%;max-width:1000px;max-height:90vh;background:var(--tng-surface);border:1px solid #333;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #333;flex-shrink:0">
-      <div style="font-size:15px;font-weight:700;color:#e0e0e0;border-left:3px solid #e8601c;padding-left:10px">Real Time API Calls</div>
+      <div style="font-size:15px;font-weight:700;color:var(--tng-text);border-left:3px solid var(--tng-accent);padding-left:10px">Real Time API Calls</div>
       <div style="display:flex;align-items:center;gap:10px">
-        <select id="realtime-api-filter" style="background:#222;border:1px solid #3d3d3d;color:#e0e0e0;border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer">
+        <select id="realtime-api-filter" style="background:var(--tng-surface-2);border:1px solid var(--tng-border-2);color:var(--tng-text);border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer">
           <option value="">All Domains</option>
         </select>
-        <button id="realtime-api-refresh" style="background:#e8601c;color:#fff;border:none;border-radius:5px;padding:5px 12px;font-size:12px;cursor:pointer">Refresh</button>
-        <button id="realtime-api-close" style="background:transparent;border:none;color:#aaa;font-size:20px;cursor:pointer;line-height:1">&times;</button>
+        <button id="realtime-api-refresh" style="background:var(--tng-accent);color:#fff;border:none;border-radius:5px;padding:5px 12px;font-size:12px;cursor:pointer">Refresh</button>
+        <button id="realtime-api-close" style="background:transparent;border:none;color:var(--tng-text-2);font-size:20px;cursor:pointer;line-height:1">&times;</button>
       </div>
     </div>
-    <div id="realtime-api-modal-body" style="padding:18px;font-family:'Inter',sans-serif;font-size:13px;color:#e0e0e0;overflow-y:auto;flex:1"></div>
+    <div id="realtime-api-modal-body" style="padding:18px;font-family:'Inter',sans-serif;font-size:13px;color:var(--tng-text);overflow-y:auto;flex:1"></div>
   </div>
 </div>
 

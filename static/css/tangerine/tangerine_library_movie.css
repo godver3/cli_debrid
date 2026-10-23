@@ -201,7 +201,7 @@
     display: inline-block;
     padding: 0.125rem 0.5rem;
     background: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
+    color: var(--tng-red);
     border-radius: 0.25rem;
     font-size: 0.75rem;
     font-weight: 600;
@@ -215,7 +215,7 @@
 
 .status-badge.collected {
     background: rgba(34, 197, 94, 0.2);
-    color: #22c55e;
+    color: var(--tng-green);
 }
 
 .separator {
@@ -293,7 +293,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
 }
 
 .success-btn {
-    color: #22c55e;
+    color: var(--tng-green);
     border-color: rgba(34, 197, 94, 0.3);
 }
 
@@ -313,7 +313,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
 
 .danger-btn,
 .delete-video-btn {
-    color: #ef4444;
+    color: var(--tng-red);
     border-color: rgba(239, 68, 68, 0.3);
 }
 
@@ -932,11 +932,11 @@ ease;
 }
 
 .video-status-icon.collected {
-    color: #22c55e;
+    color: var(--tng-green);
 }
 
 .video-status-icon.unavailable {
-    color: #ef4444;
+    color: var(--tng-red);
     opacity: 0.5;
 }
 
@@ -980,7 +980,7 @@ ease;
     padding: 0.1rem 0.5rem 0.2rem 0.5rem;
     border-radius: 4px;
     background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+    color: var(--tng-red);
     border: 1px solid rgba(239, 68, 68, 0.3);
     white-space: nowrap;
     font-size: 0.75rem;
@@ -992,7 +992,7 @@ ease;
 .broken-icon {
     width: 16px;
     height: 16px;
-    color: #ef4444;
+    color: var(--tng-red);
     margin-left: auto;
     flex-shrink: 0;
     opacity: 0.9;
@@ -1481,9 +1481,9 @@ body.modal-open {
 }
 
 .version-modal-content {
-    background: #1a1a1a;
-    border: 1px solid #3d3d3d;
-    border-top: 3px solid #e8601c;
+    background: var(--tng-surface);
+    border: 1px solid var(--tng-border-2);
+    border-top: 3px solid var(--tng-accent);
     border-radius: 10px;
     width: 320px;
     max-width: calc(100vw - 32px);
@@ -1504,8 +1504,8 @@ body.modal-open {
 .dialog-title {
     font-size: 17px;
     font-weight: 700;
-    color: #e0e0e0;
-    border-left: 3px solid #e8601c;
+    color: var(--tng-text);
+    border-left: 3px solid var(--tng-accent);
     padding-left: 10px;
     margin-bottom: 14px;
     line-height: 1.3;
@@ -1515,7 +1515,7 @@ body.modal-open {
 /* subtitle pill: "Requesting: Title (Year)" */
 .dialog-sub {
     font-size: 11px;
-    color: #e8601c;
+    color: var(--tng-accent);
     font-weight: 500;
     margin-bottom: 14px;
     padding: 5px 9px;
@@ -1536,7 +1536,7 @@ body.modal-open {
     font-weight: 600;
     letter-spacing: 0.8px;
     text-transform: uppercase;
-    color: #555;
+    color: var(--tng-text-5);
     margin-bottom: 8px;
     font-family: 'Inter', system-ui, sans-serif;
 }
@@ -1549,7 +1549,7 @@ body.modal-open {
     padding: 9px 11px;
     border-radius: 6px;
     border: 1px solid #333;
-    background: #222;
+    background: var(--tng-surface-2);
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
     margin-bottom: 6px;
@@ -1559,8 +1559,8 @@ body.modal-open {
 .option-row:last-child { margin-bottom: 0; }
 
 .option-row:hover {
-    border-color: #3d3d3d;
-    background: #2a2a2a;
+    border-color: var(--tng-border-2);
+    background: var(--tng-surface-3);
 }
 
 .option-row.checked,
@@ -1574,7 +1574,7 @@ body.modal-open {
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    border: 1.5px solid #3d3d3d;
+    border: 1.5px solid var(--tng-border-2);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1583,8 +1583,8 @@ body.modal-open {
 }
 
 .option-row.selected .custom-radio {
-    border-color: #e8601c;
-    background: #e8601c;
+    border-color: var(--tng-accent);
+    background: var(--tng-accent);
 }
 
 .custom-radio-dot {
@@ -1603,7 +1603,7 @@ body.modal-open {
     width: 16px;
     height: 16px;
     border-radius: 4px;
-    border: 1.5px solid #3d3d3d;
+    border: 1.5px solid var(--tng-border-2);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1612,8 +1612,8 @@ body.modal-open {
 }
 
 .option-row.checked .custom-cb {
-    border-color: #e8601c;
-    background: #e8601c;
+    border-color: var(--tng-accent);
+    background: var(--tng-accent);
 }
 
 .custom-cb i {
@@ -1628,14 +1628,14 @@ body.modal-open {
 /* option label text */
 .option-label {
     font-size: 13px;
-    color: #aaa;
+    color: var(--tng-text-2);
     font-weight: 500;
     transition: color 0.15s;
     font-family: 'Inter', system-ui, sans-serif;
 }
 
 .option-row.checked .option-label,
-.option-row.selected .option-label { color: #e0e0e0; }
+.option-row.selected .option-label { color: var(--tng-text); }
 
 /* divider between sections */
 .vm-divider {
@@ -1689,26 +1689,26 @@ body.modal-open {
 .vm-btn i { font-size: 11px; }
 
 .vm-btn-accent {
-    background: #e8601c;
-    border: 1px solid #e8601c;
+    background: var(--tng-accent);
+    border: 1px solid var(--tng-accent);
     color: #fff;
 }
 
 .vm-btn-accent:hover {
-    background: #f07030;
-    border-color: #f07030;
+    background: var(--tng-accent-hover);
+    border-color: var(--tng-accent-hover);
 }
 
 .vm-btn-ghost {
-    background: #222;
-    border: 1px solid #3d3d3d;
-    color: #aaa;
+    background: var(--tng-surface-2);
+    border: 1px solid var(--tng-border-2);
+    color: var(--tng-text-2);
 }
 
 .vm-btn-ghost:hover {
-    background: #2a2a2a;
-    border-color: #555;
-    color: #e0e0e0;
+    background: var(--tng-surface-3);
+    border-color: var(--tng-text-5);
+    color: var(--tng-text);
 }
 
 /* Overlay Styles */
@@ -1730,7 +1730,7 @@ body.modal-open {
 
 .overlay-content {
     position: relative;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     /* padding: 0 20px 20px 20px; */
     border-radius: 8px;
     width: 85%;
@@ -1749,7 +1749,7 @@ body.modal-open {
 .overlay-content h3 {
     position: sticky;
     top: 0;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     margin-top: 0;
     padding-top: 10px;
     padding-bottom: 15px;
@@ -1798,7 +1798,7 @@ body.modal-open {
 .overlay-content thead {
     position: sticky;
     top: 55px;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     z-index: 2;
     border-bottom: 1px solid rgba(255, 255, 255, 0.2);
 }
@@ -1808,7 +1808,7 @@ body.modal-open {
     text-align: left;
     overflow: hidden;
     text-overflow: ellipsis;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
 }
 
 .overlay-content td {
@@ -2036,7 +2036,7 @@ tr.filtered-out-item:hover {
 
 .cache-status.not-cached {
     background: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
+    color: var(--tng-red);
 }
 
 .cache-status.not-checked {
@@ -2184,7 +2184,7 @@ td#scraper-source .source-badge {
 }
 
 .file-selection-popup {
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-radius: 12px;
     padding: 2rem;
     min-width: 500px;
@@ -2367,7 +2367,7 @@ button.btn.btn-sm.replace-movie-btn.replace-movie-pending:hover {
    ========================================================================== */
 
 body[data-theme="tangerine"] {
-    --tm-accent: #e8601c;
+    --tm-accent: var(--tng-accent);
     --tm-accent-muted: rgba(232, 96, 28, 0.15);
     --tm-accent-border: rgba(232, 96, 28, 0.3);
     --tm-surface-1: #161616;
@@ -2408,33 +2408,33 @@ body[data-theme="tangerine"] .movie-title {
     font-weight: 700;
     font-family: var(--tm-sans);
     letter-spacing: -0.01em;
-    color: #e0e0e0;
+    color: var(--tng-text);
     margin-bottom: 6px;
 }
 
 body[data-theme="tangerine"] .movie-meta {
     font-family: var(--tm-sans);
     font-size: 12px;
-    color: #aaa;
+    color: var(--tng-text-2);
     gap: 8px;
     margin-top: 8px;
     align-items: center;
 }
 body[data-theme="tangerine"] .movie-meta .separator {
-    color: #666;
+    color: var(--tng-text-4);
     opacity: 1;
     font-size: 11px;
 }
 
 body[data-theme="tangerine"] #movie-rating-text {
-    color: #f59e0b;
+    color: var(--tng-yellow);
     font-weight: 600;
     font-size: 12px;
 }
 
 body[data-theme="tangerine"] .movie-tagline {
     font-size: 12px;
-    color: #aaa;
+    color: var(--tng-text-2);
     font-style: italic;
     margin-top: 4px;
     margin-bottom: 4px;
@@ -2445,15 +2445,15 @@ body[data-theme="tangerine"] .details-row {
     font-size: 12px;
     gap: 16px;
     margin: 0.5rem 0 0.75rem;
-    color: #666;
+    color: var(--tng-text-4);
 }
 body[data-theme="tangerine"] .details-row .label {
-    color: #666;
+    color: var(--tng-text-4);
     font-weight: 400;
     opacity: 1;
 }
 body[data-theme="tangerine"] .details-row span:last-child {
-    color: #aaa;
+    color: var(--tng-text-2);
     font-weight: 500;
 }
 
@@ -2531,19 +2531,19 @@ body[data-theme="tangerine"] .file-tab-title {
 }
 
 body[data-theme="tangerine"] .file-tab.active .file-tab-title {
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 body[data-theme="tangerine"] .file-tab-stats {
     font-family: var(--tm-mono);
     font-size: 0.75rem;
     font-weight: 400;
-    color: #aaa;
+    color: var(--tng-text-2);
     letter-spacing: 0;
 }
 
 body[data-theme="tangerine"] .file-tab.active .file-tab-stats {
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 /* Movie file rows */
@@ -2596,7 +2596,7 @@ body[data-theme="tangerine"] .action-btn:not(.primary-btn):not(.danger-btn):not(
 }
 
 body[data-theme="tangerine"] .action-btn:not(.primary-btn):not(.danger-btn):not(.ghost-btn):not(.success-btn):hover {
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-color: rgba(255, 255, 255, 0.2);
 }
 
@@ -2621,7 +2621,7 @@ body[data-theme="tangerine"] .primary-btn {
 }
 
 body[data-theme="tangerine"] .primary-btn:hover {
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-color: rgba(255, 255, 255, 0.2);
 }
 
@@ -2641,7 +2641,7 @@ body[data-theme="tangerine"] .danger-btn {
 }
 
 body[data-theme="tangerine"] .danger-btn:hover {
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-color: rgba(255, 255, 255, 0.2);
 }
 
@@ -2703,7 +2703,7 @@ body[data-theme="tangerine"] .file-selection-item {
 }
 
 body[data-theme="tangerine"] .file-selection-item:hover {
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-color: #4a4a4a;
 }
 
@@ -2773,7 +2773,7 @@ body[data-theme="tangerine"] .file-selection-cancel {
 }
 
 body[data-theme="tangerine"] .file-selection-cancel:hover {
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-color: #4a4a4a;
     transform: none;
     box-shadow: none;
@@ -2786,8 +2786,8 @@ body[data-theme="tangerine"] .file-selection-delete {
 }
 
 body[data-theme="tangerine"] .file-selection-delete:hover {
-    background: #f07030;
-    border-color: #f07030;
+    background: var(--tng-accent-hover);
+    border-color: var(--tng-accent-hover);
     transform: none;
     box-shadow: none;
 }
@@ -2824,7 +2824,7 @@ body[data-theme="tangerine"] .movie-file-number {
     font-family: var(--tm-mono);
     font-size: 0.8rem;
     font-weight: 500;
-    color: #e8601c;
+    color: var(--tng-accent);
     opacity: 1;
 }
 
@@ -2833,20 +2833,20 @@ body[data-theme="tangerine"] .movie-file-title {
     font-family: var(--tm-sans);
     font-size: 0.875rem;
     font-weight: 500;
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 /* Movie file meta row — Inter, 12px, muted */
 body[data-theme="tangerine"] .movie-file-meta {
     font-family: var(--tm-sans);
     font-size: 12px;
-    color: #aaa;
+    color: var(--tng-text-2);
     opacity: 1;
     gap: 6px;
 }
 
 body[data-theme="tangerine"] .movie-file-meta span {
-    color: #aaa;
+    color: var(--tng-text-2);
 }
 
 /* Version / size badges — mono, dark surface */
@@ -2857,7 +2857,7 @@ body[data-theme="tangerine"] .movie-file-meta .file-version {
     font-variant: normal;
     background: var(--tm-surface-3);
     border: 1px solid var(--tm-border);
-    color: #aaa;
+    color: var(--tng-text-2);
     border-radius: 4px;
     padding: 1px 6px;
 }
@@ -2869,7 +2869,7 @@ body[data-theme="tangerine"] .movie-file-meta .episode-track-badge {
     font-weight: 500;
     background: var(--tm-surface-3);
     border: 1px solid var(--tm-border);
-    color: #aaa;
+    color: var(--tng-text-2);
     border-radius: 4px;
     padding: 1px 6px;
 }

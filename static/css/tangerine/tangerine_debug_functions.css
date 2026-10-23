@@ -14,7 +14,7 @@ body {
 
 .debug-container > h2 + p,
 .debug-container > h2 + .alert + p {
-    color: #666;
+    color: var(--tng-text-4);
     font-size: 0.95rem;
     margin-bottom: 2.5rem;
 }
@@ -33,7 +33,7 @@ body[data-theme="tangerine"] .debug-tab {
     width: 10%;
     background: none !important;
     border: none !important;
-    color: #666 !important;
+    color: var(--tng-text-4) !important;
     font-size: 0.9rem;
     font-weight: 600;
     cursor: pointer;
@@ -139,7 +139,7 @@ body[data-theme="tangerine"] .debug_items {
 /* Description text */
 .debug_item .description,
 .debug_item > p {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.875rem;
     line-height: 1.6;
     margin-bottom: 1.25rem;
@@ -161,7 +161,7 @@ body[data-theme="tangerine"] .debug_items {
     display: block;
     font-size: 0.875rem;
     font-weight: 600;
-    color: #888;
+    color: var(--tng-text-3);
     margin-bottom: 0.5rem;
 }
 
@@ -192,7 +192,7 @@ body[data-theme="tangerine"] .debug_items {
 }
 
 .form-input::placeholder {
-    color: #555;
+    color: var(--tng-text-5);
 }
 
 /* Checkboxes */
@@ -212,7 +212,7 @@ body[data-theme="tangerine"] .debug_items {
 }
 
 .checkbox-group label {
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-size: 0.9rem;
     font-weight: 500;
     cursor: pointer;
@@ -231,7 +231,7 @@ body[data-theme="tangerine"] .debug_items {
 #cleanup-upgrades-form .form-group label {
     display: flex;
     align-items: center;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-size: 0.9rem;
     font-weight: 500;
     cursor: pointer;
@@ -316,7 +316,7 @@ body[data-theme="tangerine"] .debug_items {
 .empty-state {
     text-align: center;
     padding: 2rem;
-    color: #555;
+    color: var(--tng-text-5);
     font-size: 0.9rem;
     background: rgba(255, 255, 255, 0.02);
     border: 1px solid rgba(255, 255, 255, 0.06);
@@ -341,7 +341,7 @@ body[data-theme="tangerine"] .debug_items {
 
 .rate-limit-domain {
     font-size: 0.875rem;
-    color: #888;
+    color: var(--tng-text-3);
     margin-bottom: 0.5rem;
     font-weight: 600;
 }
@@ -354,7 +354,7 @@ body[data-theme="tangerine"] .debug_items {
 }
 
 .rate-limit-label {
-    color: #666;
+    color: var(--tng-text-4);
 }
 
 .rate-limit-value {
@@ -392,7 +392,7 @@ body[data-theme="tangerine"] .debug_items {
 
 .queue-item label {
     margin-left: 5px;
-    color: #e0e0e0;
+    color: var(--tng-text);
     cursor: pointer;
     margin-bottom: 0;
 }
@@ -422,7 +422,7 @@ body[data-theme="tangerine"] .debug_items {
 
 .stats-label {
     font-size: 0.875rem;
-    color: #888;
+    color: var(--tng-text-3);
     font-weight: 600;
 }
 
@@ -454,7 +454,7 @@ body[data-theme="tangerine"] .debug_items {
     padding: 0.75rem 1rem;
     text-align: left;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 .verification-table th {
@@ -510,7 +510,7 @@ body[data-theme="tangerine"] .debug_items {
     padding: 1rem;
     border-radius: 10px;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 .token-validity {
@@ -654,19 +654,19 @@ body[data-theme="tangerine"] .debug_items {
 }
 
 .toast.success {
-    background: #1a1a1a;
+    background: var(--tng-surface);
 }
 
 .toast.error {
-    background: #1a1a1a;
+    background: var(--tng-surface);
 }
 
 .toast.info {
-    background: #1a1a1a;
+    background: var(--tng-surface);
 }
 
 .toast.warning {
-    background: #1a1a1a;
+    background: var(--tng-surface);
 }
 
 /* Plex Labels Help Button */

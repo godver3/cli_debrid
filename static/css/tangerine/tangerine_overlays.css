@@ -6,25 +6,25 @@
 
 /* Design tokens (same as tangerine_mobile_nav.css) */
 body[data-theme="tangerine"] {
-    --ov-bg:      #111;
+    --ov-bg:      var(--tng-bg);
     --ov-surf:    #161616;
     --ov-surf2:   #1e1e1e;
     --ov-surf3:   #242424;
     --ov-border:  #252525;
     --ov-border2: #333;
-    --ov-accent:  #e8601c;
+    --ov-accent:  var(--tng-accent);
     --ov-accent-d:#e8601c22;
     --ov-accent-b:#e8601c44;
-    --ov-green:   #22c55e;
+    --ov-green:   var(--tng-green);
     --ov-green-d: #22c55e18;
     --ov-green-b: #22c55e33;
-    --ov-red:     #ef4444;
+    --ov-red:     var(--tng-red);
     --ov-red-d:   #ef444418;
     --ov-red-b:   #ef444433;
-    --ov-blue:    #3b82f6;
-    --ov-yellow:  #f59e0b;
+    --ov-blue:    var(--tng-blue);
+    --ov-yellow:  var(--tng-yellow);
     --ov-text:    #f0f0f0;
-    --ov-text2:   #888;
+    --ov-text2:   var(--tng-text-3);
     --ov-text3:   #444;
     --ov-sans:    'Inter', system-ui, sans-serif;
     --ov-mono:    'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
@@ -491,9 +491,9 @@ body[data-theme="tangerine"] .overlay-status {
     z-index: 10 !important;
     box-shadow: 0 2px 8px #00000066 !important;
 }
-body[data-theme="tangerine"] .status-applied    { background: #22c55e !important; color: #fff !important; }
-body[data-theme="tangerine"] .status-pending    { background: #f59e0b !important; color: #fff !important; }
-body[data-theme="tangerine"] .status-analyzing  { background: #3b82f6 !important; color: #fff !important; }
+body[data-theme="tangerine"] .status-applied    { background: var(--tng-green) !important; color: #fff !important; }
+body[data-theme="tangerine"] .status-pending    { background: var(--tng-yellow) !important; color: #fff !important; }
+body[data-theme="tangerine"] .status-analyzing  { background: var(--tng-blue) !important; color: #fff !important; }
 body[data-theme="tangerine"] .status-failed     { background: var(--ov-red) !important; color: #fff !important; }
 body[data-theme="tangerine"] .status-not-started{ background: #475569 !important; color: #fff !important; }
 body[data-theme="tangerine"] .status-removed    { background: #475569 !important; color: #fff !important; }
@@ -604,7 +604,7 @@ body[data-theme="tangerine"] .layout-card {
     backdrop-filter: none !important;
 }
 body[data-theme="tangerine"] .layout-card:hover {
-    border-color: #555 !important;
+    border-color: var(--tng-text-5) !important;
 }
 body[data-theme="tangerine"] .layout-card.active-layout {
     border-color: #e8601c88 !important;
@@ -643,8 +643,8 @@ body[data-theme="tangerine"] .badge-active {
     border: 1px solid rgba(74,222,128,.5) !important;
 }
 body[data-theme="tangerine"] .badge-inactive {
-    background: #2a2a2a !important;
-    color: #666 !important;
+    background: var(--tng-surface-3) !important;
+    color: var(--tng-text-4) !important;
     border: 1px solid #3a3a3a !important;
 }
 body[data-theme="tangerine"] .layout-meta {
@@ -818,7 +818,7 @@ body[data-theme="tangerine"] .poster-picker-apply-btn {
     font-size: 12px !important;
 }
 body[data-theme="tangerine"] .poster-picker-apply-btn:hover {
-    background: #f07030 !important;
+    background: var(--tng-accent-hover) !important;
 }
 body[data-theme="tangerine"] .poster-picker-apply-btn:disabled {
     background: var(--ov-surf3) !important;
@@ -889,7 +889,7 @@ body[data-theme="tangerine"] .back-link {
     gap: 5px !important;
     text-decoration: none !important;
 }
-body[data-theme="tangerine"] .back-link:hover { color: #f07030 !important; }
+body[data-theme="tangerine"] .back-link:hover { color: var(--tng-accent-hover) !important; }
 
 body[data-theme="tangerine"] .category-tabs {
     display: flex !important;

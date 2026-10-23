@@ -33,7 +33,7 @@
 
 .overlay-settings-modal-content {
     position: relative;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     border-radius: 16px;
     border: 2px solid rgba(225, 124, 82, 0.2);
     width: 90%;
@@ -127,7 +127,7 @@
 
 .overlay-setting-description {
     font-size: 0.85rem;
-    color: #aaa;
+    color: var(--tng-text-2);
     line-height: 1.5;
     margin: 8px 0;
 }
@@ -135,7 +135,7 @@
 .overlay-setting-input {
     width: 100%;
     padding: 10px 14px;
-    background-color: #2a2a2a;
+    background-color: var(--tng-surface-3);
     border: 2px solid rgba(225, 124, 82, 0.3);
     border-radius: 12px;
     color: #fff;
@@ -152,7 +152,7 @@
 }
 
 .overlay-setting-input::placeholder {
-    color: #555;
+    color: var(--tng-text-5);
 }
 
 .overlay-setting-checkbox {
@@ -219,7 +219,7 @@
 }
 
 .overlay-settings-modal-body::-webkit-scrollbar-track {
-    background: #1a1a1a;
+    background: var(--tng-surface);
     border-radius: 4px;
 }
 
@@ -375,7 +375,7 @@
 .poster-review-content {
     position: relative !important;
     z-index: 1 !important;
-    background: #1a1a1a !important;
+    background: var(--tng-surface) !important;
     border: 2px solid rgba(225, 124, 82, 0.2) !important;
     width: 95vw !important;
     max-width: 1200px !important;
@@ -454,7 +454,7 @@
     border-radius: 8px !important;
     border: 1px solid rgba(255,255,255,0.1) !important;
     background: rgba(0,0,0,0.4) !important;
-    color: #e0e0e0 !important;
+    color: var(--tng-text) !important;
     font-size: 13px !important;
 }
 
@@ -471,7 +471,7 @@
     border-radius: 8px !important;
     border: 1px solid rgba(255,255,255,0.12) !important;
     background: rgba(255,255,255,0.07) !important;
-    color: #e0e0e0 !important;
+    color: var(--tng-text) !important;
     cursor: pointer !important;
     box-shadow: none !important;
     width: auto !important;
@@ -488,7 +488,7 @@
 }
 
 .poster-review-sel-count {
-    color: #888 !important;
+    color: var(--tng-text-3) !important;
     font-size: 12px !important;
     white-space: nowrap !important;
 }
@@ -532,7 +532,7 @@
     justify-content: center !important;
     background: rgba(255,255,255,0.05) !important;
     font-size: 10px !important;
-    color: #666 !important;
+    color: var(--tng-text-4) !important;
 }
 
 .poster-review-info {
@@ -544,7 +544,7 @@
     white-space: nowrap !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
-    color: #e0e0e0 !important;
+    color: var(--tng-text) !important;
 }
 
 .poster-review-footer {
@@ -558,7 +558,7 @@
 }
 
 .poster-review-total-count {
-    color: #888 !important;
+    color: var(--tng-text-3) !important;
     font-size: 13px !important;
 }
 
@@ -568,7 +568,7 @@
     border-radius: 10px !important;
     border: 1px solid rgba(255,255,255,0.12) !important;
     background: rgba(255,255,255,0.07) !important;
-    color: #e0e0e0 !important;
+    color: var(--tng-text) !important;
     cursor: pointer !important;
     font-size: 13px !important;
     box-shadow: none !important;

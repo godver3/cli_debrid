@@ -3,7 +3,7 @@
     cursor: pointer;
     border-radius: 12px;
     overflow: hidden;
-    background: #1a1a1a;
+    background: var(--tng-surface);
     display: flex;
     flex-direction: column;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
@@ -155,7 +155,7 @@
 
 .modal-content {
     position: relative;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     margin: 10% auto;
     padding: 24px;
     width: 90%;

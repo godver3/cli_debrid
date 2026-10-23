@@ -729,7 +729,7 @@
                         <input type="checkbox" id="merge-with-adaptive" name="merge_with_adaptive">
                         <span>Merge with Adaptive List (also include TMDB Discover results)</span>
                     </label>
-                    <small style="color: #888; font-size: 0.85em; display: block; margin-top: 4px;">
+                    <small style="color: var(--tng-text-3); font-size: 0.85em; display: block; margin-top: 4px;">
                         By default, selecting a list here replaces the Adaptive List's date-based Discover results. Check this to combine both.
                     </small>
                 </div>
@@ -780,7 +780,7 @@
                 <div class="filter-group">
                     <label class="filter-label">Title Filter (Client-Side)</label>
                     <input type="text" id="title-filter" class="filter-input" placeholder="Enter text or regex pattern..." autocomplete="off">
-                    <small style="color: #888; font-size: 0.85em; display: block; margin-top: 4px;">
+                    <small style="color: var(--tng-text-3); font-size: 0.85em; display: block; margin-top: 4px;">
                         Supports plain text or regex (e.g., /pattern/i)
                     </small>
                 </div>
@@ -1100,13 +1100,13 @@
                 <div class="category-grid" id="rec-shows-grid"></div>
             </div>
             <!-- No recommendation provider message -->
-            <div id="rec-no-provider" style="display:none; text-align:center; padding:40px; color:#888;">
+            <div id="rec-no-provider" style="display:none; text-align:center; padding:40px; color:var(--tng-text-3);">
                 <p>Recommendations require an authenticated Trakt account or a configured Scrob connection.</p>
                 <p>Connect either one—or both—in Settings → Additional Settings. No content-source entry is required.</p>
                 <p>For Scrob, customize Favourite Movie Genres and/or Favourite Show Genres in your profile. Content Language and Disliked Genres further refine the results.</p>
                 <p>To exclude your existing Plex library and watched titles, connect Plex under Scrob → Connections → Media Players, enable Plex → Scrob Collection Status and Watched Status, then run a manual pull or enable automatic pulls. Playback Events and the Plex webhook are optional and only needed for real-time activity.</p>
             </div>
-            <div id="rec-no-results" style="display:none; text-align:center; padding:40px; color:#888;">
+            <div id="rec-no-results" style="display:none; text-align:center; padding:40px; color:var(--tng-text-3);">
                 <p>No personalized recommendations are available yet.</p>
                 <p>For Scrob, confirm the connection and customize Favourite Movie Genres and/or Favourite Show Genres in your profile. Content Language and Disliked Genres further refine the results.</p>
                 <p>To exclude your existing Plex library and watched titles, connect Plex under Scrob → Connections → Media Players, enable Plex → Scrob Collection Status and Watched Status, then run a manual pull or enable automatic pulls. Playback Events and the Plex webhook are optional and only needed for real-time activity.</p>

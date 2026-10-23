@@ -17,7 +17,7 @@ input, textarea, [contenteditable="true"] {
 }
 
 ::-webkit-scrollbar-track {
-    background: #1a1a1a;
+    background: var(--tng-surface);
     border-left: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -34,7 +34,7 @@ input, textarea, [contenteditable="true"] {
 /* For Firefox */
 * {
     scrollbar-width: auto;
-    scrollbar-color: rgba(255, 107, 53, 0.3) #1a1a1a;
+    scrollbar-color: rgba(255, 107, 53, 0.3) var(--tng-surface);
 }
 
 /* Global Input Field Styling */
@@ -54,7 +54,7 @@ textarea {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-size: 0.95rem;
     transition: all 0.3s ease;
     caret-color: white;
@@ -66,7 +66,7 @@ select {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-size: 0.95rem;
     transition: all 0.3s ease;
 }
@@ -125,8 +125,8 @@ select:hover {
 
 /* Dropdown menu background */
 select option {
-    background-color: #1a1a1a;
-    color: #e0e0e0;
+    background-color: var(--tng-surface);
+    color: var(--tng-text);
     padding: 0.5rem 1rem;
 }
 
@@ -209,7 +209,7 @@ body > h2,
     top: 0;
     bottom: 0;
     width: 4px;
-    border-left: 3px solid #e8601c;
+    border-left: 3px solid var(--tng-accent);
     padding-left: 10px;
 }
 
@@ -222,8 +222,8 @@ body > h2,
 body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     line-height: 1.6;
-    color: #e0e0e0;
-    background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%) fixed;
+    color: var(--tng-text);
+    background: linear-gradient(135deg, #0a0a0a 0%, var(--tng-surface) 100%) fixed;
     background-color: #0a0a0a;
     margin: 0;
     padding-top: 50px;
@@ -337,7 +337,7 @@ nav {
     align-items: center;
     gap: 0.5rem;
     padding: 1rem 1.5rem;
-    color: #e0e0e0;
+    color: var(--tng-text);
     text-decoration: none;
     font-weight: 600;
     font-size: 0.95rem;
@@ -365,7 +365,7 @@ nav {
     top: 100%;
     left: 0;
     min-width: 220px;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     backdrop-filter: blur(20px);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
@@ -395,7 +395,7 @@ nav {
     align-items: center;
     gap: 0.75rem;
     padding: 0.875rem 1.25rem;
-    color: #e0e0e0;
+    color: var(--tng-text);
     text-decoration: none;
     font-size: 0.9rem;
     font-weight: 500;
@@ -478,7 +478,7 @@ nav ul li a:hover::after {
 
 .version-info {
     font-size: 0.8em;
-    color: #888;
+    color: var(--tng-text-3);
     text-decoration: none; /* Remove underline for link */
 }
 
@@ -533,7 +533,7 @@ table {
     width: 100%;
     border-collapse: collapse;
     background-color: rgba(255, 255, 255, 0.02);
-    color: #e0e0e0;
+    color: var(--tng-text);
     border-radius: 12px;
     /* overflow: hidden; */
     border: 1px solid rgba(255, 255, 255, 0.05);
@@ -551,7 +551,7 @@ th {
     text-transform: uppercase;
     font-size: 0.85em;
     letter-spacing: 0.05em;
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 tr:nth-child(even) {
@@ -618,7 +618,7 @@ tr:hover {
     width: 100%;
     height: 150px;
     background-color: rgba(255, 255, 255, 0.05);
-    color: #e0e0e0;
+    color: var(--tng-text);
     border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -674,7 +674,7 @@ tr:hover {
     border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.05);
     background-color: rgba(255, 255, 255, 0.03);
-    color: #e0e0e0;
+    color: var(--tng-text);
     transition: all 0.2s ease;
 }
 
@@ -714,7 +714,7 @@ tr:hover {
 }
 
 .pagination a {
-    color: #e0e0e0;
+    color: var(--tng-text);
     padding: 8px 16px;
     text-decoration: none;
     transition: all 0.2s ease;
@@ -811,8 +811,8 @@ tr:hover {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        background-color: #1a1a1a;
-        color: #e0e0e0;
+        background-color: var(--tng-surface);
+        color: var(--tng-text);
         font-weight: 500;
         transition: all 0.3s ease;
         height: auto;
@@ -828,7 +828,7 @@ tr:hover {
     }
 
     .menu-group .group-title.active {
-        background-color: #1a1a1a;
+        background-color: var(--tng-surface);
         color: #e17c52;
     }
 
@@ -900,7 +900,7 @@ tr:hover {
         display: flex;
         align-items: center;
         gap: 0.75rem;
-        color: #e0e0e0;
+        color: var(--tng-text);
         transition: all 0.3s ease;
         font-size: 0.9rem;
         font-weight: 500;
@@ -1227,7 +1227,7 @@ tr:hover {
     }
 
     #releaseNotesButton:hover {
-        color: #e0e0e0;
+        color: var(--tng-text);
     }
 
     /* Logout button - red */
@@ -1288,7 +1288,7 @@ tr:hover {
         font-size: 12px;
         font-weight: 600;
         white-space: nowrap;
-        color: #e0e0e0;
+        color: var(--tng-text);
     }
 
     /* Hide button text for release notes button */
@@ -1390,7 +1390,7 @@ body[data-is-onboarding="true"] .navMenu {
 }
 
 .btn-secondary {
-    color: #e0e0e0;
+    color: var(--tng-text);
     background-color: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
 }
@@ -1422,7 +1422,7 @@ main {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     padding: 30px;
     border-radius: 12px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
@@ -1471,7 +1471,7 @@ main {
 .release-notes-close {
     background: none;
     border: none;
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 1.8em;
     cursor: pointer;
     padding: 5px;
@@ -1483,7 +1483,7 @@ main {
 }
 
 .release-notes-content {
-    color: #e0e0e0;
+    color: var(--tng-text);
     line-height: 1.8;
     overflow-y: auto;
     flex: 1;
@@ -1501,7 +1501,7 @@ main {
 }
 
 .release-notes-content h3 {
-    color: #e8601c !important;
+    color: var(--tng-accent) !important;
     font-size: 1em;
     font-weight: normal;
     margin: 5px 0 0 0;
@@ -1515,7 +1515,7 @@ main {
 }
 
 .release-notes-date {
-    color: #666;
+    color: var(--tng-text-4);
     font-size: 0.9em;
     margin-top: 20px;
     text-align: right;
@@ -1537,7 +1537,7 @@ main {
 }
 
 .release-notes-content::-webkit-scrollbar-thumb:hover {
-    background: #555;
+    background: var(--tng-text-5);
 }
 
 /* Add task monitor styles */
@@ -1573,7 +1573,7 @@ main {
 .task-monitor-dropdown {
     position: relative;
     top: 0;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     border-radius: 12px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     width: 300px;
@@ -1627,8 +1627,8 @@ main {
     position: fixed;
     top: 50px;
     right: calc(45px + env(safe-area-inset-right, 0px));
-    background-color: #1a1a1a;
-    color: #888;
+    background-color: var(--tng-surface);
+    color: var(--tng-text-3);
     border: none;
     padding: 8px;
     border-radius: 0 0 4px 4px;
@@ -1646,8 +1646,8 @@ main {
     position: fixed;
     top: 50px;
     right: calc(45px + 28px + 8px + env(safe-area-inset-right, 0px));
-    background-color: #1a1a1a;
-    color: #888;
+    background-color: var(--tng-surface);
+    color: var(--tng-text-3);
     border: none;
     padding: 8px;
     border-radius: 0 0 4px 4px;
@@ -1661,7 +1661,7 @@ main {
 }
 
 .task-monitor-toggle:hover {
-    color: #e0e0e0;
+    color: var(--tng-text);
     background-color: rgba(255, 255, 255, 0.03);
 }
 
@@ -1693,12 +1693,12 @@ main {
 }
 
 .current-task-display:hover {
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
 }
 
 .current-task-name {
     font-weight: 600;
-    color: #e0e0e0;
+    color: var(--tng-text);
     margin-right: 10px;
 }
 
@@ -1715,13 +1715,13 @@ main {
     border-bottom: 1px solid #333;
     position: sticky;
     top: 0;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     z-index: 1;
 }
 
 .task-monitor-title {
     font-weight: 600;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-size: 1.1em;
 }
 
@@ -1729,7 +1729,7 @@ main {
     display: none;
     background: none;
     border: none;
-    color: #888;
+    color: var(--tng-text-3);
     cursor: pointer;
     padding: 8px;
     border-radius: 10px;
@@ -1737,7 +1737,7 @@ main {
 }
 
 .task-monitor-refresh:hover {
-    color: #e0e0e0;
+    color: var(--tng-text);
     background-color: rgba(255, 255, 255, 0.05);
 }
 
@@ -1761,14 +1761,14 @@ main {
 
 .task-name {
     font-weight: 500;
-    color: #e0e0e0;
+    color: var(--tng-text);
     margin-bottom: 5px;
 }
 
 .task-timing {
     display: flex;
     justify-content: space-between;
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.9em;
 }
 
@@ -1782,7 +1782,7 @@ main {
 .no-tasks {
     padding: 20px;
     text-align: center;
-    color: #888;
+    color: var(--tng-text-3);
     font-style: italic;
 }
 
@@ -1795,7 +1795,7 @@ main {
 .loading {
     padding: 20px;
     text-align: center;
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 /* ── Global Loading Overlay (loading.js) ── */
@@ -1847,7 +1847,7 @@ main {
     margin-bottom: 0.6rem;
 }
 #loading .loading-spin-icon {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 1.1rem;
     flex-shrink: 0;
 }
@@ -1859,7 +1859,7 @@ main {
 }
 #loading .loading-details {
     font-size: 0.82rem;
-    color: #888;
+    color: var(--tng-text-3);
     margin-left: 1.95rem;
     line-height: 1.4;
     white-space: pre-wrap;
@@ -1900,18 +1900,18 @@ main {
 }
 
 .task-monitor-dropdown::-webkit-scrollbar-track {
-    background: #1a1a1a;
+    background: var(--tng-surface);
     border-radius: 12px;
 }
 
 .task-monitor-dropdown::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.05);
     border-radius: 12px;
-    border: 2px solid #1a1a1a;
+    border: 2px solid var(--tng-surface);
 }
 
 .task-monitor-dropdown::-webkit-scrollbar-thumb:hover {
-    background: #555;
+    background: var(--tng-text-5);
 }
 
 /* Remove the task monitor button from the header controls */
@@ -2107,7 +2107,7 @@ body.modal-open {
     border: none;
     font-size: 28px;
     font-weight: bold;
-    color: #888;
+    color: var(--tng-text-3);
     cursor: pointer;
     padding: 0 5px;
     line-height: 1;
@@ -2170,7 +2170,7 @@ body.modal-open {
 
 #help-modal-body pre code {
      display: block;
-     background-color: #111;
+     background-color: var(--tng-bg);
      padding: 10px;
      border-radius: 10px;
      overflow-x: auto;
@@ -2311,7 +2311,7 @@ body.modal-open {
 .task-list-header {
     padding: 8px 15px;
     font-weight: bold;
-    color: #888; /* Lighter gray */
+    color: var(--tng-text-3); /* Lighter gray */
     background-color: rgba(255, 255, 255, 0.03); /* Slightly different background */
     border-bottom: 1px solid #333;
     font-size: 0.9em;
@@ -2351,7 +2351,7 @@ body.modal-open {
 
 .calendar-day-group h2 {
     font-size: 1.5em; /* Larger date heading */
-    color: #e0e0e0;
+    color: var(--tng-text);
     margin-bottom: 15px;
     padding-bottom: 10px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
@@ -2369,7 +2369,7 @@ body.modal-open {
     margin-bottom: 8px;
     background-color: rgba(255, 255, 255, 0.05);
     border-radius: 10px;
-    border-left: 5px solid #555; /* Default border color */
+    border-left: 5px solid var(--tng-text-5); /* Default border color */
     transition: background-color 0.2s ease;
 }
 
@@ -2384,7 +2384,7 @@ body.modal-open {
 .event-time {
     flex-basis: 100px; /* Fixed width for time */
     font-size: 0.9em;
-    color: #888;
+    color: var(--tng-text-3);
     text-align: right;
     margin-right: 15px;
     font-weight: bold;
@@ -2392,7 +2392,7 @@ body.modal-open {
 
 .event-time .all-day-indicator {
     font-style: italic;
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 .event-details {
@@ -2404,7 +2404,7 @@ body.modal-open {
 .event-title {
     font-size: 1.1em;
     font-weight: bold;
-    color: #e0e0e0;
+    color: var(--tng-text);
     margin-bottom: 3px;
 }
 
@@ -2442,11 +2442,11 @@ body.modal-open {
 .calendar-event.status-collected .event-title,
 .calendar-event.status-checking_upgrade .event-title {
     text-decoration: line-through;
-    color: #888;
+    color: var(--tng-text-3);
 }
 .calendar-event.status-collected .event-category,
 .calendar-event.status-checking_upgrade .event-category {
-    color: #666;
+    color: var(--tng-text-4);
 }
 
 .calendar-event.status-collected {
@@ -2525,7 +2525,7 @@ body.modal-open {
 
 .calendar-nav button { /* Basic styling for prev/next buttons if you add them */
     background-color: rgba(255, 255, 255, 0.05);
-    color: #e0e0e0;
+    color: var(--tng-text);
     border: 1px solid rgba(255, 255, 255, 0.15);
     padding: 5px 10px;
     margin: 0 5px;
@@ -2543,7 +2543,7 @@ body.modal-open {
 }
 
 .calendar-grid th { /* Day names: Mon, Tue, etc. */
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     color: #ccc;
     font-weight: 600;
     text-align: center;
@@ -2565,7 +2565,7 @@ body.modal-open {
 
 .calendar-grid td .day-number {
     font-size: 0.85em;
-    color: #888;
+    color: var(--tng-text-3);
     position: absolute;
     top: 4px;
     right: 4px;
@@ -2579,7 +2579,7 @@ body.modal-open {
 
 .calendar-grid td.is-today .day-number {
     background: linear-gradient(135deg, #e17c52 0%, #f7931e 100%);
-    color: #1a1a1a;
+    color: var(--tng-surface);
     /* padding: 0px 7px; */ /* Removed asymmetric padding */
     border-radius: 50%;
     font-weight: bold;
@@ -2595,10 +2595,10 @@ body.modal-open {
 }
 
 .calendar-grid td.other-month {
-    background-color: #222; /* Darker for days not in the current month */
+    background-color: var(--tng-surface-2); /* Darker for days not in the current month */
 }
 .calendar-grid td.other-month .day-number {
-    color: #666;
+    color: var(--tng-text-4);
 }
 .calendar-grid td.other-month .grid-event-list {
     display: none; /* Hide events for other months in grid */
@@ -2615,8 +2615,8 @@ body.modal-open {
 /* Slim scrollbar for grid event list */
 .grid-event-list::-webkit-scrollbar { width: 4px; }
 .grid-event-list::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.4); border-radius: 2px; }
-.grid-event-list::-webkit-scrollbar-thumb { background: #555; border-radius: 2px; }
-.grid-event-list::-webkit-scrollbar-thumb:hover { background: #666; }
+.grid-event-list::-webkit-scrollbar-thumb { background: var(--tng-text-5); border-radius: 2px; }
+.grid-event-list::-webkit-scrollbar-thumb:hover { background: var(--tng-text-4); }
 
 
 .grid-event-item {
@@ -2632,7 +2632,7 @@ body.modal-open {
 }
 .grid-event-item.more-events {
     text-align: center;
-    color: #888;
+    color: var(--tng-text-3);
     background-color: transparent !important; /* Override type/status colors */
 }
 
@@ -2668,7 +2668,7 @@ body.modal-open {
 }
 .no-timeline-events {
     text-align: center;
-    color: #888;
+    color: var(--tng-text-3);
     padding: 20px;
 }
 
@@ -2686,7 +2686,7 @@ body.modal-open {
 
 .calendar-day-group h3 { /* Date string for timeline groups */
     font-size: 1.3em;
-    color: #e0e0e0;
+    color: var(--tng-text);
     margin-bottom: 12px;
     padding-bottom: 8px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
@@ -2704,7 +2704,7 @@ body.modal-open {
     margin-bottom: 6px;
     background-color: rgba(255, 255, 255, 0.05);
     border-radius: 10px;
-    border-left: 4px solid #555; /* Default border */
+    border-left: 4px solid var(--tng-text-5); /* Default border */
     transition: background-color 0.2s ease;
 }
 .calendar-event:last-child { margin-bottom: 0; }
@@ -2718,7 +2718,7 @@ body.modal-open {
     margin-right: 12px;
     font-weight: 500;
 }
-.event-time .all-day-indicator { font-style: italic; color: #888; }
+.event-time .all-day-indicator { font-style: italic; color: var(--tng-text-3); }
 
 .event-details { /* Details part of a timeline event */
     flex-grow: 1;
@@ -2728,12 +2728,12 @@ body.modal-open {
 .event-title { /* Title in timeline */
     font-size: 1em; /* Slightly reduced */
     font-weight: 600; /* Bolder */
-    color: #e0e0e0;
+    color: var(--tng-text);
     margin-bottom: 2px;
 }
 .event-category { /* Category (Movie/TV) in timeline */
     font-size: 0.8em;
-    color: #888;
+    color: var(--tng-text-3);
     margin-bottom: 4px;
 }
 .event-status-badge { /* Status badge in timeline */
@@ -2755,7 +2755,7 @@ body.modal-open {
 /* Timeline status specific styling (ensure consistency) */
 .calendar-event.status-collected .event-title,
 .calendar-event.status-checking_upgrade .event-title {
-    text-decoration: line-through; color: #888;
+    text-decoration: line-through; color: var(--tng-text-3);
 }
 .calendar-event.status-collected .event-category,
 .calendar-event.status-checking_upgrade .event-category { color: #777; }
@@ -2910,7 +2910,7 @@ body.modal-open {
     border: none;
     font-size: 28px;
     font-weight: bold;
-    color: #888;
+    color: var(--tng-text-3);
     cursor: pointer;
     padding: 0 5px;
     line-height: 1;
@@ -2954,7 +2954,7 @@ body.modal-open {
 
 .modal-event-time .all-day-indicator {
     font-style: italic;
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 .modal-event-details {
@@ -2966,7 +2966,7 @@ body.modal-open {
 .modal-event-title {
     font-size: 1.1em;
     font-weight: 600; /* Bolder */
-    color: #e0e0e0;
+    color: var(--tng-text);
     margin-bottom: 4px;
 }
 
@@ -2989,7 +2989,7 @@ body.modal-open {
 /* Consistent status colors for modal (should match calendar-event and grid-event-item status colors) */
 .modal-event-item.status-collected .modal-event-title,
 .modal-event-item.status-checking-upgrade .modal-event-title {
-    text-decoration: line-through; color: #888;
+    text-decoration: line-through; color: var(--tng-text-3);
 }
 .modal-event-item.status-collected .modal-event-category,
 .modal-event-item.status-checking-upgrade .modal-event-category { color: #777; }
@@ -3011,7 +3011,7 @@ body.modal-open {
 
 .no-modal-events {
     text-align: center;
-    color: #888;
+    color: var(--tng-text-3);
     padding: 20px 0;
     font-style: italic;
 }
@@ -3035,7 +3035,7 @@ body.modal-open {
     border: 2px solid #1e1e1e;
 }
 .day-events-modal-body::-webkit-scrollbar-thumb:hover {
-    background: #555;
+    background: var(--tng-text-5);
 }
 
 /* PWA-specific adjustments for mobile task monitor */
@@ -3051,7 +3051,7 @@ body.modal-open {
         right: 0;
         top: 100%;
         bottom: -40px; 
-        background: linear-gradient(to bottom, #1a1a1a, black);
+        background: linear-gradient(to bottom, var(--tng-surface), black);
         z-index: -1;
     }
 
@@ -3074,9 +3074,9 @@ body.modal-open {
 
 /* --- Version '666' Easter Egg --- */
 @keyframes redStrobe {
-    0%   { color: #888; text-shadow: 0 0 1px transparent; }
+    0%   { color: var(--tng-text-3); text-shadow: 0 0 1px transparent; }
     50%  { color: #ff0000; text-shadow: 0 0 8px #ff0000; }
-    100% { color: #888; text-shadow: 0 0 1px transparent; }
+    100% { color: var(--tng-text-3); text-shadow: 0 0 1px transparent; }
 }
 
 @keyframes bloodDripFall {
@@ -3235,7 +3235,7 @@ body.modal-open {
 }
 
 .close {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 28px;
     font-weight: bold;
     cursor: pointer;
@@ -3337,7 +3337,7 @@ body[data-notifications-disabled="true"] .notification.unread {
 .notification-type.success { background-color: #28a745; }
 
 .notification-time {
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 .notification-title {
@@ -3367,7 +3367,7 @@ body[data-notifications-disabled="true"] .notification.unread {
 .no-notifications {
     text-align: center;
     padding: 20px;
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 .support-link {
@@ -3398,7 +3398,7 @@ body[data-notifications-disabled="true"] .notification.unread {
 }
 
 .support-text {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.9em;
 }
 
@@ -3487,7 +3487,7 @@ body[data-notifications-disabled="true"] .notification.unread {
 }
 
 .version-info {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.8em;
 }
 
@@ -3553,7 +3553,7 @@ body[data-notifications-disabled="true"] .notification.unread {
 
 .support-note {
     margin-top: 15px;
-    color: #888;
+    color: var(--tng-text-3);
     font-style: italic;
 }
 
@@ -3904,7 +3904,7 @@ body[data-notifications-disabled="true"] #notifications_button.has-notifications
     justify-content: space-between;
     align-items: center;
     padding: 8px 12px;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
     margin-bottom: 8px;
@@ -3927,7 +3927,7 @@ body[data-notifications-disabled="true"] #notifications_button.has-notifications
 .toast-stack-clear {
     background: none;
     border: none;
-    color: #888;
+    color: var(--tng-text-3);
     cursor: pointer;
     font-size: 14px;
     padding: 2px 6px;
@@ -3941,7 +3941,7 @@ body[data-notifications-disabled="true"] #notifications_button.has-notifications
 }
 
 .toast {
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
@@ -4045,7 +4045,7 @@ body[data-notifications-disabled="true"] #notifications_button.has-notifications
 .toast-close {
     background: none;
     border: none;
-    color: #888;
+    color: var(--tng-text-3);
     cursor: pointer;
     font-size: 18px;
     padding: 0;
@@ -4069,7 +4069,7 @@ body[data-notifications-disabled="true"] #notifications_button.has-notifications
 }
 
 .toast-time {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 11px;
     margin-top: 8px;
 }
@@ -4189,15 +4189,15 @@ body[data-theme="tangerine"] .universal-popup .popup-content.error h3::after {
 }
 
 body[data-theme="tangerine"] .universal-popup .popup-content.success h3::after {
-    background: linear-gradient(90deg, #4ade80, #22c55e) !important;
+    background: linear-gradient(90deg, #4ade80, var(--tng-green)) !important;
 }
 
 body[data-theme="tangerine"] .universal-popup .popup-content.info h3::after {
-    background: linear-gradient(90deg, #60a5fa, #3b82f6) !important;
+    background: linear-gradient(90deg, #60a5fa, var(--tng-blue)) !important;
 }
 
 body[data-theme="tangerine"] .universal-popup .popup-content.warning h3::after {
-    background: linear-gradient(90deg, #fbbf24, #f59e0b) !important;
+    background: linear-gradient(90deg, #fbbf24, var(--tng-yellow)) !important;
 }
 
 /* Popup Message Text */

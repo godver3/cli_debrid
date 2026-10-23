@@ -129,14 +129,14 @@
 }
 
 .download-progress {
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-size: 0.875rem;
     margin-top: 0.5rem;
     font-family: monospace;
 }
 
 .empty-message {
-    color: #666;
+    color: var(--tng-text-4);
     font-style: italic;
     padding: 2rem;
     text-align: center;
@@ -146,7 +146,7 @@
 }
 
 #active-downloads-count {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.875rem;
     margin-bottom: 1rem;
     display: none;
@@ -156,7 +156,7 @@
 .expand-button {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #e0e0e0;
+    color: var(--tng-text);
     padding: 0.75rem 1.5rem;
     border-radius: 12px;
     cursor: pointer;
@@ -191,7 +191,7 @@
 }
 
 .completed-count {
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 0.875rem;
     font-weight: 600;
     background: rgba(255, 255, 255, 0.05);

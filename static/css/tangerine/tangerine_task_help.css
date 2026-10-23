@@ -100,7 +100,7 @@
 
 .task-help-modal-header h3 {
     margin: 0;
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-size: 1.1em;
     font-weight: 500;
 }
@@ -108,7 +108,7 @@
 .task-help-modal-close {
     background: none;
     border: none;
-    color: #888;
+    color: var(--tng-text-3);
     font-size: 1.5em;
     cursor: pointer;
     padding: 0;
@@ -123,12 +123,12 @@
 
 .task-help-modal-close:hover {
     background-color: rgba(255, 255, 255, 0.05);
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 .task-help-modal-body {
     padding: 1.5rem;
-    color: #e0e0e0;
+    color: var(--tng-text);
     line-height: 1.6;
 }
 
@@ -234,7 +234,7 @@
 
     .info-banner p {
         margin: 0;
-        color: #e0e0e0;
+        color: var(--tng-text);
     }
 
     .save-toggles-container {
@@ -331,7 +331,7 @@
 
     .task-tile.disabled {
         opacity: 0.7;
-        background-color: #1a1a1a;
+        background-color: var(--tng-surface);
         border-color: #333;
         cursor: default;
     }
@@ -340,14 +340,14 @@
     .task-tile.disabled .countdown,
     .task-tile.disabled small,
     .task-tile.disabled .toggle-label {
-        color: #888;
+        color: var(--tng-text-3);
     }
 
     .countdown {
         font-family: 'Roboto Mono', monospace;
         font-size: 1.2em;
         font-weight: 500;
-        color: #e0e0e0;
+        color: var(--tng-text);
         text-align: center;
         margin: 1rem 0;
     }
@@ -362,7 +362,7 @@
         font-size: 1.1em;
         font-weight: 500;
         margin: 0;
-        color: #e0e0e0;
+        color: var(--tng-text);
     }
 
     .interval-badge {
@@ -463,7 +463,7 @@
 
     .tab {
         padding: 0.75rem 1rem;
-        color: #888;
+        color: var(--tng-text-3);
         cursor: pointer;
         border: none;
         background: none;
@@ -546,7 +546,7 @@
         padding: 0.25rem 0.5rem;
         border: 1px solid rgba(255, 255, 255, 0.15);
         background-color: #3a3a3a;
-        color: #e0e0e0;
+        color: var(--tng-text);
         border-radius: 10px;
         text-align: center;
     }
@@ -565,7 +565,7 @@
     
     .task-tile .interval-input-label {
         font-size: 0.85em;
-        color: #888;
+        color: var(--tng-text-3);
         /* --- START EDIT: Update label text if needed (or rely on placeholder) --- */
         /* content: "seconds"; Remove if using placeholder */
         /* --- END EDIT --- */

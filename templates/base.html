@@ -34,7 +34,7 @@
     
     <style>
         html {
-            background-color: #1a1a1a;
+            background-color: var(--tng-surface);
         }
     </style>
 
@@ -52,6 +52,7 @@
             font-display: swap;
         }
     </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_tokens.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_base.css') }}">
     <!-- <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_onboarding.css') }}"> -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_rate_limits.css') }}">
@@ -906,7 +907,7 @@
         <!-- Task Monitor Panel -->
         <div class="st-task-monitor" id="stTaskMonitor">
             <div class="st-tm-hdr">
-                <span class="st-tm-title"><i class="fa-solid fa-list-check" style="color:var(--st-accent,#e8601c);margin-right:7px;font-size:11px"></i>Task Monitor</span>
+                <span class="st-tm-title"><i class="fa-solid fa-list-check" style="color:var(--st-accent,var(--tng-accent));margin-right:7px;font-size:11px"></i>Task Monitor</span>
                 <button class="st-tm-close" onclick="stToggleTaskMonitor()"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="st-tm-scroll" id="stTmScroll">

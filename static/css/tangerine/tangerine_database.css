@@ -151,7 +151,7 @@
 
     .content-type-link,
     .pagination-link {
-        color: #e0e0e0;
+        color: var(--tng-text);
         text-decoration: none;
         padding: 5px 10px;
         border-radius: 10px;
@@ -357,7 +357,7 @@
     }
 
     .loading-content p {
-        color: #e0e0e0;
+        color: var(--tng-text);
         margin-bottom: 15px;
         padding: 0 20px;
     }
@@ -431,7 +431,7 @@
     }
 
     .bulk-action-btn:disabled {
-        background-color: #666 !important;
+        background-color: var(--tng-text-4) !important;
         cursor: not-allowed;
     }
 
@@ -518,7 +518,7 @@
         background-color: rgba(255, 255, 255, 0.03);
         border: none;
         border-radius: 0 4px 4px 0;
-        color: #888;
+        color: var(--tng-text-3);
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -562,7 +562,7 @@
 
     .stats-box.collection-stats .stat-item p {
         margin: 0;
-        color: #888;
+        color: var(--tng-text-3);
         font-size: 1.2em;
         display: flex;
         justify-content: space-between;
@@ -592,7 +592,7 @@
     .result-count {
         margin: 10px 0 0 0;
         font-size: 14px;
-        color: #666;
+        color: var(--tng-text-4);
     }
 
     /* ========================================
@@ -718,7 +718,7 @@
     .db-stat-box {
         display: flex;
         flex-direction: column;
-        background: #1a1a1a;
+        background: var(--tng-surface);
         border: 1px solid #333;
         border-radius: 6px;
         padding: 8px 14px;
@@ -727,13 +727,13 @@
     .db-stat-val {
         font-size: 16px;
         font-weight: 600;
-        color: #e0e0e0;
+        color: var(--tng-text);
         line-height: 1.2;
     }
     .db-per-page-select {
         background: transparent;
         border: none;
-        color: #e0e0e0;
+        color: var(--tng-text);
         font-size: 16px;
         font-weight: 600;
         font-family: inherit;
@@ -746,12 +746,12 @@
         line-height: 1.2;
     }
     .db-per-page-select option {
-        background: #1a1a1a;
-        color: #e0e0e0;
+        background: var(--tng-surface);
+        color: var(--tng-text);
     }
     .db-stat-label {
         font-size: 10px;
-        color: #666;
+        color: var(--tng-text-4);
         text-transform: uppercase;
         letter-spacing: 0.5px;
         margin-top: 2px;
@@ -794,7 +794,7 @@
 
     /* ── Action toolbar: full redesign ── */
     body.tangerine-theme .bulk-actions {
-        background: #1a1a1a;
+        background: var(--tng-surface);
         border: 1px solid #333;
         border-radius: 7px;
         padding: 8px 12px;
@@ -809,8 +809,8 @@
     /* Select All: orange */
     body.tangerine-theme .select-all-btn,
     body.tangerine-theme #select-all {
-        background: #e8601c;
-        border: 1px solid #e8601c;
+        background: var(--tng-accent);
+        border: 1px solid var(--tng-accent);
         color: #fff;
         padding: 6px 12px;
         border-radius: 5px;
@@ -823,14 +823,14 @@
     }
     body.tangerine-theme .select-all-btn:hover,
     body.tangerine-theme #select-all:hover {
-        background: #f07030;
-        border-color: #f07030;
+        background: var(--tng-accent-hover);
+        border-color: var(--tng-accent-hover);
     }
     /* Delete Selected: red ghost */
     body.tangerine-theme #bulk-delete {
         background: transparent;
         border: 1px solid #7f1d1d;
-        color: #ef4444;
+        color: var(--tng-red);
         padding: 6px 12px;
         border-radius: 5px;
         font-size: 12px;
@@ -839,13 +839,13 @@
     }
     body.tangerine-theme #bulk-delete:hover:not(:disabled) {
         background: rgba(127, 29, 29, 0.2);
-        border-color: #ef4444;
+        border-color: var(--tng-red);
     }
     /* All other bulk buttons: dark ghost */
     body.tangerine-theme .bulk-action-btn:not(#bulk-delete) {
         background: transparent;
-        border: 1px solid #3d3d3d;
-        color: #aaa;
+        border: 1px solid var(--tng-border-2);
+        color: var(--tng-text-2);
         padding: 6px 12px;
         border-radius: 5px;
         font-size: 12px;
@@ -853,9 +853,9 @@
         cursor: pointer;
     }
     body.tangerine-theme .bulk-action-btn:not(#bulk-delete):hover:not(:disabled) {
-        background: #2a2a2a;
-        border-color: #555;
-        color: #e0e0e0;
+        background: var(--tng-surface-3);
+        border-color: var(--tng-text-5);
+        color: var(--tng-text);
     }
     body.tangerine-theme .bulk-action-btn:disabled,
     body.tangerine-theme #bulk-delete:disabled {
@@ -866,9 +866,9 @@
     }
     /* Selects: dark style */
     body.tangerine-theme .bulk-action-select {
-        background: #222;
-        border: 1px solid #3d3d3d;
-        color: #aaa;
+        background: var(--tng-surface-2);
+        border: 1px solid var(--tng-border-2);
+        color: var(--tng-text-2);
         padding: 6px 10px;
         border-radius: 5px;
         font-size: 12px;
@@ -887,9 +887,9 @@
         gap: 5px;
         padding: 6px 12px;
         border-radius: 5px;
-        border: 1px solid #3d3d3d;
+        border: 1px solid var(--tng-border-2);
         background: transparent;
-        color: #aaa;
+        color: var(--tng-text-2);
         font-size: 12px;
         font-weight: 500;
         cursor: pointer;
@@ -902,18 +902,18 @@
         flex-shrink: 0;
     }
     .db-view-btn:hover {
-        background: #2a2a2a;
-        border-color: #555;
-        color: #e0e0e0;
+        background: var(--tng-surface-3);
+        border-color: var(--tng-text-5);
+        color: var(--tng-text);
     }
     .db-view-btn-accent {
-        background: #e8601c;
-        border-color: #e8601c;
+        background: var(--tng-accent);
+        border-color: var(--tng-accent);
         color: #fff;
     }
     .db-view-btn-accent:hover {
-        background: #f07030;
-        border-color: #f07030;
+        background: var(--tng-accent-hover);
+        border-color: var(--tng-accent-hover);
         color: #fff;
     }
 
@@ -925,7 +925,7 @@
         margin-bottom: 12px;
     }
     body.tangerine-theme #column-selector {
-        background: #1a1a1a;
+        background: var(--tng-surface);
         border: 1px solid #333;
         border-radius: 7px;
         padding: 14px;
@@ -943,7 +943,7 @@
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.8px;
-        color: #666;
+        color: var(--tng-text-4);
     }
     /* Column selector: 3-col grid — list | arrows | list */
     body.tangerine-theme .column-selector-container {
@@ -953,9 +953,9 @@
         align-items: start;
     }
     body.tangerine-theme .column-list {
-        border: 1px solid #3d3d3d;
+        border: 1px solid var(--tng-border-2);
         border-radius: 5px;
-        background: #222;
+        background: var(--tng-surface-2);
         padding: 4px;
         min-height: 240px;
     }
@@ -964,7 +964,7 @@
     }
     body.tangerine-theme .column-list h4 {
         font-size: 10px;
-        color: #666;
+        color: var(--tng-text-4);
         text-transform: uppercase;
         letter-spacing: 0.5px;
         font-weight: 600;
@@ -975,7 +975,7 @@
         width: 100%;
         height: 240px;
         background: transparent;
-        color: #aaa;
+        color: var(--tng-text-2);
         font-size: 12px;
         padding: 2px 0;
         /* Remove the dropdown arrow — this is a listbox, not a dropdown */
@@ -985,24 +985,24 @@
         background-image: none !important;
         /* Scrollbar blends into container — track same colour as background */
         scrollbar-width: thin;
-        scrollbar-color: #3d3d3d #222;
+        scrollbar-color: var(--tng-border-2) var(--tng-surface-2);
     }
     body.tangerine-theme .column-list select::-webkit-scrollbar {
         width: 4px;
     }
     body.tangerine-theme .column-list select::-webkit-scrollbar-track {
-        background: #222;
+        background: var(--tng-surface-2);
     }
     body.tangerine-theme .column-list select::-webkit-scrollbar-thumb {
         background: #444;
         border-radius: 2px;
     }
     body.tangerine-theme .column-list select::-webkit-scrollbar-thumb:hover {
-        background: #555;
+        background: var(--tng-text-5);
     }
     body.tangerine-theme .column-list select option {
-        background: #222;
-        color: #aaa;
+        background: var(--tng-surface-2);
+        color: var(--tng-text-2);
         padding: 5px 8px;
         border-radius: 3px;
     }
@@ -1014,7 +1014,7 @@
     body.tangerine-theme #available-columns option:checked,
     body.tangerine-theme #selected-columns option:checked {
         background: linear-gradient(#e8601c22, #e8601c22) !important;
-        color: #e8601c !important;
+        color: var(--tng-accent) !important;
     }
     /* Center arrows column: all 4 buttons stacked */
     body.tangerine-theme .column-buttons {
@@ -1039,32 +1039,32 @@
         box-shadow: none !important;
     }
     body.tangerine-theme #add-column {
-        background: #e8601c !important;
-        border: 1px solid #e8601c !important;
+        background: var(--tng-accent) !important;
+        border: 1px solid var(--tng-accent) !important;
         color: #fff !important;
     }
     body.tangerine-theme #add-column:hover {
-        background: #f07030 !important;
-        border-color: #f07030 !important;
+        background: var(--tng-accent-hover) !important;
+        border-color: var(--tng-accent-hover) !important;
     }
     body.tangerine-theme #remove-column,
     body.tangerine-theme #move-up,
     body.tangerine-theme #move-down {
         background: transparent !important;
-        border: 1px solid #3d3d3d !important;
-        color: #aaa !important;
+        border: 1px solid var(--tng-border-2) !important;
+        color: var(--tng-text-2) !important;
     }
     body.tangerine-theme #remove-column:hover,
     body.tangerine-theme #move-up:hover,
     body.tangerine-theme #move-down:hover {
-        background: #2a2a2a !important;
-        border-color: #555 !important;
-        color: #e0e0e0 !important;
+        background: var(--tng-surface-3) !important;
+        border-color: var(--tng-text-5) !important;
+        color: var(--tng-text) !important;
     }
     /* Update View button + separator */
     body.tangerine-theme #update-columns {
-        background: #e8601c !important;
-        border: 1px solid #e8601c !important;
+        background: var(--tng-accent) !important;
+        border: 1px solid var(--tng-accent) !important;
         color: #fff !important;
         padding: 6px 14px !important;
         border-radius: 5px !important;
@@ -1078,13 +1078,13 @@
         box-shadow: none !important;
     }
     body.tangerine-theme #update-columns:hover {
-        background: #f07030 !important;
-        border-color: #f07030 !important;
+        background: var(--tng-accent-hover) !important;
+        border-color: var(--tng-accent-hover) !important;
     }
 
     /* ── Filter & Sort panel ── */
     body.tangerine-theme #filter-sort {
-        background: #1a1a1a;
+        background: var(--tng-surface);
         border: 1px solid #333;
         border-radius: 7px;
         padding: 14px 16px;
@@ -1108,7 +1108,7 @@
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.8px;
-        color: #666;
+        color: var(--tng-text-4);
     }
     body.tangerine-theme #filter-sort h3 {
         display: none; /* replaced by tangerine header */
@@ -1125,7 +1125,7 @@
     body.tangerine-theme .sort-container label[for="sort-column"]::before {
         content: "Sort by";
         font-size: 11px;
-        color: #666;
+        color: var(--tng-text-4);
     }
     body.tangerine-theme .sort-container label[for="sort-order"] {
         display: none;
@@ -1151,8 +1151,8 @@
     body.tangerine-theme #filter-sort .btn.btn-secondary,
     body.tangerine-theme #filter-sort .btn-secondary {
         background: transparent !important;
-        border: 1px solid #3d3d3d !important;
-        color: #aaa !important;
+        border: 1px solid var(--tng-border-2) !important;
+        color: var(--tng-text-2) !important;
         padding: 4px 11px !important;
         border-radius: 4px !important;
         font-size: 11px !important;
@@ -1167,23 +1167,23 @@
     }
     body.tangerine-theme #filter-sort .btn.btn-secondary:hover,
     body.tangerine-theme #filter-sort .btn-secondary:hover {
-        background: #e8601c !important;
-        border-color: #e8601c !important;
+        background: var(--tng-accent) !important;
+        border-color: var(--tng-accent) !important;
         color: #fff !important;
         transform: none !important;
         box-shadow: none !important;
     }
     /* Add Filter: orange by default */
     body.tangerine-theme #add-filter {
-        background: #e8601c !important;
-        border-color: #e8601c !important;
+        background: var(--tng-accent) !important;
+        border-color: var(--tng-accent) !important;
         color: #fff !important;
         transform: none !important;
         box-shadow: none !important;
     }
     body.tangerine-theme #add-filter:hover {
-        background: #f07030 !important;
-        border-color: #f07030 !important;
+        background: var(--tng-accent-hover) !important;
+        border-color: var(--tng-accent-hover) !important;
         transform: none !important;
     }
     /* Filter row selects + inputs */
@@ -1200,9 +1200,9 @@
     body.tangerine-theme .filter-column,
     body.tangerine-theme .filter-operator,
     body.tangerine-theme .filter-value {
-        background: #222;
-        border: 1px solid #3d3d3d;
-        color: #e0e0e0;
+        background: var(--tng-surface-2);
+        border: 1px solid var(--tng-border-2);
+        color: var(--tng-text);
         border-radius: 4px;
         padding: 6px 9px;
         font-size: 12px;
@@ -1221,15 +1221,15 @@
     body.tangerine-theme .filter-row select:focus,
     body.tangerine-theme .filter-row input[type="text"]:focus {
         outline: none;
-        border-color: #e8601c;
+        border-color: var(--tng-accent);
     }
     body.tangerine-theme .remove-filter {
         width: 24px !important;
         height: 24px !important;
         border-radius: 50% !important;
-        background: #2a2a2a !important;
-        border: 1px solid #3d3d3d !important;
-        color: #666 !important;
+        background: var(--tng-surface-3) !important;
+        border: 1px solid var(--tng-border-2) !important;
+        color: var(--tng-text-4) !important;
         cursor: pointer !important;
         display: flex !important;
         align-items: center !important;
@@ -1240,8 +1240,8 @@
     }
     body.tangerine-theme .remove-filter:hover {
         background: #7f1d1d !important;
-        border-color: #ef4444 !important;
-        color: #ef4444 !important;
+        border-color: var(--tng-red) !important;
+        color: var(--tng-red) !important;
     }
     /* Sort row */
     /* Sort dropdowns hidden in tangerine — sorting done via column header clicks */
@@ -1258,13 +1258,13 @@
     }
     body.tangerine-theme .sort-container label {
         font-size: 11px;
-        color: #666;
+        color: var(--tng-text-4);
     }
     body.tangerine-theme #sort-column,
     body.tangerine-theme #sort-order {
-        background: #222;
-        border: 1px solid #3d3d3d;
-        color: #e0e0e0;
+        background: var(--tng-surface-2);
+        border: 1px solid var(--tng-border-2);
+        color: var(--tng-text);
         border-radius: 4px;
         padding: 6px 9px;
         font-size: 12px;
@@ -1276,20 +1276,20 @@
         align-items: center;
         gap: 14px;
         font-size: 11px;
-        color: #aaa;
+        color: var(--tng-text-2);
         margin: 8px 0;
         padding-top: 8px;
         border-top: 1px solid #333;
     }
     body.tangerine-theme .filter-logic-section label {
-        color: #aaa;
+        color: var(--tng-text-2);
         cursor: pointer;
         display: flex;
         align-items: center;
         gap: 5px;
     }
     body.tangerine-theme .filter-logic-section input[type="radio"] {
-        accent-color: #e8601c;
+        accent-color: var(--tng-accent);
     }
     /* Apply / Clear / Save Preset buttons row */
     body.tangerine-theme .filter-buttons {
@@ -1302,8 +1302,8 @@
     }
     body.tangerine-theme .filter-buttons button[type="submit"],
     body.tangerine-theme #filter-form button[type="submit"] {
-        background: #e8601c !important;
-        border: 1px solid #e8601c !important;
+        background: var(--tng-accent) !important;
+        border: 1px solid var(--tng-accent) !important;
         color: #fff !important;
         padding: 6px 14px !important;
         border-radius: 5px !important;
@@ -1315,14 +1315,14 @@
     }
     body.tangerine-theme .filter-buttons button[type="submit"]:hover,
     body.tangerine-theme #filter-form button[type="submit"]:hover {
-        background: #f07030!important;
-        border-color: #f07030 !important;
+        background: var(--tng-accent-hover)!important;
+        border-color: var(--tng-accent-hover) !important;
         transform: none !important;
     }
     body.tangerine-theme #clear-filter-sort {
         background: transparent !important;
-        border: 1px solid #3d3d3d !important;
-        color: #aaa !important;
+        border: 1px solid var(--tng-border-2) !important;
+        color: var(--tng-text-2) !important;
         padding: 6px 14px !important;
         border-radius: 5px !important;
         font-size: 12px !important;
@@ -1331,17 +1331,17 @@
         box-shadow: none !important;
     }
     body.tangerine-theme #clear-filter-sort:hover {
-        background: #2a2a2a !important;
-        border-color: #555 !important;
-        color: #e0e0e0 !important;
+        background: var(--tng-surface-3) !important;
+        border-color: var(--tng-text-5) !important;
+        color: var(--tng-text) !important;
         transform: none !important;
     }
     /* Save Preset: pushed to far right, same ghost style as Clear all */
     body.tangerine-theme .db-save-preset-btn {
         margin-left: auto !important;
         background: transparent !important;
-        border: 1px solid #3d3d3d !important;
-        color: #aaa !important;
+        border: 1px solid var(--tng-border-2) !important;
+        color: var(--tng-text-2) !important;
         padding: 6px 14px !important;
         border-radius: 5px !important;
         font-size: 12px !important;
@@ -1351,9 +1351,9 @@
         box-shadow: none !important;
     }
     body.tangerine-theme .db-save-preset-btn:hover {
-        background: #2a2a2a !important;
-        border-color: #555 !important;
-        color: #e0e0e0 !important;
+        background: var(--tng-surface-3) !important;
+        border-color: var(--tng-text-5) !important;
+        color: var(--tng-text) !important;
         transform: none !important;
     }
 
@@ -1369,7 +1369,7 @@
     body.tangerine-theme .content-type-filter {
         display: flex;
         gap: 2px;
-        background: #222;
+        background: var(--tng-surface-2);
         border-radius: 5px;
         padding: 2px;
         width: fit-content;
@@ -1380,7 +1380,7 @@
         border-radius: 4px;
         font-size: 12px;
         font-weight: 500;
-        color: #666;
+        color: var(--tng-text-4);
         background: transparent;
         border: 1px solid transparent;
         text-decoration: none;
@@ -1389,18 +1389,18 @@
         max-width: none;
     }
     body.tangerine-theme .content-type-link:hover {
-        color: #aaa;
+        color: var(--tng-text-2);
         background: rgba(255, 255, 255, 0.04);
     }
     body.tangerine-theme .content-type-link.active {
-        background: #1a1a1a;
-        color: #e0e0e0;
+        background: var(--tng-surface);
+        color: var(--tng-text);
         border-color: #333;
     }
     /* Showing X of Y count */
     .db-showing-count {
         font-size: 11px;
-        color: #666;
+        color: var(--tng-text-4);
         font-family: monospace;
         white-space: nowrap;
     }
@@ -1432,8 +1432,8 @@
         height: 26px;
         border-radius: 4px;
         border: 1px solid #333;
-        background: #222;
-        color: #666;
+        background: var(--tng-surface-2);
+        color: var(--tng-text-4);
         font-size: 10px;
         font-weight: 600;
         text-decoration: none;
@@ -1442,12 +1442,12 @@
         max-width: none;
     }
     body.tangerine-theme .pagination-link:hover {
-        border-color: #e8601c;
-        color: #e8601c;
+        border-color: var(--tng-accent);
+        color: var(--tng-accent);
     }
     body.tangerine-theme .pagination-link.active {
-        background: #e8601c;
-        border-color: #e8601c;
+        background: var(--tng-accent);
+        border-color: var(--tng-accent);
         color: #fff;
     }
 
@@ -1455,7 +1455,7 @@
     body.tangerine-theme .table-container {
         width: 100%;
         margin: 0;
-        background: #1a1a1a;
+        background: var(--tng-surface);
         border: 1px solid #333;
         border-radius: 7px;
         overflow-x: auto;
@@ -1469,7 +1469,7 @@
         min-width: 900px;
     }
     body.tangerine-theme .table-container thead tr {
-        background: #222;
+        background: var(--tng-surface-2);
     }
     body.tangerine-theme .table-container th {
         padding: 9px 12px;
@@ -1478,7 +1478,7 @@
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.7px;
-        color: #666;
+        color: var(--tng-text-4);
         white-space: nowrap;
         overflow: visible;
         user-select: none;
@@ -1489,7 +1489,7 @@
         justify-content: space-between;
         align-items: center;
         font-size: 10px;
-        color: #555;
+        color: var(--tng-text-5);
         font-style: italic;
         font-weight: 600;
         padding: 8px 0 6px;
@@ -1497,7 +1497,7 @@
     body.tangerine-theme .db-table-hint .db-showing-count {
         font-style: normal;
         font-weight: 400;
-        color: #555;
+        color: var(--tng-text-5);
         white-space: nowrap;
     }
     @media screen and (max-width: 768px) {
@@ -1508,7 +1508,7 @@
     body.tangerine-theme .db-table-hint .db-showing-count {
         font-style: normal;
         font-weight: 400;
-        color: #555;
+        color: var(--tng-text-5);
         white-space: nowrap;
     }
 
@@ -1522,12 +1522,12 @@
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.7px;
-        color: #666;
+        color: var(--tng-text-4);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
         border-bottom: 1px solid #333;
-        background: #222;
+        background: var(--tng-surface-2);
     }
     body.tangerine-theme .table-container th:last-child {
         border-right: none;
@@ -1537,10 +1537,10 @@
     }
     body.tangerine-theme .table-container th[data-col]:hover {
         color: #ccc;
-        background: #2a2a2a;
+        background: var(--tng-surface-3);
     }
     body.tangerine-theme .table-container th[data-col].db-sort-active {
-        color: #e8601c;
+        color: var(--tng-accent);
     }
     body.tangerine-theme .table-container th .db-sort-icon {
         display: inline-block;
@@ -1551,16 +1551,16 @@
     }
     body.tangerine-theme .table-container th[data-col].db-sort-active .db-sort-icon {
         opacity: 1;
-        color: #e8601c;
+        color: var(--tng-accent);
     }
     body.tangerine-theme .table-container th:hover {
-        color: #aaa;
+        color: var(--tng-text-2);
     }
     body.tangerine-theme .table-container td {
         padding: 9px 12px;
-        border-bottom: 1px solid #2a2a2a;
+        border-bottom: 1px solid var(--tng-surface-3);
         font-size: 12px;
-        color: #e0e0e0;
+        color: var(--tng-text);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -1580,7 +1580,7 @@
         height: 28px;
         border-radius: 5px;
         border: 1px solid rgba(255,255,255,0.08);
-        background: #2a2a2a;
+        background: var(--tng-surface-3);
         cursor: pointer;
         display: inline-flex;
         align-items: center;
@@ -1595,12 +1595,12 @@
         flex-shrink: 0;
     }
     body.tangerine-theme .db-action-btn-delete {
-        color: #ef4444;
+        color: var(--tng-red);
         border-color: rgba(239,68,68,0.2);
     }
     body.tangerine-theme .db-action-btn-delete:hover {
         background: rgba(127,29,29,0.35);
-        border-color: #ef4444;
+        border-color: var(--tng-red);
         transform: translateY(-1px);
         box-shadow: 0 3px 8px rgba(239,68,68,0.25);
     }
@@ -1609,12 +1609,12 @@
         box-shadow: none;
     }
     body.tangerine-theme .db-action-btn-refresh {
-        color: #3b82f6;
+        color: var(--tng-blue);
         border-color: rgba(59,130,246,0.2);
     }
     body.tangerine-theme .db-action-btn-refresh:hover {
         background: rgba(30,58,138,0.35);
-        border-color: #3b82f6;
+        border-color: var(--tng-blue);
         transform: translateY(-1px);
         box-shadow: 0 3px 8px rgba(59,130,246,0.25);
     }
@@ -1625,7 +1625,7 @@
     /* Bold title column */
     body.tangerine-theme .table-container td.db-col-title {
         font-weight: 600;
-        color: #e0e0e0;
+        color: var(--tng-text);
         max-width: 240px;
     }
 
@@ -1637,7 +1637,7 @@
         max-width: 40px;
     }
     body.tangerine-theme .table-container td.db-row-num {
-        color: #e0e0e0;
+        color: var(--tng-text);
         font-family: monospace;
         font-size: 11px;
     }
@@ -1649,7 +1649,7 @@
     body.tangerine-theme .table-container .item-select {
         width: 14px;
         height: 14px;
-        accent-color: #e8601c;
+        accent-color: var(--tng-accent);
         cursor: pointer;
         margin: 0;
     }
@@ -1662,7 +1662,7 @@
 
     /* ── IMDB ID: accent color in tangerine only ── */
     body.tangerine-theme .db-imdb-link {
-        color: #e8601c;
+        color: var(--tng-accent);
     }
 
     /* ── State / type / version pills ── */
@@ -1685,7 +1685,7 @@
     body.tangerine-theme .db-pill-checking   { background: rgba(20,184,166,.1); color: #2dd4bf; border: 1px solid #134e4a; }
     body.tangerine-theme .db-pill-sleeping   { background: rgba(107,114,128,.1); color: #9ca3af; border: 1px solid #374151; }
     body.tangerine-theme .db-pill-unreleased { background: rgba(251,146,60,.1); color: #fb923c; border: 1px solid #7c2d12; }
-    body.tangerine-theme .db-pill-other      { background: rgba(255,255,255,.05); color: #aaa; border: 1px solid #3d3d3d; }
+    body.tangerine-theme .db-pill-other      { background: rgba(255,255,255,.05); color: var(--tng-text-2); border: 1px solid var(--tng-border-2); }
     /* Type pills */
     body.tangerine-theme .db-pill-episode { background: rgba(30,30,63,.2); color: #818cf8; border: 1px solid #2d2d5e; }
     body.tangerine-theme .db-pill-movie   { background: rgba(59,30,95,.2); color: #a78bfa; border: 1px solid #3b1e5f; }
@@ -1718,7 +1718,7 @@
         border-radius: 10px;
         background: #1e1e1e;
         border: 1px solid rgba(255, 255, 255, 0.1);
-        color: #888;
+        color: var(--tng-text-3);
         cursor: pointer;
         display: none;
         align-items: center;
@@ -1738,7 +1738,7 @@
     }
 
     #db-back-top:hover {
-        color: #e8601c;
+        color: var(--tng-accent);
         border-color: rgba(232, 96, 28, 0.5);
         background: rgba(232, 96, 28, 0.08);
         transform: translateY(-2px);
@@ -1765,7 +1765,7 @@
     }
     body.tangerine-theme #db-presets-panel {
         flex: 3 1 0%;
-        background: #1a1a1a;
+        background: var(--tng-surface);
         border: 1px solid #333;
         border-radius: 7px;
         padding: 14px 16px;
@@ -1783,7 +1783,7 @@
     }
     .db-presets-empty {
         font-size: 12px;
-        color: #555;
+        color: var(--tng-text-5);
         text-align: center;
         padding: 12px 0;
     }
@@ -1816,14 +1816,14 @@
         padding: 2px 8px;
         border-radius: 4px;
         border: 1px solid #444;
-        background: #2a2a2a;
+        background: var(--tng-surface-3);
         color: #ccc;
         cursor: pointer;
         transition: background 0.15s, color 0.15s;
     }
     .db-preset-load:hover {
-        background: #e8601c;
-        border-color: #e8601c;
+        background: var(--tng-accent);
+        border-color: var(--tng-accent);
         color: #fff;
     }
     .db-preset-del {
@@ -1832,7 +1832,7 @@
         border-radius: 4px;
         border: 1px solid #444;
         background: transparent;
-        color: #666;
+        color: var(--tng-text-4);
         cursor: pointer;
         transition: background 0.15s, color 0.15s;
     }

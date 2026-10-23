@@ -185,7 +185,7 @@
     display: inline-block;
     padding: 0.125rem 0.5rem;
     background: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
+    color: var(--tng-red);
     border-radius: 0.25rem;
     font-size: 0.75rem;
     font-weight: 600;
@@ -195,7 +195,7 @@
 /* Show status color coding */
 .status-badge.status-ended {
     background: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
+    color: var(--tng-red);
 }
 
 .status-badge.status-canceled {
@@ -205,7 +205,7 @@
 
 .status-badge.status-airing {
     background: rgba(34, 197, 94, 0.2);
-    color: #22c55e;
+    color: var(--tng-green);
 }
 
 .status-badge.status-returning-series {
@@ -269,7 +269,7 @@ button.btn.btn-sm.not-wanted-magnet-season-btn {
 button.btn.btn-sm.not-wanted-magnet-season-btn:hover {
     background: rgba(232, 96, 28, 0.18);
     border-color: rgba(232, 96, 28, 0.55);
-    color: #e8601c;
+    color: var(--tng-accent);
     transform: translateY(-1px);
 }
 
@@ -352,7 +352,7 @@ button.btn.btn-sm.replace-season-btn.replace-season-pending:hover {
 }
 
 .success-btn {
-    color: #22c55e;
+    color: var(--tng-green);
     border-color: rgba(34, 197, 94, 0.3);
 }
 
@@ -384,7 +384,7 @@ button.btn.btn-sm.replace-season-btn.replace-season-pending:hover {
 
 .danger-btn,
 .delete-episode-btn {
-    color: #ef4444;
+    color: var(--tng-red);
     border-color: rgba(239, 68, 68, 0.3);
 }
 
@@ -426,7 +426,7 @@ button.btn.btn-sm.replace-season-btn.replace-season-pending:hover {
 
 body[data-theme="tangerine"] .progress-info span:last-child {
     opacity: 1 !important;
-    /* color: #666 !important; */
+    /* color: var(--tng-text-4) !important; */
 }
 
 .progress-bar {
@@ -919,16 +919,16 @@ ease;
 }
 
 .episode-status-icon.collected {
-    color: #22c55e;
+    color: var(--tng-green);
 }
 
 .episode-status-icon.unavailable {
-    color: #ef4444;
+    color: var(--tng-red);
     opacity: 0.5;
 }
 
 .episode-status-icon.unreleased {
-    color: #e0e0e0;
+    color: var(--tng-text);
     opacity: 0.8;
 }
 
@@ -981,7 +981,7 @@ ease;
     padding: 0.1rem 0.5rem 0.2rem 0.5rem;
     border-radius: 4px;
     background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+    color: var(--tng-red);
     border: 1px solid rgba(239, 68, 68, 0.3);
     white-space: nowrap;
     font-size: 0.75rem;
@@ -993,7 +993,7 @@ ease;
 .broken-icon {
     width: 16px;
     height: 16px;
-    color: #ef4444;
+    color: var(--tng-red);
     margin-left: auto;
     flex-shrink: 0;
     opacity: 0.9;
@@ -1238,9 +1238,9 @@ body.modal-open {
 }
 
 .version-modal-content {
-    background: #1a1a1a;
-    border: 1px solid #3d3d3d;
-    border-top: 3px solid #e8601c;
+    background: var(--tng-surface);
+    border: 1px solid var(--tng-border-2);
+    border-top: 3px solid var(--tng-accent);
     border-radius: 10px;
     width: 320px;
     max-width: calc(100vw - 32px);
@@ -1255,8 +1255,8 @@ body.modal-open {
 .dialog-title {
     font-size: 17px;
     font-weight: 700;
-    color: #e0e0e0;
-    border-left: 3px solid #e8601c;
+    color: var(--tng-text);
+    border-left: 3px solid var(--tng-accent);
     padding-left: 10px;
     margin-bottom: 14px;
     line-height: 1.3;
@@ -1265,7 +1265,7 @@ body.modal-open {
 
 .dialog-sub {
     font-size: 11px;
-    color: #e8601c;
+    color: var(--tng-accent);
     font-weight: 500;
     margin-bottom: 14px;
     padding: 5px 9px;
@@ -1285,7 +1285,7 @@ body.modal-open {
     font-weight: 600;
     letter-spacing: 0.8px;
     text-transform: uppercase;
-    color: #555;
+    color: var(--tng-text-5);
     margin-bottom: 8px;
     font-family: 'Inter', system-ui, sans-serif;
 }
@@ -1297,7 +1297,7 @@ body.modal-open {
     padding: 9px 11px;
     border-radius: 6px;
     border: 1px solid #333;
-    background: #222;
+    background: var(--tng-surface-2);
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
     margin-bottom: 6px;
@@ -1306,7 +1306,7 @@ body.modal-open {
 
 .option-row:last-child { margin-bottom: 0; }
 
-.option-row:hover { border-color: #3d3d3d; background: #2a2a2a; }
+.option-row:hover { border-color: var(--tng-border-2); background: var(--tng-surface-3); }
 
 .option-row.checked,
 .option-row.selected {
@@ -1318,7 +1318,7 @@ body.modal-open {
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    border: 1.5px solid #3d3d3d;
+    border: 1.5px solid var(--tng-border-2);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1326,7 +1326,7 @@ body.modal-open {
     transition: border-color 0.15s, background 0.15s;
 }
 
-.option-row.selected .custom-radio { border-color: #e8601c; background: #e8601c; }
+.option-row.selected .custom-radio { border-color: var(--tng-accent); background: var(--tng-accent); }
 
 .custom-radio-dot {
     width: 6px;
@@ -1343,7 +1343,7 @@ body.modal-open {
     width: 16px;
     height: 16px;
     border-radius: 4px;
-    border: 1.5px solid #3d3d3d;
+    border: 1.5px solid var(--tng-border-2);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1351,7 +1351,7 @@ body.modal-open {
     transition: border-color 0.15s, background 0.15s;
 }
 
-.option-row.checked .custom-cb { border-color: #e8601c; background: #e8601c; }
+.option-row.checked .custom-cb { border-color: var(--tng-accent); background: var(--tng-accent); }
 
 .custom-cb i { font-size: 9px; color: #fff; opacity: 0; transition: opacity 0.15s; }
 
@@ -1359,14 +1359,14 @@ body.modal-open {
 
 .option-label {
     font-size: 13px;
-    color: #aaa;
+    color: var(--tng-text-2);
     font-weight: 500;
     transition: color 0.15s;
     font-family: 'Inter', system-ui, sans-serif;
 }
 
 .option-row.checked .option-label,
-.option-row.selected .option-label { color: #e0e0e0; }
+.option-row.selected .option-label { color: var(--tng-text); }
 
 .vm-divider { height: 1px; background: #333; margin: 14px 0; }
 
@@ -1412,11 +1412,11 @@ body.modal-open {
 
 .vm-btn i { font-size: 11px; }
 
-.vm-btn-accent { background: #e8601c; border: 1px solid #e8601c; color: #fff; }
-.vm-btn-accent:hover { background: #f07030; border-color: #f07030; }
+.vm-btn-accent { background: var(--tng-accent); border: 1px solid var(--tng-accent); color: #fff; }
+.vm-btn-accent:hover { background: var(--tng-accent-hover); border-color: var(--tng-accent-hover); }
 
-.vm-btn-ghost { background: #222; border: 1px solid #3d3d3d; color: #aaa; }
-.vm-btn-ghost:hover { background: #2a2a2a; border-color: #555; color: #e0e0e0; }
+.vm-btn-ghost { background: var(--tng-surface-2); border: 1px solid var(--tng-border-2); color: var(--tng-text-2); }
+.vm-btn-ghost:hover { background: var(--tng-surface-3); border-color: var(--tng-text-5); color: var(--tng-text); }
 
 /* Overlay Styles */
 .overlay {
@@ -1437,7 +1437,7 @@ body.modal-open {
 
 .overlay-content {
     position: relative;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     /* padding: 0 20px 20px 20px; */
     border-radius: 8px;
     width: 85%;
@@ -1456,7 +1456,7 @@ body.modal-open {
 .overlay-content h3 {
     position: sticky;
     top: 0;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     margin-top: 0;
     padding-top: 10px;
     padding-bottom: 15px;
@@ -1478,7 +1478,7 @@ body.modal-open {
 .overlay-content thead {
     position: sticky;
     top: 55px;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
     z-index: 2;
     border-bottom: 1px solid rgba(255, 255, 255, 0.2);
 }
@@ -1488,7 +1488,7 @@ body.modal-open {
     text-align: left;
     overflow: hidden;
     text-overflow: ellipsis;
-    background-color: #1a1a1a;
+    background-color: var(--tng-surface);
 }
 
 .overlay-content td {
@@ -1716,7 +1716,7 @@ tr.filtered-out-item:hover {
 
 .cache-status.not-cached {
     background: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
+    color: var(--tng-red);
 }
 
 .cache-status.not-checked {
@@ -1864,7 +1864,7 @@ td#scraper-source .source-badge {
 }
 
 .file-selection-popup {
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-radius: 12px;
     padding: 2rem;
     min-width: 500px;
@@ -2081,7 +2081,7 @@ td#scraper-source .source-badge {
         background: rgba(232,96,28,.08);
         border: 1px solid rgba(232,96,28,.25);
         border-radius: 5px;
-        color: #e8601c;
+        color: var(--tng-accent);
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -2193,7 +2193,7 @@ td#scraper-source .source-badge {
         background: rgba(232,96,28,.08);
         border: 1px solid rgba(232,96,28,.25);
         border-radius: 5px;
-        color: #e8601c;
+        color: var(--tng-accent);
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -2267,7 +2267,7 @@ td#scraper-source .source-badge {
    ========================================================================== */
 
 body[data-theme="tangerine"] {
-    --ts-accent: #e8601c;
+    --ts-accent: var(--tng-accent);
     --ts-accent-muted: rgba(232, 96, 28, 0.15);
     --ts-accent-border: rgba(232, 96, 28, 0.3);
     --ts-surface-1: #161616;
@@ -2328,7 +2328,7 @@ body[data-theme="tangerine"] .show-title {
     font-weight: 700;
     font-family: var(--ts-sans);
     letter-spacing: -0.01em;
-    color: #e0e0e0;
+    color: var(--tng-text);
     margin-bottom: 6px;
 }
 
@@ -2362,20 +2362,20 @@ body[data-theme="tangerine"] .status-badge.status-airing {
 body[data-theme="tangerine"] .show-meta {
     font-family: var(--ts-sans);
     font-size: 12px;
-    color: #aaa;
+    color: var(--tng-text-2);
     gap: 8px;
     margin-top: 8px;
     align-items: center;
 }
 body[data-theme="tangerine"] .show-meta .separator {
-    color: #666;
+    color: var(--tng-text-4);
     opacity: 1;
     font-size: 11px;
 }
 
 /* Rating — yellow star */
 body[data-theme="tangerine"] #show-rating-text {
-    color: #f59e0b;
+    color: var(--tng-yellow);
     font-weight: 600;
     font-size: 12px;
 }
@@ -2385,13 +2385,13 @@ body[data-theme="tangerine"] .progress-info {
     font-family: var(--ts-sans);
     font-size: 12px;
     font-weight: 400;
-    color: #aaa;
+    color: var(--tng-text-2);
     gap: 8px;
     margin-bottom: 6px;
 }
 body[data-theme="tangerine"] #seasons-count,
 body[data-theme="tangerine"] #progress-text {
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-weight: 400;
 }
 body[data-theme="tangerine"] .progress-info #progress-percent,
@@ -2404,13 +2404,13 @@ body[data-theme="tangerine"] .progress-section #progress-percent {
 body[data-theme="tangerine"] .progress-bar {
     height: 4px;
     max-width: 340px;
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-radius: 2px;
     margin-top: 0;
     margin-bottom: 4px;
 }
 body[data-theme="tangerine"] .progress-fill {
-    background: #e8601c;
+    background: var(--tng-accent);
     border-radius: 2px;
 }
 
@@ -2420,15 +2420,15 @@ body[data-theme="tangerine"] .details-row {
     font-size: 12px;
     gap: 16px;
     margin: 0.5rem 0 0.75rem;
-    color: #666;
+    color: var(--tng-text-4);
 }
 body[data-theme="tangerine"] .details-row .label {
-    color: #666;
+    color: var(--tng-text-4);
     font-weight: 400;
     opacity: 1;
 }
 body[data-theme="tangerine"] .details-row span:last-child {
-    color: #aaa;
+    color: var(--tng-text-2);
     font-weight: 500;
 }
 
@@ -2482,19 +2482,19 @@ body[data-theme="tangerine"] .season-tab-title {
 }
 
 body[data-theme="tangerine"] .season-tab.active .season-tab-title {
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-family: var(--ts-mono);
 }
 
 body[data-theme="tangerine"] .season-tab-stats {
     font-size: 0.75rem;
     font-weight: 400;
-    color: #aaa;
+    color: var(--tng-text-2);
     letter-spacing: 0;
 }
 
 body[data-theme="tangerine"] .season-tab.active .season-tab-stats {
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 /* Episode rows */
@@ -2514,7 +2514,7 @@ body[data-theme="tangerine"] .episode-number {
     font-family: var(--ts-mono);
     font-size: 0.8rem;
     font-weight: 500;
-    color: #e8601c;
+    color: var(--tng-accent);
     opacity: 1;
 }
 
@@ -2523,20 +2523,20 @@ body[data-theme="tangerine"] .episode-title {
     font-family: var(--ts-sans);
     font-size: 0.875rem;
     font-weight: 500;
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 /* Episode meta row — Inter, 12px, muted */
 body[data-theme="tangerine"] .episode-meta {
     font-family: var(--ts-sans);
     font-size: 12px;
-    color: #aaa;
+    color: var(--tng-text-2);
     opacity: 1;
     gap: 8px;
 }
 
 body[data-theme="tangerine"] .episode-meta span {
-    color: #aaa;
+    color: var(--tng-text-2);
 }
 
 /* Version / size badges — mono for numbers, dark surface */
@@ -2547,7 +2547,7 @@ body[data-theme="tangerine"] .episode-version {
     font-variant: normal;
     background: var(--ts-surface-3);
     border: 1px solid var(--ts-border);
-    color: #aaa;
+    color: var(--tng-text-2);
     border-radius: 4px;
     padding: 1px 6px;
 }
@@ -2559,7 +2559,7 @@ body[data-theme="tangerine"] .episode-track-badge {
     font-variant: normal;
     background: var(--ts-surface-3);
     border: 1px solid var(--ts-border);
-    color: #aaa;
+    color: var(--tng-text-2);
     border-radius: 4px;
     padding: 1px 6px;
 }
@@ -2586,7 +2586,7 @@ body[data-theme="tangerine"] .season-panel-header h3 {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: #e0e0e0;
+    color: var(--tng-text);
     padding-top: 6px;
 }
 
@@ -2614,7 +2614,7 @@ body[data-theme="tangerine"] .action-btn:not(.primary-btn):not(.danger-btn):not(
 }
 
 body[data-theme="tangerine"] .action-btn:not(.primary-btn):not(.danger-btn):not(.ghost-btn):not(.success-btn):hover {
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-color: rgba(255, 255, 255, 0.2);
 }
 
@@ -2634,7 +2634,7 @@ body[data-theme="tangerine"] .not-wanted-magnet-btn.refresh-btn {
 }
 
 body[data-theme="tangerine"] .not-wanted-magnet-btn.refresh-btn:hover {
-    color: #e8601c;
+    color: var(--tng-accent);
     border-color: rgba(232, 96, 28, 0.5);
     background: rgba(232, 96, 28, 0.14);
 }
@@ -2651,7 +2651,7 @@ body[data-theme="tangerine"] .primary-btn {
 }
 
 body[data-theme="tangerine"] .primary-btn:hover {
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-color: rgba(255, 255, 255, 0.2);
 }
 
@@ -2671,7 +2671,7 @@ body[data-theme="tangerine"] .danger-btn {
 }
 
 body[data-theme="tangerine"] .danger-btn:hover {
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-color: rgba(255, 255, 255, 0.2);
 }
 
@@ -2733,7 +2733,7 @@ body[data-theme="tangerine"] .file-selection-item {
 }
 
 body[data-theme="tangerine"] .file-selection-item:hover {
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-color: #4a4a4a;
 }
 
@@ -2803,7 +2803,7 @@ body[data-theme="tangerine"] .file-selection-cancel {
 }
 
 body[data-theme="tangerine"] .file-selection-cancel:hover {
-    background: #2a2a2a;
+    background: var(--tng-surface-3);
     border-color: #4a4a4a;
     transform: none;
     box-shadow: none;
@@ -2816,8 +2816,8 @@ body[data-theme="tangerine"] .file-selection-delete {
 }
 
 body[data-theme="tangerine"] .file-selection-delete:hover {
-    background: #f07030;
-    border-color: #f07030;
+    background: var(--tng-accent-hover);
+    border-color: var(--tng-accent-hover);
     transform: none;
     box-shadow: none;
 }

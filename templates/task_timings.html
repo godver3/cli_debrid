@@ -11,7 +11,7 @@
     <div class="info-banner">
         <p><i class="fas fa-info-circle"></i> Task timings and intervals are displayed based on the running program. Customize intervals using the input fields (in seconds) and save your preferences. The "Default" value never changes - it's the original program default. "Custom" shows any saved custom interval. "Configured" shows the currently active interval (custom or default). Saved intervals apply on program restart unless live updates are successful.</p>
         
-        <div class="media-flow-container" style="margin-top: 15px; padding: 15px; background-color: #1a1a1a; border-radius: 8px;">
+        <div class="media-flow-container" style="margin-top: 15px; padding: 15px; background-color: var(--tng-surface); border-radius: 8px;">
             <div class="media-flow-header" style="cursor: pointer; display: flex; align-items: center; justify-content: space-between;">
                 <h4 style="margin: 0; color: #b3d9ff; font-size: 1.1em;">
                     <i class="fas fa-route"></i> Typical Media File Flow
@@ -21,7 +21,7 @@
             
             <div class="media-flow-content" style="visibility: hidden; height: 0; overflow: hidden; margin-top: 15px; transition: all 0.3s ease;">
                 <!-- Mermaid Flowchart -->
-                <div class="mermaid" style="background-color: #1a1a1a; padding: 10px; border-radius: 5px;">
+                <div class="mermaid" style="background-color: var(--tng-surface); padding: 10px; border-radius: 5px;">
                     graph LR
                         A[Content Source<br/>mdblist, Trakt, etc.] --> B[Wanted]
                         B --> C[Scraping]
@@ -43,7 +43,7 @@
                         style H fill:#2c2c2c,stroke:#dc3545,stroke-width:2px,color:#fff
                 </div>
                 
-                <div style="margin-top: 10px; font-size: 0.85em; color: #aaa; line-height: 1.3;">
+                <div style="margin-top: 10px; font-size: 0.85em; color: var(--tng-text-2); line-height: 1.3;">
                     <strong>Notes:</strong> <br>
                     <div style="margin-left: 20px; margin-top: 10px;">
                     <ul>

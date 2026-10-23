@@ -7,11 +7,11 @@
 <style>
 /* ── Tangerine theme — System Connections ─────────────────────────────── */
 body.tangerine-theme #tng-connections{
-  --bg:#111;--surface:#1a1a1a;--surface2:#222;--surface3:#2a2a2a;
-  --border:#2d2d2d;--border2:#3d3d3d;
-  --accent:#e8601c;--accent-h:#f07030;
-  --text:#e0e0e0;--text2:#aaa;--text3:#555;
-  --green:#22c55e;--red:#ef4444;--yellow:#f59e0b;
+  --bg:var(--tng-bg);--surface:var(--tng-surface);--surface2:var(--tng-surface-2);--surface3:var(--tng-surface-3);
+  --border:var(--tng-border);--border2:var(--tng-border-2);
+  --accent:var(--tng-accent);--accent-h:var(--tng-accent-hover);
+  --text:var(--tng-text);--text2:var(--tng-text-2);--text3:var(--tng-text-5);
+  --green:var(--tng-green);--red:var(--tng-red);--yellow:var(--tng-yellow);
   --sans:'Inter',sans-serif;
   font-family:var(--sans);font-size:13px;color:var(--text);
 }
@@ -29,7 +29,7 @@ body.tangerine-theme #tng-connections .page-title{font-size:20px;font-weight:700
 /* Buttons */
 body.tangerine-theme #tng-connections .tng-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:6px;font-family:var(--sans);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap;background:transparent;}
 body.tangerine-theme #tng-connections .tng-btn-ghost{border:1px solid var(--border2);color:var(--text2);}
-body.tangerine-theme #tng-connections .tng-btn-ghost:hover{background:var(--surface2);color:var(--text);border-color:#555;}
+body.tangerine-theme #tng-connections .tng-btn-ghost:hover{background:var(--surface2);color:var(--text);border-color:var(--tng-text-5);}
 body.tangerine-theme #tng-connections .tng-btn-orange{border:1px solid #c2500f;color:#f97316;}
 body.tangerine-theme #tng-connections .tng-btn-orange:hover{background:#c2500f22;border-color:#f97316;}
 
@@ -122,7 +122,7 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
     gap: 6px;
     padding: 4px 12px 6px 12px;
     font-size: 0.72em;
-    color: var(--text-muted, #888);
+    color: var(--text-muted, var(--tng-text-3));
     font-style: italic;
     min-height: 20px;
 }
@@ -132,7 +132,7 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
     gap: 6px;
     padding: 0 12px 4px 12px;
     font-size: 0.72em;
-    color: var(--text-muted, #888);
+    color: var(--text-muted, var(--tng-text-3));
 }
 .conn-card-expiry i {
     margin-top: 2px;
@@ -150,7 +150,7 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
     display: inline-block;
     width: 8px;
     height: 8px;
-    border: 2px solid var(--text-muted, #888);
+    border: 2px solid var(--text-muted, var(--tng-text-3));
     border-top-color: transparent;
     border-radius: 50%;
     animation: conn-spin 0.7s linear infinite;
@@ -161,13 +161,13 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
     display: flex;
     align-items: center;
     gap: 8px;
-    color: var(--text-muted, #888);
+    color: var(--text-muted, var(--tng-text-3));
     font-size: 0.9em;
     padding: 12px 4px;
     grid-column: 1 / -1;
 }
 .status-indicator.checking {
-    background: #888 !important;
+    background: var(--tng-text-3) !important;
     animation: conn-pulse 1s ease-in-out infinite;
 }
 @keyframes conn-pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
@@ -195,8 +195,8 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
   <div class="toolbar">
     <div class="filter-tabs">
       <button class="ftab active" onclick="tngSetFilter(this,'all')">All</button>
-      <button class="ftab" onclick="tngSetFilter(this,'online')"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;margin-right:5px;vertical-align:middle"></span>Online</button>
-      <button class="ftab" onclick="tngSetFilter(this,'offline')"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ef4444;margin-right:5px;vertical-align:middle"></span>Offline</button>
+      <button class="ftab" onclick="tngSetFilter(this,'online')"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--tng-green);margin-right:5px;vertical-align:middle"></span>Online</button>
+      <button class="ftab" onclick="tngSetFilter(this,'offline')"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--tng-red);margin-right:5px;vertical-align:middle"></span>Offline</button>
     </div>
     <div class="search-wrap">
       <i class="fas fa-search search-icon"></i>

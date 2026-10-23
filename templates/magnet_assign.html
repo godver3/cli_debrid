@@ -7,21 +7,21 @@
 <style>
 /* ── Magnet Assign Page Variables ── */
 :root {
-  --ma-bg: #111;
-  --ma-surface: #1a1a1a;
-  --ma-surface2: #222;
-  --ma-surface3: #2a2a2a;
+  --ma-bg: var(--tng-bg);
+  --ma-surface: var(--tng-surface);
+  --ma-surface2: var(--tng-surface-2);
+  --ma-surface3: var(--tng-surface-3);
   --ma-border: #333;
-  --ma-border2: #3d3d3d;
-  --ma-accent: #e8601c;
-  --ma-accent-h: #f07030;
-  --ma-text: #e0e0e0;
-  --ma-text2: #aaa;
-  --ma-text3: #666;
-  --ma-green: #22c55e;
-  --ma-red: #ef4444;
-  --ma-blue: #3b82f6;
-  --ma-yellow: #f59e0b;
+  --ma-border2: var(--tng-border-2);
+  --ma-accent: var(--tng-accent);
+  --ma-accent-h: var(--tng-accent-hover);
+  --ma-text: var(--tng-text);
+  --ma-text2: var(--tng-text-2);
+  --ma-text3: var(--tng-text-4);
+  --ma-green: var(--tng-green);
+  --ma-red: var(--tng-red);
+  --ma-blue: var(--tng-blue);
+  --ma-yellow: var(--tng-yellow);
 }
 
 .ma-main {
@@ -175,7 +175,7 @@
 .ma-btn-ghost:hover {
   background: var(--ma-surface2) !important;
   color: var(--ma-text) !important;
-  border-color: #555 !important;
+  border-color: var(--tng-text-5) !important;
 }
 .ma-btn-orange {
   border: 1px solid #c2500f !important;
@@ -363,7 +363,7 @@
   cursor: pointer;
   transition: all 0.15s;
 }
-.ma-file-btn:hover { background: var(--ma-surface3); border-color: #555; color: var(--ma-text); }
+.ma-file-btn:hover { background: var(--ma-surface3); border-color: var(--tng-text-5); color: var(--ma-text); }
 .ma-file-btn svg { width: 12px; height: 12px; flex-shrink: 0; }
 .ma-file-btn.has-file { border-color: #166534; color: var(--ma-green); }
 

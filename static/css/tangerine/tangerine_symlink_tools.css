@@ -8,7 +8,7 @@
 }
 
 .description {
-    color: #666;
+    color: var(--tng-text-4);
     margin-bottom: 30px;
     line-height: 1.5;
 }
@@ -79,7 +79,7 @@
     padding: 10px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
-    background: #1a1a1a;
+    background: var(--tng-surface);
     color: #fff;
     font-size: 14px;
 }
@@ -120,7 +120,7 @@
     gap: 10px;
     padding: 10px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    background: #1a1a1a;
+    background: var(--tng-surface);
 }
 
 .current-path {
@@ -141,7 +141,7 @@
 .file-list {
     flex: 1;
     overflow-y: auto;
-    background: #1a1a1a;
+    background: var(--tng-surface);
 }
 
 .file-item {
@@ -182,7 +182,7 @@
 
 .file-item-details {
     font-size: 12px;
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 .file-item.selected .file-item-details {
@@ -195,13 +195,13 @@
     gap: 10px;
     padding: 15px;
     border-top: 1px solid #444;
-    background: #1a1a1a;
+    background: var(--tng-surface);
 }
 
 .loading {
     text-align: center;
     padding: 20px;
-    color: #888;
+    color: var(--tng-text-3);
 }
 
 .error-message {
@@ -266,7 +266,7 @@
 }
 
 .preview-box {
-    background: #1a1a1a;
+    background: var(--tng-surface);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
     padding: 15px;

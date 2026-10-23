@@ -8,18 +8,18 @@ body.tangerine-theme .manual-assignment-container {
     background: none;
     box-shadow: none;
     border-radius: 0;
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 body.tangerine-theme .manual-assignment-container > p {
     font-size: 12px;
-    color: #aaa;
+    color: var(--tng-text-2);
     margin-bottom: 4px;
     line-height: 1.6;
 }
 
 body.tangerine-theme .manual-assignment-container > p strong {
-    color: #e0e0e0;
+    color: var(--tng-text);
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
     font-size: 11px;
     font-weight: 600;
@@ -31,39 +31,39 @@ body.tangerine-theme .assignment-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0;
-    border: 1px solid #2d2d2d;
+    border: 1px solid var(--tng-border);
     border-radius: 8px;
     overflow: hidden;
-    background: #1a1a1a;
+    background: var(--tng-surface);
     margin: 16px 0 20px;
     padding: 0;
 }
 
 /* Column headers */
 body.tangerine-theme .assignment-header {
-    background: #222;
+    background: var(--tng-surface-2);
     padding: 9px 14px;
     font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: .7px;
-    color: #555;
-    border-bottom: 1px solid #2d2d2d;
+    color: var(--tng-text-5);
+    border-bottom: 1px solid var(--tng-border);
     margin-bottom: 0;
 }
 
 body.tangerine-theme .assignment-header:first-child {
-    border-right: 1px solid #2d2d2d;
+    border-right: 1px solid var(--tng-border);
 }
 
 /* Media item cell */
 body.tangerine-theme .media-item-info {
     padding: 12px 14px;
-    border-bottom: 1px solid #222;
-    border-right: 1px solid #2d2d2d;
+    border-bottom: 1px solid var(--tng-surface-2);
+    border-right: 1px solid var(--tng-border);
     font-size: 13px;
     line-height: 1.4;
-    color: #e0e0e0;
+    color: var(--tng-text);
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -75,7 +75,7 @@ body.tangerine-theme .media-item-info:last-of-type {
 
 body.tangerine-theme .media-item-info strong {
     font-weight: 600;
-    color: #e0e0e0;
+    color: var(--tng-text);
 }
 
 body.tangerine-theme .media-item-info em {
@@ -83,14 +83,14 @@ body.tangerine-theme .media-item-info em {
     margin-top: 3px;
     font-size: 11px;
     font-style: normal;
-    color: #aaa;
+    color: var(--tng-text-2);
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 /* File selector cell */
 body.tangerine-theme .file-selector {
     padding: 10px 12px;
-    border-bottom: 1px solid #222;
+    border-bottom: 1px solid var(--tng-surface-2);
     display: flex;
     align-items: center;
 }
@@ -101,9 +101,9 @@ body.tangerine-theme .file-selector:last-of-type {
 
 body.tangerine-theme .file-selector .form-control {
     width: 100%;
-    background: #222;
-    border: 1px solid #3d3d3d;
-    color: #e0e0e0;
+    background: var(--tng-surface-2);
+    border: 1px solid var(--tng-border-2);
+    color: var(--tng-text);
     border-radius: 5px;
     padding: 7px 10px;
     font-size: 11px;
@@ -114,18 +114,18 @@ body.tangerine-theme .file-selector .form-control {
 }
 
 body.tangerine-theme .file-selector .form-control:hover {
-    border-color: #555;
+    border-color: var(--tng-text-5);
 }
 
 body.tangerine-theme .file-selector .form-control:focus {
-    border-color: #e8601c;
+    border-color: var(--tng-accent);
 }
 
 /* No items row */
 body.tangerine-theme .no-items {
     grid-column: 1 / -1;
     text-align: center;
-    color: #f59e0b;
+    color: var(--tng-yellow);
     padding: 24px;
     font-size: 13px;
 }
@@ -153,16 +153,16 @@ body.tangerine-theme .form-actions a.btn.btn-secondary {
     cursor: pointer;
     text-decoration: none;
     transition: all .15s;
-    background: #222;
-    border: 1px solid #3d3d3d;
-    color: #aaa;
+    background: var(--tng-surface-2);
+    border: 1px solid var(--tng-border-2);
+    color: var(--tng-text-2);
 }
 
 body.tangerine-theme .form-actions .btn-secondary:hover,
 body.tangerine-theme .form-actions a.btn.btn-secondary:hover {
-    background: #2a2a2a;
-    border-color: #555;
-    color: #e0e0e0;
+    background: var(--tng-surface-3);
+    border-color: var(--tng-text-5);
+    color: var(--tng-text);
 }
 
 /* Confirm / solid orange */
@@ -180,7 +180,7 @@ body.tangerine-theme .form-actions button#confirm-assignment-btn {
     cursor: pointer;
     border: none;
     transition: opacity .15s, transform .1s;
-    background: #e8601c;
+    background: var(--tng-accent);
     color: #fff;
 }
 
@@ -217,11 +217,11 @@ body.tangerine-theme .form-actions button#confirm-assignment-btn:disabled {
 
     body.tangerine-theme .media-item-info {
         border-right: none;
-        border-bottom: 1px solid #2d2d2d;
+        border-bottom: 1px solid var(--tng-border);
     }
 
     body.tangerine-theme .file-selector {
-        border-bottom: 1px solid #2d2d2d;
+        border-bottom: 1px solid var(--tng-border);
         padding: 8px 12px;
     }
 
@@ -240,19 +240,19 @@ body.tangerine-theme .in-library-badge {
     border-radius: 4px;
     font-size: 10px;
     font-weight: 600;
-    color: #e8601c;
+    color: var(--tng-accent);
     background: rgba(232, 96, 28, .12);
 }
 
 body.tangerine-theme .replace-existing-option input {
-    accent-color: #e8601c;
+    accent-color: var(--tng-accent);
 }
 
 body.tangerine-theme .replace-existing-option {
     display: block;
     margin: 16px 0 0;
     font-size: 12px;
-    color: #e0e0e0;
+    color: var(--tng-text);
     cursor: pointer;
 }
 
@@ -260,5 +260,5 @@ body.tangerine-theme .replace-existing-hint {
     display: block;
     margin: 2px 0 0 22px;
     font-size: 11px;
-    color: #888;
+    color: var(--tng-text-3);
 }

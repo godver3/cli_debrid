@@ -104,7 +104,7 @@
         <!-- Configuration Error Message -->
         {% if not plex_configured and not tmdb_configured %}
         <div class="error-message" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 0.5rem; padding: 1.5rem; margin-bottom: 2rem; text-align: center;">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 3rem; height: 3rem; margin: 0 auto 1rem; color: #ef4444;">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 3rem; height: 3rem; margin: 0 auto 1rem; color: var(--tng-red);">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
             </svg>
             <h3 style="margin: 0 0 0.5rem 0; font-size: 1.5rem;">Library Not Configured</h3>
@@ -112,7 +112,7 @@
                 The Library page requires a <strong>TMDB API key</strong> to display artwork.
             </p>
             <p style="margin: 0;">
-                Please configure at least one source in <a href="/settings" style="color: #3b82f6; text-decoration: underline;">Settings</a> → Additional Settings → Library Manager
+                Please configure at least one source in <a href="/settings" style="color: var(--tng-blue); text-decoration: underline;">Settings</a> → Additional Settings → Library Manager
             </p>
         </div>
         {% endif %}
@@ -300,7 +300,7 @@
                             <span class="detail-label">Release Date</span>
                             <span style="display:flex;align-items:center;gap:0.45rem;justify-content:flex-end;flex-wrap:wrap">
                                 <span id="movie-release-date" class="detail-value">-</span>
-                                <span id="movie-release-date-manual" style="display:none;font-size:0.68rem;padding:0.15rem 0.4rem;border-radius:999px;background:rgba(245,158,11,0.18);color:#f59e0b">Manual</span>
+                                <span id="movie-release-date-manual" style="display:none;font-size:0.68rem;padding:0.15rem 0.4rem;border-radius:999px;background:rgba(245,158,11,0.18);color:var(--tng-yellow)">Manual</span>
                                 {% if has_admin_permissions %}
                                 <button id="refresh-release-date-btn" type="button" title="Refresh release date from provider" aria-label="Refresh release date from provider" style="background:none;border:0;color:inherit;cursor:pointer;opacity:0.7;padding:0.15rem;display:inline-flex">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
