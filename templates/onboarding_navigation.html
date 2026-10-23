@@ -5,7 +5,7 @@
             <button class="prev-step-btn onboarding-btn">Previous Step</button>
         {% endif %}
         {% if step_num|float < 6 %}
-            <button class="next-step-btn onboarding-btn" {% if not session.get('onboarding_step_' ~ current_step ~ '_can_proceed', False) %}disabled{% endif %}>
+            <button class="next-step-btn onboarding-btn" {% if not (can_proceed or session.get('onboarding_step_' ~ current_step ~ '_can_proceed', False)) %}disabled{% endif %}>
                 {% if current_step == 3 %}Configure Versions{% else %}Next Step{% endif %}
             </button>
         {% endif %}

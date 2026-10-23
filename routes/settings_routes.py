@@ -2891,6 +2891,37 @@ def update_notification_defaults():
         logging.error(f"Error updating notification defaults: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
+def build_default_version():
+    """Settings for a new 'Default' version, taken from the schema defaults."""
+    version_schema = SETTINGS_SCHEMA['Scraping']['versions']['schema']
+    return {
+        'enable_hdr': version_schema['enable_hdr']['default'],
+        'max_resolution': version_schema['max_resolution']['default'],
+        'resolution_wanted': version_schema['resolution_wanted']['default'],
+        'resolution_weight': version_schema['resolution_weight']['default'],
+        'hdr_weight': version_schema['hdr_weight']['default'],
+        'similarity_weight': version_schema['similarity_weight']['default'],
+        'similarity_threshold': version_schema['similarity_threshold']['default'],
+        'similarity_threshold_anime': version_schema['similarity_threshold_anime']['default'],
+        'size_weight': version_schema['size_weight']['default'],
+        'bitrate_weight': version_schema['bitrate_weight']['default'],
+        'year_match_weight': version_schema['year_match_weight']['default'],
+        'foreign_language_penalty': version_schema['foreign_language_penalty']['default'],
+        'preferred_filter_in': version_schema['preferred_filter_in']['default'],
+        'preferred_filter_out': version_schema['preferred_filter_out']['default'],
+        'filter_in': version_schema['filter_in']['default'],
+        'filter_out': version_schema['filter_out']['default'],
+        'min_size_gb': version_schema['min_size_gb']['default'],
+        'max_size_gb': version_schema['max_size_gb']['default'],
+        'min_bitrate_mbps': version_schema['min_bitrate_mbps']['default'],
+        'max_bitrate_mbps': version_schema['max_bitrate_mbps']['default'],
+        'wake_count': version_schema['wake_count']['default'],
+        'fallback_version': version_schema['fallback_version']['default'],
+        'anime_filter_mode': version_schema['anime_filter_mode']['default'],
+        'require_physical_release': version_schema['require_physical_release']['default'],
+        'language_code': version_schema['language_code']['default']
+    }
+
 @settings_bp.route('/versions/add_default', methods=['POST'])
 @admin_required
 def add_default_version():
@@ -2899,35 +2930,7 @@ def add_default_version():
         if 'Scraping' not in config:
             config['Scraping'] = {}
 
-        # Get the default version settings from the schema
-        version_schema = SETTINGS_SCHEMA['Scraping']['versions']['schema']
-        default_version = {
-            'enable_hdr': version_schema['enable_hdr']['default'],
-            'max_resolution': version_schema['max_resolution']['default'],
-            'resolution_wanted': version_schema['resolution_wanted']['default'],
-            'resolution_weight': version_schema['resolution_weight']['default'],
-            'hdr_weight': version_schema['hdr_weight']['default'],
-            'similarity_weight': version_schema['similarity_weight']['default'],
-            'similarity_threshold': version_schema['similarity_threshold']['default'],
-            'similarity_threshold_anime': version_schema['similarity_threshold_anime']['default'],
-            'size_weight': version_schema['size_weight']['default'],
-            'bitrate_weight': version_schema['bitrate_weight']['default'],
-            'year_match_weight': version_schema['year_match_weight']['default'],
-            'foreign_language_penalty': version_schema['foreign_language_penalty']['default'],
-            'preferred_filter_in': version_schema['preferred_filter_in']['default'],
-            'preferred_filter_out': version_schema['preferred_filter_out']['default'],
-            'filter_in': version_schema['filter_in']['default'],
-            'filter_out': version_schema['filter_out']['default'],
-            'min_size_gb': version_schema['min_size_gb']['default'],
-            'max_size_gb': version_schema['max_size_gb']['default'],
-            'min_bitrate_mbps': version_schema['min_bitrate_mbps']['default'],
-            'max_bitrate_mbps': version_schema['max_bitrate_mbps']['default'],
-            'wake_count': version_schema['wake_count']['default'],
-            'fallback_version': version_schema['fallback_version']['default'],
-            'anime_filter_mode': version_schema['anime_filter_mode']['default'],
-            'require_physical_release': version_schema['require_physical_release']['default'],
-            'language_code': version_schema['language_code']['default']
-        }
+        default_version = build_default_version()
 
         # Add the default version while preserving existing versions
         if 'versions' not in config['Scraping']:

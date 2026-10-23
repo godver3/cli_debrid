@@ -64,7 +64,8 @@ def onboarding_required(f):
             return redirect(url_for('auth.login'))
         if not current_user.onboarding_complete:
             _rate_limited_log_debug("User onboarding not complete, redirecting to onboarding")
-            return redirect(url_for('onboarding.onboarding_step', step=1))
+            from routes.onboarding_routes import get_next_onboarding_step
+            return redirect(url_for('onboarding.onboarding_step', step=get_next_onboarding_step()))
         return f(*args, **kwargs)
     return decorated_function
 
