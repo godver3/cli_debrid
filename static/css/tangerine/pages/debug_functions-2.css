@@ -1,0 +1,240 @@
+/* Moved from templates/debug_functions.html. */
+/* Simple spinner for progress indication */
+.operation-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(78, 205, 196, 0.3);
+    border-top-color: #4ecdc4;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.progress-message {
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+}
+
+.progress-estimate {
+    font-size: 12px;
+    opacity: 0.8;
+    margin-top: 5px;
+}
+
+/* Episode Results Modal Styles */
+.episode-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.episode-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+}
+
+.episode-modal-content {
+    position: relative;
+    background: var(--tng-surface);
+    border: 1px solid var(--tng-border);
+    border-radius: 8px;
+    width: 90%;
+    max-width: 1200px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 10px 40px rgba(0,0,0,.6);
+}
+
+.episode-modal-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--tng-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.episode-modal-header h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--tng-text);
+    border-left: 3px solid var(--tng-accent);
+    padding-left: 10px;
+}
+
+.episode-modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: var(--tng-text-2);
+    cursor: pointer;
+    padding: 0;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    line-height: 1;
+    transition: color .15s;
+}
+
+.episode-modal-close:hover { color: var(--tng-text); }
+
+.episode-modal-body {
+    padding: 18px;
+    overflow-y: auto;
+    flex: 1;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px;
+    color: var(--tng-text);
+}
+
+.episode-modal-body::-webkit-scrollbar { width: 6px; }
+.episode-modal-body::-webkit-scrollbar-track { background: var(--tng-surface); }
+.episode-modal-body::-webkit-scrollbar-thumb { background: var(--tng-border-2); border-radius: 3px; }
+.episode-modal-body::-webkit-scrollbar-thumb:hover { background: var(--tng-text-5); }
+
+/* Results summary styling */
+.episode-results-summary {
+    background: var(--tng-surface-2);
+    border: 1px solid var(--tng-border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+}
+
+.episode-results-summary h4 {
+    margin: 0 0 10px;
+    color: var(--tng-accent);
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+}
+
+.episode-results-summary p {
+    margin: 5px 0;
+    font-size: 13px;
+    color: var(--tng-text-2);
+}
+
+.episode-results-summary p strong { color: var(--tng-text); }
+
+/* Table styling in modal */
+.episode-modal-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 12px;
+}
+
+.episode-modal-body table th {
+    background: var(--tng-surface-2);
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--tng-text-2);
+    border-bottom: 1px solid var(--tng-border);
+    position: sticky;
+    top: -18px;
+    z-index: 10;
+    box-shadow: 0 1px 0 #333;
+}
+
+.episode-modal-body table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--tng-surface-3);
+    color: var(--tng-text);
+    vertical-align: top;
+}
+
+.episode-modal-body table tr:hover td { background: rgba(255,255,255,.02); }
+
+.episode-modal-body .title-cell {
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.episode-modal-body .path-cell {
+    font-family: monospace;
+    font-size: 11px;
+    max-width: 350px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--tng-text-3);
+}
+
+.episode-modal-body h4 {
+    margin: 18px 0 10px;
+    color: var(--tng-accent);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+}
+
+.episode-modal-body .info-text {
+    color: var(--tng-text-4);
+    font-size: 12px;
+    margin-bottom: 10px;
+}
+
+/* Episode progress bar pulse animation - matches plex labels style */
+#episode-progress-bar {
+    animation: progress-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes progress-pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+/* Cleanup progress bar - matches plex labels and fix episode numbers style */
+#cleanup-progress-bar {
+    animation: progress-pulse 1.5s ease-in-out infinite;
+}
+
+#upgrades-progress-bar {
+    animation: progress-pulse 1.5s ease-in-out infinite;
+}
+
+/* Radio button styling for cleanup forms */
+#cleanup-upgrades-form .form-group label {
+    display: block;
+    margin-bottom: 10px;
+    cursor: pointer;
+}
+
+#cleanup-upgrades-form .form-group label input[type="radio"] {
+    margin-right: 8px;
+    cursor: pointer;
+}

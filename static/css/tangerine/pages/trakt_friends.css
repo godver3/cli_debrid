@@ -1,0 +1,78 @@
+/* Moved from templates/trakt_friends.html. */
+*{box-sizing:border-box}
+:root{
+  --tf-bg:var(--tng-bg);--tf-surface:var(--tng-surface);--tf-surface2:var(--tng-surface-2);--tf-surface3:var(--tng-surface-3);
+  --tf-border:#333;--tf-border2:var(--tng-border-2);--tf-accent:var(--tng-accent);
+  --tf-text:var(--tng-text);--tf-text2:var(--tng-text-2);--tf-text3:var(--tng-text-4);
+  --tf-green:var(--tng-green);--tf-red:var(--tng-red);--tf-blue:var(--tng-blue);--tf-yellow:var(--tng-yellow);
+  --tf-sans:'Inter',system-ui,sans-serif;
+}
+
+.tf-wrap{max-width:860px;margin:0 auto;padding:1.5rem 1.25rem;font-family:var(--tf-sans);font-size:13px;color:var(--tf-text)}
+
+.tf-page-title{font-size:20px;font-weight:700;color:var(--tf-text);border-left:3px solid var(--tf-accent);padding-left:10px;margin-bottom:1.5rem}
+
+/* Cards */
+.tf-card{background:var(--tf-surface);border:1px solid var(--tf-border);border-radius:8px;padding:1.25rem;margin-bottom:1.25rem}
+
+/* Section headings */
+.tf-section-title{font-size:14px;font-weight:600;color:var(--tf-text2);text-transform:uppercase;letter-spacing:.05em;margin:0 0 .25rem}
+.tf-section-desc{font-size:13px;color:var(--tf-text2);margin:0 0 1rem;line-height:1.5}
+
+/* Form */
+.tf-form{display:flex;flex-direction:column;gap:10px}
+.tf-input{background:var(--tf-surface2);border:1px solid var(--tf-border2);color:var(--tf-text);border-radius:6px !important;padding:7px 11px !important;font-size:13px !important;font-family:var(--tf-sans);width:100%;transition:border-color .15s}
+.tf-input:focus{border-color:var(--tf-accent);outline:none}
+.tf-input::placeholder{color:var(--tf-text3);font-size:13px !important}
+
+/* Buttons */
+.tf-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:6px;font-family:var(--tf-sans);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;border:none;white-space:nowrap}
+.tf-btn-primary{background:var(--tf-accent);color:#fff}
+.tf-btn-primary:hover{background:#cc5218}
+.tf-btn-secondary{background:transparent;border:1px solid var(--tf-border2);color:var(--tf-text2)}
+.tf-btn-secondary:hover{border-color:var(--tf-text2);color:var(--tf-text)}
+.tf-btn-danger{background:transparent;border:1px solid #7f1d1d;color:var(--tf-red)}
+.tf-btn-danger:hover{background:#7f1d1d22;border-color:var(--tf-red)}
+
+/* Auth code display */
+.tf-auth-display{display:none;margin-top:1rem;padding:1rem;background:var(--tf-surface2);border:1px solid var(--tf-border2);border-radius:6px}
+.tf-auth-display p{margin:0 0 .5rem;font-size:13px;color:var(--tf-text2)}
+.tf-auth-display p:last-child{margin-bottom:0}
+
+.tf-auth-url a{color:var(--tf-accent);text-decoration:none;word-break:break-all}
+.tf-auth-url a:hover{text-decoration:underline}
+
+.tf-auth-code{display:inline-block;background:var(--tf-surface3);border:1px solid var(--tf-border2);border-radius:4px;padding:4px 10px;font-family:monospace;font-size:16px;font-weight:700;color:var(--tf-yellow);letter-spacing:.1em}
+
+.tf-auth-status{display:inline-flex;align-items:center;gap:7px;margin-top:.75rem;padding:7px 12px;border-radius:5px;font-size:12px;font-weight:500}
+.tf-auth-status.pending{background:#1e3a5f22;border:1px solid #1e3a5f;color:var(--tng-blue-light)}
+.tf-auth-status.success{background:#14532d22;border:1px solid #14532d;color:var(--tf-green)}
+.tf-auth-status.error{background:#450a0a22;border:1px solid #7f1d1d;color:var(--tf-red)}
+
+/* Friends list */
+.tf-friends-list{display:flex;flex-direction:column;gap:10px}
+
+.tf-no-friends{font-size:13px;color:var(--tf-text3);padding:.5rem 0}
+
+/* Friend item — created by JS */
+.friend-item{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;background:var(--tf-surface2);border:1px solid var(--tf-border2);border-radius:6px;padding:12px 14px}
+.friend-item:hover{border-color:var(--tf-border)}
+
+.friend-info{flex:1;min-width:0}
+.friend-info h3{font-size:14px;font-weight:600;color:var(--tf-text);margin:0 0 4px}
+.friend-info p{font-size:12px;color:var(--tf-text2);margin:0 0 2px;font-family:monospace}
+.friend-info p:last-child{margin-bottom:0}
+
+.friend-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+
+.refresh-token-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:5px;font-family:var(--tf-sans);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;background:transparent;border:1px solid var(--tf-border2);color:var(--tf-text2)}
+.refresh-token-btn:hover{border-color:var(--tf-text2);color:var(--tf-text)}
+
+.delete-auth-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:5px;font-family:var(--tf-sans);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;background:transparent;border:1px solid #7f1d1d;color:var(--tf-red)}
+.delete-auth-btn:hover{background:#7f1d1d22;border-color:var(--tf-red)}
+
+@media(max-width:560px){
+  .friend-item{flex-direction:column}
+  .friend-actions{width:100%}
+  .refresh-token-btn,.delete-auth-btn{flex:1;justify-content:center}
+}

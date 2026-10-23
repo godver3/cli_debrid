@@ -1,0 +1,63 @@
+/* Moved from templates/connections.html. */
+.conn-card-footer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px 6px 12px;
+    font-size: 0.72em;
+    color: var(--text-muted, var(--tng-text-3));
+    font-style: italic;
+    min-height: 20px;
+}
+.conn-card-expiry {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 0 12px 4px 12px;
+    font-size: 0.72em;
+    color: var(--text-muted, var(--tng-text-3));
+}
+.conn-card-expiry i {
+    margin-top: 2px;
+}
+.conn-card-expiry-lines {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.35;
+}
+.conn-card-expiry-date {
+    font-weight: 600;
+    white-space: nowrap;
+}
+.conn-card-spinner {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border: 2px solid var(--text-muted, var(--tng-text-3));
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: conn-spin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+@keyframes conn-spin { to { transform: rotate(360deg); } }
+.conn-section-loading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted, var(--tng-text-3));
+    font-size: 0.9em;
+    padding: 12px 4px;
+    grid-column: 1 / -1;
+}
+.status-indicator.checking {
+    background: var(--tng-text-3) !important;
+    animation: conn-pulse 1s ease-in-out infinite;
+}
+@keyframes conn-pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.connection-card {
+    display: flex;
+    flex-direction: column;
+}
+.connection-header {
+    flex: 1;
+}

@@ -1,0 +1,116 @@
+/* Moved from templates/play.html. */
+let player;
+let realDuration = 0;
+
+// Initialize player after getting metadata
+async function initializePlayer() {
+    try {
+        console.log('Fetching video metadata...');
+        const response = await fetch('/video/' + window.pageData.play.video_id + '/metadata');
+        if (!response.ok) {
+            throw new Error('Failed to fetch video metadata');
+        }
+        const metadata = await response.json();
+        console.log('Received metadata:', metadata);
+
+        realDuration = metadata.duration;
+
+        // Register middleware to handle duration
+        videojs.use('*', function(player) {
+            return {
+                setSource: function(srcObj, next) {
+                    next(null, srcObj);
+                },
+                duration: function(dur) {
+                    return realDuration;
+                },
+                currentTime: function(ct) {
+                    return ct;
+                },
+                setCurrentTime: function(ct) {
+                    return ct;
+                }
+            };
+        });
+
+        // Initialize Video.js
+        player = videojs('my-video', {
+            controls: true,
+            fluid: true,
+            preload: 'metadata',
+            playbackRates: [0.5, 1, 1.5, 2],
+            html5: {
+                vhs: {
+                    overrideNative: true
+                }
+            }
+        });
+
+        // Wait for player to be ready
+        player.ready(function() {
+            console.log('Player ready');
+
+            // Set up event listeners
+            const loadingOverlay = document.querySelector('.loading-overlay');
+            const customError = document.querySelector('.custom-error');
+
+            player.on('loadstart', () => {
+                console.log('Load started');
+                // Set initial duration
+                player.tech_.el_.duration = realDuration;
+            });
+
+            player.on('durationchange', () => {
+                console.log('Duration change detected');
+                // Force the duration to our real value
+                player.tech_.el_.duration = realDuration;
+            });
+
+            player.on('loadedmetadata', () => {
+                console.log('Metadata loaded');
+                // Force the duration again after metadata loads
+                player.tech_.el_.duration = realDuration;
+            });
+
+            player.on('waiting', () => {
+                console.log('Player waiting');
+                loadingOverlay.classList.add('active');
+            });
+
+            player.on('playing', () => {
+                console.log('Player playing');
+                loadingOverlay.classList.remove('active');
+            });
+
+            player.on('error', () => {
+                const error = player.error();
+                console.error('Player error:', error);
+                customError.textContent = `Error: ${error.message}`;
+                customError.style.display = 'block';
+                loadingOverlay.classList.remove('active');
+            });
+
+            // Set the source
+            player.src({
+                type: 'video/mp4',
+                src: `/video/${window.pageData.play.video_id}/stream`
+            });
+        });
+
+        // Clean up when leaving the page
+        window.addEventListener('beforeunload', () => {
+            if (player) {
+                player.dispose();
+            }
+        });
+
+    } catch (error) {
+        console.error('Error initializing player:', error);
+        const customError = document.querySelector('.custom-error');
+        customError.textContent = `Error: ${error.message}`;
+        customError.style.display = 'block';
+    }
+}
+
+// Start initialization when DOM is ready
+document.addEventListener('DOMContentLoaded', initializePlayer);

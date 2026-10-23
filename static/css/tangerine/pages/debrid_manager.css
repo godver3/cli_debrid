@@ -1,0 +1,37 @@
+/* Moved from templates/debrid_manager.html. */
+/* Exact values from tangerine_overlays.css */
+#usenet-content { font-family:'Inter',system-ui,sans-serif; font-size:13px; color:#f0f0f0; }
+#usenet-content .un-header { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; margin-bottom:1.75rem; flex-wrap:wrap; }
+#usenet-content .un-title { font-size: 14px; font-weight: 600; color: var(--text); border-left: 3px solid var(--tng-accent); padding-left: 10px; line-height: 1.3;}
+#usenet-content .un-subtitle { font-size:12px; color:var(--tng-text-3); padding-left:13px; }
+#usenet-content .un-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+#usenet-content .un-btn { display:inline-flex; align-items:center; gap:8px; height:36px; padding:0 14px; border-radius:8px; font-size:13px; font-weight:500; font-family:'Inter',system-ui,sans-serif; cursor:pointer; border:1px solid var(--tng-border); background:var(--tng-surface); color:var(--tng-text); transition:background .15s,color .15s; white-space:nowrap; }
+#usenet-content .un-btn:hover { background:var(--tng-surface-3); color:#fff; }
+#usenet-content .un-btn i { font-size:13px; }
+#usenet-content .un-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-bottom:1.25rem; }
+#usenet-content .un-card { background:var(--tng-surface); border:1px solid var(--tng-border); border-radius:8px; padding:16px 14px 12px; position:relative; overflow:hidden; text-align:left; }
+#usenet-content .un-card::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:var(--tng-accent); opacity:.5; border-radius:8px 8px 0 0; }
+#usenet-content .un-val { font-size:26px; font-weight:700; color:var(--tng-accent); font-family:'JetBrains Mono','Fira Code',ui-monospace,monospace; line-height:1; margin-bottom:6px; }
+#usenet-content .un-lbl { font-size:9px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:var(--tng-text-3); margin-bottom:8px; }
+/* Debrid sub-tab shares same card/btn styles via dr- prefixed IDs */
+#dr-content { font-family:'Inter',system-ui,sans-serif; font-size:13px; color:#f0f0f0; }
+#dr-content .un-header { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; margin-bottom:1.75rem; flex-wrap:wrap; }
+#dr-content .un-title { font-size: 14px; font-weight: 600; color: var(--text); border-left: 3px solid #CE93D8; padding-left: 10px; line-height: 1.3;}
+#dr-content .un-subtitle { font-size:12px; color:var(--tng-text-3); padding-left:13px; }
+#dr-content .un-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+#dr-content .un-btn { display:inline-flex; align-items:center; gap:8px; height:36px; padding:0 14px; border-radius:8px; font-size:13px; font-weight:500; font-family:'Inter',system-ui,sans-serif; cursor:pointer; border:1px solid var(--tng-border); background:var(--tng-surface); color:var(--tng-text); transition:background .15s,color .15s; white-space:nowrap; }
+#dr-content .un-btn:hover { background:var(--tng-surface-3); color:#fff; }
+#dr-content .un-btn i { font-size:13px; }
+#dr-content .un-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-bottom:1.25rem; }
+#dr-content .un-card { background:var(--tng-surface); border:1px solid var(--tng-border); border-radius:8px; padding:16px 14px 12px; position:relative; overflow:hidden; text-align:left; }
+#dr-content .un-card::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:#CE93D8; opacity:.5; border-radius:8px 8px 0 0; }
+#dr-content .un-val { font-size:26px; font-weight:700; color:#CE93D8; font-family:'JetBrains Mono','Fira Code',ui-monospace,monospace; line-height:1; margin-bottom:6px; }
+#dr-content .un-lbl { font-size:9px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:var(--tng-text-3); margin-bottom:8px; }
+/* cli_mount sub-tab nav */
+.dcy-subtab-btn { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:8px 8px 0 0; border:1px solid transparent; background:none; color:var(--tng-text-3); font-size:13px; font-weight:500; cursor:pointer; transition:background .15s,color .15s; border-bottom:none; margin-bottom:-1px; }
+.dcy-subtab-btn.active { background:var(--tng-surface); border-color:var(--tng-border); color:#f0f0f0; }
+.dcy-subtab-btn:not(.active):hover { color:var(--tng-text); }
+/* Protocol badges — same colors as upgrade_hub.css */
+.dr-proto-badge { display:inline-block; font-size:0.65rem; font-weight:700; padding:1px 5px; border-radius:3px; margin-left:4px; vertical-align:middle; letter-spacing:0.04em; text-transform:uppercase; }
+.dr-proto-nzb { background:#1a2a3a; color:#80CBC4; border:1px solid #2a5a55; }
+.dr-proto-debrid { background:#2a1a3a; color:#CE93D8; border:1px solid #5a2a7a; }

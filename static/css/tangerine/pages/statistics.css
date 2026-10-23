@@ -1,0 +1,31 @@
+/* Moved from templates/statistics.html. */
+/* Show desktop uptime format by default, hide mobile */
+.uptime-desktop { display: inline; }
+.uptime-mobile { display: none; }
+
+/* On mobile screens, hide desktop and show mobile format */
+@media (max-width: 768px) {
+    .uptime-desktop { display: none; }
+    .uptime-mobile { display: inline; }
+}
+
+/* Panel scrollbars — override tangerine_base.css global rules */
+.stats-box.recently-aired ul::-webkit-scrollbar,
+.stats-box.airing-soon ul::-webkit-scrollbar,
+.stats-box.upcoming-releases ul::-webkit-scrollbar,
+.stats-cards-container::-webkit-scrollbar { width: 3px !important; }
+
+.stats-box.recently-aired ul::-webkit-scrollbar-track,
+.stats-box.airing-soon ul::-webkit-scrollbar-track,
+.stats-box.upcoming-releases ul::-webkit-scrollbar-track,
+.stats-cards-container::-webkit-scrollbar-track { background: transparent !important; border: none !important; }
+
+.stats-box.recently-aired ul::-webkit-scrollbar-thumb,
+.stats-box.airing-soon ul::-webkit-scrollbar-thumb,
+.stats-box.upcoming-releases ul::-webkit-scrollbar-thumb,
+.stats-cards-container::-webkit-scrollbar-thumb { background: var(--tng-border-2) !important; border-radius: 0 !important; border: none !important; }
+
+.stats-box.recently-aired ul::-webkit-scrollbar-button,
+.stats-box.airing-soon ul::-webkit-scrollbar-button,
+.stats-box.upcoming-releases ul::-webkit-scrollbar-button,
+.stats-cards-container::-webkit-scrollbar-button { display: none !important; width: 0 !important; height: 0 !important; }

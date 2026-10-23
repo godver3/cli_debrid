@@ -1,0 +1,26 @@
+/* Moved from templates/debrid_manager.html. */
+#af-widget { margin-bottom:16px; }
+#af-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+#af-title { font-size:13px; font-weight:600; color:#f0f0f0; }
+#af-count-badge { background:var(--tng-surface); border:1px solid var(--tng-border); border-radius:10px; padding:1px 8px; font-size:11px; color:var(--tng-text-3); font-family:'JetBrains Mono',ui-monospace,monospace; }
+#af-count-badge.af-has-items { background:#1a2a1a; border-color:#2a4a2a; color:#81c784; }
+#af-refresh-btn { margin-left:auto; background:none; border:1px solid var(--tng-border); border-radius:6px; color:var(--tng-text-3); cursor:pointer; padding:3px 10px; font-size:12px; transition:color .15s,border-color .15s; }
+#af-refresh-btn:hover { color:#f0f0f0; border-color:var(--tng-text-5); }
+#af-list { display:flex; flex-direction:column; gap:6px; }
+.af-item { background:var(--tng-bg); border:1px solid var(--tng-surface-2); border-radius:8px; padding:10px 12px; display:flex; align-items:center; gap:10px; }
+.af-item-info { flex:1; min-width:0; }
+.af-item-name { font-size:12px; color:var(--tng-text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+.af-item-meta { font-size:11px; color:var(--tng-text-4); margin-top:2px; display:flex; gap:10px; flex-wrap:wrap; }
+.af-item-meta span { white-space:nowrap; }
+.af-duration { color:#80cbc4; font-family:'JetBrains Mono',ui-monospace,monospace; }
+.af-size { color:var(--tng-text-2); }
+.af-source-badge { font-size:10px; font-weight:700; padding:1px 5px; border-radius:3px; text-transform:uppercase; letter-spacing:.04em; }
+.af-source-nzb { background:#1a2a3a; color:#80CBC4; border:1px solid #2a5a55; }
+.af-source-torrent { background:#2a1a3a; color:#CE93D8; border:1px solid #5a2a7a; }
+.af-source-rclone { background:#2a2a1a; color:#fff176; border:1px solid #5a5a2a; }
+.af-del-btn { background:none; border:1px solid #3a1a1a; color:#c66; border-radius:6px; cursor:pointer; padding:4px 10px; font-size:12px; white-space:nowrap; flex-shrink:0; transition:background .15s,color .15s; }
+.af-del-btn:hover { background:#3a1a1a; color:#f88; }
+.af-del-btn:disabled { opacity:.4; cursor:not-allowed; }
+#af-empty { font-size:12px; color:var(--tng-text-5); padding:8px 0; }
+.af-progress-bar { height:2px; background:var(--tng-surface-2); border-radius:1px; margin-top:5px; overflow:hidden; }
+.af-progress-fill { height:100%; background:#80cbc4; border-radius:1px; transition:width .5s; }

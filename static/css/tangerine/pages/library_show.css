@@ -1,0 +1,74 @@
+/* Moved from templates/library_show.html. */
+/* Cast section styles */
+.cast-section {
+    margin-top: 0;
+}
+.cast-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    user-select: none;
+    /* padding: 0.5rem 0; */
+}
+.cast-header:hover {
+    opacity: 0.8;
+}
+.cast-header h3 {
+    margin: 0;
+}
+body[data-theme="tangerine"] .cast-header h3 {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(232, 232, 232, 0.55);
+    padding-top: 4px;
+    margin: 0;
+}
+body[data-theme="tangerine"] .cast-toggle-icon {
+    width: 14px;
+    height: 14px;
+    color: rgba(232, 232, 232, 0.55);
+}
+body[data-theme="tangerine"] #progress-percent {
+    opacity: 1;
+}
+.cast-toggle-icon {
+    width: 20px;
+    height: 20px;
+    transition: transform 0.2s ease;
+    color: rgba(255,255,255,0.6);
+}
+.cast-section.collapsed .cast-toggle-icon {
+    transform: rotate(-90deg);
+}
+.cast-section.collapsed .cast-grid {
+    display: none;
+}
+.cast-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+.cast-card {
+    text-align: center;
+}
+.cast-photo {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: rgba(255,255,255,0.1);
+    margin: 0 auto 0.5rem;
+}
+.cast-name {
+    font-weight: 500;
+    font-size: 0.875rem;
+}
+.cast-character {
+    font-size: 0.75rem;
+    opacity: 0.7;
+}

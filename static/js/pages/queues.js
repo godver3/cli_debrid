@@ -1,0 +1,1165 @@
+/* Moved from templates/queues.html. */
+// From tooltips.js, which base.html loads earlier
+const {
+    addTooltipEventListeners,
+    initializeTooltips: initializeGlobalTooltips
+} = window.cliTooltips;
+
+let filenameToggleState = localStorage.getItem('filenameToggleState') === 'true' || false;
+let hasReceivedFirstResponse = false;
+let eventSource = null;
+let currentQueueData = {}; // Cache current queue data to avoid unnecessary DOM updates
+let lastProcessedData = {}; // Track last processed data for change detection
+let reconnectAttempts = 0;
+let maxReconnectAttempts = 5;
+let reconnectDelay = 1000; // Start with 1 second delay
+let isReconnecting = false;
+let isInitialRenderComplete = false;
+
+function isMobile() {
+    // A simple check for mobile devices to set an appropriate default page size.
+    const toMatch = [
+        /Android/i,
+        /webOS/i,
+        /iPhone/i,
+        /iPad/i,
+        /iPod/i,
+        /BlackBerry/i,
+        /Windows Phone/i
+    ];
+    return toMatch.some((toMatchItem) => {
+        return navigator.userAgent.match(toMatchItem);
+    });
+}
+
+// Set initial page size based on device type. Desktop gets a much larger initial load.
+let currentPageSize = isMobile() ? 25 : 500;
+
+// Performance optimization: Batch DOM operations
+const DOM_BATCH_SIZE = 50; // Process items in batches
+const UPDATE_THROTTLE_MS = 100; // Throttle updates
+let updateTimeout = null;
+
+// Cache latest items for each queue so we can render on-demand
+const queueDataCache = {};
+
+function formatDateTimeToYMD_HMS(dateString, isInputUtcString = false) {
+    if (!dateString) return 'N/A';
+    try {
+        // For 'YYYY-MM-DD HH:MM:SS' UTC strings, new Date() needs 'T' separator and 'Z' to correctly parse as UTC
+        // For other date strings (e.g., full ISO8601 from item.time_added), they are parsed as is.
+        const dateInput = isInputUtcString ? dateString.replace(' ', 'T') + "Z" : dateString;
+        const date = new Date(dateInput);
+
+        // Check if date is valid
+        if (isNaN(date.getTime())) {
+            throw new Error("Invalid date resulted from parsing.");
+        }
+
+        const year = date.getFullYear();
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        const day = date.getDate().toString().padStart(2, '0');
+        const hours = date.getHours().toString().padStart(2, '0');
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        const seconds = date.getSeconds().toString().padStart(2, '0');
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    } catch (e) {
+        console.warn(`Could not parse date string '${dateString}' (isInputUtcString: ${isInputUtcString}):`, e.message);
+        return dateString; // Return original string if parsing fails
+    }
+}
+
+function toggleQueue(element) {
+    if (event && event.target && event.target.closest('.filename-toggle')) return;
+    const queueItems = element.nextElementSibling;
+    const isExpanded = queueItems.style.display !== 'none';
+    queueItems.style.display = isExpanded ? 'none' : 'block';
+
+    // Get the queue name from the data attribute of the parent .queue element
+    const queueDiv = element.closest('.queue');
+    const queueName = queueDiv ? queueDiv.getAttribute('data-queue-name') : null;
+
+    // If expanding and queue items not yet rendered, generate them from cache
+    if (!isExpanded && queueItems.innerHTML.trim() === '' && queueDataCache[queueName]) {
+        queueItems.innerHTML = generateQueueContent(queueName, queueDataCache[queueName]);
+    }
+
+    if (queueName) {
+        localStorage.setItem('queue_' + queueName, isExpanded ? 'collapsed' : 'expanded');
+    } else {
+        console.error("Could not find queue name for element:", element);
+    }
+}
+
+window.toggleQueue = toggleQueue;
+
+function toggleFilenames(event, toggleEl) {
+    console.log('[TOGGLE] toggleFilenames called', {event, toggleEl, filenameToggleState});
+    event.stopPropagation();
+    filenameToggleState = !filenameToggleState;
+    localStorage.setItem('filenameToggleState', filenameToggleState);
+    const toggle = toggleEl || event.target.closest('.filename-toggle');
+    console.log('[TOGGLE] toggle element:', toggle, 'new state:', filenameToggleState);
+    if (toggle) toggle.classList.toggle('active', filenameToggleState);
+    updateFilenameVisibility();
+    console.log('[TOGGLE] done, filename-content elements:', document.querySelectorAll('.filename-content').length);
+}
+
+window.toggleFilenames = toggleFilenames;
+
+function updateFilenameVisibility() {
+    const filenames = document.querySelectorAll('.filename-content');
+    filenames.forEach(filename => {
+        filename.style.display = filenameToggleState ? 'inline' : 'none';
+    });
+}
+
+// Optimized consolidation with better performance
+function generateConsolidatedItems(items, queueName) {
+    const consolidatedMap = new Map();
+
+    // Use for loop for better performance with large arrays
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const key = `${item.title}_${item.year}`;
+
+        if (!consolidatedMap.has(key)) {
+            consolidatedMap.set(key, {
+                title: item.title,
+                year: item.year,
+                versions: new Set([item.version]),
+                seasons: new Set(),
+                release_date: item.release_date,
+                physical_release_date: item.physical_release_date,
+                scraping_versions: item.scraping_versions,
+                version: item.version
+            });
+        } else {
+            consolidatedMap.get(key).versions.add(item.version);
+        }
+
+        if (item.type === 'episode') {
+            consolidatedMap.get(key).seasons.add(item.season_number);
+        }
+    }
+
+    // Build HTML in chunks for better performance
+    const htmlChunks = [];
+    consolidatedMap.forEach(item => {
+        let releaseInfo = item.release_date;
+
+        // Check if version requires physical release using the new backend flag
+        const require_physical = item.require_physical_release || false;
+
+        if (require_physical) {
+            releaseInfo += ` <span class="physical-release">(Physical: ${item.physical_release_date || 'Unknown'})</span>`;
+        }
+
+        htmlChunks.push(`
+            <div class="item">
+                ${item.title} (${item.year}) - Version(s): ${Array.from(item.versions).join(', ')}
+                ${item.seasons.size > 0 ? ` - Season(s): ${Array.from(item.seasons).join(', ')}` : ''}
+                ${queueName === 'Unreleased' ? ` - Release Date: ${releaseInfo}` : ''}
+            </div>
+        `);
+    });
+
+    return htmlChunks.join('');
+}
+
+function generateQueueContent(queueName, items) {
+    // For count-only queues, return empty content since we only show the count
+    if (queueName === 'Blacklisted' || queueName === 'Unreleased' || queueName === 'Collected') {
+        return ''; // Return empty string for count-only queues
+    } else {
+        return generateRegularItems(queueName, items);
+    }
+}
+
+// Optimized regular items generation with batching
+function generateRegularItems(queueName, items) {
+    if (queueName === 'Checking') {
+        return generateCheckingItems(items);
+    }
+
+    // For Wanted queue: merge duplicate entries (same title/year/type/season/episode/version)
+    // that differ only by content_source — show combined "Source A, Source B" instead of
+    // two identical rows. Backend keeps separate DB rows intentionally; display collapses them.
+    let displayItems = items;
+    if (queueName === 'Wanted') {
+        const seen = new Map();
+        for (const item of items) {
+            const key = [
+                item.title || '', item.year || '', item.type || '',
+                item.season_number || '', item.episode_number || '',
+                item.version || ''
+            ].join('|');
+            if (seen.has(key)) {
+                const existing = seen.get(key);
+                const existingSrc = existing.content_source_display || existing.content_source || '';
+                const newSrc = item.content_source_display || item.content_source || '';
+                if (newSrc && newSrc !== 'Unknown' && !existingSrc.split(', ').includes(newSrc)) {
+                    existing.content_source_display = existingSrc ? `${existingSrc}, ${newSrc}` : newSrc;
+                    existing.content_source = existing.content_source_display;
+                }
+            } else {
+                // Clone so we don't mutate the original data
+                seen.set(key, Object.assign({}, item));
+            }
+        }
+        displayItems = Array.from(seen.values());
+    }
+
+    // For Adding queue: split active items from those waiting on a download in cli_mount
+    if (queueName === 'Adding') {
+        const activeItems = displayItems.filter(item => item.display_state !== 'Downloading');
+        const downloadingItems = displayItems.filter(item => item.display_state === 'Downloading');
+        let html = '';
+        if (activeItems.length > 0) {
+            html += activeItems.map(item => generateSingleItem(item, queueName)).join('');
+        }
+        if (downloadingItems.length > 0) {
+            html += '<div class="checking-group"><h5>Downloading</h5>';
+            // Group by torrent_id so season packs show as one entry
+            const grouped = {};
+            downloadingItems.forEach(item => {
+                const tid = item.filled_by_torrent_id || 'unknown';
+                if (!grouped[tid]) grouped[tid] = [];
+                grouped[tid].push(item);
+            });
+            Object.entries(grouped).forEach(([tid, groupItems]) => {
+                if (groupItems.length > 1) {
+                    html += `<div class="download-group">`;
+                    html += groupItems.map(item => generateSingleItem(item, queueName)).join('');
+                    html += `</div>`;
+                } else {
+                    html += generateSingleItem(groupItems[0], queueName);
+                }
+            });
+            html += '</div>';
+        }
+        return html;
+    }
+
+    const htmlChunks = [];
+    for (let i = 0; i < displayItems.length; i++) {
+        htmlChunks.push(generateSingleItem(displayItems[i], queueName));
+    }
+
+    return htmlChunks.join('');
+}
+
+function generateSingleItem(item, queueName) {
+    let seasonEpisode = '';
+    if (item.type === 'episode' && item.season_number && item.episode_number) {
+        let season = item.season_number.toString().padStart(2, '0');
+        let episode = item.episode_number.toString().padStart(2, '0');
+        seasonEpisode = ` S${season}E${episode}`;
+    }
+
+    let releaseInfo = '';
+    // Check if version requires physical release using the new backend flag
+    const require_physical = item.require_physical_release || false;
+
+    let releaseDate = item.release_date;
+    if (releaseDate === null || releaseDate === 'null' || releaseDate === '') {
+        releaseDate = 'Unknown';
+    }
+
+    if (require_physical) {
+        let physicalDate = item.physical_release_date;
+        if (physicalDate === null || physicalDate === 'null' || physicalDate === '') {
+            physicalDate = 'Unknown';
+        }
+        releaseInfo = ` - Release Date: ${releaseDate} <span class="physical-release">(Physical: ${physicalDate})</span>`;
+    } else if (releaseDate && releaseDate !== 'Unknown') { // Only show if there's a known release date
+        releaseInfo = ` - Release Date: ${releaseDate}`;
+    }
+
+    const isProcessing = item.is_processing || false;
+    const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
+    const processingClass = isProcessing ? 'is-processing' : '';
+    const isForcePriority = item.is_force_priority || false;
+    const forcePriorityClass = isForcePriority ? 'force-priority-item' : '';
+
+    // Format release info with proper separators for mobile
+    let formattedReleaseInfo = '';
+    if (releaseInfo) {
+        // Replace " - Release Date:" with wrapped version
+        formattedReleaseInfo = releaseInfo.replace(' - Release Date:', '<span class="item-separator"> - </span><span class="item-release"><span class="item-label">Release Date:</span>');
+        // Also wrap " - Time Added:" if it exists in releaseInfo
+        formattedReleaseInfo = formattedReleaseInfo.replace(' - Time Added:', '</span><span class="item-separator"> - </span><span class="item-time"><span class="item-label">Time Added:</span>');
+        formattedReleaseInfo += '</span>';
+    }
+
+    let itemContent = `
+        <div class="item ${processingClass} ${forcePriorityClass}" onclick="copyItemToClipboard(this, event)">
+            <span class="item-title">${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode}</span><span class="item-separator"> - </span><span class="item-version"><span class="item-label">Version:</span> ${item.version || 'Unknown'}</span>${formattedReleaseInfo}
+    `;
+
+    if (queueName === 'Checking' && item.filled_by_file) {
+        itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- Checking: ${item.filled_by_file}</span>`;
+    }
+
+    if (queueName === 'Upgrading') {
+        let formattedTime = 'N/A';
+        if (item.time_added) {
+            formattedTime = formatDateTimeToYMD_HMS(item.time_added);
+        }
+        itemContent += `<span class="item-separator"> - </span><span class="item-time"><span class="item-label">Time Added:</span> ${formattedTime}</span>`;
+    }
+
+    if (queueName === 'Pending Uncached') {
+        let formattedTime = 'N/A';
+        if (item.time_added) {
+            formattedTime = formatDateTimeToYMD_HMS(item.time_added);
+        }
+        itemContent += `<span class="item-separator"> - </span><span class="item-time"><span class="item-label">Time Added:</span> ${formattedTime}</span><span class="item-separator"> - </span><span class="item-magnet"><span class="item-label">Magnet Link:</span> ${item.filled_by_magnet || 'Unknown'}</span>`;
+    }
+
+    if (queueName === 'Sleeping') {
+        itemContent += `<span class="item-separator"> - </span><span class="item-wake-count"><span class="item-label">Wake Count:</span> ${item.wake_count !== undefined ? item.wake_count : 'N/A'}</span>`;
+    }
+
+    if (queueName === 'Wanted' && item.formatted_scrape_time) {
+        itemContent += `<span class="item-separator"> - </span><span class="item-scrape-time"><span class="item-label">Scrape Time:</span> ${item.formatted_scrape_time}</span>`;
+    }
+
+    if (queueName === 'Final_Check') {
+        let enteredTime = 'Unknown';
+        if (item.final_check_display_time) {
+            enteredTime = formatDateTimeToYMD_HMS(item.final_check_display_time, true);
+        }
+        itemContent += `<span class="item-separator"> - </span><span class="item-time"><span class="item-label">Time Added:</span> ${enteredTime}</span>`;
+    }
+
+    if (queueName === 'Pre_release') {
+        let formattedTime = 'N/A';
+        if (item.time_added) {
+            formattedTime = formatDateTimeToYMD_HMS(item.time_added);
+        }
+        itemContent;
+        if (item.last_scrape && item.last_scrape !== 'Never') {
+            let lastScrapeTime = 'Unknown';
+            try {
+                lastScrapeTime = formatDateTimeToYMD_HMS(item.last_scrape);
+            } catch (e) {
+                lastScrapeTime = item.last_scrape;
+            }
+            itemContent += ` - Last Scrape: ${lastScrapeTime}`;
+        }
+    }
+
+    // Add Content Source inline for Wanted, Scraping, Adding, Pre-Release, Checking
+    if (['Wanted', 'Scraping', 'Adding', 'Pre_release', 'Checking'].includes(queueName) && item.content_source && item.content_source !== 'Unknown') {
+        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
+    }
+    // Add Provider for Adding queue
+    if (queueName === 'Adding' && item.provider_display) {
+        const providerLabel = (item.filled_by_torrent_id && item.filled_by_torrent_id.startsWith('nzb:')) ? 'Indexer:' : 'Provider:';
+        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${item.provider_display}</span>`;
+    }
+
+    itemContent += processingIndicator;
+    itemContent += `</div>`;
+    return itemContent;
+}
+
+function generateCheckingItems(items) {
+    // Split items into downloaded and non-downloaded
+    const downloaded = items.filter(item => item.state === 'downloaded');
+    const downloading = items.filter(item => item.state !== 'downloaded');
+
+    let content = '';
+
+    if (downloaded.length > 0) {
+        content += '<div class="checking-group"><h5>Cached</h5>';
+        content += downloaded.map(item => generateCheckingItem(item)).join('');
+        content += '</div>';
+    }
+
+    if (downloading.length > 0) {
+        content += '<div class="checking-group"><h5>Downloading</h5>';
+        // Group items by torrent_id
+        const groupedDownloading = {};
+        downloading.forEach(item => {
+            const torrentId = item.filled_by_torrent_id || 'unknown';
+            if (!groupedDownloading[torrentId]) {
+                groupedDownloading[torrentId] = {
+                    items: [],
+                    progress: item.progress || 0,
+                    state: item.state || 'unknown'
+                };
+            }
+            groupedDownloading[torrentId].items.push(item);
+        });
+
+        // Generate content for each group
+        Object.entries(groupedDownloading).forEach(([torrentId, group]) => {
+            content += '<div class="download-group">';
+            // Add items first
+            content += group.items.map(item => generateCheckingItem(item, false)).join('');
+            // Add single progress bar for the group
+            content += `
+                <div class="item-progress group-progress">
+                    <div class="progress" style="width: 200px;">
+                        <div class="progress-bar" role="progressbar" 
+                             style="width: ${group.progress}%" 
+                             aria-valuenow="${group.progress}" 
+                             aria-valuemin="0" 
+                             aria-valuemax="100">
+                        </div>
+                        <div class="progress-text">${group.progress}% - ${group.state}</div>
+                    </div>
+                </div>
+            `;
+            content += '</div>';
+        });
+        content += '</div>';
+    }
+
+    return content;
+}
+
+function formatDuration(seconds) {
+    if (!seconds || seconds < 0) return null;
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+}
+
+function generateCheckingItem(item, showProgress = true) {
+    const isProcessing = item.is_processing || false; 
+    const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
+    const processingClass = isProcessing ? 'is-processing' : '';
+    const isForcePriority = item.is_force_priority || false;
+    const forcePriorityClass = isForcePriority ? 'force-priority-item' : '';
+
+    let seasonEpisode = '';
+    if (item.type === 'episode' && item.season_number && item.episode_number) {
+        let season = item.season_number.toString().padStart(2, '0');
+        let episode = item.episode_number.toString().padStart(2, '0');
+        seasonEpisode = ` S${season}E${episode}`;
+    }
+
+    let itemContent = `
+        <div class="item ${processingClass} ${forcePriorityClass}" onclick="copyItemToClipboard(this, event)">
+            <span class="item-title">${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode}</span><span class="item-separator"> - </span><span class="item-version"><span class="item-label">Version:</span> ${item.version || 'Unknown'}</span>
+    `;
+
+    if (item.filled_by_file) {
+        itemContent += `<span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}"><span class="item-separator"> - </span><span class="item-label">File:</span> <span class="item-checking-file">${item.filled_by_file}</span></span>`;
+    }
+
+    // Add Content Source inline for Checking queue items
+    if (item.content_source && item.content_source !== 'Unknown') {
+        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
+    }
+    // Add Provider for Checking queue
+    if (item.provider_display) {
+        const providerLabel = (item.filled_by_torrent_id && item.filled_by_torrent_id.startsWith('nzb:')) ? 'Indexer:' : 'Provider:';
+        itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${item.provider_display}</span>`;
+    }
+
+    // Time in queue
+    const tiqStr = formatDuration(item.time_in_queue);
+    if (tiqStr) {
+        const tickStr = item.plex_tick ? ` · ${item.plex_tick}/4 ticks` : '';
+        itemContent += `<span class="item-separator"> - </span><span class="item-checking-tiq" style="font-size: smaller; color: var(--text-muted, #888);"><span class="item-label">In queue:</span> ${tiqStr}${tickStr}</span>`;
+    }
+
+    // Show progress bar for items that are downloading, unknown, or don't have a state set
+    if (showProgress && (!item.state || item.state === 'downloading' || item.state === 'unknown')) {
+        let progress = item.progress || 0;
+        let state = item.state || 'unknown';
+        itemContent += `<br/>
+            <div class="item-progress">
+                <div class="progress" style="width: 200px;">
+                    <div class="progress-bar" role="progressbar" 
+                         style="width: ${progress}%" 
+                         aria-valuenow="${progress}" 
+                         aria-valuemin="0" 
+                         aria-valuemax="100">
+                    </div>
+                    <div class="progress-text">${progress}% - ${state}</div>
+                </div>
+            </div>
+        `;
+    }
+    itemContent += processingIndicator;
+    itemContent += `</div>`;
+    return itemContent;
+}
+
+function updateInitializationStatus(data) {
+
+    let initStatus = document.getElementById('initialization-status');
+    let progressContainer = document.getElementById('progress-container');
+    let progressBar = document.getElementById('init-progress');
+    let stepText = document.getElementById('init-step-text');
+
+    // If elements don't exist, create them
+    if (!initStatus || !progressContainer || !progressBar || !stepText) {
+        console.warn('Initialization status elements not found, creating them dynamically');
+
+        const container = document.querySelector('.container');
+        if (!container) {
+            console.error('Container element not found');
+            return;
+        }
+
+        // Create the initialization status elements
+        initStatus = document.createElement('div');
+        initStatus.id = 'initialization-status';
+        initStatus.className = 'alert alert-info';
+        initStatus.style.display = 'none';
+
+        stepText = document.createElement('span');
+        stepText.id = 'init-step-text';
+        stepText.textContent = 'Initializing system...';
+
+        progressContainer = document.createElement('div');
+        progressContainer.id = 'progress-container';
+        progressContainer.className = 'progress mt-2';
+        progressContainer.style.display = 'none';
+
+        progressBar = document.createElement('div');
+        progressBar.id = 'init-progress';
+        progressBar.className = 'progress-bar';
+        progressBar.setAttribute('role', 'progressbar');
+        progressBar.style.width = '0%';
+        progressBar.setAttribute('aria-valuenow', '0');
+        progressBar.setAttribute('aria-valuemin', '0');
+        progressBar.setAttribute('aria-valuemax', '100');
+
+        // Add the icon
+        const icon = document.createElement('i');
+        icon.className = 'fas fa-sync fa-spin';
+
+        // Assemble the elements
+        initStatus.appendChild(icon);
+        initStatus.appendChild(document.createTextNode(' '));
+        initStatus.appendChild(stepText);
+        progressContainer.appendChild(progressBar);
+        initStatus.appendChild(progressContainer);
+
+        // Insert after the connection-status element
+        const connectionStatus = document.getElementById('connection-status');
+        if (connectionStatus && connectionStatus.nextSibling) {
+            container.insertBefore(initStatus, connectionStatus.nextSibling);
+        } else {
+            container.appendChild(initStatus);
+        }
+
+    }
+
+    if (!data || !data.current_step) {
+        initStatus.style.display = 'none';
+        progressContainer.style.display = 'none';
+        return;
+    }
+
+    initStatus.style.display = 'block';
+    progressContainer.style.display = 'block';
+
+    // Use the progress value directly from the backend
+    let progress = data.progress_value || 0;
+
+    // Special case for starting initialization
+    if (data.current_step === 'Starting initialization') {
+        progress = 0;
+    }
+
+    // Ensure progress stays within bounds
+    progress = Math.max(0, Math.min(100, progress));
+
+
+    // Update progress bar
+    progressBar.style.width = `${progress}%`;
+    progressBar.setAttribute('aria-valuenow', progress);
+
+    // Update status text
+    let statusText = data.current_step;
+    if (data.substep_details) {
+        statusText += ` - ${data.substep_details}`;
+    }
+    stepText.textContent = statusText;
+
+    // Handle error state
+    if (data.error_details) {
+        initStatus.classList.remove('alert-info');
+        initStatus.classList.add('alert-danger');
+    } else {
+        initStatus.classList.remove('alert-danger');
+        initStatus.classList.add('alert-info');
+    }
+}
+
+// Optimized queue update with change detection
+function updateQueueContents(data) {
+    if (updateTimeout) {
+        clearTimeout(updateTimeout);
+    }
+
+    updateTimeout = setTimeout(() => {
+        updateQueueContentsImmediate(data);
+    }, UPDATE_THROTTLE_MS);
+}
+
+function updateQueueContentsImmediate(data) {
+    const perfStart = performance.now();
+    console.log('[PERF] updateQueueContentsImmediate started');
+
+    const queueContents = document.getElementById('queue-contents');
+    const initializationStatus = document.getElementById('initialization-status');
+
+    if (data.program_status === "Running") {
+        console.log('[PERF] Program status: Running');
+
+        if (data.initialization_status) {
+            // Startup sync still running in the background: banner above the queues
+            updateInitializationStatus(data.initialization_status);
+        } else {
+            if (initializationStatus) {
+                initializationStatus.style.display = 'none';
+            }
+            const progressContainer = document.getElementById('progress-container');
+            if (progressContainer) {
+                progressContainer.style.display = 'none';
+            }
+        }
+        queueContents.style.display = 'flex';
+
+        let hasContent = false;
+        // Backend names; Order defines display sequence
+        let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Final_Check', 'Pre_release', 'Sleeping', 'Collected', 'Unreleased', 'Blacklisted'];
+        // Mapping for display and tooltip IDs
+        const queueDisplayMapping = {
+            "Final_Check": "Final Scrape",
+            "Pre_release": "Pre-Release"
+        };
+
+        // Always update processing stats even if queue data unchanged
+        const statsDiv = document.getElementById('processing-stats');
+        if (data.items_per_hour !== undefined && data.remaining_scrape_time !== undefined) {
+            document.getElementById('stats-items-per-hour').textContent = data.items_per_hour;
+
+            const remainingTimeEl = document.getElementById('stats-remaining-time');
+
+            // Backend provides items_remaining (Scraping + ready Wanted). If 0 => queues cleared
+            const allQueuesEmpty = (data.items_remaining !== undefined && data.items_remaining === 0);
+
+            if (allQueuesEmpty) {
+                // Show a random celebratory message instead of remaining time
+                const congratsMessages = [
+                    'All done - nothing left to scrape!'
+                ];
+                const randomMsg = congratsMessages[Math.floor(Math.random() * congratsMessages.length)];
+                remainingTimeEl.textContent = randomMsg;
+            } else {
+                remainingTimeEl.textContent = data.remaining_scrape_time;
+            }
+
+            statsDiv.style.display = 'block';
+        } else if (statsDiv) {
+            statsDiv.style.display = 'none';
+        }
+
+        // Check for changes to queue content
+        const hashStart = performance.now();
+        const currentDataHash = JSON.stringify(data.contents);
+        console.log('[PERF] Hash calculation took:', (performance.now() - hashStart).toFixed(2) + 'ms');
+
+        if (lastProcessedData.hash === currentDataHash) {
+            console.log('[PERF] No changes detected, skipping DOM operations');
+            return; // No changes, skip expensive DOM operations
+        }
+        lastProcessedData.hash = currentDataHash;
+
+        const domClearStart = performance.now();
+        queueContents.innerHTML = ''; // Clear previous content
+        console.log('[PERF] DOM clear took:', (performance.now() - domClearStart).toFixed(2) + 'ms');
+
+        const queueProcessingStart = performance.now();
+        let queueCount = 0;
+
+        queueOrder.forEach((backendQueueName, index) => {
+            const queueStart = performance.now();
+
+            // Check if queue has items OR if it's a count-only queue with a count > 0
+            const hasItems = data.contents && data.contents[backendQueueName] && data.contents[backendQueueName].length > 0;
+            const hasCount = data.queue_counts && data.queue_counts[backendQueueName] && data.queue_counts[backendQueueName] > 0;
+                                const isCountOnlyQueue = backendQueueName === 'Blacklisted' || backendQueueName === 'Unreleased' || backendQueueName === 'Collected';
+
+            if (hasItems || (isCountOnlyQueue && hasCount)) {
+                queueCount++;
+                hasContent = true;
+
+                const elementCreateStart = performance.now();
+                let queueDiv = document.createElement('div');
+                queueDiv.className = 'queue';
+                const displayQueueName = queueDisplayMapping[backendQueueName] || backendQueueName;
+                const queueDivId = `queue-box-${displayQueueName.toLowerCase().replace(/ /g, '_')}`;
+
+                queueDiv.setAttribute('data-queue-name', backendQueueName);
+                queueDiv.id = queueDivId;
+                queueDiv.setAttribute('data-tooltip', `queues.${queueDivId}`);
+                console.log('[PERF] Element creation for queue', backendQueueName, 'took:', (performance.now() - elementCreateStart).toFixed(2) + 'ms');
+
+                // For count-only queues, always show as collapsed and disable expansion
+                let isExpanded = false;
+                if (!isCountOnlyQueue) {
+                    isExpanded = localStorage.getItem('queue_' + backendQueueName) === 'expanded';
+                }
+
+                const totalItems = data.queue_counts[backendQueueName];
+
+                // For count-only queues, don't cache items since we don't show them
+                if (!isCountOnlyQueue) {
+                    queueDataCache[backendQueueName] = data.contents[backendQueueName];
+                }
+
+                // Only generate item HTML if queue is currently expanded and not count-only
+                const contentGenStart = performance.now();
+                const queueItemsHtml = (isExpanded && !isCountOnlyQueue) ? generateQueueContent(backendQueueName, data.contents[backendQueueName]) : '';
+                console.log('[PERF] Content generation for queue', backendQueueName, 'took:', (performance.now() - contentGenStart).toFixed(2) + 'ms');
+
+                const innerHtmlStart = performance.now();
+                queueDiv.innerHTML = `
+                    <div class="queue-title" onclick="${isCountOnlyQueue ? 'return false;' : 'toggleQueue(this);'}">
+                        <span>${displayQueueName.replace(/_/g, ' ')}</span>
+                        ${backendQueueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event, this)"><i class="fas fa-file"></i></span>` : ''}
+                        <span class="queue-count">${totalItems} items</span>
+                    </div>
+                    <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
+                        ${queueItemsHtml}
+                    </div>
+                `;
+                console.log('[PERF] innerHTML assignment for queue', backendQueueName, 'took:', (performance.now() - innerHtmlStart).toFixed(2) + 'ms');
+
+                const appendStart = performance.now();
+                queueContents.appendChild(queueDiv);
+                console.log('[PERF] DOM append for queue', backendQueueName, 'took:', (performance.now() - appendStart).toFixed(2) + 'ms');
+
+                console.log('[PERF] Total processing for queue', backendQueueName, 'took:', (performance.now() - queueStart).toFixed(2) + 'ms');
+            }
+        });
+
+        console.log('[PERF] All queue processing took:', (performance.now() - queueProcessingStart).toFixed(2) + 'ms');
+        console.log('[PERF] Processed', queueCount, 'queues');
+
+        if (!hasContent) {
+            queueContents.innerHTML = '<p>Program is running, but no active contents in queues.</p>';
+        } else {
+            const hiddenCounts = data.hidden_counts;
+            if (hiddenCounts && Object.keys(hiddenCounts).length > 0) {
+                let hiddenSummary = document.createElement('div');
+                hiddenSummary.className = 'hidden-items-summary';
+                let summaryText = '<h5>Additional Items Not Shown:</h5><ul>';
+                let hasHiddenItems = false;
+                for (const [queueName, count] of Object.entries(hiddenCounts)) {
+                    // Skip Checking queue from hidden counts display
+                    if (count > 0 && queueName !== 'Checking') {
+                        summaryText += `<li>${queueName.replace(/_/g, ' ')}: ${count} items</li>`;
+                        hasHiddenItems = true;
+                    }
+                }
+                summaryText += '</ul>';
+                if (hasHiddenItems) {
+                    hiddenSummary.innerHTML = summaryText;
+
+                    queueContents.appendChild(hiddenSummary);
+                }
+            }
+        }
+        updateFilenameVisibility();
+    } else if (data.program_status === "Starting") {
+        console.log('[PERF] Program status: Starting');
+        if (data.initialization_status) {
+            updateInitializationStatus(data.initialization_status);
+        } else {
+            console.warn('Starting status but no initialization_status provided');
+        }
+        queueContents.style.display = 'none';
+    } else if (data.program_status === "Stopped" || data.program_status === "Stopping") {
+        console.log('[PERF] Program status:', data.program_status);
+        if (initializationStatus) {
+            initializationStatus.style.display = 'none';
+        }
+        const progressContainer = document.getElementById('progress-container');
+        if (progressContainer) {
+            progressContainer.style.display = 'none';
+        }
+        queueContents.style.display = 'block';
+        queueContents.innerHTML = '<p>Program is not running, or queues are empty.</p>';
+    } else {
+        console.log("Received unhandled program status:", data.program_status);
+    }
+    // --- Performance logging for render ---
+    console.log('[PERF] updateQueueContentsImmediate total time:', (performance.now() - perfStart).toFixed(2) + 'ms');
+}
+
+function setupQueueStream() {
+    if (eventSource) {
+        eventSource.close();
+    }
+
+    console.log('[PERF] Setting up queue stream with limit:', currentPageSize);
+    eventSource = new EventSource(`/queues/api/queue-stream?limit=${currentPageSize}`);
+    const loadingIndicator = document.getElementById('loading-indicator');
+
+    eventSource.onmessage = function(event) {
+        const msgStart = performance.now();
+        console.log('[PERF] EventSource message received at:', new Date().toISOString());
+
+        try {
+            // Defensive: Only parse if event.data looks like JSON
+            if (typeof event.data !== 'string' || !event.data.trim().startsWith('{')) {
+                console.warn('Skipping non-JSON event data:', event.data);
+                return; // Ignore this message
+            }
+
+            const parseStart = performance.now();
+            const data = JSON.parse(event.data);
+            console.log('[PERF] JSON parsing took:', (performance.now() - parseStart).toFixed(2) + 'ms');
+
+            // Reset reconnection attempts on successful parse
+            reconnectAttempts = 0;
+            reconnectDelay = 1000;
+            isReconnecting = false;
+
+            if (!hasReceivedFirstResponse) {
+                hasReceivedFirstResponse = true;
+                if (loadingIndicator) {
+                    loadingIndicator.style.display = 'none';
+                }
+                // Clear any error messages on successful connection
+                clearErrorMessages();
+            }
+
+            // Handle heartbeat messages
+            if (data.heartbeat) {
+                console.log('Received heartbeat at', new Date(data.timestamp * 1000));
+                return; // Don't process heartbeat as queue data
+            }
+
+            // Use optimized update function
+            updateQueueContents(data);
+            console.log('[PERF] eventSource.onmessage total processing:', (performance.now() - msgStart).toFixed(2) + 'ms');
+
+        } catch (e) {
+            console.error('Error parsing queue data:', e);
+            console.error('Raw data causing error:', event.data);
+
+            // Attempt to reconnect on JSON parse error (likely partial data)
+            handleJsonParseError(e, event.data);
+        }
+    };
+
+    eventSource.onopen = function() {
+        console.log('[PERF] EventSource connection opened at:', new Date().toISOString());
+        reconnectAttempts = 0;
+        reconnectDelay = 1000;
+
+        if (isReconnecting) {
+            showConnectionStatus('Connected', 'success', 2000);
+        }
+        isReconnecting = false;
+        clearErrorMessages();
+    };
+
+    eventSource.onerror = function(error) {
+        console.error('[PERF] EventSource failed:', error);
+        handleConnectionError();
+    };
+}
+
+function handleJsonParseError(error, rawData) {
+    console.error('JSON Parse Error:', error.message);
+    console.error('Raw data snippet:', rawData.substring(0, 100));
+
+    // Show subtle notification instead of detailed error
+    showConnectionStatus('Data error. Reconnecting...', 'reconnecting', 2000);
+
+    // Trigger reconnection for JSON parse errors (likely due to partial data)
+    attemptReconnection();
+}
+
+function handleConnectionError() {
+    if (!hasReceivedFirstResponse) {
+        const loadingIndicator = document.getElementById('loading-indicator');
+        if (loadingIndicator) {
+            loadingIndicator.innerHTML = '<p class="text-danger">Connection lost. Reconnecting...</p>';
+        }
+    } else {
+        showConnectionStatus('Connection lost. Reconnecting...', 'reconnecting', 0);
+    }
+
+    // Don't immediately reconnect - EventSource will handle this automatically
+    // But we can track the state
+    isReconnecting = true;
+}
+
+function attemptReconnection() {
+    if (isReconnecting) {
+        return; // Already attempting reconnection
+    }
+
+    if (reconnectAttempts >= maxReconnectAttempts) {
+        showError(`
+            <div class="alert alert-danger">
+                <h4>Connection Failed</h4>
+                <p>Maximum reconnection attempts reached. Please refresh the page.</p>
+                <button class="btn btn-primary" onclick="location.reload()">Refresh Page</button>
+            </div>
+        `);
+        return;
+    }
+
+    isReconnecting = true;
+    reconnectAttempts++;
+
+    console.log(`Attempting reconnection ${reconnectAttempts}/${maxReconnectAttempts} in ${reconnectDelay}ms`);
+
+    showConnectionStatus(`Reconnecting... (${reconnectAttempts}/${maxReconnectAttempts})`, 'reconnecting', 0);
+
+    setTimeout(() => {
+        setupQueueStream();
+        // Exponential backoff: increase delay for next attempt
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000); // Max 30 seconds
+    }, reconnectDelay);
+}
+
+function clearErrorMessages() {
+    const existingErrors = document.querySelectorAll('.container > .alert, .container > .parse-error');
+    existingErrors.forEach(el => {
+        if (el.classList.contains('alert-danger') || 
+            el.classList.contains('alert-warning') || 
+            el.classList.contains('alert-info') ||
+            el.classList.contains('parse-error')) {
+            el.remove();
+        }
+    });
+}
+
+function showConnectionStatus(message, type = 'reconnecting', duration = 3000) {
+    const statusEl = document.getElementById('connection-status');
+    if (!statusEl) return;
+
+    statusEl.textContent = message;
+    statusEl.className = `connection-status ${type} show`;
+
+    if (duration > 0) {
+        setTimeout(() => {
+            statusEl.classList.remove('show');
+        }, duration);
+    }
+}
+
+function hideConnectionStatus() {
+    const statusEl = document.getElementById('connection-status');
+    if (statusEl) {
+        statusEl.classList.remove('show');
+    }
+}
+
+function showError(message) {
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'alert alert-danger';
+    errorDiv.innerHTML = message;
+
+    // Remove any existing error messages
+    const existingErrors = document.querySelectorAll('.container > .alert-danger');
+    existingErrors.forEach(el => el.remove());
+
+    // Insert the new error at the top of the container
+    const container = document.querySelector('.container');
+    container.insertBefore(errorDiv, container.firstChild);
+}
+
+function escapeHtml(unsafe) {
+    if (typeof unsafe !== 'string') {
+        return '';
+    }
+    return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function increasePageSize() {
+    // Increase page size and reload the stream for the current session
+    currentPageSize += 50; // Increase by 50
+
+    // Add a loading indicator to the button
+    const showMoreButton = document.querySelector('.show-more-container button');
+    if (showMoreButton) {
+        showMoreButton.disabled = true;
+        showMoreButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+    }
+
+    setupQueueStream();
+}
+
+function copyItemToClipboard(element, event) {
+    // Don't trigger copy if clicking on a progress bar or other interactive elements
+    if (event.target.closest('.progress') || event.target.closest('.filename-toggle')) {
+        return;
+    }
+
+    // Get the text content
+    const text = element.textContent.trim();
+
+    // Create a temporary textarea to copy the text
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+        // Copy the text
+        document.execCommand('copy');
+
+        // Visual feedback
+        element.classList.add('copied');
+        setTimeout(() => element.classList.remove('copied'), 500);
+
+        // Show tooltip
+        const tooltip = document.createElement('div');
+        tooltip.className = 'copy-tooltip';
+        tooltip.textContent = 'Copied!';
+        tooltip.style.left = `${event.pageX + 10}px`;
+        tooltip.style.top = `${event.pageY - 25}px`;
+        document.body.appendChild(tooltip);
+
+        // Show and remove tooltip
+        setTimeout(() => tooltip.style.opacity = '1', 0);
+        setTimeout(() => {
+            tooltip.style.opacity = '0';
+            setTimeout(() => tooltip.remove(), 200);
+        }, 1000);
+    } catch (err) {
+        console.error('Failed to copy text:', err);
+    } finally {
+        // Clean up
+        document.body.removeChild(textarea);
+    }
+}
+
+window.copyItemToClipboard = copyItemToClipboard;
+
+// Wait for CSS to load before manipulating DOM
+function waitForCSS() {
+    return new Promise(resolve => {
+        if (document.readyState === 'complete') {
+            resolve();
+        } else {
+            window.addEventListener('load', resolve);
+        }
+    });
+}
+
+// Use it in your setup
+// Initialize queue workers select from server-rendered value
+(function() {
+    const sel = document.getElementById('queue-workers-select');
+    if (sel) sel.value = window.pageData.queues.queue_pool_workers;
+})();
+
+window.saveQueueWorkers = async function saveQueueWorkers() {
+    const btn = document.getElementById('queue-workers-save-btn');
+    const status = document.getElementById('queue-workers-status');
+    const val = parseInt(document.getElementById('queue-workers-select').value);
+    btn.disabled = true;
+    status.textContent = 'Saving…';
+    try {
+        const r = await fetch('/queues/api/queue_workers', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({'workers': val})
+        });
+        const d = await r.json();
+        status.textContent = d.success ? `✓ Saved — restart to apply` : '✗ Failed: ' + (d.error || '');
+    } catch(e) {
+        status.textContent = '✗ Error';
+    }
+    btn.disabled = false;
+    setTimeout(() => { status.textContent = ''; }, 4000);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOMContentLoaded event fired');
+
+    // Add CSS loading guard
+    function waitForCSS() {
+        return new Promise(resolve => {
+            // Check if Font Awesome is loaded
+            const testElement = document.createElement('i');
+            testElement.className = 'fas fa-spinner';
+            document.body.appendChild(testElement);
+
+            const isLoaded = getComputedStyle(testElement, '::before').content !== 'none';
+            document.body.removeChild(testElement);
+
+            if (isLoaded) {
+                resolve();
+            } else {
+                // Wait a bit more for CSS to load
+                setTimeout(resolve, 200);
+            }
+        });
+    }
+
+    // Wait for CSS then setup stream
+    waitForCSS().then(() => {
+        console.log('CSS loaded, setting up queue stream');
+        setupQueueStream();
+    });
+});
+
+// Handle page visibility changes (especially important for mobile)
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        console.log('Page visible – validating queue stream connection');
+
+        /*
+           Re-establish the SSE connection if any of the following are true:
+           1. We previously marked ourselves as reconnecting (isReconnecting flag).
+           2. The EventSource does not exist.
+           3. The EventSource is in a CLOSED state.
+        */
+        if (isReconnecting || !eventSource || eventSource.readyState === EventSource.CLOSED) {
+            console.log('[Queue] Re-connecting EventSource after visibility change');
+            // Reset reconnection tracking so normal logic resumes
+            isReconnecting = false;
+            reconnectAttempts = 0;
+            reconnectDelay = 1000;
+            setupQueueStream();
+        }
+    }
+});
+
+// Immediately attempt to reconnect when the browser regains network connectivity (useful on mobile)
+window.addEventListener('online', () => {
+    console.log('[Queue] Browser came online – attempting to re-establish queue stream');
+    if (isReconnecting || !eventSource || eventSource.readyState === EventSource.CLOSED) {
+        isReconnecting = false;
+        reconnectAttempts = 0;
+        reconnectDelay = 1000;
+        setupQueueStream();
+    }
+});
+
+// Clean up when the page is unloaded
+window.addEventListener('beforeunload', () => {
+    if (eventSource) {
+        eventSource.close();
+    }
+});
+
+console.log('Queue script loaded and running (module mode)');

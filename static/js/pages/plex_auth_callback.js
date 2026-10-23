@@ -1,0 +1,80 @@
+/* Moved from templates/plex_auth_callback.html. */
+// Function to show the result and hide loading
+function showResult(success, message) {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('result').style.display = 'block';
+    document.getElementById('status-title').className = success ? 'success' : 'error';
+    document.getElementById('status-title').textContent = success ? 'Authentication Successful!' : 'Authentication Failed';
+    document.getElementById('status-message').textContent = message;
+}
+
+// Function to poll the PIN status
+async function pollPinStatus(pinId, clientId) {
+    try {
+        const response = await fetch(`https://plex.tv/api/v2/pins/${pinId}`, {
+            headers: {
+                'Accept': 'application/json',
+                'X-Plex-Client-Identifier': clientId
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.authToken) {
+            // Authentication successful
+            window.opener.postMessage({
+                type: 'plex-auth-success',
+                token: data.authToken,
+                clientId: clientId
+            }, '*');
+            showResult(true, 'You can now close this window and return to the application.');
+            setTimeout(() => window.close(), 2000);
+            return true;
+        }
+        return false;
+    } catch (error) {
+        console.error('Error polling PIN status:', error);
+        showResult(false, 'Failed to verify authentication: ' + error.message);
+        window.opener.postMessage({
+            type: 'plex-auth-error',
+            error: error.message
+        }, '*');
+        return true;
+    }
+}
+
+// Start polling when the page loads
+window.onload = async function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const pinId = urlParams.get('pinId');
+    const clientId = urlParams.get('clientId');
+
+    if (!pinId || !clientId) {
+        showResult(false, 'Missing required parameters');
+        return;
+    }
+
+    // Poll every second for up to 5 minutes
+    let attempts = 0;
+    const maxAttempts = 300; // 5 minutes * 60 seconds
+
+    const pollInterval = setInterval(async () => {
+        attempts++;
+        const done = await pollPinStatus(pinId, clientId);
+
+        if (done || attempts >= maxAttempts) {
+            clearInterval(pollInterval);
+            if (attempts >= maxAttempts) {
+                showResult(false, 'Authentication timed out. Please try again.');
+                window.opener.postMessage({
+                    type: 'plex-auth-error',
+                    error: 'Authentication timed out'
+                }, '*');
+            }
+        }
+    }, 1000);
+};

@@ -1,0 +1,92 @@
+/* Moved from templates/settings_tabs/content_sources.html. */
+.cs-tags-pill-input{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:38px;padding:6px 10px;background:var(--tng-surface);border:1px solid var(--tng-border-2);border-radius:6px;cursor:text;}
+.cs-tag-pill{display:inline-flex;align-items:center;gap:4px;background:#e8651a;color:#fff;border-radius:12px;padding:2px 10px;font-size:12px;}
+.cs-tag-pill button{background:none;border:none;color:#fff;cursor:pointer;padding:0;font-size:14px;line-height:1;opacity:.8;}.cs-tag-pill button:hover{opacity:1;}
+.cs-tags-input-wrapper{position:relative;flex:1;min-width:120px;}
+.cs-tags-search{width:100%;background:transparent;border:none;outline:none;color:#fff;font-size:13px;padding:2px 0;}
+.cs-tags-dropdown{position:absolute;top:100%;left:0;right:0;z-index:9999;background:var(--tng-surface-2);border:1px solid var(--tng-border-2);border-radius:6px;max-height:160px;overflow-y:auto;margin-top:4px;}
+.cs-tags-dd-item{padding:8px 12px;cursor:pointer;font-size:13px;color:var(--tng-text);}.cs-tags-dd-item:hover{background:var(--tng-surface-3);}
+.cs-tags-dd-create{color:#e8651a;font-style:italic;}
+/* Add your custom styles here */
+.versions-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    max-height: 200px;
+    overflow-y: auto;
+    margin-bottom: 15px;
+    padding: 5px;
+    border: 1px solid var(--tng-text-5);
+    border-radius: 4px;
+}
+
+.checkbox-item {
+    display: flex;
+    align-items: center;
+    margin-right: 15px;
+    margin-bottom: 8px;
+}
+
+.checkbox-item input[type="checkbox"] {
+    margin-right: 5px;
+}
+
+/* Warning indicator for sources with no versions enabled */
+.no-versions-warning {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 8px;
+    color: var(--tng-red-light);
+    font-size: 12px;
+    font-weight: normal;
+}
+
+.no-versions-warning-icon {
+    margin-right: 4px;
+    font-size: 14px;
+}
+
+.no-versions-warning:hover {
+    color: #ff5252;
+}
+
+/* Adaptive List styles */
+.adaptive-lists-container {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.adaptive-list-item {
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.adaptive-list-item:hover {
+    background: rgba(255,255,255,0.08) !important;
+    border-color: rgba(255,255,255,0.2) !important;
+}
+
+.edit-adaptive-list-btn {
+    background: var(--accent-color, #e67e22) !important;
+    color: white !important;
+}
+
+.edit-adaptive-list-btn:hover {
+    background: var(--accent-color-hover, #d35400) !important;
+}
+
+.delete-adaptive-list-btn {
+    background: var(--tng-red) !important;
+    color: white !important;
+}
+
+.delete-adaptive-list-btn:hover {
+    background: #c82333 !important;
+}
+
+.add-adaptive-list-btn {
+    background: var(--tng-green) !important;
+    color: white !important;
+}
+
+.add-adaptive-list-btn:hover {
+    background: #218838 !important;
+}

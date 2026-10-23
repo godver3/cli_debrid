@@ -1,0 +1,210 @@
+/* Moved from templates/recover_symlinks.html. */
+// showPopup and POPUP_TYPES are set on window by notifications.js, which base.html loads earlier
+const { showPopup, POPUP_TYPES } = window;
+
+document.addEventListener('DOMContentLoaded', function() {
+    const analyzeForm = document.getElementById('analyze-symlinks-form');
+    const recoverForm = document.getElementById('recover-items-form');
+    const analysisResultsDiv = document.getElementById('analysis-results');
+    const analysisSummary = document.getElementById('analysis-summary');
+    const analyzeButton = analyzeForm.querySelector('button[type="submit"]');
+    const recoverButton = document.getElementById('recover-all-btn');
+
+    let eventSource = null;
+    let currentTaskId = null;
+    let totalItemsFound = 0;
+
+    // Determine which set of URLs to use based on recovery_type
+    const recoveryType = window.pageData.recover_symlinks.recovery_type_standard; // Default to 'standard' if not provided
+    let analyzeUrl, progressUrlTemplate, recoverUrl;
+
+    if (recoveryType === 'riven') {
+        analyzeUrl = window.pageData.recover_symlinks.debug_analyze_riven_symlinks_url;
+        progressUrlTemplate = window.pageData.recover_symlinks.debug_riven_analysis_progress_stream_url;
+        recoverUrl = window.pageData.recover_symlinks.debug_perform_riven_recovery_url;
+        document.querySelector('.symlink-recovery h2').textContent = 'Riven Symlink Library Recovery'; // Update title
+        document.querySelector('.symlink-recovery .description').textContent = 'This tool attempts to scan your Riven symlink directory, parse filenames, and recreate database entries. This will use your current symlink settings. You must ensure that your symlink settings under Additional Settings match the structure of your folders to be recovered.'; // Update description
+    } else {
+        analyzeUrl = window.pageData.recover_symlinks.debug_analyze_symlinks_url;
+        progressUrlTemplate = window.pageData.recover_symlinks.debug_analysis_progress_stream_url;
+        recoverUrl = window.pageData.recover_symlinks.debug_perform_recovery_url;
+        // Standard title and description are already set by default in the HTML
+    }
+
+    analyzeForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        analyzeButton.disabled = true;
+        analyzeButton.textContent = 'Analyzing...'; 
+
+        analysisResultsDiv.style.display = 'block';
+        analysisSummary.innerHTML = '<p>Starting analysis...</p>';
+        recoverForm.style.display = 'none';
+        currentTaskId = null;
+        totalItemsFound = 0;
+
+        if (eventSource) {
+            eventSource.close();
+            console.log("Closed previous EventSource connection.");
+        }
+
+        const formData = new FormData(analyzeForm);
+
+        fetch(analyzeUrl, { // Use dynamic analyzeUrl
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.task_id) {
+                console.log("Analysis started with task ID:", data.task_id);
+                currentTaskId = data.task_id;
+                analysisSummary.innerHTML = `<p>Analysis started (Task ID: ${data.task_id}). Waiting for progress updates...</p>`;
+                startListeningForProgress(data.task_id);
+            } else {
+                Loading.hide();
+                 analyzeButton.disabled = false;
+                 analyzeButton.textContent = 'Analyze Library';
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: data.error || 'Failed to start analysis task.',
+                    title: 'Analysis Initiation Error'
+                });
+                analysisResultsDiv.style.display = 'none';
+            }
+        })
+        .catch(error => {
+            Loading.hide();
+             analyzeButton.disabled = false;
+             analyzeButton.textContent = 'Analyze Library';
+            console.error('Error starting analysis:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'An unexpected error occurred when trying to start the analysis.',
+                title: 'Error'
+            });
+            analysisResultsDiv.style.display = 'none';
+        });
+    });
+
+    function startListeningForProgress(taskId) {
+        const progressUrl = progressUrlTemplate.replace("TASK_ID_PLACEHOLDER", taskId); // Use dynamic progressUrlTemplate
+        console.log("Connecting to SSE:", progressUrl);
+        eventSource = new EventSource(progressUrl);
+
+        eventSource.onmessage = function(event) {
+            try {
+                const progressData = JSON.parse(event.data);
+                console.log("SSE Received:", progressData);
+
+                totalItemsFound = progressData.items_found || 0;
+
+                analysisSummary.innerHTML = `
+                    <p><strong>Status:</strong> ${progressData.status || 'N/A'} - ${progressData.message || ''}</p>
+                    <ul>
+                        <li>Total Items Scanned: ${progressData.total_items_scanned || 0}</li>
+                        <li>Symlinks Processed: ${progressData.total_symlinks_processed || 0}</li>
+                        <li>Files Processed: ${progressData.total_files_processed || 0}</li>
+                        <li>Recoverable Items Found: ${progressData.items_found || 0}</li>
+                        <li>Parser Errors: ${progressData.parser_errors || 0}</li>
+                        <li>Metadata Errors: ${progressData.metadata_errors || 0}</li>
+                    </ul>
+                `;
+
+                if (progressData.complete) {
+                    console.log("SSE Complete:", progressData);
+                    eventSource.close();
+                    console.log("Closed EventSource connection.");
+                     analyzeButton.disabled = false;
+                     analyzeButton.textContent = 'Analyze Library';
+                    Loading.hide();
+
+                    let finalMessage = `<p><strong>Analysis Finished:</strong> ${progressData.message}</p>`;
+                    if (progressData.status === 'error') {
+                         finalMessage += `<p style="color: red;">An error occurred during analysis.</p>`;
+                          showPopup({ type: POPUP_TYPES.ERROR, message: progressData.message || 'Analysis failed.', title: 'Analysis Error' });
+                          recoverForm.style.display = 'none';
+                     } else if (totalItemsFound === 0) {
+                         finalMessage += `<p>No recoverable items found matching the criteria.</p>`;
+                          recoverForm.style.display = 'none';
+                     } else {
+                         recoverButton.textContent = `Recover All ${totalItemsFound} Found Items`;
+                         showPopup({ type: POPUP_TYPES.SUCCESS, message: `Analysis complete. Found ${totalItemsFound} potentially recoverable items.`, title: 'Analysis Complete' });
+                          recoverForm.style.display = 'block';
+                     }
+                     analysisSummary.innerHTML += finalMessage;
+
+                } else {
+                }
+
+            } catch (e) {
+                console.error("Error parsing SSE data:", e);
+                console.error("Raw data:", event.data);
+            }
+        };
+
+        eventSource.onerror = function(error) {
+            console.error("EventSource failed:", error);
+            eventSource.close();
+            console.log("Closed EventSource connection due to error.");
+             analyzeButton.disabled = false;
+             analyzeButton.textContent = 'Analyze Library';
+            Loading.hide();
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Connection to analysis progress stream lost or failed.',
+                title: 'Connection Error'
+            });
+             analysisSummary.innerHTML += '<p style="color: red;"><strong>Error:</strong> Lost connection to the analysis progress stream.</p>';
+        };
+    }
+
+    recoverForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        if (!currentTaskId) {
+            showPopup({ type: POPUP_TYPES.ERROR, message: 'No active analysis task found to recover from.', title: 'Error' });
+            return;
+        }
+
+        if (totalItemsFound === 0) {
+             showPopup({ type: POPUP_TYPES.INFO, message: 'No items were found in the completed analysis to recover.', title: 'No Items Found' });
+             return;
+        }
+
+        const message = `You are about to attempt recovery for all ${totalItemsFound} found item(s) from task ${currentTaskId.substring(0, 8)}... This will add them to the database as 'Collected'. Continue?`;
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            message: message,
+            title: 'Confirm Recovery',
+            onConfirm: () => {
+                Loading.show('Recovering selected items...');
+                fetch(recoverUrl, { // Use dynamic recoverUrl
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ task_id: currentTaskId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    Loading.hide();
+                    if (data.success) {
+                        showPopup({
+                            type: data.errors && data.errors.length > 0 ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                            message: `Recovery attempt finished. Success: ${data.successful_recoveries}, Failures: ${data.failed_recoveries}. Failures: ${data.errors && data.errors.length > 0 ? data.errors.join('; ') : 'None'}`,
+                            title: data.errors && data.errors.length > 0 ? 'Partial Recovery' : 'Recovery Successful'
+                        });
+                    } else {
+                         showPopup({ type: POPUP_TYPES.ERROR, message: data.error || 'Recovery process failed.', title: 'Recovery Error' });
+                    }
+                })
+                .catch(error => {
+                    Loading.hide();
+                    console.error('Error:', error);
+                    showPopup({ type: POPUP_TYPES.ERROR, message: 'An unexpected error occurred during recovery.', title: 'Error' });
+                });
+            }
+        });
+    });
+
+});

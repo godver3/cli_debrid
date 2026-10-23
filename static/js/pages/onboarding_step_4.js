@@ -1,0 +1,361 @@
+/* Moved from templates/onboarding_step_4.html. */
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
+document.addEventListener('DOMContentLoaded', function() {
+    const SETTINGS_SCHEMA = window.pageData.onboarding_step_4.SETTINGS_SCHEMA;
+    const CONFIGURED_VERSIONS = window.pageData.onboarding_step_4.configured_versions;
+
+    initializeAddContentSourceButton();
+    initializeDeleteButtons();
+    refreshContentSourcesList();
+    startContentSourcesRefresh();
+
+    function initializeAddContentSourceButton() {
+        const addButton = document.querySelector('#add-content-source-btn');
+        if (addButton) {
+            addButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                showAddContentSourcePopup();
+            });
+        } else {
+            console.error('Add content source button not found');
+        }
+    }
+
+    function showAddContentSourcePopup() {
+        const sourceTypes = Object.keys(SETTINGS_SCHEMA['Content Sources'].schema);
+
+        showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: 'Add New Content Source',
+            message: 'Select the type of content source you want to add:',
+            dropdownOptions: sourceTypes.map(type => ({ 
+                value: type, 
+                text: type === 'Overseerr' ? 'Seerr' : type
+            })),
+            confirmText: 'Next',
+            cancelText: 'Cancel',
+            onConfirm: (selectedType) => {
+                if (selectedType) {
+                    showContentSourceSettingsPopup(selectedType);
+                } else {
+                    console.error('No content source type selected');
+                }
+            }
+        });
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : String(text);
+        return div.innerHTML.replace(/"/g, '&quot;');
+    }
+
+    // existing/sourceId are set when editing a source that's already added.
+    function showContentSourceSettingsPopup(sourceType, existing = null, sourceId = null) {
+        const sourceSchema = SETTINGS_SCHEMA['Content Sources'].schema[sourceType];
+        const isEdit = existing !== null;
+        let formHtml = '<form id="contentSourceSettingsForm">';
+
+        for (const [key, value] of Object.entries(sourceSchema)) {
+            if (key === 'enabled' || key === 'versions') continue; // Skip 'enabled' and 'versions' fields
+
+            const current = isEdit && key in existing ? existing[key] : value.default;
+            let inputHtml = '';
+            if (value.type === 'boolean') {
+                inputHtml = `<input type="checkbox" id="${key}" name="${key}" ${current ? 'checked' : ''}>`;
+            } else if (value.type === 'string') {
+                if (value.choices) {
+                    // Handle dropdown fields
+                    inputHtml = `<select id="${key}" name="${key}">`;
+                    value.choices.forEach(choice => {
+                        inputHtml += `<option value="${escapeHtml(choice)}" ${current === choice ? 'selected' : ''}>${escapeHtml(choice)}</option>`;
+                    });
+                    inputHtml += '</select>';
+                } else {
+                    // Handle regular text/password fields
+                    inputHtml = `<input type="${value.sensitive ? 'password' : 'text'}" id="${key}" name="${key}" value="${escapeHtml(current || '')}" ${value.validate === 'url' ? 'pattern="https?://.+"' : ''}>`;
+                }
+            }
+
+            formHtml += `
+                <div class="form-group">
+                    <label for="${key}">${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</label>
+                    ${inputHtml}
+                </div>
+            `;
+        }
+
+        if (isEdit && CONFIGURED_VERSIONS.length > 0) {
+            const selected = existing.versions || [];
+            formHtml += '<div class="form-group"><label>Versions:</label>' + CONFIGURED_VERSIONS.map(version => `
+                <label style="display:block;font-weight:normal;">
+                    <input type="checkbox" name="version__${escapeHtml(version)}" ${selected.includes(version) ? 'checked' : ''}> ${escapeHtml(version)}
+                </label>`).join('') + '</div>';
+        }
+
+        formHtml += '</form>';
+
+        if (isEdit) {
+            showPopup({
+                type: POPUP_TYPES.PROMPT,
+                title: `Edit ${escapeHtml(existing.display_name || sourceId)}`,
+                message: 'Change the content source settings:',
+                formHtml: formHtml,
+                confirmText: 'Save',
+                cancelText: 'Cancel',
+                onConfirm: (formData) => {
+                    const config = {};
+                    const versions = [];
+                    for (const [key, value] of Object.entries(formData)) {
+                        if (key.startsWith('version__')) versions.push(key.slice('version__'.length));
+                        else config[key] = value;
+                    }
+                    if (CONFIGURED_VERSIONS.length > 0) config.versions = versions;
+                    updateContentSource(sourceId, config);
+                }
+            });
+            return;
+        }
+
+        showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: `Configure ${sourceType} Content Source`,
+            message: 'Please configure the content source settings:',
+            formHtml: formHtml,
+            confirmText: 'Add Content Source',
+            cancelText: 'Cancel',
+            onConfirm: (formData) => {
+                formData.enabled = true; // Always set enabled to true for new content sources
+                formData.versions = CONFIGURED_VERSIONS.length > 0 ? CONFIGURED_VERSIONS : ['Default']; // Use configured versions, fallback to Default
+                addContentSource(sourceType, formData);
+            }
+        });
+    }
+
+    function addContentSource(sourceType, sourceConfig) {
+        sourceConfig.type = sourceType; // Ensure the type is set in the config
+        fetch('/onboarding/content_sources/add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ type: sourceType, config: sourceConfig })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                refreshContentSourcesList();
+                updateCanProceed(true);
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    message: `Content source ${data.source_id} added successfully.`,
+                    autoClose: 5000
+                });
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error adding content source:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error adding content source: ' + error.message,
+            });
+        });
+    }
+
+    function updateContentSource(sourceId, sourceConfig) {
+        fetch('/onboarding/content_sources/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_id: sourceId, config: sourceConfig })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) throw new Error(data.error || 'Unknown error');
+            refreshContentSourcesList();
+            showPopup({ type: POPUP_TYPES.SUCCESS, message: 'Content source saved.', autoClose: 3000 });
+        })
+        .catch(error => {
+            showPopup({ type: POPUP_TYPES.ERROR, message: 'Error saving content source: ' + escapeHtml(error.message) });
+        });
+    }
+
+    let currentSources = {};
+
+    function initializeEditButtons() {
+        document.querySelectorAll('.edit-content-source-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const sourceId = this.getAttribute('data-source-id');
+                const source = currentSources[sourceId];
+                if (source) showContentSourceSettingsPopup(source.type, source, sourceId);
+            });
+        });
+    }
+
+    function initializeDeleteButtons() {
+        const deleteButtons = document.querySelectorAll('.delete-content-source-btn');
+        deleteButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const sourceId = this.getAttribute('data-source-id');
+                deleteContentSource(sourceId);
+            });
+        });
+    }
+
+    function deleteContentSource(sourceId) {
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Delete Content Source',
+            message: 'Are you sure you want to delete this content source?',
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                fetch('/settings/content_sources/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ source_id: sourceId })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.text().then(text => {
+                        try {
+                            return JSON.parse(text);
+                        } catch (e) {
+                            throw new Error(`Invalid JSON response: ${text}`);
+                        }
+                    });
+                })
+                .then(data => {
+                    if (data.success) {
+                        refreshContentSourcesList();
+                        showPopup({
+                            type: POPUP_TYPES.SUCCESS,
+                            message: 'Content source deleted successfully.',
+                            autoClose: 5000
+                        });
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error deleting content source:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: `Error deleting content source: ${error.message}`,
+                    });
+                });
+            }
+        });
+    }
+
+    function refreshContentSourcesList() {
+        fetch('/onboarding/content_sources/get')
+            .then(response => response.json())
+            .then(data => {
+                currentSources = data.content_sources || {};
+                const sourcesList = document.getElementById('existing-content-sources');
+                sourcesList.innerHTML = '';
+                if (data.content_sources && Object.keys(data.content_sources).length > 0) {
+                    const header = document.createElement('h3');
+                    header.className = 'onboarding-title';
+                    header.textContent = 'Content Sources';
+                    sourcesList.appendChild(header);
+                    for (const [id, source] of Object.entries(data.content_sources)) {
+                        const sourceItem = document.createElement('div');
+                        sourceItem.className = 'content-source-item';
+                        let settingsHtml = '';
+                        for (const [key, value] of Object.entries(source)) {
+                            if (key !== 'enabled' && key !== 'type' && key !== 'versions') {
+                                const sourceSchema = SETTINGS_SCHEMA['Content Sources'].schema[source.type] || {};
+                                const fieldSchema = sourceSchema[key] || {};
+
+                                let displayValue = value;
+                                if (fieldSchema.choices) {
+                                    // For fields with choices (like media_type), show as readonly select
+                                    settingsHtml += `
+                                        <div class="setting-item">
+                                            <label class="onboarding-text">${escapeHtml(key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))}:</label>
+                                            <input type="text" value="${escapeHtml(value)}" readonly class="setting-value">
+                                        </div>
+                                    `;
+                                } else {
+                                    // For other fields, show as readonly text input
+                                    displayValue = Array.isArray(value) ? value.join(', ') : value;
+                                    if (fieldSchema.sensitive && displayValue) displayValue = '••••••••';
+                                    settingsHtml += `
+                                        <div class="setting-item">
+                                            <label class="onboarding-text">${escapeHtml(key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))}:</label>
+                                            <input type="text" value="${escapeHtml(displayValue)}" readonly class="setting-value">
+                                        </div>
+                                    `;
+                                }
+                            }
+                        }
+                        sourceItem.innerHTML = `
+                            <div class="content-source-header">
+                                <span class="onboarding-text">${escapeHtml(id)}</span>
+                                <span>
+                                    <button class="edit-content-source-btn onboarding-btn-edit" data-source-id="${escapeHtml(id)}">Edit</button>
+                                    <button class="delete-content-source-btn onboarding-btn-delete" data-source-id="${escapeHtml(id)}">Delete</button>
+                                </span>
+                            </div>
+                            <div class="content-source-settings">
+                                ${settingsHtml}
+                            </div>
+                        `;
+                        sourcesList.appendChild(sourceItem);
+                    }
+                    initializeDeleteButtons();
+                    initializeEditButtons();
+                } else {
+                    console.log('No content sources found or content_sources is empty');
+                }
+                updateCanProceed(Object.keys(data.content_sources || {}).length > 0);
+            })
+            .catch(error => {
+                console.error('Error fetching content sources:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Error fetching content sources: ' + error.message,
+                });
+            });
+    }
+
+    function updateCanProceed(canProceed) {
+        fetch('/onboarding/update_can_proceed', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ step: window.pageData.onboarding_step_4.current_step, can_proceed: canProceed })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const nextStepBtn = document.querySelector('.next-step-btn');
+                if (nextStepBtn) {
+                    nextStepBtn.disabled = !canProceed;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error updating can_proceed status:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error updating progress status: ' + error.message,
+            });
+        });
+    }
+
+    // Add this function to periodically refresh the content sources list
+    function startContentSourcesRefresh() {
+        refreshContentSourcesList();
+        setInterval(refreshContentSourcesList, 5000); // Refresh every 5 seconds
+    }
+});

@@ -1,0 +1,291 @@
+/* Moved from templates/trakt_friends.html. */
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
+document.addEventListener('DOMContentLoaded', function() {
+    const friendAuthForm = document.getElementById('friend-auth-form');
+    const authCodeDisplay = document.getElementById('auth-code-display');
+    const userCodeElement = document.getElementById('user-code');
+    const verificationUrlElement = document.getElementById('verification-url');
+    const expiresInElement = document.getElementById('expires-in');
+    const authStatusElement = document.getElementById('auth-status');
+    const friendsContainer = document.getElementById('friends-container');
+    const noFriendsMessage = document.getElementById('no-friends-message');
+
+    let currentAuthId = null;
+    let checkAuthInterval = null;
+    let expiresInMinutes = 0;
+    let countdownInterval = null;
+
+    // Load authorized friends on page load
+    loadAuthorizedFriends();
+
+    // Handle friend authorization form submission
+    friendAuthForm.addEventListener('submit', function(event) {
+        event.preventDefault();
+
+        const clientId = document.getElementById('client-id').value;
+        const clientSecret = document.getElementById('client-secret').value;
+
+        const formData = new FormData();
+        formData.append('client_id', clientId);
+        formData.append('client_secret', clientSecret);
+
+        fetch('/trakt_friends/authorize', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Show the authorization code
+                authCodeDisplay.style.display = 'block';
+                userCodeElement.textContent = data.user_code;
+                verificationUrlElement.textContent = data.verification_url;
+                verificationUrlElement.href = data.verification_url;
+                expiresInMinutes = Math.floor(data.expires_in / 60);
+                expiresInElement.textContent = expiresInMinutes;
+
+                // Set the current auth ID
+                currentAuthId = data.auth_id;
+
+                // Start checking auth status
+                if (checkAuthInterval) {
+                    clearInterval(checkAuthInterval);
+                }
+                checkAuthInterval = setInterval(() => checkAuthStatus(currentAuthId), 5000);
+
+                // Start countdown
+                if (countdownInterval) {
+                    clearInterval(countdownInterval);
+                }
+                countdownInterval = setInterval(() => {
+                    expiresInMinutes--;
+                    expiresInElement.textContent = expiresInMinutes;
+                    if (expiresInMinutes <= 0) {
+                        clearInterval(countdownInterval);
+                        clearInterval(checkAuthInterval);
+                        authStatusElement.textContent = 'Authorization expired. Please try again.';
+                        authStatusElement.className = 'tf-auth-status error';
+                    }
+                }, 60000);
+            } else {
+                const fallbackMessage = (typeof data.error === 'string' && data.error.trim().length > 0)
+                    ? data.error
+                    : 'Trakt returned an error without details. Please try again or check server logs.';
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Authorization Error',
+                    message: fallbackMessage
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Authorization Error',
+                message: 'An error occurred during authorization. Please try again.'
+            });
+        });
+    });
+
+    function checkAuthStatus(authId) {
+        fetch(`/trakt_friends/check_auth/${authId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                if (data.status === 'authorized') {
+                    // Authorization successful
+                    clearInterval(checkAuthInterval);
+                    clearInterval(countdownInterval);
+
+                    authStatusElement.textContent = 'Authorization successful!';
+                    authStatusElement.className = 'tf-auth-status success';
+
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        title: 'Authorization Successful',
+                        message: `${data.friend_name}'s Trakt account has been successfully authorized.`
+                    });
+
+                    // Reload the friends list
+                    loadAuthorizedFriends();
+                }
+            } else {
+                // Error occurred
+                clearInterval(checkAuthInterval);
+                clearInterval(countdownInterval);
+
+                if (data.status === 'expired') {
+                    authStatusElement.textContent = 'Authorization code expired. Please try again.';
+                    authStatusElement.className = 'tf-auth-status error';
+
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Authorization Expired',
+                        message: 'The authorization code has expired. Please start a new authorization process.'
+                    });
+                } else {
+                    authStatusElement.textContent = 'Authorization failed: ' + data.error;
+                    authStatusElement.className = 'tf-auth-status error';
+
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Authorization Failed',
+                        message: data.error || 'An error occurred during authorization.'
+                    });
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error checking auth status:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Authorization Error',
+                message: 'An error occurred while checking authorization status.'
+            });
+        });
+    }
+
+    function loadAuthorizedFriends() {
+        fetch('/trakt_friends/list')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                friendsContainer.innerHTML = '';
+
+                if (data.friends.length === 0) {
+                    friendsContainer.appendChild(noFriendsMessage);
+                } else {
+                    data.friends.forEach(friend => {
+                        const friendElement = createFriendElement(friend);
+                        friendsContainer.appendChild(friendElement);
+                    });
+                }
+            } else {
+                console.error('Error loading friends:', data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+        });
+    }
+
+    function createFriendElement(friend) {
+        const friendItem = document.createElement('div');
+        friendItem.className = 'friend-item';
+
+        const friendInfo = document.createElement('div');
+        friendInfo.className = 'friend-info';
+
+        const friendName = document.createElement('h3');
+        friendName.textContent = friend.friend_name;
+
+        const username = document.createElement('p');
+        username.textContent = `Trakt Username: ${friend.username}`;
+
+        const expiresAt = document.createElement('p');
+        const expiryDate = new Date(friend.expires_at * 1000);
+        expiresAt.textContent = `Token expires: ${expiryDate.toLocaleString()}`;
+
+        friendInfo.appendChild(friendName);
+        friendInfo.appendChild(username);
+        friendInfo.appendChild(expiresAt);
+
+        const friendActions = document.createElement('div');
+        friendActions.className = 'friend-actions';
+
+        const refreshTokenBtn = document.createElement('button');
+        refreshTokenBtn.className = 'refresh-token-btn';
+        refreshTokenBtn.textContent = 'Refresh Token';
+        refreshTokenBtn.addEventListener('click', () => refreshToken(friend.auth_id));
+
+        const deleteAuthBtn = document.createElement('button');
+        deleteAuthBtn.className = 'delete-auth-btn';
+        deleteAuthBtn.textContent = 'Delete';
+        deleteAuthBtn.addEventListener('click', () => deleteAuth(friend.auth_id));
+
+        friendActions.appendChild(refreshTokenBtn);
+        friendActions.appendChild(deleteAuthBtn);
+
+        friendItem.appendChild(friendInfo);
+        friendItem.appendChild(friendActions);
+
+        return friendItem;
+    }
+
+    function refreshToken(authId) {
+        fetch(`/trakt_friends/refresh_token/${authId}`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Token Refreshed',
+                    message: 'Friend\'s Trakt token has been refreshed successfully.'
+                });
+                loadAuthorizedFriends();
+            } else {
+                const fallbackMessage = (typeof data.error === 'string' && data.error.trim().length > 0)
+                    ? data.error
+                    : 'Trakt returned an error without details while refreshing. Please try again or check server logs.';
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error Refreshing Token',
+                    message: fallbackMessage
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error Refreshing Token',
+                message: 'An error occurred while refreshing the token. Please try again.'
+            });
+        });
+    }
+
+    function deleteAuth(authId) {
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Deletion',
+            message: 'Are you sure you want to delete this friend? This will also remove any content sources using this friend\'s watchlist.',
+            onConfirm: () => {
+                fetch(`/trakt_friends/delete/${authId}`, {
+                    method: 'POST'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showPopup({
+                            type: POPUP_TYPES.SUCCESS,
+                            title: 'Friend Deleted',
+                            message: 'Friend\'s Trakt account has been deleted successfully.'
+                        });
+                        loadAuthorizedFriends();
+                    } else {
+                        const fallbackMessage = (typeof data.error === 'string' && data.error.trim().length > 0)
+                            ? data.error
+                            : 'Trakt returned an error without details while deleting. Please try again or check server logs.';
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            title: 'Error Deleting Friend',
+                            message: fallbackMessage
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Error Deleting Friend',
+                        message: 'An error occurred while deleting the friend. Please try again.'
+                    });
+                });
+            }
+        });
+    }
+});

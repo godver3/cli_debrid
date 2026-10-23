@@ -1,0 +1,318 @@
+/* Moved from templates/debug_functions.html. */
+/* ── Tangerine debug — show/hide ── */
+body.tangerine-theme .debug-container { display: none !important; }
+body:not(.tangerine-theme) #tngDebug { display: none !important; }
+
+/* ── Tangerine debug styles ── */
+#tngDebug {
+  --bg:var(--tng-bg);--surface:var(--tng-surface);--surface2:var(--tng-surface-2);--surface3:var(--tng-surface-3);
+  --border:var(--tng-border);--border2:var(--tng-border-2);
+  --accent:var(--tng-accent);--accent-h:var(--tng-accent-hover);
+  --text:var(--tng-text);--text2:var(--tng-text-2);--text3:var(--tng-text-5);
+  --green:var(--tng-green);--red:var(--tng-red);--blue:var(--tng-blue);--yellow:var(--tng-yellow);
+  --sans:'Inter',sans-serif;
+  max-width:1300px;margin:0 auto;padding:1.25rem;font-family:var(--sans);font-size:13px;color:var(--text);
+}
+/* Page title */
+#tngDebug .tdb-title{font-size:20px;font-weight:700;border-left:3px solid var(--accent);padding-left:10px;margin-bottom:1.25rem;color:var(--text)}
+#tngDebug .tdb-warn{background:#1a1200;border:1px solid #7c5c00;border-radius:6px;padding:10px 14px;font-size:12px;color:var(--tng-yellow);margin-bottom:1.25rem;display:flex;align-items:center;gap:8px}
+
+/* Toolbar */
+#tngDebug .toolbar{display:flex;align-items:center;gap:10px;margin-bottom:1.25rem;flex-wrap:wrap}
+#tngDebug .tabs{display:flex;background:var(--surface2);border-radius:6px;padding:3px;gap:2px;flex-wrap:nowrap;overflow-x:auto}
+#tngDebug .tab{padding:5px 14px;border-radius:4px;font-size:13px;font-weight:900;cursor:pointer;color:var(--text3);border:1px solid transparent;background:none;font-family:var(--sans);transition:all .15s;white-space:nowrap}
+#tngDebug .tab.active{background:var(--surface);color:var(--text);border-color:var(--border2)}
+#tngDebug .tab:not(.active):hover{color:var(--text2)}
+#tngDebug .search-wrap{position:relative;flex:1;max-width:240px;min-width:160px;margin-left:auto}
+#tngDebug .search-icon{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--text3);pointer-events:none}
+#tngDebug .search-icon svg{width:12px;height:12px}
+#tngDebug .search-input{width:100%;background:var(--surface2);border:1px solid var(--border2);color:var(--text);border-radius:5px;padding:6px 10px 6px 28px;font-size:12px;font-family:var(--sans);transition:border-color .15s;outline:none;-webkit-appearance:none}
+#tngDebug .search-input:focus{border-color:var(--accent)}
+#tngDebug .search-input::placeholder{color:var(--text3)}
+
+/* Tab panels */
+#tngDebug .tdb-panel{display:none}
+#tngDebug .tdb-panel.active{display:block}
+
+/* Grid */
+#tngDebug .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px}
+/* Plex Labels card spans exactly 2 columns */
+#tngDebug .grid .card[data-title="plex labels management"]{grid-column:span 2}
+/* card-title row: keep title left, push help button to the right */
+#tngDebug .grid .card[data-title="plex labels management"] .card-title{
+  display:flex;align-items:center;gap:10px;
+}
+#tngDebug .grid .card[data-title="plex labels management"] .plex-labels-help-btn{
+  margin-left:auto;
+}
+/* Help button */
+#tngDebug .plex-labels-help-btn{
+  background:var(--accent);color:#fff;border:none;border-radius:5px;
+  padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;
+  display:inline-flex;align-items:center;gap:5px;font-family:var(--sans);flex-shrink:0;
+}
+#tngDebug .plex-labels-help-btn:hover{background:var(--accent-h)}
+/* Manage Cache Files card spans 3 rows */
+#tngDebug .grid .card[data-title="manage cache files"]{grid-row:span 3}
+
+/* Card */
+#tngDebug .card{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:18px;display:flex;flex-direction:column;gap:12px;transition:border-color .2s}
+#tngDebug .card:hover{border-color:var(--border2)}
+#tngDebug .card-title{font-size:14px;font-weight:600;color:var(--text);border-left:3px solid var(--accent);padding-left:10px;line-height:1.3}
+#tngDebug .card-desc{font-size:12px;color:var(--text3);line-height:1.6}
+
+/* Form elements */
+#tngDebug .field{display:flex;flex-direction:column;gap:5px}
+#tngDebug .field-label{font-size:11px;color:var(--text3);font-weight:500}
+#tngDebug .fselect,#tngDebug .finput{background:var(--surface2);border:1px solid var(--border2);color:var(--text);border-radius:5px;padding:7px 10px;font-size:12px;font-family:var(--sans);width:100%;transition:border-color .15s;appearance:none;-webkit-appearance:none;outline:none;box-sizing:border-box}
+#tngDebug .fselect{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5l3 3 3-3' stroke='%23555' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px;cursor:pointer}
+#tngDebug .finput:focus,#tngDebug .fselect:focus{border-color:var(--accent)}
+#tngDebug #task_select[size]:not([size="1"]){background-image:none !important;padding-right:10px !important;overflow-y:hidden !important;overflow-x:hidden !important;}
+#tngDebug .finput::placeholder{color:var(--text3)}
+
+/* Checkbox */
+#tngDebug .check-row{display:flex;align-items:start;gap:8px;cursor:pointer;font-size:12px;color:var(--text2);line-height:1.5}
+#tngDebug .check-row input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;flex-shrink:0;margin-top:2px;cursor:pointer}
+/* inline tags inside check-row text column must not break layout */
+#tngDebug .check-row strong,#tngDebug .check-row em,#tngDebug .check-row span{display:inline !important;font-size:inherit !important;color:inherit !important;}
+
+/* Buttons */
+#tngDebug .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:5px 14px;border-radius:6px;font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;border:none}
+#tngDebug .btn svg{width:13px;height:13px;flex-shrink:0}
+#tngDebug .btn i{font-size:12px;flex-shrink:0}
+#tngDebug .btn-orange{background:var(--accent);color:#fff}
+#tngDebug .btn-orange:hover{background:var(--accent-h)}
+#tngDebug .btn-outline-orange{background:transparent;border:1px solid #c2500f;color:var(--tng-accent)}
+#tngDebug .btn-outline-orange:hover{background:#c2500f22;border-color:var(--tng-accent)}
+#tngDebug .btn-outline-red{background:transparent;border:1px solid #7f1d1d;color:var(--red)}
+#tngDebug .btn-outline-red:hover{background:#7f1d1d22;border-color:var(--red)}
+#tngDebug .btn-outline-blue{background:transparent;border:1px solid #1e40af;color:var(--tng-blue-light)}
+#tngDebug .btn-outline-blue:hover{background:#1e40af22;border-color:var(--tng-blue-light)}
+#tngDebug .btn-sm{width:auto;padding:6px 12px;font-size:12px;font-weight:500}
+
+/* Stats box */
+#tngDebug .stats-box{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:12px 20px}
+#tngDebug .stat-label{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:4px}
+#tngDebug .stat-val{font-size:20px;font-weight:700;color:var(--accent);font-family:monospace;letter-spacing:.5px}
+/* Symlink verification stats */
+#tngDebug .verification-stats{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:12px 20px}
+#tngDebug .stats-item{display:flex;flex-direction:column;gap:4px}
+#tngDebug .stats-label{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-weight:600}
+#tngDebug .stats-value{font-size:20px;font-weight:700;color:var(--accent);font-family:monospace;letter-spacing:.5px}
+
+/* Status badge */
+#tngDebug .status-badge{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:5px;font-size:12px;font-weight:600}
+#tngDebug .badge-green{background:#14532d;color:var(--tng-green-light)}
+#tngDebug .badge-red{background:#7f1d1d;color:#fca5a5}
+#tngDebug .badge-orange{background:#7c2d12;color:var(--tng-accent-hover)}
+
+/* Token card */
+#tngDebug .token-card{background:var(--surface2);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+#tngDebug .token-card-hdr{padding:5px 12px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);color:var(--text)}
+#tngDebug .token-card-body{padding:10px 12px;display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--text2)}
+#tngDebug .token-detail-label{color:var(--text2)}
+#tngDebug .token-username strong{color:var(--text);font-weight:600}
+#tngDebug .token-username{color:var(--text2) !important;border-bottom:none !important;padding:0 !important;}
+#tngDebug .token-sep{border:none !important;border-top:1px solid var(--border) !important;margin:4px 0 !important;padding:0 !important;}
+#tngDebug .token-code{background:var(--surface3);border:1px solid var(--border2);border-radius:4px;padding:6px 10px;font-size:11px;font-family:monospace;color:var(--text2)}
+
+/* Rate limit */
+#tngDebug .rl-item{padding:10px 0;border-bottom:1px solid var(--border)}
+#tngDebug .rl-item:last-child{border-bottom:none}
+#tngDebug .rl-domain{font-size:12px;font-weight:500;color:var(--text);margin-bottom:5px}
+#tngDebug .rl-bar-row{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+#tngDebug .rl-bar-bg{flex:1;height:4px;background:var(--surface3);border-radius:2px;overflow:hidden}
+#tngDebug .rl-bar-fill{height:100%;border-radius:2px;transition:width .3s}
+#tngDebug .rl-bar-fill.low{background:var(--green)}
+#tngDebug .rl-bar-fill.mid{background:var(--yellow)}
+#tngDebug .rl-bar-fill.high{background:var(--red)}
+#tngDebug .rl-text{font-size:10px;color:var(--text3);font-family:monospace;white-space:nowrap}
+
+/* Checklist */
+#tngDebug .check-list{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px;overflow-y:auto}
+#tngDebug .check-list::-webkit-scrollbar{width:4px}
+#tngDebug .check-list::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+/* check-list inside cache-files-container loses its own bg/border (parent already has them) */
+#tngDebug .cache-files-container .check-list{background:none;border:none;border-radius:0;padding:0;margin:0}
+#tngDebug .check-section-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 0 2px;border-top:1px solid var(--border);margin-top:4px}
+#tngDebug .check-section-label:first-child{border-top:none;margin-top:0}
+
+/* Empty state */
+#tngDebug .empty-state{font-size:12px;color:var(--text3);padding:8px 0;font-style:italic}
+
+/* ── Classic element resets inside tangerine cards ── */
+
+/* debug_item: strip the classic box, become a transparent flex column */
+#tngDebug .card .debug_item{
+  background:none !important;border:none !important;padding:0 !important;margin:0 !important;
+  box-shadow:none !important;border-radius:0 !important;overflow:visible !important;
+  display:flex !important;flex-direction:column !important;gap:12px !important;
+  font-size:13px;color:var(--text);font-family:var(--sans);
+}
+#tngDebug .card .debug_item::before,
+#tngDebug .card .debug_item::after{
+  display:none !important;content:none !important;background:none !important;
+}
+
+/* forms inside cards: flex column with 12px between fields/buttons/checkboxes */
+#tngDebug .card form{
+  display:flex !important;flex-direction:column !important;gap:12px !important;
+  margin:0 !important;padding:0 !important;
+}
+/* form-group / .field: tight 5px label→input gap */
+#tngDebug .card .form-group,
+#tngDebug .card .field{
+  display:flex !important;flex-direction:column !important;gap:5px !important;
+  margin:0 !important;padding:0 !important;
+}
+
+/* Labels: field-label style */
+#tngDebug .card label:not(.check-row){
+  font-size:12px !important;color:var(--text2) !important;font-weight:500 !important;
+  font-family:var(--sans) !important;margin:0 !important;padding:0 !important;
+  background:none !important;border:none !important;display:block !important;
+}
+
+/* Inline hint/note text */
+#tngDebug .card small,
+#tngDebug .card .hint,
+#tngDebug .card .note{
+  font-size:12px !important;color:var(--text3) !important;line-height:1.5 !important;
+  font-family:var(--sans) !important;margin:0 !important;
+}
+
+/* Bare <p> tags used for result output or spacing — match card-desc */
+#tngDebug .card p:not(.description){
+  font-size:12px !important;color:var(--text2) !important;line-height:1.6 !important;
+  margin:0 !important;font-family:var(--sans) !important;
+}
+
+/* <h4> section headers inside cards (Plex labels, queue sections etc.) */
+#tngDebug .card h4{
+  font-size:12px !important;font-weight:600 !important;color:var(--text2) !important;
+  margin:0 !important;padding:0 !important;border:none !important;
+  font-family:var(--sans) !important;
+}
+
+/* Results / progress areas — hidden when empty, shown by JS when populated */
+#tngDebug .card .results-area,
+#tngDebug .card .progress-area{
+  background:var(--surface2) !important;border:1px solid var(--border) !important;
+  border-radius:5px !important;padding:10px !important;
+  font-size:12px !important;color:var(--text2) !important;
+  font-family:var(--sans) !important;line-height:1.6 !important;
+  margin:0 !important;
+}
+#tngDebug .card .results-area:empty,
+#tngDebug .card .progress-area:empty{ display:none !important; }
+/* Result/status divs not classed as results-area — hide when empty */
+#tngDebug #restoreResults:empty,
+#tngDebug #cleanupResults:empty,
+#tngDebug #cleanup-watchlist-result:empty,
+#tngDebug #reset-battery-show-cache-result:empty{ display:none !important; }
+#tngDebug #restoreResults,#tngDebug #cleanupResults,
+#tngDebug #cleanup-watchlist-result,#tngDebug #reset-battery-show-cache-result{
+  background:var(--surface2);border:1px solid var(--border);border-radius:5px;
+  padding:10px;font-size:12px;color:var(--text2);font-family:var(--sans);line-height:1.6;
+}
+#tngDebug .card .queue-items-container,
+#tngDebug .card .cache-files-container,
+#tngDebug .card .verification-queue-container{
+  background:var(--surface2) !important;border:1px solid var(--border) !important;
+  border-radius:5px !important;padding:10px !important;
+  font-size:12px !important;color:var(--text2) !important;
+  font-family:var(--sans) !important;line-height:1.6 !important;
+  margin:0 !important;
+}
+
+/* Dividers */
+#tngDebug .card hr{border:none !important;border-top:1px solid var(--border) !important;/*margin:0 !important;*/}
+
+/* Select-all row */
+#tngDebug .card .select-all-container{display:flex !important;gap:6px !important;margin:0 !important;}
+
+/* Cache files header + select-all outside the list box */
+#tngDebug .tng-cache-header{font-size:12px;font-weight:500;color:var(--text2);margin:0 !important;}
+#tngDebug .tng-cache-selall{display:flex;gap:6px;}
+#tngDebug .tng-cache-selall .btn{flex:1}
+/* cache-file-item checkboxes — same as check-row */
+#tngDebug .card .cache-file-item{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text2);line-height:1.5}
+#tngDebug .card .cache-file-item input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;flex-shrink:0;margin-top:2px;cursor:pointer}
+#tngDebug .card .cache-file-item label{font-size:12px !important;color:var(--text2) !important;font-weight:400 !important;cursor:pointer}
+
+/* Plex labels sub-sections — reset classic padding/bg */
+#tngDebug .card .label-items{display:flex !important;flex-direction:column !important;gap:8px !important;padding:0 !important;background:none !important;border-radius:0 !important;}
+#tngDebug .card .tng-label-bot h4{display:none !important;}
+#tngDebug #orphaned-cleanup-btn{display:none !important;}
+#tngDebug .card .label-items h4{font-size:11px;font-weight:600;color:var(--text2);margin:0 !important;padding:0 !important;}
+#tngDebug .tng-labels-bot-row{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;border-top:1px solid var(--border2);padding-top:12px;margin-top:4px}
+#tngDebug .card .label-items>.description,#tngDebug .card .label-items>p{display:none !important;}
+/* result/status divs inside label-items — allow p/li/ul inside them to show */
+#tngDebug .card .label-items [id$="-results"] p,
+#tngDebug .card .label-items [id$="-results"] li,
+#tngDebug .card .label-items [id$="-results"] ul,
+#tngDebug .card .label-items [id$="-preview"] p,
+#tngDebug .card .label-items [id$="-preview"] li,
+#tngDebug .card .label-items [id$="-preview"] ul,
+#tngDebug .card .label-items [id$="-status"] p,
+#tngDebug .card .label-items [id$="-status"] li,
+#tngDebug .card .label-items [id$="-status"] ul{display:revert !important;}
+#tngDebug .card .label-items [id$="-results"]:not(:empty),
+#tngDebug .card .label-items [id$="-preview"]:not(:empty),
+#tngDebug .card .label-items [id$="-status"]:not(:empty){display:block !important;font-size:12px;color:var(--text2);margin-top:4px;}
+/* Plex Labels inner grid — 3 columns */
+#tngDebug .tng-labels-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+
+/* Queue/cache inner container boxes */
+#tngDebug .card .queue-items-container,
+#tngDebug .card .cache-files-container{
+  background:var(--surface2) !important;border:1px solid var(--border) !important;
+  border-radius:6px !important;padding:10px !important;
+  display:flex !important;flex-direction:column !important;gap:8px !important;
+  margin:0 !important;
+}
+#tngDebug .card #queue_items{font-size:12px;color:var(--text3)}
+
+/* ── Rate limit — bars injected by transformRateLimitContent() ── */
+#tngDebug #rate-limit-loading{font-size:12px;color:var(--text3);font-style:italic}
+#tngDebug .rl-domain-header{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px}
+#tngDebug #rate-limit-content{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px}
+#tngDebug #rate-limit-content h4{display:none !important;}
+#tngDebug .domain-rate-limit{padding:8px 0;border-bottom:1px solid var(--border)}
+#tngDebug .domain-rate-limit:last-child{border-bottom:none;padding-bottom:0}
+#tngDebug .domain-rate-limit h5,#tngDebug .rl-domain{font-size:12px;font-weight:500;color:var(--text);margin:0 0 5px;font-family:var(--sans)}
+
+/* ── Plex tokens — token-card per user ── */
+#tngDebug .token-status-container{display:flex;flex-direction:column;gap:8px}
+#tngDebug .token-status{background:var(--surface2);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+#tngDebug .token-user{padding:10px 12px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);color:var(--text)}
+#tngDebug .token-details{padding:12px;display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--text2)}
+#tngDebug .token-validity{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:5px;font-size:12px;font-weight:600;width:fit-content}
+#tngDebug .token-validity.valid{background:#14532d;color:var(--tng-green-light)}
+#tngDebug .token-validity.invalid{background:#7f1d1d;color:#fca5a5}
+#tngDebug .token-expiry,#tngDebug .token-last-refresh{font-size:12px !important;color:var(--text2) !important;border-bottom:none !important;padding:0 !important;}
+#tngDebug .token-last-checked{font-size:11px !important;color:var(--text3) !important;border-bottom:none !important;padding:0 !important;}
+#tngDebug .token-access,#tngDebug .token-refresh{font-size:11px !important;font-family:monospace !important;color:var(--text2) !important;background:var(--surface2) !important;border:1px solid var(--border2) !important;border-radius:4px !important;padding:6px 10px !important;margin:0 !important;}
+
+/* ── Trakt token — status-badge + token-code ── */
+#tngDebug #trakt-token-status .token-details{padding:0;background:none;border:none;gap:6px}
+#tngDebug #trakt-token-status .token-details > div{font-size:12px;color:var(--text)}
+#tngDebug .token-access,#tngDebug .token-refresh{
+  background:var(--surface3);border:1px solid var(--border2);border-radius:4px;
+  padding:6px 10px;font-size:11px;font-family:monospace;color:var(--text2);display:block
+}
+
+/* select option colors */
+#tngDebug select option{background:var(--surface2);color:var(--text)}
+
+/* Toast */
+#tngDebug-toast{position:fixed;bottom:1.25rem;right:1.25rem;background:var(--surface);border:1px solid var(--border2);border-radius:7px;padding:9px 14px;font-size:12px;color:var(--text);z-index:999;opacity:0;transform:translateY(6px);transition:all .2s;pointer-events:none;display:flex;align-items:center;gap:7px;--surface:var(--tng-surface);--border2:var(--tng-border-2);--text:var(--tng-text)}
+#tngDebug-toast.show{opacity:1;transform:translateY(0)}
+#tngDebug-toast .toast-dot{width:6px;height:6px;border-radius:50%}
+
+@media(max-width:800px){
+  #tngDebug .grid{grid-template-columns:1fr !important}
+  #tngDebug .grid .card{grid-column:1 !important;grid-row:auto !important}
+  #tngDebug .tng-labels-grid{grid-template-columns:1fr !important}
+  #tngDebug .tng-labels-bot-row{grid-template-columns:1fr !important}
+}

@@ -802,3 +802,7 @@ function addTooltipEventListeners(element) {
 }
 
 export { initializeTooltips, setUpdatingContent, initializeDatabaseTooltips, addTooltipEventListeners };
+
+// Also on window, for page scripts that are static files and so can't import
+// the versioned URL base.html loads this module from.
+window.cliTooltips = { initializeTooltips, setUpdatingContent, initializeDatabaseTooltips, addTooltipEventListeners };
