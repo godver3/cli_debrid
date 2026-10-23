@@ -2556,6 +2556,22 @@ def visual_data():
         if conn:
             conn.close()
 
+@database_bp.route('/api/item_history/<int:item_id>', methods=['GET'])
+@admin_required
+def item_history(item_id):
+    """The item's state changes, newest first, with who made each one."""
+    from database.state_transitions import get_item_history
+    item = get_media_item_by_id(item_id)
+    if not item:
+        return jsonify({'success': False, 'error': 'Item not found'}), 404
+    return jsonify({
+        'success': True,
+        'item': {'id': item['id'], 'title': item.get('title'), 'state': item.get('state'),
+                 'type': item.get('type'), 'season_number': item.get('season_number'),
+                 'episode_number': item.get('episode_number'), 'version': item.get('version')},
+        'history': get_item_history(item_id),
+    })
+
 @database_bp.route('/get_column_values/<column_name>', methods=['GET'])
 @admin_required
 def get_column_values(column_name):

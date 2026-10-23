@@ -1,4 +1,5 @@
 from .core import get_db_connection, retry_on_db_lock
+from .state_transitions import caller_source, tag_transition
 import logging
 from datetime import datetime
 import json
@@ -298,9 +299,13 @@ def update_release_date_and_state(
     
 @retry_on_db_lock()
 def update_media_item_state(item_id, state, skip_state_change_hook=False, **kwargs):
+    source = caller_source()
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
+
+        old_row = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_id,)).fetchone()
+        old_state = old_row['state'] if old_row else None
 
         # Prepare the base query
         query = '''
@@ -343,6 +348,8 @@ def update_media_item_state(item_id, state, skip_state_change_hook=False, **kwar
 
         # Execute the query
         conn.execute(query, params)
+        if old_row:
+            tag_transition(conn, item_id, old_state, state, source)
 
         # Get updated item for post-processing (while still in transaction)
         updated_item_row = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
