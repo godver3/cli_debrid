@@ -716,7 +716,7 @@
 
             <div class="un-stats">
                 <div class="un-card">
-                    <div class="un-val" style="color:#4ade80" id="usenet-stat-healthy">—</div>
+                    <div class="un-val" style="color:var(--tng-green-light)" id="usenet-stat-healthy">—</div>
                     <div class="un-lbl">Healthy</div>
                 </div>
                 <div class="un-card">
@@ -732,7 +732,7 @@
                     <div class="un-lbl">Repaired (30d)</div>
                 </div>
                 <div class="un-card">
-                    <div class="un-val" style="color:#fbbf24" id="usenet-stat-notfound">—</div>
+                    <div class="un-val" style="color:var(--tng-yellow-light)" id="usenet-stat-notfound">—</div>
                     <div class="un-lbl">Not Found (30d)</div>
                 </div>
             </div>
@@ -804,7 +804,7 @@
             </div>
 
         </div>
-        <div id="usenet-error" style="display:none;padding:20px;color:#f87171;text-align:center"></div>
+        <div id="usenet-error" style="display:none;padding:20px;color:var(--tng-red-light);text-align:center"></div>
         </div><!-- /usenet-subtab-content -->
 
         <!-- Debrid sub-tab content -->
@@ -849,7 +849,7 @@
 
             <div class="un-stats">
                 <div class="un-card">
-                    <div class="un-val" style="color:#4ade80" id="dr-stat-healthy">—</div>
+                    <div class="un-val" style="color:var(--tng-green-light)" id="dr-stat-healthy">—</div>
                     <div class="un-lbl">Healthy</div>
                 </div>
                 <div class="un-card">
@@ -918,7 +918,7 @@
             </div>
 
         </div><!-- /dr-content -->
-        <div id="dr-error" style="display:none;padding:20px;color:#f87171;text-align:center"></div>
+        <div id="dr-error" style="display:none;padding:20px;color:var(--tng-red-light);text-align:center"></div>
         </div><!-- /debrid-subtab-content -->
 
     </div><!-- /usenet-tab -->
@@ -1156,13 +1156,13 @@
     {% set ms_label = 'Jellyfin' if media_server_type == 'jellyfin' else 'Plex' %}
     {% set ms_badge = 'JF' if media_server_type == 'jellyfin' else 'Plex' %}
     <div id="reconcile-tab" class="dm-panel">
-        <div class="beta-notice-box" style="border-radius:6px;padding:16px 18px;margin:16px 0 8px 0;display:flex;gap:14px;align-items:flex-start;border-left:3px solid #60a5fa;background:var(--beta-box-bg,#1e2433);">
-            <svg style="width:18px;height:18px;color:#60a5fa;flex-shrink:0;margin-top:1px;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <div class="beta-notice-box" style="border-radius:6px;padding:16px 18px;margin:16px 0 8px 0;display:flex;gap:14px;align-items:flex-start;border-left:3px solid var(--tng-blue-light);background:var(--beta-box-bg,#1e2433);">
+            <svg style="width:18px;height:18px;color:var(--tng-blue-light);flex-shrink:0;margin-top:1px;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
             </svg>
             <div style="font-size:13px;line-height:1.55;color:#b0bec5;">
                 <strong style="color:var(--tng-text);">Beta Feature</strong><br>
-                The Audit tab is in beta. Always verify the information shown before taking any action — do not delete items or run fixes without confirming the suggestion is accurate for your setup. If you believe a result is incorrect, please report it in the <a href="https://discord.gg/wDgQLnMjxS" target="_blank" rel="noopener" style="color:#60a5fa;">Discord server</a>.
+                The Audit tab is in beta. Always verify the information shown before taking any action — do not delete items or run fixes without confirming the suggestion is accurate for your setup. If you believe a result is incorrect, please report it in the <a href="https://discord.gg/wDgQLnMjxS" target="_blank" rel="noopener" style="color:var(--tng-blue-light);">Discord server</a>.
             </div>
         </div>
         <div class="dm-toolbar">

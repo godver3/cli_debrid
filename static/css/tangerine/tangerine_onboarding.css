@@ -626,7 +626,7 @@ body[data-theme="tangerine"] .ob-test-result {
     line-height: 1.45;
 }
 body[data-theme="tangerine"] .ob-test-result:empty { display: none; }
-body[data-theme="tangerine"] .ob-ok   { color: #4ade80; }
+body[data-theme="tangerine"] .ob-ok   { color: var(--tng-green-light); }
 body[data-theme="tangerine"] .ob-warn { color: #facc15; }
 body[data-theme="tangerine"] .ob-err  { color: var(--ob-danger); }
 body[data-theme="tangerine"] .ob-callout {
@@ -695,7 +695,7 @@ body[data-theme="tangerine"] .ob-health .ob-dot {
     border-radius: 50%;
     margin-top: 5px;
 }
-body[data-theme="tangerine"] .ob-dot.ok   { background: #4ade80; }
+body[data-theme="tangerine"] .ob-dot.ok   { background: var(--tng-green-light); }
 body[data-theme="tangerine"] .ob-dot.warn { background: #facc15; }
 body[data-theme="tangerine"] .ob-dot.err  { background: var(--ob-danger); }
 body[data-theme="tangerine"] .ob-health .ob-msg {

@@ -773,12 +773,12 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
     font-family: var(--st-mono); white-space: nowrap;
 }
 .c2160  { background:#0c4a6e33; color:#38bdf8; border:1px solid #0c4a6e; }
-.c1080  { background:#0c2a4e33; color:#60a5fa; border:1px solid #0c2a4e; }
+.c1080  { background:#0c2a4e33; color:var(--tng-blue-light); border:1px solid #0c2a4e; }
 .cremux { background:#4a0c3633; color:#f0abfc; border:1px solid #4a0c36; }
-.cwebdl { background:#0c3a1e33; color:#4ade80; border:1px solid #0c3a1e; }
+.cwebdl { background:#0c3a1e33; color:var(--tng-green-light); border:1px solid #0c3a1e; }
 .cbluray{ background:#1e0c4a33; color:#a78bfa; border:1px solid #1e0c4a; }
 .cx265  { background:#3a1e0c33; color:#fb923c; border:1px solid #3a1e0c; }
-.cx264  { background:#2a1e0c33; color:#fbbf24; border:1px solid #2a1e0c; }
+.cx264  { background:#2a1e0c33; color:var(--tng-yellow-light); border:1px solid #2a1e0c; }
 .catmos { background:#0c3a3a33; color:#67e8f9; border:1px solid #0c3a3a; }
 .chdr   { background:#3a2a0c33; color:#fcd34d; border:1px solid #3a2a0c; }
 .cdv    { background:#2a0c3a33; color:#d8b4fe; border:1px solid #2a0c3a; }

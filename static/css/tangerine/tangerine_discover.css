@@ -1052,7 +1052,7 @@ body[data-theme="tangerine"] .discover-subtitle {
     gap: 0.25rem;
     font-size: 0.8rem;
     font-weight: 600;
-    color: #fbbf24;
+    color: var(--tng-yellow-light);
 }
 
 .result-bottom-bar .result-rating svg {
@@ -1112,7 +1112,7 @@ body[data-theme="tangerine"] .discover-subtitle {
     display: flex;
     align-items: center;
     gap: 0.25rem;
-    color: #fbbf24;
+    color: var(--tng-yellow-light);
 }
 
 .result-hover-overlay .result-rating svg {
@@ -1156,7 +1156,7 @@ body[data-theme="tangerine"] .discover-subtitle {
     display: flex;
     align-items: center;
     gap: 0.25rem;
-    color: #fbbf24;
+    color: var(--tng-yellow-light);
 }
 
 .result-rating svg { width: 14px; height: 14px; }
@@ -2469,13 +2469,13 @@ body[data-theme="tangerine"] .discover-subtitle {
 .chips-include-btn:hover {
     background: rgba(74, 222, 128, 0.2);
     border-color: rgba(74, 222, 128, 0.5);
-    color: #4ade80;
+    color: var(--tng-green-light);
 }
 
 .chips-exclude-btn:hover {
     background: rgba(248, 113, 113, 0.2);
     border-color: rgba(248, 113, 113, 0.5);
-    color: #f87171;
+    color: var(--tng-red-light);
 }
 
 .chips-include-btn svg,
@@ -2492,31 +2492,31 @@ body[data-theme="tangerine"] .discover-subtitle {
 /* Dropdown item states */
 .chips-dropdown-item.included {
     background-color: rgba(74, 222, 128, 0.1);
-    border-left: 3px solid #4ade80;
+    border-left: 3px solid var(--tng-green-light);
 }
 
 .chips-dropdown-item.included .chips-include-btn {
     background: rgba(74, 222, 128, 0.3);
-    border-color: #4ade80;
-    color: #4ade80;
+    border-color: var(--tng-green-light);
+    color: var(--tng-green-light);
 }
 
 .chips-dropdown-item.excluded {
     background-color: rgba(248, 113, 113, 0.1);
-    border-left: 3px solid #f87171;
+    border-left: 3px solid var(--tng-red-light);
 }
 
 .chips-dropdown-item.excluded .chips-exclude-btn {
     background: rgba(248, 113, 113, 0.3);
-    border-color: #f87171;
-    color: #f87171;
+    border-color: var(--tng-red-light);
+    color: var(--tng-red-light);
 }
 
 /* Color-coded chips */
 .chip-include {
     background: rgba(74, 222, 128, 0.15) !important;
     border-color: rgba(74, 222, 128, 0.4) !important;
-    color: #4ade80 !important;
+    color: var(--tng-green-light) !important;
 }
 
 .chip-include .chip-icon {
@@ -2525,7 +2525,7 @@ body[data-theme="tangerine"] .discover-subtitle {
 }
 
 .chip-include .chip-remove {
-    color: #4ade80 !important;
+    color: var(--tng-green-light) !important;
 }
 
 .chip-include .chip-remove:hover {
@@ -2536,7 +2536,7 @@ body[data-theme="tangerine"] .discover-subtitle {
 .chip-exclude {
     background: rgba(248, 113, 113, 0.15) !important;
     border-color: rgba(248, 113, 113, 0.4) !important;
-    color: #f87171 !important;
+    color: var(--tng-red-light) !important;
 }
 
 .chip-exclude .chip-icon {
@@ -2545,7 +2545,7 @@ body[data-theme="tangerine"] .discover-subtitle {
 }
 
 .chip-exclude .chip-remove {
-    color: #f87171 !important;
+    color: var(--tng-red-light) !important;
 }
 
 .chip-exclude .chip-remove:hover {
@@ -3787,7 +3787,7 @@ body[data-theme="tangerine"] #show-status-badge.status-post-production {
 body[data-theme="tangerine"] #show-status-badge.status-returning-series,
 body[data-theme="tangerine"] #show-status-badge.status-airing {
     background: rgba(20, 83, 45, 0.13);
-    color: #4ade80;
+    color: var(--tng-green-light);
     border: 1px solid rgba(20, 83, 45, 0.33);
 }
 

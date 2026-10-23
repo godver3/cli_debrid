@@ -353,7 +353,7 @@
     }
 
     .share-result-url {
-        color: #60a5fa;
+        color: var(--tng-blue-light);
         text-decoration: none;
         font-family: 'JetBrains Mono', monospace;
         font-size: 11px;
@@ -376,7 +376,7 @@
     .copy-url-btn {
         background: none;
         border: none;
-        color: #60a5fa;
+        color: var(--tng-blue-light);
         cursor: pointer;
         padding: 4px;
         display: none;

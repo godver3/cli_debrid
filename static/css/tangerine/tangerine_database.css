@@ -1677,11 +1677,11 @@
         white-space: nowrap;
     }
     /* State pills */
-    body.tangerine-theme .db-pill-collected  { background: rgba(20,83,45,.13); color: #4ade80; border: 1px solid #14532d; }
-    body.tangerine-theme .db-pill-wanted     { background: rgba(234,179,8,.1); color: #fbbf24; border: 1px solid #78350f; }
-    body.tangerine-theme .db-pill-scraping   { background: rgba(59,130,246,.1); color: #60a5fa; border: 1px solid #1e3a5f; }
+    body.tangerine-theme .db-pill-collected  { background: rgba(20,83,45,.13); color: var(--tng-green-light); border: 1px solid #14532d; }
+    body.tangerine-theme .db-pill-wanted     { background: rgba(234,179,8,.1); color: var(--tng-yellow-light); border: 1px solid #78350f; }
+    body.tangerine-theme .db-pill-scraping   { background: rgba(59,130,246,.1); color: var(--tng-blue-light); border: 1px solid #1e3a5f; }
     body.tangerine-theme .db-pill-upgrading  { background: rgba(139,92,246,.1); color: #a78bfa; border: 1px solid #3b1e5f; }
-    body.tangerine-theme .db-pill-blacklisted{ background: rgba(239,68,68,.1); color: #f87171; border: 1px solid #7f1d1d; }
+    body.tangerine-theme .db-pill-blacklisted{ background: rgba(239,68,68,.1); color: var(--tng-red-light); border: 1px solid #7f1d1d; }
     body.tangerine-theme .db-pill-checking   { background: rgba(20,184,166,.1); color: #2dd4bf; border: 1px solid #134e4a; }
     body.tangerine-theme .db-pill-sleeping   { background: rgba(107,114,128,.1); color: #9ca3af; border: 1px solid #374151; }
     body.tangerine-theme .db-pill-unreleased { background: rgba(251,146,60,.1); color: #fb923c; border: 1px solid #7c2d12; }
@@ -1698,7 +1698,7 @@
         font-size: 10px;
         font-weight: 600;
         background: #14532d;
-        color: #4ade80;
+        color: var(--tng-green-light);
         white-space: nowrap;
     }
 

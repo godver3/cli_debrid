@@ -566,7 +566,7 @@
 .info-icon {
     width: 20px;
     height: 20px;
-    color: #60a5fa;
+    color: var(--tng-blue-light);
     flex-shrink: 0;
     margin-top: 2px;
 }
@@ -578,7 +578,7 @@
 }
 
 .info-text a {
-    color: #60a5fa;
+    color: var(--tng-blue-light);
     text-decoration: none;
     font-weight: 600;
 }
@@ -2216,7 +2216,7 @@ div#trakt-auth-status {
 .info-icon {
     width: 20px;
     height: 20px;
-    color: #60a5fa;
+    color: var(--tng-blue-light);
     flex-shrink: 0;
     margin-top: 2px;
 }
@@ -2235,7 +2235,7 @@ div#trakt-auth-status {
 
 .info-text a,
 .info-link {
-    color: #60a5fa;
+    color: var(--tng-blue-light);
     text-decoration: none;
     font-weight: 600;
 }

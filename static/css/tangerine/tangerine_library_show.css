@@ -933,12 +933,12 @@ ease;
 }
 
 .episode-status-icon.wanted {
-    color: #fbbf24;
+    color: var(--tng-yellow-light);
     opacity: 0.8;
 }
 
 .episode-status-icon.up-arrow {
-    color: #60a5fa;
+    color: var(--tng-blue-light);
 }
 
 .episode-info-section {
@@ -2343,7 +2343,7 @@ body[data-theme="tangerine"] .status-badge {
 }
 body[data-theme="tangerine"] .status-badge.status-returning-series {
     background: rgba(20, 83, 45, 0.13);
-    color: #4ade80;
+    color: var(--tng-green-light);
     border: 1px solid rgba(20, 83, 45, 0.33);
 }
 body[data-theme="tangerine"] .status-badge.status-ended,
@@ -2354,7 +2354,7 @@ body[data-theme="tangerine"] .status-badge.status-canceled {
 }
 body[data-theme="tangerine"] .status-badge.status-airing {
     background: rgba(20, 83, 45, 0.13);
-    color: #4ade80;
+    color: var(--tng-green-light);
     border: 1px solid rgba(20, 83, 45, 0.33);
 }
 

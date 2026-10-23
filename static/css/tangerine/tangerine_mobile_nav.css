@@ -1027,10 +1027,10 @@ body.tangerine-theme .notification-type {
     text-transform: uppercase;
     letter-spacing: .5px;
 }
-body.tangerine-theme .notification-type.info    { background: rgba(59,130,246,.12);  color: #60a5fa; border: 1px solid rgba(59,130,246,.2); }
-body.tangerine-theme .notification-type.success { background: rgba(34,197,94,.12);   color: #4ade80; border: 1px solid rgba(34,197,94,.2); }
-body.tangerine-theme .notification-type.warning { background: rgba(245,158,11,.12);  color: #fbbf24; border: 1px solid rgba(245,158,11,.2); }
-body.tangerine-theme .notification-type.error   { background: rgba(239,68,68,.12);   color: #f87171; border: 1px solid rgba(239,68,68,.2); }
+body.tangerine-theme .notification-type.info    { background: rgba(59,130,246,.12);  color: var(--tng-blue-light); border: 1px solid rgba(59,130,246,.2); }
+body.tangerine-theme .notification-type.success { background: rgba(34,197,94,.12);   color: var(--tng-green-light); border: 1px solid rgba(34,197,94,.2); }
+body.tangerine-theme .notification-type.warning { background: rgba(245,158,11,.12);  color: var(--tng-yellow-light); border: 1px solid rgba(245,158,11,.2); }
+body.tangerine-theme .notification-type.error   { background: rgba(239,68,68,.12);   color: var(--tng-red-light); border: 1px solid rgba(239,68,68,.2); }
 body.tangerine-theme .notification-time {
     font-size: 9.5px;
     font-family: var(--st-mono);

@@ -34,6 +34,12 @@
     --tng-yellow: #f59e0b;
     --tng-blue: #3b82f6;
 
+    /* Lighter status tints, for coloured text on dark surfaces */
+    --tng-green-light: #4ade80;
+    --tng-red-light: #f87171;
+    --tng-yellow-light: #fbbf24;
+    --tng-blue-light: #60a5fa;
+
     /* Type */
     --tng-sans: 'Inter', system-ui, sans-serif;
     --tng-mono: 'JetBrains Mono', monospace;

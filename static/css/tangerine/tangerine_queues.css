@@ -200,7 +200,7 @@ body.tangerine-theme .item-time {
 }
 
 body.tangerine-theme .item-checking-file {
-    color: #60a5fa;
+    color: var(--tng-blue-light);
     font-size: 0.9em;
 }
 
