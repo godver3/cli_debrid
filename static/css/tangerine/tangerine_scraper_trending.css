@@ -51,7 +51,7 @@
     content: '';
     width: 4px;
     height: 28px;
-    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(180deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     border-radius: 2px;
 }
 
@@ -77,7 +77,7 @@
 .trending-nav-button:hover {
     background: rgba(255, 107, 53, 0.2);
     border-color: rgba(255, 107, 53, 0.5);
-    color: #ff6b35;
+    color: var(--tng-accent);
     transform: scale(1.1);
 }
 

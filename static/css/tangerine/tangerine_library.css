@@ -51,7 +51,7 @@ input, textarea, [contenteditable="true"] {
     font-weight: bold;
     margin: 0 0 0.5rem 0;
     line-height: 1.2;
-    color: #e17c52;
+    color: var(--tng-accent);
 }
 
 .library-subtitle {
@@ -137,7 +137,7 @@ input, textarea, [contenteditable="true"] {
 }
 
 .action-btn-primary {
-    background: #e17c52;
+    background: var(--tng-accent);
     color: white;
 }
 
@@ -240,7 +240,7 @@ input, textarea, [contenteditable="true"] {
 }
 
 .search-clear-btn:hover {
-    color: #ff6b35;
+    color: var(--tng-accent);
     background: rgba(255, 107, 53, 0.1);
 }
 
@@ -469,7 +469,7 @@ input, textarea, [contenteditable="true"] {
 }
 
 .status-badge.status-collected svg {
-    color: #10b981;
+    color: var(--tng-green);
 }
 
 .status-badge.status-blacklisted svg {
@@ -833,7 +833,7 @@ input, textarea, [contenteditable="true"] {
 
 .progress-bar {
     height: 100%;
-    background: #ff6b35; /* Tangerine accent */
+    background: var(--tng-accent); /* Tangerine accent */
     transition: width 0.3s ease;
 }
 
@@ -1067,7 +1067,7 @@ input, textarea, [contenteditable="true"] {
     height: 20px;
     cursor: pointer;
     margin: 0;
-    accent-color: #ff6b35;
+    accent-color: var(--tng-accent);
 }
 
 /* Selection mode styling */
@@ -1082,15 +1082,15 @@ input, textarea, [contenteditable="true"] {
 }
 
 .media-grid.selection-mode .media-card:has(input[type="checkbox"]:checked) {
-    border: 2px solid #ff6b35;
+    border: 2px solid var(--tng-accent);
     box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.2);
 }
 
 /* Button states */
 .btn-danger {
-    background: linear-gradient(145deg, #dc3545, #c82333);
+    background: linear-gradient(145deg, var(--tng-red), #c82333);
     color: white;
-    border-color: #dc3545;
+    border-color: var(--tng-red);
 }
 
 .btn-danger:hover {

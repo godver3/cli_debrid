@@ -128,7 +128,7 @@
     background: var(--st-text2);
     transition: .25s; border-radius: 50%;
 }
-input:checked + .toggle-slider { background: #e17c52; border-color: #e17c52; }
+input:checked + .toggle-slider { background: var(--tng-accent); border-color: var(--tng-accent); }
 input:checked + .toggle-slider:before { transform: translateX(15px); background: #fff; }
 
 /* Theme selector */
@@ -256,7 +256,7 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
 /* Uptime KPI — warm orange icon */
 #kpi-uptime .stat-icon {
     background: #7c2d1222;
-    color: #fb923c;
+    color: var(--tng-accent-hover);
 }
 
 .stats-box.collection-stats .stat-item .stat-text-content {
@@ -292,7 +292,7 @@ input:checked + .toggle-slider:before { transform: translateX(15px); background:
 .stat-item p[data-label="Active Downloads"].warning,
 .stat-item p[data-label="Daily Usage"].warning  { color: #ffa500; }
 .stat-item p[data-label="Active Downloads"].critical,
-.stat-item p[data-label="Daily Usage"].critical { color: #e17c52; }
+.stat-item p[data-label="Daily Usage"].critical { color: var(--tng-accent); }
 
 /* ─────────────────────────────────────────────────────────
    Grid layouts — top-stats (3-col) and recently-added (3-col)
@@ -777,7 +777,7 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
 .cremux { background:#4a0c3633; color:#f0abfc; border:1px solid #4a0c36; }
 .cwebdl { background:#0c3a1e33; color:var(--tng-green-light); border:1px solid #0c3a1e; }
 .cbluray{ background:#1e0c4a33; color:#a78bfa; border:1px solid #1e0c4a; }
-.cx265  { background:#3a1e0c33; color:#fb923c; border:1px solid #3a1e0c; }
+.cx265  { background:#3a1e0c33; color:var(--tng-accent-hover); border:1px solid #3a1e0c; }
 .cx264  { background:#2a1e0c33; color:var(--tng-yellow-light); border:1px solid #2a1e0c; }
 .catmos { background:#0c3a3a33; color:#67e8f9; border:1px solid #0c3a3a; }
 .chdr   { background:#3a2a0c33; color:#fcd34d; border:1px solid #3a2a0c; }
@@ -813,7 +813,7 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
 .stats-poster-hover .title    { color: var(--st-accent); font-size: 11px; font-weight: 600; margin-bottom: 6px; }
 .stats-poster-hover .metadata { color: var(--tng-text); font-size: 10px; margin-bottom: 4px; font-family: var(--st-mono); }
 .stats-poster-hover .filename {
-    color: #808080; font-family: monospace; font-size: 9px;
+    color: var(--tng-text-3); font-family: monospace; font-size: 9px;
     word-break: break-all; display: block; margin-top: 4px;
 }
 .stats-poster-hover .filename[data-label]::before {
@@ -849,7 +849,7 @@ body[data-theme="tangerine"] .recently-upgraded-section .stats-poster-hover .fil
     font-size: 28px; font-weight: bold; cursor: pointer;
     transition: color .2s ease;
 }
-.close-modal:hover { color: #ff6b35; }
+.close-modal:hover { color: var(--tng-accent); }
 .external-links { display: flex; flex-direction: column; gap: 15px; margin-top: 20px; }
 .external-link {
     display: flex; align-items: center; gap: 10px;
@@ -859,12 +859,12 @@ body[data-theme="tangerine"] .recently-upgraded-section .stats-poster-hover .fil
     border-radius: 8px; text-decoration: none;
     color: var(--tng-text); transition: all .2s ease;
 }
-.external-link:hover { background-color: rgba(255,107,53,.15); border-color: rgba(255,107,53,.3); color: #ff6b35; }
+.external-link:hover { background-color: rgba(255,107,53,.15); border-color: rgba(255,107,53,.3); color: var(--tng-accent); }
 .provider-icon { width: 24px; height: 24px; object-fit: contain; }
 
 /* TMDB missing key notice */
 .tmdb-info {
-    margin-top: 10px; padding: 10px; color: #ff4444;
+    margin-top: 10px; padding: 10px; color: var(--tng-red);
     font-size: 0.9em; border-radius: 8px; text-align: center;
     background-color: rgba(255,68,68,.1); border: 1px solid rgba(255,68,68,.2);
 }

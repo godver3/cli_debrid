@@ -597,7 +597,7 @@ body[data-theme="tangerine"] #templates-tab .template-list {
 /* Layout cards (new class-based markup) */
 body[data-theme="tangerine"] .layout-card {
     background: var(--ov-surf) !important;
-    border: 1px solid #3a3a3a !important;
+    border: 1px solid var(--tng-border-2) !important;
     border-radius: var(--ov-radius) !important;
     padding: 14px 16px !important;
     transition: border-color .15s !important;
@@ -645,7 +645,7 @@ body[data-theme="tangerine"] .badge-active {
 body[data-theme="tangerine"] .badge-inactive {
     background: var(--tng-surface-3) !important;
     color: var(--tng-text-4) !important;
-    border: 1px solid #3a3a3a !important;
+    border: 1px solid var(--tng-border-2) !important;
 }
 body[data-theme="tangerine"] .layout-meta {
     font-size: 11px !important;

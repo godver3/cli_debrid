@@ -17,7 +17,7 @@
     content: '';
     width: 4px;
     height: 32px;
-    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(180deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     border-radius: 2px;
 }
 
@@ -59,7 +59,7 @@
 }
 
 .library-show-item h5 {
-    color: #ff6b35;
+    color: var(--tng-accent);
     margin-bottom: 0;
     font-size: 1.2rem;
     font-weight: 600;
@@ -89,7 +89,7 @@
 
 .library-show-item .text-danger {
     font-style: italic;
-    color: #dc3545; /* Standard danger color */
+    color: var(--tng-red); /* Standard danger color */
 }
 
 .library-show-item ul {
@@ -187,7 +187,7 @@
 }
 
 .alphabet-pagination a:hover {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     color: #fff;
     border-color: transparent;
     transform: translateY(-2px);
@@ -195,7 +195,7 @@
 }
 
 .alphabet-pagination span.active-letter {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     color: #fff;
     border-color: transparent;
     cursor: default;
@@ -213,7 +213,7 @@
 }
 .loading-spinner {
     border: 4px solid rgba(255, 255, 255, 0.08);
-    border-top: 4px solid #ff6b35;
+    border-top: 4px solid var(--tng-accent);
     border-radius: 50%;
     width: 24px;
     height: 24px;
@@ -261,14 +261,14 @@
 .version-selectors input[type="checkbox"] {
     margin-right: 8px;
     vertical-align: middle;
-    accent-color: #e17c52;
+    accent-color: var(--tng-accent);
     width: 18px;
     height: 18px;
     cursor: pointer;
 }
 
 .version-selectors label:has(input[type="checkbox"]:checked) {
-    /* background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%); */
+    /* background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%); */
     color: #fff;
     border-color: #e17c524d;
     /* box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3); */
@@ -318,7 +318,7 @@
 .collection-status-selectors input[type="radio"] {
     margin-right: 8px;
     vertical-align: middle;
-    accent-color: #e17c52;
+    accent-color: var(--tng-accent);
     width: 18px;
     height: 18px;
     cursor: pointer;
@@ -342,7 +342,7 @@ h2 {
 }
 
 .collection-status-selectors label:has(input[type="radio"]:checked) {
-    /* background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%); */
+    /* background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%); */
     color: #fff;
     border-color: #e17c524d;
     /* box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3); */
@@ -357,8 +357,8 @@ h2 {
 /* Styling for show containers based on collection status */
 .library-show-item.fully-collected-all-selected {
     background-color: #1a3a1a; /* Darker Green background for dark theme */
-    border: 1px solid #28a745;    /* Green border, matching the left border */
-    border-left: 5px solid #28a745 !important; /* Prominent green left border */
+    border: 1px solid var(--tng-green);    /* Green border, matching the left border */
+    border-left: 5px solid var(--tng-green) !important; /* Prominent green left border */
     color: #e6ffed; /* Lighter text for contrast on dark green */
 }
 .library-show-item.fully-collected-all-selected .show-header h5 {
@@ -370,8 +370,8 @@ h2 {
 
 .library-show-item.targeted-collection-complete {
     background-color: #1c2e3f; /* Darker Blue background for dark theme */
-    border: 1px solid #007bff;   /* Blue border, matching the left border */
-    border-left: 5px solid #007bff !important; /* Prominent blue left border */
+    border: 1px solid var(--tng-blue);   /* Blue border, matching the left border */
+    border-left: 5px solid var(--tng-blue) !important; /* Prominent blue left border */
     color: #e7f3fe; /* Lighter text for contrast on dark blue */
 }
 .library-show-item.targeted-collection-complete .show-header h5 {

@@ -42,7 +42,7 @@
 .settings-sidebar-title {
     font-size: 1.75rem;
     font-weight: 700;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -117,7 +117,7 @@
 
 .settings-search-clear:hover {
     background: rgba(255, 107, 53, 0.2);
-    color: #ff6b35;
+    color: var(--tng-accent);
 }
 
 .settings-search-clear svg {
@@ -138,7 +138,7 @@
 .search-results-indicator.no-results {
     background: rgba(255, 193, 7, 0.1);
     border-color: rgba(255, 193, 7, 0.3);
-    color: #ffc107;
+    color: var(--tng-yellow);
     display: flex;
     align-items: center;
 }
@@ -146,7 +146,7 @@
 .search-results-header {
     display: flex;
     align-items: center;
-    color: #ff6b35;
+    color: var(--tng-accent);
     font-weight: 600;
     margin-bottom: 8px;
 }
@@ -164,7 +164,7 @@
     background: rgba(255, 107, 53, 0.15);
     border: 1px solid rgba(255, 107, 53, 0.3);
     border-radius: 6px;
-    color: #ff8c5a;
+    color: var(--tng-accent-hover);
     font-size: 0.8rem;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -173,7 +173,7 @@
 .search-tab-match:hover {
     background: rgba(255, 107, 53, 0.25);
     border-color: rgba(255, 107, 53, 0.5);
-    color: #ff6b35;
+    color: var(--tng-accent);
     transform: translateY(-1px);
 }
 
@@ -234,7 +234,7 @@
 .settings-nav-item.active {
     background: rgba(255, 107, 53, 0.1);
     color: #fff;
-    border-left-color: #ff6b35;
+    border-left-color: var(--tng-accent);
 }
 
 .settings-nav-item.active::after {
@@ -243,7 +243,7 @@
     right: 1.5rem;
     width: 6px;
     height: 6px;
-    background: #ff6b35;
+    background: var(--tng-accent);
     border-radius: 50%;
 }
 
@@ -309,7 +309,7 @@
     top: 70px;
     left: 1.5rem;
     z-index: 1001;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     backdrop-filter: blur(10px);
     border: none;
     border-radius: 12px;
@@ -429,7 +429,7 @@
     content: '';
     width: 4px;
     height: 24px;
-    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(180deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     border-radius: 2px;
 }
 
@@ -445,7 +445,7 @@
 }
 
 .btn-primary {
-    background: #ff6b35;
+    background: var(--tng-accent);
     color: #fff;
     border: none;
     border-radius: 8px;
@@ -457,7 +457,7 @@
 }
 
 .btn-primary:hover {
-    background: #f7931e;
+    background: var(--tng-accent-hover);
     transform: none;
     box-shadow: none;
 }
@@ -474,7 +474,7 @@
 
 .btn-danger {
     background: rgba(220, 38, 38, 0.15);
-    color: #ff6b6b;
+    color: var(--tng-red-light);
     border: 1px solid rgba(220, 38, 38, 0.3);
 }
 
@@ -529,7 +529,7 @@
 
 .source-item.expanded .expand-icon {
     transform: rotate(90deg);
-    color: #ff6b35;
+    color: var(--tng-accent);
 }
 
 .source-name {
@@ -612,7 +612,7 @@
 }
 
 .settings-description a {
-    color: #dfdfdf;
+    color: var(--tng-text);
 }
 
 /* Form group styles */
@@ -712,7 +712,7 @@
 }
 
 .logo-option input[type="radio"]:checked + label {
-    border-color: #ff6b35;
+    border-color: var(--tng-accent);
     background: rgba(255, 107, 53, 0.1);
 }
 
@@ -747,7 +747,7 @@
 .date-time-format-info-btn {
     background: rgba(255, 107, 53, 0.1);
     border: 1px solid rgba(255, 107, 53, 0.3);
-    color: #ff6b35;
+    color: var(--tng-accent);
     padding: 0.5rem;
     border-radius: 8px;
     cursor: pointer;
@@ -760,7 +760,7 @@
 
 .date-time-format-info-btn:hover {
     background: rgba(255, 107, 53, 0.2);
-    border-color: #ff6b35;
+    border-color: var(--tng-accent);
 }
 
 .date-time-format-info-btn svg {
@@ -833,7 +833,7 @@
 .delete-source-btn,
 .delete-version-btn {
     background: rgba(220, 38, 38, 0.15);
-    color: #ff6b6b;
+    color: var(--tng-red-light);
     border: 1px solid rgba(220, 38, 38, 0.3);
     padding: 0.625rem 1.25rem;
     border-radius: 8px;
@@ -872,7 +872,7 @@ button.delete-scraper-btn:disabled,
 .delete-scraper-btn[disabled],
 .delete-scraper-btn:disabled {
     background-color: var(--tng-text-4) !important;
-    color: #999999 !important;
+    color: var(--tng-text-2) !important;
     cursor: not-allowed !important;
     opacity: 0.7 !important;
     pointer-events: none !important;
@@ -916,13 +916,13 @@ button.delete-scraper-btn:disabled,
     cursor: pointer;
     display: block;
     transition: all 0.3s ease;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     color: #fff;
 }
 
 
 .import-liked-to-source-btn:hover {
-    background: #f7931e;
+    background: var(--tng-accent-hover);
     border: none !important;
     outline: none;
     box-shadow: none;
@@ -1005,7 +1005,7 @@ button.delete-scraper-btn:disabled,
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background-color: #2b2b2b;
+    background-color: var(--tng-surface-3);
     border-radius: 12px;
     width: 90%;
     max-width: 800px;
@@ -1044,7 +1044,7 @@ button.delete-scraper-btn:disabled,
 }
 
 .format-modal-close:hover {
-    color: #f44336;
+    color: var(--tng-red);
 }
 
 .format-modal-body {
@@ -1079,12 +1079,12 @@ button.delete-scraper-btn:disabled,
 }
 
 .notification-params.time-options strong {
-    color: #ff6b35;
+    color: var(--tng-accent);
     font-family: monospace;
 }
 
 .format-help-link {
-    color: #ff6b35;
+    color: var(--tng-accent);
     cursor: pointer;
     text-decoration: underline;
 }
@@ -1120,15 +1120,15 @@ button.delete-scraper-btn:disabled,
     }
 
     .btn-primary { 
-        background: #ff6b35;
+        background: var(--tng-accent);
         /* margin: 0 0px 10px; */
      }
-    .btn-primary:hover { background: #f7931e; }
+    .btn-primary:hover { background: var(--tng-accent-hover); }
     .btn-secondary { background-color: rgba(255, 255, 255, 0.08); }
     .btn-secondary:hover { background-color: #777; }
-    .btn-danger { background-color: #f44336; }
+    .btn-danger { background-color: var(--tng-red); }
     .btn-danger:hover { background-color: #d32f2f; }
-    .btn-info { background-color: #3498db; }
+    .btn-info { background-color: var(--tng-blue); }
     .btn-info:hover { background-color: #2980b9; }
 
     .btn:disabled {
@@ -1210,7 +1210,7 @@ button.delete-scraper-btn:disabled,
         content: '';
         width: 4px;
         height: 24px;
-        background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(180deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
         border-radius: 2px;
         flex-shrink: 0;
     }
@@ -1271,7 +1271,7 @@ button.delete-scraper-btn:disabled,
         font-weight: 600;
         cursor: pointer;
         transition: all 0.3s ease;
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
         color: #fff;
     }
 
@@ -1283,7 +1283,7 @@ button.delete-scraper-btn:disabled,
     .duplicate-scraper-btn:hover,
     .duplicate-version-btn:hover,
     .import-versions-link:hover {
-        background: #f7931e;
+        background: var(--tng-accent-hover);
         border: none !important;
         outline: none;
         box-shadow: none;
@@ -1424,7 +1424,7 @@ button.delete-scraper-btn:disabled,
     }
 
     .settings-description a {
-        color: #dfdfdf;
+        color: var(--tng-text);
     }
 
     /* Version, scraper, and source action buttons */
@@ -1461,7 +1461,7 @@ button.delete-scraper-btn:disabled,
     .delete-notification-btn {
         padding: 0.625rem 1.25rem;
         background: rgba(220, 38, 38, 0.15);
-        color: #ff6b6b;
+        color: var(--tng-red-light);
         border: 1px solid rgba(220, 38, 38, 0.3);
         border-radius: 8px;
         font-size: 0.875rem;
@@ -1490,7 +1490,7 @@ button.delete-scraper-btn:disabled,
 
     .rename-version-btn,
     .duplicate-version-btn {
-        background-color: #3498db;
+        background-color: var(--tng-blue);
     }
 
     .rename-version-btn:hover,
@@ -1537,7 +1537,7 @@ button.delete-scraper-btn:disabled,
 
     /* Add/remove filter button */
     .add-filter-btn {
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
         color: white;
         border: none;
         padding: 5px 10px;
@@ -1552,7 +1552,7 @@ button.delete-scraper-btn:disabled,
     }
 
     .remove-filter {
-        background-color: #f44336;
+        background-color: var(--tng-red);
         color: white;
         border: none;
         padding: 5px 10px;
@@ -1719,7 +1719,7 @@ button.delete-scraper-btn:disabled,
         display: inline-flex;
         align-items: center;
         margin-left: 8px;
-        color: #ff6b6b;
+        color: var(--tng-red-light);
         font-size: 12px;
         font-weight: normal;
     }
@@ -1768,7 +1768,7 @@ button.delete-scraper-btn:disabled,
 }
 
 .test-notification-btn {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     color: white;
     border: none;
     padding: 5px 10px;
@@ -1781,7 +1781,7 @@ button.delete-scraper-btn:disabled,
 }
 
 .delete-notification-btn {
-    background-color: #f44336;
+    background-color: var(--tng-red);
     color: white;
     border: none;
     padding: 5px 10px;
@@ -1816,7 +1816,7 @@ button.delete-scraper-btn:disabled,
 }
 
 #notifications-general-enabled-content-sources option:checked {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     color: white;
 }
 
@@ -1835,7 +1835,7 @@ div#trakt-auth-status {
     margin-top: 10px;
     margin-bottom: 10px;
     font-style: italic;
-    color: #8f8f8f;
+    color: var(--tng-text-3);
 }
 
 .plex-auth-section {
@@ -1863,8 +1863,8 @@ div#trakt-auth-status {
 
 .plex-auth-btn {
     background-color: #282a2d;
-    color: #e5a00d;
-    border: 2px solid #e5a00d;
+    color: var(--tng-yellow);
+    border: 2px solid var(--tng-yellow);
     padding: 10px 20px;
     border-radius: 10px;
     cursor: pointer;
@@ -1876,7 +1876,7 @@ div#trakt-auth-status {
 }
 
 .plex-auth-btn:hover {
-    background-color: #e5a00d;
+    background-color: var(--tng-yellow);
     color: #282a2d;
 }
 
@@ -1907,17 +1907,17 @@ div#trakt-auth-status {
 }
 
 .plex-server-card.selected {
-    border: 2px solid #e5a00d;
+    border: 2px solid var(--tng-yellow);
 }
 
 .plex-server-name {
     font-weight: bold;
-    color: #e5a00d;
+    color: var(--tng-yellow);
 }
 
 .plex-connection-type {
     font-size: 0.9em;
-    color: #8f8f8f;
+    color: var(--tng-text-3);
 }
 
 .plex-libraries-section {
@@ -1938,7 +1938,7 @@ div#trakt-auth-status {
     padding: 8px;
     background-color: rgba(255, 255, 255, 0.03);
     color: #f1f1f1;
-    border: 1px solid #3a3a3a;
+    border: 1px solid var(--tng-border-2);
     border-radius: 10px;
 }
 
@@ -1971,22 +1971,22 @@ div#trakt-auth-status {
     align-items: center;
     margin-bottom: 20px;
     padding-bottom: 10px;
-    border-bottom: 1px solid #3a3a3a;
+    border-bottom: 1px solid var(--tng-border-2);
 }
 
 .plex-modal-title {
     font-size: 1.5em;
-    color: #e5a00d;
+    color: var(--tng-yellow);
 }
 
 .plex-modal-close {
     cursor: pointer;
     font-size: 1.5em;
-    color: #8f8f8f;
+    color: var(--tng-text-3);
 }
 
 .plex-modal-close:hover {
-    color: #e5a00d;
+    color: var(--tng-yellow);
 }
 
 .plex-modal-step {
@@ -2000,7 +2000,7 @@ div#trakt-auth-status {
 .plex-modal-footer {
     margin-top: 20px;
     padding-top: 10px;
-    border-top: 1px solid #3a3a3a;
+    border-top: 1px solid var(--tng-border-2);
     display: flex;
     justify-content: flex-end;
     gap: 10px;
@@ -2015,7 +2015,7 @@ div#trakt-auth-status {
 }
 
 .plex-modal-btn.primary {
-    background-color: #e5a00d;
+    background-color: var(--tng-yellow);
     color: #282a2d;
     border: none;
 }
@@ -2026,8 +2026,8 @@ div#trakt-auth-status {
 
 .plex-modal-btn.secondary {
     background-color: transparent;
-    color: #e5a00d;
-    border: 1px solid #e5a00d;
+    color: var(--tng-yellow);
+    border: 1px solid var(--tng-yellow);
 }
 
 .plex-modal-btn.secondary:hover {
@@ -2040,7 +2040,7 @@ div#trakt-auth-status {
    ======================================== */
 /* Reverse parser info box styling */
     .reverse-parser-info-box {
-        background-color: #252525;
+        background-color: var(--tng-surface-2);
         border-radius: 12px;
         padding: 20px;
         margin: 20px 0;
@@ -2068,7 +2068,7 @@ div#trakt-auth-status {
     
     /* Scraping info box styling */
     .scraping-info-box {
-        background-color: #252525;
+        background-color: var(--tng-surface-2);
         border-radius: 12px;
         padding: 20px;
         margin: 20px 0;
@@ -2290,7 +2290,7 @@ div#trakt-auth-status {
     content: '';
     width: 4px;
     height: 24px;
-    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(180deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     border-radius: 2px;
     display: inline-block;
     flex-shrink: 0;
@@ -2327,7 +2327,7 @@ div#trakt-auth-status {
 .btn-primary,
 .content-sources-btn-primary,
 .add-source-link {
-    background: #ff6b35;
+    background: var(--tng-accent);
     color: #fff;
     border: none;
     border-radius: 8px;
@@ -2342,7 +2342,7 @@ div#trakt-auth-status {
 .btn-primary:hover,
 .content-sources-btn-primary:hover,
 .add-source-link:hover {
-    background: #f7931e;
+    background: var(--tng-accent-hover);
     transform: none;
     box-shadow: none;
 }
@@ -2384,7 +2384,7 @@ div#trakt-auth-status {
 .settings-section:has(.source-disabled),
 .scraper-card:has(.scraper-disabled) {
     background: rgb(172 25 25 / 14%) !important;
-    border-left: 4px solid #ff6b6b !important;
+    border-left: 4px solid var(--tng-red-light) !important;
 }
 
 .content-source-header.source-disabled {
@@ -2417,7 +2417,7 @@ div#trakt-auth-status {
 .source-item.expanded .expand-icon,
 .content-source-card.expanded .settings-toggle-icon {
     transform: rotate(90deg);
-    color: #ff6b35;
+    color: var(--tng-accent);
 }
 
 /* Ensure SVG expand icons stay visible in all states - FORCE */
@@ -2478,7 +2478,7 @@ div#trakt-auth-status {
 .delete-source-btn {
     padding: 0.625rem 1.25rem;
     background: rgba(220, 38, 38, 0.15);
-    color: #ff6b6b;
+    color: var(--tng-red-light);
     border: 1px solid rgba(220, 38, 38, 0.3);
     border-radius: 8px;
     font-size: 0.875rem;
@@ -2819,7 +2819,7 @@ div#trakt-auth-status {
 .scraper-item.expanded .expand-icon,
 .scraper-card.expanded .settings-toggle-icon {
     transform: rotate(90deg);
-    color: #ff6b35;
+    color: var(--tng-accent);
 }
 
 /* Settings Section Content for Scrapers */
@@ -3444,7 +3444,7 @@ ease;
 .true-debug-settings-page .settings-section.expanded .expand-icon,
 .true-debug-settings-page .settings-card.expanded .settings-toggle-icon {
     transform: rotate(90deg);
-    color: #ff6b35;
+    color: var(--tng-accent);
 }
 
 /* Add orange vertical bar and left align section titles */
@@ -3565,7 +3565,7 @@ ease;
 .delete-notification-btn {
     padding: 0.625rem 1.25rem;
     background: rgba(220, 38, 38, 0.15);
-    color: #ff6b6b;
+    color: var(--tng-red-light);
     border: 1px solid rgba(220, 38, 38, 0.3);
     border-radius: 8px;
     font-size: 0.875rem;
@@ -4127,7 +4127,7 @@ ease;
 .settings-form-group.search-highlight,
 .settings-section .settings-form-group.search-highlight {
     background: rgba(255, 107, 53, 0.15) !important;
-    border-left: 3px solid #ff6b35 !important;
+    border-left: 3px solid var(--tng-accent) !important;
     padding-left: 12px !important;
     border-radius: 4px !important;
     animation: highlightFade 0.5s ease !important;
@@ -4135,7 +4135,7 @@ ease;
 }
 
 button#trakt-auth-btn {
-    background: #ff6b35;
+    background: var(--tng-accent);
     color: #fff;
     border: none;
     border-radius: 8px;
@@ -4213,7 +4213,7 @@ button#trakt-auth-btn {
     content: '';
     width: 4px;
     height: 24px;
-    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(180deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     border-radius: 2px;
 }
 
@@ -4272,7 +4272,7 @@ input#settingsSearch {
 .format-modal-body h3 {
     font-size: 1.1rem;
     font-weight: 600;
-    color: #ff6b35 !important;
+    color: var(--tng-accent) !important;
     margin: 2rem 0 1rem 0;
     display: flex;
     align-items: center;
@@ -4287,7 +4287,7 @@ input#settingsSearch {
     content: '';
     width: 3px;
     height: 18px;
-    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(180deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     border-radius: 2px;
 }
 
@@ -4314,7 +4314,7 @@ input#settingsSearch {
     text-align: left;
     font-weight: 600;
     font-size: 0.9rem;
-    color: #ff6b35;
+    color: var(--tng-accent);
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -4340,7 +4340,7 @@ input#settingsSearch {
 
 .format-modal-body table.notification-params td strong,
 .format-modal-body table.time-options td strong {
-    color: #f7931e;
+    color: var(--tng-accent-hover);
     font-weight: 600;
     font-family: 'Courier New', Courier, monospace;
     background: rgba(255, 107, 53, 0.1);
@@ -4353,21 +4353,21 @@ input#settingsSearch {
     padding: 1rem 1.25rem !important;
     background: rgba(255, 255, 255, 0.03) !important;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-left: 3px solid #ff6b35;
+    border-left: 3px solid var(--tng-accent);
     border-radius: 12px !important;
-    color: #d0d0d0 !important;
+    color: var(--tng-text) !important;
     line-height: 1.6;
     margin-top: 1.5rem;
 }
 
 .format-modal-body p strong {
-    color: #ff6b35;
+    color: var(--tng-accent);
     font-weight: 600;
 }
 
 .format-modal-body p code {
     background: rgba(255, 107, 53, 0.1);
-    color: #f7931e;
+    color: var(--tng-accent-hover);
     padding: 2px 8px;
     border-radius: 6px;
     font-family: 'Courier New', Courier, monospace;
@@ -4449,7 +4449,7 @@ input#settingsSearch {
 .loading-progress-bar {
     height: 100%;
     width: 20%;
-    background: linear-gradient(90deg, #ff6b35, #ff8c5a);
+    background: linear-gradient(90deg, var(--tng-accent), var(--tng-accent-hover));
     border-radius: 0 2px 2px 0;
     animation: loading-bar-pulse 1.8s ease-in-out infinite;
 }
@@ -4480,7 +4480,7 @@ input#settingsSearch {
 .loading-message {
     font-size: 0.95rem;
     font-weight: 600;
-    color: #e8e8e8;
+    color: var(--tng-text);
     margin: 0;
 }
 
@@ -4494,7 +4494,7 @@ input#settingsSearch {
 
 .loading-progress {
     font-size: 0.82rem;
-    color: #ff8c5a;
+    color: var(--tng-accent-hover);
     font-weight: 600;
     margin-left: 1.95rem;
     margin-top: 0.3rem;
@@ -4668,7 +4668,7 @@ input#settingsSearch {
 .settings-search-input:focus { border-color: var(--tng-accent) !important; box-shadow: none !important; }
 .settings-search-input:focus + .settings-search-clear + .settings-search-icon,
 .settings-search-container:focus-within .settings-search-icon { stroke: var(--tng-accent) !important; }
-.settings-search-input::placeholder { color: #444 !important; }
+.settings-search-input::placeholder { color: var(--tng-text-5) !important; }
 .settings-nav-section-title {
     padding: 14px 12px 4px !important;
     font-size: 9px !important;
@@ -5067,7 +5067,7 @@ input#settingsSearch {
     box-sizing: border-box !important;
 }
 .settings-input:focus { border-color: var(--tng-accent) !important; box-shadow: none !important; }
-.settings-input::placeholder { color: #444 !important; }
+.settings-input::placeholder { color: var(--tng-text-5) !important; }
 textarea.settings-input { font-family: 'JetBrains Mono', monospace !important; }
 .settings-page-container select.settings-input,
 .settings-page-container select {

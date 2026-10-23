@@ -25,8 +25,8 @@
 .pd-btn-blue:hover{background:#1e40af22;border-color:var(--tng-blue-light)!important}
 .pd-btn-green{border:1px solid #166534!important;color:var(--pd-green)}
 .pd-btn-green:hover{background:#16653422;border-color:var(--pd-green)!important}
-.pd-btn-orange{border:1px solid #c2500f!important;color:#f97316}
-.pd-btn-orange:hover{background:#c2500f22;border-color:#f97316!important}
+.pd-btn-orange{border:1px solid #c2500f!important;color:var(--tng-accent)}
+.pd-btn-orange:hover{background:#c2500f22;border-color:var(--tng-accent)!important}
 .pd-btn:disabled{opacity:.55;cursor:not-allowed}
 
 /* Section */
@@ -47,10 +47,10 @@
 .pd-prog-pct{font-size:13px;font-weight:700;font-family:var(--pd-mono);color:var(--pd-text)}
 .pd-prog-bar-bg{height:8px;background:var(--pd-surface3);border-radius:4px;overflow:hidden}
 .pd-prog-bar-fill{height:100%;border-radius:4px;transition:width .6s ease}
-.pd-prog-bar-fill.cpu{background:linear-gradient(90deg,var(--pd-accent),#fb923c)}
+.pd-prog-bar-fill.cpu{background:linear-gradient(90deg,var(--pd-accent),var(--tng-accent-hover))}
 .pd-prog-bar-fill.mem{background:linear-gradient(90deg,var(--tng-blue),#8b5cf6)}
-.pd-prog-bar-fill.warn{background:linear-gradient(90deg,var(--pd-yellow),#f97316)}
-.pd-prog-bar-fill.danger{background:linear-gradient(90deg,var(--pd-red),#f97316)}
+.pd-prog-bar-fill.warn{background:linear-gradient(90deg,var(--pd-yellow),var(--tng-accent))}
+.pd-prog-bar-fill.danger{background:linear-gradient(90deg,var(--pd-red),var(--tng-accent))}
 .pd-prog-meta{display:flex;gap:14px;margin-top:5px;flex-wrap:wrap}
 .pd-prog-meta-item{font-size:11px;font-family:var(--pd-mono);color:var(--pd-text3)}
 .pd-prog-meta-item b{color:var(--pd-accent);font-weight:500}
@@ -61,7 +61,7 @@
 .pd-mem-stat{background:var(--pd-surface2);border:1px solid var(--pd-border);border-radius:7px;padding:10px;text-align:center}
 .pd-mem-stat-label{font-size:11px;color:var(--pd-text3);margin-bottom:6px}
 .pd-mem-stat-val{font-size:18px;font-weight:700;font-family:var(--pd-mono);color:var(--pd-text)}
-.pd-mem-stat.peak .pd-mem-stat-val{color:#f97316}
+.pd-mem-stat.peak .pd-mem-stat-val{color:var(--tng-accent)}
 
 /* Memory type cards */
 .pd-mem-type-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -102,7 +102,7 @@
 .pd-gbadge{font-size:10px;font-family:var(--pd-mono);padding:3px 8px;border-radius:4px;font-weight:500}
 .pd-gbadge.rss{background:#0c4a6e22;color:var(--pd-cyan);border:1px solid #0c4a6e}
 .pd-gbadge.vms{background:#2e1065aa;color:var(--pd-purple);border:1px solid #3b0764}
-.pd-gbadge.swap{background:#713f1222;color:#fb923c;border:1px solid #7c2d12}
+.pd-gbadge.swap{background:#713f1222;color:var(--tng-accent-hover);border:1px solid #7c2d12}
 
 /* Resource handles */
 .pd-rh-grid{display:flex;gap:20px;flex-wrap:wrap}
@@ -294,7 +294,7 @@
       </div>
       <div class="pd-cpu-stat">
         <div class="pd-cpu-stat-label">Peak CPU</div>
-        <div class="pd-cpu-stat-val" id="max-cpu-percent" style="color:#f97316">—</div>
+        <div class="pd-cpu-stat-val" id="max-cpu-percent" style="color:var(--tng-accent)">—</div>
       </div>
       <div class="pd-cpu-stat">
         <div class="pd-cpu-stat-label">CPU Time</div>

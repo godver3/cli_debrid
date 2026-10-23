@@ -1196,7 +1196,7 @@
                         {% if compact_view %}
                         <div class="file-details">
                             <span class="title">{{ movie.title }} ({{ movie.year }})</span>
-                            <span class="metadata">Version: {{ movie.version }}{% if movie.formatted_size %} <span style="color: #e17c52;">•</span> Size: {{ movie.formatted_size }}{% endif %} <span style="color: #e17c52;">•</span> {{ movie.formatted_collected_at or movie.formatted_date or 'Unknown' }}</span>
+                            <span class="metadata">Version: {{ movie.version }}{% if movie.formatted_size %} <span style="color: var(--tng-accent);">•</span> Size: {{ movie.formatted_size }}{% endif %} <span style="color: var(--tng-accent);">•</span> {{ movie.formatted_collected_at or movie.formatted_date or 'Unknown' }}</span>
                             <span class="filename">{{ movie.filled_by_file }}</span>
                         </div>
                         {% else %}
@@ -1204,7 +1204,7 @@
                             <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" class="poster" loading="lazy">
                             <div class="stats-poster-hover">
                                 <span class="title">{{ movie.title }} ({{ movie.year }})</span>
-                                <span class="metadata">Version: {{ movie.version }}{% if movie.formatted_size %} <span style="color: #e17c52;">•</span> Size: {{ movie.formatted_size }}{% endif %} <span style="color: #e17c52;">•</span> {{ movie.formatted_collected_at or movie.formatted_date or 'Unknown' }}</span>
+                                <span class="metadata">Version: {{ movie.version }}{% if movie.formatted_size %} <span style="color: var(--tng-accent);">•</span> Size: {{ movie.formatted_size }}{% endif %} <span style="color: var(--tng-accent);">•</span> {{ movie.formatted_collected_at or movie.formatted_date or 'Unknown' }}</span>
                                 <span class="filename">{{ movie.filled_by_file }}</span>
                             </div>
                         </div>
@@ -1231,7 +1231,7 @@
                         {% if compact_view %}
                         <div class="file-details">
                             <span class="title">{{ show.title }}{% if show.year %} ({{ show.year }}){% endif %}</span>
-                            <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }} <span style="color: #e17c52;">•</span> {% endif %}{% if show.version %}Version: {{ show.version }}{% if show.formatted_size %} <span style="color: #e17c52;">•</span> Size: {{ show.formatted_size }}{% endif %} <span style="color: #e17c52;">•</span> {% endif %}{{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
+                            <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }} <span style="color: var(--tng-accent);">•</span> {% endif %}{% if show.version %}Version: {{ show.version }}{% if show.formatted_size %} <span style="color: var(--tng-accent);">•</span> Size: {{ show.formatted_size }}{% endif %} <span style="color: var(--tng-accent);">•</span> {% endif %}{{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
                             <span class="filename">{{ show.filled_by_file }}</span>
                         </div>
                         {% else %}
@@ -1239,7 +1239,7 @@
                             <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="poster" loading="lazy">
                             <div class="stats-poster-hover">
                                 <span class="title">{{ show.title }}{% if show.year %} ({{ show.year }}){% endif %}</span>
-                                <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }} <span style="color: #e17c52;">•</span> {% endif %}{% if show.version %}Version: {{ show.version }}{% if show.formatted_size %} <span style="color: #e17c52;">•</span> Size: {{ show.formatted_size }}{% endif %} <span style="color: #e17c52;">•</span> {% endif %}{{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
+                                <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }} <span style="color: var(--tng-accent);">•</span> {% endif %}{% if show.version %}Version: {{ show.version }}{% if show.formatted_size %} <span style="color: var(--tng-accent);">•</span> Size: {{ show.formatted_size }}{% endif %} <span style="color: var(--tng-accent);">•</span> {% endif %}{{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
                                 <span class="filename">{{ show.filled_by_file }}</span>
                             </div>
                         </div>
@@ -1266,7 +1266,7 @@
                         {% if compact_view %}
                         <div class="file-details">
                             <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                            <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number)}} <span style="color: #e17c52;">•</span> {% endif %}{% if item.version %}Version: {{ item.version }}{% if item.formatted_size %} <span style="color: #e17c52;">•</span> Size: {{ item.formatted_size }}{% endif %} <span style="color: #e17c52;">•</span> {% endif %}{{ item.formatted_date }}</span>
+                            <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number)}} <span style="color: var(--tng-accent);">•</span> {% endif %}{% if item.version %}Version: {{ item.version }}{% if item.formatted_size %} <span style="color: var(--tng-accent);">•</span> Size: {{ item.formatted_size }}{% endif %} <span style="color: var(--tng-accent);">•</span> {% endif %}{{ item.formatted_date }}</span>
                             <span class="filename" data-label="From:">{{ item.upgrading_from }}</span>
                             <span class="filename" data-label="To:">{{ item.filled_by_file }}</span>
                         </div>
@@ -1275,7 +1275,7 @@
                             <img src="{{ item.poster_url }}" alt="{{ item.title }} poster" class="poster" loading="lazy">
                             <div class="stats-poster-hover">
                                 <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                                <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }} <span style="color: #e17c52;">•</span> {% endif %}{% if item.version %}Version: {{ item.version }}{% if item.formatted_size %} <span style="color: #e17c52;">•</span> Size: {{ item.formatted_size }}{% endif %} <span style="color: #e17c52;">•</span> {% endif %}{{ item.formatted_date }}</span>
+                                <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }} <span style="color: var(--tng-accent);">•</span> {% endif %}{% if item.version %}Version: {{ item.version }}{% if item.formatted_size %} <span style="color: var(--tng-accent);">•</span> Size: {{ item.formatted_size }}{% endif %} <span style="color: var(--tng-accent);">•</span> {% endif %}{{ item.formatted_date }}</span>
                                 <span class="filename" data-label="From:">{{ item.upgrading_from }}</span>
                                 <span class="filename" data-label="To:">{{ item.filled_by_file }}</span>
                             </div>

@@ -1,6 +1,6 @@
 :root {
-    --primary-color: #ff6b35;
-    --primary-hover: #f7931e;
+    --primary-color: var(--tng-accent);
+    --primary-hover: var(--tng-accent-hover);
     --background-dark: #0a0a0a;
     --background-light: var(--tng-surface);
     --surface-color: var(--tng-surface);
@@ -38,7 +38,7 @@ html, body {
     height: auto;
     margin: 0;
     padding: 0;
-    background: linear-gradient(135deg, #0a0a0a 0%, var(--tng-surface) 100%);
+    background: linear-gradient(135deg, var(--tng-bg) 0%, var(--tng-surface) 100%);
     color: var(--tng-text);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
 }
@@ -158,7 +158,7 @@ form#search-form select:focus {
 
 form#search-form button {
     padding: 0.75rem 1.5rem;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     color: #fff;
     border: none;
     border-radius: 12px;
@@ -196,7 +196,7 @@ form#search-form button:hover {
 input[type="checkbox"] {
     width: 18px;
     height: 18px;
-    accent-color: #ff6b35;
+    accent-color: var(--tng-accent);
     cursor: pointer;
 }
 
@@ -281,7 +281,7 @@ form#search-form input:-webkit-autofill:active {
     left: 0;
     right: 0;
     height: 2px;
-    background: linear-gradient(90deg, #ff6b35, #f7931e);
+    background: linear-gradient(90deg, var(--tng-accent), var(--tng-accent-hover));
     opacity: 0;
     transition: opacity 0.3s ease;
     z-index: 10;
@@ -469,7 +469,7 @@ form#search-form input:-webkit-autofill:active {
 }
 
 .db-status-collected {
-    background: linear-gradient(135deg, #10b981, #059669);
+    background: linear-gradient(135deg, var(--tng-green), #059669);
 }
 
 .db-status-blacklisted {
@@ -629,7 +629,7 @@ form#search-form input:-webkit-autofill:active {
 }
 
 .season-controls button {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     cursor: pointer;
 }
 
@@ -669,7 +669,7 @@ form#search-form input:-webkit-autofill:active {
 }
 
 body {
-    background: linear-gradient(135deg, #0a0a0a 0%, var(--tng-surface) 100%) !important;
+    background: linear-gradient(135deg, var(--tng-bg) 0%, var(--tng-surface) 100%) !important;
 }
 
 .season-bg-image::after {
@@ -1099,7 +1099,7 @@ tr.filtered-out-item {
 }
 
 .filtered-out-item td:nth-child(4) {
-    color: #ff6b6b !important;
+    color: var(--tng-red-light) !important;
     font-style: italic;
     font-size: 0.9em;
     max-width: 200px;
@@ -1133,7 +1133,7 @@ tr.filtered-out-item {
     left: 0;
     right: 0;
     height: 2px;
-    background: linear-gradient(90deg, #ff6b35, #f7931e);
+    background: linear-gradient(90deg, var(--tng-accent), var(--tng-accent-hover));
     opacity: 0.8;
 }
 
@@ -1157,7 +1157,7 @@ tr.filtered-out-item {
     content: '';
     width: 4px;
     height: 28px;
-    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(180deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     border-radius: 2px;
 }
 
@@ -1186,7 +1186,7 @@ tr.filtered-out-item {
 .back-button:hover {
     background: rgba(255, 107, 53, 0.2);
     border-color: rgba(255, 107, 53, 0.5);
-    color: #ff6b35;
+    color: var(--tng-accent);
     transform: translateX(-4px);
 }
 
@@ -1262,7 +1262,7 @@ tr.filtered-out-item {
     gap: 10px;
     padding: 9px 11px;
     border-radius: 6px;
-    border: 1px solid #333;
+    border: 1px solid var(--tng-border);
     background: var(--tng-surface-2);
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
@@ -1331,7 +1331,7 @@ tr.filtered-out-item {
 .option-row.checked .option-label,
 .option-row.selected .option-label { color: var(--tng-text); }
 
-.vm-divider { height: 1px; background: #333; margin: 14px 0; }
+.vm-divider { height: 1px; background: var(--tng-surface-3); margin: 14px 0; }
 
 .season-selection-container {
     margin: 8px 0 0;
@@ -2470,7 +2470,7 @@ tr.filtered-out-item {
 .overlay-content .torrent-empty-state {
     text-align: center;
     padding: 3rem 1rem;
-    color: #a3a3a3;
+    color: var(--tng-text-2);
 }
 
 .overlay-content .torrent-empty-state svg {
@@ -2621,7 +2621,7 @@ tr.filtered-out-item {
 }
 
 .ds-episode-info {
-    color: #10b981;
+    color: var(--tng-green);
     font-weight: 600;
     padding: 2px 6px;
     border-radius: 4px;
@@ -3057,7 +3057,7 @@ tr.filtered-out-item {
     }
     .torresult:last-child { margin-bottom: 0 !important; }
     .torresult:hover { border-color: var(--tng-border-2) !important; background: var(--tng-surface-3) !important; }
-    .torresult:active { background: #2e2e2e !important; }
+    .torresult:active { background: var(--tng-surface-3) !important; }
     .torresult.filtered-out-item { border-color: rgba(239,68,68,.33) !important; opacity: .72 !important; }
     .torresult.filtered-out-item:hover { border-color: var(--tng-red) !important; opacity: .88 !important; }
 

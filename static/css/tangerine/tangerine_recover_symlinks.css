@@ -20,7 +20,7 @@
 
     .symlink-recovery .description {
         margin-bottom: 25px;
-        color: #b0b0b0;
+        color: var(--tng-text-2);
         font-size: 0.95em;
     }
 
@@ -34,7 +34,7 @@
         background-color: rgba(255, 255, 255, 0.05);
         padding: 20px;
         border-radius: 12px;
-        border: 1px solid #484848;
+        border: 1px solid var(--tng-border-2);
         width: auto;
     }
 
@@ -45,7 +45,7 @@
     .symlink-recovery label {
         display: block;
         margin-bottom: 8px;
-        color: #ccc;
+        color: var(--tng-text);
         font-weight: bold;
     }
 
@@ -53,8 +53,8 @@
         width: calc(100% - 22px); /* Adjust for padding */
         padding: 10px;
         border: 1px solid rgba(255, 255, 255, 0.15);
-        background-color: #252525;
-        color: #ddd;
+        background-color: var(--tng-surface-2);
+        color: var(--tng-text);
         border-radius: 10px;
     }
 
@@ -74,7 +74,7 @@
     }
 
     .symlink-recovery .btn-primary {
-        background-color: #007bff;
+        background-color: var(--tng-blue);
         color: white;
         border: 1px solid #0056b3;
     }
@@ -100,7 +100,7 @@
     }
      .symlink-recovery #analysis-summary li {
         margin-bottom: 8px;
-        color: #bbb;
+        color: var(--tng-text-2);
         background-color: #3a3a3a;
         padding: 8px;
         border-radius: 10px;

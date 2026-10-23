@@ -345,7 +345,7 @@
 
     #search-form button {
         padding: 0 5px 0 5px;
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     }
 
     .trending-container {
@@ -562,7 +562,7 @@
     }
 
     body {
-        background: linear-gradient(135deg, #0a0a0a 0%, var(--tng-surface) 100%) !important;
+        background: linear-gradient(135deg, var(--tng-bg) 0%, var(--tng-surface) 100%) !important;
         background-attachment: initial !important;
         padding-top: 35px;
     }

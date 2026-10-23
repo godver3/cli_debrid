@@ -39,7 +39,7 @@
     left: 0;
     right: 0;
     height: 2px;
-    background: linear-gradient(90deg, #ff6b35, #f7931e);
+    background: linear-gradient(90deg, var(--tng-accent), var(--tng-accent-hover));
     opacity: 0.8;
 }
 
@@ -61,7 +61,7 @@
     top: 0;
     bottom: 0;
     width: 4px;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     border-radius: 2px;
 }
 
@@ -101,7 +101,7 @@
     top: 0;
     bottom: 0;
     width: 3px;
-    background: linear-gradient(180deg, #ff6b35, #f7931e);
+    background: linear-gradient(180deg, var(--tng-accent), var(--tng-accent-hover));
     border-radius: 20px 0 0 20px;
     opacity: 0;
     transition: opacity 0.3s ease;
@@ -121,7 +121,7 @@
     font-size: 1rem;
     margin: 0 0 0.5rem 0;
     font-weight: 600;
-    color: #e17c52;
+    color: var(--tng-accent);
     word-wrap: break-word;
     overflow-wrap: break-word;
     white-space: normal;

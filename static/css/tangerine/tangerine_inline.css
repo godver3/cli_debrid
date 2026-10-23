@@ -23,7 +23,7 @@
     }
 
     .api-summary-form input[type="submit"] {
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
         color: white;
         cursor: pointer;
         transition: all 0.3s ease;
@@ -176,7 +176,7 @@
         padding: 10px;
         border: none;
         border-radius: 10px;
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
         color: white;
         cursor: pointer;
         font-size: 16px;
@@ -348,7 +348,7 @@
         top: 0;
         bottom: 0;
         width: 4px;
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
         border-radius: 2px;
     }
 
@@ -371,7 +371,7 @@
         padding: 10px;
         border: none;
         border-radius: 10px;
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
         color: white;
         cursor: pointer;
         font-size: 16px;
@@ -379,7 +379,7 @@
     }
 
     .delete-button {
-        background-color: #f44336;
+        background-color: var(--tng-red);
         color: white;
         padding: 5px 10px;
         border: none;
@@ -399,7 +399,7 @@
         margin-top: 10px;
         margin-bottom: 10px;
         font-style: italic;
-        color: #8f8f8f;
+        color: var(--tng-text-3);
     }
 
     #trakt-auth-btn {
@@ -429,7 +429,7 @@
     }
     
     #trakt-auth-status.authorized {
-        color: #ff6b35;
+        color: var(--tng-accent);
     }
     
     #trakt-auth-code {
@@ -495,7 +495,7 @@
     }
 
     .next-step-btn.validate-btn {
-        background-color: #3498db;  /* Match onboarding.css blue color */
+        background-color: var(--tng-blue);  /* Match onboarding.css blue color */
         color: white;
         padding: 10px 20px;
         border: none;
@@ -530,7 +530,7 @@
         background-color: var(--card-bg);
         border-radius: 12px;
         border: 1px solid var(--border-color, rgba(255,255,255,0.08));
-        border-left: 3px solid #e5a00d;
+        border-left: 3px solid var(--tng-yellow);
     }
 
     .plex-auth-section h3 {
@@ -549,19 +549,19 @@
     #plex-auth-failure-note {
         margin-top: 12px;
         font-size: 0.8rem;
-        color: #e5a00d;
+        color: var(--tng-yellow);
         font-style: normal;
     }
 
     #plex-auth-failure-note em {
         font-style: normal;
-        color: #e5a00d;
+        color: var(--tng-yellow);
     }
     
     .plex-auth-btn {
         background-color: #282a2d;
-        color: #e5a00d;
-        border: 2px solid #e5a00d;
+        color: var(--tng-yellow);
+        border: 2px solid var(--tng-yellow);
         padding: 10px 20px;
         border-radius: 10px;
         cursor: pointer;
@@ -573,7 +573,7 @@
     }
     
     .plex-auth-btn:hover {
-        background-color: #e5a00d;
+        background-color: var(--tng-yellow);
         color: #282a2d;
     }
     
@@ -604,17 +604,17 @@
     }
     
     .plex-server-card.selected {
-        border: 2px solid #e5a00d;
+        border: 2px solid var(--tng-yellow);
     }
     
     .plex-server-name {
         font-weight: bold;
-        color: #e5a00d;
+        color: var(--tng-yellow);
     }
     
     .plex-connection-type {
         font-size: 0.9em;
-        color: #8f8f8f;
+        color: var(--tng-text-3);
     }
     
     .plex-libraries-section {
@@ -635,7 +635,7 @@
         padding: 8px;
         background-color: rgba(255, 255, 255, 0.03);
         color: #f1f1f1;
-        border: 1px solid #3a3a3a;
+        border: 1px solid var(--tng-border-2);
         border-radius: 10px;
     }
 
@@ -668,22 +668,22 @@
         align-items: center;
         margin-bottom: 20px;
         padding-bottom: 10px;
-        border-bottom: 1px solid #3a3a3a;
+        border-bottom: 1px solid var(--tng-border-2);
     }
 
     .plex-modal-title {
         font-size: 1.5em;
-        color: #e5a00d;
+        color: var(--tng-yellow);
     }
 
     .plex-modal-close {
         cursor: pointer;
         font-size: 1.5em;
-        color: #8f8f8f;
+        color: var(--tng-text-3);
     }
 
     .plex-modal-close:hover {
-        color: #e5a00d;
+        color: var(--tng-yellow);
     }
 
     .plex-modal-step {
@@ -697,7 +697,7 @@
     .plex-modal-footer {
         margin-top: 20px;
         padding-top: 10px;
-        border-top: 1px solid #3a3a3a;
+        border-top: 1px solid var(--tng-border-2);
         display: flex;
         justify-content: flex-end;
         gap: 10px;
@@ -712,7 +712,7 @@
     }
 
     .plex-modal-btn.primary {
-        background-color: #e5a00d;
+        background-color: var(--tng-yellow);
         color: #282a2d;
         border: none;
     }
@@ -723,8 +723,8 @@
 
     .plex-modal-btn.secondary {
         background-color: transparent;
-        color: #e5a00d;
-        border: 1px solid #e5a00d;
+        color: var(--tng-yellow);
+        border: 1px solid var(--tng-yellow);
     }
 
     .plex-modal-btn.secondary:hover {
@@ -737,7 +737,7 @@
    ======================================== */
 .info-message {
         background-color: var(--tng-surface);
-        border-left: 4px solid #ff6b35;
+        border-left: 4px solid var(--tng-accent);
         padding: 0.75rem;
         margin: 0.75rem 0;
         color: var(--tng-text-3);
@@ -787,7 +787,7 @@
         padding: 0.5rem 0.75rem;
         margin-bottom: 0.5rem;
         border-radius: 0.25rem;
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
     }
 
     .scraper-header {
@@ -796,7 +796,7 @@
         align-items: center;
         margin-bottom: 0.35rem;
         padding: 0 0.25rem 0.35rem;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--tng-border);
     }
 
     .scraper-settings {
@@ -812,7 +812,7 @@
     }
 
     .onboarding-btn-delete {
-        background-color: #dc3545;
+        background-color: var(--tng-red);
         color: white;
         border: none;
         padding: 0.2rem 0.4rem;
@@ -916,7 +916,7 @@
         padding: 1rem;
         margin-bottom: 1rem;
         border-radius: 0.25rem;
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
     }
 
     .version-header {
@@ -925,7 +925,7 @@
         align-items: center;
         margin-bottom: 1rem;
         padding-bottom: 0.5rem;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--tng-border);
     }
 
     .version-settings {
@@ -954,7 +954,7 @@
 
     .filter-section {
         margin-top: 1rem;
-        border-top: 1px solid #333;
+        border-top: 1px solid var(--tng-border);
         padding-top: 1rem;
     }
 
@@ -988,7 +988,7 @@
         color: var(--tng-text-3);
         font-family: monospace;
         font-size: 0.9em;
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
     }
 
     .no-versions-message {
@@ -1004,7 +1004,7 @@
    ======================================== */
 .info-message {
         background-color: var(--tng-surface);
-        border-left: 4px solid #ff6b35;
+        border-left: 4px solid var(--tng-accent);
         padding: 0.75rem;
         margin: 0.75rem 0;
         color: var(--tng-text-3);
@@ -1054,7 +1054,7 @@
         padding: 0.5rem 0.75rem;
         margin-bottom: 0.5rem;
         border-radius: 0.25rem;
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
     }
 
     .content-source-header {
@@ -1063,7 +1063,7 @@
         align-items: center;
         margin-bottom: 0.35rem;
         padding: 0 0.25rem 0.35rem;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--tng-border);
     }
 
     .content-source-settings {
@@ -1079,7 +1079,7 @@
     }
 
     .onboarding-btn-delete {
-        background-color: #dc3545;
+        background-color: var(--tng-red);
         color: white;
         border: none;
         padding: 0.2rem 0.4rem;
@@ -1143,7 +1143,7 @@
     }
 
     .setup-option.selected {
-        border-color: #ff6b35;
+        border-color: var(--tng-accent);
         background-color: rgba(255, 255, 255, 0.03);
         box-shadow: 0 0 10px rgba(76, 175, 80, 0.3);
     }
@@ -1155,7 +1155,7 @@
 
     .setup-description {
         margin: 10px 0;
-        color: #d4d4d4;
+        color: var(--tng-text);
     }
 
     .setup-note {
@@ -1219,11 +1219,11 @@
         content: "→";
         position: absolute;
         left: 0;
-        color: #ff6b35;
+        color: var(--tng-accent);
     }
 
     .info-list .var-value {
-        color: #ff6b35;
+        color: var(--tng-accent);
         background: rgba(255, 255, 255, 0.05);
         padding: 2px 6px;
         border-radius: 10px;
@@ -1280,7 +1280,7 @@
     }
 
     .btn-primary {
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
         color: white;
     }
 
@@ -1327,7 +1327,7 @@
 
     .stat-value {
         font-size: 1.5em;
-        color: #ff6b35;
+        color: var(--tng-accent);
         font-weight: bold;
     }
 
@@ -1413,7 +1413,7 @@
 }
 
 .btn-group .btn-outline-danger {
-    border-color: #dc3545;
+    border-color: var(--tng-red);
 }
 
 /* Peer List Items */
@@ -1496,12 +1496,12 @@
 
 .table thead th {
     background-color: var(--tng-surface);
-    border-bottom: 2px solid #444;
+    border-bottom: 2px solid var(--tng-border-2);
     color: var(--tng-text);
 }
 
 .table td {
-    border-top: 1px solid #444;
+    border-top: 1px solid var(--tng-border-2);
 }
 
 /* Alert Styling */
@@ -1512,13 +1512,13 @@
 }
 
 .alert-danger {
-    background-color: #dc3545;
+    background-color: var(--tng-red);
     color: var(--tng-text);
     border: none;
 }
 
 .alert-warning {
-    background-color: #ffc107;
+    background-color: var(--tng-yellow);
     color: #000;
     border: none;
 }
@@ -1583,8 +1583,8 @@ code {
     }
 
     .btn-primary {
-        background-color: #007bff;
-        border-color: #007bff;
+        background-color: var(--tng-blue);
+        border-color: var(--tng-blue);
         padding: 0.5rem 1rem;
         font-size: 1rem;
     }
@@ -1617,7 +1617,7 @@ code {
     }
 
     .realtime-api-form input[type="submit"] {
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
         color: white;
         cursor: pointer;
         transition: all 0.3s ease;
@@ -1675,7 +1675,7 @@ code {
 /* Mobile warning styling */
 .mobile-warning {
     display: none;
-    background-color: #ff4444;
+    background-color: var(--tng-red);
     color: white;
     text-align: center;
     margin-top: 50px;
@@ -1831,12 +1831,12 @@ code {
 }
 
 .status-badge.present {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     color: white;
 }
 
 .status-badge.downloading {
-    background-color: #ffc107;
+    background-color: var(--tng-yellow);
     color: black;
 }
 
@@ -1846,7 +1846,7 @@ code {
 }
 
 .status-badge.error {
-    background-color: #dc3545;
+    background-color: var(--tng-red);
     color: white;
 }
 
@@ -1900,7 +1900,7 @@ code {
 }
 
 .trigger-badge.queue_add, .trigger-badge.QUEUE_ADD {
-    background-color: #28a745;
+    background-color: var(--tng-green);
     color: white;
 }
 
@@ -1915,7 +1915,7 @@ code {
 }
 
 .trigger-badge.adding_error, .trigger-badge.ADDING_ERROR {
-    background-color: #dc3545;  /* Using red to indicate error */
+    background-color: var(--tng-red);  /* Using red to indicate error */
     color: white;
 }
 
@@ -2081,7 +2081,7 @@ code {
 
 /* New CSS for warning badge */
 .status-badge.warning {
-    background-color: #ffc107;
+    background-color: var(--tng-yellow);
     color: #000;
 }
 
@@ -2135,7 +2135,7 @@ code {
     content: '';
     width: 4px;
     height: 32px;
-    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(180deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     border-radius: 2px;
 }
 
@@ -2214,20 +2214,20 @@ code {
 }
 
 .auth-code-display .url a {
-    color: #ff6b35;
+    color: var(--tng-accent);
     text-decoration: none;
     transition: color 0.3s ease;
 }
 
 .auth-code-display .url a:hover {
-    color: #f7931e;
+    color: var(--tng-accent-hover);
 }
 
 .auth-code-display .code {
     font-size: 1.75rem;
     font-weight: 700;
     letter-spacing: 3px;
-    color: #ff6b35;
+    color: var(--tng-accent);
     text-align: center;
     margin: 1.5rem 0;
     padding: 1rem;
@@ -2245,13 +2245,13 @@ code {
 
 .auth-status.pending {
     background-color: rgba(255, 193, 7, 0.1);
-    color: #ffc107;
+    color: var(--tng-yellow);
     border: 1px solid rgba(255, 193, 7, 0.3);
 }
 
 .auth-status.success {
     background-color: rgba(76, 175, 80, 0.1);
-    color: #4caf50;
+    color: var(--tng-green);
     border: 1px solid rgba(76, 175, 80, 0.3);
 }
 
@@ -2324,7 +2324,7 @@ code {
 }
 
 .refresh-token-btn {
-    background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
+    background: linear-gradient(135deg, var(--tng-yellow) 0%, #ff9800 100%);
     color: var(--tng-surface);
 }
 
@@ -2422,11 +2422,11 @@ code {
         background-color: var(--tng-surface);
         padding: 3px 6px;
         border-radius: 10px;
-        color: #e5a00d; /* Plex yellow */
+        color: var(--tng-yellow); /* Plex yellow */
         word-break: break-all;
     }
      #auth-details a {
-         color: #e5a00d;
+         color: var(--tng-yellow);
          word-break: break-all;
      }
     #polling-status {

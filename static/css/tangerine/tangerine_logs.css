@@ -142,7 +142,7 @@
         border-radius: 4px;
         border: none;
         background: transparent;
-        color: var(--chip-color, #bbb);
+        color: var(--chip-color, var(--tng-text-2));
         font-size: 0.76em;
         font-family: monospace;
         cursor: pointer;
@@ -179,17 +179,17 @@
     }
 
     .log-entry:not(:last-child) {
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--tng-border);
     }
 
     .log-entry.debug {
-        border-left-color: #3498db;
-        color: #3498db;
+        border-left-color: var(--tng-blue);
+        color: var(--tng-blue);
     }
 
     .log-entry.info {
-        border-left-color: #2ecc71;
-        color: #2ecc71;
+        border-left-color: var(--tng-green);
+        color: var(--tng-green);
     }
 
     .log-entry.warning {
@@ -198,8 +198,8 @@
     }
 
     .log-entry.error {
-        border-left-color: #e74c3c;
-        color: #e74c3c;
+        border-left-color: var(--tng-red);
+        color: var(--tng-red);
     }
 
     .log-entry.critical {
@@ -294,12 +294,12 @@
     }
 
     .log-source-tab:hover {
-        color: #f97316;
+        color: var(--tng-accent);
         border-color: #c2500f;
     }
 
     .log-source-tab.active {
-        color: #f97316;
+        color: var(--tng-accent);
         border-color: #c2500f;
         background: #c2500f22;
     }
@@ -320,7 +320,7 @@
         padding: 0 14px;
         height: 30px;
         background: transparent;
-        color: #f97316;
+        color: var(--tng-accent);
         border: 1px solid #c2500f;
         border-radius: 4px;
         cursor: pointer;
@@ -335,7 +335,7 @@
 
     #share-logs-btn:hover, #share-climount-logs-btn:hover, #share-both-logs-btn:hover {
         background: #c2500f22;
-        border-color: #f97316;
+        border-color: var(--tng-accent);
     }
 
     #share-logs-btn:disabled, #share-climount-logs-btn:disabled, #share-both-logs-btn:disabled {
@@ -348,7 +348,7 @@
         bottom: -2px;
         left: 0;
         height: 2px;
-        background-color: #3498db;
+        background-color: var(--tng-blue);
         transition: width 0.3s ease-in-out;
     }
 
@@ -401,10 +401,10 @@
         color: var(--tng-text-3);
     }
 
-    .log-level.debug { color: #3498db; }
-    .log-level.info { color: #2ecc71; }
+    .log-level.debug { color: var(--tng-blue); }
+    .log-level.info { color: var(--tng-green); }
     .log-level.warning { color: #f39c12; }
-    .log-level.error { color: #e74c3c; }
+    .log-level.error { color: var(--tng-red); }
     .log-level.critical { color: #9b59b6; }
 
     .log-filename {
@@ -430,10 +430,10 @@
     }
 
     /* Update the log message colors to match their levels */
-    .log-message.debug { color: #3498db; }
-    .log-message.info { color: #2ecc71; }
+    .log-message.debug { color: var(--tng-blue); }
+    .log-message.info { color: var(--tng-green); }
     .log-message.warning { color: #f39c12; }
-    .log-message.error { color: #e74c3c; }
+    .log-message.error { color: var(--tng-red); }
     .log-message.critical { color: #9b59b6; }
 
     /* Remove the generic message color since we'll use level-specific colors */

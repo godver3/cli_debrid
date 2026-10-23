@@ -439,7 +439,7 @@
             </select>
             <p class="settings-description">Backend type. cli_mount uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Zurg selects the same SAB-compatible logic as NzbDAV but resolves job folders directly under the mount root instead of a <code>&lt;category&gt;/&lt;job&gt;</code> layout — use it for Zurg 2.0's usenet SAB emulation, or any other flat-layout SAB-compatible mount. All three expose the same client interface internally.</p>
         </div>
-        <details data-provider-only="nzbdav" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
+        <details data-provider-only="nzbdav" class="settings-form-group" style="border:1px solid var(--tng-border-2);border-radius:6px;padding:8px 12px;">
             <summary style="cursor:pointer;font-weight:600;">How to set up NzbDAV (click to expand)</summary>
             <p class="settings-description" style="margin-top:8px;"><strong>Two containers, one backend (same pattern as zurg + zurg_rclone):</strong> the <code>nzbdav</code> container is the downloader + WebDAV server; an <code>rclone</code> container mounts that WebDAV as a normal folder (e.g. <code>/mnt/nzbdav</code>) so Plex and cli-debrid can read the files as a path. You need both — cli_mount only looked simpler because it bundled the mount internally.</p>
             <p class="settings-description"><strong>Don't write these by hand:</strong> use the <strong>setup helper</strong> below — it generates the <code>docker-compose.yml</code> (both containers) + <code>rclone.conf</code> + the config block for you, and can test the connection and create the required categories. The steps below are what it sets up:</p>
@@ -454,7 +454,7 @@
             <p class="settings-description" style="margin-top:4px;"><strong>Switching from cli_mount?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing cli_mount files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). To move existing downloads across, use <strong>Debug → Library → "Migrate between usenet providers"</strong> (in-app, both directions). For the cli_mount→NzbDAV direction it reads cli_mount's stored <code>.nzb</code> files, so bind cli_mount's appdata into cli-debrid (set <em>cli_mount Data Path</em> below) and the tool reads them from <code>&lt;data_path&gt;/usenet/nzbs</code>. (The host CLI <code>nzbdav_setup.py migrate-files</code> does the same from the shell.)</p>
         </details>
         {% include '_nzbdav_setup_helper.html' %}
-        <details data-provider-only="zurg" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
+        <details data-provider-only="zurg" class="settings-form-group" style="border:1px solid var(--tng-border-2);border-radius:6px;padding:8px 12px;">
             <summary style="cursor:pointer;font-weight:600;">How to set up Zurg (click to expand)</summary>
             <p class="settings-description" style="margin-top:8px;">Zurg 2.0's SABnzbd-compatible endpoint speaks the same SAB query-string API as NzbDAV, so submission, polling and health checks work unchanged — the only difference is that Zurg's mount stores content <strong>flat</strong> (<code>&lt;mount&gt;/&lt;job name&gt;/</code>), with no per-category subfolder, so choosing Zurg here (instead of NzbDAV) is what makes folder lookups resolve correctly.</p>
             <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
@@ -465,7 +465,7 @@
             </ol>
             <p class="settings-description" style="margin-top:4px;">If you were previously using the NzbDAV option against a Zurg mount, switch Provider to Zurg here — the URL/Token/Mount Path values carry over unchanged, only the folder-resolution logic changes.</p>
         </details>
-        <details data-provider-only="climount" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
+        <details data-provider-only="climount" class="settings-form-group" style="border:1px solid var(--tng-border-2);border-radius:6px;padding:8px 12px;">
             <summary style="cursor:pointer;font-weight:600;">How to set up cli_mount (click to expand)</summary>
             <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
                 <li>Run cli_mount with its rclone mount; configure your usenet provider + indexers in cli_mount.</li>

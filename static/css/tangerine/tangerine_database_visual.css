@@ -41,7 +41,7 @@ body {
     margin-top: 0;
     margin-bottom: 10px;
     font-size: 1.1em;
-    color: #ff6b35;
+    color: var(--tng-accent);
     font-weight: 500;
     height: 3.3em;
     overflow: hidden;

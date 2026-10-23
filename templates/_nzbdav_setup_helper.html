@@ -16,7 +16,7 @@
   <p class="settings-description" style="margin-top:0;"><strong>What you do vs. what's automatic:</strong> you type your paths/URL below and the tool <em>writes the config files for you</em> — but you copy them to your host and run the shown <code>docker compose</code> commands yourself (cli-debrid runs in a container and can't create other containers). The <strong>only</strong> step this tool performs automatically is checking/creating the NzbDAV categories in <em>section 2</em>. Fields are prefilled from your saved settings; blank fields fall back to the placeholders.</p>
 
   {# ---- 1. Generator inputs ---- #}
-  <details open style="border:1px solid #444;border-radius:6px;padding:8px 12px;margin-top:8px;">
+  <details open style="border:1px solid var(--tng-border-2);border-radius:6px;padding:8px 12px;margin-top:8px;">
     <summary style="cursor:pointer;font-weight:600;">1. Generate config files</summary>
 
     <p class="settings-description" style="margin-top:8px;"><input type="checkbox" id="nh-use-union" style="vertical-align:middle;margin-right:6px;"><label for="nh-use-union" style="font-weight:600;">I also use a debrid provider (Real-Debrid / zurg)</label> — most setups run both. Adds a small mergerfs "union" so cli-debrid sees debrid + usenet files under one path.</p>
@@ -61,7 +61,7 @@
   </details>
 
   {# ---- 2. Live check ---- #}
-  <details open style="border:1px solid #444;border-radius:6px;padding:8px 12px;margin-top:10px;">
+  <details open style="border:1px solid var(--tng-border-2);border-radius:6px;padding:8px 12px;margin-top:10px;">
     <summary style="cursor:pointer;font-weight:600;">2. Test connection &amp; ensure categories</summary>
     <p class="settings-description" style="margin-top:8px;">Once NzbDAV is running, verify cli-debrid can reach it and that the required categories exist (missing categories make grabs loop in "Wanted"). Uses the URL + token above.</p>
     <button type="button" id="nh-check" class="btn-primary add-version-link">Test connection &amp; check categories</button>

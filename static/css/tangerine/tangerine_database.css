@@ -4,7 +4,7 @@
     }
 
     .toggle-button {
-        background-color: #ff6b35;
+        background-color: var(--tng-accent);
         color: white;
         border: none;
         padding: 10px 20px;
@@ -30,7 +30,7 @@
     }
 
     .toggle-button:hover {
-        background-color: #f7931e;
+        background-color: var(--tng-accent-hover);
         box-shadow: 0 2px 8px rgba(255, 107, 53, 0.3);
         transform: translateY(-1px);
     }
@@ -336,14 +336,14 @@
 
     .loading-progress-bar {
         height: 100%;
-        background-color: #ff6b35;
+        background-color: var(--tng-accent);
         transition: width 0.3s ease;
         border-radius: 20px 0 0 0;
     }
 
     .spinner {
         border: 4px solid rgba(255, 255, 255, 0.1);
-        border-top: 4px solid #ff6b35;
+        border-top: 4px solid var(--tng-accent);
         border-radius: 50%;
         width: 40px;
         height: 40px;
@@ -367,7 +367,7 @@
     }
 
     .close-loading {
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
         color: white;
         border: none;
         padding: 12px 20px;
@@ -719,7 +719,7 @@
         display: flex;
         flex-direction: column;
         background: var(--tng-surface);
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
         border-radius: 6px;
         padding: 8px 14px;
         min-width: 90px;
@@ -795,7 +795,7 @@
     /* ── Action toolbar: full redesign ── */
     body.tangerine-theme .bulk-actions {
         background: var(--tng-surface);
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
         border-radius: 7px;
         padding: 8px 12px;
         margin-bottom: 12px;
@@ -861,7 +861,7 @@
     body.tangerine-theme #bulk-delete:disabled {
         background: transparent !important;
         border-color: rgba(255, 255, 255, 0.08) !important;
-        color: #444 !important;
+        color: var(--tng-text-5) !important;
         cursor: not-allowed;
     }
     /* Selects: dark style */
@@ -877,7 +877,7 @@
     body.tangerine-theme .bulk-action-select:disabled {
         background: transparent;
         border-color: rgba(255, 255, 255, 0.08);
-        color: #444;
+        color: var(--tng-text-5);
         cursor: not-allowed;
     }
     /* ── View control buttons (Columns / Reset Cols / Filter & Sort) ── */
@@ -926,7 +926,7 @@
     }
     body.tangerine-theme #column-selector {
         background: var(--tng-surface);
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
         border-radius: 7px;
         padding: 14px;
         margin-top: 0;
@@ -1085,7 +1085,7 @@
     /* ── Filter & Sort panel ── */
     body.tangerine-theme #filter-sort {
         background: var(--tng-surface);
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
         border-radius: 7px;
         padding: 14px 16px;
         margin-bottom: 12px;
@@ -1279,7 +1279,7 @@
         color: var(--tng-text-2);
         margin: 8px 0;
         padding-top: 8px;
-        border-top: 1px solid #333;
+        border-top: 1px solid var(--tng-border);
     }
     body.tangerine-theme .filter-logic-section label {
         color: var(--tng-text-2);
@@ -1298,7 +1298,7 @@
         gap: 6px;
         margin-top: 10px;
         padding-top: 10px;
-        border-top: 1px solid #333;
+        border-top: 1px solid var(--tng-border);
     }
     body.tangerine-theme .filter-buttons button[type="submit"],
     body.tangerine-theme #filter-form button[type="submit"] {
@@ -1395,7 +1395,7 @@
     body.tangerine-theme .content-type-link.active {
         background: var(--tng-surface);
         color: var(--tng-text);
-        border-color: #333;
+        border-color: var(--tng-border);
     }
     /* Showing X of Y count */
     .db-showing-count {
@@ -1431,7 +1431,7 @@
         width: 28px;
         height: 26px;
         border-radius: 4px;
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
         background: var(--tng-surface-2);
         color: var(--tng-text-4);
         font-size: 10px;
@@ -1456,7 +1456,7 @@
         width: 100%;
         margin: 0;
         background: var(--tng-surface);
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
         border-radius: 7px;
         overflow-x: auto;
         overflow-y: visible;
@@ -1526,7 +1526,7 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--tng-border);
         background: var(--tng-surface-2);
     }
     body.tangerine-theme .table-container th:last-child {
@@ -1536,7 +1536,7 @@
         cursor: pointer;
     }
     body.tangerine-theme .table-container th[data-col]:hover {
-        color: #ccc;
+        color: var(--tng-text);
         background: var(--tng-surface-3);
     }
     body.tangerine-theme .table-container th[data-col].db-sort-active {
@@ -1684,7 +1684,7 @@
     body.tangerine-theme .db-pill-blacklisted{ background: rgba(239,68,68,.1); color: var(--tng-red-light); border: 1px solid #7f1d1d; }
     body.tangerine-theme .db-pill-checking   { background: rgba(20,184,166,.1); color: #2dd4bf; border: 1px solid #134e4a; }
     body.tangerine-theme .db-pill-sleeping   { background: rgba(107,114,128,.1); color: #9ca3af; border: 1px solid #374151; }
-    body.tangerine-theme .db-pill-unreleased { background: rgba(251,146,60,.1); color: #fb923c; border: 1px solid #7c2d12; }
+    body.tangerine-theme .db-pill-unreleased { background: rgba(251,146,60,.1); color: var(--tng-accent-hover); border: 1px solid #7c2d12; }
     body.tangerine-theme .db-pill-other      { background: rgba(255,255,255,.05); color: var(--tng-text-2); border: 1px solid var(--tng-border-2); }
     /* Type pills */
     body.tangerine-theme .db-pill-episode { background: rgba(30,30,63,.2); color: #818cf8; border: 1px solid #2d2d5e; }
@@ -1716,7 +1716,7 @@
         width: 40px;
         height: 40px;
         border-radius: 10px;
-        background: #1e1e1e;
+        background: var(--tng-surface);
         border: 1px solid rgba(255, 255, 255, 0.1);
         color: var(--tng-text-3);
         cursor: pointer;
@@ -1766,7 +1766,7 @@
     body.tangerine-theme #db-presets-panel {
         flex: 3 1 0%;
         background: var(--tng-surface);
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
         border-radius: 7px;
         padding: 14px 16px;
         min-width: 0;
@@ -1793,13 +1793,13 @@
         justify-content: space-between;
         gap: 6px;
         padding: 6px 8px;
-        background: #242424;
-        border: 1px solid #333;
+        background: var(--tng-surface-2);
+        border: 1px solid var(--tng-border);
         border-radius: 5px;
     }
     .db-preset-name {
         font-size: 12px;
-        color: #ccc;
+        color: var(--tng-text);
         flex: 1 1 auto;
         min-width: 0;
         overflow: hidden;
@@ -1815,9 +1815,9 @@
         font-size: 11px;
         padding: 2px 8px;
         border-radius: 4px;
-        border: 1px solid #444;
+        border: 1px solid var(--tng-border-2);
         background: var(--tng-surface-3);
-        color: #ccc;
+        color: var(--tng-text);
         cursor: pointer;
         transition: background 0.15s, color 0.15s;
     }
@@ -1830,7 +1830,7 @@
         font-size: 11px;
         padding: 2px 6px;
         border-radius: 4px;
-        border: 1px solid #444;
+        border: 1px solid var(--tng-border-2);
         background: transparent;
         color: var(--tng-text-4);
         cursor: pointer;

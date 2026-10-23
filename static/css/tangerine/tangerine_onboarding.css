@@ -120,7 +120,7 @@ body[data-theme="tangerine"] .validate-btn:hover {
 body[data-theme="tangerine"] .onboarding-btn:disabled,
 body[data-theme="tangerine"] .finish-setup-btn:disabled,
 body[data-theme="tangerine"] .validate-btn:disabled {
-    background: #2e2e2e !important;
+    background: var(--tng-surface-3) !important;
     color: var(--ob-muted);
     opacity: 1;
     cursor: not-allowed;
@@ -318,7 +318,7 @@ body[data-theme="tangerine"] .advice-content {
     padding: 0 14px;
     max-height: 0;
     overflow: hidden;
-    color: #999;
+    color: var(--tng-text-2);
     font-size: 0.85rem;
     line-height: 1.6;
     transition: max-height 0.25s, padding 0.25s;
@@ -369,7 +369,7 @@ body[data-theme="tangerine"] .setup-note {
     border: 1px solid rgba(232,96,28,.25);
     border-radius: var(--ob-radius);
     padding: 10px 14px;
-    color: #ccc;
+    color: var(--tng-text);
     font-size: 0.83rem;
     line-height: 1.55;
     margin-bottom: 12px;
@@ -377,7 +377,7 @@ body[data-theme="tangerine"] .setup-note {
 
 body[data-theme="tangerine"] .setup-description p,
 body[data-theme="tangerine"] .settings-description {
-    color: #999;
+    color: var(--tng-text-2);
     font-size: 0.88rem;
     line-height: 1.55;
     margin-bottom: 16px;
@@ -476,7 +476,7 @@ body[data-theme="tangerine"] .version-header {
 }
 body[data-theme="tangerine"] .version-settings {
     font-size: 0.83rem;
-    color: #999;
+    color: var(--tng-text-2);
 }
 
 body[data-theme="tangerine"] .filter-section {
@@ -640,7 +640,7 @@ body[data-theme="tangerine"] .ob-callout {
     margin-bottom: 14px;
 }
 body[data-theme="tangerine"] .ob-callout a,
-body[data-theme="tangerine"] .ob-section-intro a { color: #3498db; }
+body[data-theme="tangerine"] .ob-section-intro a { color: var(--tng-blue); }
 body[data-theme="tangerine"] details.ob-details {
     border: 1px solid var(--ob-border2);
     border-radius: var(--ob-radius);
@@ -723,7 +723,7 @@ body[data-theme="tangerine"] .onboarding-btn-edit:hover { border-color: var(--ob
     body[data-theme="tangerine"] .ob-inline { flex-direction: column; align-items: stretch; }
     body[data-theme="tangerine"] .ob-test-btn { margin-bottom: 14px; }
 }
-body[data-theme="tangerine"] .ob-section .settings-description a { color: #3498db; }
+body[data-theme="tangerine"] .ob-section .settings-description a { color: var(--tng-blue); }
 @media (max-width: 600px) {
     /* The NzbDAV helper lays its fields out in two columns; stack them on phones. */
     body[data-theme="tangerine"] #nzbdav-helper-wrap [style*="grid-template-columns"] {

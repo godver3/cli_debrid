@@ -52,7 +52,7 @@
 }
 
 .category-tab.active {
-    background: var(--primary-color, #007bff);
+    background: var(--primary-color, var(--tng-blue));
     color: white;
 }
 
@@ -140,19 +140,19 @@
 }
 
 .variation-slot:hover {
-    border-color: var(--primary-color, #007bff);
+    border-color: var(--primary-color, var(--tng-blue));
     box-shadow: 0 2px 8px rgba(0, 123, 255, 0.15);
 }
 
 .variation-slot.has-asset {
     border-style: solid;
-    border-color: #28a745;
+    border-color: var(--tng-green);
     background: var(--card-background, #f0fff4);
 }
 
 .variation-slot.has-system-asset {
     border-style: solid;
-    border-color: #007bff;
+    border-color: var(--tng-blue);
     background: var(--card-background, #f0f4ff);
 }
 
@@ -172,8 +172,8 @@
     letter-spacing: 0.04em;
 }
 
-.user-tag   { background: #28a745; color: #fff; }
-.system-tag { background: #007bff; color: #fff; }
+.user-tag   { background: var(--tng-green); color: #fff; }
+.system-tag { background: var(--tng-blue); color: #fff; }
 
 .variation-badge-preview {
     width: 100%;
@@ -190,7 +190,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-secondary, #999);
+    color: var(--text-secondary, var(--tng-text-2));
     font-size: 24px;
 }
 
@@ -203,7 +203,7 @@
 
 .variation-key {
     font-size: 10px;
-    color: var(--text-secondary, #999);
+    color: var(--text-secondary, var(--tng-text-2));
     font-family: monospace;
     word-break: break-all;
 }
@@ -226,11 +226,11 @@
     white-space: nowrap;
 }
 
-.btn-primary   { background: #007bff; color: white; }
+.btn-primary   { background: var(--tng-blue); color: white; }
 .btn-primary:hover { background: #0056b3; }
-.btn-success   { background: #28a745; color: white; }
+.btn-success   { background: var(--tng-green); color: white; }
 .btn-success:hover { background: #218838; }
-.btn-danger    { background: #dc3545; color: white; }
+.btn-danger    { background: var(--tng-red); color: white; }
 .btn-danger:hover { background: #c82333; }
 .btn-secondary { background: #6c757d; color: white; }
 .btn-secondary:hover { background: #545b62; }
@@ -245,7 +245,7 @@
 
 .back-link {
     text-decoration: none;
-    color: var(--primary-color, #007bff);
+    color: var(--primary-color, var(--tng-blue));
     font-size: 14px;
     display: inline-flex;
     align-items: center;
@@ -275,7 +275,7 @@
 .stat-num {
     font-size: 24px;
     font-weight: bold;
-    color: var(--primary-color, #007bff);
+    color: var(--primary-color, var(--tng-blue));
 }
 
 .stat-lbl {

@@ -75,7 +75,7 @@
     margin: 0;
     font-size: 1.5rem;
     font-weight: 600;
-    color: #e17c52;
+    color: var(--tng-accent);
 }
 
 .library-settings-modal-close {
@@ -83,7 +83,7 @@
     border: none;
     font-size: 2rem;
     line-height: 1;
-    color: #999;
+    color: var(--tng-text-2);
     cursor: pointer;
     padding: 0;
     width: 32px;
@@ -97,7 +97,7 @@
 
 .library-settings-modal-close:hover {
     background-color: rgba(225, 124, 82, 0.2);
-    color: #e17c52;
+    color: var(--tng-accent);
 }
 
 .library-settings-modal-body {
@@ -118,7 +118,7 @@
     display: block;
     font-size: 0.95rem;
     font-weight: 600;
-    color: #e17c52;
+    color: var(--tng-accent);
     margin-bottom: 8px;
 }
 
@@ -149,16 +149,16 @@
 
 .library-setting-input:focus {
     outline: none;
-    border-color: #e17c52;
+    border-color: var(--tng-accent);
     box-shadow: 0 0 0 3px rgba(225, 124, 82, 0.1);
-    background-color: #2f2f2f;
+    background-color: var(--tng-surface-3);
 }
 
 .library-setting-checkbox {
     width: 20px;
     height: 20px;
     cursor: pointer;
-    accent-color: #e17c52;
+    accent-color: var(--tng-accent);
 }
 
 .library-settings-modal-footer {
@@ -184,18 +184,18 @@
 
 .library-settings-btn-cancel {
     background-color: transparent;
-    color: #999;
+    color: var(--tng-text-2);
     border: 2px solid rgba(225, 124, 82, 0.3);
 }
 
 .library-settings-btn-cancel:hover {
     background-color: rgba(225, 124, 82, 0.1);
     border-color: rgba(225, 124, 82, 0.5);
-    color: #e17c52;
+    color: var(--tng-accent);
 }
 
 .library-settings-btn-save {
-    background: linear-gradient(135deg, #e17c52 0%, #c96b47 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, #c96b47 100%);
     color: #fff;
     border: 2px solid transparent;
     box-shadow: 0 2px 8px rgba(225, 124, 82, 0.3);
@@ -220,7 +220,7 @@
     border: 2px solid transparent;
     cursor: pointer;
     transition: all 0.2s ease;
-    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+    background: linear-gradient(135deg, var(--tng-red) 0%, #c82333 100%);
     color: #fff;
     margin-top: 8px;
     box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);

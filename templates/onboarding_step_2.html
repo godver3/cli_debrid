@@ -243,7 +243,7 @@
 
             <details class="ob-details" {% if settings.get('Trakt', {}).get('client_id') and not settings.get('TVDB', {}).get('api_key') %}open{% endif %}>
                 <summary>Use Trakt instead (optional)</summary>
-                <p class="settings-description">Without a TVDB key, cli_debrid looks shows and movies up on Trakt instead. Trakt is also needed for Trakt-based content sources. Create an application at <a href="https://trakt.tv/oauth/applications/" target="_blank" style="color: #3498db;">Trakt Applications</a>. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p>
+                <p class="settings-description">Without a TVDB key, cli_debrid looks shows and movies up on Trakt instead. Trakt is also needed for Trakt-based content sources. Create an application at <a href="https://trakt.tv/oauth/applications/" target="_blank" style="color: var(--tng-blue);">Trakt Applications</a>. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p>
                 <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
 
                 <label for="trakt_client_id" class="onboarding-label"><br>Trakt Client ID:</label>

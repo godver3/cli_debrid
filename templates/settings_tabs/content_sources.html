@@ -1295,13 +1295,13 @@
 </script>
 
 <style>
-    .cs-tags-pill-input{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:38px;padding:6px 10px;background:var(--tng-surface);border:1px solid #444;border-radius:6px;cursor:text;}
+    .cs-tags-pill-input{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:38px;padding:6px 10px;background:var(--tng-surface);border:1px solid var(--tng-border-2);border-radius:6px;cursor:text;}
     .cs-tag-pill{display:inline-flex;align-items:center;gap:4px;background:#e8651a;color:#fff;border-radius:12px;padding:2px 10px;font-size:12px;}
     .cs-tag-pill button{background:none;border:none;color:#fff;cursor:pointer;padding:0;font-size:14px;line-height:1;opacity:.8;}.cs-tag-pill button:hover{opacity:1;}
     .cs-tags-input-wrapper{position:relative;flex:1;min-width:120px;}
     .cs-tags-search{width:100%;background:transparent;border:none;outline:none;color:#fff;font-size:13px;padding:2px 0;}
-    .cs-tags-dropdown{position:absolute;top:100%;left:0;right:0;z-index:9999;background:var(--tng-surface-2);border:1px solid #444;border-radius:6px;max-height:160px;overflow-y:auto;margin-top:4px;}
-    .cs-tags-dd-item{padding:8px 12px;cursor:pointer;font-size:13px;color:#ddd;}.cs-tags-dd-item:hover{background:#333;}
+    .cs-tags-dropdown{position:absolute;top:100%;left:0;right:0;z-index:9999;background:var(--tng-surface-2);border:1px solid var(--tng-border-2);border-radius:6px;max-height:160px;overflow-y:auto;margin-top:4px;}
+    .cs-tags-dd-item{padding:8px 12px;cursor:pointer;font-size:13px;color:var(--tng-text);}.cs-tags-dd-item:hover{background:var(--tng-surface-3);}
     .cs-tags-dd-create{color:#e8651a;font-style:italic;}
     /* Add your custom styles here */
     .versions-checkboxes {
@@ -1331,7 +1331,7 @@
         display: inline-flex;
         align-items: center;
         margin-left: 8px;
-        color: #ff6b6b;
+        color: var(--tng-red-light);
         font-size: 12px;
         font-weight: normal;
     }
@@ -1370,7 +1370,7 @@
     }
 
     .delete-adaptive-list-btn {
-        background: #dc3545 !important;
+        background: var(--tng-red) !important;
         color: white !important;
     }
 
@@ -1379,7 +1379,7 @@
     }
 
     .add-adaptive-list-btn {
-        background: #28a745 !important;
+        background: var(--tng-green) !important;
         color: white !important;
     }
 
@@ -1718,7 +1718,7 @@
                             {% set plex_labels_config = config.get('plex_labels', {}) if config.get('plex_labels', {}) is mapping else {} %}
                             {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
 
-                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid var(--tng-border-2); padding-top: 15px; margin-top: 15px;">
                                 <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Labels Configuration</h5>
                                 <p class="settings-description" style="margin-bottom: 15px;">
                                     Configure automatic Plex label assignment for items from this source. Labels help organize your Plex library and can be used for collections or filtering. More Plex label functions can be found on debug functions page.
@@ -2025,7 +2025,7 @@
                             {% set plex_labels_config = config.get('plex_labels', {}) if config.get('plex_labels', {}) is mapping else {} %}
                             {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
 
-                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid var(--tng-border-2); padding-top: 15px; margin-top: 15px;">
                                 <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Labels Configuration</h5>
                                 <p class="settings-description" style="margin-bottom: 15px;">
                                     Configure automatic Plex label assignment for items from this source. Labels help organize your Plex library and can be used for collections or filtering. More Plex label functions can be found on debug functions page.
@@ -2414,7 +2414,7 @@
                             {% set plex_labels_config = config.get('plex_labels', {}) if config.get('plex_labels', {}) is mapping else {} %}
                             {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
 
-                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid var(--tng-border-2); padding-top: 15px; margin-top: 15px;">
                                 <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Labels Configuration</h5>
                                 <p class="settings-description" style="margin-bottom: 15px;">
                                     Configure automatic Plex label assignment for items from this source. Labels help organize your Plex library and can be used for collections or filtering. More Plex label functions can be found on debug functions page.
@@ -2707,7 +2707,7 @@
                                     <button type="button"
                                             class="plex-collection-icon-picker-btn"
                                             data-source-id="{{ source_id }}"
-                                            style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px 14px; cursor:pointer; color:#ddd; font-size:0.9em; transition:border-color 0.2s;"
+                                            style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px 14px; cursor:pointer; color:var(--tng-text); font-size:0.9em; transition:border-color 0.2s;"
                                             onmouseover="this.style.borderColor='var(--accent-color,#e87429)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'">
                                         <span class="plex-coll-icon-preview" data-source-id="{{ source_id }}"
                                               style="display:flex; align-items:center; justify-content:center; width:28px; height:28px; flex-shrink:0;">
@@ -2790,7 +2790,7 @@
     {% endfor %}
 {# Virtual Folder Creator Modal #}
 <div id="cs-vf-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10000;align-items:center;justify-content:center;">
-    <div style="background:var(--tng-surface);border:1px solid #444;border-radius:12px;padding:24px;width:min(460px,95vw);max-height:85vh;overflow-y:auto;">
+    <div style="background:var(--tng-surface);border:1px solid var(--tng-border-2);border-radius:12px;padding:24px;width:min(460px,95vw);max-height:85vh;overflow-y:auto;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
             <h4 style="margin:0;color:#fff;font-size:16px;">Create cli_mount Virtual Folder</h4>
             <button onclick="csVfClose()" style="background:none;border:none;color:var(--tng-text-2);font-size:20px;cursor:pointer;">&times;</button>
@@ -2807,14 +2807,14 @@
 
         <div id="cs-vf-name-row" style="margin-top:12px;">
             <div class="section-label">Folder Name</div>
-            <input type="text" id="cs-vf-name" placeholder="e.g. SciFi" style="width:100%;padding:8px 10px;background:var(--tng-bg);color:#fff;border:1px solid #444;border-radius:6px;font-size:13px;margin-top:6px;box-sizing:border-box;">
+            <input type="text" id="cs-vf-name" placeholder="e.g. SciFi" style="width:100%;padding:8px 10px;background:var(--tng-bg);color:#fff;border:1px solid var(--tng-border-2);border-radius:6px;font-size:13px;margin-top:6px;box-sizing:border-box;">
         </div>
 
         <div class="section-label" style="margin-top:16px;">Tags</div>
-        <div id="cs-vf-tags" style="margin-top:6px;max-height:160px;overflow-y:auto;border:1px solid #333;border-radius:6px;padding:8px 12px;"></div>
+        <div id="cs-vf-tags" style="margin-top:6px;max-height:160px;overflow-y:auto;border:1px solid var(--tng-border);border-radius:6px;padding:8px 12px;"></div>
 
         <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end;">
-            <button onclick="csVfClose()" style="background:#333;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;">Cancel</button>
+            <button onclick="csVfClose()" style="background:var(--tng-surface-3);color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;">Cancel</button>
             <button id="cs-vf-submit" onclick="csVfSubmit()" style="background:#e8651a;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-weight:600;">Create</button>
         </div>
     </div>

@@ -89,8 +89,8 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
 #tngDebug .btn i{font-size:12px;flex-shrink:0}
 #tngDebug .btn-orange{background:var(--accent);color:#fff}
 #tngDebug .btn-orange:hover{background:var(--accent-h)}
-#tngDebug .btn-outline-orange{background:transparent;border:1px solid #c2500f;color:#f97316}
-#tngDebug .btn-outline-orange:hover{background:#c2500f22;border-color:#f97316}
+#tngDebug .btn-outline-orange{background:transparent;border:1px solid #c2500f;color:var(--tng-accent)}
+#tngDebug .btn-outline-orange:hover{background:#c2500f22;border-color:var(--tng-accent)}
 #tngDebug .btn-outline-red{background:transparent;border:1px solid #7f1d1d;color:var(--red)}
 #tngDebug .btn-outline-red:hover{background:#7f1d1d22;border-color:var(--red)}
 #tngDebug .btn-outline-blue{background:transparent;border:1px solid #1e40af;color:var(--tng-blue-light)}
@@ -111,7 +111,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
 #tngDebug .status-badge{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:5px;font-size:12px;font-weight:600}
 #tngDebug .badge-green{background:#14532d;color:var(--tng-green-light)}
 #tngDebug .badge-red{background:#7f1d1d;color:#fca5a5}
-#tngDebug .badge-orange{background:#7c2d12;color:#fb923c}
+#tngDebug .badge-orange{background:#7c2d12;color:var(--tng-accent-hover)}
 
 /* Token card */
 #tngDebug .token-card{background:var(--surface2);border:1px solid var(--border);border-radius:6px;overflow:hidden}
@@ -1012,7 +1012,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                 {% if nas_paths %}
                 <div class="form-group" style="margin-top: 10px;">
                     <label for="remove_dup_nas_filter">NAS / Network Filter:</label>
-                    <select id="remove_dup_nas_filter" name="nas_filter" style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid #444; border-radius: 4px;">
+                    <select id="remove_dup_nas_filter" name="nas_filter" style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid var(--tng-border-2); border-radius: 4px;">
                         <option value="all">All items (no NAS filter)</option>
                         <option value="exclude_nas">Exclude NAS items</option>
                         <option value="only_nas">Only NAS items</option>
@@ -1096,7 +1096,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                 </div>
                 <div class="form-group">
                     <label for="keep_action">Keep Action:</label>
-                    <select id="keep_action" name="keep_action" style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid #444; border-radius: 4px;">
+                    <select id="keep_action" name="keep_action" style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid var(--tng-border-2); border-radius: 4px;">
                         <option value="keep_collected" selected>Keep collected, delete blacklisted (for failed upgrades)</option>
                         <option value="keep_blacklisted">Keep blacklisted, delete collected (for blacklist bug)</option>
                         <option value="keep_collected_delete_ghostlisted">Keep collected, delete ghostlisted</option>
@@ -1107,7 +1107,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                 </div>
                 <div class="form-group">
                     <label for="version_match">Version Match:</label>
-                    <select id="version_match" name="version_match" style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid #444; border-radius: 4px;">
+                    <select id="version_match" name="version_match" style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid var(--tng-border-2); border-radius: 4px;">
                         <option value="all" selected>Delete all versions (any version)</option>
                         <option value="same">Delete only versions with same version field</option>
                     </select>
@@ -1116,7 +1116,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                     <label for="exclude_patterns">Exclude from deletion (optional):</label>
                     <input type="text" id="exclude_patterns" name="exclude_patterns"
                            placeholder="e.g., REMUX, IMAX, Director's Cut, FraMeSToR"
-                           style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid #444; border-radius: 4px;">
+                           style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid var(--tng-border-2); border-radius: 4px;">
                     <small style="color: var(--tng-text-3); font-size: 0.85em; display: block; margin-top: 5px;">
                         Enter comma or pipe-separated patterns. Items with filenames containing any of these patterns will be protected from deletion.
                     </small>
@@ -1124,7 +1124,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                 {% if nas_paths %}
                 <div class="form-group">
                     <label for="upgrades_nas_filter">NAS / Network Filter:</label>
-                    <select id="upgrades_nas_filter" name="nas_filter" style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid #444; border-radius: 4px;">
+                    <select id="upgrades_nas_filter" name="nas_filter" style="width: 100%; padding: 8px; margin-top: 5px; background: var(--tng-surface-3); color: var(--tng-text); border: 1px solid var(--tng-border-2); border-radius: 4px;">
                         <option value="all">All items (no NAS filter)</option>
                         <option value="exclude_nas">Exclude NAS items</option>
                         <option value="only_nas">Only NAS items</option>
@@ -1447,7 +1447,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                         {% endif %}
 
                         {% if other_cache_files %}
-                        <hr style="border-color: #444; margin: 12px 0;">
+                        <hr style="border-color: var(--tng-border-2); margin: 12px 0;">
                         <p style="font-size: 0.85em; color: var(--tng-text-2); margin-bottom: 8px;">Other Cache Files:</p>
                         {% for item in other_cache_files %}
                             <div class="cache-file-item" {% if not item.exists %}style="opacity: 0.5;"{% endif %}>
@@ -1530,7 +1530,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                     <button type="button" onclick="previewBulkApply()" class="btn"
                             style="padding: 8px 16px; width: 100%; margin-bottom: 5px;">Preview</button>
                     <button type="button" onclick="executeBulkApply()" class="btn"
-                            style="padding: 8px 16px; width: 100%; background-color: #007bff;" disabled id="bulk-apply-execute-btn">Apply Labels</button>
+                            style="padding: 8px 16px; width: 100%; background-color: var(--tng-blue);" disabled id="bulk-apply-execute-btn">Apply Labels</button>
                     <div id="bulk-apply-preview" style="margin-top: 15px;"></div>
                 </div>
 
@@ -1544,7 +1544,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                     <button type="button" onclick="previewBulkRemove()" class="btn"
                             style="padding: 8px 16px; width: 100%; margin-bottom: 5px;">Preview</button>
                     <button type="button" onclick="executeBulkRemove()" class="btn"
-                            style="padding: 8px 16px; width: 100%; background-color: #dc3545;" disabled id="bulk-remove-execute-btn">Remove Label</button>
+                            style="padding: 8px 16px; width: 100%; background-color: var(--tng-red);" disabled id="bulk-remove-execute-btn">Remove Label</button>
                     <div id="bulk-remove-preview" style="margin-top: 15px;"></div>
                 </div>
 
@@ -1557,7 +1557,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                     <button type="button" onclick="findOrphanedLabels()" class="btn"
                             style="padding: 8px 16px; width: 100%; margin-bottom: 5px;">Find Orphaned Labels</button>
                     <button type="button" onclick="cleanupOrphanedLabels()" class="btn"
-                            style="padding: 8px 16px; width: 100%; background-color: #dc3545;" disabled id="orphaned-cleanup-btn">Cleanup</button>
+                            style="padding: 8px 16px; width: 100%; background-color: var(--tng-red);" disabled id="orphaned-cleanup-btn">Cleanup</button>
                     <div id="orphaned-labels-results" style="margin-top: 15px;"></div>
                 </div>
 
@@ -1568,7 +1568,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                         Re-sync all labels based on current content source configurations. This will apply labels to all Collected items from sources that have Plex labels enabled.
                     </p>
                     <button type="button" onclick="syncAllLabels()" class="btn"
-                            style="padding: 8px 16px; width: 100%; background-color: #28a745;">Sync All Labels</button>
+                            style="padding: 8px 16px; width: 100%; background-color: var(--tng-green);">Sync All Labels</button>
                     <div id="sync-labels-status" style="margin-top: 15px;"></div>
                 </div>
 
@@ -1589,7 +1589,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
         <div class="debug_item" id="climount-cleanup-card">
             <h3>cli_mount DB Cleanup</h3>
             <p class="description">Remove entries for a specific debrid provider from cli_mount's <code>entries.db</code> and <code>items.db</code> using infohash matching. Mixed folders (containing files from multiple providers) are rebuilt with only non-provider files kept.</p>
-            <div style="background:#2a1a00;border:1px solid #ff6b35;border-radius:4px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#ffaa66;">
+            <div style="background:#2a1a00;border:1px solid var(--tng-accent);border-radius:4px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#ffaa66;">
                 &#9888; <strong>Stop cli_mount before running a live cleanup.</strong> Dry run is safe to run anytime.
             </div>
             <div class="form-group" style="margin-bottom:10px">
@@ -6164,7 +6164,7 @@ if (document.readyState === 'loading') {
     .episode-modal-content {
         position: relative;
         background: var(--tng-surface);
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
         border-radius: 8px;
         width: 90%;
         max-width: 1200px;
@@ -6176,7 +6176,7 @@ if (document.readyState === 'loading') {
 
     .episode-modal-header {
         padding: 14px 18px;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--tng-border);
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -6228,7 +6228,7 @@ if (document.readyState === 'loading') {
     /* Results summary styling */
     .episode-results-summary {
         background: var(--tng-surface-2);
-        border: 1px solid #333;
+        border: 1px solid var(--tng-border);
         border-radius: 6px;
         padding: 14px 16px;
         margin-bottom: 18px;
@@ -6268,7 +6268,7 @@ if (document.readyState === 'loading') {
         text-transform: uppercase;
         letter-spacing: .04em;
         color: var(--tng-text-2);
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--tng-border);
         position: sticky;
         top: -18px;
         z-index: 10;
@@ -6352,8 +6352,8 @@ if (document.readyState === 'loading') {
 
 <!-- API Summary Modal -->
 <div id="api-summary-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;padding:1rem;padding-top:calc(1rem + 30px)">
-  <div style="width:100%;max-width:900px;max-height:90vh;background:var(--tng-surface);border:1px solid #333;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #333;flex-shrink:0">
+  <div style="width:100%;max-width:900px;max-height:90vh;background:var(--tng-surface);border:1px solid var(--tng-border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--tng-border);flex-shrink:0">
       <div style="font-size:15px;font-weight:700;color:var(--tng-text);border-left:3px solid var(--tng-accent);padding-left:10px">API Summary</div>
       <div style="display:flex;align-items:center;gap:10px">
         <select id="api-summary-timeframe" style="background:var(--tng-surface-2);border:1px solid var(--tng-border-2);color:var(--tng-text);border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer">
@@ -6370,8 +6370,8 @@ if (document.readyState === 'loading') {
 
 <!-- Real Time API Modal -->
 <div id="realtime-api-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;padding:1rem;padding-top:calc(1rem + 30px)">
-  <div style="width:100%;max-width:1000px;max-height:90vh;background:var(--tng-surface);border:1px solid #333;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #333;flex-shrink:0">
+  <div style="width:100%;max-width:1000px;max-height:90vh;background:var(--tng-surface);border:1px solid var(--tng-border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--tng-border);flex-shrink:0">
       <div style="font-size:15px;font-weight:700;color:var(--tng-text);border-left:3px solid var(--tng-accent);padding-left:10px">Real Time API Calls</div>
       <div style="display:flex;align-items:center;gap:10px">
         <select id="realtime-api-filter" style="background:var(--tng-surface-2);border:1px solid var(--tng-border-2);color:var(--tng-text);border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer">

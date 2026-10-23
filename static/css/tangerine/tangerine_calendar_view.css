@@ -3,16 +3,16 @@
    ====================================================== */
 
 .calendar-event.status-premiered_uncollected {
-    border-left-color: #e74c3c;
+    border-left-color: var(--tng-red);
     opacity: 0.9;
 }
 .event-status-badge.status-premiered_uncollected {
-    background-color: #e74c3c;
+    background-color: var(--tng-red);
     color: white;
 }
 
 .calendar-event.status-upcoming_uncollected {
-    border-left-color: #3498db;
+    border-left-color: var(--tng-blue);
 }
 .event-status-badge.status-upcoming_uncollected {
     background-color: #5dade2;
@@ -20,11 +20,11 @@
 }
 
 .calendar-event.status-upcoming_collected {
-    border-left-color: #2ecc71;
+    border-left-color: var(--tng-green);
     opacity: 0.7;
 }
 .event-status-badge.status-upcoming_collected {
-    background-color: #2ecc71;
+    background-color: var(--tng-green);
 }
 
 .calendar-event.event-type-movie.status-collected .event-title {
@@ -57,7 +57,7 @@
     display: inline-flex;
     border-radius: 8px;
     overflow: hidden;
-    border: 1px solid #444;
+    border: 1px solid var(--tng-border-2);
 }
 .cal-toggle-btn {
     display: inline-flex;
@@ -73,7 +73,7 @@
     transition: background 0.15s, color 0.15s;
 }
 .cal-toggle-btn.active {
-    background: #e17c52 !important;
+    background: var(--tng-accent) !important;
     color: var(--tng-surface) !important;
 }
 
@@ -94,7 +94,7 @@
     transform: translateX(-50%);
     text-align: center;
     font-size: 1.25em;
-    color: #e17c52 !important;
+    color: var(--tng-accent) !important;
     margin: 0;
     font-weight: 600;
     line-height: 1;
@@ -108,7 +108,7 @@
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    background: #e17c52 !important;
+    background: var(--tng-accent) !important;
     border: none !important;
     color: var(--tng-surface) !important;
     font-size: 1.2em;
@@ -161,7 +161,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 /* Column headers */
 .cal-adv-th {
     background: var(--tng-surface) !important;
-    border: 1px solid #333 !important;
+    border: 1px solid var(--tng-border) !important;
     padding: 10px 6px 8px !important;
     text-align: center !important;
     vertical-align: middle !important;
@@ -185,19 +185,19 @@ body[data-theme="tangerine"] .cal-slide-incoming {
     justify-content: center;
     font-size: 1.05em;
     font-weight: 600;
-    color: #ccc !important;
+    color: var(--tng-text) !important;
     width: 28px;
     height: 28px;
     border-radius: 50%;
 }
 .cal-today-pill {
-    background: #e17c52;
+    background: var(--tng-accent);
     color: var(--tng-surface);
 }
 .cal-th-month {
     display: block;
     font-size: 0.68em;
-    color: #e17c52;
+    color: var(--tng-accent);
     margin-top: 3px;
 }
 
@@ -210,7 +210,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
     padding: 6px !important;
     vertical-align: top !important;
     min-height: 120px;
-    background: #181818 !important;
+    background: var(--tng-surface) !important;
 }
 .cal-adv-cell-today {
     background: #1a261a !important;
@@ -225,7 +225,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
    ====================================================== */
 
 .cal-adv-event {
-    background: #252525 !important;
+    background: var(--tng-surface-2) !important;
     border-left: 3px solid var(--tng-text-5);
     border-radius: 4px;
     padding: 5px 7px;
@@ -238,16 +238,16 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 .cal-adv-event { cursor: pointer; }
 .cal-adv-event:hover { filter: brightness(1.15); }
 
-.cal-adv-event.event-type-movie   { border-left-color: #3498db; }
+.cal-adv-event.event-type-movie   { border-left-color: var(--tng-blue); }
 .cal-adv-event.event-type-tv_show { border-left-color: #9b59b6; }
 
 .cal-adv-event.status-collected          { border-left-color: #27ae60; opacity: 0.7; }
 .cal-adv-event.status-checking-upgrade   { border-left-color: #d35400; opacity: 0.75; }
 .cal-adv-event.status-upgrading          { border-left-color: #f1c40f; }
-.cal-adv-event.status-premiered-uncollected  { border-left-color: #e74c3c; }
+.cal-adv-event.status-premiered-uncollected  { border-left-color: var(--tng-red); }
 .cal-adv-event.status-upcoming-uncollected   { border-left-color: #5dade2; }
 .cal-adv-event.status-upcoming-collected     { border-left-color: #27ae60; opacity: 0.7; }
-.cal-adv-event.status-upcoming               { border-left-color: #3498db; }
+.cal-adv-event.status-upcoming               { border-left-color: var(--tng-blue); }
 
 .cal-adv-event-time {
     font-size: 0.78em;
@@ -256,7 +256,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
     margin-bottom: 2px;
 }
 .cal-adv-event-title {
-    color: #e8e8e8 !important;
+    color: var(--tng-text) !important;
     font-weight: 600;
     word-break: break-word;
     margin-bottom: 3px;
@@ -264,7 +264,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 .cal-adv-event.status-collected .cal-adv-event-title,
 .cal-adv-event.status-checking-upgrade .cal-adv-event-title {
     text-decoration: line-through;
-    color: #777 !important;
+    color: var(--tng-text-3) !important;
 }
 .cal-adv-event-meta {
     display: flex;
@@ -275,7 +275,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 }
 .cal-adv-event-type {
     font-size: 0.72em;
-    color: #777 !important;
+    color: var(--tng-text-3) !important;
 }
 .cal-adv-event-status {
     font-size: 0.68em;
@@ -288,10 +288,10 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 .cal-adv-event-status.status-collected           { background: #27ae60; }
 .cal-adv-event-status.status-checking-upgrade    { background: #d35400; }
 .cal-adv-event-status.status-upgrading           { background: #f1c40f; color: #333; }
-.cal-adv-event-status.status-premiered-uncollected  { background: #e74c3c; }
+.cal-adv-event-status.status-premiered-uncollected  { background: var(--tng-red); }
 .cal-adv-event-status.status-upcoming-uncollected   { background: #5dade2; }
 .cal-adv-event-status.status-upcoming-collected     { background: #27ae60; }
-.cal-adv-event-status.status-upcoming               { background: #3498db; }
+.cal-adv-event-status.status-upcoming               { background: var(--tng-blue); }
 .cal-adv-event-status.status-uncollected            { background: var(--tng-text-5); }
 
 /* ======================================================

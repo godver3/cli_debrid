@@ -18,7 +18,7 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
     content: '';
     width: 4px;
     height: 23px;
-    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(180deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     border-radius: 2px;
 }
 
@@ -32,11 +32,11 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
 }
 
 .alert-success {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
 }
 
 .alert-error {
-    background-color: #f44336;
+    background-color: var(--tng-red);
 }
 
 .connection-card {
@@ -103,7 +103,7 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
 }
 
 .status-indicator.disconnected {
-    background-color: #f44336;
+    background-color: var(--tng-red);
     box-shadow: 0 0 8px rgba(244, 67, 54, 0.5);
 }
 
@@ -112,19 +112,19 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
 }
 
 .status-text.connected {
-    color: #ff6b35;
+    color: var(--tng-accent);
 }
 
 .status-text.disconnected {
-    color: #f44336;
+    color: var(--tng-red);
 }
 
 .connection-details {
     margin-top: 1rem;
     padding-top: 1rem;
-    border-top: 1px solid #444;
+    border-top: 1px solid var(--tng-border-2);
     font-size: 0.9rem;
-    color: #bbb;
+    color: var(--tng-text-2);
 }
 
 .status-message {
@@ -150,7 +150,7 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
 
 .details-info li {
     margin-bottom: 0.5rem;
-    color: #bbb;
+    color: var(--tng-text-2);
 }
 
 .details-info li strong {
@@ -177,7 +177,7 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
 }
 
 .connection-button.test {
-    background-color: #2196F3;
+    background-color: var(--tng-blue);
     color: white;
 }
 
@@ -219,14 +219,14 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
     top: 0;
     bottom: 0;
     width: 4px;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     border-radius: 2px;
 }
 
 .failure-details {
     margin-top: 1rem;
     padding: 1rem;
-    background-color: #363636;
+    background-color: var(--tng-surface-3);
     border-radius: 10px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
@@ -248,13 +248,13 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
     top: 0;
     bottom: 0;
     width: 4px;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     border-radius: 2px;
 }
 
 .error-message {
     margin-bottom: 1rem;
-    color: #bbb;
+    color: var(--tng-text-2);
 }
 
 .error-message strong {
@@ -267,7 +267,7 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
     border-radius: 10px;
     font-family: monospace;
     font-size: 0.9em;
-    color: #bbb;
+    color: var(--tng-text-2);
 }
 
 .debug-info strong {
@@ -324,11 +324,11 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
     display: none;
     margin-top: 10px;
     padding: 10px;
-    background-color: #363636;
+    background-color: var(--tng-surface-3);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
     font-size: 0.9em;
-    color: #bbb;
+    color: var(--tng-text-2);
     max-height: 150px;
     overflow-y: auto;
 }
@@ -348,11 +348,11 @@ main > h1::before, main > h2::before, .container > h1::before, .container > h2::
 
 .sample-data-container li {
     margin-bottom: 4px;
-    color: #bbb;
+    color: var(--tng-text-2);
 }
 
 .sample-error {
-    color: #f44336;
+    color: var(--tng-red);
     font-style: italic;
     font-size: 0.9em;
 }

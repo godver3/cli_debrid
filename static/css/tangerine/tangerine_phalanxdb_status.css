@@ -59,13 +59,13 @@
 }
 
 .alert-danger {
-    background-color: #dc3545;
+    background-color: var(--tng-red);
     color: var(--tng-text);
     border: none;
 }
 
 .alert-warning {
-    background-color: #ffc107;
+    background-color: var(--tng-yellow);
     color: #000;
     border: none;
 }

@@ -165,12 +165,12 @@
 
 /* Focus styles for accessibility */
 .task-help-modal-close:focus {
-    outline: 2px solid #007bff;
+    outline: 2px solid var(--tng-blue);
     outline-offset: 2px;
 }
 
 .task-help-icon:focus {
-    outline: 2px solid #007bff;
+    outline: 2px solid var(--tng-blue);
     outline-offset: 2px;
 }
 
@@ -228,7 +228,7 @@
         left: 0;
         right: 0;
         height: 2px;
-        background: linear-gradient(90deg, #ff6b35, #f7931e);
+        background: linear-gradient(90deg, var(--tng-accent), var(--tng-accent-hover));
         opacity: 0.8;
     }
 
@@ -245,7 +245,7 @@
     }
 
     .save-toggles-btn {
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
         color: white;
         border: none;
         border-radius: 12px;
@@ -311,7 +311,7 @@
         left: 0;
         right: 0;
         height: 2px;
-        background: linear-gradient(90deg, #ff6b35, #f7931e);
+        background: linear-gradient(90deg, var(--tng-accent), var(--tng-accent-hover));
         opacity: 0;
         transition: opacity 0.3s ease;
     }
@@ -332,7 +332,7 @@
     .task-tile.disabled {
         opacity: 0.7;
         background-color: var(--tng-surface);
-        border-color: #333;
+        border-color: var(--tng-border);
         cursor: default;
     }
 
@@ -366,7 +366,7 @@
     }
 
     .interval-badge {
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
         color: white;
         padding: 0.25rem 0.75rem;
         border-radius: 12px;
@@ -384,14 +384,14 @@
         justify-content: center;
         margin-top: 1rem;
         padding-top: 0.75rem;
-        border-top: 1px solid #444;
+        border-top: 1px solid var(--tng-border-2);
         position: relative;
         z-index: 5; /* Ensure it's above other elements */
     }
 
     /* Add a hover effect to make it clear this is interactive */
     .task-toggle:hover .toggle-label {
-        color: #ff6b35;
+        color: var(--tng-accent);
     }
     
     .toggle-switch {
@@ -433,7 +433,7 @@
     }
 
     .toggle-switch input:checked + .toggle-slider {
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     }
 
     .toggle-switch input:checked + .toggle-slider:before {
@@ -474,12 +474,12 @@
     }
 
     .tab:hover {
-        color: #999;
+        color: var(--tng-text-2);
     }
 
     .tab.active {
-        color: #ff6b35;
-        border-bottom: 3px solid #ff6b35;
+        color: var(--tng-accent);
+        border-bottom: 3px solid var(--tng-accent);
     }
 
     .tab-content > div {
@@ -499,11 +499,11 @@
     }
 
     .status-indicator.enabled {
-        background-color: #28a745;
+        background-color: var(--tng-green);
     }
 
     .status-indicator.disabled {
-        background-color: #dc3545;
+        background-color: var(--tng-red);
     }
 
     .badge {
@@ -518,7 +518,7 @@
     /* Label shown next to task names to indicate library specificity */
     .library-label {
         font-size: 0.75em;
-        color: #ffc107; /* Gold/yellow to stand out */
+        color: var(--tng-yellow); /* Gold/yellow to stand out */
         margin-left: 0.5rem;
         font-weight: 500;
         white-space: nowrap;
@@ -528,7 +528,7 @@
         margin-top: 0.5rem;
         margin-bottom: 1rem; /* Space before countdown */
         font-size: 0.9em;
-        color: #ccc;
+        color: var(--tng-text);
         text-align: center; /* Center interval details */
     }
 
@@ -554,13 +554,13 @@
     /* Style for when input matches default */
     .task-tile .interval-input.default {
         /* Optional: Add subtle style */
-         /* border-color: #007bff; */
+         /* border-color: var(--tng-blue); */
     }
 
     /* Style for when input is custom */
      .task-tile .interval-input.custom {
         /* Optional: Add subtle style */
-         border-color: #ffc107; /* Example: yellow border */
+         border-color: var(--tng-yellow); /* Example: yellow border */
     }
     
     .task-tile .interval-input-label {
@@ -583,7 +583,7 @@
 
     /* Warning button styles */
     .warning-button {
-        background-color: #ffc107;
+        background-color: var(--tng-yellow);
         color: #212529;
         border: none;
         border-radius: 10px;

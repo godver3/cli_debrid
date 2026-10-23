@@ -91,7 +91,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 12px 15px;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid var(--tng-border);
     position: sticky;
     top: 0;
     background-color: var(--tng-surface);
@@ -108,7 +108,7 @@
     margin: 0;
     padding: 12px 15px;
     background: transparent;
-    border-bottom: 1px solid #2c2c2c;
+    border-bottom: 1px solid var(--tng-border);
     position: relative;
     z-index: 1;
     transition: background-color 0.2s ease;
@@ -129,12 +129,12 @@
 }
 
 .rate-limit-normal {
-    color: #28a745;
+    color: var(--tng-green);
     font-size: 0.9em;
 }
 
 .rate-limit-warning {
-    color: #dc3545;
+    color: var(--tng-red);
     font-size: 0.9em;
 }
 

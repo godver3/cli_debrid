@@ -39,7 +39,7 @@
 }
 
 .overlay-tab.active {
-    background: var(--primary-color, #007bff);
+    background: var(--primary-color, var(--tng-blue));
     color: white;
 }
 
@@ -79,7 +79,7 @@
 }
 
 .btn-primary {
-    background: #007bff;
+    background: var(--tng-blue);
     color: white;
 }
 
@@ -88,7 +88,7 @@
 }
 
 .btn-success {
-    background: #28a745;
+    background: var(--tng-green);
     color: white;
 }
 
@@ -97,7 +97,7 @@
 }
 
 .btn-warning {
-    background: #ffc107;
+    background: var(--tng-yellow);
     color: black;
 }
 
@@ -106,7 +106,7 @@
 }
 
 .btn-danger {
-    background: #dc3545;
+    background: var(--tng-red);
     color: white;
 }
 
@@ -219,7 +219,7 @@
     display: flex; align-items: center; justify-content: center;
 }
 .poster-picker-modal {
-    background: #1e1e1e;
+    background: var(--tng-surface);
     border-radius: 10px;
     padding: 20px;
     width: 320px;
@@ -277,7 +277,7 @@
 }
 .poster-picker-apply-btn {
     flex: 1; padding: 9px;
-    background: #28a745; color: #fff;
+    background: var(--tng-green); color: #fff;
     border: none; border-radius: 6px;
     font-size: 13px; font-weight: 600; cursor: pointer;
     transition: background 0.15s;
@@ -429,7 +429,7 @@
     height: 75px;
     object-fit: cover;
     border-radius: 4px;
-    background: #333;
+    background: var(--tng-surface-3);
     flex-shrink: 0;
 }
 .season-info {
@@ -459,8 +459,8 @@
 }
 
 .media-card.selected {
-    border-color: var(--primary-color, #007bff);
-    box-shadow: 0 0 0 2px var(--primary-color, #007bff);
+    border-color: var(--primary-color, var(--tng-blue));
+    box-shadow: 0 0 0 2px var(--primary-color, var(--tng-blue));
 }
 
 .media-poster {
@@ -500,12 +500,12 @@
 }
 
 .status-applied {
-    background: #28a745;
+    background: var(--tng-green);
     color: white;
 }
 
 .status-pending {
-    background: #ffc107;
+    background: var(--tng-yellow);
     color: black;
 }
 
@@ -515,7 +515,7 @@
 }
 
 .status-failed {
-    background: #dc3545;
+    background: var(--tng-red);
     color: white;
 }
 
@@ -603,7 +603,7 @@
     opacity: 1;
 }
 .stat-reset-btn:hover {
-    color: #e5a00d;
+    color: var(--tng-yellow);
 }
 
 .stat-card-clickable {
@@ -618,7 +618,7 @@
 
 .backup-action-btn {
     background: none;
-    border: 1px solid #444;
+    border: 1px solid var(--tng-border-2);
     border-radius: 4px;
     cursor: pointer;
     padding: 3px 6px;
@@ -631,7 +631,7 @@
 }
 
 .backup-action-btn:hover {
-    color: #ccc;
+    color: var(--tng-text);
     border-color: var(--tng-text-3);
     background: rgba(255,255,255,0.06);
     transform: translateY(-1px);
@@ -643,14 +643,14 @@
 }
 
 .stat-filter-active {
-    border-color: var(--primary-color, #007bff) !important;
-    box-shadow: 0 0 0 2px var(--primary-color, #007bff) !important;
+    border-color: var(--primary-color, var(--tng-blue)) !important;
+    box-shadow: 0 0 0 2px var(--primary-color, var(--tng-blue)) !important;
 }
 
 .stat-value {
     font-size: 32px;
     font-weight: bold;
-    color: var(--primary-color, #007bff);
+    color: var(--primary-color, var(--tng-blue));
 }
 
 .stat-label {
@@ -868,20 +868,20 @@
 
     <!-- Task Progress Overlay -->
     <div id="task-progress-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.65);backdrop-filter:blur(3px);align-items:center;justify-content:center;">
-        <div style="background:#141414;border:1px solid rgba(255,255,255,0.08);border-radius:10px;min-width:480px;max-width:520px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,0.6);">
+        <div style="background:var(--tng-bg);border:1px solid rgba(255,255,255,0.08);border-radius:10px;min-width:480px;max-width:520px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,0.6);">
             <!-- Orange progress bar strip at top -->
             <div style="height:3px;background:rgba(255,255,255,0.06);">
-                <div id="task-progress-bar" style="height:100%;width:40%;background:linear-gradient(90deg,#ff6b35,#ff8c5a);border-radius:0 2px 2px 0;animation:progress-pulse 1.8s ease-in-out infinite;"></div>
+                <div id="task-progress-bar" style="height:100%;width:40%;background:linear-gradient(90deg,var(--tng-accent),var(--tng-accent-hover));border-radius:0 2px 2px 0;animation:progress-pulse 1.8s ease-in-out infinite;"></div>
             </div>
             <div style="padding:1.5rem 1.75rem 1.25rem;">
                 <div style="display:flex;align-items:center;gap:0.85rem;margin-bottom:0.9rem;">
                     <i class="fas fa-circle-notch fa-spin" style="color:var(--tng-text-3);font-size:1.1rem;flex-shrink:0;"></i>
-                    <div id="task-progress-title" style="font-size:0.95rem;font-weight:600;color:#e8e8e8;"></div>
+                    <div id="task-progress-title" style="font-size:0.95rem;font-weight:600;color:var(--tng-text);"></div>
                 </div>
                 <div id="task-progress-msg" style="font-size:0.82rem;color:var(--tng-text-3);margin-left:1.95rem;line-height:1.4;"></div>
-                <div id="task-progress-counter" style="font-size:0.82rem;color:#ff8c5a;font-weight:600;margin-left:1.95rem;margin-bottom:1.1rem;margin-top:0.3rem;letter-spacing:0.01em;"></div>
+                <div id="task-progress-counter" style="font-size:0.82rem;color:var(--tng-accent-hover);font-weight:600;margin-left:1.95rem;margin-bottom:1.1rem;margin-top:0.3rem;letter-spacing:0.01em;"></div>
                 <div style="display:flex;justify-content:flex-end;">
-                    <button onclick="_hideProgress()" style="padding:0.4rem 1rem;font-size:0.82rem;background:rgba(255,107,53,0.12);border:1px solid rgba(255,107,53,0.35);color:#ff8c5a;border-radius:6px;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.background='rgba(255,107,53,0.22)';this.style.borderColor='rgba(255,107,53,0.6)';this.style.color='#fff'" onmouseout="this.style.background='rgba(255,107,53,0.12)';this.style.borderColor='rgba(255,107,53,0.35)';this.style.color='#ff8c5a'">
+                    <button onclick="_hideProgress()" style="padding:0.4rem 1rem;font-size:0.82rem;background:rgba(255,107,53,0.12);border:1px solid rgba(255,107,53,0.35);color:var(--tng-accent-hover);border-radius:6px;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.background='rgba(255,107,53,0.22)';this.style.borderColor='rgba(255,107,53,0.6)';this.style.color='#fff'" onmouseout="this.style.background='rgba(255,107,53,0.12)';this.style.borderColor='rgba(255,107,53,0.35)';this.style.color='#ff8c5a'">
                         Continue in background
                     </button>
                 </div>
@@ -897,7 +897,7 @@
     </style>
 
     <!-- Library Sync Bar -->
-    <div id="library-sync-bar" style="display:flex; align-items:center; gap:12px; padding:10px 16px; background:var(--card-bg,#1a1a2e); border-radius:8px; margin-bottom:12px; border:1px solid #333;">
+    <div id="library-sync-bar" style="display:flex; align-items:center; gap:12px; padding:10px 16px; background:var(--card-bg,#1a1a2e); border-radius:8px; margin-bottom:12px; border:1px solid var(--tng-border);">
         <button class="btn btn-secondary" id="sync-library-btn" onclick="syncLibrary()" style="white-space:nowrap;">
             <i class="fas fa-sync-alt"></i> Sync Library
         </button>

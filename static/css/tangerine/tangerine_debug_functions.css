@@ -45,15 +45,15 @@ body[data-theme="tangerine"] .debug-tab {
 }
 
 body[data-theme="tangerine"] .debug-tab:hover {
-    color: #999 !important;
+    color: var(--tng-text-2) !important;
     background: none !important;
     transform: none !important;
 }
 
 body[data-theme="tangerine"] .debug-tab.active {
-    color: #ff6b35 !important;
+    color: var(--tng-accent) !important;
     background: none !important;
-    border-bottom: 3px solid #ff6b35 !important;
+    border-bottom: 3px solid var(--tng-accent) !important;
     box-shadow: none !important;
 }
 
@@ -94,7 +94,7 @@ body[data-theme="tangerine"] .debug_items {
     left: 0;
     right: 0;
     height: 2px;
-    background: linear-gradient(90deg, #ff6b35, #f7931e);
+    background: linear-gradient(90deg, var(--tng-accent), var(--tng-accent-hover));
     opacity: 0;
     transition: opacity 0.3s ease;
 }
@@ -186,7 +186,7 @@ body[data-theme="tangerine"] .debug_items {
 .debug-container input[type="number"]:focus,
 .debug-container select:focus {
     outline: none;
-    border-color: #ff6b35;
+    border-color: var(--tng-accent);
     background: rgba(0, 0, 0, 0.5);
     box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
 }
@@ -208,7 +208,7 @@ body[data-theme="tangerine"] .debug_items {
     width: 18px;
     height: 18px;
     cursor: pointer;
-    accent-color: #ff6b35;
+    accent-color: var(--tng-accent);
 }
 
 .checkbox-group label {
@@ -224,7 +224,7 @@ body[data-theme="tangerine"] .debug_items {
     width: 18px;
     height: 18px;
     cursor: pointer;
-    accent-color: #ff6b35;
+    accent-color: var(--tng-accent);
     margin-right: 8px;
 }
 
@@ -256,7 +256,7 @@ body[data-theme="tangerine"] .debug_items {
     cursor: pointer;
     transition: all 0.3s ease;
     margin-top: 0.5rem;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     color: #fff;
     text-align: center;
     text-decoration: none;
@@ -287,7 +287,7 @@ body[data-theme="tangerine"] .debug_items {
     border-radius: 10px;
     padding: 1rem;
     font-size: 0.875rem;
-    color: #ff6b35;
+    color: var(--tng-accent);
     margin-bottom: 1.25rem;
     line-height: 1.6;
 }
@@ -358,7 +358,7 @@ body[data-theme="tangerine"] .debug_items {
 }
 
 .rate-limit-value {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -429,7 +429,7 @@ body[data-theme="tangerine"] .debug_items {
 .stats-value {
     font-size: 1.2rem;
     font-weight: 700;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -488,7 +488,7 @@ body[data-theme="tangerine"] .debug_items {
 }
 
 .token-status.valid {
-    border-left-color: #ff6b35;
+    border-left-color: var(--tng-accent);
 }
 
 .token-status.invalid {
@@ -523,7 +523,7 @@ body[data-theme="tangerine"] .debug_items {
 
 .token-validity.valid {
     background: rgba(255, 107, 53, 0.15);
-    color: #ff6b35;
+    color: var(--tng-accent);
 }
 
 .token-validity.invalid {
@@ -537,7 +537,7 @@ body[data-theme="tangerine"] .debug_items {
 .token-refresh,
 .token-username,
 .token-last-checked {
-    color: #ababab;
+    color: var(--tng-text-2);
     padding: 5px 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -589,7 +589,7 @@ body[data-theme="tangerine"] .debug_items {
 }
 
 .cache-file-item label {
-    color: #ccc;
+    color: var(--tng-text);
     font-size: 0.9rem;
     word-break: break-all;
     margin-bottom: 0;
@@ -611,7 +611,7 @@ body[data-theme="tangerine"] .debug_items {
 
 .progress-area p {
     margin: 5px 0;
-    color: #ddd;
+    color: var(--tng-text);
 }
 
 .progress-area ul,
@@ -623,7 +623,7 @@ body[data-theme="tangerine"] .debug_items {
 .progress-area li,
 .results-area li {
     margin-bottom: 3px;
-    color: #ccc;
+    color: var(--tng-text);
 }
 
 /* Full-width card for monitoring */
@@ -683,7 +683,7 @@ body[data-theme="tangerine"] .debug-container .plex-labels-help-btn {
     cursor: pointer;
     transition: all 0.3s ease;
     margin-top: 0.5rem;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%) !important;
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%) !important;
     color: #fff;
     text-align: center;
     text-decoration: none;
@@ -782,7 +782,7 @@ body[data-theme="tangerine"] .debug-container .plex-labels-help-btn:active {
 
 .loading-details {
     font-size: 14px;
-    color: #ccc;
+    color: var(--tng-text);
     margin-top: 10px;
 }
 
@@ -797,7 +797,7 @@ body[data-theme="tangerine"] .debug-container .plex-labels-help-btn:active {
 
 .loading-progress-bar {
     height: 100%;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, var(--tng-accent-hover) 100%);
     width: 0%;
     transition: width 0.3s ease;
 }

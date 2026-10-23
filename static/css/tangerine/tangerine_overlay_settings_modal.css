@@ -71,7 +71,7 @@
     margin: 0;
     font-size: 1.5rem;
     font-weight: 600;
-    color: #e17c52;
+    color: var(--tng-accent);
 }
 
 .overlay-settings-modal-close {
@@ -79,7 +79,7 @@
     border: none;
     font-size: 2rem;
     line-height: 1;
-    color: #999;
+    color: var(--tng-text-2);
     cursor: pointer;
     padding: 0;
     width: 32px;
@@ -93,7 +93,7 @@
 
 .overlay-settings-modal-close:hover {
     background-color: rgba(225, 124, 82, 0.2);
-    color: #e17c52;
+    color: var(--tng-accent);
 }
 
 .overlay-settings-modal-body {
@@ -114,7 +114,7 @@
     display: block;
     font-size: 0.95rem;
     font-weight: 600;
-    color: #e17c52;
+    color: var(--tng-accent);
     margin-bottom: 8px;
 }
 
@@ -146,9 +146,9 @@
 
 .overlay-setting-input:focus {
     outline: none;
-    border-color: #e17c52;
+    border-color: var(--tng-accent);
     box-shadow: 0 0 0 3px rgba(225, 124, 82, 0.1);
-    background-color: #2f2f2f;
+    background-color: var(--tng-surface-3);
 }
 
 .overlay-setting-input::placeholder {
@@ -159,7 +159,7 @@
     width: 20px;
     height: 20px;
     cursor: pointer;
-    accent-color: #e17c52;
+    accent-color: var(--tng-accent);
     flex-shrink: 0;
 }
 
@@ -185,18 +185,18 @@
 
 .overlay-settings-btn-cancel {
     background-color: transparent;
-    color: #999;
+    color: var(--tng-text-2);
     border: 2px solid rgba(225, 124, 82, 0.3);
 }
 
 .overlay-settings-btn-cancel:hover {
     background-color: rgba(225, 124, 82, 0.1);
     border-color: rgba(225, 124, 82, 0.5);
-    color: #e17c52;
+    color: var(--tng-accent);
 }
 
 .overlay-settings-btn-save {
-    background: linear-gradient(135deg, #e17c52 0%, #c96b47 100%);
+    background: linear-gradient(135deg, var(--tng-accent) 0%, #c96b47 100%);
     color: #fff;
     border: 2px solid transparent;
     box-shadow: 0 2px 8px rgba(225, 124, 82, 0.3);
@@ -286,7 +286,7 @@
 .overlay-reset-btn--all {
     background: rgba(220, 38, 38, 0.15) !important;
     border: 2px solid rgba(220, 38, 38, 0.35) !important;
-    color: #ff6b6b !important;
+    color: var(--tng-red-light) !important;
 }
 
 .overlay-reset-btn--all:hover {
@@ -301,7 +301,7 @@
 .overlay-reset-btn--review {
     background: rgba(255, 107, 53, 0.08) !important;
     border: 2px solid rgba(255, 107, 53, 0.35) !important;
-    color: #ff8c5a !important;
+    color: var(--tng-accent-hover) !important;
 }
 
 .overlay-reset-btn--review:hover {
@@ -314,15 +314,15 @@
 }
 
 .overlay-reset-progress-bar {
-    background: #ff6b35 !important;
+    background: var(--tng-accent) !important;
 }
 
 .poster-review-card--selected {
-    border-color: #ff6b35 !important;
+    border-color: var(--tng-accent) !important;
     box-shadow: 0 0 0 1px rgba(255, 107, 53, 0.3) !important;
 }
 
-.poster-review-checkbox { accent-color: #ff6b35; }
+.poster-review-checkbox { accent-color: var(--tng-accent); }
 
 /* Review grid "Reset Selected" button — danger style */
 .poster-review-reset-btn {
@@ -337,7 +337,7 @@
     min-width: unset !important;
     background: rgba(220, 38, 38, 0.15) !important;
     border: 1px solid rgba(220, 38, 38, 0.35) !important;
-    color: #ff6b6b !important;
+    color: var(--tng-red-light) !important;
     transition: all 0.2s ease !important;
 }
 
@@ -399,14 +399,14 @@
 }
 
 .poster-review-title {
-    color: #e17c52 !important;
+    color: var(--tng-accent) !important;
     font-size: 1.3rem !important;
     font-weight: 600 !important;
     margin: 0 0 4px !important;
 }
 
 .poster-review-subtitle {
-    color: #999 !important;
+    color: var(--tng-text-2) !important;
     font-size: 13px !important;
     margin: 0 !important;
 }
@@ -415,7 +415,7 @@
     background: none !important;
     border: none !important;
     font-size: 2rem !important;
-    color: #999 !important;
+    color: var(--tng-text-2) !important;
     cursor: pointer !important;
     line-height: 1 !important;
     padding: 0 !important;
@@ -432,7 +432,7 @@
 
 .poster-review-close:hover {
     background: rgba(225, 124, 82, 0.2) !important;
-    color: #e17c52 !important;
+    color: var(--tng-accent) !important;
 }
 
 .poster-review-toolbar {
@@ -590,7 +590,7 @@
 }
 
 .poster-review-card--selected {
-    border-color: #e17c52 !important;
+    border-color: var(--tng-accent) !important;
     box-shadow: 0 0 0 1px rgba(225, 124, 82, 0.4) !important;
 }
 

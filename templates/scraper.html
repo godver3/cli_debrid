@@ -11,10 +11,10 @@
 <style>
     /* Prevent white flash on page load */
     html {
-        background-color: #0a0a0a !important;
+        background-color: var(--tng-bg) !important;
     }
     body {
-        background: linear-gradient(to bottom, #333 0px, #333 450px, #000 650px) !important;
+        background: linear-gradient(to bottom, var(--tng-surface-3) 0px, var(--tng-surface-3) 450px, #000 650px) !important;
     }
 </style>
 {% endblock %}
@@ -37,11 +37,11 @@
             </select>
             <div class="checkbox-container specials-checkbox">
                 <input type="checkbox" id="allow-specials" name="allow_specials">
-                <label for="allow-specials" style="color: #ccc; font-size: 0.9em;">Allow Specials</label>
+                <label for="allow-specials" style="color: var(--tng-text); font-size: 0.9em;">Allow Specials</label>
             </div>
             <div id="skip-cache-check-container" class="checkbox-container" style="display: inline-block; margin-left: 10px; vertical-align: middle;">
                 <input type="checkbox" id="skip-cache-check" name="skip_cache_check">
-                <label for="skip-cache-check" style="color: #ccc; font-size: 0.9em;">Skip Cache Check</label>
+                <label for="skip-cache-check" style="color: var(--tng-text); font-size: 0.9em;">Skip Cache Check</label>
             </div>
             <button id="searchformButton" type="submit">Search</button>
             <!-- Back Button (Desktop Only) -->

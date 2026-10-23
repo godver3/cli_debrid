@@ -83,7 +83,7 @@
     width: 48px;
     height: 48px;
     border: 4px solid rgba(255, 107, 53, 0.2);
-    border-top-color: #ff6b35;
+    border-top-color: var(--tng-accent);
     border-radius: 50%;
     animation: spin 1s linear infinite;
 }
@@ -304,7 +304,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
 .primary-btn {
     background: rgba(255, 107, 53, 0.2);
     border-color: rgba(255, 107, 53, 0.4);
-    color: #ff9166;
+    color: var(--tng-accent-hover);
 }
 
 .primary-btn:hover {
@@ -364,7 +364,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
 
 .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #ff6b35, #f7931e);
+    background: linear-gradient(90deg, var(--tng-accent), var(--tng-accent-hover));
     transition: width 0.3s ease;
 }
 
@@ -411,7 +411,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
     background: rgba(255, 107, 53, 0.1);
     border: 1px solid rgba(255, 107, 53, 0.2);
     border-radius: 0.25rem;
-    color: #ff9166;
+    color: var(--tng-accent-hover);
     text-decoration: none;
     font-size: 0.75rem;
     transition: all 0.2s ease;
@@ -459,7 +459,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
 .stat-value {
     font-size: 1.25rem;
     font-weight: 600;
-    color: #ff9166;
+    color: var(--tng-accent-hover);
 }
 
 .movie-ids {
@@ -477,7 +477,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
     background: rgba(255, 107, 53, 0.15);
     border: 1px solid rgba(255, 107, 53, 0.3);
     border-radius: 0.375rem;
-    color: #ff9166;
+    color: var(--tng-accent-hover);
     text-decoration: none;
     font-size: 0.875rem;
     font-weight: 500;
@@ -568,7 +568,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
 
 .detail-link {
     font-size: 0.8125rem;
-    color: #ff9166;
+    color: var(--tng-accent-hover);
     text-decoration: none;
     transition: opacity 0.2s ease;
 }
@@ -658,7 +658,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
     text-align: center;
     font-weight: 600;
     font-size: 0.875rem;
-    color: #ff9166;
+    color: var(--tng-accent-hover);
     opacity: 0.8;
     flex-shrink: 0;
 }
@@ -764,7 +764,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
 .movie-file-meta .file-version {
     padding: 0.1rem 0.5rem 0.2rem 0.5rem;
     background: rgba(255, 107, 53, 0.2);
-    color: #ff9166;
+    color: var(--tng-accent-hover);
     border-radius: 0.25rem;
     font-size: 0.85rem;
     font-variant: all-petite-caps;
@@ -841,7 +841,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
     font-size: 0.875rem;
     font-weight: 600;
     margin-bottom: 0.375rem;
-    color: #ff9166;
+    color: var(--tng-accent-hover);
 }
 
 .file-tab.active .file-tab-title {
@@ -868,7 +868,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
 
 .file-tab-progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #ff6b35, #f7931e);
+    background: linear-gradient(90deg, var(--tng-accent), var(--tng-accent-hover));
     transition: width 0.3s ease;
 }
 
@@ -920,7 +920,7 @@ ease;
     text-align: center;
     font-weight: 600;
     font-size: 0.875rem;
-    color: #ff9166;
+    color: var(--tng-accent-hover);
     opacity: 0.8;
     flex-shrink: 0;
 }
@@ -966,7 +966,7 @@ ease;
 .video-version {
     padding: 0.1rem 0.5rem 0.2rem 0.5rem;
     background: rgba(255, 107, 53, 0.2);
-    color: #ff9166;
+    color: var(--tng-accent-hover);
     border-radius: 0.25rem;
     font-size: 0.75rem;
     font-variant: all-petite-caps;
@@ -1008,7 +1008,7 @@ ease;
     background: transparent;
     border: 1px solid rgba(255, 107, 53, 0.3);
     border-radius: 0.375rem;
-    color: #ff9166;
+    color: var(--tng-accent-hover);
     cursor: pointer;
     transition: all 0.2s ease;
     margin-left: 0.5rem;
@@ -1046,7 +1046,7 @@ ease;
     background: rgba(255, 107, 53, 0.15);
     border: 1px solid rgba(255, 107, 53, 0.3);
     border-radius: 0.375rem;
-    color: #ff9166;
+    color: var(--tng-accent-hover);
     cursor: pointer;
     transition: all 0.2s ease;
     font-size: 0.875rem;
@@ -1138,7 +1138,7 @@ ease;
     content: counter(file-counter) ".";
     position: absolute;
     left: 0;
-    color: #ff9166;
+    color: var(--tng-accent-hover);
     font-weight: 600;
     font-family: system-ui, -apple-system, sans-serif;
 }
@@ -1162,7 +1162,7 @@ ease;
     height: 4rem;
     margin-bottom: 1rem;
     opacity: 0.5;
-    color: #ff9166;
+    color: var(--tng-accent-hover);
 }
 
 .empty-state h3 {
@@ -1548,7 +1548,7 @@ body.modal-open {
     gap: 10px;
     padding: 9px 11px;
     border-radius: 6px;
-    border: 1px solid #333;
+    border: 1px solid var(--tng-border);
     background: var(--tng-surface-2);
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
@@ -1640,7 +1640,7 @@ body.modal-open {
 /* divider between sections */
 .vm-divider {
     height: 1px;
-    background: #333;
+    background: var(--tng-surface-3);
     margin: 14px 0;
 }
 
@@ -1768,7 +1768,7 @@ body.modal-open {
     background: none;
     border: none;
     font-size: 28px;
-    color: #ccc;
+    color: var(--tng-text);
     cursor: pointer;
     width: 32px;
     height: 32px;
@@ -1835,7 +1835,7 @@ body.modal-open {
 }
 
 .filtered-out-item td:nth-child(4) {
-    color: #ff6b6b !important;
+    color: var(--tng-red-light) !important;
     font-style: italic;
     font-size: 0.9em;
 }
@@ -1878,7 +1878,7 @@ tr.filtered-out-item:hover {
 
 .loading-details {
     font-size: 14px;
-    color: #ccc;
+    color: var(--tng-text);
     margin-top: 10px;
 }
 
@@ -1893,7 +1893,7 @@ tr.filtered-out-item:hover {
 
 .loading-progress-bar {
     height: 100%;
-    background-color: #ff6b35;
+    background-color: var(--tng-accent);
     transition: width 0.3s ease;
     border-radius: 20px 0 0 0;
 }
@@ -1928,7 +1928,7 @@ tr.filtered-out-item:hover {
     left: 0;
     right: 0;
     height: 2px;
-    background: linear-gradient(90deg, #ff6b35, #f7931e);
+    background: linear-gradient(90deg, var(--tng-accent), var(--tng-accent-hover));
 }
 
 .overlay-content h3 {
@@ -2031,7 +2031,7 @@ tr.filtered-out-item:hover {
 
 .cache-status.cached {
     background: rgba(16, 185, 129, 0.2);
-    color: #10b981;
+    color: var(--tng-green);
 }
 
 .cache-status.not-cached {
@@ -2074,7 +2074,7 @@ tr.filtered-out-item:hover {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    background-color: #ff6b35;
+    background-color: var(--tng-accent);
     border: none;
     color: white;
     margin: 5px 0;
@@ -2099,7 +2099,7 @@ tr.filtered-out-item:hover {
 }
 
 .overlay-content td button.assign-button {
-    background-color: #FFC107;
+    background-color: var(--tng-yellow);
     color: #333;
 }
 
@@ -2116,7 +2116,7 @@ tr.filtered-out-item:hover {
 }
 
 .filtered-out-item td:nth-child(4) {
-    color: #ff6b6b !important;
+    color: var(--tng-red-light) !important;
     font-style: italic;
     font-size: 0.9em;
     max-width: 200px;
@@ -2241,7 +2241,7 @@ td#scraper-source .source-badge {
     height: 18px;
     cursor: pointer;
     flex-shrink: 0;
-    accent-color: #e17c52;
+    accent-color: var(--tng-accent);
 }
 
 .file-selection-item label {
@@ -2296,7 +2296,7 @@ td#scraper-source .source-badge {
 }
 
 .file-selection-delete {
-    background: #dc3545;
+    background: var(--tng-red);
     color: #fff;
 }
 
@@ -2590,9 +2590,9 @@ body[data-theme="tangerine"] button.btn.btn-sm.replace-movie-btn {
 }
 
 body[data-theme="tangerine"] .action-btn:not(.primary-btn):not(.danger-btn):not(.ghost-btn):not(.success-btn) {
-    background: #1e1e1e;
+    background: var(--tng-surface);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #e8e8e8;
+    color: var(--tng-text);
 }
 
 body[data-theme="tangerine"] .action-btn:not(.primary-btn):not(.danger-btn):not(.ghost-btn):not(.success-btn):hover {
@@ -2616,7 +2616,7 @@ body[data-theme="tangerine"] .action-btn svg {
 }
 
 body[data-theme="tangerine"] .primary-btn {
-    background: #1e1e1e;
+    background: var(--tng-surface);
     border-color: rgba(255, 255, 255, 0.1);
 }
 
@@ -2626,17 +2626,17 @@ body[data-theme="tangerine"] .primary-btn:hover {
 }
 
 body[data-theme="tangerine"] .ghost-btn {
-    background: #1e1e1e;
+    background: var(--tng-surface);
     border-color: rgba(255, 255, 255, 0.1);
 }
 
 body[data-theme="tangerine"] .ghost-btn:hover {
-    background: #1e1e1e;
+    background: var(--tng-surface);
     border-color: rgba(255, 255, 255, 0.2);
 }
 
 body[data-theme="tangerine"] .danger-btn {
-    background: #1e1e1e;
+    background: var(--tng-surface);
     border-color: rgba(255, 255, 255, 0.1);
 }
 
