@@ -1107,26 +1107,6 @@ SETTINGS_SCHEMA = {
             "description": "Truncate episode notifications to show only the first episode and a summary of the rest.",
             "default": False
         },
-        "apply_to_anime_tv_shows": {
-            "type": "boolean",
-            "description": "Apply subtitle downloads to anime TV show folders (if separate anime folders are enabled)",
-            "default": True
-        },
-        "apply_to_documentary_movies": {
-            "type": "boolean",
-            "description": "Apply subtitle downloads to documentary movie folders (if separate documentary folders are enabled)",
-            "default": True
-        },
-        "apply_to_documentary_tv_shows": {
-            "type": "boolean",
-            "description": "Apply subtitle downloads to documentary TV show folders (if separate documentary folders are enabled)",
-            "default": True
-        },
-        "only_current_file": {
-            "type": "boolean",
-            "description": "Only download subtitles for the current file being processed (instead of scanning all folders)",
-            "default": False
-        },
         "sanitizer_replacement_character": {
             "type": "string",
             "description": "Character to use when replacing invalid characters in filenames (default: '_'). Must be a valid character for both Windows and Linux filesystems.",
@@ -3252,16 +3232,6 @@ SETTINGS_SCHEMA = {
             "description": "Apply subtitle downloads to anime TV show folders (if separate anime folders are enabled)",
             "default": True
         },
-        "apply_to_documentary_movies": {
-            "type": "boolean",
-            "description": "Apply subtitle downloads to documentary movie folders (if separate documentary folders are enabled)",
-            "default": True
-        },
-        "apply_to_documentary_tv_shows": {
-            "type": "boolean",
-            "description": "Apply subtitle downloads to documentary TV show folders (if separate documentary folders are enabled)",
-            "default": True
-        },
         "only_current_file": {
             "type": "boolean",
             "description": "Only download subtitles for the current file being processed (instead of scanning all folders)",
@@ -3364,12 +3334,6 @@ SETTINGS_SCHEMA = {
     },
     "Library Manager": {
         "tab": "Additional Settings",
-        "primary_artwork_source": {
-            "type": "string",
-            "description": "Artwork source for posters and backdrops. Uses TMDB online movie database (requires TMDB API key).",
-            "default": "TMDB",
-            "choices": ["TMDB"]
-        },
         "ghostlist_mode": {
             "type": "boolean",
             "description": "Add shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting content will mark it as ghosted in the database. When disabled, deleted content can be re-added by dynamic content sources.",

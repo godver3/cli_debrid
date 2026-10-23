@@ -258,7 +258,7 @@
         </div>
     </div>
     <div class="settings-section-content">
-        {% for key in ['sort_by_uncached_status', 'checking_queue_period', 'ignore_wanted_queue_throttling', 'disable_not_wanted_check', 'allow_partial_overseerr_requests', 'max_upgrading_score', 'upgrade_queue_duration_hours', 'only_current_file', 'enable_library_maintenance_task'] %}
+        {% for key in ['sort_by_uncached_status', 'checking_queue_period', 'ignore_wanted_queue_throttling', 'disable_not_wanted_check', 'allow_partial_overseerr_requests', 'max_upgrading_score', 'upgrade_queue_duration_hours', 'enable_library_maintenance_task'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">
