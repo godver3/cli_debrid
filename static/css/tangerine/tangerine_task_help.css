@@ -626,21 +626,13 @@
 body.tangerine-theme #taskTimingsContainer { display: none !important; }
 body:not(.tangerine-theme) #tngTaskManager { display: none !important; }
 
+/* Older short names used by this page, mapped onto tangerine_tokens.css */
 body.tangerine-theme {
-  --tng-bg: #111;
-  --tng-surface: #1a1a1a;
-  --tng-surface2: #222;
-  --tng-surface3: #2a2a2a;
-  --tng-border: #2d2d2d;
-  --tng-border2: #3d3d3d;
-  --tng-accent: #e8601c;
-  --tng-text: #e0e0e0;
-  --tng-text2: #aaa;
-  --tng-text3: #555;
-  --tng-green: #22c55e;
-  --tng-red: #ef4444;
-  --tng-blue: #3b82f6;
-  --tng-yellow: #f59e0b;
+  --tng-surface2: var(--tng-surface-2);
+  --tng-surface3: var(--tng-surface-3);
+  --tng-border2: var(--tng-border-2);
+  --tng-text2: var(--tng-text-2);
+  --tng-text3: var(--tng-text-5);
 }
 
 #tngTaskManager {
