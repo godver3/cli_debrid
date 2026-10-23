@@ -156,6 +156,27 @@ def tag_transition(conn, item_id: int, from_state: Optional[str], to_state: str,
         )
 
 
+def history_mark(conn) -> int:
+    """Newest history row id; pass to tag_since() after a raw-SQL state update."""
+    try:
+        return conn.execute("SELECT COALESCE(MAX(id), 0) FROM item_state_transitions").fetchone()[0]
+    except Exception:
+        return 0
+
+
+def tag_since(conn, mark: int, source: Optional[str] = None) -> None:
+    """Attach `source` (default: the caller) to history rows written after `mark`
+    on this connection. For code paths that change state with their own UPDATE."""
+    source = source or caller_source()
+    try:
+        conn.execute(
+            "UPDATE item_state_transitions SET source = ? WHERE id > ? AND source IS NULL",
+            (source, mark),
+        )
+    except Exception as e:
+        logger.debug(f"[StateHistory] Could not tag transitions after {mark}: {e}")
+
+
 def get_item_history(item_id: int, limit: int = 200) -> List[Dict[str, Any]]:
     """Newest first."""
     conn = get_db_connection()

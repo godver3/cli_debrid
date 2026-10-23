@@ -23,6 +23,7 @@ from database import update_media_item_state
 from utilities.local_library_scan import convert_item_to_symlink
 from database.database_writing import update_media_item, RESET_COLLECTION_STATE_SQL
 from database.symlink_verification import add_symlinked_file_for_verification
+from database.state_transitions import get_item_history, history_mark, tag_since
 database_bp = Blueprint('database', __name__)
 
 def translate_plex_path_to_local(plex_path: str) -> str:
@@ -858,10 +859,12 @@ def bulk_queue_action():
                 try:
                     cursor = conn.cursor()
                     placeholders = ','.join('?' * len(batch))
+                    mark = history_mark(conn)
                     cursor.execute(
                         f'UPDATE media_items SET state = ?, last_updated = ? WHERE id IN ({placeholders})',
                         [target_queue, datetime.now()] + batch
                     )
+                    tag_since(conn, mark)
                     total_processed += cursor.rowcount
                     conn.commit()
                 except sqlite3.OperationalError as e:
@@ -2560,7 +2563,6 @@ def visual_data():
 @admin_required
 def item_history(item_id):
     """The item's state changes, newest first, with who made each one."""
-    from database.state_transitions import get_item_history
     item = get_media_item_by_id(item_id)
     if not item:
         return jsonify({'success': False, 'error': 'Item not found'}), 404

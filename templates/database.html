@@ -309,6 +309,9 @@
                                 <button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="{{ item['id'] }}" title="Rescrape">
                                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                                 </button>
+                                <button class="db-action-btn db-action-btn-history history-item" data-item-id="{{ item['id'] }}" title="State history">
+                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                </button>
                             </span>
                         </td>
                         {% for column in selected_columns %}
@@ -1652,6 +1655,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const deleteSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
         const refreshSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`;
+        const historySVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
 
         items.forEach((item, index) => {
             const rowNumber = index + 1;
@@ -1661,6 +1665,7 @@ document.addEventListener('DOMContentLoaded', function() {
             tableHTML += `<td><span style="display:flex;gap:4px;align-items:center">` +
                 `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${item['id']}" title="Delete">${deleteSVG}</button>` +
                 `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${item['id']}" title="Rescrape">${refreshSVG}</button>` +
+                `<button class="db-action-btn db-action-btn-history history-item" data-item-id="${item['id']}" title="State history">${historySVG}</button>` +
                 `</span></td>`;
             selectedColumns.forEach(column => {
                 let cellContentKey = column;
@@ -2135,6 +2140,58 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 showRescrapeConfirmation(btn.getAttribute('data-item-id'));
             }
+        });
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('.history-item');
+            if (btn) {
+                e.preventDefault();
+                showStateHistory(btn.getAttribute('data-item-id'));
+            }
+        });
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : String(text);
+        return div.innerHTML;
+    }
+
+    async function showStateHistory(itemId) {
+        let data;
+        try {
+            const response = await fetch(`{{ url_for('database.index') }}api/item_history/${encodeURIComponent(itemId)}`);
+            data = await response.json();
+            if (!data.success) throw new Error(data.error || 'Request failed');
+        } catch (error) {
+            showPopup({ type: POPUP_TYPES.ERROR, title: 'State history', message: `Could not load history: ${escapeHtml(error.message)}` });
+            return;
+        }
+        const item = data.item;
+        let label = item.title || `Item ${item.id}`;
+        if (item.type === 'episode') {
+            label += ` S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`;
+        }
+        let rows = '';
+        if (!data.history.length) {
+            rows = '<li class="db-history-empty">No state changes recorded yet. History starts with this version of cli_debrid.</li>';
+        }
+        data.history.forEach(entry => {
+            const from = entry.from_state ? escapeHtml(entry.from_state) : '<em>added</em>';
+            let by = entry.source ? escapeHtml(entry.source) : '<em>direct database update</em>';
+            let tags = '';
+            if (entry.manual) tags += '<span class="db-history-tag">manual</span>';
+            if (!entry.expected) tags += '<span class="db-history-tag db-history-tag-warn" title="Not a move the pipeline normally makes">unexpected</span>';
+            rows += `<li class="${entry.expected ? '' : 'db-history-unexpected'}">
+                <div class="db-history-line"><span>${from} &rarr; <strong>${escapeHtml(entry.to_state)}</strong></span>${tags}</div>
+                <div class="db-history-meta">${escapeHtml(String(entry.changed_at).slice(0, 19))} &middot; ${by}</div>
+            </li>`;
+        });
+        showPopup({
+            type: POPUP_TYPES.INFO,
+            title: `State history: ${escapeHtml(label)}`,
+            message: `<div class="db-history"><div class="db-history-now">Now: <strong>${escapeHtml(item.state)}</strong>${item.version ? ` &middot; ${escapeHtml(item.version)}` : ''}</div>
+                <ol class="db-history-list">${rows}</ol></div>`,
+            autoClose: 0
         });
     }
 
@@ -3218,6 +3275,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const rowNumber = (pageToLoad - 1) * CONFIG.ITEMS_PER_PAGE + index + 1;
             const deleteSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
             const refreshSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`;
+            const historySVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
             // Column order matches Jinja thead: checkbox | # | actions
             let html = '';
             html += `<td><input type="checkbox" class="item-select" data-item-id="${item.id}"></td>`;
@@ -3225,6 +3283,7 @@ document.addEventListener('DOMContentLoaded', function() {
             html += `<td><span style="display:flex;gap:4px;align-items:center">` +
                 `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${item.id}" title="Delete">${deleteSVG}</button>` +
                 `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${item.id}" title="Rescrape">${refreshSVG}</button>` +
+                `<button class="db-action-btn db-action-btn-history history-item" data-item-id="${item.id}" title="State history">${historySVG}</button>` +
                 `</span></td>`;
 
             const selectedColumns = {{ selected_columns | tojson }};

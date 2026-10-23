@@ -147,5 +147,23 @@ class TestUnexpectedTransitions(_DbCase):
         self.assertTrue(last['expected'])
 
 
+
+class TestRawSqlTagging(_DbCase):
+    def test_tag_since_tags_only_rows_from_this_update(self):
+        self.sql("INSERT INTO media_items (id, state) VALUES (1, 'Wanted'), (2, 'Collected')")
+        self.sql("UPDATE media_items SET state = 'Scraping' WHERE id = 1")  # older, untagged
+        conn = get_db_connection()
+        mark = st.history_mark(conn)
+        conn.execute("UPDATE media_items SET state = 'Wanted' WHERE id IN (1, 2)")
+        st.tag_since(conn, mark, 'routes.database_routes.bulk_queue_action')
+        conn.commit()
+        conn.close()
+        h1, h2 = self.history(1), self.history(2)
+        self.assertIsNone(h1[1]['source'])  # Wanted -> Scraping stays untagged
+        self.assertEqual(h1[2]['source'], 'routes.database_routes.bulk_queue_action')
+        self.assertEqual(h2[1]['source'], 'routes.database_routes.bulk_queue_action')
+        self.assertTrue(h2[1]['manual'])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1622,6 +1622,25 @@
         transform: translateY(0);
         box-shadow: none;
     }
+    body.tangerine-theme .db-action-btn-history {
+        color: var(--tng-text-2);
+    }
+    body.tangerine-theme .db-action-btn-history:hover {
+        color: var(--tng-accent);
+        border-color: var(--tng-accent);
+        transform: translateY(-1px);
+    }
+    /* State history popup */
+    .db-history { text-align: left; }
+    .db-history-now { margin-bottom: 10px; color: var(--tng-text-2); }
+    .db-history-list { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; }
+    .db-history-list li { padding: 7px 8px; border-bottom: 1px solid var(--tng-border); }
+    .db-history-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--tng-text); }
+    .db-history-meta { margin-top: 2px; font-family: var(--tng-mono); font-size: 11px; color: var(--tng-text-3); word-break: break-word; }
+    .db-history-empty { color: var(--tng-text-3); text-align: center; }
+    .db-history-unexpected { background: rgba(245, 158, 11, 0.08); }
+    .db-history-tag { font-family: var(--tng-sans); font-size: 10px; padding: 1px 6px; border-radius: var(--tng-radius-sm); border: 1px solid var(--tng-border-2); color: var(--tng-text-2); }
+    .db-history-tag-warn { border-color: var(--tng-yellow); color: var(--tng-yellow-light); }
     /* Bold title column */
     body.tangerine-theme .table-container td.db-col-title {
         font-weight: 600;
@@ -1657,7 +1676,7 @@
     body.tangerine-theme .table-container td:has(.db-action-btn) {
         padding: 4px 8px;
         max-width: none;
-        width: 68px;
+        width: 100px;
     }
 
     /* ── IMDB ID: accent color in tangerine only ── */
