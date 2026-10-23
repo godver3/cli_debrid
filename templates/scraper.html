@@ -1,31 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Add Media{% endblock %}
-{% block head %}
-<script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
+{% block page_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_scraper_trending.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_scraper-mobile.css') }}">
+{% endblock %}
 
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const theme = getCurrentTheme();
-        const cssFile = 'css/tangerine/tangerine_scraper.css';
-        const trendingCssFile = 'css/tangerine/tangerine_scraper_trending.css';
-        const mobileCssFile = 'css/tangerine/tangerine_scraper-mobile.css';
-        
-        const link1 = document.createElement('link');
-        link1.rel = 'stylesheet';
-        link1.href = '{{ url_for("static", filename="") }}' + cssFile + '?v={{ range(10000, 99999) | random }}';
-        document.head.appendChild(link1);
-        
-        const link2 = document.createElement('link');
-        link2.rel = 'stylesheet';
-        link2.href = '{{ url_for("static", filename="") }}' + trendingCssFile + '?v={{ range(10000, 99999) | random }}';
-        document.head.appendChild(link2);
-        
-        const link3 = document.createElement('link');
-        link3.rel = 'stylesheet';
-        link3.href = '{{ url_for("static", filename="") }}' + mobileCssFile + '?v={{ range(10000, 99999) | random }}';
-        document.head.appendChild(link3);
-    });
-</script>
+{% block head %}
 
 <style>
     /* Prevent white flash on page load */

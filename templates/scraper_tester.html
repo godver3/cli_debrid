@@ -4,16 +4,7 @@
 
 {% block head %}
     {{ super() }}
-    <script>
-        (function() {
-            var theme = localStorage.getItem('selectedTheme') || 'tangerine';
-            var cssFile = 'css/tangerine/tangerine_scraper_tester.css?v=17';
-            var link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = '{{ url_for("static", filename="") }}' + cssFile;
-            document.head.appendChild(link);
-        })();
-    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_scraper_tester.css') }}">
     {% endblock %}
 
 {% block content %}

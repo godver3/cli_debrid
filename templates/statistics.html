@@ -1316,12 +1316,8 @@
         return `rgb(${r} ${g} ${b} / 65%)`;
     }
     
-    // Apply color gradient to stat boxes (Tangerine theme only)
+    // Apply color gradient to stat boxes
     function applyPercentageColorGradient() {
-        // Only apply for tangerine theme
-        const isTangerine = document.body.classList.contains('tangerine-theme');
-        if (!isTangerine) return;
-        
         // Active downloads percentage
         const activeDownloads = parseInt(document.getElementById('active_downloads')?.textContent || 0);
         const downloadLimit = parseInt(document.getElementById('download_limit')?.textContent || 75);
@@ -1737,15 +1733,8 @@
 </div>
 
 <script>
-// Convert filenames to quality badges on statistics page (Tangerine theme only)
+// Convert filenames to quality badges on statistics page
 function applyQualityBadges() {
-    // Only apply badges for tangerine theme
-    const currentTheme = document.body.getAttribute('data-theme');
-    if (currentTheme !== 'tangerine') {
-        console.log('Not tangerine theme, skipping badge application');
-        return;
-    }
-
     // Check if functions are available
     if (typeof extractQualityTags !== 'function' || typeof createQualityBadge !== 'function') {
         console.warn('Quality badge functions not available yet, retrying...');
@@ -1862,39 +1851,6 @@ function applyQualityBadges() {
     console.log('Finished applying badges to', processedCards.size, 'cards');
 }
 
-// Restore original filenames (for classic theme)
-function restoreOriginalFilenames() {
-    console.log('Restoring original filenames for classic theme...');
-
-    // Restore regular filename elements
-    const filenameElements = document.querySelectorAll('.filename[data-original-filename]');
-    filenameElements.forEach(element => {
-        const originalFilename = element.getAttribute('data-original-filename');
-        if (originalFilename && element.textContent !== originalFilename) {
-            element.textContent = originalFilename;
-        }
-        // Make sure the element is visible
-        element.style.display = '';
-    });
-
-    // Hide badge containers and show original From/To spans
-    const upgradedContainers = document.querySelectorAll('.upgraded-tags-container');
-    upgradedContainers.forEach(container => {
-        container.style.display = 'none';
-    });
-
-    // Show hidden From/To spans
-    const hiddenSpans = document.querySelectorAll('.filename[data-label="From:"][style*="display: none"], .filename[data-label="To:"][style*="display: none"]');
-    hiddenSpans.forEach(span => {
-        span.style.display = '';
-    });
-
-    // Clear badges-applied flags
-    document.querySelectorAll('.stats-card[data-badges-applied]').forEach(card => {
-        card.removeAttribute('data-badges-applied');
-    });
-}
-
 // Apply badges on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, waiting for scripts...');
@@ -1902,21 +1858,6 @@ document.addEventListener('DOMContentLoaded', function() {
     setTimeout(applyQualityBadges, 200);
 });
 
-// Re-apply badges on theme change
-document.addEventListener('themeChanged', function(event) {
-    console.log('Theme changed to:', event.detail.theme);
-
-    if (event.detail.theme === 'tangerine') {
-        // Clear badges-applied flags to allow reprocessing
-        document.querySelectorAll('.stats-card[data-badges-applied]').forEach(card => {
-            card.removeAttribute('data-badges-applied');
-        });
-        setTimeout(applyQualityBadges, 100);
-    } else {
-        // Restore original filenames for classic theme
-        restoreOriginalFilenames();
-    }
-});
 </script>
 
 {% endblock %}

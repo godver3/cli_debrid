@@ -948,9 +948,6 @@
         const mediaQuery = window.matchMedia('(max-width: 1024px)');
         const isMobile = mediaQuery.matches;
 
-        // Check current theme
-        const currentTheme = localStorage.getItem('selectedTheme') || 'classic';
-
         if (isMobile) {
             // MOBILE VIEW - Simple cards
             const header = document.createElement('h3');
@@ -1033,7 +1030,7 @@
                 });
                 overlayContent.appendChild(gridContainer);
             }
-        } else if (currentTheme === 'tangerine') {
+        } else {
             // TANGERINE THEME - Table with filters (copied from scraper.js)
             // This uses the existing displayTorrentResults logic from scraper.js
             // Call the scraper.js function if it exists
@@ -1113,88 +1110,6 @@
                 gridContainer.appendChild(torResDiv);
             });
             overlayContent.appendChild(gridContainer);
-        } else {
-            // CLASSIC THEME - Simple grid
-            const header = document.createElement('h3');
-            header.textContent = `Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}`;
-            overlayContent.appendChild(header);
-
-            if (allDisplayItems.length === 0) {
-                const noResults = document.createElement('p');
-                noResults.textContent = 'No torrents found.';
-                noResults.style.textAlign = 'center';
-                noResults.style.padding = '2rem';
-                overlayContent.appendChild(noResults);
-            } else {
-                const gridContainer = document.createElement('div');
-                gridContainer.style.display = 'flex';
-                gridContainer.style.flexWrap = 'wrap';
-                gridContainer.style.gap = '20px';
-                gridContainer.style.justifyContent = 'center';
-                gridContainer.style.padding = '1rem 0';
-
-                allDisplayItems.forEach((torrent) => {
-                    const isFilteredOut = torrent.__isActuallyFilteredOut;
-                    const torResDiv = document.createElement('div');
-                    torResDiv.className = 'torresult' + (isFilteredOut ? ' filtered-out-item' : '');
-
-                    const bitrateDisplay = torrent.bitrate ? ` | ${(torrent.bitrate / 1000).toFixed(1)} Mbps` : '';
-                    const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A');
-
-                    torResDiv.innerHTML = `
-                        <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
-                            <div class="torresult-info">
-                                <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
-                                <p class="torresult-item">${(torrent.size || 0).toFixed(1)} GB${bitrateDisplay} | Score: ${scoreDisplay}</p>
-                                <p class="torresult-item">${torrent.source || 'N/A'}</p>
-                                <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
-                                              torrent.cached === 'No' ? 'not-cached' :
-                                              torrent.cached === 'Not Checked' ? 'not-checked' :
-                                              torrent.cached === 'N/A' ? 'check-unavailable' : 'unknown'}">${torrent.cached || 'N/A'}</span>
-                            </div>
-                        </button>
-                    `;
-
-                    torResDiv.onclick = function() {
-                        const torrentData = {
-                            title: title, year: year, version: version, media_type: mediaType,
-                            season: season || null, episode: episode || null, tmdb_id: mediaId,
-                            genres: genre_ids, original_title: torrent.original_title
-                        };
-
-                        if (isFilteredOut) {
-                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
-                            if (typeof showPopup === 'function') {
-                                showPopup({
-                                    type: POPUP_TYPES.CONFIRM,
-                                    title: 'Add Filtered Item?',
-                                    message: confirmationMessage,
-                                    confirmText: 'Add Anyway',
-                                    onConfirm: () => {
-                                        addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
-                                    }
-                                });
-                            } else {
-                                showPopup({
-                                    type: 'confirm',
-                                    title: 'Add Media',
-                                    message: confirmationMessage,
-                                    confirmText: 'Add',
-                                    cancelText: 'Cancel',
-                                    onConfirm: function() {
-                                        addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
-                                    }
-                                });
-                            }
-                        } else {
-                            addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
-                        }
-                    };
-
-                    gridContainer.appendChild(torResDiv);
-                });
-                overlayContent.appendChild(gridContainer);
-            }
         }
 
         // Show overlay

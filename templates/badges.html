@@ -2,29 +2,11 @@
 
 {% block title %}Badge Library{% endblock %}
 
+{% block page_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_overlays.css') }}">
+{% endblock %}
+
 {% block head %}
-<script>
-    function loadBadgesCss() {
-        const theme = window.themeSwitcher?.getTheme() || 'tangerine';
-        if (theme === 'tangerine') {
-            const themeId = 'theme-tangerine-overlays';
-            if (!document.getElementById(themeId)) {
-                const link = document.createElement('link');
-                link.id = themeId;
-                link.rel = 'stylesheet';
-                link.href = "{{ url_for('static', filename='css/tangerine/tangerine_overlays.css') }}";
-                link.setAttribute('data-theme-css', 'tangerine');
-                document.head.appendChild(link);
-            }
-        }
-    }
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', loadBadgesCss);
-    } else {
-        loadBadgesCss();
-    }
-    document.addEventListener('themeChanged', loadBadgesCss);
-</script>
 <style>
 .badges-container {
     padding: 20px;

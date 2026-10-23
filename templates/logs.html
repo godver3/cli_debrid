@@ -3,19 +3,6 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_logs.css') }}">
-<script>
-(function(){
-    var theme = localStorage.getItem('selectedTheme') || 'tangerine';
-    var link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = '/static/css/tangerine/tangerine_logs.css?v=7';
-    link.id = 'theme-tangerine-logs';
-    link.setAttribute('data-theme-css', 'tangerine');
-    if (theme === 'tangerine') {
-        document.head.appendChild(link);
-    }
-})();
-</script>
 {% endblock %}
 {% block title %}Logs{% endblock %}
 

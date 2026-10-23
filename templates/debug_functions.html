@@ -869,8 +869,6 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
   }
 
   document.addEventListener('DOMContentLoaded', function() {
-    if (!document.body.classList.contains('tangerine-theme')) return;
-
     buildCards();
     attachMonitoringObservers();
 

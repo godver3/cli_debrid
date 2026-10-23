@@ -162,12 +162,6 @@
      * Combine From/To filenames in Recently Upgraded section
      */
     function combineRecentlyUpgradedFilenames() {
-        // Check if we're using Tangerine theme
-        const currentTheme = document.body.getAttribute('data-theme');
-        if (currentTheme !== 'tangerine') {
-            return;
-        }
-
         // Find all Recently Upgraded sections
         const upgradedSections = document.querySelectorAll('.recently-upgraded-section .file-details, .recently-upgraded-section .poster-hover');
 
@@ -207,15 +201,8 @@
 
     /**
      * Apply filename formatting to all filename elements on the page
-     * Only applies to Tangerine theme
      */
     function applyFilenameFormatting() {
-        // Check if we're using Tangerine theme
-        const currentTheme = document.body.getAttribute('data-theme');
-        if (currentTheme !== 'tangerine') {
-            return;
-        }
-
         // Find all filename elements
         const filenameElements = document.querySelectorAll('.file-details .filename, .poster-hover .filename');
 
@@ -244,69 +231,32 @@
     }
 
     /**
-     * Restore original filenames (used when switching back to classic theme)
-     */
-    function restoreOriginalFilenames() {
-        const filenameElements = document.querySelectorAll('.file-details .filename[data-original-filename], .poster-hover .filename[data-original-filename]');
-
-        filenameElements.forEach(element => {
-            const originalFilename = element.getAttribute('data-original-filename');
-            if (originalFilename) {
-                element.textContent = originalFilename;
-            }
-
-            // Remove combined attribute and restore hidden To elements
-            if (element.hasAttribute('data-combined')) {
-                element.removeAttribute('data-combined');
-            }
-        });
-
-        // Restore hidden "To" elements
-        const hiddenToElements = document.querySelectorAll('.filename[data-label="To:"][style*="display: none"]');
-        hiddenToElements.forEach(element => {
-            element.style.display = '';
-        });
-    }
-
-    /**
      * Initialize the formatter
      */
     function initializeFormatter() {
         // Apply formatting on initial load
         applyFilenameFormatting();
 
-        // Listen for theme changes
-        document.addEventListener('themeChanged', function(event) {
-            if (event.detail.theme === 'tangerine') {
-                applyFilenameFormatting();
-            } else {
-                restoreOriginalFilenames();
-            }
-        });
-
         // Create a MutationObserver to watch for dynamically added content
         const observer = new MutationObserver(function(mutations) {
-            const currentTheme = document.body.getAttribute('data-theme');
-            if (currentTheme === 'tangerine') {
-                mutations.forEach(function(mutation) {
-                    if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                        // Check if any added nodes contain filename elements
-                        mutation.addedNodes.forEach(function(node) {
-                            if (node.nodeType === 1) { // Element node
-                                // Check if the node itself or its children contain filename elements
-                                if (node.matches && (node.matches('.file-details .filename') || node.matches('.poster-hover .filename'))) {
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                    // Check if any added nodes contain filename elements
+                    mutation.addedNodes.forEach(function(node) {
+                        if (node.nodeType === 1) { // Element node
+                            // Check if the node itself or its children contain filename elements
+                            if (node.matches && (node.matches('.file-details .filename') || node.matches('.poster-hover .filename'))) {
+                                applyFilenameFormatting();
+                            } else if (node.querySelectorAll) {
+                                const filenameElements = node.querySelectorAll('.file-details .filename, .poster-hover .filename');
+                                if (filenameElements.length > 0) {
                                     applyFilenameFormatting();
-                                } else if (node.querySelectorAll) {
-                                    const filenameElements = node.querySelectorAll('.file-details .filename, .poster-hover .filename');
-                                    if (filenameElements.length > 0) {
-                                        applyFilenameFormatting();
-                                    }
                                 }
                             }
-                        });
-                    }
-                });
-            }
+                        }
+                    });
+                }
+            });
         });
 
         // Observe the statistics wrapper for changes
@@ -329,7 +279,6 @@
     // Export functions to global scope for debugging if needed
     window.tangerineFilenameFormatter = {
         format: formatFilename,
-        apply: applyFilenameFormatting,
-        restore: restoreOriginalFilenames
+        apply: applyFilenameFormatting
     };
 })();

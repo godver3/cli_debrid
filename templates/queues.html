@@ -4,21 +4,8 @@
 {% block head %}
 <!-- v9 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_queues.css') }}">
 <!-- Add Font Awesome if not already included in base.html -->
-<script>
-(function(){
-    var theme = localStorage.getItem('selectedTheme') || 'tangerine';
-    var link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = '/static/css/tangerine/tangerine_queues.css?v=10';
-    link.id = 'theme-tangerine-queues';
-    link.setAttribute('data-theme-css', 'tangerine');
-    if (theme === 'tangerine') {
-        document.head.appendChild(link);
-    }
-})();
-</script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_queues.css') }}">
 {% endblock %}
 
 {% block content %}

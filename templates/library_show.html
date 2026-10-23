@@ -5,41 +5,9 @@
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_show.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_trailer_modal.css') }}">
-<script>
-    // Dynamically load theme-specific CSS
-    (function() {
-        function getCurrentTheme() {
-            const savedTheme = localStorage.getItem('selectedTheme');
-            if (savedTheme) return savedTheme;
-            const metaTheme = document.querySelector('meta[name="theme"]');
-            return metaTheme ? metaTheme.getAttribute('content') : 'tangerine';
-        }
-
-        const theme = getCurrentTheme();
-
-        var scraperLink = document.createElement('link');
-        scraperLink.rel = 'stylesheet';
-        if (theme === 'tangerine') {
-            scraperLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}";
-        } else {
-            scraperLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}";
-        }
-        document.head.appendChild(scraperLink);
-
-        var mobileCssFile = 'css/tangerine/tangerine_scraper-mobile.css';
-        var mobileLink = document.createElement('link');
-        mobileLink.rel = 'stylesheet';
-        mobileLink.href = '{{ url_for("static", filename="") }}' + mobileCssFile + '?v={{ range(10000, 99999) | random }}';
-        document.head.appendChild(mobileLink);
-
-        if (theme === 'tangerine') {
-            var showLink = document.createElement('link');
-            showLink.rel = 'stylesheet';
-            showLink.href = "{{ url_for('static', filename='css/tangerine/tangerine_library_show.css') }}";
-            document.head.appendChild(showLink);
-        }
-    })();
-</script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_scraper-mobile.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_show.css') }}">
 <style>
     /* Cast section styles */
     .cast-section {

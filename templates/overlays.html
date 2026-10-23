@@ -2,34 +2,11 @@
 
 {% block title %}Overlays{% endblock %}
 
+{% block page_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_overlays.css') }}">
+{% endblock %}
+
 {% block head %}
-<script>
-    // Load theme-specific CSS using theme_switcher API
-    function loadOverlayCss() {
-        const theme = window.themeSwitcher?.getTheme() || 'tangerine';
-        if (theme === 'tangerine') {
-            const themeId = 'theme-tangerine-overlays';
-            if (!document.getElementById(themeId)) {
-                const link = document.createElement('link');
-                link.id = themeId;
-                link.rel = 'stylesheet';
-                link.href = "{{ url_for('static', filename='css/tangerine/tangerine_overlays.css') }}";
-                link.setAttribute('data-theme-css', 'tangerine');
-                document.head.appendChild(link);
-            }
-        }
-    }
-
-    // Load on DOMContentLoaded or immediately if already loaded
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', loadOverlayCss);
-    } else {
-        loadOverlayCss();
-    }
-
-    // Reload CSS when theme changes
-    document.addEventListener('themeChanged', loadOverlayCss);
-</script>
 <style>
 /* Inline styles for overlay management - Theme-aware */
 .overlays-container {

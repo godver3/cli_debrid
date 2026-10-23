@@ -32,23 +32,9 @@
     <meta name="msapplication-TileImage" content="{{ url_for('static', filename='mstile-144x144.png') }}">
     <meta name="theme-color" content="#007bff">
     
-    <!-- Prevent FOUC by hiding page until theme is applied -->
     <style>
         html {
             background-color: #1a1a1a;
-        }
-        body {
-            opacity: 0;
-            transition: opacity 0.1s ease-in;
-        }
-        /* Hide navigation items until theme is loaded to prevent unstyled flash */
-        body:not(.theme-ready) nav,
-        body:not(.theme-ready) #navMenu,
-        body:not(.theme-ready) header {
-            visibility: hidden !important;
-        }
-        html.theme-ready body {
-            opacity: 1;
         }
     </style>
 
@@ -78,21 +64,6 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_ai_butler.css') }}">
     {% endif %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_calendar_view.css') }}">
-
-    <!-- Load theme switcher early to prevent FOUC -->
-    <script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
-    <script>
-        // Mark page as ready to show after theme is applied
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function() {
-                document.documentElement.classList.add('theme-ready');
-                document.body.classList.add('theme-ready');
-            });
-        } else {
-            document.documentElement.classList.add('theme-ready');
-            document.body.classList.add('theme-ready');
-        }
-    </script>
 
     {% block head %}{% endblock %}
     
@@ -753,6 +724,8 @@
     </script>
     <!-- Last in <head> so it overrides tangerine_base.css and any page styles -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_mobile_nav.css') }}">
+    {# Page stylesheets that must override the shared ones above #}
+    {% block page_css %}{% endblock %}
 </head>
 
 <body data-theme="tangerine" class="tangerine-theme" data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}"
@@ -771,10 +744,6 @@
             document.body.classList.add('transitions-enabled');
         }, 100);
 
-        // Helper function to safely get current theme (prevents toLowerCase errors)
-        window.getCurrentTheme = function() {
-            return (document.body.getAttribute('data-theme') || 'tangerine').toLowerCase();
-        };
     </script>
 
     <!-- Tangerine Nav Redesign (hidden on classic via CSS) -->
@@ -1077,11 +1046,9 @@
         {% endif %}
 
         <script>
-        // Reset scroll to top on page load for tangerine theme (sticky nav gets cut off by browser scroll restore)
-        if (localStorage.getItem('selectedTheme') === 'tangerine') {
-            if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
-            window.scrollTo(0, 0);
-        }
+        // Reset scroll to top on page load (sticky nav gets cut off by browser scroll restore)
+        if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+        window.scrollTo(0, 0);
         // Tangerine nav JS (prefixed st_ to avoid conflicts)
         function stToggleDD(id) {
             document.querySelectorAll('.st-nav-item.open').forEach(function(el) {
@@ -1407,10 +1374,9 @@
                 // Run once immediately in case task_monitor.js already populated the DOM
                 stSyncFromDisplay();
 
-                // Replace "Interval:" with "Intvl:" in task display — tangerine only
+                // Replace "Interval:" with "Intvl:" in task display
                 (function() {
                     function shortenInterval(root) {
-                        if (!document.body.classList.contains('tangerine-theme')) return;
                         root.querySelectorAll('.task-timing span, .current-task-time').forEach(function(el) {
                             if (el.textContent.includes('Interval:')) {
                                 el.textContent = el.textContent.replace(/Interval:/g, 'Intvl:');

@@ -1,18 +1,7 @@
 {% extends "base.html" %}
 
 {% block head %}
-<script>
-    // Dynamically load the correct CSS based on theme cookie
-    (function() {
-        const theme = document.cookie.split('; ').find(row => row.startsWith('selectedTheme='))?.split('=')[1] || 'tangerine';
-        const cssFile = 'css/tangerine/tangerine_database.css';
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        // Add cache-busting parameter based on theme to force reload when theme changes
-        link.href = '{{ url_for("static", filename="") }}' + cssFile + '?v=' + theme + '_' + Date.now();
-        document.head.appendChild(link);
-    })();
-</script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_database.css') }}">
 <style>
 /* Prevent blue flash on filter buttons before tangerine CSS loads */
 #filter-sort .btn.btn-secondary,
@@ -616,8 +605,6 @@ async function fetchColumnValues(columnName) {
 }
 
 function renderCell(column, displayContent) {
-    const isTangerine = document.body.classList.contains('tangerine-theme');
-    if (!isTangerine) return `<td class="truncate" data-full-content="${displayContent}">${displayContent}</td>`;
     if (column === 'title') return `<td class="truncate db-col-title" data-full-content="${displayContent}">${displayContent}</td>`;
     if (column === 'imdb_id' && displayContent !== 'None') {
         return `<td class="truncate" data-full-content="${displayContent}"><span class="db-imdb-link">${displayContent}</span></td>`;
@@ -1083,24 +1070,22 @@ document.addEventListener('DOMContentLoaded', function() {
     if (sortColumnSelect) sortColumnSelect.addEventListener('change', handleSortChange);
     if (sortOrderSelect) sortOrderSelect.addEventListener('change', handleSortChange);
 
-    // Column header sort click (tangerine only)
-    if (document.body.classList.contains('tangerine-theme')) {
-        document.addEventListener('click', function(e) {
-            const th = e.target.closest('.table-container th[data-col]');
-            if (!th) return;
-            const col = th.getAttribute('data-col');
-            const sortColEl = document.getElementById('sort-column');
-            const sortOrdEl = document.getElementById('sort-order');
-            if (!sortColEl || !sortOrdEl) return;
-            if (sortColEl.value === col) {
-                sortOrdEl.value = sortOrdEl.value === 'asc' ? 'desc' : 'asc';
-            } else {
-                sortColEl.value = col;
-                sortOrdEl.value = 'asc';
-            }
-            handleSortChange();
-        });
-    }
+    // Column header sort click
+    document.addEventListener('click', function(e) {
+        const th = e.target.closest('.table-container th[data-col]');
+        if (!th) return;
+        const col = th.getAttribute('data-col');
+        const sortColEl = document.getElementById('sort-column');
+        const sortOrdEl = document.getElementById('sort-order');
+        if (!sortColEl || !sortOrdEl) return;
+        if (sortColEl.value === col) {
+            sortOrdEl.value = sortOrdEl.value === 'asc' ? 'desc' : 'asc';
+        } else {
+            sortColEl.value = col;
+            sortOrdEl.value = 'asc';
+        }
+        handleSortChange();
+    });
 
     // Filter form submit (no page reset)
         const filterForm = document.getElementById('filter-form');
@@ -1634,7 +1619,6 @@ document.addEventListener('DOMContentLoaded', function() {
         let tableHTML = '<table><thead><tr>';
         let columnIndex = 0;
 
-        const isTangerineTable = document.body.classList.contains('tangerine-theme');
         const activeSortCol = document.getElementById('sort-column')?.value || '';
         const activeSortOrder = document.getElementById('sort-order')?.value || 'asc';
 
@@ -1642,7 +1626,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const createHeader = (text, index, colKey = null) => {
             const width = savedWidths[index];
             const style = width ? ` style="width: ${width}px; min-width: ${width}px;"` : '';
-            if (isTangerineTable && colKey) {
+            if (colKey) {
                 const isActive = colKey === activeSortCol;
                 const activeClass = isActive ? ' class="db-sort-active"' : '';
                 const icon = isActive ? (activeSortOrder === 'desc' ? '▼' : '▲') : '⇅';
@@ -1651,16 +1635,11 @@ document.addEventListener('DOMContentLoaded', function() {
             return `<th${style}>${text}</th>`;
         };
 
-        // Unified column order: Select | # | (classic: Delete+Rescrape) | (tangerine: Actions)
+        // Unified column order: Select | # | Actions
         tableHTML += createHeader('Select', columnIndex++);
         tableHTML += `<th class="db-col-rownum">#</th>`;
         columnIndex++;
-        if (isTangerineTable) {
-            tableHTML += createHeader('Actions', columnIndex++);
-        } else {
-            tableHTML += createHeader('Delete', columnIndex++);
-            tableHTML += createHeader('Rescrape', columnIndex++);
-        }
+        tableHTML += createHeader('Actions', columnIndex++);
 
         selectedColumns.forEach(column => {
             let displayName = column;
@@ -1679,15 +1658,10 @@ document.addEventListener('DOMContentLoaded', function() {
             tableHTML += `<tr data-page="1">`;
             tableHTML += `<td><input type="checkbox" class="item-select" data-item-id="${item['id']}"></td>`;
             tableHTML += `<td class="db-row-num">${rowNumber}</td>`;
-            if (isTangerineTable) {
-                tableHTML += `<td><span style="display:flex;gap:4px;align-items:center">` +
-                    `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${item['id']}" title="Delete">${deleteSVG}</button>` +
-                    `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${item['id']}" title="Rescrape">${refreshSVG}</button>` +
-                    `</span></td>`;
-            } else {
-                tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`;
-                tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`;
-            }
+            tableHTML += `<td><span style="display:flex;gap:4px;align-items:center">` +
+                `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${item['id']}" title="Delete">${deleteSVG}</button>` +
+                `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${item['id']}" title="Rescrape">${refreshSVG}</button>` +
+                `</span></td>`;
             selectedColumns.forEach(column => {
                 let cellContentKey = column;
                 let displayContent;
@@ -1944,7 +1918,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     dbShowingCount.textContent = `Showing ${data.result_count} of ${data.total_count} results`;
                 }
                 // Tangerine: update top stat boxes to reflect current view
-                if (document.body.classList.contains('tangerine-theme') && typeof data.total_count !== "undefined") {
+                if (typeof data.total_count !== "undefined") {
                     const statVals = document.querySelectorAll('.db-stat-boxes .db-stat-val');
                     if (statVals[0]) statVals[0].textContent = data.total_count;
                     if (statVals[1]) statVals[1].textContent = data.unique_result_count;
@@ -3242,22 +3216,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
         function buildRowHTML(item, pageToLoad, index) {
             const rowNumber = (pageToLoad - 1) * CONFIG.ITEMS_PER_PAGE + index + 1;
-            const isTangerine = document.body.classList.contains('tangerine-theme');
             const deleteSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
             const refreshSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`;
-            // Column order matches Jinja thead: checkbox | # | (classic: delete+rescrape) | (tangerine: actions)
+            // Column order matches Jinja thead: checkbox | # | actions
             let html = '';
             html += `<td><input type="checkbox" class="item-select" data-item-id="${item.id}"></td>`;
             html += `<td class="db-row-num">${rowNumber}</td>`;
-            if (isTangerine) {
-                html += `<td><span style="display:flex;gap:4px;align-items:center">` +
-                    `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${item.id}" title="Delete">${deleteSVG}</button>` +
-                    `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${item.id}" title="Rescrape">${refreshSVG}</button>` +
-                    `</span></td>`;
-            } else {
-                html += `<td><button class="delete-item" data-item-id="${item.id}">X</button></td>`;
-                html += `<td><button class="rescrape-item" data-item-id="${item.id}">↻</button></td>`;
-            }
+            html += `<td><span style="display:flex;gap:4px;align-items:center">` +
+                `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${item.id}" title="Delete">${deleteSVG}</button>` +
+                `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${item.id}" title="Rescrape">${refreshSVG}</button>` +
+                `</span></td>`;
 
             const selectedColumns = {{ selected_columns | tojson }};
             selectedColumns.forEach(column => {
@@ -3335,11 +3303,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        // Tangerine toolbar button wiring
-        function isTangerine() {
-            return document.body.classList.contains('tangerine-theme');
-        }
-
+        // Toolbar button wiring
         function dbToggleColumnSelector() {
             const colSel = document.getElementById('column-selector');
             const toggleBtn = document.getElementById('toggle-column-selector');
@@ -3449,124 +3413,120 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         // ── Floating sticky header ──
-        if (document.body.classList.contains('tangerine-theme')) {
-            const NAV_HEIGHT = 50;
-            let fh = null;
-            let fhRAF = null;
+        const NAV_HEIGHT = 50;
+        let fh = null;
+        let fhRAF = null;
 
-            function dbBuildFloatHeader() {
-                const table = document.querySelector('.table-container table');
-                if (!table) return;
-                if (fh) { fh.remove(); fh = null; }
-                const realThead = table.querySelector('thead');
-                if (!realThead) return;
+        function dbBuildFloatHeader() {
+            const table = document.querySelector('.table-container table');
+            if (!table) return;
+            if (fh) { fh.remove(); fh = null; }
+            const realThead = table.querySelector('thead');
+            if (!realThead) return;
 
-                fh = document.createElement('div');
-                fh.id = 'db-float-header';
-                fh.style.cssText = 'position:fixed;top:' + NAV_HEIGHT + 'px;left:0;z-index:999;overflow:hidden;pointer-events:none;display:none;background:#222;border-bottom:1px solid #333;box-shadow:0 2px 8px rgba(0,0,0,0.4);';
-                const ct = document.createElement('table');
-                ct.style.cssText = 'border-collapse:separate;border-spacing:0;table-layout:fixed;margin:0;';
-                const ch = realThead.cloneNode(true);
-                ch.querySelectorAll('.column-resize-handle').forEach(el => el.remove());
-                ct.appendChild(ch);
-                fh.appendChild(ct);
-                document.body.appendChild(fh);
-                dbSyncFloatHeader();
+            fh = document.createElement('div');
+            fh.id = 'db-float-header';
+            fh.style.cssText = 'position:fixed;top:' + NAV_HEIGHT + 'px;left:0;z-index:999;overflow:hidden;pointer-events:none;display:none;background:#222;border-bottom:1px solid #333;box-shadow:0 2px 8px rgba(0,0,0,0.4);';
+            const ct = document.createElement('table');
+            ct.style.cssText = 'border-collapse:separate;border-spacing:0;table-layout:fixed;margin:0;';
+            const ch = realThead.cloneNode(true);
+            ch.querySelectorAll('.column-resize-handle').forEach(el => el.remove());
+            ct.appendChild(ch);
+            fh.appendChild(ct);
+            document.body.appendChild(fh);
+            dbSyncFloatHeader();
 
-                // Mirror horizontal scroll
-                const container = document.querySelector('.table-container');
-                if (container) {
-                    container.addEventListener('scroll', function() { if (fh) fh.scrollLeft = container.scrollLeft; });
-                }
+            // Mirror horizontal scroll
+            const container = document.querySelector('.table-container');
+            if (container) {
+                container.addEventListener('scroll', function() { if (fh) fh.scrollLeft = container.scrollLeft; });
             }
-
-            function dbSyncFloatHeader() {
-                if (!fh) return;
-                const container = document.querySelector('.table-container');
-                const table = document.querySelector('.table-container table');
-                if (!container || !table) return;
-                const cr = container.getBoundingClientRect();
-                fh.style.width = cr.width + 'px';
-                fh.style.left = cr.left + 'px';
-                fh.scrollLeft = container.scrollLeft;
-                fh.querySelector('table').style.width = table.offsetWidth + 'px';
-                const realThs = table.querySelectorAll('thead th');
-                const cloneThs = fh.querySelectorAll('thead th');
-                realThs.forEach((th, i) => {
-                    if (cloneThs[i]) {
-                        cloneThs[i].style.width = th.offsetWidth + 'px';
-                        cloneThs[i].style.minWidth = th.offsetWidth + 'px';
-                    }
-                });
-            }
-
-            window.addEventListener('scroll', function() {
-                if (!fh) return;
-                const container = document.querySelector('.table-container');
-                const table = document.querySelector('.table-container table');
-                if (!container || !table) return;
-                const cr = container.getBoundingClientRect();
-                const tr = table.getBoundingClientRect();
-                const theadH = table.querySelector('thead') ? table.querySelector('thead').offsetHeight : 40;
-                const show = cr.top < NAV_HEIGHT && tr.bottom > NAV_HEIGHT + theadH;
-                fh.style.display = show ? 'block' : 'none';
-                if (show) {
-                    if (fhRAF) cancelAnimationFrame(fhRAF);
-                    fhRAF = requestAnimationFrame(dbSyncFloatHeader);
-                }
-            }, { passive: true });
-
-            window.addEventListener('resize', function() { dbSyncFloatHeader(); }, { passive: true });
-
-            window.reinitFloatHeader = function() { dbBuildFloatHeader(); };
-
-            dbBuildFloatHeader();
         }
 
-        // Back to row 1 button (tangerine only)
-        if (document.body.classList.contains('tangerine-theme')) {
-            const dbBackTop = document.getElementById('db-back-top');
-            if (dbBackTop) {
-                // Show/hide based on scroll position
-                window.addEventListener('scroll', function() {
-                    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-                    dbBackTop.classList.toggle('db-back-top-visible', scrollTop > 300);
-                }, { passive: true });
+        function dbSyncFloatHeader() {
+            if (!fh) return;
+            const container = document.querySelector('.table-container');
+            const table = document.querySelector('.table-container table');
+            if (!container || !table) return;
+            const cr = container.getBoundingClientRect();
+            fh.style.width = cr.width + 'px';
+            fh.style.left = cr.left + 'px';
+            fh.scrollLeft = container.scrollLeft;
+            fh.querySelector('table').style.width = table.offsetWidth + 'px';
+            const realThs = table.querySelectorAll('thead th');
+            const cloneThs = fh.querySelectorAll('thead th');
+            realThs.forEach((th, i) => {
+                if (cloneThs[i]) {
+                    cloneThs[i].style.width = th.offsetWidth + 'px';
+                    cloneThs[i].style.minWidth = th.offsetWidth + 'px';
+                }
+            });
+        }
 
-                dbBackTop.addEventListener('click', async function() {
-                    if (minLoadedPage === 1) {
-                        // Page 1 is in DOM — jump to top instantly
-                        window.scrollTo({ top: 0, behavior: 'instant' });
-                    } else {
-                        // Page 1 has been windowed out — reload it
-                        dbBackTop.disabled = true;
-                        try {
-                            const data = await fetchPageData(1);
-                            if (data && data.items) {
-                                const tbody = document.querySelector('.table-container table tbody');
-                                if (!tbody) return;
-
-                                // Remove all existing rows
-                                tbody.innerHTML = '';
-
-                                // Reset windowing state
-                                window.resetInfiniteScroll(totalPages);
-
-                                // Build and insert page 1 rows
-                                const fragment = createPageFragment(data.items, 1);
-                                tbody.appendChild(fragment);
-
-                                window.scrollTo({ top: 0, behavior: 'instant' });
-
-                                if (typeof window.reinitFloatHeader === 'function') window.reinitFloatHeader();
-                                if (typeof window.initColumnResize === 'function') window.initColumnResize();
-                            }
-                        } finally {
-                            dbBackTop.disabled = false;
-                        }
-                    }
-                });
+        window.addEventListener('scroll', function() {
+            if (!fh) return;
+            const container = document.querySelector('.table-container');
+            const table = document.querySelector('.table-container table');
+            if (!container || !table) return;
+            const cr = container.getBoundingClientRect();
+            const tr = table.getBoundingClientRect();
+            const theadH = table.querySelector('thead') ? table.querySelector('thead').offsetHeight : 40;
+            const show = cr.top < NAV_HEIGHT && tr.bottom > NAV_HEIGHT + theadH;
+            fh.style.display = show ? 'block' : 'none';
+            if (show) {
+                if (fhRAF) cancelAnimationFrame(fhRAF);
+                fhRAF = requestAnimationFrame(dbSyncFloatHeader);
             }
+        }, { passive: true });
+
+        window.addEventListener('resize', function() { dbSyncFloatHeader(); }, { passive: true });
+
+        window.reinitFloatHeader = function() { dbBuildFloatHeader(); };
+
+        dbBuildFloatHeader();
+
+        // Back to row 1 button
+        const dbBackTop = document.getElementById('db-back-top');
+        if (dbBackTop) {
+            // Show/hide based on scroll position
+            window.addEventListener('scroll', function() {
+                const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+                dbBackTop.classList.toggle('db-back-top-visible', scrollTop > 300);
+            }, { passive: true });
+
+            dbBackTop.addEventListener('click', async function() {
+                if (minLoadedPage === 1) {
+                    // Page 1 is in DOM — jump to top instantly
+                    window.scrollTo({ top: 0, behavior: 'instant' });
+                } else {
+                    // Page 1 has been windowed out — reload it
+                    dbBackTop.disabled = true;
+                    try {
+                        const data = await fetchPageData(1);
+                        if (data && data.items) {
+                            const tbody = document.querySelector('.table-container table tbody');
+                            if (!tbody) return;
+
+                            // Remove all existing rows
+                            tbody.innerHTML = '';
+
+                            // Reset windowing state
+                            window.resetInfiniteScroll(totalPages);
+
+                            // Build and insert page 1 rows
+                            const fragment = createPageFragment(data.items, 1);
+                            tbody.appendChild(fragment);
+
+                            window.scrollTo({ top: 0, behavior: 'instant' });
+
+                            if (typeof window.reinitFloatHeader === 'function') window.reinitFloatHeader();
+                            if (typeof window.initColumnResize === 'function') window.initColumnResize();
+                        }
+                    } finally {
+                        dbBackTop.disabled = false;
+                    }
+                }
+            });
         }
 
     // Per-page selector
