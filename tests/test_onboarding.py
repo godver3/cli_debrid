@@ -104,6 +104,21 @@ class TestSaveRequiredSettings(unittest.TestCase):
         self.assertEqual(c['Plex']['url'], 'http://plex:32400')  # kept for watchlist sources
         self.assertEqual((c['TVDB']['api_key'], c['TMDB']['api_key']), ('tv', 'tm'))
 
+    def test_plex_mode_also_fills_the_symlink_plex_fields(self):
+        if _delegated_to_clean_interpreter(self):
+            return
+        routes = _routes()
+        fake = _FakeConfig({})
+        form = _Form({'use_debrid': 'on', 'use_usenet': 'off', 'debrid_api_key': 'k',
+                      'file_collection_management': 'Plex', 'plex_url': 'http://plex:32400/',
+                      'plex_token': 'ptok', 'movie_libraries': 'Movies, 4K Movies'})
+        with fake.patch(routes):
+            routes._save_required_settings(form)
+        fm, plex = fake.config['File Management'], fake.config['Plex']
+        self.assertEqual((fm['plex_url_for_symlink'], fm['plex_token_for_symlink']), ('http://plex:32400', 'ptok'))
+        self.assertEqual((plex['url'], plex['token'], plex['movie_libraries']),
+                         ('http://plex:32400', 'ptok', 'Movies,4K Movies'))
+
     def test_unknown_usenet_backend_falls_back_to_climount(self):
         if _delegated_to_clean_interpreter(self):
             return

@@ -69,8 +69,9 @@ def _save_required_settings(form):
         'file_collection_management': file_management_type,
         'original_files_path': original_files_path,
         'symlinked_files_path': form.get('symlinked_files_path', '/mnt/symlinked').strip(),
-        'plex_url_for_symlink': plex_url if is_symlink and media_server == 'plex' else '',
-        'plex_token_for_symlink': plex_token if is_symlink and media_server == 'plex' else '',
+        # Filled in Plex mode too: Debrid Manager's Plex views read these in either mode.
+        'plex_url_for_symlink': plex_url if media_server == 'plex' else '',
+        'plex_token_for_symlink': plex_token if media_server == 'plex' else '',
     })
     if is_symlink:
         file_management['media_server_type'] = 'jellyfin' if media_server == 'jellyfin' else 'plex'
