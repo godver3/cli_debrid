@@ -1,0 +1,34 @@
+{#
+  Shared UI components (styles in static/css/tangerine/tangerine_components.css).
+
+  {% from "macros/components.html" import modal %}
+  {% set my_footer %}
+      <button type="button" class="ui-btn ui-btn-secondary">Cancel</button>
+      <button type="button" class="ui-btn ui-btn-primary">Save</button>
+  {% endset %}
+  {% call modal('myModal', 'Title', footer=my_footer) %}
+      ...body...
+  {% endcall %}
+
+  `legacy` adds the old class names (<legacy>, <legacy>-overlay, -content,
+  -header, -close, -body, -footer) for scripts that still select by them.
+#}
+{% macro modal(id, title, footer=None, legacy=None) -%}
+<div id="{{ id }}" class="ui-modal{% if legacy %} {{ legacy }}{% endif %}" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="{{ id }}Title">
+    <div class="ui-modal-overlay{% if legacy %} {{ legacy }}-overlay{% endif %}"></div>
+    <div class="ui-modal-content{% if legacy %} {{ legacy }}-content{% endif %}">
+        <div class="ui-modal-header{% if legacy %} {{ legacy }}-header{% endif %}">
+            <h2 id="{{ id }}Title">{{ title }}</h2>
+            <button type="button" class="ui-modal-close{% if legacy %} {{ legacy }}-close{% endif %}" aria-label="Close">&times;</button>
+        </div>
+        <div class="ui-modal-body{% if legacy %} {{ legacy }}-body{% endif %}">
+            {{- caller() }}
+        </div>
+        {%- if footer %}
+        <div class="ui-modal-footer{% if legacy %} {{ legacy }}-footer{% endif %}">
+            {{- footer }}
+        </div>
+        {%- endif %}
+    </div>
+</div>
+{%- endmacro %}

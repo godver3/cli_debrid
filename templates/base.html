@@ -1,3 +1,4 @@
+{% from "macros/components.html" import modal -%}
 <!doctype html>
 <html lang="en">
 <head>
@@ -54,11 +55,10 @@
     </style>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_tokens.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_base.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_components.css') }}">
     <!-- <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_onboarding.css') }}"> -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_rate_limits.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_management.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library_settings_modal.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_discover_settings_modal.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_overlay_settings_modal.css') }}">
 
     {% if ai_butler_enabled and not is_onboarding %}
@@ -866,131 +866,110 @@
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- Library Settings Modal -->
-    <div id="librarySettingsModal" class="library-settings-modal" style="display: none;">
-        <div class="library-settings-modal-overlay"></div>
-        <div class="library-settings-modal-content">
-            <div class="library-settings-modal-header">
-                <h2>Library Manager Settings</h2>
-                <button class="library-settings-modal-close" aria-label="Close">&times;</button>
-            </div>
-            <div class="library-settings-modal-body">
-                <div class="library-setting-group">
+    {% set library_settings_footer %}
+                <button type="button" class="ui-btn ui-btn-secondary library-settings-btn-cancel">Cancel</button>
+                <button type="button" class="ui-btn ui-btn-primary library-settings-btn-save">Save Settings</button>
+            {% endset %}
+    {% call modal('librarySettingsModal', 'Library Manager Settings', footer=library_settings_footer, legacy='library-settings-modal') %}
+                <div class="ui-field">
                     <label for="autoGhostlistDeleted">
-                        <input type="checkbox" id="autoGhostlistDeleted" class="library-setting-checkbox">
+                        <input type="checkbox" id="autoGhostlistDeleted" class="ui-checkbox">
                         Ghostlist Mode
                     </label>
-                    <p class="library-setting-description">Add shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting content will mark it as ghosted in the database. When disabled, deleted content can be re-added by dynamic content sources.</p>
+                    <p class="ui-field-help">Add shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting content will mark it as ghosted in the database. When disabled, deleted content can be re-added by dynamic content sources.</p>
                 </div>
 
-                <div class="library-setting-group">
+                <div class="ui-field">
                     <label for="removeFromContentSources">
-                        <input type="checkbox" id="removeFromContentSources" class="library-setting-checkbox">
+                        <input type="checkbox" id="removeFromContentSources" class="ui-checkbox">
                         Remove From Content Sources
                     </label>
-                    <p class="library-setting-description">Remove items from content sources (Trakt lists, Overseerr requests, Plex Watchlist, etc.) during deletion. When enabled, the app will remove items from these sources to prevent them from being automatically re-added, but this makes deletion slower. When disabled, deletion is faster but the item might be re-added if it's still on your lists. <strong>Tip:</strong> Enable this when ghostlist mode is OFF. Disable this when ghostlist mode is ON (since ghostlist already prevents re-addition, and disabling makes deletion much faster).</p>
+                    <p class="ui-field-help">Remove items from content sources (Trakt lists, Overseerr requests, Plex Watchlist, etc.) during deletion. When enabled, the app will remove items from these sources to prevent them from being automatically re-added, but this makes deletion slower. When disabled, deletion is faster but the item might be re-added if it's still on your lists. <strong>Tip:</strong> Enable this when ghostlist mode is OFF. Disable this when ghostlist mode is ON (since ghostlist already prevents re-addition, and disabling makes deletion much faster).</p>
                 </div>
 
-                <div class="library-setting-group">
+                <div class="ui-field">
                     <label for="hideSeasonZero">
-                        <input type="checkbox" id="hideSeasonZero" class="library-setting-checkbox">
+                        <input type="checkbox" id="hideSeasonZero" class="ui-checkbox">
                         Hide Season 0
                     </label>
-                    <p class="library-setting-description">Hide Season 0 (Specials) tab and its episodes from the TV show page.</p>
+                    <p class="ui-field-help">Hide Season 0 (Specials) tab and its episodes from the TV show page.</p>
                 </div>
 
-                <div class="library-setting-group">
+                <div class="ui-field">
                     <label>Clear Artwork Cache</label>
-                    <p class="library-setting-description">Remove all cached posters and backdrops. Artwork will be re-downloaded from TMDB on next library load.</p>
-                    <button type="button" id="clearLibraryCacheBtn" class="library-settings-btn-clear-cache">Clear Cache</button>
+                    <p class="ui-field-help">Remove all cached posters and backdrops. Artwork will be re-downloaded from TMDB on next library load.</p>
+                    <button type="button" id="clearLibraryCacheBtn" class="ui-btn ui-btn-danger library-settings-btn-clear-cache">Clear Cache</button>
                 </div>
-            </div>
-            <div class="library-settings-modal-footer">
-                <button class="library-settings-btn-cancel">Cancel</button>
-                <button class="library-settings-btn-save">Save Settings</button>
-            </div>
-        </div>
-    </div>
+    {% endcall %}
 
     <!-- Discover Settings Modal -->
-    <div id="discoverSettingsModal" class="discover-settings-modal" style="display: none;">
-        <div class="discover-settings-modal-overlay"></div>
-        <div class="discover-settings-modal-content">
-            <div class="discover-settings-modal-header">
-                <h2>Discover Settings</h2>
-                <button class="discover-settings-modal-close" aria-label="Close">&times;</button>
-            </div>
-            <div class="discover-settings-modal-body">
-                <div class="discover-setting-group">
+    {% set discover_settings_footer %}
+                <button type="button" class="ui-btn ui-btn-secondary discover-settings-btn-cancel">Cancel</button>
+                <button type="button" class="ui-btn ui-btn-primary discover-settings-btn-save">Save Settings</button>
+            {% endset %}
+    {% call modal('discoverSettingsModal', 'Discover Settings', footer=discover_settings_footer, legacy='discover-settings-modal') %}
+                <div class="ui-field">
                     <label for="discoverHideNoRating">
-                        <input type="checkbox" id="discoverHideNoRating" class="discover-setting-checkbox">
+                        <input type="checkbox" id="discoverHideNoRating" class="ui-checkbox">
                         Hide items without rating
                     </label>
-                    <p class="discover-setting-description">Hide items that don't have a TMDB rating from discover results.</p>
+                    <p class="ui-field-help">Hide items that don't have a TMDB rating from discover results.</p>
                 </div>
 
-                <div class="discover-setting-group">
+                <div class="ui-field">
                     <label for="discoverHideNoPoster">
-                        <input type="checkbox" id="discoverHideNoPoster" class="discover-setting-checkbox">
+                        <input type="checkbox" id="discoverHideNoPoster" class="ui-checkbox">
                         Hide items without poster image
                     </label>
-                    <p class="discover-setting-description">Hide items that don't have a poster image from discover results.</p>
+                    <p class="ui-field-help">Hide items that don't have a poster image from discover results.</p>
                 </div>
 
-                <div class="discover-setting-group">
+                <div class="ui-field">
                     <label for="discoverOnlyShowMissing">
-                        <input type="checkbox" id="discoverOnlyShowMissing" class="discover-setting-checkbox">
+                        <input type="checkbox" id="discoverOnlyShowMissing" class="ui-checkbox">
                         Only show missing items
                     </label>
-                    <p class="discover-setting-description">Only show items that are not already in your library. Items will be filtered based on their database status.</p>
+                    <p class="ui-field-help">Only show items that are not already in your library. Items will be filtered based on their database status.</p>
                 </div>
 
-                <div class="discover-setting-group">
+                <div class="ui-field">
                     <label for="discoverHideSpecials">
-                        <input type="checkbox" id="discoverHideSpecials" class="discover-setting-checkbox">
+                        <input type="checkbox" id="discoverHideSpecials" class="ui-checkbox">
                         Hide TV specials (Season 0)
                     </label>
-                    <p class="discover-setting-description">Hide Season 0 (specials) from the season list on TV show detail pages.</p>
+                    <p class="ui-field-help">Hide Season 0 (specials) from the season list on TV show detail pages.</p>
                 </div>
 
-                <div class="discover-setting-group">
+                <div class="ui-field">
                     <label for="discoverEpisodeView">TV Show Episode View</label>
-                    <select id="discoverEpisodeView" class="discover-setting-select">
+                    <select id="discoverEpisodeView" class="ui-select">
                         <option value="discover">Discover</option>
                         <option value="add_media">Classic (Add Media)</option>
                     </select>
-                    <p class="discover-setting-description">Choose where to route when clicking on TV shows not in your library. Movies always go to Discover details page.</p>
+                    <p class="ui-field-help">Choose where to route when clicking on TV shows not in your library. Movies always go to Discover details page.</p>
                 </div>
-            </div>
-            <div class="discover-settings-modal-footer">
-                <button class="discover-settings-btn-cancel">Cancel</button>
-                <button class="discover-settings-btn-save">Save Settings</button>
-            </div>
-        </div>
-    </div>
+    {% endcall %}
 
     <!-- Overlay Settings Modal -->
-    <div id="overlaySettingsModal" class="overlay-settings-modal" style="display: none;">
-        <div class="overlay-settings-modal-overlay"></div>
-        <div class="overlay-settings-modal-content">
-            <div class="overlay-settings-modal-header">
-                <h2>Overlay Settings</h2>
-                <button class="overlay-settings-modal-close" aria-label="Close">&times;</button>
-            </div>
-            <div class="overlay-settings-modal-body">
-                <div class="overlay-setting-group">
+    {% set overlay_settings_footer %}
+                <button type="button" class="ui-btn ui-btn-secondary overlay-settings-btn-cancel">Cancel</button>
+                <button type="button" class="ui-btn ui-btn-primary overlay-settings-btn-save">Save Settings</button>
+            {% endset %}
+    {% call modal('overlaySettingsModal', 'Overlay Settings', footer=overlay_settings_footer, legacy='overlay-settings-modal') %}
+                <div class="ui-field">
                     <label for="overlaySettingsEnabled">
-                        <input type="checkbox" id="overlaySettingsEnabled" class="overlay-setting-checkbox">
+                        <input type="checkbox" id="overlaySettingsEnabled" class="ui-checkbox">
                         Enable Overlay System
                     </label>
-                    <p class="overlay-setting-description">Enable the poster overlay system. When enabled, overlay sync tasks will automatically run and apply media info badges to Plex posters. Requires Plex URL and token to be configured.</p>
+                    <p class="ui-field-help">Enable the poster overlay system. When enabled, overlay sync tasks will automatically run and apply media info badges to Plex posters. Requires Plex URL and token to be configured.</p>
                 </div>
 
-                <div class="overlay-setting-group">
+                <div class="ui-field">
                     <label for="overlaySettingsTextlessPoster">
-                        <input type="checkbox" id="overlaySettingsTextlessPoster" class="overlay-setting-checkbox">
+                        <input type="checkbox" id="overlaySettingsTextlessPoster" class="ui-checkbox">
                         Enable Textless / Clean Posters
                     </label>
-                    <p class="overlay-setting-description">
+                    <p class="ui-field-help">
                         When enabled, cli_debrid will fetch a language-neutral (textless) poster from TMDB
                         as the base image — these posters have no baked-in title text so the title logo
                         badge can render it cleanly at your chosen position.
@@ -1002,61 +981,27 @@
                     </p>
                 </div>
 
-                <div class="overlay-setting-group">
-                    <label for="overlaySettingsTextlessPoster">
-                        <input type="checkbox" id="overlaySettingsTextlessPoster" class="overlay-setting-checkbox">
-                        Enable Textless / Clean Posters
-                    </label>
-                    <p class="overlay-setting-description">
-                        When enabled, cli_debrid will fetch a language-neutral (textless) poster from TMDB
-                        as the base image — these posters have no baked-in title text so the title logo
-                        badge can render it cleanly at your chosen position.
-                        Use the <strong>Title Logo</strong> badge in the layout editor to add the show or movie
-                        title as a transparent clearlogo PNG (with text fallback if no clearlogo exists).
-                        The Title Logo badge is only available in the layout editor when this setting is on.
-                        <br><strong>Note:</strong> Not all titles have textless posters on TMDB.
-                        If none is found, the standard English poster is used as fallback.
-                    </p>
-                </div>
-
-                <div class="overlay-setting-group">
-                    <label for="overlaySettingsTextlessPoster">
-                        <input type="checkbox" id="overlaySettingsTextlessPoster" class="overlay-setting-checkbox">
-                        Enable Textless / Clean Posters
-                    </label>
-                    <p class="overlay-setting-description">
-                        When enabled, cli_debrid will fetch a language-neutral (textless) poster from TMDB
-                        as the base image — these posters have no baked-in title text so the title logo
-                        badge can render it cleanly at your chosen position.
-                        Use the <strong>Title Logo</strong> badge in the layout editor to add the show or movie
-                        title as a transparent clearlogo PNG (with text fallback if no clearlogo exists).
-                        The Title Logo badge is only available in the layout editor when this setting is on.
-                        <br><strong>Note:</strong> Not all titles have textless posters on TMDB.
-                        If none is found, the standard English poster is used as fallback.
-                    </p>
-                </div>
-
-                <div class="overlay-setting-group">
+                <div class="ui-field">
                     <label for="overlaySettingsMediaDataPath">Media Server Data Path</label>
-                    <input type="text" id="overlaySettingsMediaDataPath" class="overlay-setting-input" placeholder="/config/Library/Application Support/Plex Media Server">
-                    <p class="overlay-setting-description">Path to the Plex Media Server data directory. Required for the poster cleanup task to delete old uploaded overlay versions directly from the filesystem.</p>
+                    <input type="text" id="overlaySettingsMediaDataPath" class="ui-input" placeholder="/config/Library/Application Support/Plex Media Server">
+                    <p class="ui-field-help">Path to the Plex Media Server data directory. Required for the poster cleanup task to delete old uploaded overlay versions directly from the filesystem.</p>
                 </div>
 
-                <div class="overlay-setting-group">
+                <div class="ui-field">
                     <label for="overlaySettingsContentCheckDays">Ratings Check Interval (days)</label>
-                    <input type="number" id="overlaySettingsContentCheckDays" class="overlay-setting-input" min="0" step="1" placeholder="7">
-                    <p class="overlay-setting-description">How often to re-fetch ratings (IMDb/TMDB/Trakt/RT) and show status to detect changes. Set to 0 to check every sync. Version count changes are always checked every sync. Default: 7.</p>
+                    <input type="number" id="overlaySettingsContentCheckDays" class="ui-input" min="0" step="1" placeholder="7">
+                    <p class="ui-field-help">How often to re-fetch ratings (IMDb/TMDB/Trakt/RT) and show status to detect changes. Set to 0 to check every sync. Version count changes are always checked every sync. Default: 7.</p>
                 </div>
 
-                <div class="overlay-setting-group">
+                <div class="ui-field">
                     <label for="overlaySettingsSyncItemsPerRun">Items Per Sync Run</label>
-                    <input type="number" id="overlaySettingsSyncItemsPerRun" class="overlay-setting-input" min="10" step="10" placeholder="200">
-                    <p class="overlay-setting-description">Maximum number of shows/movies processed per overlay sync run. Higher values clear backlogs faster but each run takes longer (~1s per item). Default: 200.</p>
+                    <input type="number" id="overlaySettingsSyncItemsPerRun" class="ui-input" min="10" step="10" placeholder="200">
+                    <p class="ui-field-help">Maximum number of shows/movies processed per overlay sync run. Higher values clear backlogs faster but each run takes longer (~1s per item). Default: 200.</p>
                 </div>
 
-                <div class="overlay-setting-group overlay-setting-group--danger">
+                <div class="ui-field overlay-setting-group--danger">
                     <label class="overlay-setting-label--danger">Poster Reset</label>
-                    <p class="overlay-setting-description">Reset posters to clean originals from TMDB. Use this when migrating from another overlay app (Kometa, PMM, etc.) or to clear any foreign overlays. Overlays will <strong>not</strong> be re-applied automatically — use Generate All when ready.</p>
+                    <p class="ui-field-help">Reset posters to clean originals from TMDB. Use this when migrating from another overlay app (Kometa, PMM, etc.) or to clear any foreign overlays. Overlays will <strong>not</strong> be re-applied automatically — use Generate All when ready.</p>
                     <div class="overlay-reset-actions">
                         <button type="button" class="overlay-reset-btn overlay-reset-btn--all" onclick="openPosterResetConfirm()">
                             Reset All Posters
@@ -1077,13 +1022,7 @@
                         <button type="button" class="overlay-reset-cancel-btn" onclick="cancelPosterReset()">Cancel</button>
                     </div>
                 </div>
-            </div>
-            <div class="overlay-settings-modal-footer">
-                <button class="overlay-settings-btn-cancel">Cancel</button>
-                <button class="overlay-settings-btn-save">Save Settings</button>
-            </div>
-        </div>
-    </div>
+    {% endcall %}
 
     {% block scripts %}{% endblock %}
     <script>

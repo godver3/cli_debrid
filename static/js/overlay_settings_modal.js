@@ -7,19 +7,6 @@
 (function() {
     'use strict';
 
-    // Ensure the modal stylesheet is present (base.html normally links it).
-    function loadThemeCSS() {
-        if (!document.querySelector('link[href*="tangerine_overlay_settings_modal.css"]')) {
-            const link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = '/static/css/tangerine/tangerine_overlay_settings_modal.css';
-            document.head.appendChild(link);
-        }
-    }
-
-    // Load CSS immediately
-    loadThemeCSS();
-
     let modal, overlay, closeBtn, cancelBtn, saveBtn;
     let overlaysEnabledInput, mediaDataPathInput, contentCheckDaysInput, syncItemsPerRunInput;
     let textlessPosterInput;
@@ -41,8 +28,6 @@
         mediaDataPathInput = document.getElementById('overlaySettingsMediaDataPath');
         contentCheckDaysInput = document.getElementById('overlaySettingsContentCheckDays');
         syncItemsPerRunInput = document.getElementById('overlaySettingsSyncItemsPerRun');
-        textlessPosterInput = document.getElementById('overlaySettingsTextlessPoster');
-        textlessPosterInput = document.getElementById('overlaySettingsTextlessPoster');
         textlessPosterInput = document.getElementById('overlaySettingsTextlessPoster');
 
         return true;
@@ -70,14 +55,6 @@
 
             if (overlaysEnabledInput) {
                 overlaysEnabledInput.checked = overlaySettings.overlays_enabled || false;
-            }
-
-            if (textlessPosterInput) {
-                textlessPosterInput.checked = overlaySettings.textless_posters || false;
-            }
-
-            if (textlessPosterInput) {
-                textlessPosterInput.checked = overlaySettings.textless_posters || false;
             }
 
             if (textlessPosterInput) {

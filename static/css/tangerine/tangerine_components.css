@@ -1,0 +1,291 @@
+/*
+ * Shared UI components, built on tangerine_tokens.css. Loaded after
+ * tangerine_base.css (and before page stylesheets), so these win over the
+ * base element rules and pages can still adjust them.
+ *
+ * Use these instead of writing page-specific copies. Markup for the modal
+ * shell comes from the `modal` macro in templates/macros/components.html.
+ *
+ *   .ui-modal      dialog shell: overlay, content, header, body, footer
+ *   .ui-field      a labelled setting: label, control, .ui-field-help
+ *   .ui-input / .ui-select / .ui-checkbox
+ *   .ui-btn        + .ui-btn-primary / -secondary / -danger, .ui-btn-sm
+ *   .ui-pill       + .ui-pill-accent / -green / -red / -yellow / -blue
+ *   .ui-card
+ */
+
+/* ── Modal ──────────────────────────────────────────────────────────────── */
+.ui-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: ui-fade-in 0.2s ease-out;
+}
+
+.ui-modal-overlay {
+    position: absolute;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+}
+
+.ui-modal-content {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 90%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow: hidden;
+    background-color: var(--tng-surface);
+    border: 1px solid var(--tng-border-2);
+    border-radius: var(--tng-radius-lg);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    animation: ui-slide-up 0.25s ease-out;
+}
+
+.ui-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--tng-border);
+}
+
+/* The accent bar comes from tangerine_base.css's h2::before */
+.ui-modal-header h2 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--tng-text);
+}
+
+.ui-modal-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--tng-radius);
+    font-size: 1.6rem;
+    line-height: 1;
+    color: var(--tng-text-2);
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.ui-modal-close:hover {
+    background-color: var(--tng-surface-3);
+    color: var(--tng-text);
+}
+
+.ui-modal-body {
+    flex: 1;
+    padding: 20px 24px;
+    overflow-y: auto;
+}
+
+.ui-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 14px 24px;
+    border-top: 1px solid var(--tng-border);
+}
+
+.ui-modal-body::-webkit-scrollbar { width: 8px; }
+.ui-modal-body::-webkit-scrollbar-track { background: var(--tng-surface); }
+.ui-modal-body::-webkit-scrollbar-thumb { background: var(--tng-border-2); border-radius: 4px; }
+
+@keyframes ui-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes ui-slide-up {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+/* ── Form fields ────────────────────────────────────────────────────────── */
+.ui-field {
+    margin-bottom: 22px;
+}
+
+.ui-field:last-child {
+    margin-bottom: 0;
+}
+
+.ui-field > label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--tng-text);
+}
+
+.ui-field > label:has(.ui-checkbox) {
+    cursor: pointer;
+}
+
+.ui-field-help {
+    margin: 6px 0;
+    font-size: 0.83rem;
+    line-height: 1.5;
+    color: var(--tng-text-2);
+}
+
+/* element-qualified to outrank tangerine_base.css's input[type=...] rules */
+input.ui-input,
+select.ui-select,
+textarea.ui-input {
+    width: 100%;
+    padding: 9px 12px;
+    background-color: var(--tng-surface-2);
+    border: 1px solid var(--tng-border-2);
+    border-radius: var(--tng-radius);
+    color: var(--tng-text);
+    font-size: 0.92rem;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+input.ui-input:focus,
+select.ui-select:focus,
+textarea.ui-input:focus {
+    outline: none;
+    border-color: var(--tng-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tng-accent) 15%, transparent);
+}
+
+.ui-field-help + .ui-btn {
+    margin-top: 6px;
+}
+
+.ui-checkbox {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    flex-shrink: 0;
+    cursor: pointer;
+    accent-color: var(--tng-accent);
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+.ui-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 9px 18px;
+    font-family: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    border-radius: var(--tng-radius);
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.ui-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.ui-btn-sm {
+    padding: 5px 11px;
+    font-size: 0.8rem;
+}
+
+.ui-btn-primary {
+    background-color: var(--tng-accent);
+    color: #fff;
+}
+
+.ui-btn-primary:hover:not(:disabled) {
+    background-color: var(--tng-accent-hover);
+}
+
+.ui-btn-secondary {
+    background-color: transparent;
+    border-color: var(--tng-border-2);
+    color: var(--tng-text-2);
+}
+
+.ui-btn-secondary:hover:not(:disabled) {
+    background-color: var(--tng-surface-3);
+    color: var(--tng-text);
+}
+
+.ui-btn-danger {
+    background-color: color-mix(in srgb, var(--tng-red) 12%, transparent);
+    border-color: color-mix(in srgb, var(--tng-red) 50%, transparent);
+    color: var(--tng-red-light);
+}
+
+.ui-btn-danger:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--tng-red) 25%, transparent);
+    border-color: var(--tng-red);
+}
+
+/* ── Pills ──────────────────────────────────────────────────────────────── */
+.ui-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border: 1px solid var(--tng-border-2);
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.5;
+    color: var(--tng-text-2);
+    white-space: nowrap;
+}
+
+.ui-pill-accent { border-color: color-mix(in srgb, var(--tng-accent) 50%, transparent); color: var(--tng-accent); }
+.ui-pill-green { border-color: color-mix(in srgb, var(--tng-green) 50%, transparent); color: var(--tng-green-light); }
+.ui-pill-red { border-color: color-mix(in srgb, var(--tng-red) 50%, transparent); color: var(--tng-red-light); }
+.ui-pill-yellow { border-color: color-mix(in srgb, var(--tng-yellow) 50%, transparent); color: var(--tng-yellow-light); }
+.ui-pill-blue { border-color: color-mix(in srgb, var(--tng-blue) 50%, transparent); color: var(--tng-blue-light); }
+
+/* ── Card ───────────────────────────────────────────────────────────────── */
+.ui-card {
+    padding: 16px 18px;
+    background-color: var(--tng-surface);
+    border: 1px solid var(--tng-border);
+    border-radius: var(--tng-radius-lg);
+}
+
+/* ── Phone width ────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .ui-modal-content {
+        width: 95%;
+        max-width: none;
+        max-height: 85vh;
+    }
+
+    .ui-modal-header,
+    .ui-modal-footer {
+        padding-left: 18px;
+        padding-right: 18px;
+    }
+
+    .ui-modal-body {
+        padding: 18px;
+    }
+
+    .ui-modal-footer .ui-btn {
+        flex: 1;
+    }
+}

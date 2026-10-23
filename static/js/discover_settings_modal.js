@@ -7,19 +7,6 @@
 (function() {
     'use strict';
 
-    // Ensure the modal stylesheet is present (base.html normally links it).
-    function loadThemeCSS() {
-        if (!document.querySelector('link[href*="tangerine_discover_settings_modal.css"]')) {
-            const link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = '/static/css/tangerine/tangerine_discover_settings_modal.css';
-            document.head.appendChild(link);
-        }
-    }
-
-    // Load CSS immediately
-    loadThemeCSS();
-
     let modal, overlay, closeBtn, cancelBtn, saveBtn;
     let hideNoRatingInput, hideNoPosterInput, onlyShowMissingInput, discoverEpisodeViewSelect, hideSpecialsInput;
     let currentSettings = null;
