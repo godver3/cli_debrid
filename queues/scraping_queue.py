@@ -2011,10 +2011,11 @@ class ScrapingQueue:
             logging.warning(f"No results found for {item_identifier}. Checking wake count limits before moving to Sleeping or Final_Check/Blacklisted.")
             # Get wake count settings for this item's version
             version_settings = get_setting('Scraping', 'versions', {}).get(item.get('version', ''), {})
-            # Fetch the global default wake limit, using 5 as an ultimate fallback
-            global_default_wake_limit = int(get_setting("Queue", "wake_limit", default=5))
-            # Use the version-specific limit if available, otherwise use the global default
-            max_wake_count = version_settings.get('max_wake_count', global_default_wake_limit)
+            # Same rule the Sleeping queue applies (version wake_count, -1 = never sleep,
+            # else global Wake Limit). This used to read a nonexistent 'max_wake_count'
+            # key with a fallback of 5, so version limits above the global one were capped.
+            from queues.sleeping_queue import get_global_wake_limit, resolve_wake_limit
+            max_wake_count = resolve_wake_limit(version_settings, get_global_wake_limit())
 
             # Get current wake count from DB
             from database import get_wake_count

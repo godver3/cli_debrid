@@ -953,6 +953,7 @@ def get_task_timings():
         'task_overlay_sync',
         'task_overlay_cleanup',
         'task_sync_plex_labels',
+        'task_process_plex_reported_issues',
         'task_process_bulk_subtitles',
         'task_backup_debrid',
         'task_cleanup_debrid',
@@ -1161,6 +1162,17 @@ def disable_task():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+def _sync_setting_backed_tasks(runner):
+    """Write the setting behind each setting-backed task to match its Task Manager toggle."""
+    from queues.run_program import SETTING_BACKED_TASKS
+    from utilities.settings import set_setting
+    for task_name, (section, key) in SETTING_BACKED_TASKS.items():
+        enabled = task_name in runner.enabled_tasks
+        if bool(get_setting(section, key, False)) != enabled:
+            set_setting(section, key, enabled)
+            logging.info(f"Set {section} > {key} to {enabled} to match task '{task_name}'")
+
+
 def _persist_task_toggles_from_runner(runner):
     """Write ProgramRunner's live enabled_tasks state to task_toggles.json.
 
@@ -1221,6 +1233,7 @@ def _persist_task_toggles_from_runner(runner):
         with open(toggles_file_path, 'w') as f:
             json.dump(data_to_save, f, indent=4)
         logging.info(f"Live task toggle states saved to {toggles_file_path}")
+        _sync_setting_backed_tasks(runner)
         return True, None
     except OSError as e:
         logging.error(f"Error writing task toggles file: {str(e)}")

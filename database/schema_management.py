@@ -6,6 +6,7 @@ from .upgrade_hub_activity import create_upgrade_hub_activity_table
 from .nzb_repair_activity import create_nzb_repair_activity_table
 from .nzb_playback_repair import create_nzb_playback_repair_table
 from .scraper_grabs import create_scraper_grabs_table
+from .plex_reported_issues import create_plex_reported_issues_table
 import sqlite3
 import os
 
@@ -18,6 +19,7 @@ def create_database():
     create_nzb_repair_activity_table()
     create_nzb_playback_repair_table()
     create_scraper_grabs_table()
+    create_plex_reported_issues_table()
     #TODO: create_upgrading_table()
 
     # Add statistics-specific indexes
@@ -888,6 +890,7 @@ def verify_database():
     # playback table solely there leaves upgraded databases without it.
     create_nzb_playback_repair_table()
     create_scraper_grabs_table()
+    create_plex_reported_issues_table()
 
     # Ensure overlay_removal_queue table exists (handles post-delete without restart)
     try:

@@ -1,50 +1,343 @@
 {
-  "helpData": {
-    "Adding": "Cycle through all content returned from Scraping and try to add to Debrid. Cache status is followed based on settings. Full = add best result, Hybrid = add best cached result and fallback to uncached, None = add only cached. On failure of all results, move to Blacklisted. <br><br> <b>ACTION</b>: Process any items in Adding Queue.",
-    "Blacklisted": "Check if any items qualify for unblacklisting if enabled, otherwise no action. <br><br> <b>ACTION</b>: Process any items in Blacklisted Queue.",
-    "Final Scrape": "If Blacklist Final Scrape Delay Hours is set, wake items in this queue for one final scrape before Blacklisting. <br><br> <b>ACTION</b>: Process any items in Final Scrape Queue.",
-    "Checking": "Check if item is present in Plex (if using Plex library), or on disk (if using Symlinked library). If Plex, move to Collected, if Symlinked, symlink the item and perform post-processing. <br><br> <b>ACTION</b>: Process any items in Checking Queue.",
-    "Pending Uncached": "If over max active downloading file count in Debrid, wait in Pending Uncached queue until space becomes available. <br><br> <b>ACTION</b>: Process any items in Pending Uncached Queue.",
-    "Scraping": "Perform series of scrapes using all scrapers for item. If multiple items present in Wanted or Scraping state seek Season or Series packs. Results passed to Adding queue. <br><br> <b>ACTION</b>: Process any items in Scraping Queue.",
-    "Sleeping": "If item not found during Scraping, and item is less than 7 days old, sleep for 30 minutes and retry. Default 24 attempts over 12 hours (30 minutes each). If not found, move to Blacklisted. <br><br> <b>ACTION</b>: Process any items in Sleeping Queue.",
-    "Unreleased": "Staging queue for items that are not yet released. <br><br> <b>ACTION</b>: Process any items in Unreleased Queue.",
-    "Upgrading": "Items with a release date within 7 days are marked for upgrading. Hourly re-scrapes over 24 hours to find a better version if enabled. <br><br> <b>ACTION</b>: Process any items in Upgrading Queue.",
-    "Wanted": "Items that will be released within the next 24 hours. Additionally staging queue for Scraping queue if too many items in Scraping queue. <br><br> <b>ACTION</b>: Process any items in Wanted Queue.",
-    "Pre-Release": "Items that are within the pre-release period. <br><br> <b>ACTION</b>: Process any items in Pre-Release Queue.",
-    "Analyze Media Files": "Analyze 200 media files per run to verify playability. <br><br> <b>ACTION</b>: Process 200 media files in rclone mount using ffprobe. If found to be unplayable check if item is the last of its version, and if so move back to Wanted, otherwise move to Blacklisted.",
-    "Check Database Health": "Check if media_items.db is healthy. <br><br> <b>ACTION</b>: Check if media_items.db is healthy.",
-    "Check Plex Files Plex library only": "If Plex File Discovery is enabled, check if files have appeared in the rclone mount, and if so call an update in Plex for those files. [Plex Library Only] <br><br> <b>ACTION</b>: Check if files have appeared in the rclone mount, and if so call an update in Plex for those files.",
-    "Check Service Connectivity": "Check if Plex/Jellyfin and your Debrid/Usenet provider are reachable. If not, pause the queue until they are reachable again. If Trakt is configured, its authorization is also checked, but Trakt issues are logged only and never pause the queue since Trakt is an optional integration. <br><br> <b>ACTION</b>: Perform connectivity check for Plex/Jellyfin and your provider (and Trakt authorization, if configured).",
-    "Check Trakt Early Releases": "Check if any items have been flagged for early release in Trakt based on popular lists. <br><br> <b>ACTION</b>: Check if any items have been flagged for early release and if so flag them in the database. This flag is used to bypass the Wanted/Unreleased queues.",
-    "Get Plex Watch History": "Get watch history from Plex. Used to prevent addition of items that have been watched. <br><br> <b>ACTION</b>: Get watch history from Plex.",
-    "Heartbeat": "Check if the service is running. You probably don't need to click this. <br><br> <b>ACTION</b>: Check if the service is running.",
-    "Manual Plex Full Scan": "Performs a full scan of the Plex library and marks all items as Collected in the database. Used for those with a hybrid symlink/Plex library. <br><br> <b>ACTION</b>: Perform a full scan of the Plex library and mark all items as Collected in the database.",
-    "Plex Full Scan Plex library only": "Performs a full scan of the Plex library and marks all items as Collected in the database. Part of regular Plex library operations. [Plex Library Only] <br><br> <b>ACTION</b>: Perform a full scan of the Plex library and mark all items as Collected in the database.",
-    "Precompute Airing Shows": "Checks airing times for upcoming shows and ensures that move from Wanted to Scraping happens on time. <br><br> <b>ACTION</b>: Check airing times for upcoming shows.",
-    "Process Bulk Subtitles": "Processes 200 media items at a time. Tries to find subtitles for items that don't currently have an associated SRT file and have not yet been processed. <br><br> <b>ACTION</b>: Process 200 media items at a time.",
-    "Process Standalone Plex Removals": "If enabled, removes items that have been queued for removal from Plex. <br><br> <b>ACTION</b>: Process any items in Standalone Plex Removals Queue.",
-    "Reconcile Queues": "Clear items from the Wanted queue that are already present in a Collected state for the associated version. <br><br> <b>ACTION</b>: Reconcile queue items.",
-    "Refresh Download Stats": "Updates download stats for the home page from Debrid service. <br><br> <b>ACTION</b>: Refresh download stats.",
-    "Refresh Plex Tokens": "Refreshes Plex tokens for the service. <br><br> <b>ACTION</b>: Refresh Plex tokens.",
-    "Refresh Release Dates": "Updates release dates for all items in an Unreleased state. Ensures that if changes have occurred, the release date is updated. <br><br> <b>ACTION</b>: Refresh release dates.",
-    "Regulate System Load": "Regulates queue speed based on CPU and RAM load. <br><br> <b>ACTION</b>: Regulate system load.",
-    "Run Library Maintenance": "Run library maintenance tasks. For Plex libraries, checks that all items listed in the Plex library are also present on disk, and if not moves back to a Wanted state. For Symlinked libraries, checks that symlinks are not broken, and processes any orphan symlinks in the symlink folder. <br><br> <b>ACTION</b>: Run library maintenance tasks.",
-    "Send Notifications": "Send any enabled notifications that have been queued. <br><br> <b>ACTION</b>: Send any enabled notifications.",
-    "Sync Time": "Sync time with NTP server. <br><br> <b>ACTION</b>: Sync time with NTP server.",
-    "Update Movie IDs": "Update movie IDs for all items in the database. Not generally recommended or needed. <br><br> <b>ACTION</b>: Update movie IDs for all items in the database.",
-    "Update Movie Titles": "Update movie titles for all items in the database. Not generally recommended or needed. <br><br> <b>ACTION</b>: Update movie titles for all items in the database.",
-    "Update Queue Views": "Syncs queue views from backend to frontend. <br><br> <b>ACTION</b>: Sync queue views from backend to frontend.",
-    "Update Show IDs": "Update show IDs for all items in the database. Not generally recommended or needed. <br><br> <b>ACTION</b>: Update show IDs for all items in the database.",
-    "Update Show Titles": "Update show titles for all items in the database. Not generally recommended or needed. <br><br> <b>ACTION</b>: Update show titles for all items in the database.",
-    "Update TV Show Status": "Update TV show status for all items in the database. Not generally recommended or needed. <br><br> <b>ACTION</b>: Update TV show status for all items in the database.",
-    "Verify Plex Removals": "If enabled, verifies that items have been removed from Plex. <br><br> <b>ACTION</b>: Verify that items have been removed from Plex.",
-    "Verify Symlinked Files Symlink library only": "Verifies that symlinks have been successfully added to Plex library. Makes 10 attempts before assuming success. <br><br> <b>ACTION</b>: Process verification queue.",
-    "Backup Database": "Creates a backup of the media_items.db database. Only runs when the system is idle to avoid locking the database during active processing. <br><br> <b>ACTION</b>: Create a backup of media_items.db.",
-    "Refresh Debrid Library Size": "Refreshes the cached Debrid library size shown on the home page. <br><br> <b>ACTION</b>: Fetch and cache the current Debrid library size.",
-    "Overlay Sync": "Checks all collected items for overlay changes and regenerates any posters where the content or layout has changed since last applied. Only runs when overlays are enabled. <br><br> <b>ACTION</b>: Scan collected items and regenerate changed overlay posters.",
-    "Overlay Cleanup": "Removes orphaned overlay posters from the media server that no longer correspond to any tracked item. Only runs when overlays are enabled. <br><br> <b>ACTION</b>: Clean up orphaned overlay posters from the media server.",
-    "Sync Episode Metadata": "Syncs episode titles and metadata from TMDB/Trakt for all collected TV show episodes. Useful if episode titles were missing or incorrect at time of collection. <br><br> <b>ACTION</b>: Sync episode metadata from TMDB/Trakt for all collected episodes.",
-    "Sync Plex Labels": "Syncs Plex labels for all Collected items based on their content source. Labels can be used in Plex for filtering and smart playlists. <br><br> <b>ACTION</b>: Sync Plex labels for all Collected items.",
-    "default": "Processes any items from this Content Source. Content source items metadata are cached for 6 hours on addition and can be cleared on the Debug page. Items are added to the Wanted queue for processing. <br><br> <b>ACTION</b>: Process any items from this Content Source."
+  "tasks": {
+    "Wanted": {
+      "description": "Holds items waiting for their release time. An item moves to Scraping once its release date plus the airtime offset has passed (Movie Airtime Offset, default 19 hours, counted from the end of release day for movies with no airtime; Episode Airtime Offset, default 0). Items that are more than 24 hours away, or have no release date, go to Unreleased. Versions that require a physical release wait for the physical release date. Early-release and magnet-assigned items move right away. Wanted stops feeding Scraping while Scraping already holds 100 items.",
+      "action": "Check every Wanted item's release time and move the ready ones to Scraping.",
+      "runs": "Always on."
+    },
+    "Scraping": {
+      "description": "Runs your enabled scrapers for each item, filters and scores the results with the item's version settings, and passes the best ones to Adding. When several episodes of a show are wanted at once, it tries season and series packs first. If nothing is found: movies released more than 30 days ago, episodes released more than 7 days ago, and items with no release date are blacklisted right away (an old episode also blacklists the other old episodes from its season). Newer items go to Sleeping until the wake limit is used up.",
+      "action": "Scrape the items in the Scraping queue.",
+      "runs": "Always on."
+    },
+    "Adding": {
+      "description": "Adds the best scrape result to your debrid service or usenet provider, trying the next result if one fails. For debrid torrents, Uncached Content Handling decides what's allowed: None takes only cached results, Full takes the best result cached or not, Hybrid tries cached first and then uncached. Accept Uncached Within Hours lets recent releases use uncached torrents too. Usenet NZBs are submitted and wait here while the NZB Health Check task watches the download. Items move to Checking once added, or to Blacklisted if every result fails.",
+      "action": "Add the items in the Adding queue to debrid or usenet.",
+      "runs": "Always on."
+    },
+    "Checking": {
+      "description": "Waits for an added file to show up, then marks the item Collected. In Symlinked/Local mode, once the file appears on the mount it creates the symlink, tells Plex or Jellyfin/Emby to scan it if one is set up, and runs post-processing. In Plex mode it waits until Plex has the file (or, with Disable Plex Library Checks, until the file is on the mount). Items that never show up go back to Wanted after the Checking Queue Period (Debug settings, default 1 hour). A torrent the provider reports missing several times in a row has its magnet blacklisted.",
+      "action": "Look for the files of the items in the Checking queue.",
+      "runs": "Always on, except in Plex mode with library checks disabled and no mounted file location (then Check Plex Files does this work)."
+    },
+    "Sleeping": {
+      "description": "Items that weren't found while scraping rest here, then go back to Wanted for another try. By default that's every 30 minutes (Sleep Duration Minutes, minimum 10), up to 24 tries (Wake Limit). A version can set its own wake count, and -1 skips sleeping. After the last try the item goes to Final Scrape if it's enabled, otherwise to Blacklisted. Only recent items sleep. Older ones are blacklisted straight from Scraping.",
+      "action": "Wake the items whose sleep time is up, and blacklist the ones out of tries.",
+      "runs": "Always on."
+    },
+    "Unreleased": {
+      "description": "Holds items whose release date is more than 24 hours away or still unknown. Each run recalculates the release time the same way Wanted does (airtime offset, physical release date for versions that need it) and moves items to Wanted once they're within 24 hours.",
+      "action": "Move Unreleased items that are now within 24 hours of release to Wanted.",
+      "runs": "Always on."
+    },
+    "Blacklisted": {
+      "description": "Holds items that couldn't be found or added. Unblacklisting is off by default (Debug → Disable Unblacklisting). When you turn it on, items that have been blacklisted for longer than Blacklist Duration (default 30 days) go back to Wanted for another try. Unblacklisting Cutoff Date limits this to items released on or after that date.",
+      "action": "Unblacklist the items that qualify. Does nothing while unblacklisting is disabled.",
+      "runs": "Always on."
+    },
+    "Pending Uncached": {
+      "description": "Uncached torrents wait here while your debrid account is at its active-download limit. Each run checks the limit and, when there's room, adds the waiting torrents and moves them on.",
+      "action": "Add the waiting uncached torrents if the debrid account has room.",
+      "runs": "Always on."
+    },
+    "Upgrading": {
+      "description": "With Enable Upgrading on, items collected within 7 days of release stay here for 24 hours (Upgrade Queue Duration Hours, Debug settings) and are re-scraped about once an hour. A result that beats the current file by the upgrade threshold is added and replaces it. The old file is removed only if Enable Upgrading Cleanup is on. When the window ends, the item becomes Collected. Manually assigned items never upgrade. Upgrades queued from the Upgrade Hub also run here.",
+      "action": "Re-scrape the Upgrading items that are due and finish the ones whose window has ended.",
+      "runs": "Always on. Items only enter it when Enable Upgrading is on."
+    },
+    "final_check_queue": {
+      "description": "Only used when Blacklist Final Scrape Delay Hours is above 0. Items that would be blacklisted wait here for that many hours and then get one last scrape. If it finds something, the item goes to Adding. If not, it's blacklisted. If you set the delay back to 0, items still waiting here are blacklisted.",
+      "action": "Do the final scrape for the items whose delay has passed.",
+      "runs": "Always on. Items only enter it when the delay setting is above 0."
+    },
+    "Pre_release": {
+      "description": "Only used when Pre-Release Scrape Days is above 0. Unreleased movies coming out within that many days are scraped once a day in case a release appears early. A usable result is added right away. Otherwise the movie stays Unreleased. Within 24 hours of release, the movie leaves this queue and follows the normal Wanted flow.",
+      "action": "Run the daily scrape for the pre-release movies.",
+      "runs": "Always on. Does nothing while Pre-Release Scrape Days is 0."
+    },
+    "task_nzb_health_check": {
+      "description": "Watches the NZB downloads of usenet items in the Adding queue. When a job finishes and its folder appears on the mount, the item moves to Checking. Jobs that fail, vanish, or run past the download timeout are removed, and the item goes back to Wanted with that release marked not wanted. Polls up to 30 jobs per run, and skips a run if the previous one was slow.",
+      "action": "Check the status of the pending NZB jobs.",
+      "runs": "Always on. Does nothing unless usenet items are in Adding."
+    },
+    "task_nzb_playback_repair_completion": {
+      "description": "Finishes NZB playback repairs that have already started. When a usenet file fails to play (missing segments, unreadable video), a replacement is grabbed. This task confirms the replacement is healthy, switches the library to it, and removes the broken file. It never looks for new broken files.",
+      "action": "Confirm and finish the in-progress playback repairs.",
+      "runs": "Always on."
+    },
+    "task_nzb_playback_cleanup_retry": {
+      "description": "Some playback repairs finish before the old broken file can be removed, usually because the mount hasn't caught up yet. This task retries those removals on a slower schedule (15 minutes up to 2 hours apart) and gives up after 48 hours.",
+      "action": "Retry the old-file removals left over from finished playback repairs.",
+      "runs": "Always on."
+    },
+    "task_repair_broken_nzbs": {
+      "description": "Asks the usenet provider (cli_mount) for a health scan, then repairs the NZB files it reports as broken. For each one it blacklists the broken release and scrapes for a usenet replacement. The old file is only deleted after the replacement is confirmed in the provider's queue. If no replacement is found, the broken file stays in place, the item goes back to Wanted, and the repair tries again later (1, 2, 4 hours apart, up to 24 hours). Auto-repair gives up on an item after 3 failed attempts.",
+      "action": "Run a health scan and repair the broken NZBs.",
+      "runs": "On by default. Needs cli_mount as the usenet provider."
+    },
+    "task_repair_broken_debrids": {
+      "description": "Asks cli_mount for a health scan of its debrid torrents and repairs the broken ones. A torrent missing its provider link is re-inserted. Otherwise, only the item whose file is broken goes back to Wanted, and the torrent is deleted only when no other item (for example the rest of a season pack) still uses it. Leftover health records with nothing behind them are cleaned up first.",
+      "action": "Run a health scan and repair the broken debrid torrents.",
+      "runs": "On by default. Needs cli_mount."
+    },
+    "task_sync_cli_mount_changes": {
+      "description": "Pulls changes from cli_mount (renamed folders, new provider IDs, magnets, file names) into the cli_debrid database so both agree on where each file lives. The first run does a full sync and pauses the queue until it's done.",
+      "action": "Fetch the changes from cli_mount since the last sync.",
+      "runs": "On by default. Does nothing unless cli_mount is set up."
+    },
+    "task_push_pending_climount_tags": {
+      "description": "Sends tags you changed in cli_debrid (for example with Database → Assign Tags) to cli_mount. Sync cli_mount Changes only brings changes the other way, so without this a tag edited only in cli_debrid would never reach cli_mount.",
+      "action": "Push the changed tags to cli_mount.",
+      "runs": "On by default. Does nothing unless cli_mount is set up."
+    },
+    "task_scan_mount_for_external_adds": {
+      "description": "Imports content that showed up on the debrid mount without cli_debrid putting it there, such as torrents added through DMM or the provider's website. New folders go through the same symlink pipeline as Zurg's library-update webhook. The first run only records what's already on the mount, so turning this on doesn't import your whole existing library. Leftovers from cli_debrid's own rejected grabs are skipped.",
+      "action": "Scan the mount and import new external content.",
+      "runs": "Symlinked/Local mode only, when File Management → Scan Mount for External Adds is on. Zurg users don't need it."
+    },
+    "task_backfill_nzb_torrent_ids": {
+      "description": "One-time fix for older usenet items that were collected without a provider ID. Matches each item's folder name against cli_mount's entries and saves the ID, so repair and sync can find those items.",
+      "action": "Fill in the missing provider IDs from cli_mount.",
+      "runs": "Off by default. Run it once. Needs cli_mount as the usenet provider."
+    },
+    "task_check_service_connectivity": {
+      "description": "Checks that the services cli_debrid depends on are reachable: your debrid service or usenet provider, Plex or Jellyfin/Emby, and the mount and symlink folders in Symlinked/Local mode. If one is down, the queue pauses and resumes on its own once it's back. If Trakt is set up, its login is checked and refreshed too, but a Trakt problem never pauses the queue.",
+      "action": "Check every required service and pause or resume the queue.",
+      "runs": "Always on."
+    },
+    "task_heartbeat": {
+      "description": "Writes a \"Program running...\" line to the log, then frees unused memory and logs memory use before and after. Useful for seeing that the program is alive and how much memory it uses over time.",
+      "action": "Log a heartbeat and free unused memory.",
+      "runs": "Always on."
+    },
+    "task_trim_memory": {
+      "description": "Frees memory that large one-off jobs (Upgrade Hub scans, the Debrid Manager library, overlay syncs) leave behind, so memory use stays flat over long uptimes. Also drops the Debrid Manager library cache after 2 hours without use.",
+      "action": "Free unused memory and log how much was released.",
+      "runs": "On by default."
+    },
+    "task_regulate_system_load": {
+      "description": "Watches CPU and RAM use. Above the thresholds (System Load Regulation settings, default 75%), it adds a pause between queue tasks and makes it longer each run, up to the maximum. Once load drops, the pause shrinks again.",
+      "action": "Check system load and adjust the pause between tasks.",
+      "runs": "Off by default, except in limited environments."
+    },
+    "task_update_queue_views": {
+      "description": "Reloads every queue from the database so the Queues page and the queue processors see changes made elsewhere, such as from the web UI or another task.",
+      "action": "Refresh all queues from the database.",
+      "runs": "Always on."
+    },
+    "task_send_notifications": {
+      "description": "Sends the queued notifications (collected, upgraded, state changes...) to the notification services you've enabled.",
+      "action": "Send the queued notifications.",
+      "runs": "Always on. Does nothing if no notifications are queued."
+    },
+    "task_check_database_health": {
+      "description": "Checks that media_items.db is readable and not corrupt. If it's corrupt, the queue pauses and a notification is sent, because the program needs a restart to rebuild the database.",
+      "action": "Run a database integrity check.",
+      "runs": "Always on."
+    },
+    "task_backup_database": {
+      "description": "Copies cli_mount's databases every run. Backs up media_items.db only when the program is idle, so the database isn't locked during busy processing.",
+      "action": "Back up the databases.",
+      "runs": "On by default."
+    },
+    "task_sync_time": {
+      "description": "Compares the system clock with internet time servers (pool.ntp.org, Cloudflare, Google) and logs a warning if it's more than 60 seconds off. It doesn't change the clock. A wrong clock can make release times and logins misbehave.",
+      "action": "Check the clock and log the offset.",
+      "runs": "Always on."
+    },
+    "task_reconcile_queues": {
+      "description": "Cleans up the queues. Items in Checking that point to the same file as another item are merged. After a Replace Season/Movie, the old entries are removed once the new ones are collected. Season-pack episodes left in Adding after a sibling was collected are matched to their own files. Duplicate Wanted, Scraping and Unreleased items are removed, and so are ones whose version is already collected. Details go to reconciliations.log.",
+      "action": "Reconcile and de-duplicate the queues.",
+      "runs": "Always on. Also runs after each Plex full scan."
+    },
+    "task_refresh_download_stats": {
+      "description": "Refreshes the download stats shown on the home page, so the page loads without waiting on them.",
+      "action": "Refresh the home page download stats.",
+      "runs": "Always on."
+    },
+    "task_refresh_library_size_cache": {
+      "description": "Asks your debrid service for the total size of your library and saves it for the home page. Skipped for services that don't report a total size.",
+      "action": "Fetch and save the debrid library size.",
+      "runs": "On by default."
+    },
+    "task_precompute_airing_shows": {
+      "description": "Builds the \"recently aired\" and \"airing soon\" lists in the background so the home page shows them right away.",
+      "action": "Rebuild the airing shows lists.",
+      "runs": "Always on."
+    },
+    "task_check_trakt_early_releases": {
+      "description": "For movies in Wanted, Sleeping or Unreleased, checks Trakt's popular lists for each title. If it appears on a \"latest releases\" or \"new releases\" list, the movie is flagged as an early release and scraped right away instead of waiting for its release date. Episodes and movies marked \"no early release\" are skipped.",
+      "action": "Check Trakt lists and flag early movie releases.",
+      "runs": "On by default. Does nothing unless Scraping → Trakt Early Releases is on and Trakt is set up."
+    },
+    "task_refresh_plex_tokens": {
+      "description": "Checks with plex.tv that your main Plex token and the tokens of other users' Plex watchlists are still valid, and logs any that aren't. If a watchlist stops updating, look here for an invalid token.",
+      "action": "Check the Plex tokens.",
+      "runs": "Always on."
+    },
+    "task_plex_full_scan": {
+      "description": "Reads your whole Plex library and records everything in it as Collected, filling in missing resolutions from the file names. Then runs Reconcile Queues so items already in Plex leave Wanted.",
+      "action": "Run a full Plex library scan.",
+      "runs": "Plex mode only, unless you turn it on by hand."
+    },
+    "task_manual_plex_full_scan": {
+      "description": "The same full Plex library scan as Plex Full Scan, but runs in any mode. Meant for libraries that mix symlinks with files Plex already has.",
+      "action": "Run a full Plex library scan regardless of mode.",
+      "runs": "Off by default."
+    },
+    "task_check_plex_files": {
+      "description": "In Plex mode, looks on the mount for the files of items in Checking. When one appears, it asks Plex to scan just that folder, so new files show up fast instead of waiting for Plex's own scan. With Disable Plex Library Checks on, items are marked Collected as soon as the file is on the mount, or right away if no mounted file location is set. Also fixes upgraded items whose saved location still points to the old file.",
+      "action": "Look for new files on the mount and trigger Plex scans.",
+      "runs": "Plex mode, when Update Plex on File Discovery or Disable Plex Library Checks is on."
+    },
+    "task_verify_symlinked_files": {
+      "description": "Confirms that new symlinks actually showed up in Plex or Jellyfin/Emby. Alternates between checking recently added items and a full check, up to 500 files per run. Files that still don't appear after several tries are marked as failed.",
+      "action": "Check that the new symlinks are in the media server.",
+      "runs": "Symlinked/Local mode, when a Plex or Jellyfin/Emby server is set up for symlinks."
+    },
+    "task_verify_plex_removals": {
+      "description": "After cli_debrid removes a file, checks that its title is gone from Plex. Items still listed get more tries with growing waits (1 minute up to 30 minutes) and are marked failed after the max attempts (Plex Removal Max Attempts, default 5).",
+      "action": "Check that removed files are gone from Plex.",
+      "runs": "On by default. Does nothing without a Plex server set up."
+    },
+    "task_process_standalone_plex_removals": {
+      "description": "Some removals are delayed on purpose. For example, Library Maintenance and Analyze Media Files queue Plex removals instead of doing them right away. Once a removal has waited long enough (Plex Removal Cache Delay Minutes, Debug settings, default 6 hours), this task deletes the symlink if one is left and removes the item from Plex. A removal is skipped if the item has come back into the library in the meantime.",
+      "action": "Carry out the delayed Plex removals.",
+      "runs": "On by default."
+    },
+    "task_get_plex_watch_history": {
+      "description": "Downloads your Plex watch history so items you've already watched aren't added to the queue again.",
+      "action": "Download the Plex watch history.",
+      "runs": "Only when Debug → Don't Add Plex Watch History Items to Queue is on."
+    },
+    "task_run_library_maintenance": {
+      "description": "Checks the library against the files on disk. In Symlinked/Local mode it finds broken symlinks (target missing) and orphaned symlinks the database doesn't know about. In Plex mode it checks that collected files are still on the mount. Broken items go back to Wanted if they were the last copy of their version, otherwise they're deleted, and their Plex entries are queued for removal.",
+      "action": "Run library maintenance and fix what it finds.",
+      "runs": "Off by default. On in limited environments or when Debug → Enable Library Maintenance Task is on."
+    },
+    "task_analyze_media_files": {
+      "description": "Opens collected files with ffprobe to make sure they can be played, 200 files per run, picking up where the last run stopped. Unplayable files are removed: the symlink is deleted, the Plex entry is queued for removal, and the item goes back to Wanted if it was the last copy of its version. Otherwise the item is deleted.",
+      "action": "Check the next 200 files with ffprobe.",
+      "runs": "Off by default. Needs ffprobe."
+    },
+    "task_sync_library_metadata": {
+      "description": "Reads the audio and subtitle tracks of collected items from Plex or Jellyfin and saves them. Overlays and audio-language checks use this information.",
+      "action": "Sync the audio and subtitle track details from the media server.",
+      "runs": "On by default. Does nothing without a media server set up."
+    },
+    "task_backfill_plex_guids": {
+      "description": "One-time fix that fills in the Plex GUID for collected movies and shows that don't have one, from the metadata battery (with a Trakt lookup as fallback). Features that match items with Plex, like labels and collections, need the GUID.",
+      "action": "Fill in the missing Plex GUIDs.",
+      "runs": "Off by default. Run it once."
+    },
+    "task_backfill_plex_ms_item_id": {
+      "description": "One-time fix for collected items that don't have a saved Plex item ID. First asks Plex to scan each item's folder, then looks the items up in Plex by file name and GUID. If Plex is still scanning when the lookup runs, run it again later to catch the rest.",
+      "action": "Trigger Plex scans and fill in the missing Plex item IDs.",
+      "runs": "Off by default. Run it once. Needs Plex."
+    },
+    "task_refresh_release_dates": {
+      "description": "Looks up the release dates of items that aren't collected yet (Unreleased, Wanted, Sleeping, Final Scrape) again, so changed or newly announced dates are picked up.",
+      "action": "Refresh the release dates.",
+      "runs": "Always on."
+    },
+    "task_sync_episode_metadata": {
+      "description": "For every collected show, fetches the episode list again and updates changed episode titles and airtimes, plus missing release dates. Useful when titles were missing or wrong when the episodes were collected.",
+      "action": "Sync episode titles and air dates.",
+      "runs": "Off by default."
+    },
+    "task_update_show_ids": {
+      "description": "Checks the IMDb and TMDB IDs of shows in the database against current metadata and fixes ones that changed. Rarely needed.",
+      "action": "Fix outdated show IDs.",
+      "runs": "Off by default."
+    },
+    "task_update_show_titles": {
+      "description": "Updates show titles in the database to match current metadata. The old title is kept as an alias so scraping still matches releases that use it. Rarely needed.",
+      "action": "Update outdated show titles.",
+      "runs": "Off by default."
+    },
+    "task_update_movie_ids": {
+      "description": "Checks the IMDb and TMDB IDs of movies in the database against current metadata and fixes ones that changed. Rarely needed.",
+      "action": "Fix outdated movie IDs.",
+      "runs": "Off by default."
+    },
+    "task_update_movie_titles": {
+      "description": "Updates movie titles in the database to match current metadata. The old title is kept as an alias so scraping still matches releases that use it. Rarely needed.",
+      "action": "Update outdated movie titles.",
+      "runs": "Off by default."
+    },
+    "task_update_tv_show_status": {
+      "description": "Updates each show's status (returning, ended...) from metadata and works out, for each version, whether you have every episode of the show.",
+      "action": "Update show statuses and per-version completion.",
+      "runs": "Off by default."
+    },
+    "task_cleanup_title_year_suffixes": {
+      "description": "Removes a year in brackets from the end of titles in the database, for example \"The Office (2005)\" becomes \"The Office\". Titles with the year attached don't match releases properly.",
+      "action": "Remove trailing (YYYY) from titles.",
+      "runs": "Off by default."
+    },
+    "task_overlay_sync": {
+      "description": "Checks collected items for changes that affect their poster overlays and redraws only the posters whose content or layout changed since they were last applied.",
+      "action": "Redraw the posters that changed.",
+      "runs": "When overlays are enabled."
+    },
+    "task_overlay_cleanup": {
+      "description": "Deletes saved original-poster backups for items that are no longer tracked, and resets overlay jobs stuck in \"analyzing\" for over 30 minutes so they run again.",
+      "action": "Clean up the overlay cache.",
+      "runs": "When overlays are enabled."
+    },
+    "task_sync_plex_labels": {
+      "description": "Adds Plex labels to collected items based on their content source, up to 100 per run. Catches labels that couldn't be added when the item was collected because Plex didn't have it yet. Labels can be used for Plex filters and smart collections.",
+      "action": "Sync the pending Plex labels.",
+      "runs": "Off by default. Does nothing unless a content source has Plex labels enabled."
+    },
+    "task_process_plex_reported_issues": {
+      "description": "Checks every 30 seconds for issues reported with Plex's Report Issue on items in your library (Plex has no way to push them). A reported movie or episode is sent back to Wanted to get a different release, and the current file keeps playing until the new one is in. The reporter gets a reply in Plex when it's picked up and again once it's replaced. Reports on a whole show or season are only flagged for you.",
+      "action": "Check for new reported issues now.",
+      "runs": "When Plex Reported Issues is enabled in Additional Settings."
+    },
+    "task_plex_smart_collection_posters": {
+      "description": "Applies your shared custom poster design to the Plex smart collections you've enabled for it.",
+      "action": "Update the smart collection posters.",
+      "runs": "When Plex is the media server."
+    },
+    "task_plex_movie_boxsets": {
+      "description": "Finds which TMDB collection (box set) each movie belongs to, creates or updates the matching Plex collections, and sets their posters. With Grab Missing on, it also adds the movies you're missing from each collection to Wanted. Only collections whose owned movies changed are rebuilt.",
+      "action": "Sync the movie box set collections in Plex.",
+      "runs": "When Plex is the media server. Does nothing unless Plex Movie Box Sets is enabled."
+    },
+    "task_process_bulk_subtitles": {
+      "description": "Downloads subtitles for collected files that don't have any yet, up to 200 per run. Files that were already tried are skipped. Symlinked/Local mode saves .srt files next to the symlinks. Plex mode adds them through cli_mount.",
+      "action": "Download subtitles for the next 200 files.",
+      "runs": "Off by default."
+    },
+    "task_backup_debrid": {
+      "description": "Saves a list of every torrent in your debrid account, so the library can be restored if the account is lost or wiped. Keeps three copies: 1, 3 and 7 days old.",
+      "action": "Back up the debrid torrent list.",
+      "runs": "Off by default. Does nothing unless debrid backup is enabled in its settings."
+    },
+    "task_cleanup_debrid": {
+      "description": "Removes junk from your debrid account. Each rule can be turned on or off in the cleanup settings: errored torrents (error, magnet error, virus, dead), duplicates of the same torrent (keeps the best copy), and torrents stuck at 0% for too many days.",
+      "action": "Delete errored, duplicate and stalled debrid torrents.",
+      "runs": "Off by default. While this task is on, it runs even if the cleanup's own enable switch is off."
+    },
+    "task_upgrade_hub_scan": {
+      "description": "Searches Zilean for better-quality releases of your collected items and saves the upgrade and season-pack candidates for the Upgrade Hub page. Scan Limit caps how many items are checked.",
+      "action": "Scan for upgrade candidates.",
+      "runs": "Off by default. Needs Zilean."
+    },
+    "task_upgrade_hub_auto_queue": {
+      "description": "Takes the candidates from the last Upgrade Hub scan (and scans first if there are none) and queues the ones that meet the Min Improvement Threshold for upgrading, up to Max Upgrades per Run. Season packs come first, and items already upgrading are skipped. Show Recent Only limits it to recently added items.",
+      "action": "Queue the best upgrade candidates.",
+      "runs": "Off by default. Needs Zilean."
+    }
+  },
+  "content_source": {
+    "description": "Fetches the items from this content source (watchlist, list, request service...) and adds new ones to the Wanted queue for each version the source has enabled. Items already in the database are skipped. Item details are cached for 6 hours. The cache can be cleared on the Debug page.",
+    "action": "Fetch this content source now.",
+    "runs": "On while the content source is enabled."
+  },
+  "fallback": {
+    "description": "No description yet for this task.",
+    "action": "Run this task now."
   }
-} 
+}

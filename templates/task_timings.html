@@ -216,6 +216,7 @@
     <div class="tng-modal-body">
       <div class="tng-modal-meta" id="tngModalMeta"></div>
       <div class="tng-modal-desc" id="tngModalDesc"></div>
+      <div class="tng-modal-runs" id="tngModalRuns"></div>
       <div class="tng-modal-action" id="tngModalAction"></div>
     </div>
   </div>
@@ -231,7 +232,6 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
-<script src="{{ url_for('static', filename='js/task_help.js') }}"></script>
 <script>
 // Initialize Mermaid
 mermaid.initialize({
@@ -1498,23 +1498,26 @@ window.tngToggleFlow = function() {
     document.getElementById('tngFchev').classList.toggle('open');
 };
 
-// ── help data (same source as classic task_help.js) ──────
+// ── help data ─────────────────────────────────────────────
+// Keyed by internal task name (task_*, or the queue name), not the display
+// name: display names are derived and drift, and a miss used to fall through
+// to the content-source text for every unlisted system task.
 let _tngHelpData = null;
 async function tngGetHelpData() {
     if (_tngHelpData) return _tngHelpData;
     try {
         const r = await fetch('/static/js/task_help_data.json');
-        const d = await r.json();
-        _tngHelpData = d.helpData || {};
+        _tngHelpData = await r.json();
     } catch(e) {
         _tngHelpData = {};
     }
     return _tngHelpData;
 }
-function tngFindHelp(helpData, displayName) {
-    if (!displayName) return null;
-    const k = Object.keys(helpData).find(k => k.toLowerCase() === displayName.toLowerCase());
-    return k ? helpData[k] : (helpData['default'] || null);
+function tngFindHelp(helpData, taskName) {
+    const tasks = helpData.tasks || {};
+    if (tasks[taskName]) return tasks[taskName];
+    if (/^task_.+_wanted$/.test(taskName)) return helpData.content_source || null;
+    return helpData.fallback || null;
 }
 
 // ── modal ────────────────────────────────────────────────
@@ -1534,17 +1537,20 @@ function tngOpenModal(taskName, cat, info, name, cfgFmt, defFmt, enabled) {
       <span class="tng-modal-pill" style="background:var(--tng-accent);color:#fff">Configured: ${cfgFmt}</span>
       <span class="tng-modal-pill" style="background:var(--tng-surface2);color:var(--tng-text2);border:1px solid var(--tng-border2)">Default: ${defFmt}</span>`;
     document.getElementById('tngModalDesc').innerHTML  = '';
+    document.getElementById('tngModalRuns').textContent = '';
     document.getElementById('tngModalAction').innerHTML = '';
     document.getElementById('tngModalOverlay').classList.add('open');
 
-    // Load help text from same JSON as classic task_help.js
     tngGetHelpData().then(helpData => {
-        const raw = tngFindHelp(helpData, name);
-        if (raw) {
-            const parts = raw.split(/<br\s*\/?>\s*<br\s*\/?>\s*<b>ACTION<\/b>\s*:\s*/i);
-            document.getElementById('tngModalDesc').innerHTML = parts[0] ? parts[0].trim() : '';
-            document.getElementById('tngModalAction').innerHTML = parts[1]
-                ? `<b style="color:var(--tng-accent)">ACTION</b>: ${parts[1].trim()}` : '';
+        const help = tngFindHelp(helpData, taskName);
+        if (help) {
+            document.getElementById('tngModalDesc').textContent = help.description || '';
+            document.getElementById('tngModalRuns').textContent = help.runs ? `When it runs: ${help.runs}` : '';
+            const actionEl = document.getElementById('tngModalAction');
+            if (help.action) {
+                actionEl.innerHTML = '<b style="color:var(--tng-accent)">RUN NOW</b>: ';
+                actionEl.appendChild(document.createTextNode(help.action));
+            }
         }
     });
 }
