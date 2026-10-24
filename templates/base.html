@@ -1095,6 +1095,14 @@
                 document.querySelectorAll('.st-nav-item.open').forEach(function(el) { el.classList.remove('open'); });
             }
         });
+        // With hover-to-open, a menu left open by a click would stay up beside the hovered one
+        document.querySelectorAll('.st-nav-item').forEach(function(item) {
+            item.addEventListener('mouseenter', function() {
+                document.querySelectorAll('.st-nav-item.open').forEach(function(el) {
+                    if (el !== item) el.classList.remove('open');
+                });
+            });
+        });
         function stToggleDrawer() {
             var d = document.getElementById('st-nav-drawer');
             if (d) d.classList.toggle('open');
