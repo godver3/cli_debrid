@@ -32,6 +32,13 @@
     color: #888;
 }
 
+/* In progress = being scraped, added or checked (movies and episodes alike) */
+.grid-event-item.status-in_progress { background-color: #16a085; }
+.calendar-event.status-in_progress { border-left-color: #1abc9c; }
+.event-status-badge.status-in_progress { background-color: #16a085; color: white; }
+.event-status-badge.status-upcoming { background-color: #3498db; color: white; }
+.modal-event-status-badge.status-in-progress { background-color: #16a085; }
+
 
 .calendar-page-container {
     max-width: 1600px;
@@ -248,6 +255,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 .cal-adv-event.status-upcoming-uncollected   { border-left-color: #5dade2; }
 .cal-adv-event.status-upcoming-collected     { border-left-color: #27ae60; opacity: 0.7; }
 .cal-adv-event.status-upcoming               { border-left-color: #3498db; }
+.cal-adv-event.status-in-progress            { border-left-color: #1abc9c; }
 
 .cal-adv-event-time {
     font-size: 0.78em;
@@ -292,6 +300,7 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 .cal-adv-event-status.status-upcoming-uncollected   { background: #5dade2; }
 .cal-adv-event-status.status-upcoming-collected     { background: #27ae60; }
 .cal-adv-event-status.status-upcoming               { background: #3498db; }
+.cal-adv-event-status.status-in-progress            { background: #16a085; }
 .cal-adv-event-status.status-uncollected            { background: #555; }
 
 /* ======================================================

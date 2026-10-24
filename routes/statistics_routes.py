@@ -225,41 +225,48 @@ def get_movies_for_calendar(days_past: int = 7, days_future: int = 28, start_dat
         query_start_date_iso = start_range_date.isoformat()
         query_end_date_iso = end_range_date.isoformat()
     
-    # Query to get movies within the date range, along with their current state.
-    # We group by essential fields to get unique movie releases.
-    # MAX(m.state) is used to get a definitive state if there happen to be multiple entries
-    # for the exact same movie release (which should be rare for type 'movie').
+    # One row per movie release. A movie can have several media_items rows (one per
+    # version), so every row's state is kept and the calendar picks the best one;
+    # MAX(state) used to pick alphabetically, so a collected 1080p plus a wanted 4K
+    # showed as missing. Blacklisted rows are skipped, matching the episode query.
     query = """
-    SELECT 
-        m.title, 
-        m.release_date, 
-        m.tmdb_id, 
+    SELECT
+        m.title,
+        m.release_date,
+        m.tmdb_id,
         m.imdb_id,
-        COALESCE(MAX(m.state), 'Unknown') as state 
+        COALESCE(m.state, 'Unknown') as state,
+        m.upgrading_from
     FROM media_items m
-    WHERE m.type = 'movie' 
+    WHERE m.type = 'movie'
       AND m.release_date BETWEEN ? AND ?
-    GROUP BY m.title, m.release_date, m.tmdb_id, m.imdb_id
+      AND COALESCE(m.state, '') != 'Blacklisted'
     ORDER BY m.release_date ASC, m.title ASC
     """
-    
+
     cursor.execute(query, (query_start_date_iso, query_end_date_iso))
     results = cursor.fetchall()
     conn.close()
-    
-    movies_data = []
-    for title, release_date_str, tmdb_id, imdb_id, state in results:
-        movies_data.append({
-            'title': title,
-            'release_date': release_date_str, # This is a string 'YYYY-MM-DD'
-            'tmdb_id': tmdb_id,
-            'imdb_id': imdb_id,
-            'state': state # Current state from DB
-        })
+
+    movies_by_release = {}
+    for title, release_date_str, tmdb_id, imdb_id, state, upgrading_from in results:
+        key = (title, release_date_str, tmdb_id, imdb_id)
+        if key not in movies_by_release:
+            movies_by_release[key] = {
+                'title': title,
+                'release_date': release_date_str, # This is a string 'YYYY-MM-DD'
+                'tmdb_id': tmdb_id,
+                'imdb_id': imdb_id,
+                'states': []
+            }
+        movies_by_release[key]['states'].append((state, upgrading_from))
+    movies_data = list(movies_by_release.values())
     return movies_data
 
 @cache_for_seconds(600)  # Increase cache to 10 minutes since show airtimes don't change frequently
-def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1, start_date_override_iso: Optional[str] = None, end_date_override_iso: Optional[str] = None):
+def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1, start_date_override_iso: Optional[str] = None, end_date_override_iso: Optional[str] = None, include_all_upcoming: bool = False):
+    # include_all_upcoming keeps future episodes that are already in flight or collected;
+    # the home page's Airing Soon hides them, but the calendar must show every episode.
     from metadata.metadata import get_show_airtime_by_imdb_id, _get_local_timezone
     from database import get_db_connection
     conn = get_db_connection()
@@ -392,7 +399,8 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
                         'state': state,
                         'imdb_id': imdb_id,
                         'tmdb_id': tmdb_id,
-                        'year': year
+                        'year': year,
+                        'episode_states': {}
                     }
 
                 # If any episode in the group is collected or checking_upgrade, prioritize that status
@@ -404,6 +412,7 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
                     shows[show_key]['state'] = state
                 
                 shows[show_key]['episodes'].add(episode)
+                shows[show_key]['episode_states'][episode] = (state, upgrading_from)
             
             except (ValueError, AttributeError) as e:
                 logging.error(f"Error parsing date/time for {title}: {e}")
@@ -461,7 +470,8 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
                     'imdb_id': show['imdb_id'],
                     'tmdb_id': show['tmdb_id'],
                     'season_number': show['season'],
-                    'episode_number': episodes[0]  # Use first episode number for single episodes or ranges
+                    'episode_number': episodes[0],  # Use first episode number for single episodes or ranges
+                    'episode_states': [show['episode_states'][ep] for ep in episodes]
                 }
                 
                 # Use timestamp comparison which is faster than datetime comparison
@@ -475,7 +485,7 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
                         'Scraping', 'Adding', 'Checking', 'Pending Uncached',
                         'Final Scrape', 'Missing'
                     }
-                    if show.get('state') not in _airing_soon_exclude:
+                    if include_all_upcoming or show.get('state') not in _airing_soon_exclude:
                         airing_soon.append(formatted_item)
         
         processing_time = time.perf_counter() - processing_start
@@ -1693,6 +1703,56 @@ def get_library_size_api():
 
     return jsonify({'total_library_size': size_str})
 
+# Calendar statuses, shared by movies and episodes so the same situation gets the
+# same colour and label. Ordered from most to least in need of attention.
+_CALENDAR_STATUS_ORDER = [
+    'premiered_uncollected', 'in_progress', 'checking_upgrade',
+    'upcoming', 'upcoming_collected', 'collected',
+]
+_CALENDAR_STATUS_LABELS = {
+    'premiered_uncollected': 'Not Collected',
+    'in_progress': 'In Progress',
+    'checking_upgrade': 'Checking Upgrade',
+    'upcoming': 'Upcoming',
+    'upcoming_collected': 'Collected',
+    'collected': 'Collected',
+}
+_CALENDAR_IN_PROGRESS_STATES = {'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Final Scrape'}
+_CALENDAR_COLLECTED_STATUSES = {'collected', 'upcoming_collected'}
+
+
+def _calendar_status(state, upgrading_from, released):
+    """Map one media_items state to a calendar status."""
+    if state in ('Collected', 'Upgrading', 'Upgraded'):
+        return 'collected' if released else 'upcoming_collected'
+    if state in ('Adding', 'Checking') and upgrading_from:
+        return 'checking_upgrade'
+    if state in _CALENDAR_IN_PROGRESS_STATES:
+        return 'in_progress'
+    return 'premiered_uncollected' if released else 'upcoming'
+
+
+def _calendar_episode_group_status(episode_states, released):
+    """Status and label for an episode drop (e.g. S01E01-08) from each episode's state.
+
+    The drop takes the status of its episode most in need of attention, and the
+    label says how many are collected when only some are.
+    """
+    statuses = [_calendar_status(state, upgrading_from, released) for state, upgrading_from in episode_states]
+    status = min(statuses, key=_CALENDAR_STATUS_ORDER.index)
+    collected = sum(1 for st in statuses if st in _CALENDAR_COLLECTED_STATUSES)
+    if 0 < collected < len(statuses):
+        return status, f"{collected}/{len(statuses)} Collected"
+    return status, _CALENDAR_STATUS_LABELS[status]
+
+
+def _calendar_movie_status(states, released):
+    """Status and label for a movie; with several versions the best one wins."""
+    statuses = [_calendar_status(state, upgrading_from, released) for state, upgrading_from in states]
+    status = max(statuses, key=_CALENDAR_STATUS_ORDER.index)
+    return status, _CALENDAR_STATUS_LABELS[status]
+
+
 @statistics_bp.route('/calendar')
 @user_required
 @onboarding_required
@@ -1732,7 +1792,8 @@ def calendar_view():
     # 1. Get TV Show Data using the 3-week range
     recently_aired, airing_soon = get_recently_aired_and_airing_soon(
         start_date_override_iso=calendar_pull_start_date_iso,
-        end_date_override_iso=calendar_pull_end_date_iso
+        end_date_override_iso=calendar_pull_end_date_iso,
+        include_all_upcoming=True
     )
 
     for item in recently_aired + airing_soon:
@@ -1740,13 +1801,17 @@ def calendar_view():
         time_str = item['air_datetime'].strftime("%H:%M" if use_24hour_format else "%I:%M %p")
         if not use_24hour_format and time_str.startswith("0"):
             time_str = time_str[1:]
+        display_status, status_label = _calendar_episode_group_status(
+            item['episode_states'], item['air_datetime'] <= now_aware
+        )
 
         events.append({
             'date': event_date,
             'time': time_str,
             'title': item['title'],
             'type': 'tv_show',
-            'display_status': item.get('display_status', 'uncollected').lower().replace(' ', '_'),
+            'display_status': display_status,
+            'status_label': status_label,
             'imdb_id': item.get('imdb_id'),
             'tmdb_id': item.get('tmdb_id'),
             'season_number': item.get('season_number'),
@@ -1773,32 +1838,16 @@ def calendar_view():
         naive_movie_datetime = datetime.combine(release_date_obj, datetime.min.time())
         aware_movie_datetime = local_tz.localize(naive_movie_datetime) if hasattr(local_tz, 'localize') and naive_movie_datetime.tzinfo is None else naive_movie_datetime.replace(tzinfo=local_tz)
 
-        movie_state = movie.get('state', 'Unknown').lower()
-        display_status = movie_state
-
-        if release_date_obj < today_date:
-            if movie_state in ['wanted', 'searching', 'unknown', 'not_collected']:
-                display_status = 'premiered_uncollected'
-            elif movie_state == 'collected':
-                display_status = 'collected'
-            elif movie_state == 'upgrading':
-                display_status = 'upgrading'
-            elif movie_state == 'checking':
-                 display_status = 'checking_upgrade'
-        elif release_date_obj >= today_date:
-            if movie_state in ['wanted', 'searching', 'unknown', 'not_collected']:
-                 display_status = 'upcoming_uncollected'
-            elif movie_state == 'collected':
-                 display_status = 'upcoming_collected'
-            else:
-                 display_status = 'upcoming'
+        # Released movies are those whose date has passed; today's releases still count as upcoming.
+        display_status, status_label = _calendar_movie_status(movie['states'], release_date_obj < today_date)
 
         events.append({
             'date': release_date_obj,
             'time': None,
             'title': movie['title'],
             'type': 'movie',
-            'display_status': display_status.replace(' ', '_'),
+            'display_status': display_status,
+            'status_label': status_label,
             'imdb_id': movie.get('imdb_id'),
             'tmdb_id': movie.get('tmdb_id'),
             'sort_datetime': aware_movie_datetime

@@ -54,8 +54,8 @@
                                         <ul class="grid-event-list">
                                             {% for event in grouped_events[day_iso_str]['items'] | sort(attribute='sort_datetime') %}
                                                 {% if loop.index <= 3 %}
-                                                <li class="grid-event-item event-type-{{ event.type }} status-{{ event.display_status | replace('_', '-') }}"
-                                                    title="{{ event.title }} - {% if event.type == 'movie' %}Movie{% elif event.type == 'tv_show' %}TV Episode{% endif %} ({{ event.display_status.replace('_', ' ') | title }})">
+                                                <li class="grid-event-item event-type-{{ event.type }} status-{{ event.display_status }}"
+                                                    title="{{ event.title }} - {% if event.type == 'movie' %}Movie{% elif event.type == 'tv_show' %}TV Episode{% endif %} ({{ event.status_label }})">
                                                     {{ event.title | truncate(20, True) }}
                                                 </li>
                                                 {% elif loop.index == 4 %}
@@ -89,7 +89,7 @@
                                 <h5>{{ group.display_str_timeline }}</h5>
                                 <ul class="calendar-event-list">
                                     {% for event in group['items'] | sort(attribute='sort_datetime') %}
-                                        <li class="calendar-event event-type-{{ event.type }} status-{{ event.display_status | replace('_', '-') }}">
+                                        <li class="calendar-event event-type-{{ event.type }} status-{{ event.display_status }}">
                                             <div class="event-time">
                                                 {% if event.time %}{{ event.time }}{% else %}<span class="all-day-indicator">All Day</span>{% endif %}
                                             </div>
@@ -98,8 +98,8 @@
                                                 <span class="event-category">
                                                     {% if event.type == 'movie' %}Movie{% elif event.type == 'tv_show' %}TV Episode{% endif %}
                                                 </span>
-                                                <span class="event-status-badge status-{{ event.display_status | replace('_', '-') }}">
-                                                    {{ event.display_status.replace('_', ' ') | title }}
+                                                <span class="event-status-badge status-{{ event.display_status }}">
+                                                    {{ event.status_label }}
                                                 </span>
                                             </div>
                                         </li>
@@ -189,7 +189,7 @@
     function eventCardHTML(ev) {
         const timeStr  = ev.time ? `<div class="cal-adv-event-time">${esc(ev.time)}</div>` : '';
         const typeStr  = ev.type === 'movie' ? 'Movie' : 'TV Episode';
-        const statusStr = (ev.display_status || '').replace(/_/g,' ').replace(/\b\w/g, l => l.toUpperCase());
+        const statusStr = ev.status_label || '';
         const slug     = (ev.display_status || '').replace(/_/g,'-');
         // Store click data in data-attributes to avoid inline JSON quoting issues
         return `<div class="cal-adv-event cal-clickable-event event-type-${esc(ev.type)} status-${slug}"
@@ -359,7 +359,7 @@
 
     // ── Event click ─────────────────────────────────────────────────────────
     function calEventClick(status, tmdbId, imdbId, type, seasonNumber, episodeNumber) {
-        const collected = ['collected', 'upgrading', 'checking_upgrade'];
+        const collected = ['collected', 'upcoming_collected', 'checking_upgrade'];
         const mediaType = type === 'movie' ? 'movie' : 'tv';
         let params = '';
         if (seasonNumber && type !== 'movie') {
@@ -367,7 +367,8 @@
             if (episodeNumber) params += `&episode=${episodeNumber}`;
         }
         if (collected.includes(status)) {
-            const libBase = type === 'movie' ? '/library/' : `/library/show/${tmdbId || imdbId}`;
+            const libId = (tmdbId && tmdbId !== 'None' && tmdbId !== 'null') ? tmdbId : imdbId;
+            const libBase = type === 'movie' ? `/library/movie/${libId}` : `/library/show/${libId}`;
             window.location.href = libBase + params;
         } else if (tmdbId && tmdbId !== 'None' && tmdbId !== 'null') {
             window.location.href = `/discover/details/${tmdbId}/${mediaType}${params}`;
@@ -458,7 +459,7 @@
                         li.className = `modal-event-item event-type-${ev.type} status-${slug}`;
                         const timeStr  = ev.time || '<span class="all-day-indicator">All Day</span>';
                         const typeStr  = ev.type === 'movie' ? 'Movie' : 'TV Episode';
-                        const statusStr= (ev.display_status||'').replace(/_/g,' ').replace(/\b\w/g,l=>l.toUpperCase());
+                        const statusStr= ev.status_label || '';
                         li.innerHTML = `
                             <div class="modal-event-time">${timeStr}</div>
                             <div class="modal-event-details">
