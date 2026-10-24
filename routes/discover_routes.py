@@ -4347,5 +4347,10 @@ def _prewarm_discover_cache():
         logging.error(f"[Prewarm] Unexpected error during discover prewarm: {e}", exc_info=True)
 
 
-# Fire 15 seconds after module import so Flask has time to finish starting up
-threading.Timer(15, _prewarm_discover_cache).start()
+# Fire 15 seconds after module import so Flask has time to finish starting up.
+# Daemon, so it never holds the interpreter open: a non-daemon timer made every
+# process that imports routes (restarts, scripts, each fresh-interpreter test)
+# wait out the 15 seconds before it could exit.
+_prewarm_timer = threading.Timer(15, _prewarm_discover_cache)
+_prewarm_timer.daemon = True
+_prewarm_timer.start()
