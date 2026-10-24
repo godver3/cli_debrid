@@ -20,13 +20,22 @@
         </div>
     </div>
 
-    <!-- ===== SIMPLE VIEW: 3-week grid + timeline (original layout, untouched) ===== -->
+    <!-- ===== SIMPLE VIEW: month grid + timeline ===== -->
     <div id="cal-simple-view">
 
-        {% if three_week_grid_days %}
+        {% if month_grid_days %}
             <div class="calendar-grid-section">
-                <div class="calendar-grid-header">
-                    <h5>{{ three_week_grid_header }}</h5>
+                <div class="calendar-grid-header cal-month-header">
+                    <a class="cal-nav-btn" href="?month={{ prev_month }}" aria-label="Previous month">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+                    </a>
+                    <h5>{{ month_header }}</h5>
+                    <a class="cal-nav-btn" href="?month={{ next_month }}" aria-label="Next month">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
+                    </a>
+                    {% if not is_current_month %}
+                    <a class="cal-month-today" href="?">Today</a>
+                    {% endif %}
                 </div>
                 <table class="calendar-grid">
                     <thead>
@@ -35,7 +44,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for week_of_dates in three_week_grid_days %}
+                        {% for week_of_dates in month_grid_days %}
                         <tr>
                             {% for day_date_obj in week_of_dates %}
                                 {% set day_iso_str = day_date_obj.isoformat() %}
@@ -47,7 +56,7 @@
                                 {% elif day_date_obj == tomorrow_date %}
                                     {% set day_display_str = "Tomorrow, " + day_date_obj.strftime("%B %d") %}
                                 {% endif %}
-                                <td class="calendar-day-cell {% if day_date_obj == today_date %}is-today{% endif %}"
+                                <td class="calendar-day-cell {% if day_date_obj == today_date %}is-today{% endif %} {% if day_date_obj.month != month_start.month %}other-month{% endif %}"
                                     data-dateiso="{{ day_iso_str }}" data-displaydate="{{ day_display_str }}">
                                     <div class="day-number">{{ day_date_obj.day }}</div>
                                     {% if grouped_events.get(day_iso_str) and grouped_events[day_iso_str]['items'] %}
@@ -266,7 +275,7 @@
         animating = true;
         const DURATION = 320;
 
-        // Lock viewport height to current content so layout doesn't jump
+        // Lock viewport height so layout doesn't jump
         viewport.style.height = grid.offsetHeight + 'px';
 
         // Build incoming panel off-screen
@@ -281,6 +290,8 @@
         incoming.classList.add(fromClass);
         grid.classList.add('cal-animating');
         viewport.appendChild(incoming);
+        // Fit whichever week is taller so neither is cropped mid-slide
+        viewport.style.height = Math.max(grid.offsetHeight, incoming.offsetHeight) + 'px';
 
         // Force reflow so initial positions are painted before transitions start
         incoming.getBoundingClientRect();
@@ -301,10 +312,13 @@
     }
 
     function calAdvNav(dir) {
+        // A second click mid-slide would be overwritten when the first slide finishes
+        if (animating) return;
         const next = currentOffset + dir;
         if (next < -2 || next > 2) return;
         currentOffset = next;
-        renderAdvGrid(currentOffset, dir > 0 ? 'next' : 'prev');
+        const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        renderAdvGrid(currentOffset, reduceMotion ? null : (dir > 0 ? 'next' : 'prev'));
         // Sync mobile day to same relative position
         calMobileRenderForOffset(currentOffset);
     }

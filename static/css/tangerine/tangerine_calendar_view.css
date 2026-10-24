@@ -155,6 +155,13 @@ body[data-theme="tangerine"] .cal-slide-incoming {
     transition: transform 0.32s cubic-bezier(0.4,0,0.2,1), opacity 0.32s ease;
     pointer-events: none;
 }
+/* Slide positions set by renderAdvGrid: the outgoing week leaves one side while the
+   incoming week enters from the other */
+.cal-slide-from-right { transform: translateX(100%); opacity: 0; }
+.cal-slide-from-left  { transform: translateX(-100%); opacity: 0; }
+.cal-slide-to-center  { transform: translateX(0); opacity: 1; }
+.cal-slide-to-left    { transform: translateX(-100%); opacity: 0; }
+.cal-slide-to-right   { transform: translateX(100%); opacity: 0; }
 
 .cal-adv-table {
     width: 100% !important;
@@ -343,3 +350,29 @@ body[data-theme="tangerine"] .cal-slide-incoming {
     .cal-week-grid-wrap { display: none; }
     .cal-mobile-day-view { display: block; }
 }
+
+/* ======================================================
+   Simple calendar: month navigation
+   ====================================================== */
+.cal-month-header {
+    position: relative;
+    gap: 16px;
+}
+.cal-month-header h5 {
+    min-width: 170px;
+    text-align: center;
+    margin: 0;
+}
+.cal-month-today {
+    position: absolute;
+    right: 0;
+    padding: 4px 12px;
+    border: 1px solid #444;
+    border-radius: 6px;
+    color: #e0e0e0 !important;
+    font-size: 0.85em;
+    text-decoration: none;
+}
+.cal-month-today:hover { border-color: #e17c52; color: #e17c52 !important; }
+/* Days from the neighbouring months: dimmed, events still listed */
+.calendar-grid td.other-month .grid-event-list { display: block; opacity: 0.45; }

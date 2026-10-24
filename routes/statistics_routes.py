@@ -1753,6 +1753,78 @@ def _calendar_movie_status(states, released):
     return status, _CALENDAR_STATUS_LABELS[status]
 
 
+def _calendar_events(start_date, end_date, now_aware, local_tz, use_24hour_format):
+    """Calendar events (episode drops and movie releases) dated start_date..end_date inclusive."""
+    events: List[Dict[str, Any]] = []
+    today_date = now_aware.date()
+
+    # 1. TV episodes
+    recently_aired, airing_soon = get_recently_aired_and_airing_soon(
+        start_date_override_iso=start_date.isoformat(),
+        end_date_override_iso=end_date.isoformat(),
+        include_all_upcoming=True
+    )
+
+    for item in recently_aired + airing_soon:
+        event_date = item['air_datetime'].date()
+        time_str = item['air_datetime'].strftime("%H:%M" if use_24hour_format else "%I:%M %p")
+        if not use_24hour_format and time_str.startswith("0"):
+            time_str = time_str[1:]
+        display_status, status_label = _calendar_episode_group_status(
+            item['episode_states'], item['air_datetime'] <= now_aware
+        )
+
+        events.append({
+            'date': event_date,
+            'time': time_str,
+            'title': item['title'],
+            'type': 'tv_show',
+            'display_status': display_status,
+            'status_label': status_label,
+            'imdb_id': item.get('imdb_id'),
+            'tmdb_id': item.get('tmdb_id'),
+            'season_number': item.get('season_number'),
+            'episode_number': item.get('episode_number'),
+            'sort_datetime': item['air_datetime']
+        })
+
+    # 2. Movies
+    calendar_movies = get_movies_for_calendar(
+        start_date_override_iso=start_date.isoformat(),
+        end_date_override_iso=end_date.isoformat()
+    )
+
+    for movie in calendar_movies:
+        try:
+            release_date_str = movie['release_date']
+            if not isinstance(release_date_str, str):
+                release_date_str = release_date_str.isoformat()
+            release_date_obj = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+        except (ValueError, TypeError) as e:
+            logging.error(f"Could not parse release_date '{movie['release_date']}' for movie '{movie['title']}': {e}")
+            continue
+
+        naive_movie_datetime = datetime.combine(release_date_obj, datetime.min.time())
+        aware_movie_datetime = local_tz.localize(naive_movie_datetime) if hasattr(local_tz, 'localize') and naive_movie_datetime.tzinfo is None else naive_movie_datetime.replace(tzinfo=local_tz)
+
+        # Released movies are those whose date has passed; today's releases still count as upcoming.
+        display_status, status_label = _calendar_movie_status(movie['states'], release_date_obj < today_date)
+
+        events.append({
+            'date': release_date_obj,
+            'time': None,
+            'title': movie['title'],
+            'type': 'movie',
+            'display_status': display_status,
+            'status_label': status_label,
+            'imdb_id': movie.get('imdb_id'),
+            'tmdb_id': movie.get('tmdb_id'),
+            'sort_datetime': aware_movie_datetime
+        })
+
+    return events
+
+
 @statistics_bp.route('/calendar')
 @user_required
 @onboarding_required
@@ -1786,89 +1858,38 @@ def calendar_view():
     view_start_date = this_week_monday - timedelta(weeks=2)
     view_end_date = view_start_date + timedelta(days=34)  # 5 weeks - 1 day
 
-    calendar_pull_start_date_iso = view_start_date.isoformat()
-    calendar_pull_end_date_iso = view_end_date.isoformat()
+    # Simple view: one calendar month (?month=YYYY-MM, default this month), shown as
+    # whole Monday-Sunday weeks, so days from the neighbouring months fill the edges.
+    month_start = today_date.replace(day=1)
+    month_arg = request.args.get('month', '')
+    try:
+        parsed = datetime.strptime(month_arg, '%Y-%m').date()
+        if abs(parsed.year - today_date.year) <= 10:
+            month_start = parsed
+    except ValueError:
+        pass
+    next_month_start = (month_start + timedelta(days=32)).replace(day=1)
+    prev_month_start = (month_start - timedelta(days=1)).replace(day=1)
+    month_grid_start = month_start - timedelta(days=month_start.weekday())
+    month_last_day = next_month_start - timedelta(days=1)
+    month_grid_end = month_last_day + timedelta(days=6 - month_last_day.weekday())
+    month_grid_days = []
+    day = month_grid_start
+    while day <= month_grid_end:
+        month_grid_days.append([day + timedelta(days=i) for i in range(7)])
+        day += timedelta(days=7)
 
-    # 1. Get TV Show Data using the 3-week range
-    recently_aired, airing_soon = get_recently_aired_and_airing_soon(
-        start_date_override_iso=calendar_pull_start_date_iso,
-        end_date_override_iso=calendar_pull_end_date_iso,
-        include_all_upcoming=True
-    )
-
-    for item in recently_aired + airing_soon:
-        event_date = item['air_datetime'].date()
-        time_str = item['air_datetime'].strftime("%H:%M" if use_24hour_format else "%I:%M %p")
-        if not use_24hour_format and time_str.startswith("0"):
-            time_str = time_str[1:]
-        display_status, status_label = _calendar_episode_group_status(
-            item['episode_states'], item['air_datetime'] <= now_aware
-        )
-
-        events.append({
-            'date': event_date,
-            'time': time_str,
-            'title': item['title'],
-            'type': 'tv_show',
-            'display_status': display_status,
-            'status_label': status_label,
-            'imdb_id': item.get('imdb_id'),
-            'tmdb_id': item.get('tmdb_id'),
-            'season_number': item.get('season_number'),
-            'episode_number': item.get('episode_number'),
-            'sort_datetime': item['air_datetime']
-        })
-
-    # 2. Get Movies using the 3-week range
-    calendar_movies = get_movies_for_calendar(
-        start_date_override_iso=calendar_pull_start_date_iso,
-        end_date_override_iso=calendar_pull_end_date_iso
-    )
-
-    for movie in calendar_movies:
-        try:
-            release_date_str = movie['release_date']
-            if not isinstance(release_date_str, str):
-                release_date_str = release_date_str.isoformat()
-            release_date_obj = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-        except (ValueError, TypeError) as e:
-            logging.error(f"Could not parse release_date '{movie['release_date']}' for movie '{movie['title']}': {e}")
-            continue
-
-        naive_movie_datetime = datetime.combine(release_date_obj, datetime.min.time())
-        aware_movie_datetime = local_tz.localize(naive_movie_datetime) if hasattr(local_tz, 'localize') and naive_movie_datetime.tzinfo is None else naive_movie_datetime.replace(tzinfo=local_tz)
-
-        # Released movies are those whose date has passed; today's releases still count as upcoming.
-        display_status, status_label = _calendar_movie_status(movie['states'], release_date_obj < today_date)
-
-        events.append({
-            'date': release_date_obj,
-            'time': None,
-            'title': movie['title'],
-            'type': 'movie',
-            'display_status': display_status,
-            'status_label': status_label,
-            'imdb_id': movie.get('imdb_id'),
-            'tmdb_id': movie.get('tmdb_id'),
-            'sort_datetime': aware_movie_datetime
-        })
+    # Pull the advanced window and the month separately unless they overlap, so a
+    # month far from today doesn't drag in everything between the two.
+    if month_grid_start <= view_end_date + timedelta(days=1) and month_grid_end >= view_start_date - timedelta(days=1):
+        pull_ranges = [(min(view_start_date, month_grid_start), max(view_end_date, month_grid_end))]
+    else:
+        pull_ranges = [(view_start_date, view_end_date), (month_grid_start, month_grid_end)]
+    for range_start, range_end in pull_ranges:
+        events.extend(_calendar_events(range_start, range_end, now_aware, local_tz, use_24hour_format))
 
     # 3. Sort all events
     events.sort(key=lambda x: x['sort_datetime'])
-
-    # --- Simple view: original 3-week grid (prev week / current week / next week) ---
-    simple_view_start = today_date - timedelta(days=today_date.weekday() + 7)  # Monday of prev week
-    three_week_grid_days = []
-    current_day_for_grid = simple_view_start
-    for _ in range(3):
-        week_days = []
-        for _ in range(7):
-            week_days.append(current_day_for_grid)
-            current_day_for_grid += timedelta(days=1)
-        three_week_grid_days.append(week_days)
-
-    simple_view_end = simple_view_start + timedelta(days=20)
-    three_week_grid_header = f"{simple_view_start.strftime('%b %d')} – {simple_view_end.strftime('%b %d')}"
 
     # --- Advanced view: single week being viewed ---
     viewed_week_days = [viewed_week_monday + timedelta(days=i) for i in range(7)]
@@ -1941,9 +1962,13 @@ def calendar_view():
         }
 
     return render_template('calendar_view.html',
-                           # Simple view 3-week grid
-                           three_week_grid_days=three_week_grid_days,
-                           three_week_grid_header=three_week_grid_header,
+                           # Simple view month grid
+                           month_grid_days=month_grid_days,
+                           month_start=month_start,
+                           month_header=month_start.strftime('%B %Y'),
+                           prev_month=prev_month_start.strftime('%Y-%m'),
+                           next_month=next_month_start.strftime('%Y-%m'),
+                           is_current_month=(month_start == today_date.replace(day=1)),
                            # Advanced view single-week (still used for SSR initial render)
                            viewed_week_days=viewed_week_days,
                            adv_grid_header=adv_grid_header,
