@@ -173,6 +173,31 @@ body.tangerine-theme .st-nav-item.open .st-nav-dropdown {
     pointer-events: all;
     transform: translateX(-50%) translateY(0);
 }
+/* Open dropdowns on hover for mouse users; touch keeps click-to-open */
+@media (hover: hover) and (pointer: fine) {
+    body.tangerine-theme .st-nav-item:hover .st-nav-dropdown {
+        opacity: 1;
+        pointer-events: all;
+        transform: translateX(-50%) translateY(0);
+    }
+    body.tangerine-theme .st-nav-item:hover .st-nav-btn {
+        color: var(--st-text, #e0e0e0);
+        border-bottom-color: var(--st-accent, #e8601c);
+    }
+    body.tangerine-theme .st-nav-item:hover .st-nav-btn .st-arr {
+        transform: rotate(180deg);
+        color: var(--st-accent, #e8601c);
+    }
+    /* Bridge the gap between button and dropdown so the pointer doesn't drop hover */
+    body.tangerine-theme .st-nav-dropdown::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: -8px;
+        height: 8px;
+    }
+}
 body.tangerine-theme .st-nav-dd-item {
     display: flex;
     align-items: center;
