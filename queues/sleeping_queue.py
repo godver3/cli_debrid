@@ -23,6 +23,32 @@ def _get_int_setting(section: str, key: str, default: int) -> int:
         )
         return default
 
+DEFAULT_WAKE_LIMIT = 24  # settings_schema Queue.wake_limit default
+NEVER_SLEEP = -1
+
+
+def get_global_wake_limit() -> int:
+    return _get_int_setting("Queue", "wake_limit", default=DEFAULT_WAKE_LIMIT)
+
+
+def resolve_wake_limit(version_settings: Dict[str, Any], global_limit: int) -> int:
+    """Wake limit for a version: its wake_count when positive, NEVER_SLEEP for -1,
+    otherwise (blank/None/0, as the bundled versions ship) the global Wake Limit.
+
+    Shared by Scraping (sleep or blacklist on no results) and Sleeping (wake or
+    blacklist), so both stop at the same count.
+    """
+    raw = (version_settings or {}).get('wake_count')
+    try:
+        value = int(raw) if raw not in (None, '') else None
+    except (TypeError, ValueError):
+        value = None
+    if value == NEVER_SLEEP:
+        return NEVER_SLEEP
+    if value and value > 0:
+        return value
+    return global_limit
+
 class SleepingQueue:
     def __init__(self):
         self.items = []
@@ -85,7 +111,7 @@ class SleepingQueue:
     def process(self, queue_manager):
         #logging.debug("Processing sleeping queue")
         current_time = datetime.now()
-        default_wake_limit = _get_int_setting("Queue", "wake_limit", default=24)
+        default_wake_limit = get_global_wake_limit()
         # Read sleep duration from settings, default to 30 minutes
         sleep_duration_minutes = _get_int_setting("Queue", "sleep_duration_minutes", default=30)
         # Ensure a minimum duration to prevent potential issues with very small values
@@ -106,14 +132,10 @@ class SleepingQueue:
             # Get version-specific wake limit if it exists
             version = item.get('version', 'Default')
             version_settings = config.get('Scraping', {}).get('versions', {}).get(version, {})
-            version_wake_count = version_settings.get('wake_count')
-            # Use version wake count if it's a positive number, -1 means never sleep
-            if version_wake_count == -1:
-                # Move directly to blacklist if wake_count is -1 (never sleep)
+            wake_limit = resolve_wake_limit(version_settings, default_wake_limit)
+            if wake_limit == NEVER_SLEEP:
                 items_to_blacklist.append(item)
                 continue
-            # Otherwise use version wake count if positive, or default
-            wake_limit = version_wake_count if version_wake_count and version_wake_count > 0 else default_wake_limit
 
             time_asleep = current_time - self.sleeping_queue_times[item_id]
             # Fetch current wake count from DB
