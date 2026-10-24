@@ -757,7 +757,7 @@ SETTINGS_SCHEMA = {
                 "foreign_language_penalty": {
                     "type": "number",
                     "default": 30,
-                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. 0 disables."
+                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), the same amount is a bonus for releases tagged MULTi, DUAL or with the version's language, since untagged ones usually carry only the original audio. 0 disables both."
                 },
                 "wake_count": {
                     "type": "integer",

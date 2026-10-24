@@ -1437,6 +1437,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 'language_score', 'year_match_score', 'season_match_score',
                 'episode_match_score', 'multi_pack_score', 'single_episode_score',
                 'content_type_score', 'language_code_penalty', 'foreign_language_penalty',
+                'extra_audio_bonus',
                 'is_multi_pack',
                 'num_items', 'scraper_priority_score', 'version_scraper_priority_score',
                 // preferred_filter_score sits just above its breakdown

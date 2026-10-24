@@ -436,7 +436,7 @@ def install_nodejs():
             logging.info("Winget not available or not responding, attempting manual Node.js installation...")
             try:
                 # Download Node.js installer
-                url = 'https://nodejs.org/dist/v20.11.1/node-v20.11.1-x64.msi'  # LTS version
+                url = 'https://nodejs.org/dist/v22.23.4/node-v22.23.4-x64.msi'  # LTS version
                 logging.info("Downloading Node.js installer...")
                 response = requests.get(url, stream=True, timeout=30)
                 

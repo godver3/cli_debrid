@@ -121,6 +121,45 @@ class ForeignLanguagePenaltyTests(unittest.TestCase):
         # Without the original language it's the old behaviour.
         self.assertEqual(_score(korean)['foreign_language_penalty'], -90)
 
+    def test_extra_audio_bonus_on_foreign_original_title(self):
+        # Squid Game S01: untagged DBTV WEB-DLs have Korean audio only and won on
+        # bitrate; the DUAL/MULTi releases carry English too.
+        dbtv = 'Squid.Game.S01E01.2021.1080p.Netflix.WEB-DL.AVC.DDP.5.1.Atmos-DBTV'
+        untagged = _score(dbtv, original_language='ko')
+        self.assertEqual(untagged['extra_audio_bonus'], 0)
+        self.assertEqual(untagged['foreign_language_penalty'], 0)
+        for title in ('Squid.Game.S01E02.Hell.1080p.NF.WEB-DL.DUAL.DDP5.1.Atmos.x264-AGLET',
+                      'Squid Game 2021 S01E08 1080p NF WEB-DL MULTI DDP5 1 H 264-DUSKLiGHT',
+                      'Squid.Game.S01E09.FiNAL.MULTi.1080p.NF.WEB.DDP5.1.H264-TFA',
+                      'Squid.Game.S01E01.1080p.NF.WEB-DL.Dual-Audio.DDP5.1.x264-X',
+                      'Squid.Game.S01E01.1080p.NF.WEB-DL.KOR.ENG.DDP5.1.x264-X'):
+            with self.subTest(title=title):
+                self.assertEqual(_score(title, original_language='ko')['extra_audio_bonus'], 90)
+
+    def test_extra_audio_bonus_needs_foreign_original(self):
+        dual = 'How.I.Met.Your.Mother.S01E18.1080p.WEB-DL.DUAL.DDP5.1.x264-X'
+        self.assertEqual(_score(dual)['extra_audio_bonus'], 0)
+        self.assertEqual(_score(dual, original_language='en')['extra_audio_bonus'], 0)
+        self.assertEqual(_score(dual, preferred_language=None, original_language='ko')['extra_audio_bonus'], 0)
+        self.assertEqual(_score(dual, upgrade_mode=True, original_language='ko')['extra_audio_bonus'], 0)
+        self.assertEqual(_score(dual, original_language='ko', foreign_language_penalty=0)['extra_audio_bonus'], 0)
+
+    def test_subtitle_and_title_words_earn_no_bonus(self):
+        for title in ('Squid.Game.S01E01.1080p.NF.WEB-DL.Multi.Subs.x264-X',
+                      'Squid.Game.S01E01.1080p.NF.WEB-DL.Dual.Subs.x264-X',
+                      'Squid.Game.S01E01.1080p.NF.WEB-DL.x264-X'):
+            with self.subTest(title=title):
+                self.assertEqual(_score(title, original_language='ko')['extra_audio_bonus'], 0)
+        # A show named "Dual ..." isn't a DUAL release.
+        result = _result('Dual.Survival.S01E01.1080p.WEB.x264-X')
+        rank_result_key(result, [result], 'Dual Survival', 2010, 1, 1, False, 'episode',
+                        {'max_resolution': '1080p', 'language_code': 'en'},
+                        preferred_language='en', original_language='ko')
+        self.assertEqual(result['score_breakdown']['extra_audio_bonus'], 0)
+
+    def test_bare_dual_exempts_penalty(self):
+        self.assertEqual(_score('How.I.Met.Your.Mother.S01E18.GERMAN.DUAL.1080p.WEB.x264-X')['foreign_language_penalty'], 0)
+
     def test_no_preferred_language_no_penalty(self):
         self.assertEqual(_score(GERMAN, preferred_language=None)['foreign_language_penalty'], 0)
 
