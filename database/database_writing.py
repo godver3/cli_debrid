@@ -47,6 +47,45 @@ def stash_replaced_files(rows):
     return stashed
 
 
+def move_to_wanted_for_replacement(cursor, where_sql, params):
+    """Send the media_items rows matching where_sql back to Wanted to get a different release.
+
+    The current release is saved in excluded_release_id so the next scrape skips it for
+    these rows only (the scraper clears it after that scrape, see reset_not_wanted_check),
+    and the old files are stashed in replaced_files so they keep playing until the
+    replacement is Collected (see cleanup_files_replaced_by_move_to_wanted). Rows already
+    in Wanted/Scraping/Adding are left alone. Returns the number of rows moved; the
+    caller commits.
+    """
+    where_sql = f"({where_sql}) AND state NOT IN ('Wanted', 'Scraping', 'Adding')"
+    stashed = stash_replaced_files(
+        cursor.execute(f"SELECT * FROM media_items WHERE {where_sql}", params).fetchall())
+    cursor.execute(
+        f"""UPDATE media_items
+            SET state = 'Wanted',
+                filled_by_file = NULL,
+                filled_by_title = NULL,
+                filled_by_magnet = NULL,
+                filled_by_torrent_id = NULL,
+                {RESET_COLLECTION_STATE_SQL},
+                last_updated = ?,
+                disable_not_wanted_check = FALSE,
+                excluded_release_id = filled_by_magnet,
+                location_on_disk = NULL,
+                original_path_for_symlink = NULL,
+                original_scraped_torrent_title = NULL,
+                upgrading_from = NULL,
+                version = TRIM(version, '*'),
+                upgrading = NULL
+            WHERE {where_sql}""",
+        (datetime.now(), *params),
+    )
+    updated = cursor.rowcount
+    for row_id, replaced_files in stashed:
+        cursor.execute("UPDATE media_items SET replaced_files = ? WHERE id = ?", (replaced_files, row_id))
+    return updated
+
+
 @retry_on_db_lock()
 def replace_collected_item(item: dict) -> Optional[int]:
     """Point the library's Collected row for this episode/movie and version at a new release.

@@ -162,6 +162,14 @@ def _parse_last_updated(value):
         return None
 
 
+# Tasks whose on/off switch is a setting. ProgramRunner schedules them from the setting
+# alone (saved Task Manager toggles are ignored), and flipping one in the Task Manager
+# writes the setting (see _sync_setting_backed_tasks in program_operation_routes).
+SETTING_BACKED_TASKS = {
+    'task_process_plex_reported_issues': ('Plex Reported Issues', 'enabled'),
+}
+
+
 class ProgramRunner:
     _instance = None
 
@@ -343,6 +351,7 @@ class ProgramRunner:
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours (if enabled)
             'task_refresh_plex_tokens': 24 * 60 * 60,   # Run every 24 hours
             'task_sync_plex_labels': 30 * 60,           # Run every 30 minutes
+            'task_process_plex_reported_issues': 30, # Run every 30 seconds (if enabled) - Plex has no push for reports
             'task_update_tv_show_status': 172800,       # Run every 48 hours
             # 'task_purge_not_wanted_magnets_file': 604800, # Default: 1 week (Can be added if needed)
             # 'task_local_library_scan': 900, # Default: 15 mins (Can be added if needed)
@@ -780,6 +789,13 @@ class ProgramRunner:
             if _bs_task in self.enabled_tasks and not _is_toggled_on:
                 self.enabled_tasks.remove(_bs_task)
 
+        # Setting-backed tasks follow their setting alone (see SETTING_BACKED_TASKS).
+        for _sb_task, (_sb_section, _sb_key) in SETTING_BACKED_TASKS.items():
+            if get_setting(_sb_section, _sb_key, False):
+                self.enabled_tasks.add(_sb_task)
+            else:
+                self.enabled_tasks.discard(_sb_task)
+
         # Enable overlay tasks if overlays are enabled
         if get_setting('Overlay Settings', 'overlays_enabled', False):
             overlay_tasks = ['task_overlay_sync', 'task_overlay_cleanup']
@@ -830,6 +846,8 @@ class ProgramRunner:
                 normalized_name = self._normalize_task_name(task_name)
                 if normalized_name not in self.original_task_intervals and normalized_name not in self.task_intervals:
                     logging.warning(f"Task '{normalized_name}' in task_toggles.json not defined in intervals. Skipping toggle application.")
+                    continue
+                if normalized_name in SETTING_BACKED_TASKS:
                     continue
                 if enabled:
                     if normalized_name not in self.enabled_tasks:
@@ -5932,6 +5950,20 @@ class ProgramRunner:
                 logging.info(f"Synced {synced} Plex labels")
         except Exception as e:
             logging.error(f"Error in task_sync_plex_labels: {e}", exc_info=True)
+
+    def task_process_plex_reported_issues(self):
+        """Replace movies and episodes Plex users reported with Plex's Report Issue.
+
+        Scheduled when 'Plex Reported Issues' is enabled in settings; the Task Manager
+        toggle flips that setting.
+        """
+        try:
+            from utilities.plex_reported_issues import process_reported_issues
+            counts = process_reported_issues()
+            if counts:
+                logging.info(f"Plex reported issues: {counts}")
+        except Exception as e:
+            logging.error(f"Error in task_process_plex_reported_issues: {e}", exc_info=True)
 
     def task_backfill_plex_labels_content_source_detail(self):
         """

@@ -18,7 +18,7 @@ from functools import wraps
 # Provider-agnostic: avoid direct Real-Debrid import
 from typing import Optional, Dict, List, Any
 import calendar
-from database.database_writing import RESET_COLLECTION_STATE_SQL, stash_replaced_files
+from database.database_writing import move_to_wanted_for_replacement
 
 def format_file_size(size_gb):
     """Format file size from GB to human-readable format (GB, MB, etc.)"""
@@ -1396,97 +1396,24 @@ def move_to_wanted():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Build query based on item type. excluded_release_id captures the release
-        # (magnet/nzb URL) that's currently filling the row *before* filled_by_magnet
-        # is wiped, so the next scrape can skip it for this item only — without
-        # touching the global not-wanted lists — instead of just re-picking the
-        # same top-scored result again. It's a one-shot flag: the scraper clears
-        # it after the item's next scrape completes (see reset_not_wanted_check).
+        # Each branch picks the rows; move_to_wanted_for_replacement saves the release
+        # that's filling them in excluded_release_id (so the next scrape skips it for
+        # these rows only, without touching the global not-wanted lists) and stashes
+        # their old files, which are removed once the replacement is collected.
         if season_number is not None and episode_number is not None:
             # Episode — no item_id scoping here since episode rows group all versions together
-            query = f"""
-                UPDATE media_items
-                SET state = 'Wanted',
-                    filled_by_file = NULL,
-                    filled_by_title = NULL,
-                    filled_by_magnet = NULL,
-                    filled_by_torrent_id = NULL,
-                    {RESET_COLLECTION_STATE_SQL},
-                    last_updated = ?,
-                    disable_not_wanted_check = FALSE,
-                    excluded_release_id = filled_by_magnet,
-                    location_on_disk = NULL,
-                    original_path_for_symlink = NULL,
-                    original_scraped_torrent_title = NULL,
-                    upgrading_from = NULL,
-                    version = TRIM(version, '*'),
-                    upgrading = NULL
-                WHERE (imdb_id = ? OR tmdb_id = ?)
-                AND season_number = ?
-                AND episode_number = ?
-                AND state NOT IN ('Wanted', 'Scraping', 'Adding')
-            """
-            params = (datetime.now(), imdb_id, tmdb_id, season_number, episode_number)
+            where = "(imdb_id = ? OR tmdb_id = ?) AND season_number = ? AND episode_number = ?"
+            params = (imdb_id, tmdb_id, season_number, episode_number)
         elif item_id:
             # Movie with specific row ID — only move this exact version
-            query = f"""
-                UPDATE media_items
-                SET state = 'Wanted',
-                    filled_by_file = NULL,
-                    filled_by_title = NULL,
-                    filled_by_magnet = NULL,
-                    filled_by_torrent_id = NULL,
-                    {RESET_COLLECTION_STATE_SQL},
-                    last_updated = ?,
-                    disable_not_wanted_check = FALSE,
-                    excluded_release_id = filled_by_magnet,
-                    location_on_disk = NULL,
-                    original_path_for_symlink = NULL,
-                    original_scraped_torrent_title = NULL,
-                    upgrading_from = NULL,
-                    version = TRIM(version, '*'),
-                    upgrading = NULL
-                WHERE id = ?
-                AND type = 'movie'
-                AND state NOT IN ('Wanted', 'Scraping', 'Adding')
-            """
-            params = (datetime.now(), item_id)
+            where = "id = ? AND type = 'movie'"
+            params = (item_id,)
         else:
             # Movie fallback (no item_id) — move all versions
-            query = f"""
-                UPDATE media_items
-                SET state = 'Wanted',
-                    filled_by_file = NULL,
-                    filled_by_title = NULL,
-                    filled_by_magnet = NULL,
-                    filled_by_torrent_id = NULL,
-                    {RESET_COLLECTION_STATE_SQL},
-                    last_updated = ?,
-                    disable_not_wanted_check = FALSE,
-                    excluded_release_id = filled_by_magnet,
-                    location_on_disk = NULL,
-                    original_path_for_symlink = NULL,
-                    original_scraped_torrent_title = NULL,
-                    upgrading_from = NULL,
-                    version = TRIM(version, '*'),
-                    upgrading = NULL
-                WHERE (imdb_id = ? OR tmdb_id = ?)
-                AND type = 'movie'
-                AND state NOT IN ('Wanted', 'Scraping', 'Adding')
-            """
-            params = (datetime.now(), imdb_id, tmdb_id)
+            where = "(imdb_id = ? OR tmdb_id = ?) AND type = 'movie'"
+            params = (imdb_id, tmdb_id)
 
-        # Remember the files this release left behind (symlink, mount file, provider
-        # job) before the UPDATE wipes them, so they're removed once the replacement is
-        # collected (see cleanup_files_replaced_by_move_to_wanted). Without this the old
-        # symlink, the mount-side torrent/NZB and the Plex entry were all orphaned.
-        select_query = "SELECT * FROM media_items WHERE " + query.split("WHERE", 1)[1]
-        stashed = stash_replaced_files(cursor.execute(select_query, params[1:]).fetchall())
-
-        cursor.execute(query, params)
-        updated = cursor.rowcount
-        for row_id, replaced_files in stashed:
-            cursor.execute("UPDATE media_items SET replaced_files = ? WHERE id = ?", (replaced_files, row_id))
+        updated = move_to_wanted_for_replacement(cursor, where, params)
         conn.commit()
 
         if updated > 0:

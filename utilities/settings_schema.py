@@ -3545,5 +3545,18 @@ SETTINGS_SCHEMA = {
         "collection_name_pattern": {"type": "string", "description": "Naming pattern for box set collections. {title} = franchise name (e.g. The Godfather).", "default": "{title} Collection"},
         "min_movies": {"type": "number", "description": "Minimum number of owned movies required to create/keep a box set collection.", "default": 2},
         "sort_order": {"type": "string", "description": "Sort order for movies within each box set collection.", "default": "release_date_asc"}
+    },
+    "Plex Reported Issues": {
+        "tab": "Additional Settings",
+        "enabled": {
+            "type": "boolean",
+            "description": "Replace movies and episodes that Plex users report with Plex's Report Issue (the ... menu on an item). The reported item is sent back to Wanted to get a different release, and the current file keeps playing until the new one is in. Reports already in Plex when this is turned on are left alone. Reports on a whole show or season are only flagged, not replaced. New reports are picked up within about 30 seconds. Same switch as the task in the Task Manager.",
+            "default": False
+        },
+        "reply_to_reporter": {
+            "type": "boolean",
+            "description": "Reply in the Plex report thread when a report is picked up and again once the item has been replaced.",
+            "default": True
+        }
     }
 }
