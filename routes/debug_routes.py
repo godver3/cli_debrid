@@ -7735,7 +7735,7 @@ def list_database_backups():
         from main import verify_backup, get_backup_age_category
 
         config = load_config()
-        db_content_dir = config.get('db_content_dir', '/user/db_content')
+        db_content_dir = (config.get('db_content_dir') or os.environ.get('USER_DB_CONTENT', '/user/db_content'))
         backups_dir = os.path.join(db_content_dir, 'backups')
 
         if not os.path.exists(backups_dir):
@@ -7832,7 +7832,7 @@ def request_database_restore():
 
         # Create restore flag
         config = load_config()
-        config_dir = config.get('config_dir', '/user/config')
+        config_dir = (config.get('config_dir') or os.environ.get('USER_CONFIG', '/user/config'))
         restore_flag_path = os.path.join(config_dir, 'restore_backup.json')
 
         restore_data = {
@@ -7880,7 +7880,7 @@ def scan_old_databases():
         import sqlite3
 
         config = load_config()
-        db_content_dir = config.get('db_content_dir', '/user/db_content')
+        db_content_dir = (config.get('db_content_dir') or os.environ.get('USER_DB_CONTENT', '/user/db_content'))
         backups_dir = os.path.join(db_content_dir, 'backups')
 
         # Current database files that should NEVER be deleted
@@ -8073,7 +8073,7 @@ def delete_old_databases():
             return jsonify({'success': False, 'error': 'No files selected'}), 400
 
         config = load_config()
-        db_content_dir = config.get('db_content_dir', '/user/db_content')
+        db_content_dir = (config.get('db_content_dir') or os.environ.get('USER_DB_CONTENT', '/user/db_content'))
 
         # Protected files that should NEVER be deleted
         protected_files = {'media_items.db', 'users.db', 'cli_battery.db'}

@@ -15,7 +15,7 @@ def load_config():
         return False
     
     try:
-        with open('/user/config/config.json', 'r') as f:
+        with open(os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'config.json'), 'r') as f:
             config = json.load(f)
             return config.get('UI Settings', {}).get('enable_phalanx_db', False)
     except Exception:

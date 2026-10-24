@@ -12,6 +12,8 @@ import os
 import requests
 import threading
 from pathlib import Path
+
+from utilities.paths import config_dir
 from typing import Optional, Tuple, List
 
 try:
@@ -927,7 +929,7 @@ def get_source_icon(source_type: str, override_icon: str = '') -> str:
         clean = override_icon.lstrip('/')
         if clean.startswith('logos/'):
             clean = clean[len('logos/'):]
-        for base in [ASSETS_LOGOS, Path('/user/config/overlay_assets/logos')]:
+        for base in [ASSETS_LOGOS, Path(config_dir('overlay_assets', 'logos'))]:
             full = base / clean
             if full.exists():
                 return str(full)

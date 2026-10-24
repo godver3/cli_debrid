@@ -147,8 +147,8 @@ def check_and_perform_restore():
     from utilities.settings import load_config
 
     config = load_config()
-    config_dir = config.get('config_dir', '/user/config')
-    db_content_dir = config.get('db_content_dir', '/user/db_content')
+    config_dir = config.get('config_dir') or os.environ.get('USER_CONFIG', '/user/config')
+    db_content_dir = config.get('db_content_dir') or os.environ.get('USER_DB_CONTENT', '/user/db_content')
 
     restore_flag_path = os.path.join(config_dir, 'restore_backup.json')
 

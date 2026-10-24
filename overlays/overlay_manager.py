@@ -70,8 +70,8 @@ class OverlayManager:
     """
 
     def __init__(self, db_path: Optional[str], plex_base_url: str, plex_token: str,
-                 asset_dir: str = "/user/config/overlay_assets",
-                 template_dir: str = "/user/config/overlay_templates"):
+                 asset_dir: Optional[str] = None,
+                 template_dir: Optional[str] = None):
         """
         Initialize overlay manager.
 

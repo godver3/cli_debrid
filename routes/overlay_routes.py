@@ -10,11 +10,13 @@ import re
 import sqlite3
 from flask import Blueprint, jsonify, request, send_file, render_template, abort
 from pathlib import Path
+from utilities.paths import config_dir
 from database.core import get_db_connection as _get_db_connection
 
 # Logo library directories (two-tier: user first, system fallback)
 _SYSTEM_LOGO_DIR = Path(__file__).parent.parent / 'overlays' / 'assets' / 'logos'
-_USER_LOGO_DIR = Path('/user/config/overlay_assets/logos')
+def _user_logo_dir() -> Path:
+    return Path(config_dir('overlay_assets', 'logos'))
 
 from routes.models import admin_required
 from overlays import OverlayManager, LayoutManager, LayoutValidator
@@ -31,13 +33,14 @@ logger = logging.getLogger(__name__)
 # the overlay page never hammers Plex with hundreds of simultaneous downloads.
 # Cache lives at /user/config/poster_thumb_cache/ (persisted across restarts).
 # ---------------------------------------------------------------------------
-_THUMB_CACHE_DIR = Path('/user/config/poster_thumb_cache')
+def _thumb_cache_dir() -> Path:
+    return Path(config_dir('poster_thumb_cache'))
 
 
 def _thumb_cache_path(key: str, prefix: str = '') -> Path:
     """Return the cache file path for a given ms_item_id / season key."""
     safe = key.replace('/', '_').replace('\\', '_')
-    return _THUMB_CACHE_DIR / f"{prefix}{safe}.jpg"
+    return _thumb_cache_dir() / f"{prefix}{safe}.jpg"
 
 
 def _serve_from_thumb_cache(cache_path: Path):
@@ -64,7 +67,7 @@ def _write_thumb_cache(cache_path: Path, jpeg_bytes: bytes) -> None:
     if not jpeg_bytes:
         return
     try:
-        _THUMB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _thumb_cache_dir().mkdir(parents=True, exist_ok=True)
         tmp = cache_path.with_suffix('.tmp')
         tmp.write_bytes(jpeg_bytes)
         tmp.rename(cache_path)
@@ -3146,7 +3149,7 @@ def list_logos():
     category_filter = request.args.get('category')
 
     sys_groups  = _scan_logo_dir(_SYSTEM_LOGO_DIR, False)
-    user_groups = _scan_logo_dir(_USER_LOGO_DIR,   True)
+    user_groups = _scan_logo_dir(_user_logo_dir(),   True)
 
     # Merge: user logos added on top of system; same key → merge logo lists
     merged = dict(sys_groups)
@@ -3188,7 +3191,7 @@ def serve_logo(filepath):
     parts = Path(filepath).parts
     if '..' in parts:
         abort(400)
-    user_path = _USER_LOGO_DIR / filepath
+    user_path = _user_logo_dir() / filepath
     if user_path.exists():
         return send_file(str(user_path))
     system_path = _SYSTEM_LOGO_DIR / filepath
@@ -3216,12 +3219,12 @@ def upload_logo():
     safe_sub  = re.sub(r'[^\w\-]', '_', subcategory) if subcategory else ''
     safe_name = re.sub(r'[^\w\-. ]', '_', Path(f.filename).name)
 
-    dest_dir = _USER_LOGO_DIR / safe_cat / safe_sub if safe_sub else _USER_LOGO_DIR / safe_cat
+    dest_dir = _user_logo_dir() / safe_cat / safe_sub if safe_sub else _user_logo_dir() / safe_cat
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / safe_name
     f.save(str(dest))
 
-    rel = str(dest.relative_to(_USER_LOGO_DIR))
+    rel = str(dest.relative_to(_user_logo_dir()))
     return jsonify({
         'success': True,
         'path': f"/logos/{rel}",
@@ -3245,10 +3248,10 @@ def delete_logo():
     if '..' in parts or not parts:
         return jsonify({'success': False, 'error': 'Invalid path'}), 400
 
-    user_path = _USER_LOGO_DIR / rel
+    user_path = _user_logo_dir() / rel
     try:
         resolved = user_path.resolve()
-        base_resolved = _USER_LOGO_DIR.resolve()
+        base_resolved = _user_logo_dir().resolve()
         if not str(resolved).startswith(str(base_resolved)):
             return jsonify({'success': False, 'error': 'Path outside user logo directory'}), 400
     except Exception:
@@ -3274,8 +3277,7 @@ def serve_font(font_name):
     stem = Path(font_name).stem
 
     search_paths = [
-        _USER_LOGO_DIR.parent / 'fonts' / font_name,
-        Path('/user/config/overlay_assets/fonts') / font_name,
+        Path(config_dir('overlay_assets', 'fonts')) / font_name,
         Path(__file__).parent.parent / 'overlays' / 'fonts' / 'cache' / font_name,
         Path('/usr/share/fonts/TTF') / font_name,
         Path('/usr/share/fonts/truetype/dejavu') / font_name,
