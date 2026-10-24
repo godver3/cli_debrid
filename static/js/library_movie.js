@@ -1458,7 +1458,8 @@ function initializeDeletionHandlers() {
     // Movie-level delete button
     const deleteMovieBtn = document.getElementById('delete-movie-btn');
     if (deleteMovieBtn && movieData) {
-        deleteMovieBtn.dataset.imdbId = movieData.imdb_id;
+        // Movies without an IMDb ID (TMDB-only) are deleted by TMDB ID; the endpoint takes either
+        deleteMovieBtn.dataset.imdbId = movieData.imdb_id || movieData.tmdb_id || '';
         deleteMovieBtn.addEventListener('click', handleDeleteMovie);
     }
 
