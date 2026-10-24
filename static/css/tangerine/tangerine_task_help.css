@@ -953,6 +953,8 @@ body.tangerine-theme {
   font-size: 10px; font-weight: 600; font-family: monospace;
 }
 .tng-modal-desc { font-size: 13px; color: var(--tng-text2); line-height: 1.65; margin-bottom: 12px; }
+.tng-modal-runs { font-size: 12px; color: var(--tng-text3, var(--tng-text2)); line-height: 1.5; margin-bottom: 12px; font-style: italic; }
+.tng-modal-runs:empty { display: none; }
 .tng-modal-action {
   background: var(--tng-surface2);
   border: 1px solid var(--tng-border2);
