@@ -38,17 +38,10 @@ def _load_media_matcher():
         ptt = types.ModuleType('PTT')
         ptt.parse_title = lambda filename: {}
         sys.modules['PTT'] = ptt
-    if 'scraper' not in sys.modules:
-        sys.modules['scraper'] = types.ModuleType('scraper')
-    if 'scraper.functions' not in sys.modules:
-        sys.modules['scraper.functions'] = types.ModuleType('scraper.functions')
-    if 'scraper.functions.anime_utils' not in sys.modules:
-        au = types.ModuleType('scraper.functions.anime_utils')
-        au.detect_absolute_numbering = lambda *a, **k: None
-        sys.modules['scraper.functions.anime_utils'] = au
-
-    path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                         'queues', 'media_matcher.py')
+    # scraper.functions is imported for real: hand-made stand-ins fell behind the
+    # names media_matcher imports and only passed when another file loaded the real ones.
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    path = os.path.join(root, 'queues', 'media_matcher.py')
     spec = importlib.util.spec_from_file_location('media_matcher_assign_test', path)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)

@@ -2,7 +2,7 @@
 # Run every check before pushing or live-patching: the same checks every time.
 #
 #   scripts/check.sh            everything
-#   scripts/check.sh --quick    skip slow tests (pytest -m "not slow")
+#   scripts/check.sh --quick    skip slow tests (pytest -m "not slow") and the per-folder runs
 #
 # PYTHON picks the interpreter (default: python3, which needs requirements-linux.txt,
 # pytest and pyflakes installed). CLI_MOUNT_DIR points at a cli_mount (decypharr)
@@ -16,9 +16,10 @@ PYTEST_ARGS=()
 [[ "${1:-}" == "--quick" ]] && PYTEST_ARGS=(-m "not slow")
 
 failed=()
+skipped=()
 step() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 fail() { failed+=("$1"); printf '\033[31mFAILED: %s\033[0m\n' "$1"; }
-skip() { printf '\033[33mskipped: %s\033[0m\n' "$1"; }
+skip() { skipped+=("$1"); printf '\033[33mskipped: %s\033[0m\n' "$1"; }
 
 # Tests write their files under a throwaway folder, never /user.
 scratch="$(mktemp -d)"
@@ -27,6 +28,17 @@ export USER_CONFIG="$scratch" USER_DB_CONTENT="$scratch" USER_LOGS="$scratch"
 
 step "pytest"
 "$PYTHON" -m pytest -q "${PYTEST_ARGS[@]}" || fail "pytest"
+
+if [[ "${1:-}" != "--quick" ]]; then
+    step "pytest: each test folder on its own"
+    # The full run imports every file first, so a test that only passes because another
+    # file loaded a real module (or a stub) for it goes unnoticed there.
+    for dir in tests/*/; do
+        [[ -f "$dir/__init__.py" ]] || continue
+        "$PYTHON" -m pytest -q -p no:warnings "$dir" >"$scratch/area.log" 2>&1 \
+            && echo "ok  $dir" || { tail -20 "$scratch/area.log"; fail "pytest $dir alone"; }
+    done
+fi
 
 step "pyflakes: undefined names"
 # Unfiltered on purpose: grepping for names you expect misses the ones you don't.
@@ -63,4 +75,8 @@ if (( ${#failed[@]} )); then
     printf '\033[31m%d check(s) failed: %s\033[0m\n' "${#failed[@]}" "${failed[*]}"
     exit 1
 fi
-printf '\033[32mAll checks passed.\033[0m\n'
+if (( ${#skipped[@]} )); then
+    printf '\033[33mAll checks that ran passed; skipped: %s\033[0m\n' "${skipped[*]%% (*}"
+else
+    printf '\033[32mAll checks passed.\033[0m\n'
+fi
