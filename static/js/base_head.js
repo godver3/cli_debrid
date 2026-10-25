@@ -20,7 +20,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const releaseNotesPopup = document.getElementById('releaseNotesPopup');
     const releaseNotesOverlay = document.getElementById('releaseNotesOverlay');
     const releaseNotesClose = document.getElementById('releaseNotesClose');
-    const easterEggModal = document.getElementById('easterEggModal');
     // --- End Release Notes Modal Elements ---
 
     // Notification functions are handled in base.js to avoid conflicts
@@ -38,11 +37,6 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log('Closing support modal via outside click');
             supportModal.style.display = 'none';
             document.body.classList.remove('modal-open'); // Ensure removed for support modal too
-        }
-        // Close Easter Egg modal if clicking outside
-        if (easterEggModal && event.target == easterEggModal) {
-            easterEggModal.style.display = 'none';
-            document.body.classList.remove('modal-open');
         }
     });
 
@@ -369,12 +363,6 @@ document.addEventListener('DOMContentLoaded', function() {
                  // document.getElementById('help-overlay').style.display = 'none'; // Example
                  // document.body.classList.remove('modal-open'); // Example
              }
-             // Close Easter Egg modal via ESC key
-            if (easterEggModal && easterEggModal.style.display === 'block') {
-                console.log('Closing easter egg modal via ESC key');
-                easterEggModal.style.display = 'none';
-                document.body.classList.remove('modal-open');
-            }
         }
     });
 
@@ -416,49 +404,6 @@ document.addEventListener('DOMContentLoaded', function() {
         console.warn('One or more release notes elements not found.');
     }
     // --- End Release Notes Modal Event Listeners ---
-
-    // --- Easter Egg Modal Logic ---
-    const easterEggModalClose = document.getElementById('easterEggModalClose');
-
-    if (easterEggModal && easterEggModalClose) {
-        easterEggModalClose.addEventListener('click', function() {
-            easterEggModal.style.display = 'none';
-            document.body.classList.remove('modal-open');
-        });
-    } else {
-        console.warn('Easter egg modal elements not found.');
-    }
-
-    // Konami Code
-    const konamiSequence = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
-    let konamiCurrentIndex = 0;
-
-    document.addEventListener('keydown', (e) => {
-        if (!easterEggModal) return; // Do nothing if modal element isn't there
-
-        const key = e.key;
-        const expectedKey = konamiSequence[konamiCurrentIndex];
-
-        if (key === expectedKey) {
-            konamiCurrentIndex++;
-            if (konamiCurrentIndex === konamiSequence.length) {
-                const eggImg = easterEggModal.querySelector('img[data-src]');
-                if (eggImg && !eggImg.src) eggImg.src = eggImg.dataset.src;
-                easterEggModal.style.display = 'block';
-                document.body.classList.add('modal-open');
-                konamiCurrentIndex = 0; // Reset for next time
-            }
-        } else {
-            // If the pressed key is the first in the sequence, restart from the second char
-            if (key === konamiSequence[0].toLowerCase()) {
-                konamiCurrentIndex = 1;
-            } else {
-                // Otherwise, completely reset
-                konamiCurrentIndex = 0;
-            }
-        }
-    });
-    // --- End Easter Egg Modal Logic ---
 
     // --- "Hacked" Easter Egg ---
     const headerElement = document.querySelector('header');

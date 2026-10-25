@@ -795,21 +795,6 @@
         {% block content %}{% endblock %}
     </main>
 
-    <!-- Easter Egg Modal -->
-    <div id="easterEggModal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>🎉 You found an Easter Egg! 🎉</h2>
-                <span class="close" id="easterEggModalClose">&times;</span>
-            </div>
-            <div class="modal-body">
-                <!-- 2 MB image: loaded only when the modal opens, not on every page view -->
-                <img data-src="{{ url_for('static', filename='1.png') }}" alt="Easter Egg Image">
-                <p>Who's awesome? You are!</p>
-            </div>
-        </div>
-    </div>
-
     <!-- "Hacked" Easter Egg Overlay -->
     <div id="hack-overlay" style="display: none;">
         <div id="hack-text"></div>
