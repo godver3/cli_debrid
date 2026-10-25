@@ -103,3 +103,62 @@ def _no_stub_modules_left_behind():
     if changed:
         pytest.fail("test replaced real module attributes and didn't restore them: " + ", ".join(changed)
                     + " (use mock.patch or monkeypatch)", pytrace=False)
+
+
+# --- Shared fixtures ---------------------------------------------------------
+
+@pytest.fixture(scope='session')
+def _schema_template(tmp_path_factory):
+    """A media_items.db with the real schema, built once per run and copied per test."""
+    path = tmp_path_factory.mktemp('schema_template')
+    old = os.environ.get('USER_DB_CONTENT')
+    os.environ['USER_DB_CONTENT'] = str(path)
+    try:
+        import database  # noqa: F401  (the app imports the package before anything else)
+        from database.schema_management import verify_database
+        from database.core import get_db_connection
+        verify_database()
+        conn = get_db_connection()
+        conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        conn.close()
+    finally:
+        os.environ['USER_DB_CONTENT'] = old
+    return path / 'media_items.db'
+
+
+@pytest.fixture
+def app_db(_schema_template, tmp_path, monkeypatch):
+    """A fresh media_items database with the real schema for this test.
+
+    Returns database.core.get_db_connection; every app function that opens the
+    database without a path uses this one too, because USER_DB_CONTENT points here.
+    """
+    import shutil
+    shutil.copy(_schema_template, tmp_path / 'media_items.db')
+    monkeypatch.setenv('USER_DB_CONTENT', str(tmp_path))
+    from database.core import get_db_connection
+    return get_db_connection
+
+
+@pytest.fixture
+def app_settings():
+    """The config get_setting() and load_config() return for this test, as a plain dict.
+
+    Fill it in the test (app_settings['Plex Reported Issues'] = {'enabled': True}).
+    Both read through utilities.settings._get_cached_entry, so this also reaches
+    modules that imported get_setting/load_config by name.
+    """
+    from unittest import mock
+    config = {}
+    with mock.patch('utilities.settings._get_cached_entry', side_effect=lambda: (config, None)):
+        yield config
+
+
+def pytest_collection_modifyitems(items):
+    # Mark each test with its folder so one area can be run on its own (pytest -m usenet).
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    for item in items:
+        rel = os.path.relpath(str(item.fspath), tests_dir)
+        area = rel.split(os.sep)[0] if os.sep in rel else None
+        if area:
+            item.add_marker(getattr(pytest.mark, area))
