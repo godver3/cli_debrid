@@ -94,6 +94,9 @@ def get_babelfish_data_dir():
 def setup_logging():
     logging.getLogger('selector').setLevel(logging.WARNING)
     logging.getLogger('asyncio').setLevel(logging.WARNING)
+    # Pillow's PNG decoder logs every chunk at DEBUG (thousands of lines per
+    # overlay run) into both debug.log and the console.
+    logging.getLogger('PIL').setLevel(logging.INFO)
 
     # Get log directory from environment variable with fallback
     log_dir = os.environ.get('USER_LOGS', '/user/logs')
@@ -2338,23 +2341,24 @@ def main():
     # Initialize statistics summary # Moved earlier
     # ...
 
-    # Add delay to ensure server is ready # Maybe less critical now
-    time.sleep(1) # Reduced delay slightly
-
     # Fix notification settings if needed (can run later)
     fix_notification_settings()
 
     # Validate Plex tokens on startup. Purely informational: a plex.tv outage or any error
-    # here must never stop the app from starting.
-    try:
-        token_status = validate_plex_tokens()
-        for username, status in token_status.items():
-            if status.get('valid') is False:
-                logging.error(f"Invalid Plex token for user {username}")
-            elif status.get('valid') is None:
-                logging.warning(f"Could not verify the Plex token for user {username} (plex.tv unreachable?)")
-    except Exception as e:
-        logging.error(f"Plex token validation failed at startup (continuing): {e}", exc_info=True)
+    # here must never stop the app from starting, and it calls plex.tv, so it runs in the
+    # background instead of delaying auto-start.
+    def _validate_plex_tokens_at_startup():
+        try:
+            token_status = validate_plex_tokens()
+            for username, status in token_status.items():
+                if status.get('valid') is False:
+                    logging.error(f"Invalid Plex token for user {username}")
+                elif status.get('valid') is None:
+                    logging.warning(f"Could not verify the Plex token for user {username} (plex.tv unreachable?)")
+        except Exception as e:
+            logging.error(f"Plex token validation failed at startup (continuing): {e}", exc_info=True)
+
+    threading.Thread(target=_validate_plex_tokens_at_startup, name='plex-token-check', daemon=True).start()
 
     # Add the update_media_locations call here
     # update_media_locations() # Keep commented unless needed at startup

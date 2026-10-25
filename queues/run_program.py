@@ -1365,9 +1365,16 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
         # Add psutil memory logging
         if psutil:
             try:
-                # 1. Explicitly run garbage collection
-                gc.collect()
-                logging.debug("Explicitly ran gc.collect()")
+                # 1. Explicit full garbage collection, at most every 15 minutes.
+                # A full collection pauses every thread (page requests included)
+                # and Python's own collector already runs continuously; the
+                # malloc_trim below still runs on every heartbeat.
+                now_mono = time.monotonic()
+                if now_mono - getattr(self, '_last_full_gc', 0.0) >= 900:
+                    self._last_full_gc = now_mono
+                    gc_start = time.perf_counter()
+                    collected = gc.collect()
+                    logging.debug(f"Explicitly ran gc.collect(): {collected} objects in {(time.perf_counter() - gc_start) * 1000:.0f} ms")
 
                 # 2. Log memory before trim
                 process = psutil.Process(os.getpid())
@@ -2049,9 +2056,11 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
                         main_loop_sleep_seconds = float(get_setting('Queue', 'main_loop_sleep_seconds', 5.0))
                     except (ValueError, TypeError):
                         main_loop_sleep_seconds = 5.0
-                    # Ensure sleep is not too low
-                    if main_loop_sleep_seconds < 0.1:
-                        main_loop_sleep_seconds = 0.1
+                    # Ensure sleep is not too low. The setting defaults to 0 (it is
+                    # meant for the gap between tasks), which made this loop wake
+                    # 10 times a second just to check connectivity/pause state.
+                    if main_loop_sleep_seconds < 1.0:
+                        main_loop_sleep_seconds = 1.0
                     time.sleep(main_loop_sleep_seconds) # Check status based on setting
 
                 except Exception as loop_error:

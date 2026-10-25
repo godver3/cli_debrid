@@ -18,7 +18,11 @@ from queues.performance_monitor import monitor, start_performance_monitoring
 global_profiler = cProfile.Profile()
 
 def start_global_profiling():
+    """Profile the main thread when CLI_DEBRID_PROFILE is set. Nothing reads the
+    stats otherwise, and on Python 3.12+ cProfile slows every thread (~3x)."""
     global global_profiler
+    if not os.environ.get('CLI_DEBRID_PROFILE'):
+        return
     try:
         # First try to disable any existing profiler
         try:
@@ -229,6 +233,9 @@ def setup_info_logging(log_dir):
     console_handler.addFilter(lambda record: not record.name.startswith(('urllib3', 'requests', 'charset_normalizer')))
     console_handler.addFilter(ExcludeFilter())
     console_handler.addFilter(APSchedulerQueueJobFilter())
+    # Same as debug.log: at DEBUG the scheduler logs "Looking for jobs" / "Next
+    # wakeup" twice a second, which filled the supervisord stderr log.
+    console_handler.addFilter(APSchedulerDebugNoiseFilter())
     console_handler.addFilter(APSchedulerMaxInstancesWarningFilter())
     
     # Add handler to root logger
