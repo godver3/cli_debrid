@@ -27,6 +27,36 @@ _torrent_status_rate_limiter = {
     'lock': threading.Lock()
 }
 
+# The queues page never reads scrape_results (a JSON blob of every scrape
+# result, often 100 KB+ per Adding item), so the stream doesn't send it.
+_STREAM_DROP_FIELDS = frozenset({'scrape_results'})
+# NZB provider labels come from parsing scrape_results; remember them per item.
+_nzb_provider_display_cache = {}
+_NZB_PROVIDER_DISPLAY_CACHE_MAX = 2000
+
+
+def _stream_item_copy(item: dict, queue_name: str) -> dict:
+    """Shallow copy of an in-memory queue item for the queue stream.
+
+    process_item_for_response adds display fields to the dict it gets; on the
+    live queue dicts that meant the web thread rewriting state/progress/
+    time_added on items the queue thread was working on.
+    """
+    copy = {k: v for k, v in item.items() if k not in _STREAM_DROP_FIELDS}
+    if queue_name in ('Adding', 'Checking'):
+        torrent_id = str(item.get('filled_by_torrent_id') or '')
+        if torrent_id.startswith('nzb:'):
+            key = (item.get('id'), torrent_id)
+            label = _nzb_provider_display_cache.get(key)
+            if label is None:
+                label = _get_provider_display(item)
+                if len(_nzb_provider_display_cache) >= _NZB_PROVIDER_DISPLAY_CACHE_MAX:
+                    _nzb_provider_display_cache.clear()
+                _nzb_provider_display_cache[key] = label
+            copy['provider_display'] = label
+    return copy
+
+
 def _get_provider_display(item: dict) -> str:
     """Return a short provider label for Adding/Checking queue items.
     NZB items: scraper name (NZBGeek, althub, etc.)
@@ -450,171 +480,12 @@ def consolidate_items(items, limit=None):
 @user_required
 @onboarding_required
 def index():
-    # --- Performance logging ---
-    start_time = time.time()
-    logging.debug(f"[QUEUE_ROUTES] Starting index route at {start_time}")
-
-    queue_manager_start = time.time()
-    # Use progressive fallback to handle large queues gracefully
-    queue_contents, error_info = get_queue_contents_with_progressive_fallback(queue_manager, max_time=20)
-    queue_manager_time = time.time() - queue_manager_start
-
-    if error_info == "minimal":
-        logging.info(f"[QUEUE_ROUTES] Queue loading was slow, showing minimal view with counts only")
-        # Continue with minimal data - the template will handle showing counts vs full data
-    elif error_info == "timeout":
-        logging.warning(f"[QUEUE_ROUTES] Queue loading timed out, showing partial data")
-        # Continue with partial data
-    elif error_info:
-        logging.warning(f"[QUEUE_ROUTES] Some queues had errors: {error_info}")
-        # Continue with partial data, errors will be shown in UI
-
-    logging.debug(f"[QUEUE_ROUTES] Queue loading completed in {queue_manager_time:.3f}s")
-    
-    program_status_start = time.time()
-    program_status = get_program_status()
-    program_status_time = time.time() - program_status_start
-    logging.debug(f"[QUEUE_ROUTES] get_program_status() took {program_status_time:.3f}s")
-    
-    # Log queue sizes for debugging
-    for queue_name, items in queue_contents.items():
-        logging.debug(f"[QUEUE_ROUTES] Queue '{queue_name}' has {len(items)} items")
-    
-    queue_processing_start = time.time()
-    for queue_name, items in queue_contents.items():
-        queue_item_start = time.time()
-
-        # Skip processing if no items or if items is not a list
-        if not items or not isinstance(items, list):
-            queue_item_time = time.time() - queue_item_start
-            if queue_item_time > 0.1:  # Log if processing took more than 100ms
-                logging.debug(f"[QUEUE_ROUTES] Processing queue '{queue_name}' took {queue_item_time:.3f}s (skipped - no items)")
-            continue
-
-        if queue_name == 'Upgrading':
-            for item in items:
-                # Skip if item is not a dictionary
-                if not isinstance(item, dict):
-                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
-                    continue
-
-                upgrade_info = queue_manager.queues['Upgrading'].upgrade_times.get(item['id'])
-                if upgrade_info:
-                    time_added = upgrade_info.get('time_added')
-                    # logging.info(f"time_added: {time_added}")
-                    if isinstance(time_added, str):
-                        item['time_added'] = time_added
-                    elif isinstance(time_added, datetime):
-                        item['time_added'] = time_added.strftime('%Y-%m-%d %H:%M:%S')
-                    else:
-                        item['time_added'] = str(time_added)
-                else:
-                    item['time_added'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                item['upgrades_found'] = item.get('upgrades_found', 0)
-        elif queue_name == 'Checking':
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                item['time_added'] = item.get('time_added', datetime.now())
-                item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
-                item['filled_by_torrent_id'] = item.get('filled_by_torrent_id', 'Unknown')
-                # Don't make live API calls on page render — SSE stream populates progress
-                item['progress'] = item.get('progress', 0)
-                item['state'] = item.get('state', 'unknown')
-        elif queue_name == 'Sleeping':
-            for item in items:
-                # Skip if item is not a dictionary
-                if not isinstance(item, dict):
-                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
-                    continue
-                if 'wake_count' not in item or item['wake_count'] is None:
-                    item['wake_count'] = queue_manager.get_wake_count(item['id'])
-        elif queue_name == 'Pending Uncached':
-            for item in items:
-                # Skip if item is not a dictionary
-                if not isinstance(item, dict):
-                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
-                    continue
-                item['time_added'] = item.get('time_added', datetime.now())
-                item['filled_by_magnet'] = item.get('filled_by_magnet', 'Unknown')
-                item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
-        elif queue_name == 'Pre_release':
-            for item in items:
-                # Skip if item is not a dictionary
-                if not isinstance(item, dict):
-                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
-                    continue
-                # Add pre-release specific data
-                item['time_added'] = item.get('time_added', datetime.now())
-                # Get pre-release data if available
-                pre_release_queue = queue_manager.queues.get('Pre_release')
-                if pre_release_queue and hasattr(pre_release_queue, 'pre_release_data'):
-                    pre_release_info = pre_release_queue.pre_release_data.get(item['id'], {})
-                    item['scrape_count'] = pre_release_info.get('scrape_count', 0)
-                    item['last_scrape'] = pre_release_info.get('last_scrape', 'Never')
-                else:
-                    item['scrape_count'] = 0
-                    item['last_scrape'] = 'Never'
-        
-        queue_item_time = time.time() - queue_item_start
-        if queue_item_time > 0.1:  # Log if processing took more than 100ms
-            logging.debug(f"[QUEUE_ROUTES] Processing queue '{queue_name}' took {queue_item_time:.3f}s")
-    
-    queue_processing_time = time.time() - queue_processing_start
-    logging.debug(f"[QUEUE_ROUTES] Total queue processing took {queue_processing_time:.3f}s")
-
-    unreleased_start = time.time()
-    for queue_name, items in queue_contents.items():
-        if queue_name == 'Unreleased':
-            for item in items:
-                if item['release_date'] is None:
-                    item['release_date'] = "Unknown"
-    unreleased_time = time.time() - unreleased_start
-    logging.debug(f"[QUEUE_ROUTES] Unreleased queue processing took {unreleased_time:.3f}s")
-
-    # Add display names for content sources
-    display_names_start = time.time()
-    from utilities.settings import get_all_settings
-    content_sources = get_all_settings().get('Content Sources', {})
-    for queue_name, items in queue_contents.items():
-        if queue_name in ['Wanted', 'Scraping', 'Adding', 'Pre_release', 'Checking']:
-            for item in items:
-                if item.get('content_source'):
-                    source_config = content_sources.get(item['content_source'], {})
-                    display_name = source_config.get('display_name', item['content_source'])
-                    item['content_source_display'] = item.get('content_source_detail') or display_name
-                if queue_name in ['Adding', 'Checking']:
-                    item['provider_display'] = _get_provider_display(item)
-                if queue_name == 'Adding':
-                    _tid = str(item.get('filled_by_torrent_id', ''))
-                    if _tid.startswith('nzb:'):
-                        _lu = item.get('last_updated')
-                        _is_dl = False
-                        if _lu:
-                            try:
-                                from datetime import datetime as _dt_ui
-                                _lu_dt = _dt_ui.fromisoformat(str(_lu).replace('Z', '+00:00').split('+')[0])
-                                if (_dt_ui.now() - _lu_dt).total_seconds() >= 60:
-                                    _is_dl = True
-                            except Exception:
-                                pass
-                        if _is_dl:
-                            item['display_state'] = 'Downloading'
-    display_names_time = time.time() - display_names_start
-    logging.debug(f"[QUEUE_ROUTES] Display names processing took {display_names_time:.3f}s")
-
-    template_start = time.time()
-    upgrading_queue = queue_contents.get('Upgrading', [])
+    # The page fills itself from /api/queue-stream; the template only needs the
+    # worker count. (Building every queue's contents here was thrown away and
+    # cost a full pass over the queues on each visit.)
     from utilities.settings import get_setting as _qs
     _queue_pool_workers = int(_qs('Queue', 'queue_pool_workers', 2))
-    response = render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue, program_status=program_status, queue_pool_workers=_queue_pool_workers)
-    template_time = time.time() - template_start
-    logging.debug(f"[QUEUE_ROUTES] Template rendering took {template_time:.3f}s")
-    
-    total_time = time.time() - start_time
-    logging.debug(f"[QUEUE_ROUTES] Total index route took {total_time:.3f}s")
-    
-    return response
+    return render_template('queues.html', program_status=get_program_status(), queue_pool_workers=_queue_pool_workers)
 
 @queues_bp.route('/api/queue_contents')
 @user_required
@@ -945,7 +816,7 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
             display_name = source_config.get('display_name', item['content_source'])
             item['content_source_display'] = item.get('content_source_detail') or display_name
 
-        if queue_name in ['Adding', 'Checking']:
+        if queue_name in ['Adding', 'Checking'] and 'provider_display' not in item:
             item['provider_display'] = _get_provider_display(item)
 
         # Optimize JSON serialization - only process problematic fields
@@ -1226,7 +1097,7 @@ def queue_stream():
                                 if hidden_count > 0:
                                     hidden_counts[queue_name] = hidden_count
 
-                            limited_items = items[:limit_for_queue]
+                            limited_items = [_stream_item_copy(item, queue_name) for item in items[:limit_for_queue]]
 
                             # Process items in batches for better performance
                             processed_items = []
@@ -1338,7 +1209,8 @@ def queue_stream():
 
                     # Performance optimization: Only send if data has changed
                     ser_start = time.time()
-                    current_hash = hash(json.dumps(data_to_send, sort_keys=True, default=str))
+                    payload_str = json.dumps(data_to_send, default=str)
+                    current_hash = hash(payload_str)
                     if current_hash == last_sent_hash:
                         consecutive_identical_sends += 1
                         if consecutive_identical_sends >= MAX_IDENTICAL_SENDS:
@@ -1350,7 +1222,6 @@ def queue_stream():
                         last_sent_hash = current_hash
                         consecutive_identical_sends = 0
 
-                    payload_str = json.dumps(data_to_send, default=str)
                     payload_size = len(payload_str)
                     ser_time = time.time() - ser_start
                     if ser_time > 0.1:
@@ -1493,7 +1364,7 @@ def get_ready_wanted_items_count() -> int:
 
         # Wanted queue tends to be small; fetching all rows is acceptable here.
         query_start = time.time()
-        for raw in get_all_media_items(state="Wanted", limit=None):
+        for raw in get_all_media_items(state="Wanted", limit=None, columns=QUEUE_DISPLAY_COLUMNS):
             item = dict(raw)
 
             scrape_str = compute_scrape_time_cached(item)

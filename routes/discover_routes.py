@@ -14,7 +14,7 @@ import threading
 from datetime import datetime, timedelta
 from flask import Blueprint, render_template, jsonify, request, redirect, url_for
 from flask_login import current_user
-from utilities.tmdb_cache import cache_response, get_cached_db_statuses, get_cached_episode_info
+from utilities.tmdb_cache import cache_response, get_cached_db_statuses, get_cached_episode_info, get_tmdb_json, TMDB_JSON_TTL
 from utilities.settings import get_setting
 from utilities.recommendation_provider import get_recommendation_provider
 from utilities.reverse_parser import get_default_version
@@ -362,21 +362,24 @@ def add_db_status_and_episode_info(results, use_battery=False):
     # Fetch counts from TMDB for remaining shows
     tmdb_api_key = get_setting('TMDB', 'api_key', '')
     if tv_shows_needing_counts and tmdb_api_key:
-        import requests
-        for item in tv_shows_needing_counts:
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _apply_tmdb_counts(item):
             try:
                 url = f"https://api.themoviedb.org/3/tv/{item['id']}?api_key={tmdb_api_key}"
-                response = requests.get(url, timeout=5)
-                if response.status_code == 200:
-                    data = response.json()
-                    # Exclude Season 0 (specials) from counts
-                    seasons = data.get('seasons', [])
-                    non_special_seasons = [s for s in seasons if s.get('season_number', 0) != 0]
-                    item['number_of_seasons'] = len(non_special_seasons)
-                    item['number_of_episodes'] = sum(s.get('episode_count', 0) for s in non_special_seasons)
-                    logging.debug(f"TMDB API provided season counts for {item['id']} (excluding specials)")
+                data = get_tmdb_json(url, timeout=5)
+                # Exclude Season 0 (specials) from counts
+                seasons = data.get('seasons', [])
+                non_special_seasons = [s for s in seasons if s.get('season_number', 0) != 0]
+                item['number_of_seasons'] = len(non_special_seasons)
+                item['number_of_episodes'] = sum(s.get('episode_count', 0) for s in non_special_seasons)
+                logging.debug(f"TMDB API provided season counts for {item['id']} (excluding specials)")
             except Exception as e:
                 logging.debug(f"Failed to fetch TMDB counts for {item['id']}: {e}")
+
+        # One TMDB call per show; fetch them in parallel (and through the cache).
+        with ThreadPoolExecutor(max_workers=min(8, len(tv_shows_needing_counts))) as executor:
+            list(executor.map(_apply_tmdb_counts, tv_shows_needing_counts))
 
     # Apply to results
     for item in results:
@@ -437,6 +440,20 @@ def _season_list(seasons):
         key=lambda s: s['season_number'])
 
 
+def _has_digital_release(release_dates):
+    return any(release.get('type') == 4
+               for country in release_dates.get('results', [])
+               for release in country.get('release_dates', []))
+
+
+def _movie_release_dates(tmdb_id, tmdb_api_key):
+    """/movie/{id}/release_dates, shared by the digital-date and certification
+    lookups. Kept 15 minutes instead of an hour while there is no digital
+    release yet, so a new one shows up soon after TMDB has it."""
+    url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/release_dates?api_key={tmdb_api_key}"
+    return get_tmdb_json(url, ttl_for=lambda data: TMDB_JSON_TTL if _has_digital_release(data) else 900)
+
+
 def get_digital_release_date(tmdb_id, media_type, tmdb_api_key):
     """
     Fetch digital release date for a movie/TV show from TMDB release_dates endpoint.
@@ -446,10 +463,7 @@ def get_digital_release_date(tmdb_id, media_type, tmdb_api_key):
     try:
         if media_type == 'movie':
             # For movies, use the release_dates endpoint
-            url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/release_dates?api_key={tmdb_api_key}"
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            data = _movie_release_dates(tmdb_id, tmdb_api_key)
             
             # Priority: US digital release (type 4), then any digital release, then US theatrical (type 3)
             us_digital = None
@@ -491,10 +505,7 @@ def get_certification(tmdb_id, media_type, tmdb_api_key, region='US'):
     try:
         if media_type == 'movie':
             # For movies, use the release_dates endpoint
-            url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/release_dates?api_key={tmdb_api_key}"
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            data = _movie_release_dates(tmdb_id, tmdb_api_key)
 
             # Find certification for the specified region
             for country in data.get('results', []):
@@ -506,9 +517,7 @@ def get_certification(tmdb_id, media_type, tmdb_api_key, region='US'):
         else:
             # For TV shows, use the content_ratings endpoint
             url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/content_ratings?api_key={tmdb_api_key}"
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            data = get_tmdb_json(url)
 
             # Find content rating for the specified region
             for rating in data.get('results', []):
@@ -530,9 +539,19 @@ def enrich_with_digital_dates(results, media_type, tmdb_api_key):
     Batch enrich results with digital release dates.
     Updates the 'release_date' and 'release_type' fields for each result.
     """
+    # One TMDB call per movie; fetch them in parallel (and through the cache).
+    from concurrent.futures import ThreadPoolExecutor
+    movie_ids = [item['id'] for item in results if item.get('media_type', media_type) == 'movie']
+    release_infos = {}
+    if movie_ids:
+        with ThreadPoolExecutor(max_workers=min(8, len(movie_ids))) as executor:
+            for movie_id, info in zip(movie_ids, executor.map(
+                    lambda movie_id: get_digital_release_date(movie_id, 'movie', tmdb_api_key), movie_ids)):
+                release_infos[movie_id] = info
+
     for item in results:
         if item.get('media_type', media_type) == 'movie':
-            release_info = get_digital_release_date(item['id'], 'movie', tmdb_api_key)
+            release_info = release_infos.get(item['id'])
             if release_info and release_info.get('date'):
                 item['release_date'] = release_info['date']
                 item['release_type'] = release_info.get('type', 'theatrical')
@@ -4347,10 +4366,10 @@ def _prewarm_discover_cache():
         logging.error(f"[Prewarm] Unexpected error during discover prewarm: {e}", exc_info=True)
 
 
-# Fire 15 seconds after module import so Flask has time to finish starting up.
-# Daemon, so it never holds the interpreter open: a non-daemon timer made every
+# Fire 2 minutes after module import, after the busy startup window (initial
+# sync, first page loads) instead of competing with it. Daemon, so it never holds the interpreter open: a non-daemon timer made every
 # process that imports routes (restarts, scripts, each fresh-interpreter test)
 # wait out the 15 seconds before it could exit.
-_prewarm_timer = threading.Timer(15, _prewarm_discover_cache)
+_prewarm_timer = threading.Timer(120, _prewarm_discover_cache)
 _prewarm_timer.daemon = True
 _prewarm_timer.start()

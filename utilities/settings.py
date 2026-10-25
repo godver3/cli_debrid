@@ -684,8 +684,7 @@ def ensure_settings_file():
 def get_nas_paths():
     """Return the list of configured NAS path prefixes (from Debug.nas_paths).
     Each entry is stripped and non-empty. Returns [] if none configured."""
-    config = load_config()
-    paths = config.get('Debug', {}).get('nas_paths', [])
+    paths = get_setting('Debug', 'nas_paths', [])
     if isinstance(paths, list):
         return [p.strip() for p in paths if p and p.strip()]
     return []

@@ -12,6 +12,8 @@ import logging
 import requests
 from datetime import datetime, timedelta
 from .discover_routes import get_digital_release_date, get_certification
+from utilities.tmdb_cache import get_tmdb_json
+from concurrent.futures import ThreadPoolExecutor
 from .poster_cache import load_cache, save_cache
 
 library_bp = Blueprint('library', __name__, url_prefix='/library')
@@ -1297,9 +1299,7 @@ def show_detail_data(media_id):
                         logging.info(f"Fetching TMDB ratings for show {tmdb_id} (to supplement Battery data)")
                     else:
                         logging.info(f"Fetching TMDB metadata for show {tmdb_id} (Battery unavailable)")
-                    details_response = requests.get(details_url, timeout=15, headers={'Accept-Encoding': 'identity'})
-                    details_response.raise_for_status()
-                    details_data = details_response.json()
+                    details_data = get_tmdb_json(details_url, timeout=15)
 
                     # Always get ratings from TMDB
                     rating = details_data.get('vote_average')  # TMDB rating (0-10)
@@ -1352,14 +1352,23 @@ def show_detail_data(media_id):
                 if missing_seasons:
                     logging.info(f"Found {len(missing_seasons)} missing season(s): {missing_seasons}")
 
-                    # Fetch episode counts for missing seasons from TMDB
+                    # Fetch episode counts for missing seasons from TMDB, all at once
+                    def _fetch_season(season_num):
+                        season_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_num}?api_key={tmdb_api_key}&language=en-US"
+                        try:
+                            return get_tmdb_json(season_url, timeout=10)
+                        except Exception as fetch_err:
+                            return fetch_err
+
+                    logging.info(f"Fetching phantom season details from TMDB: {missing_seasons}")
+                    with ThreadPoolExecutor(max_workers=min(6, len(missing_seasons))) as executor:
+                        season_results = dict(zip(missing_seasons, executor.map(_fetch_season, missing_seasons)))
+
                     for season_num in missing_seasons:
                         try:
-                            season_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_num}?api_key={tmdb_api_key}&language=en-US"
-                            logging.info(f"Fetching phantom season {season_num} details from TMDB")
-                            season_response = requests.get(season_url, timeout=10)
-                            season_response.raise_for_status()
-                            season_data = season_response.json()
+                            season_data = season_results[season_num]
+                            if isinstance(season_data, Exception):
+                                raise season_data
 
                             # Get episode count for this season
                             episodes_in_season = season_data.get('episodes', [])
@@ -4703,9 +4712,7 @@ def movie_detail_data(media_id):
                 try:
                     details_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
                     logging.info(f"Fetching TMDB metadata for movie {tmdb_id} (Battery fallback)")
-                    details_response = requests.get(details_url, timeout=15, headers={'Accept-Encoding': 'identity'})
-                    details_response.raise_for_status()
-                    details_data = details_response.json()
+                    details_data = get_tmdb_json(details_url, timeout=15)
 
                     overview = details_data.get('overview', '')
                     genres_list = details_data.get('genres', [])
@@ -4885,9 +4892,7 @@ def get_cast(media_type, tmdb_id):
 
         # Fetch credits from TMDB
         credits_url = f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/credits?api_key={tmdb_api_key}"
-        response = requests.get(credits_url, timeout=10)
-        response.raise_for_status()
-        credits_data = response.json()
+        credits_data = get_tmdb_json(credits_url)
 
         # Extract top 10 cast members
         cast = credits_data.get('cast', [])[:10]

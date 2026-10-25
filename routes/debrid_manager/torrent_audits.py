@@ -41,7 +41,10 @@ _BTA_PERSIST_FILE = os.path.join(
 
 # Cache the bad folder path after first successful discovery so web workers
 # never call os.path.isdir() on the FUSE mount (which can block indefinitely).
-_bta_bad_folder_cache = {'path': None, 'checked': False}
+_bta_bad_folder_cache = {'path': None, 'checked': False, 'checked_at': 0.0}
+# A miss is remembered this long, so loading the Debrid Manager page doesn't
+# stat the (possibly slow or hung) mount every time when there is no __bad__.
+_BAD_FOLDER_MISS_TTL = 300
 
 
 def _bta_load_persisted():
@@ -82,7 +85,7 @@ def _resolve_bad_folder_path():
     ]
 
 
-def _get_bad_folder_path():
+def _get_bad_folder_path(recheck_miss=False):
     """Return the __bad__ folder path, using cached result after first discovery.
 
     The os.path.isdir() check is only ever done from background threads (scan start)
@@ -90,6 +93,9 @@ def _get_bad_folder_path():
     """
     if _bta_bad_folder_cache['path']:
         return _bta_bad_folder_cache['path']
+    if (not recheck_miss and _bta_bad_folder_cache['checked']
+            and time.time() - _bta_bad_folder_cache['checked_at'] < _BAD_FOLDER_MISS_TTL):
+        return None
     # Check filesystem — only call this from background threads
     for c in _resolve_bad_folder_path():
         try:
@@ -100,6 +106,7 @@ def _get_bad_folder_path():
         except OSError:
             pass
     _bta_bad_folder_cache['checked'] = True
+    _bta_bad_folder_cache['checked_at'] = time.time()
     return None
 
 
@@ -317,7 +324,7 @@ def api_bad_torrent_audit():
 
 def _run_bad_torrent_audit_wrapper(fresh):
     """Wrapper that resolves the bad folder path in the background thread (never in a web worker)."""
-    bad_folder = _get_bad_folder_path()
+    bad_folder = _get_bad_folder_path(recheck_miss=True)
     if not bad_folder:
         with _bad_torrent_audit_state['lock']:
             _bad_torrent_audit_state['status'] = 'error'

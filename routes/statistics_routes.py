@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request, render_template, session, make_re
 from datetime import datetime, timedelta
 from operator import itemgetter
 from itertools import groupby
+import threading
 import time
 import logging
 import asyncio
@@ -36,25 +37,37 @@ def cache_for_seconds(seconds):
     """Cache the result of a function for the specified number of seconds."""
     def decorator(func):
         cache = {}
+        # When the entry expires, concurrent callers wait for one recompute
+        # instead of all running the (slow) function at once.
+        compute_lock = threading.Lock()
+
+        def cached(key):
+            if key in cache:
+                result, timestamp = cache[key]
+                if time.time() - timestamp < seconds:
+                    return True, result
+            return False, None
         
         @wraps(func)
         def wrapper(*args, **kwargs):
-            now = time.time()
-            
             # Create a cache key from the function name and arguments
             key = (func.__name__, args, frozenset(kwargs.items()))
             
             # Check if we have a cached value and it's still valid
-            if key in cache:
-                result, timestamp = cache[key]
-                if now - timestamp < seconds:
-                    logging.debug(f"Cache hit for {func.__name__}")
-                    return result
+            hit, result = cached(key)
+            if hit:
+                logging.debug(f"Cache hit for {func.__name__}")
+                return result
             
-            # If no valid cached value, call the function
-            result = func(*args, **kwargs)
-            cache[key] = (result, now)
-            return result
+            with compute_lock:
+                hit, result = cached(key)
+                if hit:
+                    return result
+                # If no valid cached value, call the function
+                now = time.time()
+                result = func(*args, **kwargs)
+                cache[key] = (result, now)
+                return result
             
         return wrapper
     return decorator
@@ -1192,33 +1205,9 @@ def index_api():
     stats['total_shows'] = counts['total_shows']
     stats['total_episodes'] = counts['total_episodes']
     
-    # Get additional counts for badges
+    # Get additional counts for badges (same 60 s cache as the page)
     try:
-        from database import get_db_connection
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM media_items WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')")
-        stats['total_movie_files'] = cursor.fetchone()[0]
-        
-        cursor.execute("""
-            SELECT COUNT(DISTINCT COALESCE(imdb_id, tmdb_id)) 
-            FROM media_items 
-            WHERE type = 'movie' 
-            AND state = 'Wanted'
-            AND (imdb_id IS NOT NULL OR tmdb_id IS NOT NULL)
-        """)
-        stats['wanted_movies'] = cursor.fetchone()[0]
-        
-        cursor.execute("""
-            SELECT COUNT(DISTINCT imdb_id || '-' || season_number || '-' || episode_number)
-            FROM media_items 
-            WHERE type = 'episode' 
-            AND state NOT IN ('Collected', 'Upgrading')
-            AND imdb_id IN (SELECT DISTINCT imdb_id FROM media_items WHERE type = 'episode' AND state IN ('Collected', 'Upgrading'))
-        """)
-        stats['missing_episodes'] = cursor.fetchone()[0]
-        
-        conn.close()
+        stats['total_movie_files'], stats['wanted_movies'], stats['missing_episodes'] = get_badge_counts()
     except Exception as e:
         logging.error(f"Error getting additional statistics: {str(e)}")
         stats['total_movie_files'] = 0
