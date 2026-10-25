@@ -232,8 +232,8 @@ class _ShowNumbering:
         The pack follows the count when it has numbers only the count uses
         (a pack numbered straight through a skip in TVDB's numbering), and
         the provider when it has numbers only the provider uses or leaves
-        out the count-only numbers inside its range ("[Lia] One Piece" has
-        no 590, the Dream 9 crossover TVDB files as S00E39). A pack that has
+        out a count-only number that a special aired in ("[Lia] One Piece"
+        has no 590, the Dream 9 crossover TVDB files as S00E39). A pack that has
         a number the provider skips for a special proves nothing: "0590" is
         the special in a broadcast-numbered pack and S16E12 in a counted
         one. Evidence both ways, or none, leaves those numbers to the user.
@@ -245,8 +245,11 @@ class _ShowNumbering:
         counted_only = set(self.counted_claims) - set(self.provider_claims)
         low, high = min(pack_numbers), max(pack_numbers)
         follows_count = bool(pack_numbers & (counted_only - self.special_slots))
+        # A count-only number missing from the pack is only evidence where a special
+        # aired in that slot; elsewhere the pack may just be missing that file.
         follows_provider = (bool(pack_numbers & provider_only)
-                            or any(low < n < high and n not in pack_numbers for n in counted_only))
+                            or any(low < n < high and n not in pack_numbers
+                                   for n in counted_only & self.special_slots))
         if follows_count != follows_provider:
             self.preferred = self.counted_claims if follows_count else self.provider_claims
             logging.info(f"[Absolute] Pack numbers follow the {'counted' if follows_count else 'provider'} "

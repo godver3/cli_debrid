@@ -158,6 +158,16 @@ class ManualAssignAbsoluteTests(unittest.TestCase):
         self.assertEqual(_assigned(items), {(2, 1): 'Kai - 99.mkv', (2, 2): 'Kai - 100.mkv',
                                             (2, 3): 'Kai - 101.mkv', (2, 4): 'Kai - 102.mkv'})
 
+    def test_counted_pack_missing_the_skipped_number_is_not_guessed(self):
+        # Same skip with no special behind it, and a count-numbered pack that just
+        # lacks file 100: 101 is S2E2 to the provider and S2E3 to the count, and
+        # nothing in the pack says which, so only 99 is assigned.
+        seasons = _seasons({1: 98, 2: 4}, {(2, 1): 99, (2, 2): 101, (2, 3): 102, (2, 4): 103})
+        items = _items([(2, 1), (2, 2), (2, 3), (2, 4)])
+        files = [_file(f'Kai - {n}.mkv', episodes=[n]) for n in (99, 101, 102)]
+        self.assertEqual(self.m.match_absolute_files(items, files, seasons), 1)
+        self.assertEqual(_assigned(items), {(2, 1): 'Kai - 99.mkv'})
+
     def test_aired_file_joins_absolute_order_by_episode_id(self):
         # Absolute order without TVDB absolute numbers and an aired order whose
         # count disagrees: the episode ID decides.
