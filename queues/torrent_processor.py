@@ -1551,7 +1551,8 @@ class TorrentProcessor:
                     temp_item_for_check['imdb_id'] = item.get('imdb_id')
 
                 # Check cache across all providers in parallel — use first hit
-                from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+                from concurrent.futures import as_completed as _as_completed
+                from utilities.log_context import ContextThreadPoolExecutor
                 providers = self._providers
                 is_cached = False
                 cache_source = 'direct_check'
@@ -1579,7 +1580,7 @@ class TorrentProcessor:
                     winning_provider, is_cached, cache_source = _check_one(providers[0])
                 else:
                     _outcomes = {}
-                    with ThreadPoolExecutor(max_workers=len(providers)) as _ex:
+                    with ContextThreadPoolExecutor(max_workers=len(providers)) as _ex:
                         _futures = {_ex.submit(_check_one, p): p for p in providers}
                         for _fut in _as_completed(_futures):
                             _prov, _cached, _src = _fut.result()

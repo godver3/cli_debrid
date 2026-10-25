@@ -6,7 +6,8 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
+from utilities.log_context import ContextThreadPoolExecutor
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import List, Dict, Any, Optional
@@ -253,7 +254,7 @@ def scrape_newznab_instance(
     if len(params_list) == 1:
         all_results = _fetch_coalesced(params_list[0])
     else:
-        with ThreadPoolExecutor(max_workers=2) as ex:
+        with ContextThreadPoolExecutor(max_workers=2) as ex:
             futures = [ex.submit(_fetch_coalesced, p) for p in params_list]
             for f in as_completed(futures):
                 all_results.extend(f.result())
@@ -270,7 +271,7 @@ def scrape_newznab_instance(
         if len(tv_params_list) == 1:
             retry_results = _fetch_coalesced(tv_params_list[0])
         else:
-            with ThreadPoolExecutor(max_workers=2) as ex:
+            with ContextThreadPoolExecutor(max_workers=2) as ex:
                 futures = [ex.submit(_fetch_coalesced, p) for p in tv_params_list]
                 for f in as_completed(futures):
                     retry_results.extend(f.result())
@@ -583,7 +584,7 @@ def scrape_newznab_season_aggregate(
     # ep_results: {ep_num: [result, ...]}
     ep_results: Dict[int, List[Dict]] = {ep: [] for ep in _ep_list}
 
-    with ThreadPoolExecutor(max_workers=min(len(tasks), 16)) as ex:
+    with ContextThreadPoolExecutor(max_workers=min(len(tasks), 16)) as ex:
         future_map = {ex.submit(_fetch_episode, ep, inst, cfg): ep for ep, inst, cfg in tasks}
         for fut in as_completed(future_map):
             ep = future_map[fut]

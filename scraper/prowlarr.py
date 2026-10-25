@@ -5,7 +5,8 @@ import logging
 import threading
 import time
 from typing import List, Dict, Any, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
+from utilities.log_context import ContextThreadPoolExecutor
 from utilities.settings import get_setting
 from urllib.parse import urlencode, quote_plus
 import re
@@ -189,7 +190,7 @@ def scrape_prowlarr_instance(
     if len(params_list) == 1:
         all_instance_results = _fetch_coalesced(params_list[0])
     else:
-        with ThreadPoolExecutor(max_workers=2) as ex:
+        with ContextThreadPoolExecutor(max_workers=2) as ex:
             futures = [ex.submit(_fetch_coalesced, p) for p in params_list]
             for f in as_completed(futures):
                 all_instance_results.extend(f.result())

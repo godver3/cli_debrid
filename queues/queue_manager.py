@@ -25,7 +25,7 @@ from queues.final_check_queue import FinalCheckQueue
 from queues.pre_release_queue import PreReleaseQueue
 from queues.base_queue import BaseQueue
 from utilities.settings import get_setting
-from utilities.log_context import logs_for_item
+from utilities.log_context import logs_for_item, state_change_logged_by_caller
 
 # Get the item tracker logger
 item_tracker_logger = logging.getLogger('item_tracker')
@@ -1016,7 +1016,9 @@ class QueueManager:
             additional_params['version'] = new_version
             
         # Update the item's state (and potentially version) in the database - returns updated dict
-        updated_item = update_media_item_state(item['id'], new_state, **additional_params)
+        # This method writes its own state line (with time in queue) below
+        with state_change_logged_by_caller():
+            updated_item = update_media_item_state(item['id'], new_state, **additional_params)
         
         if updated_item:
             # 'updated_item' is now the dictionary returned by the update function

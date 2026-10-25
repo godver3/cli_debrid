@@ -1,6 +1,7 @@
 import logging
 from typing import List, Dict, Any, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+from concurrent.futures import as_completed, TimeoutError
+from utilities.log_context import ContextThreadPoolExecutor
 import concurrent.futures
 import os
 import json
@@ -270,7 +271,7 @@ class ScraperManager:
                 
                 # Use ThreadPoolExecutor to run anime scrapers in parallel without blocking on shutdown
                 anime_scraper_tasks = []
-                executor = ThreadPoolExecutor()
+                executor = ContextThreadPoolExecutor()
                 future_instance_map = {}
                 try:
                     if old_nyaa_enabled:
@@ -363,7 +364,7 @@ class ScraperManager:
             scraper_tasks.append((instance, scraper_type, current_settings))
         
         # Run all scrapers in parallel using ThreadPoolExecutor without blocking on shutdown
-        executor = ThreadPoolExecutor()
+        executor = ContextThreadPoolExecutor()
         future_instance_map = {}
         try:
             futures = []
