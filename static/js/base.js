@@ -396,72 +396,16 @@ function initializeTangerineMobileNav() {
     restoreExpandedState();
 }
 
-// marked is only needed for release notes, so it loads on first open
-// instead of with every page.
-let markedPromise = null;
-function loadMarked() {
-    if (window.marked) return Promise.resolve();
-    if (!markedPromise) {
-        markedPromise = new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js';
-            script.onload = resolve;
-            script.onerror = () => { markedPromise = null; reject(new Error('Failed to load marked')); };
-            document.head.appendChild(script);
-        });
-    }
-    return markedPromise;
-}
+// Release notes live in the Discord release notes channel
+const RELEASE_NOTES_URL = 'https://discord.com/channels/691282102162948107/1366605850814185492';
 
-// Release notes functionality
 function initializeReleaseNotes() {
     const releaseNotesButton = document.getElementById('releaseNotesButton');
-    const releaseNotesPopup = document.getElementById('releaseNotesPopup');
-    const releaseNotesOverlay = document.getElementById('releaseNotesOverlay');
-    const releaseNotesClose = document.getElementById('releaseNotesClose');
-    const releaseNotesContent = document.getElementById('releaseNotesContent');
-
-    function showReleaseNotes() {
-        releaseNotesPopup.style.display = 'block';
-        releaseNotesOverlay.style.display = 'block';
-        
-        Promise.all([fetch('/base/api/release-notes').then(response => response.json()), loadMarked()])
-            .then(([data]) => {
-                if (data.success) {
-                    releaseNotesContent.innerHTML = marked.parse(data.body);
-                } else {
-                    releaseNotesContent.innerHTML = '<div class="error">Failed to load release notes</div>';
-                }
-            })
-            .catch(error => {
-                if (window.DEBUG) console.error('Error fetching release notes:', error);
-                releaseNotesContent.innerHTML = '<div class="error">Error loading release notes</div>';
-            });
-    }
-
-    function hideReleaseNotes() {
-        releaseNotesPopup.style.display = 'none';
-        releaseNotesOverlay.style.display = 'none';
-    }
-
     if (releaseNotesButton) {
-        releaseNotesButton.addEventListener('click', showReleaseNotes);
+        releaseNotesButton.addEventListener('click', () => {
+            window.open(RELEASE_NOTES_URL, '_blank', 'noopener');
+        });
     }
-
-    if (releaseNotesClose) {
-        releaseNotesClose.addEventListener('click', hideReleaseNotes);
-    }
-
-    if (releaseNotesOverlay) {
-        releaseNotesOverlay.addEventListener('click', hideReleaseNotes);
-    }
-
-    // Close on escape key
-    document.addEventListener('keydown', function(event) {
-        if (event.key === 'Escape' && releaseNotesPopup.style.display === 'block') {
-            hideReleaseNotes();
-        }
-    });
 }
 
 // Rate Limits Functions

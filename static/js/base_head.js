@@ -15,23 +15,10 @@ document.addEventListener('DOMContentLoaded', function() {
     let isFirstLoad = true; // Track if this is the first load
     let notificationEventSource = null; // SSE connection
 
-    // --- Release Notes Modal Elements ---
-    const releaseNotesButton = document.getElementById('releaseNotesButton');
-    const releaseNotesPopup = document.getElementById('releaseNotesPopup');
-    const releaseNotesOverlay = document.getElementById('releaseNotesOverlay');
-    const releaseNotesClose = document.getElementById('releaseNotesClose');
-    // --- End Release Notes Modal Elements ---
-
     // Notification functions are handled in base.js to avoid conflicts
 
     // Modal controls for non-notification modals
     window.addEventListener('click', function(event) {
-        // Close release notes if clicking overlay
-        if (event.target == releaseNotesOverlay) {
-            releaseNotesPopup.style.display = 'none';
-            releaseNotesOverlay.style.display = 'none';
-            document.body.classList.remove('modal-open'); // Remove class from body
-        }
         // Close support modal if clicking outside
         if (event.target == supportModal) {
             console.log('Closing support modal via outside click');
@@ -348,12 +335,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 notificationsModal.style.display = 'none';
                 document.body.classList.remove('modal-open');
              }
-             if (releaseNotesPopup.style.display === 'block') {
-                console.log('Closing release notes modal via ESC key');
-                releaseNotesPopup.style.display = 'none';
-                releaseNotesOverlay.style.display = 'none';
-                document.body.classList.remove('modal-open');
-             }
              // Add for help modal if needed (assuming it's handled elsewhere)
              const helpModal = document.getElementById('help-modal-box');
              if (helpModal && helpModal.style.display === 'flex') { // Or however help modal is shown
@@ -380,30 +361,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     // ---- End Mark All Read Button Logic ----
 
-    // --- Release Notes Modal Event Listeners ---
-    if (releaseNotesButton && releaseNotesPopup && releaseNotesOverlay && releaseNotesClose) {
-        releaseNotesButton.addEventListener('click', () => {
-            // Assuming showReleaseNotesPopup() is defined elsewhere, 
-            // we'll manually set display here for simplicity
-            // If showReleaseNotesPopup handles display, integrate there.
-            releaseNotesPopup.style.display = 'block';
-            releaseNotesOverlay.style.display = 'block';
-            document.body.classList.add('modal-open'); // Add class
-            // Optionally load content if not already loaded
-            // loadReleaseNotes(); 
-        });
-
-        releaseNotesClose.addEventListener('click', () => {
-            releaseNotesPopup.style.display = 'none';
-            releaseNotesOverlay.style.display = 'none';
-            document.body.classList.remove('modal-open'); // Remove class
-        });
-
-        // Click outside handled by the general window click listener above
-    } else {
-        console.warn('One or more release notes elements not found.');
-    }
-    // --- End Release Notes Modal Event Listeners ---
 
     // --- "Hacked" Easter Egg ---
     const headerElement = document.querySelector('header');

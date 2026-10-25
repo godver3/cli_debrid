@@ -259,7 +259,7 @@
                         <i class="fas fa-bell"></i>
                         <span class="st-notif-count" id="st_notif_count" style="display:none;"></span>
                     </button>
-                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release Notes" data-tooltip="global.releaseNotesButton">
+                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release notes on Discord" data-tooltip="global.releaseNotesButton">
                         <i class="fas fa-file-alt"></i>
                     </button>
                     {% if current_user.role == 'admin' %}
@@ -278,7 +278,7 @@
                         <i class="fas fa-bell"></i>
                         <span class="st-notif-count" id="st_notif_count" style="display:none;"></span>
                     </button>
-                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release Notes" data-tooltip="global.releaseNotesButton">
+                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release notes on Discord" data-tooltip="global.releaseNotesButton">
                         <i class="fas fa-file-alt"></i>
                     </button>
                     {% set program_status = get_program_status() %}
@@ -798,18 +798,6 @@
     <!-- "Hacked" Easter Egg Overlay -->
     <div id="hack-overlay" style="display: none;">
         <div id="hack-text"></div>
-    </div>
-
-    <!-- Release notes popup -->
-    <div class="release-notes-overlay" id="releaseNotesOverlay" style="display: none;"></div>
-    <div class="release-notes-popup" id="releaseNotesPopup" style="display: none;">
-        <div class="release-notes-header">
-            <h3 class="release-notes-title">Release Notes</h3>
-            <button class="release-notes-close" id="releaseNotesClose">&times;</button>
-        </div>
-        <div class="release-notes-content" id="releaseNotesContent">
-            <div class="loading">Loading release notes...</div>
-        </div>
     </div>
 
     <!-- Scripts -->
