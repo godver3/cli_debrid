@@ -73,6 +73,7 @@ def _fetch_browse_page(url: str, api_key: str, cats: str, limit: int,
             return [], 0
         if r.status_code != 200:
             return [], 0
+        newznab_cooldown.note_success(cooldown_key)
         root = ET.fromstring(r.text)
         channel = root.find('channel')
         if channel is None:

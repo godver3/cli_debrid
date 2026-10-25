@@ -61,6 +61,17 @@ class TestClassify(unittest.TestCase):
         for code in (100, 101, 102, 910):
             self.assertEqual(self.c(200, _err(code, 'nope')), cd.ACCOUNT_SECONDS, code)
 
+    def test_newznab_plus_errors(self):
+        # altHUB and NZBPlanet run newznab+ 0.2.3p: limits as <error> 500/501 bodies.
+        self.assertEqual(self.c(200, _err(500, 'Request limit reached')), cd.LIMIT_SECONDS)
+        self.assertEqual(self.c(200, _err(501, 'Download limit reached')), cd.LIMIT_SECONDS)
+        self.assertEqual(self.c(200, _err(101, 'Account suspended')), cd.ACCOUNT_SECONDS)
+
+    def test_stated_waits_are_marked(self):
+        self.assertIn('asked to wait', cd.classify_search_response(429, {'Retry-After': '90'}, '')[1])
+        self.assertIn('asked to wait', cd.classify_search_response(503, {}, 'You must wait 3 seconds')[1])
+        self.assertNotIn('asked to wait', cd.classify_search_response(503, {}, 'Service Unavailable')[1])
+
     def test_503_without_wording_is_short(self):
         self.assertEqual(self.c(503, '<html>Service Unavailable</html>'), cd.UNAVAILABLE_SECONDS)
         self.assertEqual(self.c(503, 'API limit reached'), cd.LIMIT_SECONDS)
@@ -84,8 +95,8 @@ class TestRecord(unittest.TestCase):
         self.addCleanup(cd.reset_search_cooldowns)
 
     def test_longer_cooldown_is_not_shortened(self):
-        self.assertTrue(cd.record('k', 3600, 'limit'))
-        self.assertFalse(cd.record('k', 60, 'short'))
+        self.assertTrue(cd.record('k', 3600, 'limit')[0])
+        self.assertFalse(cd.record('k', 60, 'short')[0])
         left, reason = cd.remaining('k')
         self.assertGreater(left, 3000)
         self.assertEqual(reason, 'limit')
@@ -94,6 +105,30 @@ class TestRecord(unittest.TestCase):
         cd.record('k', 10, 'x')
         with mock.patch.object(cd.time, 'monotonic', return_value=cd.time.monotonic() + 11):
             self.assertIsNone(cd.remaining('k'))
+
+    def _expire(self):
+        cd._until.clear()
+
+    def test_repeated_bare_503_escalates_until_a_success(self):
+        # NZBPlanet answers a bare 503 at its limit: 5, 10, 20, 40, then capped at 60 min.
+        applied = []
+        for _ in range(6):
+            applied.append(cd.record('k', cd.UNAVAILABLE_SECONDS, 'HTTP 503')[1])
+            self._expire()
+        self.assertEqual(applied, [300, 600, 1200, 2400, 3600, 3600])
+        cd.note_success('k')
+        self.assertEqual(cd.record('k', cd.UNAVAILABLE_SECONDS, 'HTTP 503')[1], 300)
+
+    def test_stated_wait_is_never_escalated(self):
+        for _ in range(3):
+            self.assertEqual(cd.record('k', 5, 'HTTP 503, asked to wait')[1], 5)
+            self._expire()
+
+    def test_refusal_during_cooldown_is_not_a_new_strike(self):
+        cd.record('k', 300, 'HTTP 503')
+        cd.record('k', 300, 'HTTP 503')  # parallel request refused in the same window
+        self._expire()
+        self.assertEqual(cd.record('k', 300, 'HTTP 503')[1], 600)
 
 
 class TestNewznabUsesCooldown(unittest.TestCase):

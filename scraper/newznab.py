@@ -227,6 +227,7 @@ def scrape_newznab_instance(
                 if r.status_code in (429, 503, 502, 500):
                     _cache_set(ck, [])
                 return []
+            newznab_cooldown.note_success(_cooldown_key)
             results = _parse_newznab_xml(r.text, instance)
             _cache_set(ck, results)  # Cache even empty results to avoid hammering indexer
             return results
@@ -553,6 +554,7 @@ def scrape_newznab_season_aggregate(
                 if newznab_cooldown.note_refusal(instance, cooldown_key, r):
                     return []
                 if r.status_code == 200:
+                    newznab_cooldown.note_success(cooldown_key)
                     parsed = _parse_newznab_xml(r.text, instance)
                     _cache_set(ck, parsed)  # Cache even empty
                     return parsed

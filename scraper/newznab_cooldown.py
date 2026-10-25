@@ -19,7 +19,10 @@ ApiV2Controller, which DrunkenSlug, NZBFinder, NinjaCentral and others run):
   disabled): every request is refused the same way, so one hour. The key
   includes the API key, so a corrected key in settings retries at once.
 - HTTP 503: "wait N seconds" when the body says so, an hour for limit wording,
-  else five minutes (maintenance or a Cloudflare blip).
+  else five minutes (maintenance or a Cloudflare blip). NZBPlanet (newznab+
+  0.2.3p, like altHUB) answers a bare 503 at its grab limit, so back-to-back
+  refusals with no stated wait double the cooldown up to an hour; the first
+  successful search resets it.
 Only error bodies are read. A successful result list is never phrase-scanned,
 because release titles ("Limited Series") would match.
 
@@ -59,6 +62,7 @@ _SHORT_WAIT_RE = re.compile(r'\b(?:concurrent|retry shortly|try again shortly)\b
 
 _until: dict = {}
 _reason: dict = {}
+_strikes: dict = {}
 _skip_logged: dict = {}
 _lock = Lock()
 
@@ -78,7 +82,11 @@ def _stated_wait(text: str) -> Optional[int]:
 
 
 def classify_search_response(status_code: int, headers: Optional[Mapping], body: str) -> Optional[Tuple[int, str]]:
-    """(cooldown seconds, short reason) when this search response is a refusal, else None."""
+    """(cooldown seconds, short reason) when this search response is a refusal, else None.
+
+    A wait the server stated (Retry-After, "wait N seconds") is in the reason as
+    "asked to wait", which record() never escalates.
+    """
     body = (body or '')[:2000]
     retry_after = _retry_after_seconds(headers)
 
@@ -88,8 +96,13 @@ def classify_search_response(status_code: int, headers: Optional[Mapping], body:
         code = attrs.get('code', '').strip()
         desc = attrs.get('description', '').strip()
         label = f'error {code} "{desc}"' if desc else f'error {code}'
+        if retry_after:
+            label += ', asked to wait'
         if _SHORT_WAIT_RE.search(desc) or _stated_wait(desc):
-            return retry_after or _stated_wait(desc) or SHORT_WAIT_SECONDS, label
+            stated = retry_after or _stated_wait(desc)
+            if stated and not retry_after:
+                label += ', asked to wait'
+            return stated or SHORT_WAIT_SECONDS, label
         if code in _LIMIT_CODES or _LIMIT_PHRASE_RE.search(desc):
             return retry_after or LIMIT_SECONDS, label
         if code in _ACCOUNT_CODES:
@@ -98,29 +111,45 @@ def classify_search_response(status_code: int, headers: Optional[Mapping], body:
         if status_code not in (429, 503):
             return None
 
+    stated = retry_after or _stated_wait(body)
     if status_code == 429:
-        return retry_after or _stated_wait(body) or LIMIT_SECONDS, 'HTTP 429'
+        return (stated, 'HTTP 429, asked to wait') if stated else (LIMIT_SECONDS, 'HTTP 429')
     if status_code == 503:
-        stated = _stated_wait(body)
         if stated:
-            return retry_after or stated, 'HTTP 503 (asked to wait)'
+            return stated, 'HTTP 503, asked to wait'
         if _LIMIT_PHRASE_RE.search(body):
-            return retry_after or LIMIT_SECONDS, 'HTTP 503 (limit)'
-        return retry_after or UNAVAILABLE_SECONDS, 'HTTP 503'
+            return LIMIT_SECONDS, 'HTTP 503 (limit)'
+        return UNAVAILABLE_SECONDS, 'HTTP 503'
     return None
 
 
-def record(key: str, seconds: int, reason: str) -> bool:
-    """Start or extend a cooldown. True when the indexer was not already cooling down."""
+def record(key: str, seconds: int, reason: str) -> Tuple[bool, int]:
+    """Start or extend a cooldown: (indexer was not already cooling down, seconds applied).
+
+    A new refusal with no stated wait, before any search has succeeded since the
+    last one, doubles the cooldown (capped at an hour).
+    """
     now = time.monotonic()
     with _lock:
         current = _until.get(key, 0)
+        is_new = current <= now
+        if is_new:
+            strikes = _strikes.get(key, 0)
+            _strikes[key] = strikes + 1
+            if 'asked to wait' not in reason and seconds < LIMIT_SECONDS:
+                seconds = min(LIMIT_SECONDS, seconds * (2 ** strikes))
         until = now + seconds
         # A longer cooldown already in place is never shortened.
         if until > current:
             _until[key] = until
             _reason[key] = reason
-        return current <= now
+        return is_new, seconds
+
+
+def note_success(key: str) -> None:
+    """A search went through: the next refusal starts from the base cooldown again."""
+    with _lock:
+        _strikes.pop(key, None)
 
 
 def remaining(key: str) -> Optional[Tuple[int, str]]:
@@ -178,7 +207,8 @@ def note_refusal(instance: str, key: str, response) -> bool:
     if not hit:
         return False
     seconds, reason = hit
-    if record(key, seconds, reason):
+    is_new, seconds = record(key, seconds, reason)
+    if is_new:
         logging.warning(f"Newznab '{instance}' refused a search ({reason}); pausing all searches "
                         f"to it for {describe(seconds)}")
     return True
@@ -189,4 +219,5 @@ def reset_search_cooldowns() -> None:
     with _lock:
         _until.clear()
         _reason.clear()
+        _strikes.clear()
         _skip_logged.clear()
