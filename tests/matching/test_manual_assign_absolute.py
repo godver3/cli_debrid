@@ -108,6 +108,56 @@ class ManualAssignAbsoluteTests(unittest.TestCase):
         self.assertEqual(self.m.match_absolute_files(items, files, seasons), 0)
         self.assertFalse(files[0]['used'])
 
+    @staticmethod
+    def _one_piece_seasons():
+        # TVDB's One Piece: S16E11 is 589, S16E12 is 591. 590, the Dream 9
+        # crossover, is S00E39 and aired between them, so from S16E12 on the
+        # provider's number and the count (590, 591, ...) both claim every number.
+        seasons = _seasons({15: 4, 16: 4}, {(15, 1): 586, (15, 2): 587, (15, 3): 588, (15, 4): 589,
+                                            (16, 1): 591, (16, 2): 592, (16, 3): 593, (16, 4): 594})
+        for e, day in enumerate(('03-10', '03-17', '03-24', '03-31'), 1):
+            seasons[15]['episodes'][e]['first_aired'] = f'2013-{day}T14:15:00.000Z'
+        for e, day in enumerate(('04-14', '04-21', '04-28', '05-05'), 1):
+            seasons[16]['episodes'][e]['first_aired'] = f'2013-{day}T14:15:00.000Z'
+        seasons[0] = {'episodes': {39: {'title': 'Dream 9 (2/2)', 'first_aired': '2013-04-07T14:15:00.000Z'}}}
+        # The count needs the 585 episodes before season 15
+        seasons[14] = {'episode_count': 585, 'episodes': {}}
+        return seasons
+
+    def test_pack_without_the_special_follows_the_provider(self):
+        # "[Lia] One Piece - 0001-1000" has no 0590: everything after it was left
+        # unassigned because 591 could be S16E01 (provider) or S16E02 (count).
+        seasons = self._one_piece_seasons()
+        items = _items([(15, 4), (16, 1), (16, 2), (16, 3), (16, 4)])
+        files = [_file(f'[Lia] One Piece - 0{n} [1080p].mkv', episodes=[n]) for n in (589, 591, 592, 593, 594)]
+        self.assertEqual(self.m.match_absolute_files(items, files, seasons), 5)
+        self.assertEqual(_assigned(items), {(15, 4): '[Lia] One Piece - 0589 [1080p].mkv',
+                                            (16, 1): '[Lia] One Piece - 0591 [1080p].mkv',
+                                            (16, 2): '[Lia] One Piece - 0592 [1080p].mkv',
+                                            (16, 3): '[Lia] One Piece - 0593 [1080p].mkv',
+                                            (16, 4): '[Lia] One Piece - 0594 [1080p].mkv'})
+
+    def test_pack_with_the_special_s_number_is_not_guessed(self):
+        # "0590" is the crossover in a broadcast-numbered pack but S16E01 in one
+        # numbered by plain count: no telling which, so nothing past it is guessed
+        # and 590 itself never lands on S16E01.
+        seasons = self._one_piece_seasons()
+        items = _items([(15, 4), (16, 1), (16, 2)])
+        files = [_file(f'One Piece - {n}.mkv', episodes=[n]) for n in (589, 590, 591, 592)]
+        self.assertEqual(self.m.match_absolute_files(items, files, seasons), 1)
+        self.assertEqual(_assigned(items), {(15, 4): 'One Piece - 589.mkv'})
+        self.assertFalse(files[1]['used'])
+
+    def test_pack_numbered_through_a_skip_follows_the_count(self):
+        # No special behind the skip, and the pack has 100, a number only the
+        # count uses: the pack counts straight through.
+        seasons = _seasons({1: 98, 2: 4}, {(2, 1): 99, (2, 2): 101, (2, 3): 102, (2, 4): 103})
+        items = _items([(2, 1), (2, 2), (2, 3), (2, 4)])
+        files = [_file(f'Kai - {n}.mkv', episodes=[n]) for n in (99, 100, 101, 102)]
+        self.assertEqual(self.m.match_absolute_files(items, files, seasons), 4)
+        self.assertEqual(_assigned(items), {(2, 1): 'Kai - 99.mkv', (2, 2): 'Kai - 100.mkv',
+                                            (2, 3): 'Kai - 101.mkv', (2, 4): 'Kai - 102.mkv'})
+
     def test_aired_file_joins_absolute_order_by_episode_id(self):
         # Absolute order without TVDB absolute numbers and an aired order whose
         # count disagrees: the episode ID decides.
