@@ -1657,6 +1657,11 @@ def main():
     from routes.program_operation_routes import _execute_start_program
     import os
 
+    # Bring over overlay files and backups written to C:\user\... before
+    # those paths followed USER_CONFIG / USER_DB_CONTENT (Windows only)
+    from utilities.paths import migrate_legacy_user_dirs
+    migrate_legacy_user_dirs()
+
     # Check for database restore request BEFORE any database operations
     restore_performed = check_and_perform_restore()
     if restore_performed:

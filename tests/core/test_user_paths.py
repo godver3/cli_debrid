@@ -17,6 +17,9 @@ ALLOWED = {
     ('windows_wrapper.py', "os.environ.setdefault("),
     ('usenet/nzbdav_migrate.py', "'/user/config/config.json',"),
     ('utilities/deletion_manager.py', "'cache_files':"),  # docstring example
+    # the old locations migrate_legacy_user_dirs copies from
+    ('utilities/paths.py', "('/user/config', config_dir,"),
+    ('utilities/paths.py', "('/user/db_content', db_content_dir,"),
 }
 
 
@@ -55,3 +58,31 @@ class NoHardcodedUserPathsTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_legacy_folders_are_copied_once(tmp_path, monkeypatch):
+    from utilities import paths
+    legacy, new = tmp_path / 'legacy', tmp_path / 'appdata'
+    (legacy / 'poster_backups').mkdir(parents=True)
+    (legacy / 'poster_backups' / 'orig.jpg').write_text('poster')
+    (legacy / 'badge_assets').mkdir()
+    (legacy / 'badge_assets' / 'old.png').write_text('old')
+    (new / 'badge_assets').mkdir(parents=True)
+    (new / 'badge_assets' / 'current.png').write_text('in use')
+    monkeypatch.setenv('USER_CONFIG', str(new))
+    monkeypatch.setattr(paths, '_LEGACY_FOLDERS', ((str(legacy), paths.config_dir, ('poster_backups', 'badge_assets', 'overlay_assets')),))
+
+    paths.migrate_legacy_user_dirs()
+
+    assert (new / 'poster_backups' / 'orig.jpg').read_text() == 'poster'
+    assert (legacy / 'poster_backups' / 'orig.jpg').exists()  # copied, not moved
+    assert sorted(p.name for p in (new / 'badge_assets').iterdir()) == ['current.png']  # in use: left alone
+    assert not (new / 'overlay_assets').exists()
+
+
+def test_legacy_migration_does_nothing_when_the_folders_are_the_same(tmp_path, monkeypatch):
+    from utilities import paths
+    (tmp_path / 'poster_backups').mkdir()
+    monkeypatch.setenv('USER_CONFIG', str(tmp_path))
+    monkeypatch.setattr(paths, '_LEGACY_FOLDERS', ((str(tmp_path), paths.config_dir, ('poster_backups',)),))
+    paths.migrate_legacy_user_dirs()  # must not try to copy a folder onto itself
