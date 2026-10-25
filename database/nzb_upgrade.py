@@ -56,24 +56,16 @@ def get_newznab_scrapers() -> List[Tuple[str, Dict]]:
 
 
 def _fetch_browse_page(url: str, api_key: str, cats: str, limit: int,
-                        offset: int, timeout: int = 30,
-                        instance: str = '') -> Tuple[List[ET.Element], int]:
+                        offset: int, timeout: int = 30) -> Tuple[List[ET.Element], int]:
     """Fetch one browse page. Returns (items, total)."""
     from routes.api_tracker import api as _api
-    from scraper import newznab_cooldown
-    cooldown_key = newznab_cooldown.indexer_key(f'{url}/api', api_key)
-    if newznab_cooldown.should_skip(instance or url, cooldown_key):
-        return [], 0
     try:
         r = _api.get(f'{url}/api', params={
             'apikey': api_key, 't': 'search', 'q': '',
             'cat': cats, 'limit': limit, 'offset': offset,
         }, timeout=timeout)
-        if newznab_cooldown.note_refusal(instance or url, cooldown_key, r):
-            return [], 0
         if r.status_code != 200:
             return [], 0
-        newznab_cooldown.note_success(cooldown_key)
         root = ET.fromstring(r.text)
         channel = root.find('channel')
         if channel is None:
@@ -89,7 +81,6 @@ def _fetch_browse_page(url: str, api_key: str, cats: str, limit: int,
         return channel.findall('item'), total
     except Exception as e:
         logger.warning(f'[NZB_UPGRADE] Browse error {url}: {e}')
-        newznab_cooldown.note_refusal(instance or url, cooldown_key, getattr(e, 'response', None))
         return [], 0
 
 
@@ -198,7 +189,7 @@ def _fetch_instance_category(instance: str, settings: Dict, cats: str,
 
     while len(all_results) < max_items:
         fetch_size = min(page_limit, max_items - len(all_results))
-        items, total = _fetch_browse_page(url, api_key, cats, fetch_size, offset, instance=instance)
+        items, total = _fetch_browse_page(url, api_key, cats, fetch_size, offset)
         if not items:
             break
         all_results.extend(_parse_items(items, instance))
