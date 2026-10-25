@@ -196,84 +196,6 @@ def is_limited_environment():
     from utilities.set_supervisor_env import is_limited_environment
     return is_limited_environment()
 
-@base_bp.route('/api/release-notes', methods=['GET'])
-def get_release_notes():
-    try:
-        # Get current branch from branch_id file
-        current_branch = get_current_branch()
-        
-        # GitHub API endpoint for commits (using public API)
-        api_url = f"https://api.github.com/repos/godver3/cli_debrid/commits"
-        
-        # Make request to GitHub API with a user agent (required by GitHub)
-        headers = {
-            'User-Agent': 'cli-debrid-app'
-        }
-        
-        # Get the latest 10 commits for the current branch
-        params = {
-            'per_page': 10,
-            'page': 1,
-            'sha': current_branch  # Specify the branch to fetch commits from
-        }
-        
-        response = requests.get(api_url, headers=headers, params=params)
-        if response.status_code == 200:
-            commits = response.json()
-            if not commits:
-                return jsonify({
-                    'success': True,
-                    'version': 'No Commits',
-                    'name': f'No Commits Available ({current_branch} branch)',
-                    'body': 'No commit history is available.',
-                    'published_at': ''
-                })
-            
-            # Format the commit messages into markdown
-            commit_notes = []
-            seen_versions = set()
-            
-            for commit in commits:
-                message = commit['commit']['message']
-                # Only process commits that start with version numbers (e.g., "0.5.35 -")
-                if not message.strip().startswith(('0.', '1.', '2.')):
-                    continue
-                    
-                # Extract version from message (assuming format "X.Y.Z - description")
-                version = message.split(' - ')[0].strip()
-                
-                # Skip if we've already seen this version
-                if version in seen_versions:
-                    continue
-                    
-                seen_versions.add(version)
-                date = datetime.strptime(commit['commit']['author']['date'], '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d %H:%M:%S')
-                sha = commit['sha'][:7]  # Short SHA
-                commit_notes.append(f"### {date} - {sha}\n{message}\n")
-            
-            body = "\n".join(commit_notes) if commit_notes else "No version commits available."
-            
-            return jsonify({
-                'success': True,
-                'version': f"Latest Commit: {commits[0]['sha'][:7]} ({current_branch} branch)",
-                'name': f'Recent Changes - {current_branch} branch',
-                'body': body,
-                'published_at': commits[0]['commit']['author']['date']
-            })
-        else:
-            logging.error(f"Failed to fetch commit history for branch {current_branch}. Status code: {response.status_code}")
-            return jsonify({
-                'success': False,
-                'error': f'Failed to fetch commit history for branch {current_branch}'
-            }), 500
-            
-    except Exception as e:
-        logging.error(f"Error fetching commit history: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
 @base_bp.route('/api/check-update', methods=['GET'])
 @cache_for_seconds(3600)  # Cache for 1 hour
 def check_for_update():
@@ -448,6 +370,138 @@ def notification_stream():
     })
     return response
 
+_TASK_STREAM_NO_PAUSE = {
+    "reason_string": None, "error_type": None, "service_name": None,
+    "status_code": None, "retry_count": 0
+}
+
+# Every open tab (one task stream each) used to rebuild this payload once a
+# second, taking scheduler_lock each time. Now one snapshot per second is
+# shared by all of them.
+_TASK_STREAM_MAX_AGE = 0.9
+_task_stream_cache = {'built_at': 0.0, 'payload': None}
+_task_stream_build_lock = threading.Lock()
+
+
+def _build_task_stream_payload():
+    """Build the JSON string the task stream sends: running state, pause info,
+    the visible running tasks and the scheduled (>= 150 s interval) jobs."""
+    program_runner = get_program_runner()
+    # Safely get timezone with proper None checks
+    if program_runner and hasattr(program_runner, 'scheduler') and program_runner.scheduler:
+        try:
+            tz = program_runner.scheduler.timezone
+        except (AttributeError, RuntimeError):
+            tz = pytz.utc
+    else:
+        tz = pytz.utc
+    current_time_dt = datetime.now(tz)
+
+    ui_visible_running_tasks_list = []  # This will be sent to UI
+    is_paused = False
+    pause_info_to_send = dict(_TASK_STREAM_NO_PAUSE)
+    tasks_info = []
+    program_running_state = False
+
+    # Get current monotonic time ONCE for consistent check across tasks in this iteration
+    current_monotonic_now = time.monotonic()
+
+    if program_runner is not None:
+        program_running_state = program_runner.is_running()
+
+        # Get all actually running task IDs and their start times
+        potential_running_tasks_with_starts = {}
+        try:
+            # Atomically get the set of currently running task IDs
+            with program_runner._running_task_lock:
+                current_task_ids_snapshot = list(program_runner.currently_executing_tasks)
+
+            # Atomically get their start times
+            with program_runner._executing_task_start_times_lock:
+                for task_id in current_task_ids_snapshot:
+                    if task_id in program_runner.executing_task_start_times:
+                        potential_running_tasks_with_starts[task_id] = program_runner.executing_task_start_times[task_id]
+                    else:
+                        logging.warning(f"Task '{task_id}' in currently_executing_tasks but missing from executing_task_start_times. Won't be shown as running this cycle.")
+
+        except Exception as read_err:
+            logging.error(f"Error reading running task data for UI stifling: {read_err}", exc_info=True)
+            # potential_running_tasks_with_starts remains empty
+
+        # Filter tasks based on duration for UI display
+        for task_id, start_time_monotonic in potential_running_tasks_with_starts.items():
+            if current_monotonic_now - start_time_monotonic >= 0.1:
+                ui_visible_running_tasks_list.append(task_id)
+
+        # Get pause state
+        is_paused = program_runner.queue_paused
+        if hasattr(program_runner, 'pause_info') and isinstance(program_runner.pause_info, dict):
+            pause_info_to_send = program_runner.pause_info.copy()
+
+        # BUGFIX: Clear pause_info if queue is not actually paused
+        # This prevents stale pause messages from persisting in the UI
+        if not is_paused and pause_info_to_send.get('reason_string') is not None:
+            pause_info_to_send = dict(_TASK_STREAM_NO_PAUSE)
+
+        if program_running_state:
+            # Only copy the job list under the lock; format it after releasing.
+            with program_runner.scheduler_lock:
+                # Check scheduler inside lock to prevent race condition
+                if program_runner.scheduler is not None:
+                    jobs = program_runner.scheduler.get_jobs()
+                else:
+                    jobs = []
+
+            for job in jobs:
+                interval = None
+                if isinstance(job.trigger, IntervalTrigger):
+                    interval = job.trigger.interval.total_seconds()
+
+                if interval is not None and interval < 150:  # Skip tasks with interval < 150 seconds
+                    continue
+
+                next_run_timestamp = None
+                if job.next_run_time:
+                    next_run_aware = job.next_run_time.astimezone(tz)
+                    next_run_timestamp = next_run_aware.timestamp()
+
+                enabled = job.next_run_time is not None
+
+                time_until_next = None
+                if enabled and next_run_timestamp:
+                    time_until_next = max(0, next_run_timestamp - current_time_dt.timestamp())
+
+                tasks_info.append({
+                    'name': job.id,
+                    'next_run': time_until_next,
+                    'next_run_timestamp': next_run_timestamp,
+                    'interval': interval,
+                    'enabled': enabled,
+                })
+            tasks_info.sort(key=lambda x: x['name'])
+
+    return json.dumps({
+        'success': True,
+        'running': program_running_state,
+        'tasks': tasks_info,
+        'paused': is_paused,
+        'pause_info': pause_info_to_send,
+        'running_tasks_list': ui_visible_running_tasks_list  # Use the filtered list
+    }, default=str)
+
+
+def _get_task_stream_payload():
+    """The shared payload, rebuilt by whichever stream asks first once it is stale."""
+    if time.monotonic() - _task_stream_cache['built_at'] < _TASK_STREAM_MAX_AGE:
+        return _task_stream_cache['payload']
+    with _task_stream_build_lock:
+        # Another stream may have rebuilt it while we waited for the lock.
+        if time.monotonic() - _task_stream_cache['built_at'] >= _TASK_STREAM_MAX_AGE:
+            _task_stream_cache['payload'] = _build_task_stream_payload()
+            _task_stream_cache['built_at'] = time.monotonic()
+        return _task_stream_cache['payload']
+
+
 @base_bp.route('/api/task-stream')
 def task_stream():
     """Stream task updates. No caching for streaming endpoints."""
@@ -456,125 +510,7 @@ def task_stream():
         while True:
             with app.app_context():
                 try:
-                    program_runner = get_program_runner()
-                    # Safely get timezone with proper None checks
-                    if program_runner and hasattr(program_runner, 'scheduler') and program_runner.scheduler:
-                        try:
-                            tz = program_runner.scheduler.timezone
-                        except (AttributeError, RuntimeError):
-                            tz = pytz.utc
-                    else:
-                        tz = pytz.utc
-                    current_time_dt = datetime.now(tz)
-
-                    # Renamed to reflect its purpose before filtering
-                    potential_running_task_ids = []
-                    ui_visible_running_tasks_list = [] # This will be sent to UI
-
-                    is_paused = False
-                    pause_info_to_send = {
-                        "reason_string": None, "error_type": None, "service_name": None,
-                        "status_code": None, "retry_count": 0
-                    }
-                    tasks_info = []
-                    program_running_state = False
-                    
-                    # Get current monotonic time ONCE for consistent check across tasks in this iteration
-                    current_monotonic_now = time.monotonic()
-
-                    if program_runner is not None:
-                        program_running_state = program_runner.is_running()
-
-                        # Get all actually running task IDs and their start times
-                        potential_running_tasks_with_starts = {}
-                        try:
-                            # Atomically get the set of currently running task IDs
-                            with program_runner._running_task_lock:
-                                current_task_ids_snapshot = list(program_runner.currently_executing_tasks)
-                            
-                            # Atomically get their start times
-                            with program_runner._executing_task_start_times_lock:
-                                for task_id in current_task_ids_snapshot:
-                                    if task_id in program_runner.executing_task_start_times:
-                                        potential_running_tasks_with_starts[task_id] = program_runner.executing_task_start_times[task_id]
-                                    else:
-                                        logging.warning(f"Task '{task_id}' in currently_executing_tasks but missing from executing_task_start_times. Won't be shown as running this cycle.")
-                        
-                        except Exception as read_err:
-                             logging.error(f"Error reading running task data for UI stifling: {read_err}", exc_info=True)
-                             # potential_running_tasks_with_starts remains empty
-
-                        # Filter tasks based on duration for UI display
-                        for task_id, start_time_monotonic in potential_running_tasks_with_starts.items():
-                            duration_monotonic = current_monotonic_now - start_time_monotonic
-                            if duration_monotonic >= 0.1:  # Stifle period of 1 second
-                                ui_visible_running_tasks_list.append(task_id)
-                            else:
-                                # This logging can be verbose if many short tasks run
-                                logging.debug(f"Task '{task_id}' running for {duration_monotonic:.3f}s, stifled from UI display.")
-                        
-                        # Get pause state
-                        is_paused = program_runner.queue_paused
-                        if hasattr(program_runner, 'pause_info') and isinstance(program_runner.pause_info, dict):
-                            pause_info_to_send = program_runner.pause_info.copy()
-
-                        # BUGFIX: Clear pause_info if queue is not actually paused
-                        # This prevents stale pause messages from persisting in the UI
-                        if not is_paused and pause_info_to_send.get('reason_string') is not None:
-                            pause_info_to_send = {
-                                "reason_string": None, "error_type": None, "service_name": None,
-                                "status_code": None, "retry_count": 0
-                            }
-
-                        # Get scheduled task list (this part remains the same)
-                        if program_running_state:
-                            with program_runner.scheduler_lock:
-                                # Check scheduler inside lock to prevent race condition
-                                if program_runner.scheduler is not None:
-                                    jobs = program_runner.scheduler.get_jobs()
-                                else:
-                                    jobs = []
-
-                                for job in jobs:
-                                    interval = None
-                                    if isinstance(job.trigger, IntervalTrigger):
-                                        interval = job.trigger.interval.total_seconds()
-
-                                    if interval is not None and interval < 150: # Skip tasks with interval < 150 seconds
-                                        continue
-
-                                    next_run_timestamp = None
-                                    if job.next_run_time:
-                                        next_run_aware = job.next_run_time.astimezone(tz)
-                                        next_run_timestamp = next_run_aware.timestamp()
-
-                                    enabled = job.next_run_time is not None
-
-                                    time_until_next = None
-                                    if enabled and next_run_timestamp:
-                                        time_until_next = max(0, next_run_timestamp - current_time_dt.timestamp())
-
-                                    tasks_info.append({
-                                        'name': job.id,
-                                        'next_run': time_until_next,
-                                        'next_run_timestamp': next_run_timestamp,
-                                        'interval': interval,
-                                        'enabled': enabled,
-                                    })
-                            tasks_info.sort(key=lambda x: x['name'])
-
-                    # Construct the data payload using the new filtered list for running tasks
-                    data = {
-                        'success': True,
-                        'running': program_running_state,
-                        'tasks': tasks_info,
-                        'paused': is_paused,
-                        'pause_info': pause_info_to_send,
-                        'running_tasks_list': ui_visible_running_tasks_list # Use the filtered list
-                    }
-
-                    yield f"data: {json.dumps(data, default=str)}\n\n"
-
+                    yield f"data: {_get_task_stream_payload()}\n\n"
                 except Exception as e:
                     logging.error(f"Error in task stream generate loop: {str(e)}", exc_info=True)
                     default_error_pause_info = {

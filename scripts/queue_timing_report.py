@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
 
-DEFAULT_FILE_PATH = "/user/db_content/queue_timing_data.json"
+DEFAULT_FILE_PATH = os.path.join(os.environ.get("USER_DB_CONTENT", "/user/db_content"), "queue_timing_data.json")
 
 
 def load_data(file_path: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:

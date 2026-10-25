@@ -396,72 +396,16 @@ function initializeTangerineMobileNav() {
     restoreExpandedState();
 }
 
-// marked is only needed for release notes, so it loads on first open
-// instead of with every page.
-let markedPromise = null;
-function loadMarked() {
-    if (window.marked) return Promise.resolve();
-    if (!markedPromise) {
-        markedPromise = new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js';
-            script.onload = resolve;
-            script.onerror = () => { markedPromise = null; reject(new Error('Failed to load marked')); };
-            document.head.appendChild(script);
-        });
-    }
-    return markedPromise;
-}
+// Release notes live in the Discord release notes channel
+const RELEASE_NOTES_URL = 'https://discord.com/channels/691282102162948107/1366605850814185492';
 
-// Release notes functionality
 function initializeReleaseNotes() {
     const releaseNotesButton = document.getElementById('releaseNotesButton');
-    const releaseNotesPopup = document.getElementById('releaseNotesPopup');
-    const releaseNotesOverlay = document.getElementById('releaseNotesOverlay');
-    const releaseNotesClose = document.getElementById('releaseNotesClose');
-    const releaseNotesContent = document.getElementById('releaseNotesContent');
-
-    function showReleaseNotes() {
-        releaseNotesPopup.style.display = 'block';
-        releaseNotesOverlay.style.display = 'block';
-        
-        Promise.all([fetch('/base/api/release-notes').then(response => response.json()), loadMarked()])
-            .then(([data]) => {
-                if (data.success) {
-                    releaseNotesContent.innerHTML = marked.parse(data.body);
-                } else {
-                    releaseNotesContent.innerHTML = '<div class="error">Failed to load release notes</div>';
-                }
-            })
-            .catch(error => {
-                if (window.DEBUG) console.error('Error fetching release notes:', error);
-                releaseNotesContent.innerHTML = '<div class="error">Error loading release notes</div>';
-            });
-    }
-
-    function hideReleaseNotes() {
-        releaseNotesPopup.style.display = 'none';
-        releaseNotesOverlay.style.display = 'none';
-    }
-
     if (releaseNotesButton) {
-        releaseNotesButton.addEventListener('click', showReleaseNotes);
+        releaseNotesButton.addEventListener('click', () => {
+            window.open(RELEASE_NOTES_URL, '_blank', 'noopener');
+        });
     }
-
-    if (releaseNotesClose) {
-        releaseNotesClose.addEventListener('click', hideReleaseNotes);
-    }
-
-    if (releaseNotesOverlay) {
-        releaseNotesOverlay.addEventListener('click', hideReleaseNotes);
-    }
-
-    // Close on escape key
-    document.addEventListener('keydown', function(event) {
-        if (event.key === 'Escape' && releaseNotesPopup.style.display === 'block') {
-            hideReleaseNotes();
-        }
-    });
 }
 
 // Rate Limits Functions
@@ -842,17 +786,39 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Update checker
-    async function checkForUpdates() {
+    // Update checker. The answer is reused across page loads for 5 minutes
+    // (the poll interval) so navigating doesn't re-ask on every page.
+    const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
+    const UPDATE_CHECK_KEY = 'updateCheckResult';
+
+    function readCachedUpdateCheck() {
         try {
-            const response = await fetch('/base/api/check-update', {
-                cache: 'no-store',  // Force bypass browser cache
-                headers: {
-                    'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache'
+            const cached = JSON.parse(sessionStorage.getItem(UPDATE_CHECK_KEY));
+            if (cached && Date.now() - cached.at < UPDATE_CHECK_TTL_MS) return cached.data;
+        } catch (e) {
+            // Storage unavailable or bad JSON: just ask the server.
+        }
+        return null;
+    }
+
+    async function checkForUpdates(useCache = false) {
+        try {
+            let data = useCache ? readCachedUpdateCheck() : null;
+            if (!data) {
+                const response = await fetch('/base/api/check-update', {
+                    cache: 'no-store',  // Force bypass browser cache
+                    headers: {
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache'
+                    }
+                });
+                data = await response.json();
+                try {
+                    sessionStorage.setItem(UPDATE_CHECK_KEY, JSON.stringify({ at: Date.now(), data }));
+                } catch (e) {
+                    // Storage unavailable: nothing to remember.
                 }
-            });
-            const data = await response.json();
+            }
 
             const updateButton = document.getElementById('updateAvailableButton');
             if (!updateButton) {
@@ -874,8 +840,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Check for updates periodically
-    setInterval(checkForUpdates, 5 * 60 * 1000); // Check every 5 minutes
-    checkForUpdates(); // Initial check
+    setInterval(checkForUpdates, UPDATE_CHECK_TTL_MS); // Check every 5 minutes
+    checkForUpdates(true); // Initial check (reuses a recent answer)
 
     // Add click handler for update button
     document.getElementById('updateAvailableButton')?.addEventListener('click', () => {

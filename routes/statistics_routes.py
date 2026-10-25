@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request, render_template, session, make_re
 from datetime import datetime, timedelta
 from operator import itemgetter
 from itertools import groupby
+import threading
 import time
 import logging
 import asyncio
@@ -36,25 +37,37 @@ def cache_for_seconds(seconds):
     """Cache the result of a function for the specified number of seconds."""
     def decorator(func):
         cache = {}
+        # When the entry expires, concurrent callers wait for one recompute
+        # instead of all running the (slow) function at once.
+        compute_lock = threading.Lock()
+
+        def cached(key):
+            if key in cache:
+                result, timestamp = cache[key]
+                if time.time() - timestamp < seconds:
+                    return True, result
+            return False, None
         
         @wraps(func)
         def wrapper(*args, **kwargs):
-            now = time.time()
-            
             # Create a cache key from the function name and arguments
             key = (func.__name__, args, frozenset(kwargs.items()))
             
             # Check if we have a cached value and it's still valid
-            if key in cache:
-                result, timestamp = cache[key]
-                if now - timestamp < seconds:
-                    logging.debug(f"Cache hit for {func.__name__}")
-                    return result
+            hit, result = cached(key)
+            if hit:
+                logging.debug(f"Cache hit for {func.__name__}")
+                return result
             
-            # If no valid cached value, call the function
-            result = func(*args, **kwargs)
-            cache[key] = (result, now)
-            return result
+            with compute_lock:
+                hit, result = cached(key)
+                if hit:
+                    return result
+                # If no valid cached value, call the function
+                now = time.time()
+                result = func(*args, **kwargs)
+                cache[key] = (result, now)
+                return result
             
         return wrapper
     return decorator
@@ -1192,33 +1205,9 @@ def index_api():
     stats['total_shows'] = counts['total_shows']
     stats['total_episodes'] = counts['total_episodes']
     
-    # Get additional counts for badges
+    # Get additional counts for badges (same 60 s cache as the page)
     try:
-        from database import get_db_connection
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM media_items WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')")
-        stats['total_movie_files'] = cursor.fetchone()[0]
-        
-        cursor.execute("""
-            SELECT COUNT(DISTINCT COALESCE(imdb_id, tmdb_id)) 
-            FROM media_items 
-            WHERE type = 'movie' 
-            AND state = 'Wanted'
-            AND (imdb_id IS NOT NULL OR tmdb_id IS NOT NULL)
-        """)
-        stats['wanted_movies'] = cursor.fetchone()[0]
-        
-        cursor.execute("""
-            SELECT COUNT(DISTINCT imdb_id || '-' || season_number || '-' || episode_number)
-            FROM media_items 
-            WHERE type = 'episode' 
-            AND state NOT IN ('Collected', 'Upgrading')
-            AND imdb_id IN (SELECT DISTINCT imdb_id FROM media_items WHERE type = 'episode' AND state IN ('Collected', 'Upgrading'))
-        """)
-        stats['missing_episodes'] = cursor.fetchone()[0]
-        
-        conn.close()
+        stats['total_movie_files'], stats['wanted_movies'], stats['missing_episodes'] = get_badge_counts()
     except Exception as e:
         logging.error(f"Error getting additional statistics: {str(e)}")
         stats['total_movie_files'] = 0
@@ -1427,38 +1416,9 @@ def move_to_wanted():
     finally:
         conn.close()
 
-# Define the path for the size cache file
-DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-SIZE_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'library_size_cache.json')
-CACHE_EXPIRY_HOURS = 72 # How long to consider the cached value valid (e.g., 3 days)
-
-# Helper function to read the cache
 def _read_size_cache() -> Optional[Dict]:
-    try:
-        if os.path.exists(SIZE_CACHE_FILE):
-            with open(SIZE_CACHE_FILE, 'r') as f:
-                data = json.load(f)
-                if isinstance(data, dict) and 'size_str' in data and 'timestamp' in data:
-                     try:
-                        cached_time = datetime.fromisoformat(data['timestamp'])
-                        if datetime.utcnow() - cached_time < timedelta(hours=CACHE_EXPIRY_HOURS):
-                            # logging.debug("Read valid library size cache for initial page load.")
-                            return data
-                        else:
-                            # logging.info("Cached library size expired for initial page load.")
-                            return None
-                     except ValueError:
-                         # logging.warning("Invalid timestamp format in cache file.")
-                         return None
-                else:
-                    # logging.warning("Invalid data format in cache file.")
-                    return None
-        else:
-            # logging.debug("Library size cache file not found for initial load.")
-            return None
-    except Exception as e:
-        logging.error(f"Failed to read library size cache for initial load: {e}")
-        return None
+    from database.statistics import read_library_size_cache
+    return read_library_size_cache()
 
 def _scraper_stats_args():
     raw_days = request.args.get('days', '30')
@@ -1524,7 +1484,10 @@ def get_library_size_api():
     # regardless of whether a debrid provider is configured — same source
     # _refresh_download_stats_blocking uses for the toggle-bar Library value,
     # so the on-demand refresh button and the cached value never disagree.
+    # With base decypharr instead of cli_mount there's no combined size to read (the
+    # stats show the cached debrid size), so fall through and ask the debrid provider.
     if _stats_mode == 'combined':
+        active = None
         try:
             from database.statistics import download_stats_cache
             download_stats_cache['last_update'] = 0  # force stats re-fetch
@@ -1533,7 +1496,8 @@ def get_library_size_api():
             size_str = (active or {}).get('library_size', 'N/A')
         except Exception as _e:
             size_str = 'N/A'
-        return jsonify({'total_library_size': size_str})
+        if (active or {}).get('library_source') != 'debrid':
+            return jsonify({'total_library_size': size_str})
 
     # cli_mount mode — reset nzbs size cache and re-run statvfs
     if _stats_mode == 'usenet':

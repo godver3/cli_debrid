@@ -865,9 +865,16 @@ def migrate_schema():
             """)
             if cur_sr.rowcount > 0:
                 conn.commit()
-                logging.info(f"[Startup] Cleared scrape_results for {cur_sr.rowcount} terminal-state items — running VACUUM")
-                conn.execute("VACUUM")
-                logging.info("[Startup] VACUUM complete.")
+                logging.info(f"[Startup] Cleared scrape_results for {cur_sr.rowcount} terminal-state items")
+                # VACUUM rewrites the whole file and blocks every writer while the
+                # UI is already up; only worth it when a lot of space was freed.
+                page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+                page_count = conn.execute("PRAGMA page_count").fetchone()[0]
+                free_pages = conn.execute("PRAGMA freelist_count").fetchone()[0]
+                if free_pages * page_size >= 16 * 1024 * 1024 and free_pages * 4 >= page_count:
+                    logging.info(f"[Startup] {free_pages * page_size // (1024 * 1024)} MB free in the database — running VACUUM")
+                    conn.execute("VACUUM")
+                    logging.info("[Startup] VACUUM complete.")
         except Exception as _ce:
             logging.warning(f"[Migration] scrape_results cleanup failed: {_ce}")
 

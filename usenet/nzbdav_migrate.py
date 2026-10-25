@@ -66,6 +66,7 @@ RECOMMENDED = ['music']
 
 # Common cli-debrid config locations (host or in-container).
 CONFIG_CANDIDATES = [
+    os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'config.json'),
     '/user/config/config.json',
     os.path.expanduser('~/.config/cli_debrid/config.json'),
     './config.json',

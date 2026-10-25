@@ -3,18 +3,6 @@
 {% block title %}Discover - Find New Content{% endblock %}
 
 {% block head %}
-<script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
-
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const theme = getCurrentTheme();
-        const cssFile = 'css/tangerine/tangerine_discover.css';
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = '{{ url_for("static", filename="") }}' + cssFile + '?v={{ range(10000, 99999) | random }}';
-        document.head.appendChild(link);
-    });
-</script>
 {% endblock %}
 
 {% block content %}
@@ -1141,4 +1129,8 @@
 
 <script src="{{ url_for('static', filename='js/episode_order_picker.js') }}"></script>
 <script src="{{ url_for('static', filename='js/discover.js') }}"></script>
+{% endblock %}
+
+{% block head_last %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_discover.css') }}">
 {% endblock %}

@@ -8,6 +8,7 @@ from scraper.functions import *
 from database.database_writing import update_anime_format, get_anime_format
 import threading
 import concurrent.futures
+from utilities.log_context import ContextThreadPoolExecutor
 import time
 import re
 import random
@@ -557,7 +558,7 @@ def scrape_nyaa_anime_season(title: str, year: int, season: int, tmdb_id: str, e
         return results
     
     # Use ThreadPoolExecutor to scrape all formats simultaneously
-    with concurrent.futures.ThreadPoolExecutor() as executor:
+    with ContextThreadPoolExecutor() as executor:
         future_to_format = {
             executor.submit(scrape_with_format, format_type, format_pattern): format_type
             for format_type, format_pattern in episode_formats.items()

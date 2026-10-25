@@ -29,7 +29,8 @@ from cli_battery.app.episode_order import show_episode_order
 from cli_battery.app.direct_api import DirectAPI
 import json
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
+from utilities.log_context import ContextThreadPoolExecutor
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 except ImportError:
@@ -1283,7 +1284,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         max_workers = min(len(titles_to_try), 4)  # Limit to 4 concurrent threads to avoid overwhelming scrapers
         logging.info(f"Starting parallel scraping with {max_workers} workers for {len(titles_to_try)} titles")
         
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ContextThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all scraping tasks
             future_to_title = {executor.submit(scrape_single_title, (source, search_title)): (source, search_title) 
                               for source, search_title in titles_to_try}

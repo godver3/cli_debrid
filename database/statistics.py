@@ -7,7 +7,9 @@ from routes.poster_cache import get_cached_poster_url, cache_poster_url, clean_e
 from utilities.settings import get_setting
 from flask import request, url_for
 from urllib.parse import urlparse
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
+import os
 import time
 from functools import wraps
 import random
@@ -23,6 +25,31 @@ def format_bytes(size):
             return f"{size:.2f} {unit}"
         size /= 1024.0
     return f"{size:.2f} PB"
+
+# Debrid library size written by the Real-Debrid client (get_total_library_size) and
+# refreshed by task_refresh_library_size_cache.
+LIBRARY_SIZE_CACHE_FILE = os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'),
+                                       'library_size_cache.json')
+LIBRARY_SIZE_CACHE_EXPIRY_HOURS = 72
+
+
+def read_library_size_cache():
+    """The cached debrid library size as {'size_str', 'timestamp'}, or None if missing or expired."""
+    try:
+        if not os.path.exists(LIBRARY_SIZE_CACHE_FILE):
+            return None
+        with open(LIBRARY_SIZE_CACHE_FILE, 'r') as f:
+            data = json.load(f)
+        if not (isinstance(data, dict) and 'size_str' in data and 'timestamp' in data):
+            return None
+        cached_time = datetime.fromisoformat(data['timestamp'])
+        if datetime.utcnow() - cached_time >= timedelta(hours=LIBRARY_SIZE_CACHE_EXPIRY_HOURS):
+            return None
+        return data
+    except Exception as e:
+        logging.error(f"Failed to read library size cache: {e}")
+        return None
+
 
 # Cache for cli_mount nzbs folder size (updated by background du -sh)
 _dcy_nzbs_size_cache = {'size': 'N/A', 'last_update': 0}
@@ -245,8 +272,15 @@ def _refresh_download_stats_blocking():
                 _pct = round((_used / _max * 100) if _max > 0 else 0)
                 _status = 'critical' if _pct >= 90 else ('warning' if _pct >= 75 else 'normal')
 
-                _content = _data.get('content', {}) or {}
-                _total_size = _content.get('total_size', 0)
+                # Only cli_mount reports 'content'. Base decypharr's stats have no library
+                # size at all, so show the debrid account's size there instead of 0 B.
+                if 'content' in _data:
+                    _library_size = format_bytes((_data.get('content') or {}).get('total_size', 0))
+                    _library_source = 'climount'
+                else:
+                    _cached = read_library_size_cache()
+                    _library_size = _cached['size_str'] if _cached else 'N/A'
+                    _library_source = 'debrid'
                 _broken = _data.get('repair', {}).get('health', {}).get('broken', 0)
                 _broken_nzbs, _broken_debrid = _fetch_climount_broken_split(_broken)
 
@@ -258,7 +292,8 @@ def _refresh_download_stats_blocking():
                     'status': _status,
                     'error': None,
                     'source': 'combined',
-                    'library_size': format_bytes(_total_size),
+                    'library_size': _library_size,
+                    'library_source': _library_source,
                     'broken_nzbs': _broken_nzbs,
                     'broken_debrid': _broken_debrid,
                 }
@@ -271,7 +306,7 @@ def _refresh_download_stats_blocking():
                     'label': 'Connections',
                 }
                 download_stats_cache['last_update'] = current_time
-                logging.debug(f"Combined stats: pool_active={_active}, pool_max={_max}, total_size={_total_size}, broken={_broken}")
+                logging.debug(f"Combined stats: pool_active={_active}, pool_max={_max}, library={_library_size} ({_library_source}), broken={_broken}")
                 return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
             # cli_mount not available — return empty stats (same shape as the usenet-mode fallback below)
             download_stats_cache['active_downloads'] = {'count': 0, 'limit': 0, 'percentage': 0, 'status': 'error', 'error': 'no_provider'}

@@ -24,11 +24,17 @@ import threading
 import time
 from typing import Optional
 
+from utilities.paths import config_dir
+
 logger = logging.getLogger(__name__)
 
 _DATASET_URL  = "https://datasets.imdbws.com/title.ratings.tsv.gz"
-_DATASET_PATH = "/user/config/imdb_ratings.tsv.gz"
-_DB_PATH      = "/user/config/imdb_ratings.db"
+def _dataset_path() -> str:
+    return config_dir("imdb_ratings.tsv.gz")
+
+
+def _db_path() -> str:
+    return config_dir("imdb_ratings.db")
 _TTL          = 86400  # re-download after 24 hours
 
 # Tracks when the DB was last successfully built in this process.
@@ -38,27 +44,27 @@ _lock = threading.Lock()
 
 
 def _file_age() -> float:
-    """Return seconds since _DATASET_PATH was last modified, or infinity if absent."""
+    """Return seconds since _dataset_path() was last modified, or infinity if absent."""
     try:
-        return time.time() - os.path.getmtime(_DATASET_PATH)
+        return time.time() - os.path.getmtime(_dataset_path())
     except OSError:
         return float('inf')
 
 
 def _db_age() -> float:
-    """Return seconds since _DB_PATH was last modified, or infinity if absent."""
+    """Return seconds since _db_path() was last modified, or infinity if absent."""
     try:
-        return time.time() - os.path.getmtime(_DB_PATH)
+        return time.time() - os.path.getmtime(_db_path())
     except OSError:
         return float('inf')
 
 
 def _db_ready() -> bool:
     """Return True if the SQLite DB exists and contains at least one row."""
-    if not os.path.exists(_DB_PATH):
+    if not os.path.exists(_db_path()):
         return False
     try:
-        conn = sqlite3.connect(_DB_PATH, timeout=5)
+        conn = sqlite3.connect(_db_path(), timeout=5)
         count = conn.execute("SELECT COUNT(*) FROM imdb_ratings").fetchone()[0]
         conn.close()
         return count > 0
@@ -67,18 +73,18 @@ def _db_ready() -> bool:
 
 
 def _download() -> bool:
-    """Download the gzipped TSV to _DATASET_PATH. Returns True on success."""
+    """Download the gzipped TSV to _dataset_path(). Returns True on success."""
     import requests
     try:
         logger.info(f"Downloading IMDb ratings dataset from {_DATASET_URL} ...")
         resp = requests.get(_DATASET_URL, stream=True, timeout=30)
         resp.raise_for_status()
-        os.makedirs(os.path.dirname(_DATASET_PATH), exist_ok=True)
-        tmp = _DATASET_PATH + ".tmp"
+        os.makedirs(os.path.dirname(_dataset_path()), exist_ok=True)
+        tmp = _dataset_path() + ".tmp"
         with open(tmp, "wb") as fh:
             for chunk in resp.iter_content(chunk_size=65536):
                 fh.write(chunk)
-        os.replace(tmp, _DATASET_PATH)
+        os.replace(tmp, _dataset_path())
         logger.info("IMDb ratings dataset downloaded successfully")
         return True
     except Exception as exc:
@@ -87,12 +93,12 @@ def _download() -> bool:
 
 
 def _parse() -> bool:
-    """Parse _DATASET_PATH into a SQLite DB at _DB_PATH. Returns True on success."""
+    """Parse _dataset_path() into a SQLite DB at _db_path(). Returns True on success."""
     global _loaded_at
 
-    tmp_db = _DB_PATH + ".tmp"
+    tmp_db = _db_path() + ".tmp"
     try:
-        os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
+        os.makedirs(os.path.dirname(_db_path()), exist_ok=True)
         if os.path.exists(tmp_db):
             os.remove(tmp_db)
 
@@ -104,7 +110,7 @@ def _parse() -> bool:
         )
 
         def _rows():
-            with gzip.open(_DATASET_PATH, "rt", encoding="utf-8") as fh:
+            with gzip.open(_dataset_path(), "rt", encoding="utf-8") as fh:
                 next(fh)  # skip header: tconst\taverageRating\tnumVotes
                 for line in fh:
                     parts = line.split("\t")
@@ -119,7 +125,7 @@ def _parse() -> bool:
         count = conn.execute("SELECT COUNT(*) FROM imdb_ratings").fetchone()[0]
         conn.close()
 
-        os.replace(tmp_db, _DB_PATH)
+        os.replace(tmp_db, _db_path())
         _loaded_at = time.time()
         logger.info(f"IMDb ratings dataset loaded into SQLite: {count:,} entries")
         return True
@@ -180,7 +186,7 @@ def get_imdb_dataset_rating(imdb_id: str) -> Optional[float]:
     try:
         if not _ensure_loaded():
             return None
-        conn = sqlite3.connect(_DB_PATH, timeout=5)
+        conn = sqlite3.connect(_db_path(), timeout=5)
         row = conn.execute(
             "SELECT rating FROM imdb_ratings WHERE imdb_id = ?", (imdb_id,)
         ).fetchone()

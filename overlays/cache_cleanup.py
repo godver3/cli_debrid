@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
+from utilities.paths import config_dir
+
 logger = logging.getLogger(__name__)
 
 # ── Remove-All job state ──────────────────────────────────────────────────────
@@ -61,7 +63,7 @@ class PosterCacheManager:
     - Cleaning up orphaned overlay posters
     """
 
-    def __init__(self, db_path=None, backup_dir: str = "/user/config/poster_backups"):
+    def __init__(self, db_path=None, backup_dir: Optional[str] = None):
         """
         Initialize poster cache manager.
 
@@ -69,7 +71,7 @@ class PosterCacheManager:
             db_path: Unused — kept for API compatibility. DB access uses get_db_connection().
             backup_dir: Directory for poster backups
         """
-        self.backup_dir = Path(backup_dir)
+        self.backup_dir = Path(backup_dir or config_dir('poster_backups'))
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         self.logger = logging.getLogger(__name__)
 

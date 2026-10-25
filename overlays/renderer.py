@@ -10,6 +10,8 @@ from io import BytesIO
 from typing import Dict, Any, Optional, Union
 from pathlib import Path
 
+from utilities.paths import config_dir
+
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:
@@ -20,7 +22,8 @@ except ImportError:
 
 # Logo library directories (two-tier: user first, system fallback)
 _SYSTEM_LOGO_DIR = Path(__file__).parent / 'assets' / 'logos'
-_USER_LOGO_DIR = Path('/user/config/overlay_assets/logos')
+def _user_logo_dir() -> Path:
+    return Path(config_dir('overlay_assets', 'logos'))
 
 
 class OverlayRenderer:
@@ -31,14 +34,14 @@ class OverlayRenderer:
     Later: Will support JSON templates with image assets.
     """
 
-    def __init__(self, asset_dir: str = "/user/config/overlay_assets"):
+    def __init__(self, asset_dir: Optional[str] = None):
         """
         Initialize the overlay renderer.
 
         Args:
             asset_dir: Path to overlay assets directory
         """
-        self.asset_dir = Path(asset_dir)
+        self.asset_dir = Path(asset_dir or config_dir('overlay_assets'))
         self.logger = logging.getLogger(__name__)
 
         if not Image:
@@ -395,7 +398,7 @@ class OverlayRenderer:
                 path_strip = icon_path.lstrip('/')
                 if path_strip.startswith('logos/'):
                     logo_rel  = path_strip[len('logos/'):]
-                    icon_file = _USER_LOGO_DIR / logo_rel
+                    icon_file = _user_logo_dir() / logo_rel
                     if not icon_file.exists():
                         icon_file = _SYSTEM_LOGO_DIR / logo_rel
                 else:
@@ -424,7 +427,7 @@ class OverlayRenderer:
             path_strip = icon_path.lstrip('/')
             if path_strip.startswith('logos/'):
                 logo_rel = path_strip[len('logos/'):]
-                asset_path = _USER_LOGO_DIR / logo_rel
+                asset_path = _user_logo_dir() / logo_rel
                 if not asset_path.exists():
                     asset_path = _SYSTEM_LOGO_DIR / logo_rel
             else:
@@ -1685,7 +1688,7 @@ class OverlayRenderer:
                 else:
                     sub_dir = 'studio/bigger' if logo_variant == 'color' else 'studio/standard'
                 rel = f'{sub_dir}/{name_val}.png'
-                logo_file = _USER_LOGO_DIR / rel
+                logo_file = _user_logo_dir() / rel
                 if not logo_file.exists():
                     logo_file = _SYSTEM_LOGO_DIR / rel
                 # Fuzzy fallback: case-insensitive + normalized (strip spaces/punctuation)
@@ -1711,7 +1714,7 @@ class OverlayRenderer:
                     # Check alias map first
                     alias_stem = _NETWORK_ALIASES.get(name_val.lower())
                     if alias_stem:
-                        for search_dir in (_USER_LOGO_DIR / sub_dir, _SYSTEM_LOGO_DIR / sub_dir):
+                        for search_dir in (_user_logo_dir() / sub_dir, _SYSTEM_LOGO_DIR / sub_dir):
                             candidate = search_dir / f'{alias_stem}.png'
                             if candidate.exists():
                                 logo_file = candidate
@@ -1722,7 +1725,7 @@ class OverlayRenderer:
                     if not logo_file.exists():
                         name_norm = _norm(name_val)
                         name_words = set(_re.split(r'\s+', name_val.lower()))
-                        for search_dir in (_USER_LOGO_DIR / sub_dir, _SYSTEM_LOGO_DIR / sub_dir):
+                        for search_dir in (_user_logo_dir() / sub_dir, _SYSTEM_LOGO_DIR / sub_dir):
                             if not search_dir.is_dir():
                                 continue
                             best = None

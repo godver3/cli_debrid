@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from database.database_writing import update_media_item_state
 from scraper.scraper import scrape
 from utilities.settings import get_setting
+from utilities.log_context import logs_for_item
 import os
 import pickle
 from pathlib import Path
@@ -207,6 +208,7 @@ class PreReleaseQueue:
             logging.error(f"Error checking effective release date for item {item.get('id')}: {str(e)}")
             return False
 
+    @logs_for_item
     def daily_scrape(self, item: Dict[str, Any], queue_manager=None):
         """Perform daily scraping for an item"""
         item_id = item['id']

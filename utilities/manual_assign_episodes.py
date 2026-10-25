@@ -30,6 +30,17 @@ def absolute_numbers(seasons: Optional[Dict[Any, Any]]) -> Dict[Tuple[int, int],
     numbering sometimes skips, e.g. Dragon Ball Z Kai season 2). Specials
     (S0) have no absolute number.
     """
+    result: Dict[Tuple[int, int], List[int]] = {}
+    for pos, (provider_abs, counted) in absolute_number_sources(seasons).items():
+        numbers = [n for n in (provider_abs, counted) if n]
+        if numbers:
+            result[pos] = list(dict.fromkeys(numbers))
+    return result
+
+
+def absolute_number_sources(seasons: Optional[Dict[Any, Any]]
+                            ) -> Dict[Tuple[int, int], Tuple[Optional[int], Optional[int]]]:
+    """{(season, episode): (provider absolute, counted absolute)}, see absolute_numbers."""
     counts: Dict[int, int] = {}
     for s_num, s_data in (seasons or {}).items():
         try:
@@ -39,7 +50,7 @@ def absolute_numbers(seasons: Optional[Dict[Any, Any]]) -> Dict[Tuple[int, int],
         if isinstance(s_data, dict):
             counts[s_num] = len(s_data.get('episodes') or {}) or s_data.get('episode_count') or 0
 
-    result: Dict[Tuple[int, int], List[int]] = {}
+    result: Dict[Tuple[int, int], Tuple[Optional[int], Optional[int]]] = {}
     for s_num, s_data in (seasons or {}).items():
         try:
             s_num = int(s_num)
@@ -57,9 +68,7 @@ def absolute_numbers(seasons: Optional[Dict[Any, Any]]) -> Dict[Tuple[int, int],
                 provider_abs = int(provider_abs) if provider_abs else None
             except (TypeError, ValueError):
                 provider_abs = None
-            numbers = [n for n in (provider_abs, absolute_from_counts(s_num, e_num, counts)) if n]
-            if numbers:
-                result[(s_num, e_num)] = list(dict.fromkeys(numbers))
+            result[(s_num, e_num)] = (provider_abs, absolute_from_counts(s_num, e_num, counts) or None)
     return result
 
 
@@ -139,6 +148,20 @@ def file_explicit_absolute(parsed: Dict[str, Any], filename: Optional[str],
                                      counts or None)
 
 
+def file_position_label(parsed: Dict[str, Any], explicit_absolute: Optional[List[int]] = None) -> str:
+    """Short label for what a file's name says it holds: "S02E05", "S01E01-02",
+    "E07" or "#050"; empty when the name has no numbers."""
+    numbers = sorted(set(_ints(explicit_absolute or [])))
+    if numbers:
+        return f'#{numbers[0]:03d}' + (f'-{numbers[-1]:03d}' if len(numbers) > 1 else '')
+    episodes = sorted(set(_ints(parsed.get('episodes') or [])))
+    if not episodes:
+        return ''
+    span = f'E{episodes[0]:02d}' + (f'-{episodes[-1]:02d}' if len(episodes) > 1 else '')
+    seasons = sorted(set(_ints(parsed.get('seasons') or [])))
+    return (f'S{seasons[0]:02d}' if len(seasons) == 1 else '') + span
+
+
 def explicit_absolute_conflicts(item_numbers: Optional[List[int]], file_numbers: List[int]) -> bool:
     """True when a file's stated absolute number is another episode's."""
     return bool(item_numbers and file_numbers and not set(item_numbers) & set(file_numbers))
@@ -177,12 +200,21 @@ class _ShowNumbering:
 
     def __init__(self, show_seasons, alt_seasons=None):
         self.show_abs = absolute_numbers(show_seasons)
-        # Which episodes each absolute number could mean. A number two
-        # episodes claim (TVDB's absolute vs a plain count) is ambiguous.
-        self.claims: Dict[int, Set[Tuple[int, int]]] = defaultdict(set)
-        for pos, numbers in self.show_abs.items():
-            for n in numbers:
-                self.claims[n].add(pos)
+        # Which episodes each absolute number could mean, by the provider's
+        # numbering and by a plain count. Once the provider's numbering skips
+        # (TVDB files One Piece 590 under specials), every later number is
+        # claimed by two episodes; prefer_numbering() picks one per pack.
+        self.provider_claims: Dict[int, Set[Tuple[int, int]]] = defaultdict(set)
+        self.counted_claims: Dict[int, Set[Tuple[int, int]]] = defaultdict(set)
+        for pos, (provider_abs, counted) in absolute_number_sources(show_seasons).items():
+            if provider_abs:
+                self.provider_claims[provider_abs].add(pos)
+            if counted:
+                self.counted_claims[counted].add(pos)
+        self.special_slots = _special_slots(show_seasons, self.provider_claims)
+        self.preferred: Optional[Dict[int, Set[Tuple[int, int]]]] = None
+        self.pack_numbers: Set[int] = set()  # absolute numbers the pack's names state
+        self.quiet = False
         self.alt_abs = absolute_numbers(alt_seasons) if alt_seasons else {}
         self.alt_ids = _episode_ids(alt_seasons) if alt_seasons else {}
         self.id_to_pos: Dict[str, Tuple[int, int]] = {}
@@ -190,15 +222,52 @@ class _ShowNumbering:
             for key in keys:
                 self.id_to_pos.setdefault(key, pos)
 
-    def _by_number(self, numbers: Iterable[int]) -> Optional[Tuple[int, int]]:
+    def _by_number(self, numbers: Iterable[int], from_name: bool = True) -> Optional[Tuple[int, int]]:
+        numbers = list(numbers)
+        if from_name:
+            self.pack_numbers.update(numbers)
         positions: Set[Tuple[int, int]] = set()
         for n in numbers:
-            positions |= self.claims.get(n, set())
+            positions |= self.provider_claims.get(n, set()) | self.counted_claims.get(n, set())
+        if self.special_slots.intersection(numbers) and self.preferred is not self.counted_claims:
+            # "One Piece - 0590" is the special unless the pack counts straight through
+            positions = set()
+        elif len(positions) > 1 and self.preferred is not None:
+            positions = set().union(*(self.preferred.get(n, set()) for n in numbers))
         if len(positions) == 1:
             return next(iter(positions))
-        if len(positions) > 1:
+        if len(positions) > 1 and not self.quiet:
             logging.info(f"[Absolute] Absolute {sorted(set(numbers))} could be any of {sorted(positions)}; not guessing")
         return None
+
+    def prefer_numbering(self) -> None:
+        """Settle numbers both numberings claim by the one the pack follows.
+
+        The pack follows the count when it has numbers only the count uses
+        (a pack numbered straight through a skip in TVDB's numbering), and
+        the provider when it has numbers only the provider uses or leaves
+        out a count-only number that a special aired in ("[Lia] One Piece"
+        has no 590, the Dream 9 crossover TVDB files as S00E39). A pack that has
+        a number the provider skips for a special proves nothing: "0590" is
+        the special in a broadcast-numbered pack and S16E12 in a counted
+        one. Evidence both ways, or none, leaves those numbers to the user.
+        """
+        pack_numbers = self.pack_numbers
+        if not pack_numbers:
+            return
+        provider_only = set(self.provider_claims) - set(self.counted_claims)
+        counted_only = set(self.counted_claims) - set(self.provider_claims)
+        low, high = min(pack_numbers), max(pack_numbers)
+        follows_count = bool(pack_numbers & (counted_only - self.special_slots))
+        # A count-only number missing from the pack is only evidence where a special
+        # aired in that slot; elsewhere the pack may just be missing that file.
+        follows_provider = (bool(pack_numbers & provider_only)
+                            or any(low < n < high and n not in pack_numbers
+                                   for n in counted_only & self.special_slots))
+        if follows_count != follows_provider:
+            self.preferred = self.counted_claims if follows_count else self.provider_claims
+            logging.info(f"[Absolute] Pack numbers follow the {'counted' if follows_count else 'provider'} "
+                         f"absolute numbering")
 
     def file_positions(self, parsed: Dict[str, Any], explicit_absolute: Optional[List[int]] = None,
                        bare_number: Optional[int] = None) -> Set[Tuple[int, int]]:
@@ -235,7 +304,7 @@ class _ShowNumbering:
                     # else by its absolute number
                     pos = next((self.id_to_pos[k] for k in self.alt_ids.get((s, e), ()) if k in self.id_to_pos), None)
                     if pos is None:
-                        pos = self._by_number(self.alt_abs[(s, e)])
+                        pos = self._by_number(self.alt_abs[(s, e)], from_name=False)
                 elif (s, e) in self.show_abs:
                     pos = (s, e)
                 elif s == 1:
@@ -244,6 +313,42 @@ class _ShowNumbering:
                 if pos:
                     positions.add(pos)
         return positions
+
+
+def _special_slots(seasons: Optional[Dict[Any, Any]],
+                   provider_claims: Dict[int, Set[Tuple[int, int]]]) -> Set[int]:
+    """Numbers the provider's absolute numbering skips for a special.
+
+    TVDB's One Piece goes S16E11 = 589, S16E12 = 591: 590 is the Dream 9
+    crossover, filed as S00E39 and aired between the two. A skipped number
+    counts when a special aired between its neighbours (dates inclusive).
+    """
+    specials = (seasons or {}).get(0) or (seasons or {}).get('0') or {}
+    special_dates = sorted(str(ep.get('first_aired'))[:10]
+                           for ep in ((specials.get('episodes') or {}).values() if isinstance(specials, dict) else [])
+                           if isinstance(ep, dict) and ep.get('first_aired'))
+    if not special_dates or not provider_claims:
+        return set()
+
+    def aired(number):
+        positions = provider_claims.get(number) or set()
+        if len(positions) != 1:
+            return None
+        s_num, e_num = next(iter(positions))
+        s_data = seasons.get(s_num) or seasons.get(str(s_num)) or {}
+        episodes = s_data.get('episodes') or {}
+        ep = episodes.get(e_num) or episodes.get(str(e_num)) or {}
+        return str(ep.get('first_aired'))[:10] if ep.get('first_aired') else None
+
+    slots = set()
+    numbered = sorted(provider_claims)
+    for before, after in zip(numbered, numbered[1:]):
+        if after - before < 2:
+            continue
+        start, end = aired(before), aired(after)
+        if start and end and any(start <= d <= end for d in special_dates):
+            slots.update(range(before + 1, after))
+    return slots
 
 
 def match_absolute_files(target_items: List[Dict[str, Any]],
@@ -274,7 +379,7 @@ def match_absolute_files(target_items: List[Dict[str, Any]],
         if not item.get('assigned'):
             items_by_pos[pos] = item
 
-    files_by_pos: Dict[Tuple[int, int], List[Dict[str, Any]]] = defaultdict(list)
+    candidates_by_file = []
     for f in parsed_files:
         multi_episode = len(set(_ints((f.get('parsed') or {}).get('episodes')))) > 1
         if f.get('used') and not multi_episode:
@@ -283,12 +388,25 @@ def match_absolute_files(target_items: List[Dict[str, Any]],
         if is_anime_op_ed_extra(filename) or is_anime_op_ed_extra((f.get('original') or {}).get('path')):
             continue
         explicit = file_explicit_absolute(f.get('parsed') or {}, filename, show_seasons)
+        candidates_by_file.append((f, multi_episode, explicit))
+
+    # Survey the whole pack first: which absolute numbering it follows
+    # decides numbers the provider's numbering and a plain count both claim
+    numbering.quiet = True
+    for f, _, explicit in candidates_by_file:
+        numbering.file_positions(f.get('parsed') or {}, explicit, bare_numbers.get(id(f)))
+    numbering.quiet = False
+    numbering.prefer_numbering()
+
+    files_by_pos: Dict[Tuple[int, int], List[Dict[str, Any]]] = defaultdict(list)
+    for f, multi_episode, explicit in candidates_by_file:
         positions = numbering.file_positions(f.get('parsed') or {}, explicit, bare_numbers.get(id(f)))
         if len(positions) > 1 and not multi_episode:
             continue  # one number, several episodes: left to the user
         for pos in positions & set(items_by_pos):
             files_by_pos[pos].append(f)
 
+    explicit_by_file = {id(f): explicit for f, _, explicit in candidates_by_file}
     assigned = 0
     for pos, item in items_by_pos.items():
         candidates = files_by_pos.get(pos, [])
@@ -302,6 +420,11 @@ def match_absolute_files(target_items: List[Dict[str, Any]],
             continue
         item['suggested_file_path'] = filename
         item['assigned'] = True
+        # Placed by the S/E its name states (a multi-episode "S02E01-E02" file's second
+        # episode, or an aired "S15E01" mapped into another episode order), else by number
+        parsed = candidates[0].get('parsed') or {}
+        by_se = bool(_ints(parsed.get('seasons') or [])) and not explicit_by_file.get(id(candidates[0]))
+        item['match_reason'] = 'se' if by_se else 'absolute'
         candidates[0]['used'] = True
         assigned += 1
         logging.info(f"[Absolute] Assigned '{candidates[0]['original'].get('path')}' to "

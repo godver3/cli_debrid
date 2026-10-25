@@ -16,6 +16,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from utilities.paths import config_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +28,6 @@ def _get_db_connection():
     return conn
 
 
-BADGE_ASSET_DIR_DEFAULT = '/user/config/badge_assets'
 
 # ---------------------------------------------------------------------------
 # Pre-seeded badge type definitions
@@ -326,7 +327,7 @@ class BadgeManager:
     def __init__(self, db_path: str = None, asset_dir: str = None):
         # db_path is unused — kept for API compatibility. DB access uses get_db_connection().
         # user_asset_dir: where uploads land (runtime, outside app)
-        self.user_asset_dir = Path(asset_dir or BADGE_ASSET_DIR_DEFAULT)
+        self.user_asset_dir = Path(asset_dir or config_dir('badge_assets'))
         self.user_asset_dir.mkdir(parents=True, exist_ok=True)
         # backwards-compat alias used by save_variation_asset
         self.asset_dir = self.user_asset_dir

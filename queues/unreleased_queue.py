@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any
 from datetime import datetime, timedelta, time as dt_time
 from utilities.settings import get_setting
+from queues.scrape_window import in_alternate_scrape_window
 from database.database_reading import get_all_media_items, stream_all_media_items
 import time
 
@@ -40,49 +41,12 @@ class UnreleasedQueue:
         logging.debug(f"UnreleasedQueue.remove_item called for ID {item.get('id', 'N/A')} - item state managed in DB.")
 
     def _is_within_alternate_scrape_window(self, item, now=None, use_alt=None, anchor_time=None):
-        if now is None:
-            now = datetime.now()
         # Allow callers to pass in pre-computed values to avoid repeated settings look-ups.
         if use_alt is None:
             use_alt = get_setting('Debug', 'use_alternate_scrape_time_strategy', False)
         if not use_alt:
             return False
-        if anchor_time is None:
-            anchor_str = get_setting('Debug', 'alternate_scrape_time_24h', '00:00')
-            try:
-                anchor_time = datetime.strptime(anchor_str, '%H:%M').time()
-            except Exception:
-                anchor_time = dt_time(0, 0)
-        today_anchor = now.replace(hour=anchor_time.hour, minute=anchor_time.minute, second=0, microsecond=0)
-        if now < today_anchor:
-            anchor_dt = today_anchor
-        else:
-            anchor_dt = today_anchor
-        window_start = anchor_dt - timedelta(hours=24)
-        # Get item datetime
-        release_date_str = item.get('release_date')
-        airtime_str = item.get('airtime')
-        if not release_date_str or release_date_str.lower() in ['unknown', 'none']:
-            return False
-        try:
-            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-            if airtime_str:
-                try:
-                    airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
-                except ValueError:
-                    try:
-                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                    except ValueError:
-                        airtime = dt_time(0, 0)
-            else:
-                airtime = dt_time(0, 0)
-            item_dt = datetime.combine(release_date, airtime)
-        except Exception:
-            return False
-        # If the item is older than the window, always allow
-        if item_dt < window_start:
-            return True
-        return window_start <= item_dt <= anchor_dt
+        return in_alternate_scrape_window(item, now, anchor_time)
 
     def process(self, queue_manager):
         logging.debug("Processing unreleased queue using direct DB query.")

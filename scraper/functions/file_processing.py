@@ -248,11 +248,11 @@ def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, floa
     PARALLEL_THRESHOLD = 12  # Tunable – empirically the break-even point
     if len(titles) >= PARALLEL_THRESHOLD:
         try:
-            from concurrent.futures import ThreadPoolExecutor
+            from utilities.log_context import ContextThreadPoolExecutor
             import multiprocessing
 
             max_workers = min(32, (multiprocessing.cpu_count() or 1) * 2)
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            with ContextThreadPoolExecutor(max_workers=max_workers) as executor:
                 results = list(executor.map(_process_single_title, zip(titles, sizes)))
             return results
         except Exception as e:

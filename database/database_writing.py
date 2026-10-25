@@ -8,6 +8,7 @@ import os
 import threading
 from utilities.atomic_io import atomic_write_bytes
 from utilities.post_processing import handle_state_change
+from utilities.log_context import log_state_change
 from typing import List, Optional
 import sqlite3
 
@@ -264,6 +265,8 @@ def update_release_date_and_state(
             ]
             params = [release_date, expected_state, state, datetime.now()]
 
+        old_state_row = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_id,)).fetchone()
+
         if airtime is not None:
             set_clauses.append('airtime = ?')
             params.append(airtime)
@@ -302,6 +305,8 @@ def update_release_date_and_state(
 
         conn.commit()
 
+        if updated_item_row:
+            log_state_change(dict(updated_item_row), old_state_row['state'] if old_state_row else None)
         if updated_item_row and updated_item_row['state'] != state:
             logging.info(f"Item {item_id} left {expected_state} (now {updated_item_row['state']}) before the "
                          f"release-date update; kept its state instead of setting {state}")
@@ -347,6 +352,7 @@ def update_media_item_state(item_id, state, skip_state_change_hook=False, **kwar
             SET state = ?, last_updated = ?
         '''
         params = [state, datetime.now()]
+        old_state_row = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_id,)).fetchone()
 
         # Add optional fields to the query if they are provided
         optional_fields = [
@@ -392,6 +398,7 @@ def update_media_item_state(item_id, state, skip_state_change_hook=False, **kwar
         # Post-processing AFTER commit (lock is released)
         if updated_item_row:
             item_dict = dict(updated_item_row)
+            log_state_change(item_dict, old_state_row['state'] if old_state_row else None)
 
             # Handle post-processing based on state. Callers that already ran
             # handle_state_change() for this exact state transition themselves
@@ -650,8 +657,15 @@ def update_media_item(item_id: int, **kwargs):
             WHERE id = ? AND (ghostlisted IS NULL OR ghostlisted = 0)
         '''
 
+        old_state_row = None
+        if 'state' in kwargs:
+            old_state_row = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_id,)).fetchone()
         conn.execute(query, params)
         conn.commit()
+        if old_state_row is not None:
+            updated_row = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+            if updated_row:
+                log_state_change(dict(updated_row), old_state_row['state'])
 
         logging.info(f"Updated media item ID {item_id} with values: {kwargs}")
         return True

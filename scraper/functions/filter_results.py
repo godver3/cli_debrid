@@ -31,14 +31,10 @@ def detect_language_codes(text: str) -> List[str]:
         'PL', 'CZ', 'HU', 'RO', 'BG', 'HR', 'RS', 'SI', 'SK', 'EE', 'LV', 'LT', 'PT', 'GR',
         'JP', 'KR', 'CN', 'IN', 'BR', 'MX', 'AR', 'CL', 'PE', 'CO', 'VE', 'EC', 'BO', 'PY',
         'UY', 'GY', 'SR', 'GF', 'FK', 'GS', 'IO', 'PN', 'TC', 'VG', 'AI', 'BM', 'KY', 'MS',
-        'KN', 'LC', 'VC', 'AG', 'DM', 'GD', 'TT', 'BB', 'JM', 'HT', 'DO', 'PR', 'CU', 'JM',
-        'BS', 'TC', 'AW', 'CW', 'SX', 'BQ', 'BL', 'MF', 'GP', 'MQ', 'RE', 'YT', 'NC', 'PF',
+        'KN', 'LC', 'VC', 'AG', 'DM', 'GD', 'TT', 'BB', 'JM', 'HT', 'DO', 'PR', 'CU', 'BS', 'AW', 'CW', 'SX', 'BQ', 'BL', 'MF', 'GP', 'MQ', 'RE', 'YT', 'NC', 'PF',
         'WF', 'TF', 'PM', 'ST', 'CV', 'GM', 'GN', 'GW', 'SL', 'LR', 'CI', 'BF', 'ML', 'NE',
         'TD', 'SD', 'ER', 'DJ', 'SO', 'KE', 'TZ', 'UG', 'RW', 'BI', 'CD', 'CG', 'GA', 'GQ',
-        'ST', 'AO', 'ZM', 'ZW', 'BW', 'NA', 'SZ', 'LS', 'MG', 'MU', 'SC', 'KM', 'YT', 'RE',
-        'MZ', 'MW', 'ZW', 'ZM', 'TZ', 'KE', 'UG', 'RW', 'BI', 'CD', 'CG', 'GA', 'GQ', 'ST',
-        'AO', 'ZM', 'ZW', 'BW', 'NA', 'SZ', 'LS', 'MG', 'MU', 'SC', 'KM', 'YT', 'RE', 'MZ',
-        'MW', 'ZW', 'ZM', 'TZ', 'KE', 'UG', 'RW', 'BI', 'CD', 'CG', 'GA', 'GQ', 'ST', 'AO'
+        'AO', 'ZM', 'ZW', 'BW', 'NA', 'SZ', 'LS', 'MG', 'MU', 'SC', 'KM', 'MZ', 'MW'
     }
     
     # Split text into words and check for language codes

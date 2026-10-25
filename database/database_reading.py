@@ -892,12 +892,6 @@ def get_item_count_by_state(state: str) -> int:
     try:
         conn = get_db_connection()
 
-        # Try to create the index if it doesn't exist (one-time operation)
-        try:
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_state ON media_items(state);')
-        except Exception as e:
-            logging.debug(f"Index creation attempt (may already exist): {e}")
-
         # Special handling for Blacklisted state to exclude ghostlisted items
         if state == 'Blacklisted':
             query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ? AND (ghostlisted IS NULL OR ghostlisted = 0)'
@@ -1564,9 +1558,9 @@ def get_items_with_all_blacklisted_versions() -> List[int]:
 def get_item_counts_by_states(states: list) -> dict:
     """Fetch COUNT(*) for multiple states in a single DB connection.
 
-    Creates the state index if it doesn't already exist (idempotent), then
-    runs one COUNT query per state inside the same open connection, which
-    is much cheaper than opening/closing a connection for each state.
+    Runs one COUNT query per state inside the same open connection, which
+    is much cheaper than opening/closing a connection for each state. The
+    state index is created by schema_management at startup.
 
     Args:
         states: List of state strings to count (e.g. ['Wanted', 'Blacklisted']).
@@ -1577,11 +1571,6 @@ def get_item_counts_by_states(states: list) -> dict:
     conn = None
     try:
         conn = get_db_connection()
-        try:
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_state ON media_items(state);')
-        except Exception as e:
-            logging.debug(f"Index creation attempt (may already exist): {e}")
-
         counts = {}
         for state in states:
             if state == 'Blacklisted':

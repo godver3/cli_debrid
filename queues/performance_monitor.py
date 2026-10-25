@@ -92,6 +92,11 @@ class PerformanceMonitor:
         # Polling intervals (in seconds)
         self.basic_metrics_interval = 15  # Poll basic metrics every 15 seconds
         self.detailed_metrics_interval = 60  # Poll detailed metrics every minute
+        # The memory-map breakdown parses /proc/self/smaps in Python (~45 ms
+        # holding the GIL on a live install, which page requests wait on), so
+        # it runs every 10 minutes; the rest of the detailed report stays at 1.
+        self.detailed_memory_interval = 600
+        self.last_detailed_memory = None
         self.snapshot_interval = 1800  # Take memory snapshots every 30 minutes
         self.log_cleanup_interval = 3600  # Clean up logs every hour
         
@@ -132,8 +137,11 @@ class PerformanceMonitor:
                     self.performance_logger.info(" " * 40 + "DETAILED PERFORMANCE REPORT" + " " * 40)
                     self.performance_logger.info("=" * 100 + "\n")
                     
-                    self._log_detailed_memory()
-                    self.performance_logger.info("\n" + "-" * 100 + "\n")
+                    if (self.last_detailed_memory is None or
+                            (current_time - self.last_detailed_memory).total_seconds() >= self.detailed_memory_interval):
+                        self._log_detailed_memory()
+                        self.last_detailed_memory = current_time
+                        self.performance_logger.info("\n" + "-" * 100 + "\n")
                     
                     self._log_memory_growth()
                     self.performance_logger.info("\n" + "-" * 100 + "\n")

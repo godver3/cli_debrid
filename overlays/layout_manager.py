@@ -13,6 +13,8 @@ from typing import Dict, Any, List, Optional
 
 from .layout_validator import LayoutValidator
 
+from utilities.paths import config_dir
+
 
 def _get_db_connection():
     from database.core import get_db_connection
@@ -30,7 +32,7 @@ class LayoutManager:
     2. Filesystem (/user/config/overlay_layouts/) - for backup/portability
     """
 
-    def __init__(self, db_path=None, layout_dir: str = "/user/config/overlay_layouts"):
+    def __init__(self, db_path=None, layout_dir: Optional[str] = None):
         """
         Initialize layout manager.
 
@@ -38,7 +40,7 @@ class LayoutManager:
             db_path: Unused — kept for API compatibility. DB access uses get_db_connection().
             layout_dir: Path to layout storage directory
         """
-        self.layout_dir = Path(layout_dir)
+        self.layout_dir = Path(layout_dir or config_dir('overlay_layouts'))
         self.layout_dir.mkdir(parents=True, exist_ok=True)
         self.validator = LayoutValidator()
         self.logger = logging.getLogger(__name__)

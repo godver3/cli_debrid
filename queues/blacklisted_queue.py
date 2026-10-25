@@ -3,6 +3,7 @@ from typing import Dict, Any, List
 from datetime import datetime, timedelta, date
 
 from utilities.settings import get_setting
+from utilities.log_context import logs_for_item
 from queues.config_manager import get_version_settings, load_config
 from database.database_reading import check_existing_media_item, get_media_item_by_id, get_media_item_presence
 from database.database_writing import (
@@ -136,6 +137,7 @@ class BlacklistedQueue:
         except Exception as e:
             logging.error(f"Error during BlacklistedQueue processing: {e}", exc_info=True)
 
+    @logs_for_item
     def unblacklist_item(self, queue_manager, item: Dict[str, Any]):
         item_identifier = queue_manager.generate_identifier(item)
         logging.info(f"Unblacklisting item: {item_identifier}")
@@ -144,6 +146,7 @@ class BlacklistedQueue:
 
         queue_manager.move_to_wanted(item, "Blacklisted")
 
+    @logs_for_item
     def blacklist_item(self, item: Dict[str, Any], queue_manager):
         item_id = item['id']
         item_identifier = queue_manager.generate_identifier(item)

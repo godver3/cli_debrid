@@ -3,16 +3,7 @@
 {% block title %}Upgrade Hub{% endblock %}
 
 {% block head %}
-<script>
-    (function() {
-        const theme = document.cookie.split('; ').find(row => row.startsWith('selectedTheme='))?.split('=')[1] || 'tangerine';
-        const cssFile = 'css/tangerine/tangerine_upgrade_hub.css';
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = '{{ url_for("static", filename="") }}' + cssFile;
-        document.head.appendChild(link);
-    })();
-</script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_upgrade_hub.css') }}">
 {% endblock %}
 
 {% block content %}

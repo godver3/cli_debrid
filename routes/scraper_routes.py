@@ -29,6 +29,7 @@ from .utils import is_user_system_enabled
 import asyncio
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 import re
+import threading
 import time
 import json
 from utilities.web_scraper import get_media_meta
@@ -1177,30 +1178,25 @@ def anime_trending():
 
     return render_template('scraper.html', versions=versions, is_requester=is_requester)
 
-def fetch_all_trending_parallel():
-    """
-    Fetch all trending data in parallel for faster loading
-    Uses ThreadPoolExecutor to make API calls simultaneously
-    """
+# Last trending result, served immediately while a refresh runs in the
+# background once it is older than _TRENDING_FRESH_SECONDS. The page used to
+# wait for Trakt + up to 60 TMDB lookups whenever the 60 s cache had expired.
+_TRENDING_FRESH_SECONDS = 60
+_trending_state = {'data': None, 'fetched_at': 0.0, 'refreshing': False}
+_trending_lock = threading.Lock()
+
+
+def _fetch_all_trending_now():
+    """Fetch trending movies, shows and anime in parallel (10 s budget)."""
     start_time = time.time()
-
-    # Try cache first
-    cache_key = 'scraper:all_trending:v2'
-    cached_data = get_from_cache(cache_key)
-    if cached_data:
-        logging.info(f"✅ Cache HIT: all_trending ({time.time() - start_time:.0f}ms)")
-        return cached_data
-
-    logging.info("📡 Cache MISS: Fetching trending data in parallel...")
-
     results = {
         'trendingMovies': [],
         'trendingShows': [],
         'trendingAnime': []
     }
 
-    # Fetch all three in parallel
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    executor = ThreadPoolExecutor(max_workers=3)
+    try:
         futures = {
             'movies': executor.submit(trending_movies),
             'shows': executor.submit(trending_shows),
@@ -1209,7 +1205,7 @@ def fetch_all_trending_parallel():
 
         for key, future in futures.items():
             try:
-                data = future.result(timeout=10)  # 10 second timeout
+                data = future.result(timeout=max(0.1, 10 - (time.time() - start_time)))
                 if key == 'movies' and data and 'trendingMovies' in data:
                     results['trendingMovies'] = data['trendingMovies']
                 elif key == 'shows' and data and 'trendingShows' in data:
@@ -1218,14 +1214,51 @@ def fetch_all_trending_parallel():
                     results['trendingAnime'] = data['trendingAnime']
             except Exception as e:
                 logging.error(f"Error fetching trending {key}: {e}")
-
-    # Cache for 60 seconds
-    set_in_cache(cache_key, results, 60)
+    finally:
+        # Don't wait for a worker that blew the budget (a `with` block would).
+        executor.shutdown(wait=False)
 
     duration = (time.time() - start_time) * 1000
     logging.info(f"✅ Fetched all trending in parallel: {duration:.0f}ms")
-
     return results
+
+
+def _refresh_trending_in_background():
+    try:
+        data = _fetch_all_trending_now()
+        with _trending_lock:
+            _trending_state['data'] = data
+            _trending_state['fetched_at'] = time.time()
+    except Exception as e:
+        logging.error(f"Background trending refresh failed: {e}")
+    finally:
+        with _trending_lock:
+            _trending_state['refreshing'] = False
+
+
+def fetch_all_trending_parallel():
+    """
+    Trending movies, shows and anime for the scraper page.
+
+    Only the very first call waits for the fetch; later calls get the last
+    result straight away and, if it is over a minute old, start one refresh
+    in the background. Callers must not modify the returned dict.
+    """
+    with _trending_lock:
+        data = _trending_state['data']
+        age = time.time() - _trending_state['fetched_at']
+        if data is not None:
+            if age >= _TRENDING_FRESH_SECONDS and not _trending_state['refreshing']:
+                _trending_state['refreshing'] = True
+                threading.Thread(target=_refresh_trending_in_background, name='trending-refresh', daemon=True).start()
+            return data
+
+    logging.info("📡 No trending data yet: fetching in parallel...")
+    data = _fetch_all_trending_now()
+    with _trending_lock:
+        _trending_state['data'] = data
+        _trending_state['fetched_at'] = time.time()
+    return data
 
 @scraper_bp.route('/all_trending', methods=['GET'])
 @user_required
@@ -1236,7 +1269,8 @@ def all_trending():
 
     try:
         # OPTIMIZATION: Use parallel fetching with caching
-        trending_data = fetch_all_trending_parallel()
+        # Deep copy: db_status is written into the items below.
+        trending_data = copy.deepcopy(fetch_all_trending_parallel())
 
         # Extract data from parallel fetch results
         trendingMoviesData = {'trendingMovies': trending_data.get('trendingMovies', [])}

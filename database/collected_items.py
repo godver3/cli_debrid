@@ -1,4 +1,5 @@
 from .core import get_db_connection, row_to_dict, normalize_string, get_existing_airtime
+import itertools
 import logging
 import time as _time
 
@@ -499,7 +500,6 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                     # If imdb_id missing, try to resolve via battery tmdb→imdb mapping
                                     if not _imdb_id and _db_row['tmdb_id']:
                                         try:
-                                            from cli_battery.app.direct_api import DirectAPI
                                             _resolved, _ = DirectAPI.tmdb_to_imdb(
                                                 str(_db_row['tmdb_id']),
                                                 media_type='show' if _db_row['type'] == 'episode' else 'movie'
@@ -791,7 +791,6 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                         import threading as _ci_thread
                                         def _ci_fix(_rk, _title, _year, _tmdb, _imdb, _s, _ep):
                                             try:
-                                                from cli_battery.app.direct_api import DirectAPI
                                                 from utilities.settings import get_setting as _gs
                                                 from plexapi.server import PlexServer as _PS
                                                 _gu = _gs('Plex', 'url', '').rstrip('/')
@@ -1206,12 +1205,14 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                 is_expected_on_disk = filled_by or location_base or location_on_disk
 
                 # Debug: Log cleanup check for items that might be deleted
-                if is_expected_on_disk and not is_present_on_disk:
+                # Guarded: the sample below copies the whole filename set into a list,
+                # once per missing item, even when DEBUG is off.
+                if is_expected_on_disk and not is_present_on_disk and logging.getLogger().isEnabledFor(logging.DEBUG):
                     logging.debug(f"[Cleanup Debug] Item {item['id']} ({item_identifier}) NOT found in Plex scan:")
                     logging.debug(f"  filled_by_file: '{filled_by}' - in valid? {filled_by in all_valid_filenames if filled_by else 'N/A'}")
                     logging.debug(f"  location_basename: '{location_base}' - in valid? {location_base in all_valid_filenames if location_base else 'N/A'}")
                     logging.debug(f"  location_on_disk: '{location_on_disk}' - in valid? {location_on_disk in all_valid_filenames if location_on_disk else 'N/A'}")
-                    logging.debug(f"  all_valid_filenames sample (first 5): {list(all_valid_filenames)[:5]}")
+                    logging.debug(f"  all_valid_filenames sample (first 5): {list(itertools.islice(all_valid_filenames, 5))}")
 
                 if is_expected_on_disk and not is_present_on_disk:
                     file_to_log = location_base or filled_by

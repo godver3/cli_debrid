@@ -11,6 +11,7 @@ import time # Add time import
 
 from debrid import get_debrid_provider
 from utilities.settings import get_setting
+from utilities.log_context import logs_for_item
 from .torrent_processor import TorrentProcessor
 from .media_matcher import MediaMatcher
 from database.torrent_tracking import update_adding_error
@@ -1045,6 +1046,7 @@ class AddingQueue:
             logging.error(f"Cannot call _handle_failed_item from _process_results_with_mode directly.")
             return None, None, None # Return None for all three on error
 
+    @logs_for_item
     def _handle_failed_item(self, item: Dict, error: str, queue_manager: Any, *, is_nzb: bool = False):
         """
         Handle a failed item by moving it back to Wanted queue if media matching failed,
