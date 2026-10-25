@@ -10,6 +10,7 @@
     'notifications': url_for('static', filename='js/notifications.js'),
     'episode_orders': url_for('magnet.episode_orders'),
     'rematch': url_for('magnet.rematch_manual_assignment'),
+    'fill_gaps': url_for('magnet.fill_gaps'),
     'done': url_for('discover.index'),
 }|tojson }}</script>
 <script type="module" src="{{ url_for('static', filename='js/manual_assignment.js') }}"></script>
@@ -38,6 +39,11 @@
                 {% endif %}The old file is removed once the new one is collected. Untick to keep both.
             </span>
         </label>
+        <label class="replace-existing-option" id="ma-wanted-option" hidden>
+            <input type="checkbox" name="empty_to_wanted" value="1" id="ma-wanted-checkbox">
+            Add <span id="ma-wanted-count"></span> with no file to Wanted
+            <span class="replace-existing-hint">They're searched for like any other request. Ignored items are left out.</span>
+        </label>
 
         {# Controls below carry no name: everything named in this form is read as an assignment #}
         <div class="ma-toolbar" id="ma-toolbar">
@@ -61,7 +67,16 @@
 
         <div class="ma-layout">
             <div class="ma-main">
-                <div class="ma-missing" id="ma-missing" hidden></div>
+                <div class="ma-missing" id="ma-missing" hidden>
+                    <div id="ma-missing-text"></div>
+                    <div class="ma-gap-fill" id="ma-gap-fill" hidden>
+                        <label for="ma-gap-magnet">Have another torrent for these?</label>
+                        <div class="ma-gap-row">
+                            <input type="text" id="ma-gap-magnet" placeholder="magnet:?xt=urn:btih:..." autocomplete="off" spellcheck="false">
+                            <button type="button" class="ma-btn ma-btn-accent" id="ma-gap-btn">Assign these, then fill the rest</button>
+                        </div>
+                    </div>
+                </div>
                 <div class="ma-list" id="ma-list">
                     {% if not target_items %}
                     <div class="no-items">

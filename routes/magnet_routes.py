@@ -648,6 +648,36 @@ def assign_magnet():
             # Standard GET request (no prefill)
             return render_template('magnet_assign.html', step='search')
 
+def _video_files(files):
+    """The .mkv/.mp4/.avi files of a debrid file list, as the assignment screen uses them."""
+    video_files = []
+    for f in files:
+        path = f.get('path', '')
+        if isinstance(path, str):
+            path = path.lstrip('/')
+            if any(path.lower().endswith(ext) for ext in ['.mkv', '.mp4', '.avi']):
+                filename = os.path.basename(path)
+                video_files.append({
+                    'id': f.get('id'),
+                    'path': path,
+                    'filename': filename,
+                    'bytes': f.get('bytes', 0)
+                })
+        else:
+             logging.warning(f"Skipping file due to non-string path: {f}")
+    return video_files
+
+
+def _episode_list(selected):
+    """(season, episode) pairs from "S:E" strings; bad entries are dropped."""
+    pairs = []
+    for raw in selected or []:
+        season, _, episode = str(raw).partition(':')
+        if season.strip().isdigit() and episode.strip().isdigit():
+            pairs.append((int(season), int(episode)))
+    return pairs
+
+
 class _AssignmentError(Exception):
     """A request the assignment screen can't be built for (message, HTTP status)."""
     def __init__(self, message, status=400):
@@ -729,6 +759,8 @@ def _build_assignment(video_files, tmdb_id, media_type, title, year, version, to
         # (e.g. a recently-aired season Trakt hasn't indexed yet).
         if selection_type == 'seasons':
             needed_seasons = {int(s) for s in selected_seasons if s.strip().isdigit()}
+        elif selection_type == 'episode_list':
+            needed_seasons = {s for s, _ in _episode_list(selected_seasons)}
         elif selection_type != 'all' and season and season.strip().isdigit():
             needed_seasons = {int(season)}
         else:
@@ -809,6 +841,10 @@ def _build_assignment(video_files, tmdb_id, media_type, title, year, version, to
             target_items = create_full_series_items(metadata, title, year, version, torrent_id, magnet_link)
         elif selection_type == 'seasons':
             target_items = create_season_items(metadata, title, year, version, torrent_id, magnet_link, selected_seasons)
+        elif selection_type == 'episode_list':
+            # The episodes another torrent left without a file ("fill the gaps")
+            target_items = [create_episode_item(metadata, title, year, version, torrent_id, magnet_link, s, e)
+                            for s, e in _episode_list(selected_seasons)]
         else: # Single episode
             try:
                 season_number = int(season)
@@ -1355,22 +1391,7 @@ def prepare_manual_assignment():
                 except Exception as cleanup_error:
                     logging.warning(f"Failed to clean up temporary file {temp_file_path}: {cleanup_error}")
 
-        # Filter for video files (.mkv, .mp4, .avi)
-        video_files = []
-        for f in files:
-            path = f.get('path', '')
-            if isinstance(path, str):
-                path = path.lstrip('/')
-                if any(path.lower().endswith(ext) for ext in ['.mkv', '.mp4', '.avi']):
-                    filename = os.path.basename(path)
-                    video_files.append({
-                        'id': f.get('id'),
-                        'path': path,
-                        'filename': filename,
-                        'bytes': f.get('bytes', 0)
-                    })
-            else:
-                 logging.warning(f"Skipping file due to non-string path: {f}")
+        video_files = _video_files(files)
 
         if not video_files:
             error_msg = 'No video files found in the magnet link.'
@@ -1495,6 +1516,50 @@ def rematch_manual_assignment():
     token = _store_assignment(target_items, episode_order, requested_order, imdb_id, video_files, context)
     return jsonify({'success': True, 'redirect_url': url_for('magnet.show_manual_assignment', token=token)})
 
+
+@magnet_bp.route('/fill_gaps', methods=['POST'])
+@admin_required
+def fill_gaps():
+    """An assignment screen for just the episodes another torrent left without a
+    file, matched against the files of a second magnet."""
+    data = request.get_json(silent=True) or {}
+    context = data.get('context') or {}
+    magnet_link = (data.get('magnet_link') or '').strip()
+    episodes = [f'{s}:{e}' for s, e in _episode_list(data.get('episodes'))]
+    if not magnet_link.startswith('magnet:'):
+        return jsonify({'success': False, 'error': 'Paste a magnet link (magnet:?xt=...).'}), 400
+    if not episodes or context.get('media_type') not in ['tv', 'show']:
+        return jsonify({'success': False, 'error': 'There are no episodes left to fill.'}), 400
+    if not all(context.get(k) for k in ('tmdb_id', 'title', 'year', 'version')):
+        return jsonify({'success': False, 'error': 'The assignment data is incomplete; start again from the assign page.'}), 400
+    try:
+        result = get_debrid_provider().get_torrent_file_list(magnet_link)
+        if result is None:
+            return jsonify({'success': False, 'error': 'Failed to retrieve file list from debrid service. Torrent might be invalid or provider error.'}), 503
+        files, torrent_filename, torrent_id = result
+        video_files = _video_files(files)
+        if not video_files:
+            return jsonify({'success': False, 'error': 'No video files found in that magnet link.'}), 400
+        requested_order = _requested_episode_order(data.get('episode_order'))
+        context = {
+            'tmdb_id': str(context['tmdb_id']), 'media_type': context['media_type'],
+            'title': context['title'], 'year': context['year'], 'version': context['version'],
+            'selection_type': 'episode_list', 'selected_seasons': episodes, 'season': None, 'episode': None,
+            'torrent_id': torrent_id, 'magnet_link': magnet_link, 'torrent_filename': torrent_filename,
+            'is_torrent_file': False, 'video_files': video_files,
+        }
+        target_items, episode_order = _build_assignment(
+            video_files, context['tmdb_id'], context['media_type'], context['title'], context['year'],
+            context['version'], torrent_id, magnet_link, 'episode_list', episodes, None, None, requested_order)
+    except _AssignmentError as e:
+        return jsonify({'success': False, 'error': str(e)}), e.status
+    except Exception as e:
+        logging.error(f"Preparing a gap-fill assignment failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'An internal server error occurred. Please check logs.'}), 500
+    imdb_id = next((i.get('imdb_id') for i in target_items if i.get('imdb_id')), None)
+    token = _store_assignment(target_items, episode_order, requested_order, imdb_id, video_files, context)
+    return jsonify({'success': True, 'redirect_url': url_for('magnet.show_manual_assignment', token=token)})
+
 @magnet_bp.route('/confirm_manual_assignment', methods=['POST'])
 @admin_required
 def confirm_manual_assignment():
@@ -1513,6 +1578,9 @@ def confirm_manual_assignment():
         # "Replace episodes already in the library": a Collected row in this version
         # is pointed at the new file instead of getting a second copy next to it
         replace_existing = assignments.pop('replace_existing', [''])[0] in ('1', 'on', 'true')
+        # Items left with no file (not ignored) are added to Wanted, so they're searched for
+        empty_to_wanted = assignments.pop('empty_to_wanted', [''])[0] in ('1', 'on', 'true')
+        empty_keys = [k for k, v in assignments.items() if not (v and v[0])]
 
         if not all([torrent_filename, initial_torrent_id, version]):
              return jsonify({'success': False, 'error': 'Missing essential torrent information in submission.'}), 400
@@ -1900,6 +1968,8 @@ def confirm_manual_assignment():
             except Exception as notify_error:
                 logging.error(f"Failed to send notifications after manual assignment: {notify_error}")
 
+        wanted_count = _add_empty_to_wanted(empty_keys, version) if empty_to_wanted and empty_keys else 0
+
         if order_imdb_id and added_items_count > 0:
             order_plex_note = _sync_plex_order_for_new_show(order_imdb_id, requested_order)
 
@@ -1914,7 +1984,13 @@ def confirm_manual_assignment():
                 message += ' Episode order saved on the show.'
                 if order_plex_note:
                     message += f' {order_plex_note}'
-            return jsonify({'success': True, 'message': message, 'added_count': added_items_count, 'failed_count': failed_items_count})
+            if wanted_count:
+                message += f' {wanted_count} item(s) with no file added to Wanted.'
+            return jsonify({'success': True, 'message': message, 'added_count': added_items_count,
+                            'failed_count': failed_items_count, 'wanted_count': wanted_count})
+        elif wanted_count:
+            return jsonify({'success': True, 'message': f'{wanted_count} item(s) with no file added to Wanted.',
+                            'added_count': 0, 'failed_count': failed_items_count, 'wanted_count': wanted_count})
         elif failed_items_count > 0:
             return jsonify({'success': False, 'error': f'Failed to assign {failed_items_count} item(s). Check logs.', 'added_count': 0, 'failed_count': failed_items_count}), 500
         else:
@@ -1923,6 +1999,63 @@ def confirm_manual_assignment():
     except Exception as e:
         logging.error(f"Error confirming manual assignment: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': f'An unexpected error occurred: {str(e)}'}), 500
+
+def _add_empty_to_wanted(item_keys, version):
+    """Add the items a manual assignment left with no file to Wanted.
+
+    Goes through process_metadata + add_wanted_items like a Discover request,
+    so release dates, unaired episodes, the blacklist and existing rows are
+    handled the same way; only the episodes in `item_keys` are kept.
+    Returns how many were added.
+    """
+    wanted = {}  # tmdb_id -> {'type': ..., 'episodes': set of (s, e)}
+    for key in item_keys:
+        parts = key.split('_')
+        if len(parts) < 2 or parts[0] not in ('ep', 'movie'):
+            continue
+        entry = wanted.setdefault(parts[1], {'type': parts[0], 'episodes': set()})
+        if parts[0] == 'ep' and len(parts) >= 3:
+            match = re.search(r's(\d+)e(\d+)', parts[2], re.IGNORECASE)
+            if match:
+                entry['episodes'].add((int(match.group(1)), int(match.group(2))))
+    if not wanted:
+        return 0
+
+    from metadata.metadata import get_metadata, get_imdb_id_if_missing, process_metadata
+    from database.wanted_items import add_wanted_items
+    versions = {(version or '').rstrip('*'): True}
+    added = 0
+    for tmdb_id, entry in wanted.items():
+        is_movie = entry['type'] == 'movie'
+        try:
+            imdb_id = get_imdb_id_if_missing({'tmdb_id': int(tmdb_id), 'media_type': 'movie' if is_movie else 'show'})
+            if not imdb_id:
+                logging.warning(f"Manual assign: no IMDb ID for TMDB {tmdb_id}; can't add its items to Wanted")
+                continue
+            metadata = get_metadata(tmdb_id=tmdb_id, item_media_type='movie' if is_movie else 'show') or {}
+            request = {'imdb_id': imdb_id, 'tmdb_id': tmdb_id, 'media_type': 'movie' if is_movie else 'tv',
+                       'title': metadata.get('title'), 'year': metadata.get('year'),
+                       'genres': metadata.get('genres') or [], 'versions': versions}
+            if not is_movie:
+                request['requested_seasons'] = sorted({s for s, _ in entry['episodes']})
+            processed = process_metadata([request]) or {}
+            if is_movie:
+                items = processed.get('movies', [])
+            else:
+                items = [i for i in processed.get('episodes', [])
+                         if (i.get('season_number'), i.get('episode_number')) in entry['episodes']]
+            for item in items:
+                item['content_source'] = 'Magnet_Assigner'
+                append_content_source_detail(item, source_type='Magnet_Assigner')
+            count = add_wanted_items(items, versions) if items else 0
+            added += count or 0
+            logging.info(f"Manual assign: added {count} of {len(entry['episodes']) or 1} item(s) with no file "
+                         f"for {imdb_id} to Wanted")
+        except Exception as e:
+            logging.error(f"Manual assign: adding items with no file for TMDB {tmdb_id} to Wanted failed: {e}",
+                          exc_info=True)
+    return added
+
 
 @magnet_bp.route('/verify_media_type')
 @admin_required

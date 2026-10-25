@@ -754,3 +754,45 @@ body.tangerine-theme .ma-menu-hint {
     body.tangerine-theme .ma-row-menu { grid-area: menu; }
     body.tangerine-theme .ma-toolbar-actions .ma-btn { flex: 1 1 auto; }
 }
+
+/* Fill the gaps from another magnet */
+body.tangerine-theme .ma-gap-fill {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(245, 158, 11, .2);
+}
+
+body.tangerine-theme .ma-gap-fill label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 11px;
+    color: #aaa;
+}
+
+body.tangerine-theme .ma-gap-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+body.tangerine-theme .ma-gap-row input {
+    flex: 1 1 220px;
+    min-width: 0;
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid #3d3d3d;
+    border-radius: 5px;
+    background: #222;
+    color: #e0e0e0;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    outline: none;
+}
+
+body.tangerine-theme .ma-gap-row input:focus { border-color: #e8601c; }
+
+body.tangerine-theme .ma-btn.ma-btn-accent {
+    border-color: #e8601c;
+    background: rgba(232, 96, 28, .15);
+    color: #fff;
+}

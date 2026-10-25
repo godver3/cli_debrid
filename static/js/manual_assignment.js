@@ -288,6 +288,7 @@ function refresh() {
     drawFilters(counts);
     drawFilesPanel();
     drawMissing(states);
+    drawWantedOption(counts);
     drawArmed();
     document.getElementById('ma-undo').disabled = undoStack.length === 0;
     const anyEmpty = counts.empty > 0;
@@ -735,14 +736,23 @@ document.getElementById('ma-ignore-empty').addEventListener('click', () => {
 });
 
 // ── Episodes with no file ──
+const wantedCheckbox = document.getElementById('ma-wanted-checkbox');
+
+function drawWantedOption(counts) {
+    document.getElementById('ma-wanted-option').hidden = counts.empty === 0;
+    document.getElementById('ma-wanted-count').textContent = `${counts.empty} item${counts.empty === 1 ? '' : 's'}`;
+}
+
 function drawMissing(states) {
     const box = document.getElementById('ma-missing');
+    const text = document.getElementById('ma-missing-text');
     const empty = orderedKeys.filter(k => states.get(k) === 'empty' && itemsByKey.get(k).type === 'episode');
     box.hidden = empty.length === 0;
+    document.getElementById('ma-gap-fill').hidden = !data.is_show || empty.length === 0;
     if (!empty.length) return;
     const unused = files.filter(f => !usage.has(f.filename) && !f.skip_reason).length;
     const noun = `episode${empty.length === 1 ? '' : 's'}`;
-    box.replaceChildren(el('span', null, unused
+    text.replaceChildren(el('span', null, unused
         ? `No file picked for ${empty.length} ${noun}, and ${unused} file${unused === 1 ? ' is' : 's are'} still unused: `
         : `This pack has no file for ${empty.length} ${noun}: `));
     const shown = empty.slice(0, 12);
@@ -750,14 +760,80 @@ function drawMissing(states) {
         const link = el('button', 'ma-link', itemCode(itemsByKey.get(key)));
         link.type = 'button';
         link.addEventListener('click', () => revealRow(key));
-        box.append(link);
-        if (i < shown.length - 1) box.append(document.createTextNode(', '));
+        text.append(link);
+        if (i < shown.length - 1) text.append(document.createTextNode(', '));
     });
-    if (empty.length > shown.length) box.append(document.createTextNode(` and ${empty.length - shown.length} more`));
-    box.append(document.createTextNode(unused
-        ? '. Leave them empty or ignore them to skip them.'
-        : ". They won't be added unless you pick a file."));
+    if (empty.length > shown.length) text.append(document.createTextNode(` and ${empty.length - shown.length} more`));
+    text.append(document.createTextNode(wantedCheckbox.checked
+        ? ". They'll be added to Wanted and searched for."
+        : unused ? '. Leave them empty or ignore them to skip them.'
+            : ". They won't be added unless you pick a file, add them to Wanted, or fill them from another torrent."));
 }
+
+// ── Fill the gaps from another magnet ──
+// Confirms what's picked here, then opens a new assignment screen for just the
+// episodes still without a file, matched against the other magnet's files.
+async function fillGaps() {
+    const magnet = document.getElementById('ma-gap-magnet').value.trim();
+    if (!magnet.startsWith('magnet:')) {
+        notify('error', 'Not a magnet link', 'Paste a magnet link (magnet:?xt=...).');
+        return;
+    }
+    const emptyKeys = orderedKeys.filter(k => rowState(k) === 'empty' && itemsByKey.get(k).type === 'episode');
+    const filled = orderedKeys.filter(k => ['set', 'duplicate'].includes(rowState(k))).length;
+    const run = async () => {
+        if (filled) {
+            const formData = new FormData(form);
+            formData.delete('empty_to_wanted');  // they're about to be filled instead
+            const confirmed = await postAssignment(formData);
+            if (!confirmed) return;
+        }
+        Loading.show();
+        try {
+            const episodes = emptyKeys.map(k => `${itemsByKey.get(k).season}:${itemsByKey.get(k).episode}`);
+            const response = await fetch(urls.fill_gaps, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ magnet_link: magnet, episodes, context: data.context,
+                                       episode_order: data.current_order }),
+            });
+            const result = await response.json();
+            if (response.ok && result.success) {
+                window.location.href = result.redirect_url;
+                return;
+            }
+            Loading.hide();
+            notify('error', filled ? 'Assigned, but the other magnet failed' : 'Could not use that magnet',
+                   result.error || 'Preparing the second torrent failed.');
+        } catch (error) {
+            Loading.hide();
+            console.error('Error preparing gap fill:', error);
+            notify('error', 'Could not use that magnet', 'A network or unexpected error occurred.');
+        }
+    };
+    const noun = `episode${emptyKeys.length === 1 ? '' : 's'}`;
+    showPopup({
+        type: POPUP_TYPES.CONFIRM,
+        title: 'Fill the gaps from another torrent?',
+        message: filled
+            ? `The ${filled} item${filled === 1 ? '' : 's'} with a file here are assigned first. Then the ${emptyKeys.length} ${noun} with no file are matched against the other torrent's files.`
+            : `The ${emptyKeys.length} ${noun} with no file are matched against the other torrent's files.`,
+        confirmText: 'Continue',
+        onConfirm: run,
+    });
+}
+
+document.getElementById('ma-gap-btn').addEventListener('click', fillGaps);
+document.getElementById('ma-gap-magnet').addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+        // Not the form's confirm, and not the popup's Enter-to-confirm, which
+        // would otherwise catch this same keypress as it bubbles to document
+        event.preventDefault();
+        event.stopPropagation();
+        fillGaps();
+    }
+});
+wantedCheckbox.addEventListener('change', refresh);
 
 // ── Episode order ──
 async function setupOrderPicker() {
@@ -838,36 +914,40 @@ function notify(kind, title, message) {
 // ── Confirm ──
 const submitButton = document.getElementById('confirm-assignment-btn');
 
-async function submitAssignment() {
+// Posts the assignment; returns the result on success, null after showing the error
+async function postAssignment(formData) {
     submitButton.disabled = true;
     Loading.show();
     try {
         const response = await fetch(form.action, {
             method: 'POST',
-            body: new FormData(form),
+            body: formData,
             headers: { 'Accept': 'application/json' },
         });
         const result = await response.json();
         Loading.hide();
-        if (response.ok && result.success) {
-            showPopup({
-                type: POPUP_TYPES.SUCCESS,
-                title: 'Assignment Successful',
-                message: escapeHtml(result.message || `Successfully assigned ${result.added_count || 0} item(s).`),
-                autoClose: 4000,
-                onConfirm: () => { window.location.href = urls.done; },
-            });
-            setTimeout(() => { window.location.href = urls.done; }, 4000);
-        } else {
-            notify('error', 'Assignment Failed', result.error || 'An error occurred during assignment.');
-            submitButton.disabled = false;
-        }
+        if (response.ok && result.success) return result;
+        notify('error', 'Assignment Failed', result.error || 'An error occurred during assignment.');
     } catch (error) {
         Loading.hide();
         console.error('Error submitting assignment:', error);
         notify('error', 'Submission Error', 'A network or unexpected error occurred.');
-        submitButton.disabled = false;
     }
+    submitButton.disabled = false;
+    return null;
+}
+
+async function submitAssignment() {
+    const result = await postAssignment(new FormData(form));
+    if (!result) return;
+    showPopup({
+        type: POPUP_TYPES.SUCCESS,
+        title: 'Assignment Successful',
+        message: escapeHtml(result.message || `Successfully assigned ${result.added_count || 0} item(s).`),
+        autoClose: 4000,
+        onConfirm: () => { window.location.href = urls.done; },
+    });
+    setTimeout(() => { window.location.href = urls.done; }, 4000);
 }
 
 form.addEventListener('submit', event => {
@@ -876,7 +956,7 @@ form.addEventListener('submit', event => {
     const empty = orderedKeys.filter(k => rowState(k) === 'empty').length;
     const shared = [...usage.keys()].filter(isDuplicate).length;
     const problems = [];
-    if (empty) problems.push(`${empty} item${empty === 1 ? ' has' : 's have'} no file and will be skipped.`);
+    if (empty && !wantedCheckbox.checked) problems.push(`${empty} item${empty === 1 ? ' has' : 's have'} no file and will be skipped.`);
     if (shared) problems.push(`${shared} file${shared === 1 ? ' is' : 's are'} given to more episodes than ${shared === 1 ? 'it holds' : 'they hold'}.`);
     if (!problems.length || !showPopup) { submitAssignment(); return; }
     showPopup({
