@@ -17,6 +17,7 @@ source text instead.
 import importlib.util
 import unittest
 from pathlib import Path
+from tests._source import runner_source, runner_method, runner_tree  # noqa: F401
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -104,7 +105,7 @@ class TestCallSiteWiring(unittest.TestCase):
         self.assertNotIn(r"[Ss]\d{2}[Ee]\d{2}", src)
 
     def test_run_program_uses_shared_helper_at_every_stale_check(self):
-        src = self._source('queues/run_program.py')
+        src = runner_source()
         self.assertEqual(src.count('from debrid.common import is_likely_season_pack'), 5)
         self.assertNotIn(r"[Ss]\d{2}[Ee]\d{2}", src)
 

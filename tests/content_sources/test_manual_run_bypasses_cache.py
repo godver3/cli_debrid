@@ -8,6 +8,7 @@ reaching add_wanted_items, so the unblacklist flag never had anything to act on.
 
 import os
 import unittest
+from tests._source import runner_source, runner_method, runner_tree  # noqa: F401
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,7 +21,7 @@ def _read(path):
 
 class TestTriggerTaskBypassesCacheForContentSources(unittest.TestCase):
     def setUp(self):
-        self.source = _read("queues/run_program.py")
+        self.source = runner_source()
 
     def test_get_task_target_accepts_manual_flag(self):
         self.assertIn("def _get_task_target(self, task_name: str, manual: bool = False):", self.source)

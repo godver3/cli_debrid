@@ -13,6 +13,7 @@ import tempfile
 import types
 import unittest
 from unittest import mock
+from tests._source import runner_source, runner_method, runner_tree  # noqa: F401
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -126,7 +127,7 @@ class ResetTraktAuthTests(unittest.TestCase):
 
 class ManualTaskListTests(unittest.TestCase):
     def test_tasks_exist_on_the_runner(self):
-        source = open(os.path.join(ROOT, 'queues/run_program.py')).read()
+        source = runner_source()
         listed = open(os.path.join(ROOT, 'routes/debug_routes.py')).read()
         for task in ('task_purge_not_wanted_urls_file', 'task_purge_not_wanted_nzbs_files',
                      'task_purge_all_not_wanted_files', 'task_reset_trakt_auth'):

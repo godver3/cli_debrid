@@ -9,6 +9,7 @@ from content_checkers.content_cache_management import (
     load_live_content_source_config,
     normalize_enabled_versions,
 )
+from tests._source import runner_source, runner_method, runner_tree  # noqa: F401
 
 
 class TestNormalizeEnabledVersions(unittest.TestCase):
@@ -56,13 +57,7 @@ class TestLoadLiveContentSourceConfig(unittest.TestCase):
 
 class TestContentSourceExecutionUsesLiveVersions(unittest.TestCase):
     def test_live_config_is_loaded_before_versions_are_resolved(self):
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        with open(os.path.join(project_root, "queues", "run_program.py"), encoding="utf-8") as source_file:
-            source = source_file.read()
-
-        method_start = source.index("    def process_content_source(self, source, data, bypass_cache=False):")
-        method_end = source.index("\n    def task_purge_not_wanted_magnets_file", method_start)
-        method = source[method_start:method_end]
+        method = runner_method('process_content_source')
 
         live_load = method.index("live_source_data = load_live_content_source_config(source)")
         version_read = method.index("versions_from_config = data.get('versions', [])")

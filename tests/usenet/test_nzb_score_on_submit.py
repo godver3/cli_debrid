@@ -12,6 +12,7 @@ import ast
 import os
 import unittest
 from typing import Any, Dict, Optional
+from tests._source import runner_source, runner_method, runner_tree  # noqa: F401
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -68,7 +69,7 @@ class TestNzbPathsStoreScore(unittest.TestCase):
         self.assertIn("_coal_seg_kwargs['resolution'] = _sibling_nzb[7]", src)
 
     def test_sibling_pulls_copy_pack_score(self):
-        src = _read('queues', 'run_program.py')
+        src = runner_source()
         self.assertIn('**_seg_e_kw, **_score_e_kw)', src)
         self.assertIn('**_pull_score_kwargs,', src)
 

@@ -287,6 +287,7 @@ class TestFailedInCliMountCounter(unittest.TestCase):
 # simulations above would keep passing (they don't read the real files).
 
 import os
+from tests._source import runner_source, runner_method, runner_tree  # noqa: F401
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -324,7 +325,7 @@ class TestSourceShapeRegression(unittest.TestCase):
         """Both the progress==-2 (ghost job) and progress==-1 (folder never
         appeared) branches must reference the shared counter/threshold -
         losing either silently reintroduces an unbounded loop on that path."""
-        src = self._read('queues/run_program.py')
+        src = runner_source()
         self.assertIn('_nzb_ghost_repeat_counts: dict = {}', src)  # class-level init present
         self.assertIn('_NZB_GHOST_BLACKLIST_THRESHOLD = 3', src)
 
@@ -351,7 +352,7 @@ class TestSourceShapeRegression(unittest.TestCase):
         progress==-1 branch, which also contains the primary item's own
         counting code further down and would pass this assertion even if
         the sibling loop had none at all - the actual gap this test closes)."""
-        src = self._read('queues/run_program.py')
+        src = runner_source()
         siblings_start = src.index("_dead_siblings = [")
         siblings_end = src.index("# Try next result from scrape_results", siblings_start)
         siblings_region = src[siblings_start:siblings_end]
@@ -365,7 +366,7 @@ class TestSourceShapeRegression(unittest.TestCase):
         (the primary item and a coalesced sibling moved with it) must clear
         this item's ghost history - otherwise a later unrelated ghost streak
         wrongly inherits stale progress toward the threshold."""
-        src = self._read('queues/run_program.py')
+        src = runner_source()
         primary_success_start = src.index("Item cleared Adding on a real, live job")
         primary_region = src[primary_success_start:primary_success_start + 300]
         self.assertIn("_nzb_ghost_repeat_counts.pop(item_id, None)", primary_region)
@@ -379,7 +380,7 @@ class TestSourceShapeRegression(unittest.TestCase):
         check must still run - and short-circuit via continue - before this
         fix's counter logic in both branches, so a playback-repair candidate
         never gets miscounted as a plain ghost/failure repeat."""
-        src = self._read('queues/run_program.py')
+        src = runner_source()
         ghost_branch_start = src.index("# Ghost job — never existed in cli_mount")
         fail_branch_start = src.index("failed in cli_mount — adding to not-wanted")
         playback_marker = 'reject_active_candidate'

@@ -1,6 +1,7 @@
 import ast
 import os
 import unittest
+from tests._source import runner_source, runner_method, runner_tree  # noqa: F401
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -9,9 +10,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 class TestNZBPlaybackScheduler(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        path = os.path.join(ROOT, 'queues', 'run_program.py')
-        with open(path, 'r', encoding='utf-8') as handle:
-            cls.tree = ast.parse(handle.read())
+        cls.tree = runner_tree()
 
     def _assigned_literal(self, attribute, literal_type):
         for node in ast.walk(self.tree):
