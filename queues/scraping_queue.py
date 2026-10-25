@@ -7,6 +7,7 @@ import os
 import re
 
 from utilities.settings import get_setting
+from queues.scrape_window import in_alternate_scrape_window
 from scraper.scraper import scrape
 from scraper.functions.anime_utils import absolute_episode_for
 from database.core import retry_on_db_lock
@@ -2208,43 +2209,7 @@ class ScrapingQueue:
         return any(i['id'] == item_id for i in self.items)
 
     def _is_within_alternate_scrape_window(self, item, now=None):
-        if now is None:
-            now = datetime.now()
-        use_alt = get_setting('Debug', 'use_alternate_scrape_time_strategy', False)
-        if not use_alt:
+        if not get_setting('Debug', 'use_alternate_scrape_time_strategy', False):
             return True  # If not enabled, always allow
-        anchor_str = get_setting('Debug', 'alternate_scrape_time_24h', '00:00')
-        try:
-            anchor_time = datetime.strptime(anchor_str, '%H:%M').time()
-        except Exception:
-            anchor_time = dt_time(0, 0)
-        today_anchor = now.replace(hour=anchor_time.hour, minute=anchor_time.minute, second=0, microsecond=0)
-        if now < today_anchor:
-            anchor_dt = today_anchor
-        else:
-            anchor_dt = today_anchor
-        window_start = anchor_dt - timedelta(hours=24)
-        # Get item datetime
-        release_date_str = item.get('release_date')
-        airtime_str = item.get('airtime')
-        if not release_date_str or release_date_str.lower() in ['unknown', 'none']:
-            return False
-        try:
-            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-            if airtime_str:
-                try:
-                    airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
-                except ValueError:
-                    try:
-                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                    except ValueError:
-                        airtime = dt_time(0, 0)
-            else:
-                airtime = dt_time(0, 0)
-            item_dt = datetime.combine(release_date, airtime)
-        except Exception:
-            return False
-        # If the item is older than the window, always allow
-        if item_dt < window_start:
-            return True
-        return window_start <= item_dt <= anchor_dt
+        return in_alternate_scrape_window(item, now)
+

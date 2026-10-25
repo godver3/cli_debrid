@@ -6,7 +6,7 @@ import os
 import json
 from datetime import datetime
 import time
-from .nyaa import scrape_nyaa
+from .nyaa import scrape_nyaa, contains_target_episode
 from .jackett import scrape_jackett_instance
 from .mediafusion import scrape_mediafusion_instance
 from .aiostreams import scrape_aiostreams_instance, scrape_aiostreams_api
@@ -136,110 +136,6 @@ class ScraperManager:
         self.use_timeout = self.scraper_timeout > 0
         self.scraper_timeout = None if self.scraper_timeout == 0 else self.scraper_timeout
         self.batch_timeout = None if self.batch_timeout == 0 else self.batch_timeout
-        
-        # Helper function to check if results contain target episode
-        def contains_target_episode(results, target_episode, target_season):
-            """Check if any result contains the target episode number."""
-            if not results or target_episode is None or target_season is None:
-                return False
-                
-            for result in results:
-                title = result.get('title', '').lower()
-                
-                # First, check for explicit SxxExx patterns (most reliable)
-                explicit_patterns = [
-                    f"s{target_season:02d}e{target_episode:02d}",  # S03E01
-                    f"s{target_season}e{target_episode:02d}",      # S3E01
-                    f"s{target_season:02d}e{target_episode}",      # S03E1
-                    f"s{target_season}e{target_episode}"           # S3E1
-                ]
-                
-                for pattern in explicit_patterns:
-                    if pattern in title:
-                        logging.debug(f"Found explicit SxxExx pattern '{pattern}' in title: {result.get('title')}")
-                        return True
-                
-                # For standalone episode patterns (E01, 01), we need to be more careful
-                # Only match if there's no conflicting season information
-                
-                # Check if title contains any season information
-                has_season_info = False
-                season_in_title = None
-                
-                # Look for season patterns in the title
-                season_patterns = [
-                    rf"\bs{target_season:02d}\b",  # S03
-                    rf"\bs{target_season}\b",      # S3
-                    rf"\bseason\s+{target_season:02d}\b",  # Season 03
-                    rf"\bseason\s+{target_season}\b",      # Season 3
-                ]
-                
-                for pattern in season_patterns:
-                    if re.search(pattern, title):
-                        has_season_info = True
-                        season_in_title = target_season
-                        break
-                
-                # Also check for other seasons that might conflict
-                other_season_patterns = [
-                    r"\bs0?[1-9]\b",  # S01, S1, S02, S2, etc.
-                    r"\bseason\s+0?[1-9]\b",  # Season 1, Season 01, etc.
-                ]
-                
-                for pattern in other_season_patterns:
-                    match = re.search(pattern, title)
-                    if match:
-                        has_season_info = True
-                        # Extract the season number
-                        season_text = match.group()
-                        if 'season' in season_text:
-                            season_num = season_text.replace('season', '').strip()
-                        else:
-                            season_num = season_text[1:]  # Remove 's'
-                        
-                        try:
-                            season_in_title = int(season_num)
-                            if season_in_title != target_season:
-                                logging.debug(f"Found conflicting season {season_in_title} in title: {result.get('title')}")
-                                break
-                        except ValueError:
-                            pass
-                
-                # If we found a conflicting season, don't match standalone episode patterns
-                if has_season_info and season_in_title != target_season:
-                    continue
-                
-                # Now check for standalone episode patterns (only if no conflicting season)
-                episode_patterns = [
-                    rf"\be{target_episode:02d}\b",  # E01 (word boundary)
-                    rf"\be{target_episode}\b",      # E1 (word boundary)
-                    rf"\b{target_episode:02d}\b",   # 01 (word boundary)
-                ]
-                
-                for pattern in episode_patterns:
-                    if re.search(pattern, title):
-                        # Additional context check to avoid false positives
-                        match = re.search(pattern, title)
-                        if match:
-                            start_pos = match.start()
-                            end_pos = match.end()
-                            
-                            # Check if preceded by 's' or 'season' (likely a season number)
-                            if start_pos > 0:
-                                before_match = title[start_pos-1:start_pos+1]
-                                if before_match.startswith('s') or before_match.startswith('season'):
-                                    continue
-                            
-                            # Check if followed by 'e' (likely part of SxxExx format)
-                            if end_pos < len(title):
-                                after_match = title[end_pos-1:end_pos+1]
-                                if after_match.endswith('e'):
-                                    continue
-                            
-                            logging.debug(f"Found standalone episode pattern '{pattern}' in title: {result.get('title')}")
-                            return True
-            
-            return False
         
         # Helper function to run a scraper and handle exceptions
         def run_scraper(instance, scraper_type, settings, is_translated):
