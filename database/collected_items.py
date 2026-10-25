@@ -499,7 +499,6 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                     # If imdb_id missing, try to resolve via battery tmdb→imdb mapping
                                     if not _imdb_id and _db_row['tmdb_id']:
                                         try:
-                                            from cli_battery.app.direct_api import DirectAPI
                                             _resolved, _ = DirectAPI.tmdb_to_imdb(
                                                 str(_db_row['tmdb_id']),
                                                 media_type='show' if _db_row['type'] == 'episode' else 'movie'
@@ -791,7 +790,6 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                         import threading as _ci_thread
                                         def _ci_fix(_rk, _title, _year, _tmdb, _imdb, _s, _ep):
                                             try:
-                                                from cli_battery.app.direct_api import DirectAPI
                                                 from utilities.settings import get_setting as _gs
                                                 from plexapi.server import PlexServer as _PS
                                                 _gu = _gs('Plex', 'url', '').rstrip('/')

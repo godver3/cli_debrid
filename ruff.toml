@@ -1,0 +1,15 @@
+# Lint for bugs, not style: only rules whose hits are real mistakes are on, and the
+# codebase passes them all, so any new hit fails scripts/check.sh.
+target-version = "py311"
+extend-exclude = ["phalanx_db_hyperswarm", "node_modules"]
+
+[lint]
+select = [
+    "E9",     # syntax errors
+    "F63",    # comparisons that are always true/false (is with a literal, assert on a tuple)
+    "F7",     # break/continue/return/yield in the wrong place
+    "F82",    # undefined names, including a local used before assignment (F823)
+    "PLE",    # pylint errors: bad format strings, invalid __all__, return in __init__, ...
+    "B005",   # .strip()/.rstrip() with a multi-character string (strips characters, not a suffix)
+    "B033",   # duplicate values in a set literal
+]

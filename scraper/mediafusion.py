@@ -5,7 +5,8 @@ from typing import Dict, Any, List
 from database.database_reading import get_imdb_aliases
 
 def scrape_mediafusion_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
-    mediafusion_base_url = settings.get('url', '').rstrip('manifest.json')
+    # removesuffix, not rstrip: rstrip('manifest.json') strips any of those characters off the end
+    mediafusion_base_url = settings.get('url', '').removesuffix('manifest.json')
     
     try:
         # Get all IMDB aliases for this ID
