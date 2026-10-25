@@ -29,6 +29,7 @@ from debrid.status import TorrentStatus
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls, is_magnet_not_wanted
 from database.scraper_grabs import record_grab, queue_grab_trigger
 from utilities.settings import get_setting
+from utilities.log_context import logs_for_item
 from utilities.rescrape_helpers import rescrape_blocks_any_pack_reuse, rescrape_blocks_pack_reuse
 
 class TorrentProcessingError(Exception):
@@ -886,6 +887,7 @@ class TorrentProcessor:
             except Exception as e:
                 logging.warning(f"Error removing consolidated-away torrent {old_torrent_id}: {e}")
 
+    @logs_for_item
     def _process_nzb_result(self, result: Dict, item: Optional[Dict] = None, adding_queue_items: Optional[list] = None) -> Optional[Tuple]:
         """Submit an NZB result to the configured Usenet provider and return a synthetic torrent_info tuple."""
         from usenet import get_usenet_client, reset_usenet_client
@@ -1427,6 +1429,7 @@ class TorrentProcessor:
         }
         return torrent_info, nzb_url, result
 
+    @logs_for_item
     def process_results(
         self,
         results: list[Dict],

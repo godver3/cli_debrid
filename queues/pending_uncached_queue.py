@@ -8,6 +8,7 @@ from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_url
 from debrid.common import extract_hash_from_magnet, download_and_extract_hash
 from .torrent_processor import TorrentProcessor
 from .media_matcher import MediaMatcher
+from utilities.log_context import logs_for_item
 
 class PendingUncachedQueue:
     def __init__(self):
@@ -115,6 +116,7 @@ class PendingUncachedQueue:
 
         logging.debug(f"Pending uncached queue processing complete. Remaining items: {len(self.items)}")
 
+    @logs_for_item
     def _handle_successful_add(self, item: Dict[str, Any], queue_manager, torrent_id):
         item_identifier = queue_manager.generate_identifier(item)
         logging.info(f"Successfully added pending uncached item: {item_identifier}")
@@ -279,6 +281,7 @@ class PendingUncachedQueue:
                 # These items are from 'Scraping' or 'Wanted' queues, not self.items.
                 # Their state transition is handled by move_to_checking.
             
+    @logs_for_item
     def _handle_failed_add(self, item: Dict[str, Any], queue_manager):
         item_identifier = queue_manager.generate_identifier(item)
         logging.error(f"Failed to add pending uncached item: {item_identifier}")

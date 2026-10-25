@@ -215,14 +215,15 @@ def setup_debug_logging(log_dir):
     debug_handler.addFilter(APSchedulerDebugNoiseFilter())
     debug_handler.addFilter(APSchedulerMaxInstancesWarningFilter())
     
-    formatter = RedactingFormatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(message)s')
+    # item_tag is "[item 123] " while an item is being processed (utilities.log_context)
+    formatter = RedactingFormatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(item_tag)s%(message)s')
     debug_handler.setFormatter(formatter)
     logging.getLogger().addHandler(debug_handler)
 
 def setup_info_logging(log_dir):
     # Add console handler for info logs
     console_handler = DynamicConsoleHandler()
-    console_handler.setFormatter(RedactingFormatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+    console_handler.setFormatter(RedactingFormatter('%(asctime)s - %(item_tag)s%(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
     
     # Add filters to exclude unwanted messages
     console_handler.addFilter(lambda record: not record.name.startswith(('urllib3', 'requests', 'charset_normalizer')))
@@ -306,6 +307,10 @@ def setup_logging():
     
     # Clear any existing handlers
     root_logger.handlers.clear()
+
+    # Every record carries item_tag, which the debug and console formats print
+    from utilities.log_context import install_log_record_factory
+    install_log_record_factory()
     
     # Configure handlers
     setup_debug_logging(log_dir)

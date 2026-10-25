@@ -5,6 +5,7 @@ from database.database_writing import add_to_collected_notifications
 from queues.scraping_queue import ScrapingQueue
 from queues.adding_queue import AddingQueue
 from utilities.settings import get_setting
+from utilities.log_context import logs_for_item
 from utilities.plex_functions import remove_file_from_plex
 from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
 import os
@@ -260,6 +261,7 @@ class UpgradingQueue:
         })
         self.save_failed_upgrades()
 
+    @logs_for_item
     def revert_failed_upgrade(self, item: Dict[str, Any]):
         """Revert an item back to its previous state when an upgrade fails"""
         logging.info(f"Reverting failed upgrade for item {self.generate_identifier(item)}")
@@ -731,6 +733,7 @@ class UpgradingQueue:
             logging.error(f"Error calculating score for current item '{current_title}': {e}")
             return 0.0
 
+    @logs_for_item
     def hourly_scrape(self, item: Dict[str, Any], queue_manager=None):
         item_identifier = self.generate_identifier(item)
         logging.info(f"Starting hourly scrape for {item_identifier}")
@@ -1282,6 +1285,7 @@ class UpgradingQueue:
             logging.debug(f"Finished hourly scrape processing for {item_identifier}. Clearing processing flag.")
             self.currently_processing_item_id = None
 
+    @logs_for_item
     def update_item_with_upgrade(self, item: Dict[str, Any], adding_queue: AddingQueue, best_result: Dict[str, Any]):
         """Updates the database item after a successful upgrade initiation (moved to Checking)."""
         new_values = adding_queue.get_new_item_values(item) # Get details from AddingQueue's perspective (e.g., selected files)

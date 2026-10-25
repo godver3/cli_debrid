@@ -4,6 +4,7 @@ from typing import Dict, Any, List
 import time
 
 from utilities.settings import get_setting
+from utilities.log_context import logs_for_item
 from queues.scrape_window import in_alternate_scrape_window
 from database.manual_blacklist import is_blacklisted
 from database.core import get_db_connection
@@ -76,6 +77,7 @@ class WantedQueue:
             return False
         return in_alternate_scrape_window(item, now)
 
+    @logs_for_item
     def _evaluate_item_readiness_and_act(self, item: Dict[str, Any], current_datetime: datetime, queue_manager) -> Dict[str, Any]:
         """
         Evaluates a single item's readiness, performs actions like reconciliation or moving to Unreleased,

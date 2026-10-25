@@ -25,6 +25,7 @@ from queues.final_check_queue import FinalCheckQueue
 from queues.pre_release_queue import PreReleaseQueue
 from queues.base_queue import BaseQueue
 from utilities.settings import get_setting
+from utilities.log_context import logs_for_item
 
 # Get the item tracker logger
 item_tracker_logger = logging.getLogger('item_tracker')
@@ -243,6 +244,15 @@ class QueueTimer:
                     })
         
         return current_items
+
+def _format_duration(seconds):
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m{seconds % 60:02d}s"
+    return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
+
 
 class QueueManager:
     _instance = None
@@ -506,6 +516,7 @@ class QueueManager:
         self.queues["Blacklisted"].blacklist_old_season_items(item, self)
         self.queues[from_queue].remove_item(item)
 
+    @logs_for_item
     def move_to_wanted(self, item: Dict[str, Any], from_queue: str, new_version: str = None):
         item_identifier = self.generate_identifier(item)
         target_version_str = f" (Version: {new_version})" if new_version else ""
@@ -542,6 +553,7 @@ class QueueManager:
             # No additional processing needed for Wanted queue itself
             pass
 
+    @logs_for_item
     def move_to_upgrading(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
 
@@ -557,6 +569,7 @@ class QueueManager:
         logging.debug(f"Moving item to Upgrading: {item_identifier}")
         self._move_item_to_queue(item, from_queue, "Upgrading", "Upgrading")
 
+    @logs_for_item
     def move_to_pre_release(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
 
@@ -572,6 +585,7 @@ class QueueManager:
         logging.debug(f"Moving item to Pre-Release: {item_identifier}")
         self._move_item_to_queue(item, from_queue, "Pre_release", "Pre_release")
 
+    @logs_for_item
     def move_to_scraping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
 
@@ -625,6 +639,7 @@ class QueueManager:
         except Exception as e:
             logging.error(f"Failed to send Scraping state change notification: {str(e)}")
 
+    @logs_for_item
     def move_to_adding(self, item: Dict[str, Any], from_queue: str, filled_by_title: str, scrape_results: List[Dict]):
         item_identifier = self.generate_identifier(item)
 
@@ -680,6 +695,7 @@ class QueueManager:
         except Exception as e:
             logging.error(f"Failed to send Adding state change notification: {str(e)}")
 
+    @logs_for_item
     def move_to_checking(
         self,
         item: Dict[str, Any],
@@ -774,6 +790,7 @@ class QueueManager:
             updated_item['downloading'] = item['downloading']
             self.queues["Checking"].add_item(updated_item)  # Re-add with updated flag
 
+    @logs_for_item
     def move_to_sleeping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
 
@@ -798,6 +815,7 @@ class QueueManager:
             updated_item['wake_count'] = wake_count
             self.queues["Sleeping"].add_item(updated_item)  # Re-add with wake count
 
+    @logs_for_item
     def move_to_unreleased(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
 
@@ -812,6 +830,7 @@ class QueueManager:
 
         self._move_item_to_queue(item, from_queue, "Unreleased", "Unreleased")
 
+    @logs_for_item
     def move_to_blacklisted(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
         logging.debug(f"[move_to_blacklisted] Initiating move for item {item_identifier} from {from_queue} to Blacklisted state via blacklist_item method")
@@ -874,6 +893,7 @@ class QueueManager:
 
         logging.debug(f"Finished processing move for item {item_identifier} (to Blacklisted or Fallback)")
 
+    @logs_for_item
     def move_to_pending_uncached(self, item: Dict[str, Any], from_queue: str, title: str, link: str, scrape_results: List[Dict]):
         item_identifier = self.generate_identifier(item)
 
@@ -953,6 +973,7 @@ class QueueManager:
         logging.debug("All critical queues (Scraping, Adding, Checking) are empty.")
         return True
 
+    @logs_for_item
     def _move_item_to_queue(self, item, from_queue, to_queue_name, new_state, new_version=None, **additional_params):
         """
         Common method to handle moving items between queues.
@@ -1010,7 +1031,10 @@ class QueueManager:
             if from_queue and from_queue in self.queues:
                 self.queues[from_queue].remove_item(item)
                 
-            logging.debug(f"Successfully moved item {item_identifier} to {to_queue_name}")
+            # One line per state change, so the item's path reads straight down the log.
+            waited = (f" after {_format_duration(time_in_from_queue_seconds)} in {from_queue}"
+                      if time_in_from_queue_seconds is not None else '')
+            logging.info(f"{item_identifier}: {from_queue or 'new'} -> {new_state}{waited}")
             
             # Log completion of move
             log_data = {
@@ -1038,6 +1062,7 @@ class QueueManager:
             })
             return None
 
+    @logs_for_item
     def move_to_collected(self, item: Dict[str, Any], from_queue: str, skip_notification: bool = False, skip_state_change_hook: bool = False):
         """Move an item to the Collected state after symlink is created."""
         item_identifier = self.generate_identifier(item)
@@ -1196,6 +1221,7 @@ class QueueManager:
             return self.queue_timer.get_current_queue_items()
         return {}
 
+    @logs_for_item
     def initiate_final_check_or_blacklist(self, item: Dict[str, Any], from_queue: str):
         """
         Checks the delay setting and moves item to Final_Check or directly
