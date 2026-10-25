@@ -148,6 +148,20 @@ def file_explicit_absolute(parsed: Dict[str, Any], filename: Optional[str],
                                      counts or None)
 
 
+def file_position_label(parsed: Dict[str, Any], explicit_absolute: Optional[List[int]] = None) -> str:
+    """Short label for what a file's name says it holds: "S02E05", "S01E01-02",
+    "E07" or "#050"; empty when the name has no numbers."""
+    numbers = sorted(set(_ints(explicit_absolute or [])))
+    if numbers:
+        return f'#{numbers[0]:03d}' + (f'-{numbers[-1]:03d}' if len(numbers) > 1 else '')
+    episodes = sorted(set(_ints(parsed.get('episodes') or [])))
+    if not episodes:
+        return ''
+    span = f'E{episodes[0]:02d}' + (f'-{episodes[-1]:02d}' if len(episodes) > 1 else '')
+    seasons = sorted(set(_ints(parsed.get('seasons') or [])))
+    return (f'S{seasons[0]:02d}' if len(seasons) == 1 else '') + span
+
+
 def explicit_absolute_conflicts(item_numbers: Optional[List[int]], file_numbers: List[int]) -> bool:
     """True when a file's stated absolute number is another episode's."""
     return bool(item_numbers and file_numbers and not set(item_numbers) & set(file_numbers))
@@ -405,6 +419,10 @@ def match_absolute_files(target_items: List[Dict[str, Any]],
             continue
         item['suggested_file_path'] = filename
         item['assigned'] = True
+        # A multi-episode "S02E01-E02" file reaches the second episode here by its S/E
+        parsed = candidates[0].get('parsed') or {}
+        by_se = pos[0] in _ints(parsed.get('seasons') or []) and pos[1] in _ints(parsed.get('episodes') or [])
+        item['match_reason'] = 'se' if by_se else 'absolute'
         candidates[0]['used'] = True
         assigned += 1
         logging.info(f"[Absolute] Assigned '{candidates[0]['original'].get('path')}' to "

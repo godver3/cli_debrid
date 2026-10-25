@@ -4,79 +4,22 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_manual_assignment.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_manual_assignment.css') }}">
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
-<script type="module">
-const notificationsUrl = "{{ url_for('static', filename='js/notifications.js') }}";
-let showPopup, POPUP_TYPES;
-
-// Dynamic import of notifications module
-import(notificationsUrl).then(module => {
-    showPopup = module.showPopup;
-    POPUP_TYPES = module.POPUP_TYPES;
-}).catch(error => console.error('Error loading notifications module:', error));
-
-document.addEventListener('DOMContentLoaded', function() {
-    const assignmentForm = document.getElementById('manual-assignment-form');
-    const submitButton = document.getElementById('confirm-assignment-btn');
-
-    assignmentForm.addEventListener('submit', async function(e) {
-        e.preventDefault();
-        submitButton.disabled = true;
-        Loading.show();
-
-        try {
-            const formData = new FormData(assignmentForm);
-            const response = await fetch(assignmentForm.action, {
-                method: 'POST',
-                body: formData,
-                headers: {
-                    'Accept': 'application/json'
-                }
-            });
-
-            const data = await response.json();
-            Loading.hide();
-
-            if (response.ok && data.success) {
-                showPopup({
-                    type: POPUP_TYPES.SUCCESS,
-                    title: 'Assignment Successful',
-                    message: data.message || `Successfully assigned ${data.added_count || 0} item(s).`,
-                    autoClose: 4000,
-                    onConfirm: () => { window.location.href = "{{ url_for('discover.index') }}"; }
-                });
-                setTimeout(() => { window.location.href = "{{ url_for('discover.index') }}"; }, 4000);
-            } else {
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    title: 'Assignment Failed',
-                    message: data.error || 'An error occurred during assignment.',
-                    autoClose: 5000
-                });
-                submitButton.disabled = false; // Re-enable button on failure
-            }
-        } catch (error) {
-            Loading.hide();
-            console.error('Error submitting assignment:', error);
-            showPopup({
-                type: POPUP_TYPES.ERROR,
-                title: 'Submission Error',
-                message: 'A network or unexpected error occurred.',
-                autoClose: 5000
-            });
-            submitButton.disabled = false; // Re-enable button on error
-        }
-    });
-});
-</script>
+<script type="application/json" id="ma-page-data">{{ page_data|tojson }}</script>
+<script type="application/json" id="ma-page-urls">{{ {
+    'notifications': url_for('static', filename='js/notifications.js'),
+    'episode_orders': url_for('magnet.episode_orders'),
+    'rematch': url_for('magnet.rematch_manual_assignment'),
+    'done': url_for('discover.index'),
+}|tojson }}</script>
+<script type="module" src="{{ url_for('static', filename='js/manual_assignment.js') }}"></script>
 {% endblock %}
 
 {% block content %}
 <div class="manual-assignment-container">
     <h3>Manual File Assignment</h3>
     <p>Torrent: <strong>{{ torrent_filename }}</strong> (Version: {{ version }})</p>
-    <p>Please map the video files from the torrent to the corresponding media items below.</p>
+    <p>Match each item below to a file from the torrent. Click an episode's file to choose one, or pick a file under Unused files and then click the episode it belongs to.</p>
 
     <form id="manual-assignment-form" method="POST" action="{{ url_for('magnet.confirm_manual_assignment') }}">
         <input type="hidden" name="magnet_link" value="{{ magnet_link }}">
@@ -84,6 +27,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <input type="hidden" name="torrent_id" value="{{ torrent_id }}">
         <input type="hidden" name="version" value="{{ version }}">
         <input type="hidden" name="episode_order" value="{{ episode_order or '' }}">
+        {% if is_torrent_file %}<input type="hidden" name="is_torrent_file" value="1">{% endif %}
 
         {% set library_count = target_items|selectattr('in_library')|list|length %}
         <label class="replace-existing-option">
@@ -95,36 +39,38 @@ document.addEventListener('DOMContentLoaded', function() {
             </span>
         </label>
 
-        <div class="assignment-grid">
-            <div class="assignment-header">Media Item</div>
-            <div class="assignment-header">Torrent File</div>
-            
-            {% for item in target_items %}
-            <div class="media-item-info">
-                <strong>{{ item.title }}</strong> ({{ item.year }})
-                {% if item.type == 'episode' %}
-                    <br><em>S{{ "%02d"|format(item.season_number) }}E{{ "%02d"|format(item.episode_number) }}{% if item.absolute_number and item.season_number != 1 %} (#{{ item.absolute_number }}){% endif %} - {{ item.episode_title }}</em>
-                {% endif %}
-                {% if item.in_library %}<span class="in-library-badge" title="Already in your library as {{ version }}">In library</span>{% endif %}
+        {# Controls below carry no name: everything named in this form is read as an assignment #}
+        <div class="ma-toolbar" id="ma-toolbar">
+            <div class="ma-summary" id="ma-summary" aria-live="polite"></div>
+            <div class="ma-toolbar-row">
+                <div class="ma-filters" id="ma-filters" role="group" aria-label="Show"></div>
+                <div class="ma-toolbar-actions">
+                    <button type="button" class="ma-btn" id="ma-prev" title="Previous episode with no file">&#8249; Prev empty</button>
+                    <button type="button" class="ma-btn" id="ma-next" title="Next episode with no file">Next empty &#8250;</button>
+                    <button type="button" class="ma-btn" id="ma-ignore-empty" title="Mark every episode with no file as ignored">Ignore empty</button>
+                    <button type="button" class="ma-btn" id="ma-undo" disabled title="Undo the last change">Undo</button>
+                </div>
             </div>
-            <div class="file-selector">
-                <select name="{{ item.item_key }}" class="form-control">
-                    <option value="">-- Select a file --</option>
-                    <option value="--ignore--">-- Ignore this item --</option>
-                    {% for file in video_files %}
-                        {# Use filename (basename) for the option value, display full path for context #}
-                        {# Pre-select based on suggested_file_path (which is now also a basename) matching file.filename #}
-                        <option value="{{ file.filename }}" {% if item.suggested_file_path == file.filename %}selected{% endif %}>
-                            {{ file.filename }} ({{ (file.bytes / (1024*1024*1024))|round(2) }} GB)
-                        </option>
-                    {% endfor %}
-                </select>
+            <div class="ma-order" id="ma-order" hidden>
+                <label for="ma-order-select">Episode order</label>
+                <select id="ma-order-select"></select>
+                <span class="ma-order-hint" id="ma-order-hint"></span>
             </div>
-            {% else %}
-            <div class="no-items" colspan="2">
-                <p>No target media items were generated. Please go back and check your selection.</p>
+            <div class="ma-armed" id="ma-armed" hidden></div>
+        </div>
+
+        <div class="ma-layout">
+            <div class="ma-main">
+                <div class="ma-missing" id="ma-missing" hidden></div>
+                <div class="ma-list" id="ma-list">
+                    {% if not target_items %}
+                    <div class="no-items">
+                        <p>No target media items were generated. Please go back and check your selection.</p>
+                    </div>
+                    {% endif %}
+                </div>
             </div>
-            {% endfor %}
+            <aside class="ma-files" id="ma-files" aria-label="Files not used yet"></aside>
         </div>
 
         <div class="form-actions">
@@ -133,4 +79,4 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
     </form>
 </div>
-{% endblock %} 
+{% endblock %}
