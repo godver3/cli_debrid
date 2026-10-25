@@ -2,9 +2,6 @@
 
 
 {% block head %}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_statistics.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_scraper-mobile.css') }}">
@@ -61,15 +58,15 @@
         <h3 id="modal-title">View on External Sites</h3>
         <div class="external-links">
             <a id="trakt-link" href="#" target="_blank" class="external-link">
-                <img src="{{ url_for('static', filename='images/trakt.png') }}" alt="Trakt" class="provider-icon">
+                <img src="{{ url_for('static', filename='images/trakt.png') }}" alt="Trakt" class="provider-icon" loading="lazy">
                 <span>Trakt</span>
             </a>
             <a id="tmdb-link" href="#" target="_blank" class="external-link">
-                <img src="{{ url_for('static', filename='images/tmdb.png') }}" alt="TMDB" class="provider-icon">
+                <img src="{{ url_for('static', filename='images/tmdb.png') }}" alt="TMDB" class="provider-icon" loading="lazy">
                 <span>TMDB</span>
             </a>
             <a id="imdb-link" href="#" target="_blank" class="external-link">
-                <img src="{{ url_for('static', filename='images/imdb.png') }}" alt="IMDB" class="provider-icon">
+                <img src="{{ url_for('static', filename='images/imdb.png') }}" alt="IMDB" class="provider-icon" loading="lazy">
                 <span>IMDB</span>
             </a>
         </div>

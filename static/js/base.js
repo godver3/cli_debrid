@@ -842,17 +842,39 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Update checker
-    async function checkForUpdates() {
+    // Update checker. The answer is reused across page loads for 5 minutes
+    // (the poll interval) so navigating doesn't re-ask on every page.
+    const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
+    const UPDATE_CHECK_KEY = 'updateCheckResult';
+
+    function readCachedUpdateCheck() {
         try {
-            const response = await fetch('/base/api/check-update', {
-                cache: 'no-store',  // Force bypass browser cache
-                headers: {
-                    'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache'
+            const cached = JSON.parse(sessionStorage.getItem(UPDATE_CHECK_KEY));
+            if (cached && Date.now() - cached.at < UPDATE_CHECK_TTL_MS) return cached.data;
+        } catch (e) {
+            // Storage unavailable or bad JSON: just ask the server.
+        }
+        return null;
+    }
+
+    async function checkForUpdates(useCache = false) {
+        try {
+            let data = useCache ? readCachedUpdateCheck() : null;
+            if (!data) {
+                const response = await fetch('/base/api/check-update', {
+                    cache: 'no-store',  // Force bypass browser cache
+                    headers: {
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache'
+                    }
+                });
+                data = await response.json();
+                try {
+                    sessionStorage.setItem(UPDATE_CHECK_KEY, JSON.stringify({ at: Date.now(), data }));
+                } catch (e) {
+                    // Storage unavailable: nothing to remember.
                 }
-            });
-            const data = await response.json();
+            }
 
             const updateButton = document.getElementById('updateAvailableButton');
             if (!updateButton) {
@@ -874,8 +896,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Check for updates periodically
-    setInterval(checkForUpdates, 5 * 60 * 1000); // Check every 5 minutes
-    checkForUpdates(); // Initial check
+    setInterval(checkForUpdates, UPDATE_CHECK_TTL_MS); // Check every 5 minutes
+    checkForUpdates(true); // Initial check (reuses a recent answer)
 
     // Add click handler for update button
     document.getElementById('updateAvailableButton')?.addEventListener('click', () => {
