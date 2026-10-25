@@ -15,6 +15,7 @@ from utilities.settings import get_setting
 from PTT import parse_title as ptt_parse
 from rapidfuzz import fuzz as _fuzz
 from scraper.request_dedup import SingleFlightGuard
+from scraper import newznab_cooldown
 
 def _get_retention_days() -> int:
     """Get configured usenet retention days. 0 = disabled."""
@@ -203,15 +204,23 @@ def scrape_newznab_instance(
         api_key, clean_imdb, title, year, content_type, season, episode, multi
     )
 
+    _cooldown_key = newznab_cooldown.indexer_key(endpoint, api_key)
+
     def _fetch(params):
         ck = _cache_key(endpoint, params)
         cached = _cache_get(ck)
         if cached is not None:
             logging.info(f"Newznab '{instance}' cache hit for {params.get('t')} query")
             return cached
+        if newznab_cooldown.should_skip(instance, _cooldown_key):
+            return []
         try:
             r = api.get(endpoint, params=params, timeout=timeout)
             logging.info(f"Newznab '{instance}' full request URL: {r.url}")
+            # Newznab errors usually come back as HTTP 200 with an <error> body.
+            # Not cached: the cooldown decides when this query may run again.
+            if newznab_cooldown.note_refusal(instance, _cooldown_key, r):
+                return []
             if r.status_code != 200:
                 logging.error(f"Newznab '{instance}' HTTP {r.status_code}: {r.text[:200]}")
                 # Cache empty on rate limit or server errors to avoid hammering
@@ -223,6 +232,9 @@ def scrape_newznab_instance(
             return results
         except Exception as exc:
             logging.error(f"Newznab '{instance}' request error: {exc}")
+            # api.get raises on 4xx/5xx; the refused response rides on the exception.
+            if newznab_cooldown.note_refusal(instance, _cooldown_key, getattr(exc, 'response', None)):
+                return []
             # Cache empty result on rate limit or server errors to avoid immediate retry
             _exc_str = str(exc)
             if any(code in _exc_str for code in ('429', '503', '502', '500')):
@@ -527,6 +539,29 @@ def scrape_newznab_season_aggregate(
         if not url or not api_key:
             return []
         ep_endpoint = f'{url}/api'
+        cooldown_key = newznab_cooldown.indexer_key(ep_endpoint, api_key)
+
+        def _get(params) -> List[Dict[str, Any]]:
+            ck = _cache_key(ep_endpoint, params)
+            cached = _cache_get(ck)
+            if cached is not None:
+                return cached
+            if newznab_cooldown.should_skip(instance, cooldown_key):
+                return []
+            try:
+                r = api.get(ep_endpoint, params=params, timeout=timeout)
+                if newznab_cooldown.note_refusal(instance, cooldown_key, r):
+                    return []
+                if r.status_code == 200:
+                    parsed = _parse_newznab_xml(r.text, instance)
+                    _cache_set(ck, parsed)  # Cache even empty
+                    return parsed
+                if r.status_code == 429:
+                    _cache_set(ck, [])  # Cache 429 to avoid retry
+            except Exception as exc:
+                newznab_cooldown.note_refusal(instance, cooldown_key, getattr(exc, 'response', None))
+            return []
+
         results = []
         # ID-based tvsearch first
         if clean_imdb:
@@ -535,39 +570,11 @@ def scrape_newznab_season_aggregate(
                 'season': season, 'ep': ep_num, 'cat': cats, 'limit': 20,
                 'extended': 1,
             }
-            ck = _cache_key(ep_endpoint, id_params)
-            cached = _cache_get(ck)
-            if cached is not None:
-                results.extend(_drop_other_titles(cached, clean_imdb, instance))
-            else:
-                try:
-                    r = api.get(ep_endpoint, params=id_params, timeout=timeout)
-                    if r.status_code == 200:
-                        parsed = _parse_newznab_xml(r.text, instance)
-                        _cache_set(ck, parsed)  # Cache even empty
-                        results.extend(_drop_other_titles(parsed, clean_imdb, instance))
-                    elif r.status_code == 429:
-                        _cache_set(ck, [])  # Cache 429 to avoid retry
-                except Exception:
-                    pass
+            results.extend(_drop_other_titles(_get(id_params), clean_imdb, instance))
         # Title text search
         q = _SANITIZE_RE.sub('', f'{title} S{season:02d}E{ep_num:02d}').strip()
         txt_params = {'apikey': api_key, 't': 'search', 'q': q, 'cat': cats, 'limit': 20}
-        ck = _cache_key(ep_endpoint, txt_params)
-        cached = _cache_get(ck)
-        if cached is not None:
-            results.extend(cached)
-        else:
-            try:
-                r = api.get(ep_endpoint, params=txt_params, timeout=timeout)
-                if r.status_code == 200:
-                    parsed = _parse_newznab_xml(r.text, instance)
-                    _cache_set(ck, parsed)  # Cache even empty
-                    results.extend(parsed)
-                elif r.status_code == 429:
-                    _cache_set(ck, [])  # Cache 429 to avoid retry
-            except Exception:
-                pass
+        results.extend(_get(txt_params))
         # Deduplicate by guid
         seen, deduped = set(), []
         for res in results:
