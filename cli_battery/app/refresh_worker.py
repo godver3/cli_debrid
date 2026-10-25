@@ -10,6 +10,7 @@ Hybrid refresh strategy:
 Single daemon thread, no APScheduler.  10-minute cycle.
 """
 
+import os
 import time
 import threading
 from datetime import datetime, timedelta, timezone
@@ -44,6 +45,10 @@ _last_updates_check: datetime | None = None
 def start():
     """Start the background refresh worker (idempotent)."""
     global _thread
+    # Set by the test suite: the worker wakes mid-run and calls Trakt/TVDB while
+    # tests have settings and modules mocked, failing whichever test is running
+    if os.environ.get('CLI_DEBRID_NO_BACKGROUND_WORKERS'):
+        return
     if _thread is not None and _thread.is_alive():
         return
     _stop_event.clear()

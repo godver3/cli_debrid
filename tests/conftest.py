@@ -19,6 +19,9 @@ for _var, _sub in (("USER_CONFIG", "config"), ("USER_DB_CONTENT", "db_content"),
         os.makedirs(_path, exist_ok=True)
         os.environ[_var] = _path
 
+# No battery refresh worker: a test reaching DirectAPI would start it, and 30 s
+# later it calls Trakt/TVDB in the middle of whatever test runs then
+os.environ.setdefault("CLI_DEBRID_NO_BACKGROUND_WORKERS", "1")
 
 
 # C extensions (Cython, OpenSSL/cryptography bindings) register modules without a
