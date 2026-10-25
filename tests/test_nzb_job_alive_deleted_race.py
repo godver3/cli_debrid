@@ -24,8 +24,10 @@ import types
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tests._isolation import isolated_modules
 
 
+@isolated_modules
 def _load():
     """Load climount_client.py fresh, with routes.api_tracker.api stubbed
     so get() calls are observable and delete() always succeeds (200).

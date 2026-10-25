@@ -23,6 +23,10 @@ import shutil
 import importlib.util
 
 
+from tests._isolation import isolated_modules
+
+
+@isolated_modules
 def _load_client_module():
     if 'utilities' not in sys.modules:
         sys.modules['utilities'] = types.ModuleType('utilities')

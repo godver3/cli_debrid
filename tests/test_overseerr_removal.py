@@ -16,6 +16,10 @@ import os
 import types
 
 
+from tests._isolation import isolated_modules
+
+
+@isolated_modules
 def _load(get_responses, delete_responses):
     """Load content_checkers/overseerr.py fresh with a stubbed `api` module.
 

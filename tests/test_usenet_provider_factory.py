@@ -20,13 +20,21 @@ import sys
 import os
 import types
 import importlib.util
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+from tests._isolation import isolated_modules
+
+
 class TestIsNzbJobAliveDispatch(unittest.TestCase):
     def setUp(self):
-        # Fresh module instance per test so monkeypatched settings don't leak.
+        # Fresh module instance per test so monkeypatched settings don't leak; sys.modules
+        # (real usenet package included) is put back after each test.
+        modules = mock.patch.dict(sys.modules)
+        modules.start()
+        self.addCleanup(modules.stop)
         for name in list(sys.modules):
             if name == 'usenet' or name.startswith('usenet.'):
                 del sys.modules[name]
@@ -93,6 +101,7 @@ class TestIsNzbJobAliveDispatch(unittest.TestCase):
         self.assertFalse(self.usenet.is_nzb_job_alive('gonejob'))
 
 
+@isolated_modules
 def _load_nzbdav_module():
     if 'utilities' not in sys.modules:
         sys.modules['utilities'] = types.ModuleType('utilities')

@@ -19,6 +19,10 @@ import types
 import importlib.util
 
 
+from tests._isolation import isolated_modules
+
+
+@isolated_modules
 def _load_media_matcher():
     if 'PTT' not in sys.modules:
         ptt = types.ModuleType('PTT')

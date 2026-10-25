@@ -18,8 +18,10 @@ import os
 import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tests._isolation import isolated_modules
 
 
+@isolated_modules
 def _load_client_module():
     # Stub the two cli-debrid imports nzbdav_client does at module scope.
     if 'utilities' not in sys.modules:

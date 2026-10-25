@@ -74,8 +74,10 @@ class TestDiagnosticSettingsSnapshot(unittest.TestCase):
             snapshot,
         )
 
+    # get_setting reads the cached config directly rather than through load_config.
+    @patch('utilities.settings._get_cached_config', return_value=FAKE_CONFIG)
     @patch('utilities.settings.load_config', return_value=FAKE_CONFIG)
-    def test_debug_advanced_settings_included_in_flat_summary(self, mock_config):
+    def test_debug_advanced_settings_included_in_flat_summary(self, mock_config, mock_cached):
         snapshot = get_diagnostic_settings_snapshot()
         self.assertIn('Debug.enable_granular_version_additions', snapshot)
 

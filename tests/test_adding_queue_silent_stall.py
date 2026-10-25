@@ -101,6 +101,9 @@ class ScrapingDeferralTests(unittest.TestCase):
     """
 
     def _queue(self, items):
+        # The app imports the database package before the queues (main.py does); importing
+        # queues.scraping_queue first runs into the app's import cycles, so do the same here.
+        import database  # noqa: F401
         from queues.scraping_queue import ScrapingQueue
         q = ScrapingQueue()
         q.items = list(items)

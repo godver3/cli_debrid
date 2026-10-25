@@ -21,12 +21,16 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+from tests._isolation import isolated_modules
+
+
 def _permissive_module(name):
     m = types.ModuleType(name)
     m.__getattr__ = lambda attr: (lambda *a, **k: None)  # any imported name → dummy callable
     return m
 
 
+@isolated_modules
 def _load():
     # Stub third-party + cli-debrid imports repair_engine pulls at module scope.
     if 'requests' not in sys.modules:

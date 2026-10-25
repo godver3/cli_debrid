@@ -18,6 +18,9 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+from tests._isolation import isolated_modules
+
+
 def _permissive(name, **attrs):
     m = types.ModuleType(name)
     m.__getattr__ = lambda a: (lambda *x, **k: None)
@@ -26,6 +29,7 @@ def _permissive(name, **attrs):
     return m
 
 
+@isolated_modules
 def _load_statistics():
     # database package + stubbed submodules (relative imports resolve against these)
     pkg = types.ModuleType('database'); pkg.__path__ = []

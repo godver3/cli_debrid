@@ -30,10 +30,15 @@ import importlib.util
 from unittest.mock import MagicMock
 
 
+from tests._isolation import isolated_modules
+
+
+@isolated_modules
 def _load_web_scraper():
     def _mod(name):
-        if name not in sys.modules:
-            sys.modules[name] = types.ModuleType(name)
+        # Always a fresh stand-in: reusing an already-imported real module here set these
+        # fake attributes on it (get_setting, api, request, ...) for every later test.
+        sys.modules[name] = types.ModuleType(name)
         return sys.modules[name]
 
     _mod('flask').request = MagicMock()

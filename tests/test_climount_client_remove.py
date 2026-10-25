@@ -17,6 +17,7 @@ import types
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tests._isolation import isolated_modules
 
 
 class _FakeResponse:
@@ -30,6 +31,7 @@ class _FakeHTTPError(Exception):
         self.response = _FakeResponse(status_code)
 
 
+@isolated_modules
 def _load(status_map, connection_error_urls=frozenset()):
     """Load climount_client.py fresh with routes.api_tracker.api.delete()
     stubbed to mimic raise_for_status(): a mapped status >=400 raises

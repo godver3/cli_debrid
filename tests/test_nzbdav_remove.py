@@ -15,8 +15,10 @@ import os
 import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tests._isolation import isolated_modules
 
 
+@isolated_modules
 def _load():
     if 'utilities' not in sys.modules:
         sys.modules['utilities'] = types.ModuleType('utilities')

@@ -28,6 +28,7 @@ imports (all lazy, inside the function body) and verifies:
 """
 
 import unittest
+from unittest import mock
 import sys
 import os
 import sqlite3
@@ -36,6 +37,10 @@ import importlib.util
 from unittest.mock import MagicMock
 
 
+from tests._isolation import isolated_modules
+
+
+@isolated_modules
 def _load_post_processing():
     if 'utilities' not in sys.modules:
         sys.modules['utilities'] = types.ModuleType('utilities')
@@ -81,6 +86,10 @@ class TestReplaceCleanupAfterCollect(unittest.TestCase):
             def __getattr__(_self, name):
                 return getattr(_self._conn, name)
 
+        # Restores whatever was in sys.modules before (real modules included) after the test.
+        modules = mock.patch.dict(sys.modules)
+        modules.start()
+        self.addCleanup(modules.stop)
         fake_db_module = types.ModuleType('database')
         fake_db_module.get_db_connection = lambda: _UnclosableConn(self.conn)
         sys.modules['database'] = fake_db_module
@@ -112,8 +121,6 @@ class TestReplaceCleanupAfterCollect(unittest.TestCase):
     def tearDown(self):
         self.conn.close()
         pp.get_setting = self._orig_get_setting
-        for name in ('database', 'debrid', 'utilities.deletion_manager', 'utilities.plex_functions'):
-            sys.modules.pop(name, None)
 
     def test_stale_movie_replaced_deleted_via_deletion_manager_not_plex_only(self):
         self.conn.execute(
