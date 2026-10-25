@@ -18,7 +18,7 @@
                 ' / /| (_| | |_) | |_) | |_| |    \\ V  V / (_| \\__ \\  |  _  |  __/ | |  __/',
                 '/____\\__,_|_.__/|_.__/ \\__, |     \\_/\\_/ \\__,_|___/  |_| |_|\\___|_|  \\___|',
                 '                       |___/                                              ',
-            ].join('\n') + '\n\n%c' + CREDIT + '. Thanks for reading the source \ud83d\udc4b',
+            ].join('\n') + '\n\n%cZabby was here \u2014 ' + CREDIT + '. Thanks for reading the source \ud83d\udc4b',
             'color:#f97316;font-family:monospace;font-weight:bold',
             'color:#a3a3a3;font-style:italic'
         );
