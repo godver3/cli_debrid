@@ -406,6 +406,7 @@ def match_absolute_files(target_items: List[Dict[str, Any]],
         for pos in positions & set(items_by_pos):
             files_by_pos[pos].append(f)
 
+    explicit_by_file = {id(f): explicit for f, _, explicit in candidates_by_file}
     assigned = 0
     for pos, item in items_by_pos.items():
         candidates = files_by_pos.get(pos, [])
@@ -419,9 +420,10 @@ def match_absolute_files(target_items: List[Dict[str, Any]],
             continue
         item['suggested_file_path'] = filename
         item['assigned'] = True
-        # A multi-episode "S02E01-E02" file reaches the second episode here by its S/E
+        # Placed by the S/E its name states (a multi-episode "S02E01-E02" file's second
+        # episode, or an aired "S15E01" mapped into another episode order), else by number
         parsed = candidates[0].get('parsed') or {}
-        by_se = pos[0] in _ints(parsed.get('seasons') or []) and pos[1] in _ints(parsed.get('episodes') or [])
+        by_se = bool(_ints(parsed.get('seasons') or [])) and not explicit_by_file.get(id(candidates[0]))
         item['match_reason'] = 'se' if by_se else 'absolute'
         candidates[0]['used'] = True
         assigned += 1

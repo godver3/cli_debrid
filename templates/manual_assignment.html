@@ -19,6 +19,7 @@
 {% block content %}
 <div class="manual-assignment-container">
     <h3>Manual File Assignment</h3>
+    {% if notice %}<div class="ma-notice" role="status"><strong>Previous torrent:</strong> {{ notice }}</div>{% endif %}
     <p>Torrent: <strong>{{ torrent_filename }}</strong> (Version: {{ version }})</p>
     <p>Match each item below to a file from the torrent. Click an episode's file to choose one, or pick a file under Unused files and then click the episode it belongs to.</p>
 

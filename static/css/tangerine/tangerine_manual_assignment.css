@@ -796,3 +796,61 @@ body.tangerine-theme .ma-btn.ma-btn-accent {
     background: rgba(232, 96, 28, .15);
     color: #fff;
 }
+
+/* Suggested file on a row with no file */
+body.tangerine-theme .ma-suggest {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 6px;
+    width: 100%;
+    margin-top: 4px;
+    padding: 4px 8px;
+    border: 1px dashed rgba(74, 222, 128, .45);
+    border-radius: 5px;
+    background: rgba(74, 222, 128, .06);
+    color: #e0e0e0;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+body.tangerine-theme .ma-suggest:hover { border-style: solid; background: rgba(74, 222, 128, .12); }
+body.tangerine-theme .ma-suggest:focus-visible { outline: 2px solid #e8601c; outline-offset: 1px; }
+
+body.tangerine-theme .ma-suggest-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: #4ade80;
+}
+
+body.tangerine-theme .ma-suggest-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 11px;
+}
+
+body.tangerine-theme .ma-suggest-why {
+    flex-basis: 100%;
+    font-size: 10px;
+    color: #888;
+}
+
+/* What the previous torrent's confirm said (fill the gaps) */
+body.tangerine-theme .ma-notice {
+    margin: 0 0 12px;
+    padding: 9px 12px;
+    border: 1px solid rgba(74, 222, 128, .35);
+    border-radius: 6px;
+    background: rgba(74, 222, 128, .07);
+    font-size: 12px;
+    line-height: 1.5;
+    color: #e0e0e0;
+}
+
+body.tangerine-theme .ma-notice strong { color: #4ade80; }

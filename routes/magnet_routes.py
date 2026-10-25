@@ -1171,7 +1171,7 @@ def _build_assignment(video_files, tmdb_id, media_type, title, year, version, to
     return target_items, episode_order
 
 
-def _store_assignment(target_items, episode_order, requested_order, imdb_id, video_files, context):
+def _store_assignment(target_items, episode_order, requested_order, imdb_id, video_files, context, notice=''):
     """Keep a built assignment for show_manual_assignment; returns its token."""
     import uuid as _uuid
     token = str(_uuid.uuid4())
@@ -1190,6 +1190,8 @@ def _store_assignment(target_items, episode_order, requested_order, imdb_id, vid
             # The order the items are numbered in, and what rematch needs to rebuild them
             'current_episode_order': episode_order or '',
             'rematch_context': context,
+            # Shown at the top: what the previous screen's confirm said (fill the gaps)
+            'notice': notice,
         }
     return token
 
@@ -1557,7 +1559,8 @@ def fill_gaps():
         logging.error(f"Preparing a gap-fill assignment failed: {e}", exc_info=True)
         return jsonify({'success': False, 'error': 'An internal server error occurred. Please check logs.'}), 500
     imdb_id = next((i.get('imdb_id') for i in target_items if i.get('imdb_id')), None)
-    token = _store_assignment(target_items, episode_order, requested_order, imdb_id, video_files, context)
+    notice = str(data.get('notice') or '')[:1000]
+    token = _store_assignment(target_items, episode_order, requested_order, imdb_id, video_files, context, notice)
     return jsonify({'success': True, 'redirect_url': url_for('magnet.show_manual_assignment', token=token)})
 
 @magnet_bp.route('/confirm_manual_assignment', methods=['POST'])
@@ -1690,7 +1693,10 @@ def confirm_manual_assignment():
         # torrent ID (which the checking queue would then report as missing/404 and reset
         # to Wanted).
         final_torrent_id = initial_torrent_id
-        if magnet_link:
+        # Nothing picked (all ignored, or only "add the rest to Wanted"): no item will
+        # point at the torrent, so don't add it for real and leave an orphan behind
+        any_file_picked = any(v and v[0] and v[0] != '--ignore--' for v in assignments.values())
+        if magnet_link and any_file_picked:
             try:
                 logging.info(f"Adding permanent magnet torrent to debrid service for manual assignment: {magnet_link[:60]}...")
                 debrid_provider = get_debrid_provider()
@@ -1989,7 +1995,10 @@ def confirm_manual_assignment():
             return jsonify({'success': True, 'message': message, 'added_count': added_items_count,
                             'failed_count': failed_items_count, 'wanted_count': wanted_count})
         elif wanted_count:
-            return jsonify({'success': True, 'message': f'{wanted_count} item(s) with no file added to Wanted.',
+            message = f'{wanted_count} item(s) with no file added to Wanted.'
+            if failed_items_count > 0:
+                message += f' Failed to assign {failed_items_count} item(s).'
+            return jsonify({'success': True, 'message': message,
                             'added_count': 0, 'failed_count': failed_items_count, 'wanted_count': wanted_count})
         elif failed_items_count > 0:
             return jsonify({'success': False, 'error': f'Failed to assign {failed_items_count} item(s). Check logs.', 'added_count': 0, 'failed_count': failed_items_count}), 500

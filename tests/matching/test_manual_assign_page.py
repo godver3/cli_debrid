@@ -231,7 +231,8 @@ class GapFillTests(unittest.TestCase):
                 mock.patch.object(self.mr, '_build_assignment', return_value=(built, 'default')) as build:
             response = self.client.post('/magnet/fill_gaps', json={
                 'magnet_link': 'magnet:?xt=urn:btih:b', 'episodes': ['1:2', 'junk'],
-                'context': self.CONTEXT, 'episode_order': 'default'})
+                'context': self.CONTEXT, 'episode_order': 'default',
+                'notice': 'Successfully assigned 997 item(s). Episode order saved on the show.'})
         data = response.get_json()
         self.assertTrue(data['success'], data)
         args = build.call_args.args
@@ -240,6 +241,8 @@ class GapFillTests(unittest.TestCase):
         stored = self.mr._assignment_store.pop(data['redirect_url'].split('token=')[1])
         self.assertEqual((stored['torrent_id'], stored['torrent_filename']), ('T2', 'Other Pack'))
         self.assertEqual(stored['magnet_link'], 'magnet:?xt=urn:btih:b')
+        # The first screen's confirm message is shown on this one
+        self.assertIn('Episode order saved', stored['notice'])
 
     def test_fill_gaps_rejects_bad_requests(self):
         for body in [{'magnet_link': 'http://x/y.torrent', 'episodes': ['1:2'], 'context': self.CONTEXT},
@@ -274,6 +277,33 @@ class GapFillTests(unittest.TestCase):
         self.assertTrue(data['success'], data)
         self.assertEqual(data['wanted_count'], 1)
         wanted.assert_called_once_with(['ep_1_s01e01'], '1080p')
+
+    def test_nothing_picked_adds_no_torrent(self):
+        provider = mock.Mock()
+        with mock.patch.object(self.mr, 'get_debrid_provider', return_value=provider), \
+                mock.patch.object(self.mr, '_add_empty_to_wanted', return_value=2):
+            response = self.client.post('/magnet/confirm_manual_assignment', data={
+                'magnet_link': 'magnet:?dn=pack', 'torrent_filename': 'Pack', 'torrent_id': 'T0',
+                'version': '1080p', 'empty_to_wanted': '1', 'ep_1_s01e01': '', 'ep_1_s01e02': '--ignore--'})
+        self.assertTrue(response.get_json()['success'])
+        provider.add_torrent.assert_not_called()  # nothing points at it: no orphan torrent
+
+    def test_torrent_file_upload_confirms_without_re_adding(self):
+        # The page used to post the string "None" as the magnet for .torrent uploads,
+        # so confirm tried to add a magnet called "None" and failed
+        provider = mock.Mock()
+        added = []
+        with mock.patch.object(self.mr, 'get_debrid_provider', return_value=provider), \
+                mock.patch('metadata.metadata.get_metadata',
+                           return_value={'imdb_id': 'tt0000001', 'tmdb_id': '1', 'title': 'Movie', 'genres': []}), \
+                mock.patch.object(self.mr, 'add_media_item', side_effect=lambda item, **kw: added.append(item) or 7), \
+                mock.patch.object(self.mr, 'update_torrent_tracking'):
+            response = self.client.post('/magnet/confirm_manual_assignment', data={
+                'magnet_link': '', 'torrent_filename': 'Movie.2020', 'torrent_id': 'TFILE', 'version': '1080p',
+                'is_torrent_file': '1', 'movie_1': 'Movie.2020.mkv'})
+        self.assertTrue(response.get_json()['success'], response.get_json())
+        provider.add_torrent.assert_not_called()
+        self.assertEqual((added[0]['filled_by_torrent_id'], added[0]['filled_by_magnet']), ('TFILE', None))
 
     def test_confirm_without_the_option_leaves_empty_items_alone(self):
         provider = mock.Mock()

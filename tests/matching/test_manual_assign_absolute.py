@@ -64,6 +64,7 @@ class ManualAssignAbsoluteTests(unittest.TestCase):
                                             (2, 12): 'Show - 24.mkv'})
         self.assertFalse(files[3]['used'])
         self.assertEqual(items[1]['absolute_number'], 17)
+        self.assertEqual({i['match_reason'] for i in items}, {'absolute'})
 
     def test_specials_never_get_an_absolute_number(self):
         seasons = _seasons({0: 3, 1: 12})
@@ -178,6 +179,8 @@ class ManualAssignAbsoluteTests(unittest.TestCase):
         files = [_file('Show.S02E01.mkv', seasons=[2], episodes=[1]), _file('Show.S02E05.mkv', seasons=[2], episodes=[5])]
         self.assertEqual(self.m.match_absolute_files(items, files, absolute_order, aired), 2)
         self.assertEqual(_assigned(items), {(1, 6): 'Show.S02E01.mkv', (1, 10): 'Show.S02E05.mkv'})
+        # Placed by the S/E in its name (through the order mapping), not by an absolute number
+        self.assertEqual({i['match_reason'] for i in items}, {'se'})
 
     def test_multi_episode_file_goes_to_each_episode(self):
         seasons = _seasons({1: 12, 2: 12})

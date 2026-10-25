@@ -100,6 +100,105 @@ function fileFits(file, item) {
         || (item.absolute != null && episodes.includes(item.absolute));
 }
 
+// ── Suggestions for items with no file ──
+// Unused files that could be an item's, by what's in the name: its S/E, a bare
+// number equal to the episode or absolute number, words of the episode title,
+// or the place between the files of the episodes either side (packs that are
+// numbered one off).
+const NOT_EPISODE_NUMBERS = new Set([264, 265, 480, 576, 720, 1080, 2160]);
+const STOP_WORDS = new Set(['the', 'and', 'for', 'with', 'from', 'that', 'this', 'part', 'episode']);
+const sortedFiles = [...files].sort((a, b) => collator.compare(a.path, b.path));
+const sortIndex = new Map(sortedFiles.map((f, i) => [f.filename, i]));
+const fileWords = new Map(files.map(f => {
+    const name = f.filename.replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+    const numbers = new Set((name.match(/\b\d{1,4}\b/g) || []).map(Number)
+        .filter(n => !NOT_EPISODE_NUMBERS.has(n) && !(n >= 1900 && n <= 2099)));
+    return [f.filename, { words: new Set(name.split(' ').filter(Boolean)), numbers }];
+}));
+// Lookups so each row only scores the few files that could be its own
+const filesByNumber = new Map();  // episode / absolute number (parsed or bare) -> files
+const filesByWord = new Map();
+const addTo = (map, k, file) => { if (!map.has(k)) map.set(k, new Set()); map.get(k).add(file); };
+for (const file of files) {
+    if (file.skip_reason) continue;
+    const { words, numbers } = fileWords.get(file.filename);
+    [...numbers, ...(file.episodes || []), ...(file.absolutes || [])].forEach(n => addTo(filesByNumber, n, file));
+    words.forEach(w => addTo(filesByWord, w, file));
+}
+// A word in half the pack (the release group, "1080p") says nothing about an episode
+for (const [word, set] of filesByWord) if (set.size > Math.max(3, files.length / 2)) filesByWord.delete(word);
+const showWords = new Set();
+items.forEach(i => String(i.title || '').toLowerCase().split(/[^a-z0-9]+/).forEach(w => w && showWords.add(w)));
+
+function titleWords(item) {
+    const title = String(item.episode_title || '').toLowerCase();
+    if (!title || title === `episode ${item.episode}`) return [];
+    return [...new Set(title.split(/[^a-z0-9]+/))].filter(w => w.length >= 3 && !STOP_WORDS.has(w) && !showWords.has(w));
+}
+
+function neighbourFile(key, step) {
+    const group = groups.find(g => g.keys.includes(key));
+    const neighbour = group.keys[group.keys.indexOf(key) + step];
+    const value = neighbour && values.get(neighbour);
+    return value && value !== IGNORE && sortIndex.has(value) ? { key: neighbour, index: sortIndex.get(value) } : null;
+}
+
+function suggestionsFor(key, limit = 5) {
+    const item = itemsByKey.get(key);
+    if (item.type !== 'episode') return [];
+    const words = titleWords(item);
+    const before = neighbourFile(key, -1);
+    const after = neighbourFile(key, 1);
+    const candidates = new Set();
+    for (const n of [item.episode, item.absolute]) (filesByNumber.get(n) || []).forEach(f => candidates.add(f));
+    words.forEach(w => (filesByWord.get(w) || []).forEach(f => candidates.add(f)));
+    if (before || after) {
+        const from = before ? before.index + 1 : after.index - 1;
+        const to = after ? after.index - 1 : before.index + 1;
+        for (let i = Math.max(0, from); i <= Math.min(to, from + 4, sortedFiles.length - 1); i += 1) candidates.add(sortedFiles[i]);
+    }
+    const found = [];
+    for (const file of candidates) {
+        if (file.skip_reason || usage.has(file.filename)) continue;
+        const { words: nameWords, numbers } = fileWords.get(file.filename);
+        const why = [];
+        let score = 0;
+        if (fileFits(file, item)) {
+            score += 100;
+            why.push(`name says ${file.label || itemCode(item)}`);
+        } else {
+            const seasons = file.seasons || [];
+            if (item.absolute != null && item.absolute !== item.episode && numbers.has(item.absolute)) {
+                score += 50;
+                why.push(`has ${item.absolute} in its name`);
+            } else if (numbers.has(item.episode) && (!seasons.length || seasons.includes(item.season))) {
+                score += 40;
+                why.push(`has ${item.episode} in its name`);
+            }
+        }
+        if (words.length) {
+            const hits = words.filter(w => nameWords.has(w)).length;
+            if (hits && hits / words.length >= 0.6 && (words.length > 1 || words[0].length >= 5)) {
+                score += Math.round(60 * hits / words.length);
+                why.push(`title ${Math.round(100 * hits / words.length)}%`);
+            }
+        }
+        const index = sortIndex.get(file.filename);
+        if (before && after && index > before.index && index < after.index) {
+            score += 30;
+            why.push(`between the ${itemCode(itemsByKey.get(before.key))} and ${itemCode(itemsByKey.get(after.key))} files`);
+        } else if (before && index === before.index + 1) {
+            score += 20;
+            why.push(`next after the ${itemCode(itemsByKey.get(before.key))} file`);
+        } else if (after && index === after.index - 1) {
+            score += 20;
+            why.push(`just before the ${itemCode(itemsByKey.get(after.key))} file`);
+        }
+        if (score) found.push({ file, score, why: why.join(', ') });
+    }
+    return found.sort((a, b) => b.score - a.score || collator.compare(a.file.path, b.file.path)).slice(0, limit);
+}
+
 function isDuplicate(filename) {
     const keys = usage.get(filename);
     const file = filesByName.get(filename);
@@ -204,7 +303,17 @@ function buildRows() {
             const input = el('input');
             input.type = 'hidden';
             input.name = key;
-            fileCell.append(pick, input);
+            const suggest = el('button', 'ma-suggest');
+            suggest.type = 'button';
+            suggest.hidden = true;
+            suggest.addEventListener('click', event => {
+                event.stopPropagation();
+                if (suggest.dataset.file) {
+                    change([[key, suggest.dataset.file]]);
+                    flashRow(key);
+                }
+            });
+            fileCell.append(pick, suggest, input);
 
             const menuBtn = el('button', 'ma-row-menu', '⋯');
             menuBtn.type = 'button';
@@ -220,7 +329,7 @@ function buildRows() {
                 if (armedFile && !event.target.closest('.ma-row-menu')) assignArmed(key);
             });
             body.append(row);
-            rowEls.set(key, { row, reasonEl, pickName, pickMeta, input });
+            rowEls.set(key, { row, reasonEl, pickName, pickMeta, input, suggest });
         }
         listEl.append(section);
     }
@@ -265,15 +374,15 @@ function refresh() {
         const { section, body, countEl } = groupEls.get(group.id);
         let filled = 0;
         let shown = 0;
+        const isCollapsed = collapsed.has(group.id) && filter === 'all';
         for (const key of group.keys) {
             const state = states.get(key);
             if (state === 'set' || state === 'duplicate') filled += 1;
             const visible = rowVisible(key, state);
             if (visible) shown += 1;
-            drawRow(key, state, visible);
+            drawRow(key, state, visible, visible && !isCollapsed);
         }
         section.hidden = shown === 0;
-        const isCollapsed = collapsed.has(group.id) && filter === 'all';
         body.hidden = isCollapsed;
         if (countEl) {
             countEl.textContent = `${filled} / ${group.keys.length}`;
@@ -297,21 +406,35 @@ function refresh() {
     document.getElementById('ma-ignore-empty').disabled = !anyEmpty;
 }
 
-function drawRow(key, state, visible) {
-    const { row, reasonEl, pickName, pickMeta, input } = rowEls.get(key);
+function drawRow(key, state, visible, expanded) {
+    const { row, reasonEl, pickName, pickMeta, input, suggest } = rowEls.get(key);
     const value = values.get(key);
     row.hidden = !visible;
     row.dataset.state = state;
     row.classList.toggle('ma-armable', !!armedFile);
     input.value = value;
 
+    if (value !== '') suggest.hidden = true;
     if (value === IGNORE) {
         pickName.textContent = 'Ignored';
         pickMeta.textContent = 'This item will be skipped';
     } else if (!value) {
         pickName.textContent = 'No file';
-        pickMeta.textContent = 'Click to choose';
+        // Rows filtered out or in a collapsed season skip this; they get it when shown
+        // A file that only sorts next to a neighbour's file is too weak a hint to offer here
+        const [top, runnerUp] = expanded ? suggestionsFor(key, 2).filter(s => s.score >= 30) : [];
+        suggest.hidden = !top;
+        pickMeta.textContent = top ? 'Click to choose, or use the suggestion below' : 'Click to choose';
+        if (top) {
+            suggest.dataset.file = top.file.filename;
+            suggest.replaceChildren(el('span', 'ma-suggest-label', 'Suggested'),
+                el('span', 'ma-suggest-name', top.file.filename),
+                el('span', 'ma-suggest-why', runnerUp && runnerUp.score === top.score
+                    ? `${top.why} · another file fits as well, click above to compare` : top.why));
+            suggest.title = `Use ${top.file.path}`;
+        }
     } else {
+        suggest.hidden = true;
         const file = filesByName.get(value);
         pickName.textContent = value;
         const meta = [file.label, formatSize(file.bytes)].filter(Boolean);
@@ -495,7 +618,10 @@ function drawPicker() {
         .filter(f => !query || f.path.toLowerCase().includes(query));
     const fits = sorted.filter(f => fileFits(f, item));
     const fitSet = new Set(fits);
-    const unused = sorted.filter(f => !fitSet.has(f) && !usage.has(f.filename));
+    // Unused files that could be this episode's, with why
+    const suggested = query ? [] : suggestionsFor(pickerKey, 8).filter(s => !fitSet.has(s.file));
+    const suggestedWhy = new Map(suggested.map(s => [s.file, s.why]));
+    const unused = sorted.filter(f => !fitSet.has(f) && !suggestedWhy.has(f) && !usage.has(f.filename));
     const used = sorted.filter(f => !fitSet.has(f) && usage.has(f.filename));
 
     pickerOptions = [];
@@ -512,7 +638,7 @@ function drawPicker() {
         pickerOptions.push({ value, el: option });
     };
     const fileMeta = file => {
-        const parts = [file.label, formatSize(file.bytes)];
+        const parts = [suggestedWhy.get(file), file.label, formatSize(file.bytes)];
         const others = (usage.get(file.filename) || []).filter(k => k !== pickerKey);
         if (others.length) parts.push(`used by ${others.map(k => itemCode(itemsByKey.get(k))).join(', ')}`);
         if (file.skip_reason) parts.push(`skipped: ${file.skip_reason}`);
@@ -523,7 +649,8 @@ function drawPicker() {
         addOption(IGNORE, 'Ignore this item', 'Skip it on purpose', 'ma-option-plain');
     }
     let rendered = 0;
-    for (const [title, list] of [['Matches this episode', fits], ['Unused', unused], ['Used elsewhere', used]]) {
+    for (const [title, list] of [['Matches this episode', fits], ['Suggested', suggested.map(s => s.file)],
+                                 ['Unused', unused], ['Used elsewhere', used]]) {
         if (!list.length || rendered >= PICKER_LIMIT) continue;
         pickerList.append(el('div', 'ma-option-group', title));
         for (const file of list) {
@@ -532,7 +659,7 @@ function drawPicker() {
             rendered += 1;
         }
     }
-    const total = fits.length + unused.length + used.length;
+    const total = fits.length + suggested.length + unused.length + used.length;
     if (total > rendered) pickerList.append(el('div', 'ma-option-note', `${total - rendered} more, type to narrow down`));
     if (!total && query) pickerList.append(el('div', 'ma-option-note', 'No file matches'));
 
@@ -699,9 +826,10 @@ window.addEventListener('resize', () => { closePicker(); closeMenu(); });
 // ── Jump to the next / previous episode with no file ──
 function flashRow(key) {
     const { row } = rowEls.get(key);
+    // Restart the animation on the next frame: reading offsetWidth here would force
+    // a layout of the whole list right after a refresh
     row.classList.remove('ma-flash');
-    void row.offsetWidth;
-    row.classList.add('ma-flash');
+    requestAnimationFrame(() => requestAnimationFrame(() => row.classList.add('ma-flash')));
 }
 
 function revealRow(key) {
@@ -773,6 +901,18 @@ function drawMissing(states) {
 // ── Fill the gaps from another magnet ──
 // Confirms what's picked here, then opens a new assignment screen for just the
 // episodes still without a file, matched against the other magnet's files.
+// Set once this page's picks are confirmed by the fill-the-gaps flow: a retry
+// after the second magnet fails must not assign them a second time
+let pageConfirmed = false;
+let confirmedMessage = '';  // what that confirm said, shown on the next screen
+
+function lockConfirmedPage() {
+    pageConfirmed = true;
+    submitButton.disabled = true;
+    submitButton.textContent = 'Assigned';
+    document.getElementById('ma-order-select').disabled = true;
+}
+
 async function fillGaps() {
     const magnet = document.getElementById('ma-gap-magnet').value.trim();
     if (!magnet.startsWith('magnet:')) {
@@ -780,13 +920,16 @@ async function fillGaps() {
         return;
     }
     const emptyKeys = orderedKeys.filter(k => rowState(k) === 'empty' && itemsByKey.get(k).type === 'episode');
-    const filled = orderedKeys.filter(k => ['set', 'duplicate'].includes(rowState(k))).length;
+    const filled = pageConfirmed ? 0
+        : orderedKeys.filter(k => ['set', 'duplicate'].includes(rowState(k))).length;
     const run = async () => {
         if (filled) {
             const formData = new FormData(form);
             formData.delete('empty_to_wanted');  // they're about to be filled instead
             const confirmed = await postAssignment(formData);
             if (!confirmed) return;
+            lockConfirmedPage();
+            confirmedMessage = confirmed.message || '';
         }
         Loading.show();
         try {
@@ -795,7 +938,7 @@ async function fillGaps() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
                 body: JSON.stringify({ magnet_link: magnet, episodes, context: data.context,
-                                       episode_order: data.current_order }),
+                                       episode_order: data.current_order, notice: confirmedMessage }),
             });
             const result = await response.json();
             if (response.ok && result.success) {
@@ -811,13 +954,14 @@ async function fillGaps() {
             notify('error', 'Could not use that magnet', 'A network or unexpected error occurred.');
         }
     };
+    if (!showPopup) { run(); return; }
     const noun = `episode${emptyKeys.length === 1 ? '' : 's'}`;
     showPopup({
         type: POPUP_TYPES.CONFIRM,
         title: 'Fill the gaps from another torrent?',
         message: filled
             ? `The ${filled} item${filled === 1 ? '' : 's'} with a file here are assigned first. Then the ${emptyKeys.length} ${noun} with no file are matched against the other torrent's files.`
-            : `The ${emptyKeys.length} ${noun} with no file are matched against the other torrent's files.`,
+            : `${pageConfirmed ? 'The files here are already assigned. ' : ''}The ${emptyKeys.length} ${noun} with no file are matched against the other torrent's files.`,
         confirmText: 'Continue',
         onConfirm: run,
     });
@@ -952,6 +1096,7 @@ async function submitAssignment() {
 
 form.addEventListener('submit', event => {
     event.preventDefault();
+    if (pageConfirmed) return;
     refresh();
     const empty = orderedKeys.filter(k => rowState(k) === 'empty').length;
     const shared = [...usage.keys()].filter(isDuplicate).length;
