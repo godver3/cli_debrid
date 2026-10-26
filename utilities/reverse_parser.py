@@ -4,7 +4,6 @@ import logging
 import json
 
 # Define regex metacharacters for detection at module level
-REGEX_METACHARACTERS_FOR_DETECTION = r'.*?+^$()[]{}|\\'
 
 def get_version_settings() -> dict:
     """
@@ -28,60 +27,6 @@ def get_version_order() -> list:
     """
     return get_setting('Reverse Parser', 'version_order', [])
 
-def parse_term(term, filename):
-    """
-    Parses a single term against the filename.
-    Supports AND, OR logical operations and regex patterns.
-    
-    Args:
-        term (str): The term to parse. Can be a simple string, or AND/OR expressions.
-        filename (str): The filename to parse against.
-    
-    Returns:
-        bool: True if the term condition is satisfied, False otherwise.
-    """
-    term = term.strip()
-    
-    # Handle AND/OR expressions
-    if term.startswith('AND(') and term.endswith(')'):
-        sub_terms = split_terms(term[4:-1])
-        result = all(evaluate_sub_term(sub_term, filename) for sub_term in sub_terms)
-        return result
-    elif term.startswith('OR(') and term.endswith(')'):
-        sub_terms = split_terms(term[3:-1])
-        result = any(evaluate_sub_term(sub_term, filename) for sub_term in sub_terms)
-        return result
-    else:
-        # Single term
-        return evaluate_sub_term(term, filename)
-
-def evaluate_sub_term(sub_term, filename):
-    """
-    Evaluates a sub-term against the filename.
-    
-    Args:
-        sub_term (str): The sub-term to evaluate.
-        filename (str): The filename to parse against.
-    
-    Returns:
-        bool: True if the sub-term condition is satisfied, False otherwise.
-    """
-    sub_term = sub_term.strip()
-    
-    # Check if the term is a regex pattern
-    if is_regex(sub_term):
-        pattern = extract_regex(sub_term)
-        try:
-            match = re.search(pattern, filename, re.IGNORECASE)
-            result = bool(match)
-            return result
-        except re.error as e:
-            logging.error(f"Invalid regex pattern '{pattern}': {e}")
-            return False
-    else:
-        # Simple substring match
-        result = sub_term.lower() in filename.lower()
-        return result
 
 def is_regex(term: str) -> bool:
     """
@@ -95,59 +40,6 @@ def is_regex(term: str) -> bool:
     """
     return term.startswith('/') and term.endswith('/')
 
-def extract_regex(term: str) -> str:
-    """
-    Extracts the regex pattern from a term.
-    
-    Args:
-        term (str): The term containing the regex pattern.
-    
-    Returns:
-        str: The extracted regex pattern.
-    """
-    return term[1:-1]
-
-def split_terms(terms_str):
-    """
-    Splits a string of terms separated by commas, respecting parentheses and regex delimiters.
-    
-    Args:
-        terms_str (str): The string containing multiple terms separated by commas.
-    
-    Returns:
-        list: A list of individual terms.
-    """
-    terms = []
-    current_term = ''
-    in_regex = False
-    escape = False
-    
-    for char in terms_str:
-        if char == '/' and not escape:
-            in_regex = not in_regex
-        if char == ',' and not in_regex:
-            terms.append(current_term.strip())
-            current_term = ''
-            continue
-        if char == '\\' and not escape:
-            escape = True
-        else:
-            escape = False
-        current_term += char
-    if current_term:
-        terms.append(current_term.strip())
-    return terms
-
-def _is_likely_regex_pattern(pattern_str: str) -> bool:
-    """
-    Heuristically determines if a string is likely intended as a regex pattern
-    by checking for common regex metacharacters.
-    """
-    if not pattern_str:
-        return False
-    # If any of the common regex metacharacters are present, assume it's a regex.
-    # This aligns with how other parts of the application (e.g., smart_search) identify regex.
-    return any(char in pattern_str for char in REGEX_METACHARACTERS_FOR_DETECTION)
 
 def _compare_resolutions_from_ptt(ptt_resolution: str | None, version_max_res_str: str, version_wanted_op: str) -> bool:
     """Compares PTT-parsed resolution with version's resolution criteria."""
@@ -180,59 +72,6 @@ def _compare_resolutions_from_ptt(ptt_resolution: str | None, version_max_res_st
         return ptt_res_val >= version_max_res_val
     return False
 
-def _term_matches(term: str, text_source: str | list | None) -> bool:
-    """
-    Checks if a term matches text.
-    If text_source is a list, checks against each item, including items in nested lists.
-    Case-insensitive for strings. Regex pattern matching is also case-insensitive.
-    Detects regex based on content (presence of metacharacters), not slash delimiters.
-    """
-    if text_source is None:
-        return False # No source to match against
-
-    term_stripped = term.strip()
-    if not term_stripped: # An empty term cannot match
-        return False
-
-    # Build a flat list of strings to check against
-    sources_to_evaluate = []
-    if isinstance(text_source, str):
-        sources_to_evaluate.append(text_source)
-    elif isinstance(text_source, list):
-        for item in text_source:
-            if item is None: # Skip None items in the list
-                continue
-            if isinstance(item, str):
-                sources_to_evaluate.append(item)
-            elif isinstance(item, list): # Handles nested lists
-                for sub_item in item:
-                    if sub_item is not None:
-                        sources_to_evaluate.append(str(sub_item))
-            else: # For other types in the list, convert to string
-                sources_to_evaluate.append(str(item))
-    
-    if not sources_to_evaluate: # If after processing, there's nothing to check against
-        return False
-
-    # Determine if the term should be treated as a regex
-    is_identified_as_regex = _is_likely_regex_pattern(term_stripped)
-    compiled_pattern = None
-
-    if is_identified_as_regex:
-        try:
-            compiled_pattern = re.compile(term_stripped, re.IGNORECASE)
-        except re.error as e:
-            logging.warning(f"Invalid regex pattern '{term_stripped}' in scoring: {e}. Will attempt literal string match instead.")
-            is_identified_as_regex = False # Fallback to literal match
-
-    for text in sources_to_evaluate:
-        if is_identified_as_regex and compiled_pattern:
-            if compiled_pattern.search(text):
-                return True
-        else: # Literal string match (either not identified as regex, or regex failed to compile)
-            if term_stripped.lower() in text.lower():
-                return True
-    return False
 
 # Helper function adapted from rank_results.py for use in _calculate_match_score
 def _normalize_filter_pattern_rp(pattern: str) -> str:

@@ -431,13 +431,6 @@ def _set_in_cache(key, data, ttl_hours=None):
             del _mdblist_cache[k]
 
 
-def clear_mdblist_cache():
-    """Clear all MDBList cache entries"""
-    global _mdblist_cache
-    _mdblist_cache.clear()
-    logging.info("MDBList cache cleared")
-
-
 def fetch_mdblist_top_lists():
     """
     Fetch the available top lists from MDBList
@@ -524,51 +517,6 @@ def fetch_list_items(list_key, limit=20):
     except Exception as e:
         logging.error(f"MDBList processing error for list {list_key}: {e}")
         return {'error': f'Error processing list: {str(e)}', 'items': []}
-
-
-def search_mdblist(query, limit=20):
-    """
-    Search MDBList for content
-
-    Args:
-        query: Search query string
-        limit: Maximum results to return
-
-    Returns:
-        Dict with search results
-    """
-    api_key = get_mdblist_api_key()
-    if not api_key:
-        return {'error': 'MDBList API key not configured', 'items': []}
-
-    try:
-        url = f"{MDBLIST_API_BASE}/?apikey={api_key}&s={query}&limit={limit}"
-
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-
-        data = response.json()
-
-        items = []
-        for item in data if isinstance(data, list) else data.get('results', []):
-            processed_item = {
-                'tmdb_id': item.get('tmdb_id') or item.get('id'),
-                'imdb_id': item.get('imdb_id'),
-                'title': item.get('title') or item.get('name'),
-                'year': item.get('year'),
-                'media_type': 'movie' if item.get('mediatype', 'movie') == 'movie' else 'tv',
-            }
-            if processed_item['tmdb_id']:
-                items.append(processed_item)
-
-        return {
-            'success': True,
-            'items': items[:limit]
-        }
-
-    except requests.exceptions.RequestException as e:
-        logging.error(f"MDBList search error: {e}")
-        return {'error': f'Search failed: {str(e)}', 'items': []}
 
 
 def get_mdblist_username():

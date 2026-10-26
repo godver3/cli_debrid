@@ -1,7 +1,5 @@
 from flask import Blueprint, jsonify, request, render_template, session, make_response
 from datetime import datetime, timedelta
-from operator import itemgetter
-from itertools import groupby
 import threading
 import time
 import logging
@@ -86,37 +84,6 @@ def get_cached_user_traffic():
 statistics_bp = Blueprint('statistics', __name__)
 root_bp = Blueprint('root', __name__)
 
-def get_airing_soon():
-    from database import get_db_connection
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    today = datetime.now().date()
-    tomorrow = today + timedelta(days=1)
-    
-    query = """
-    SELECT title, release_date, airtime
-    FROM media_items
-    WHERE type = 'episode' AND release_date BETWEEN ? AND ?
-    ORDER BY release_date, airtime
-    """
-    
-    cursor.execute(query, (today.isoformat(), tomorrow.isoformat()))
-    results = cursor.fetchall()
-    
-    conn.close()
-    
-    # Group by title and take the earliest air date/time for each show
-    grouped_results = []
-    for key, group in groupby(results, key=itemgetter(0)):
-        group_list = list(group)
-        grouped_results.append({
-            'title': key,
-            'air_date': group_list[0][1],
-            'air_time': group_list[0][2]
-        })
-    
-    return grouped_results
 
 @cache_for_seconds(60)  # The missing-episodes count scans every episode row
 def get_badge_counts():

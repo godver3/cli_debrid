@@ -1,4 +1,4 @@
-from flask import Flask, redirect, url_for, send_from_directory, jsonify, session
+from flask import Flask, send_from_directory, jsonify, session
 from flask_session import Session
 import time
 from queues.queue_manager import QueueManager
@@ -13,7 +13,6 @@ from flask_login import LoginManager
 from flask_sqlalchemy import SQLAlchemy
 from routes.extensions import db, app, app_start_time
 from routes.auth_routes import init_db
-from flask_login import current_user
 import sys
 
 from routes import register_blueprints, auth_bp
@@ -177,13 +176,6 @@ def zfill_filter(value, width=None):
         return ""
     return str(value).zfill(width if width is not None else 2)
 
-@app.route('/')
-def index():
-    from routes.settings_routes import is_user_system_enabled
-    if not is_user_system_enabled() or current_user.is_authenticated:
-        return redirect(url_for('root.root'))
-    else:
-        return redirect(url_for('auth.login'))
 
 @app.route('/favicon.ico')
 def favicon():

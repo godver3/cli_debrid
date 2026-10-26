@@ -51,10 +51,10 @@ from content_checkers.mdb_list import get_wanted_from_mdblist_source
 from content_checkers.content_source_detail import append_content_source_detail
 from database.not_wanted_magnets import purge_not_wanted_magnets_file
 import traceback
-from datetime import datetime, timedelta, time as dt_time, timezone # Modified import
+from datetime import datetime, time as dt_time, timezone  # Modified import
 import asyncio
 from utilities.plex_functions import run_get_collected_from_plex, run_get_recent_from_plex
-from routes.notifications import send_notifications, _send_notifications, get_enabled_notifications
+from routes.notifications import send_notifications
 import requests
 from pathlib import Path
 import pickle
@@ -381,7 +381,6 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             'task_process_plex_reported_issues': 30, # Run every 30 seconds (if enabled) - Plex has no push for reports
             'task_update_tv_show_status': 172800,       # Run every 48 hours
             # 'task_purge_not_wanted_magnets_file': 604800, # Default: 1 week (Can be added if needed)
-            # 'task_local_library_scan': 900, # Default: 15 mins (Can be added if needed)
             'task_plex_full_scan': 1800, # Run every hour (Can be adjusted)
             # NEW Load Adjustment Task
             # 'task_adjust_intervals_for_load': 120, # Run every 2 minutes
@@ -413,7 +412,6 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             'task_overlay_cleanup': 86400, # Run every 24 hours (if overlays enabled)
             'task_plex_smart_collection_posters': 86400, # Run every 24 hours (if Plex mode)
             'task_plex_movie_boxsets': 86400, # Run every 24 hours (if Plex mode)
-            # 'task_artificial_long_run': 1*60*60, # Run every 2 minutes
             'task_regulate_system_load': 30, # Check system load every 30 seconds
             'task_upgrade_hub_scan': 24 * 60 * 60, # Run every 24 hours (disabled by default)
             'task_upgrade_hub_auto_queue': 24 * 60 * 60, # Run every 24 hours (disabled by default)
@@ -611,7 +609,6 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             'task_process_standalone_plex_removals', # Enable by default
             # Enable media analysis task by default
             # 'task_analyze_media_files', # disabled by default
-            # 'task_artificial_long_run',
             'task_trim_memory',
             'task_sync_library_metadata',
             'task_repair_broken_nzbs',
@@ -2109,190 +2106,8 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             # Ensure stop is called on fatal error
             self.stop()
 
-    def invalidate_content_sources_cache(self):
-        self.content_sources = None
 
-    def task_adjust_intervals_for_load(self): # Renamed
-        """
-        Task to dynamically adjust non-critical task intervals based on queue load.
-        Intervals are increased when Scraping/Adding queues are empty,
-        and reset when they have items.
-        """
-        # Remove [Refactor Needed] log
-        # logging.debug("[Refactor Needed] adjust_task_intervals_based_on_load needs to use scheduler.modify_job/reschedule_job")
-
-        # --- START REFACTOR ---
-        if not hasattr(self, '_interval_adjustment_time'):
-            self._interval_adjustment_time = 0
-
-        current_time = time.time()
-        if current_time - self._interval_adjustment_time < 60:
-            return
-
-        self._interval_adjustment_time = current_time
-
-        # Define non-critical tasks (same logic as before)
-        slowdown_candidates = {
-            'Checking', 'Sleeping', 'Blacklisted', 'Pending Uncached', 'Upgrading',
-            'task_refresh_release_dates', 'task_purge_not_wanted_magnets_file',
-            'task_generate_airtime_report', 'task_sync_time', 'task_check_trakt_early_releases',
-            'task_reconcile_queues', 'task_refresh_download_stats',
-            'task_update_show_ids', 'task_update_show_titles', 'task_update_movie_ids',
-            'task_update_movie_titles', 'task_sync_episode_metadata', 'task_cleanup_title_year_suffixes', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
-            'task_check_database_health', 'task_run_library_maintenance',
-            'task_verify_symlinked_files', 'task_update_statistics_summary',
-            'task_precompute_airing_shows',
-            'task_update_tv_show_status'
-        }
-        # Add content source tasks with interval > 900s (15 min) to dynamic set
-        # This needs to happen *after* content sources are processed, let's refine this later if needed
-        # For now, initialize with the base set. We can add sources dynamically later.
-
-        idle_increase_seconds = 300
-        # DELAY_THRESHOLD = 3 # Remove delay threshold
-
-        # --- Determine idle state based on Scraping/Adding queues ---
-        system_is_idle = False
-        # Initialize queue status variables to prevent UnboundLocalError if queue check fails
-        scraping_empty = True 
-        adding_empty = True
-        checking_empty = True
-        if hasattr(self, 'queue_manager') and self.queue_manager:
-            scraping_queue = self.queue_manager.queues.get('Scraping')
-            adding_queue = self.queue_manager.queues.get('Adding')
-            checking_queue = self.queue_manager.queues.get('Checking') # Get the Checking queue
-            if scraping_queue and adding_queue and checking_queue: # Ensure all queues are found
-                try:
-                    # Use get_contents with limit 1 for efficiency
-                    scraping_empty = len(scraping_queue.get_contents()) == 0
-                    adding_empty = len(adding_queue.get_contents()) == 0
-                    checking_empty = len(checking_queue.get_contents()) == 0 # Check if Checking queue is empty
-                    system_is_idle = scraping_empty and adding_empty and checking_empty # Update idle condition
-                except Exception as e:
-                    logging.error(f"Error checking Scraping/Adding/Checking queue state for idle check: {e}")
-                    # Default to not idle on error
-                    system_is_idle = False
-            else:
-                logging.warning("Scraping, Adding, or Checking queue not found for idle check.")
-                system_is_idle = False # Assume not idle if queues are missing
-        else:
-             logging.warning("Queue manager not available for idle check.")
-             system_is_idle = False # Assume not idle if manager is missing
-
-        # --- End Determine idle state ---
-
-        with self.scheduler_lock:
-            if system_is_idle:
-                if not hasattr(self, '_last_idle_adjustment_log') or current_time - self._last_idle_adjustment_log >= 600:
-                     # Updated log message
-                     logging.info(f"System idle (Scraping, Adding, and Checking queues empty) - increasing non-critical task intervals by {idle_increase_seconds}s.")
-                     self._last_idle_adjustment_log = current_time
-
-                for task_id in slowdown_candidates:
-                     job = self.scheduler.get_job(task_id)
-                     original_interval = self.original_task_intervals.get(task_id)
-                     if job and original_interval:
-                         current_job_interval = job.trigger.interval.total_seconds()
-                         new_interval = original_interval + idle_increase_seconds
-                         if new_interval > current_job_interval: # Only modify if increasing
-                             try:
-                                 self.scheduler.modify_job(task_id, trigger=IntervalTrigger(seconds=new_interval))
-                                 logging.debug(f"Increased interval for '{task_id}' to {new_interval}s")
-                             except Exception as e:
-                                 logging.error(f"Error modifying job '{task_id}' interval to {new_interval}s: {e}")
-
-            else: # System is active
-                 active_reason_parts = [] # Renamed for clarity
-                 # Update active reason based on new check
-                 # This logic seems to check specific queues if not idle, let's ensure it's correct
-                 if not scraping_empty: active_reason_parts.append("Scraping queue has items")
-                 if not adding_empty: active_reason_parts.append("Adding queue has items")
-                 if not checking_empty: active_reason_parts.append("Checking queue has items")
-                 
-                 final_active_reason_str = "; ".join(active_reason_parts) if active_reason_parts else "One or more core queues have items"
-
-
-                 log_now = False 
-                 if not hasattr(self, '_last_active_state_log'):
-                      self._last_active_state_log = 0
-                      # Ensure _was_idle_last_check is initialized if it's the first run or after a restart
-                      if not hasattr(self, '_was_idle_last_check'):
-                          self._was_idle_last_check = True # Assume was idle to trigger initial active log if system starts active
-
-                 if not self._was_idle_last_check: 
-                      if current_time - self._last_active_state_log >= 600:
-                           log_now = True
-                 else: 
-                      log_now = True
-
-
-                 if log_now:
-                      logging.info(f"System active ({final_active_reason_str}) - ensuring default task intervals.")
-                      self._last_active_state_log = current_time
-
-                 needs_reset = False
-                 tasks_to_reset = []
-                 for task_id in slowdown_candidates:
-                      job = self.scheduler.get_job(task_id)
-                      base_interval = self.task_intervals.get(task_id)
-                      if job and base_interval:
-                           current_job_interval = job.trigger.interval.total_seconds()
-                           if current_job_interval != base_interval:
-                                needs_reset = True
-                                tasks_to_reset.append(task_id)
-
-                 if needs_reset:
-                      logging.info(f"Resetting intervals for {len(tasks_to_reset)} tasks to default values.")
-                      for task_id in tasks_to_reset:
-                           base_interval = self.task_intervals.get(task_id)
-                           if base_interval:
-                                try:
-                                    self.scheduler.modify_job(task_id, trigger=IntervalTrigger(seconds=base_interval))
-                                    logging.debug(f"Reset interval for '{task_id}' to {base_interval}s")
-                                    if task_id == "Checking":
-                                        job_check = self.scheduler.get_job(task_id) # Re-fetch job
-                                        if job_check:
-                                            live_interval = job_check.trigger.interval.total_seconds()
-                                            logging.info(f"[DEBUG] After reset: self.task_intervals['Checking']={self.task_intervals.get('Checking')}, scheduler job interval={live_interval}")
-                                except Exception as e:
-                                    logging.error(f"Error resetting job '{task_id}' interval to {base_interval}s: {e}")
-            
-            # Conditional block for forcing next_run_time on state change:
-            if not hasattr(self, '_was_idle_last_check'): # Initialize if it doesn't exist (e.g. first run)
-                self._was_idle_last_check = not system_is_idle # Set to opposite of current to ensure first run acts as a change if needed by logging
-
-            if system_is_idle != self._was_idle_last_check:
-                logging.info(f"System idle state changed (was_idle: {self._was_idle_last_check}, is_idle: {system_is_idle}). Forcing next run time for slowdown_candidates.")
-                for task_id in slowdown_candidates:
-                    job = self.scheduler.get_job(task_id)
-                    base_interval = self.task_intervals.get(task_id) # Uses current configured interval
-                    if job and base_interval:
-                        try:
-                            next_run_utc = datetime.now(self.scheduler.timezone) + timedelta(seconds=base_interval)
-                            job.modify(next_run_time=next_run_utc)
-                            # Convert to local time for logging
-                            from metadata.metadata import _get_local_timezone # Added import
-                            local_tz = _get_local_timezone()
-                            next_run_local = next_run_utc.astimezone(local_tz)
-                            logging.info(f"[DEBUG] Forced next run time for '{task_id}' to {next_run_local} (interval {base_interval}s) due to state change.")
-                        except Exception as e:
-                            logging.error(f"Error forcing next run time for '{task_id}' due to state change: {e}")
-            # --- END NEW BLOCK / MODIFIED BLOCK ---
-
-        self._was_idle_last_check = system_is_idle
          # --- END REFACTOR ---
-
-
-    def check_task_health(self):
-        """
-        Check task health. This check is currently disabled as APScheduler's
-        misfire handling is preferred over manual delay detection based on
-        next_run_time.
-        """
-        # --- START REFACTOR (Disabled) ---
-        logging.info("Task health check is disabled. Returning 0 delayed tasks.")
-        return 0 # Return 0, indicating no delayed tasks detected by this method
-        # --- END REFACTOR (Disabled) ---
 
 
     def update_heartbeat(self):
@@ -2352,78 +2167,6 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
                 # Mark I/O as slow if we get errors
                 self._heartbeat_io_slow = True
 
-    def check_heartbeat(self):
-        """Check heartbeat using memory cache with fallback to file."""
-        import os
-        
-        current_time = int(time.time())
-        
-        # Initialize in-memory heartbeat tracking
-        if not hasattr(self, '_last_heartbeat_time'):
-            self._last_heartbeat_time = 0
-            self._last_heartbeat_file_write = 0
-        
-        # If in-memory heartbeat is recent enough, use it
-        if self._last_heartbeat_time > 0:
-            time_diff = current_time - self._last_heartbeat_time
-            
-            # If memory indicates a stale heartbeat (over 5 minutes)
-            if time_diff > 300:
-                logging.warning(f"Stale heartbeat detected in memory - {time_diff} seconds since last update")
-                return False
-                
-            # If the memory heartbeat is recent, no need to check file
-            return True
-                
-        # If no memory heartbeat or it's stale, check file as fallback
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        heartbeat_file = os.path.join(db_content_dir, 'program_heartbeat')
-        
-        # Ensure directory exists
-        try:
-            os.makedirs(os.path.dirname(heartbeat_file), exist_ok=True)
-        except (IOError, OSError) as e:
-            logging.error(f"Failed to create heartbeat directory: {e}")
-            return False
-        
-        if not os.path.exists(heartbeat_file):
-            logging.warning("Heartbeat file does not exist - creating new one")
-            self.update_heartbeat()
-            return True
-
-        try:
-            with open(heartbeat_file, 'r') as f:
-                content = f.read().strip()
-                if not content:
-                    logging.warning("Heartbeat file exists but is empty - updating it")
-                    self.update_heartbeat()
-                    return True
-                    
-                try:
-                    last_heartbeat = int(content)
-                except ValueError:
-                    logging.error(f"Invalid heartbeat value in file: '{content}' - updating it")
-                    self.update_heartbeat()
-                    return True
-                    
-                time_diff = current_time - last_heartbeat
-                
-                # Update in-memory cache from file
-                self._last_heartbeat_time = last_heartbeat
-                
-                # If more than 5 minutes have passed since last heartbeat
-                if time_diff > 300:
-                    logging.warning(f"Stale heartbeat detected in file - {time_diff} seconds since last update")
-                    return False
-                
-                return True
-        except (IOError, OSError) as e:
-            logging.error(f"Error reading heartbeat file: {e}")
-            return False
-        except Exception as e:
-            logging.error(f"Unexpected error checking heartbeat: {e}")
-            return False
-
 
     # Track last health check duration to implement skip-if-slow guard
     _nzb_health_last_duration: float = 0.0
@@ -2435,7 +2178,6 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
     _nzb_folder_wait_counts: dict = {}   # job_id → consecutive ticks where folder not found
     _NZB_FOLDER_WAIT_MAX = 10            # after this many ticks (~100s) treat as broken
     _nzb_health_triggered: dict = {}     # entry_name → tick count since trigger (0 = not yet triggered)
-    _NZB_HEALTH_MAX_POLL_TICKS = 6       # give up polling after ~60s (6 ticks × 10s)
     _nzb_confirmed_complete: dict = {}   # job_id → entry_name for jobs confirmed complete+folder found
     _nzb_ghost_repeat_counts: dict = {}  # item_id → consecutive ghost-job cycles for this item
     _NZB_GHOST_BLACKLIST_THRESHOLD = 3   # blacklist instead of retrying after this many ghost repeats
@@ -2486,130 +2228,6 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
         finally:
             self._reinitializing = False
 
-    def handle_rate_limit(self):
-        """Handle rate limit by pausing relevant jobs for a period."""
-        pause_duration = 1800 # 30 minutes
-        logging.warning(f"Rate limit exceeded. Pausing relevant Debrid-interacting jobs for {pause_duration // 60} minutes.")
-
-        # --- Send Notification as Queue Pause ---
-        try:
-            enabled_notifications = get_enabled_notifications()
-            if enabled_notifications: # Only send if notifications are configured
-                # Construct the specific message for the pause reason
-                message = f"Queue paused for {pause_duration // 60} minutes due to Debrid rate limit."
-                # Call with 'queue_pause' category
-                _send_notifications(message, enabled_notifications, notification_category='queue_pause')
-        except Exception as e:
-            logging.error(f"Failed to send rate limit pause notification: {e}")
-        # --- End Send Notification ---
-
-        jobs_to_pause = set()
-        # Identify jobs that might hit Debrid APIs
-        # --- START REVERT: Replace combined task with individual ones ---
-        debrid_related_ids = {
-            'Wanted', 'Scraping', 'Adding', 'Checking', 'Upgrading',
-        # --- END REVERT ---
-            # Content sources that *might* trigger checks? Less likely direct Debrid hits.
-            # task_reconcile_queues? Unlikely.
-            # task_process_pending_rclone_paths? Depends on handle_rclone_file logic.
-        }
-        # Add content source tasks that might trigger searches
-        for task_id in self.task_intervals:
-             if task_id.startswith('task_') and task_id.endswith('_wanted'):
-                 debrid_related_ids.add(task_id)
-
-
-        with self.scheduler_lock:
-            if self.scheduler.state != 1: return # Not running
-
-            # Define tasks that should never be paused (essential monitoring tasks)
-            never_pause_tasks = {'task_check_service_connectivity', 'task_heartbeat'}
-
-            paused_count = 0
-            for job_id in debrid_related_ids:
-                 # Skip pausing essential monitoring tasks
-                 if job_id in never_pause_tasks:
-                     logging.debug(f"Rate Limit: Skipping pause for essential task: {job_id}")
-                     continue
-                     
-                 try:
-                     job = self.scheduler.get_job(job_id)
-                     if job and job.next_run_time is not None: # Only pause if running
-                          # Pause the job temporarily
-                          self.scheduler.pause_job(job_id)
-                          jobs_to_pause.add(job_id) # Track jobs we actually paused
-                          paused_count += 1
-                          logging.debug(f"Rate Limit: Paused job {job_id}")
-                     elif job and job.next_run_time is None:
-                          logging.debug(f"Rate Limit: Job {job_id} was already paused.")
-                          jobs_to_pause.add(job_id) # Also track already paused jobs to ensure they get resumed
-                 except Exception as e:
-                      logging.error(f"Rate Limit: Error pausing job {job_id}: {e}")
-
-            if paused_count > 0:
-                 logging.info(f"Rate Limit: Paused {paused_count} active jobs. Scheduling resume in {pause_duration} seconds for {len(jobs_to_pause)} total affected jobs.")
-            elif jobs_to_pause:
-                 logging.info(f"Rate Limit: No active jobs needed pausing, but scheduling resume check for {len(jobs_to_pause)} already paused jobs in {pause_duration} seconds.")
-            else:
-                 logging.info("Rate Limit: No relevant jobs found to pause or schedule for resume.")
-                 return # No need to schedule resume if nothing was affected
-
-
-            # Schedule a one-off job to resume these tasks
-            resume_time = datetime.now(self.scheduler.timezone) + timedelta(seconds=pause_duration)
-            self.scheduler.add_job(
-                self._resume_rate_limited_jobs,
-                trigger='date',
-                run_date=resume_time,
-                args=[list(jobs_to_pause)], # Pass the list of jobs to resume
-                id='rate_limit_resume_job',
-                name='RateLimitResume',
-                replace_existing=True
-            )
-
-        # Set pause reason for status (though queue might not be fully paused)
-        self.pause_info = {
-            "reason_string": f"Debrid Rate Limit - Resuming tasks around {resume_time.strftime('%H:%M:%S')}",
-            "error_type": "RATE_LIMIT",
-            "service_name": "Debrid Service", # Or be more specific if possible
-            "status_code": None, # Typically rate limits are 429, but we might not get it directly here
-            "retry_count": 0 # Not a retry scenario in the same way as connection
-        }
-        # Optionally pause the entire queue manager status reporting
-        # from queues.queue_manager import QueueManager
-        # QueueManager().pause_queue(reason=self.pause_reason)
-        self.queue_paused = True # Indicate partial pause state
-
-    def _resume_rate_limited_jobs(self, job_ids_to_resume):
-        """Internal function called by scheduler to resume jobs after rate limit pause."""
-        logging.info(f"Rate limit pause period complete. Resuming {len(job_ids_to_resume)} jobs.")
-        with self.scheduler_lock:
-             if self.scheduler.state != 1: return # Not running
-
-             resumed_count = 0
-             for job_id in job_ids_to_resume:
-                  try:
-                       job = self.scheduler.get_job(job_id)
-                       # Only resume if the job exists and is actually paused
-                       if job and job.next_run_time is None:
-                           self.scheduler.resume_job(job_id)
-                           resumed_count += 1
-                           logging.debug(f"Rate Limit: Resumed job {job_id}")
-                       elif job:
-                            logging.debug(f"Rate Limit: Job {job_id} was already running, no resume needed.")
-                       # If job doesn't exist, ignore
-                  except Exception as e:
-                       logging.error(f"Rate Limit: Error resuming job {job_id}: {e}")
-
-        logging.info(f"Rate Limit: Resumed {resumed_count} jobs.")
-        # Clear the rate limit pause reason and state
-        if self.pause_info and self.pause_info.get("error_type") == "RATE_LIMIT":
-            self.pause_info = {
-                "reason_string": None, "error_type": None, "service_name": None,
-                "status_code": None, "retry_count": 0
-            }
-            self.queue_paused = False
-
 
             # Updated sections log moved to after the scan loop
 
@@ -2617,7 +2235,7 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
     def trigger_task(self, task_name):
         """Manually trigger a task to run immediately by adding it to APScheduler's queue."""
         normalized_name = self._normalize_task_name(task_name)
-        job_id_base = normalized_name # This is the base task name, e.g., "task_artificial_long_run"
+        job_id_base = normalized_name # This is the base task name, e.g., "task_sync_time"
 
         logging.info(f"Attempting to manually trigger task: {job_id_base} by adding it to APScheduler queue.")
 
@@ -3528,161 +3146,6 @@ def process_overseerr_webhook(data):
                 item = append_content_source_detail(item, source_type=source_type)
             add_wanted_items(items_for_source, versions, force_granular_versions=True)
             logging.info(f"Processed {len(items_for_source)} wanted item(s) from {source_type} webhook via source '{source_key}' (TMDB ID: {tmdb_id}). Requester: {requester_display_name}, Versions: {versions}")
-
-def generate_airtime_report():
-    from metadata.metadata import _get_local_timezone # Added import here
-    logging.info("Generating airtime report for wanted and unreleased items...")
-
-    from database.core import get_db_connection
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # Fetch all wanted and unreleased items
-    cursor.execute("""
-        SELECT id, title, type, release_date, airtime, state
-        FROM media_items
-        WHERE state IN ('Wanted', 'Unreleased')
-        AND (ghostlisted IS NULL OR ghostlisted = 0)
-        ORDER BY release_date, airtime
-    """)
-    items = cursor.fetchall()
-    conn.close() # Close connection after fetching
-
-    current_datetime_local = datetime.now(_get_local_timezone()) # Use local timezone
-    report = []
-
-    # Add try-except for float conversions
-    try:
-        movie_airtime_offset_min = float(get_setting("Queue", "movie_airtime_offset", "19")) * 60
-    except (ValueError, TypeError):
-        movie_airtime_offset_min = 19.0 * 60
-
-    try:
-        episode_airtime_offset_min = float(get_setting("Queue", "episode_airtime_offset", "0")) * 60
-    except (ValueError, TypeError):
-        episode_airtime_offset_min = 0.0 * 60
-
-    logging.info(f"Movie airtime offset: {movie_airtime_offset_min / 60} hours")
-    logging.info(f"Episode airtime offset: {episode_airtime_offset_min / 60} hours")
-
-
-    for item_dict in items: # Use dicts
-        item_id = item_dict['id']
-        title = item_dict['title']
-        item_type = item_dict['type']
-        release_date_str = item_dict['release_date']
-        airtime_str = item_dict['airtime']
-        state = item_dict['state']
-
-        if not release_date_str or release_date_str.lower() == "unknown":
-            report.append(f"{title} ({item_type}, ID: {item_id}): Unknown release date (State: {state})")
-            continue
-
-        try:
-            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-        except ValueError:
-            report.append(f"{title} ({item_type}, ID: {item_id}): Invalid release date format '{release_date_str}' (State: {state})")
-            continue
-
-        # Determine airtime and offset based on type
-        airtime_offset_minutes = 0
-        airtime = dt_time(0, 0) # Default to midnight
-        try:
-            if item_type == 'movie':
-                airtime_offset_minutes = movie_airtime_offset_min
-                # Movies often don't have specific airtime, use default (midnight)
-            elif item_type == 'episode':
-                airtime_offset_minutes = episode_airtime_offset_min
-                if airtime_str:
-                    airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                else:
-                     # Use default if airtime is missing for episode
-                     airtime = dt_time(0, 0)
-            # else: handle other types if necessary
-        except ValueError:
-             report.append(f"{title} ({item_type}, ID: {item_id}): Invalid airtime format '{airtime_str}' (State: {state})")
-             continue
-
-
-        # Combine date and time using local timezone awareness
-        tz = _get_local_timezone()
-        try:
-            # Assume release_date and airtime are naive, localize them to the system's configured timezone
-            naive_release_datetime = datetime.combine(release_date, airtime)
-            # Use replace() for zoneinfo, which handles DST transitions (raises errors for invalid times, assumes standard time for ambiguous times by default)
-            local_release_datetime = naive_release_datetime.replace(tzinfo=tz) 
-
-            # Calculate scrape datetime by adding offset
-            scrape_datetime_local = local_release_datetime + timedelta(minutes=airtime_offset_minutes)
-
-            time_until_scrape = scrape_datetime_local - current_datetime_local
-
-            # Format datetimes for readability
-            scrape_dt_str = scrape_datetime_local.strftime('%Y-%m-%d %H:%M:%S %Z%z')
-
-            if time_until_scrape > timedelta(0):
-                # Format timedelta nicely (e.g., remove microseconds)
-                days, remainder = divmod(time_until_scrape.total_seconds(), 86400)
-                hours, remainder = divmod(remainder, 3600)
-                minutes, seconds = divmod(remainder, 60)
-                time_until_str = f"{int(days)}d {int(hours)}h {int(minutes)}m" if days > 0 else f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
-
-                report.append(f"{title} ({item_type}, ID: {item_id}): State={state}. Scrape at ~{scrape_dt_str} (In: {time_until_str})")
-            else:
-                report.append(f"{title} ({item_type}, ID: {item_id}): State={state}. Ready to scrape (Scrape time was ~{scrape_dt_str})")
-
-        except Exception as dt_err:
-            logging.error(f"Error calculating airtime for item {item_id}: {dt_err}", exc_info=True)
-            report.append(f"{title} ({item_type}, ID: {item_id}): Error calculating airtime (State: {state})")
-
-
-    # Log the report
-    logging.info("--- Airtime Report Start ---")
-    if report:
-        for line in report:
-            logging.info(line)
-    else:
-        logging.info("No Wanted/Unreleased items found for report.")
-    logging.info("--- Airtime Report End ---")
-
-def append_runtime_airtime(items):
-    from metadata.metadata import get_runtime, get_episode_airtime # Added import here
-    logging.info(f"Starting to append runtime and airtime for {len(items)} items")
-    processed_count = 0
-    for index, item in enumerate(items, start=1):
-        # Use dict access with .get() for safety
-        imdb_id = item.get('imdb_id')
-        media_type = item.get('type') # Changed 'type' to 'media_type' based on other usage? Check consistency. Let's assume 'type'.
-
-        if not imdb_id or not media_type:
-            logging.warning(f"Item {index} is missing imdb_id ('{imdb_id}') or type ('{media_type}'). Skipping runtime/airtime.")
-            continue
-
-        try:
-            runtime = None
-            airtime = None
-            if media_type == 'movie':
-                runtime = get_runtime(imdb_id, 'movie')
-            elif media_type == 'episode':
-                runtime = get_runtime(imdb_id, 'episode') # Assuming get_runtime handles episode lookup
-                airtime = get_episode_airtime(imdb_id) # Assuming uses imdb_id of episode
-            else:
-                logging.warning(f"Unknown media type '{media_type}' for item {index} (IMDb: {imdb_id}). Cannot get runtime/airtime.")
-                continue # Skip unknown types
-
-            # Append to item if values were found
-            if runtime is not None:
-                item['runtime'] = runtime
-            if airtime is not None:
-                item['airtime'] = airtime
-            processed_count += 1
-
-        except Exception as e:
-            logging.error(f"Error processing runtime/airtime for item {index} (IMDb: {imdb_id}, Type: {media_type}): {str(e)}")
-            # Avoid logging full traceback for potentially common API errors? Optional.
-            # logging.error(traceback.format_exc())
-
-    logging.info(f"Finished appending runtime/airtime. Processed {processed_count}/{len(items)} items.")
 
 
 def get_and_add_all_collected_from_plex(bypass=False, backfill=False):

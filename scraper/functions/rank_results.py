@@ -810,36 +810,6 @@ def rank_result_key(
     # Add the score breakdown to the result
     result['score_breakdown'] = score_breakdown
 
-    # Log detailed score breakdown
-    # logging.debug(f"Score breakdown for '{torrent_title}':")
-    # logging.debug(f"├─ Num Items Covered (for ranking): {num_items}") # Add this to logging if needed
-    # logging.debug(f"├─ Title Similarity: {score_breakdown['similarity_score']:.2f} (weight: {similarity_weight})")
-    # logging.debug(f"├─ Resolution: {score_breakdown['resolution_score']:.2f} (weight: {resolution_weight})")
-    # logging.debug(f"├─ HDR: {score_breakdown['hdr_score']:.2f} (weight: {hdr_weight})")
-    # logging.debug(f"├─ Size: {score_breakdown['size_score']:.2f} (weight: {size_weight})")
-    # logging.debug(f"├─ Bitrate: {score_breakdown['bitrate_score']:.2f} (weight: {bitrate_weight})")
-    # logging.debug(f"├─ Country: {score_breakdown['country_score']:.2f} (weight: {country_weight}, reason: {country_reason})")
-    # logging.debug(f"├─ Language: {score_breakdown['language_score']:.2f} (weight: {language_weight}, reason: {language_reason})")
-    # logging.debug(f"├─ Year Match: {score_breakdown['year_match_score']:.2f} (base: {year_match}, weight: {year_match_weight}, reason: {year_reason})")
-    # if content_type.lower() == 'episode':
-    #     logging.debug(f"├─ Season Match: {score_breakdown['season_match_score']:.2f} (base: {season_match_score})")
-    #     logging.debug(f"├─ Episode Match: {score_breakdown['episode_match_score']:.2f} (base: {episode_match_score})")
-    #     if score_breakdown['is_multi_pack']:
-    #         logging.debug(f"├─ Multi-pack: {score_breakdown['multi_pack_score']:.2f} ({score_breakdown['num_items']} items)")
-    #     if score_breakdown['single_episode_score']:
-    #         logging.debug(f"├─ Single Episode Penalty: {score_breakdown['single_episode_score']:.2f}")
-    # if score_breakdown['content_type_score']:
-    #     logging.debug(f"├─ Content Type Score: {score_breakdown['content_type_score']:.2f}")
-    # if preferred_filter_in_breakdown:
-    #     logging.debug("├─ Preferred Filter Bonuses:")
-    #     for pattern, score in preferred_filter_in_breakdown.items():
-    #         logging.debug(f"│  ├─ {pattern}: +{score}")
-    # if preferred_filter_out_breakdown:
-    #     logging.debug("├─ Preferred Filter Penalties:")
-    #     for pattern, score in preferred_filter_out_breakdown.items():
-    #         logging.debug(f"│  ├─ {pattern}: {score}")
-    # logging.debug(f"└─ Total Score: {score_breakdown['total_score']:.2f}")
-
     # Return negative total_score to sort in descending order
     # Year match raw score is used as a tie-breaker
     # If you want to prioritize by num_items, it would be the first element:

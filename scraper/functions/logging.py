@@ -11,9 +11,3 @@ def setup_scraper_logger():
     return scraper_logger
 
 scraper_logger = setup_scraper_logger()
-
-def log_filter_result(title: str, resolution: str, filter_reason: str = None):
-    if filter_reason:
-        logging.debug(f"Release: '{title}' (Resolution: {resolution}) - Filtered out: {filter_reason}")
-    else:
-        logging.debug(f"Release: '{title}' (Resolution: {resolution}) - Passed filters")

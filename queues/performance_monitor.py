@@ -115,12 +115,6 @@ class PerformanceMonitor:
             self.monitor_thread.start()
             self.performance_logger.info("Started performance monitoring")
     
-    def stop_monitoring(self):
-        """Stop performance monitoring"""
-        try:
-            pass
-        except Exception as e:
-            self.performance_logger.error(f"Error stopping performance monitoring: {e}")
     
     def _monitor_loop(self):
         """Main monitoring loop that collects various performance metrics"""

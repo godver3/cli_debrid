@@ -68,10 +68,6 @@ class User(UserMixin, db.Model):
     # API token for external access (OpenClaw, homepage widgets, etc.)
     api_token = db.Column(db.String(48), nullable=True, unique=True)
 
-    @property
-    def is_sso_user(self):
-        """True if this account was created via SSO and has no local password."""
-        return bool(self.oidc_sub) and not self.password
 
 def init_db(app):
     db.init_app(app)

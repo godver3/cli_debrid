@@ -139,10 +139,6 @@ def calculate_bitrate(size_gb, runtime_minutes):
     bitrate_mbps = (size_bits / runtime_seconds) / 1000  # Convert to Mbps
     return round(bitrate_mbps, 2)
 
-def detect_resolution(parsed_info: Dict[str, Any]) -> str:
-    # First try to get resolution from PTT result
-    resolution = parsed_info.get('resolution', 'Unknown')
-    return resolution
 
 def _process_single_title(args):
     """Helper for threaded execution inside batch_parse_torrent_info.

@@ -3,7 +3,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session, relationship
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime, timezone
 from sqlalchemy import func, inspect as sa_inspect
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError, OperationalError
 from .logger_config import logger
 from sqlalchemy import text, UniqueConstraint, event
@@ -380,15 +380,6 @@ class TVDBToIMDBMapping(Base):
     media_type = Column(String)
 
 
-class MigrationFlag(Base):
-    __tablename__ = 'migration_flags'
-
-    id = Column(Integer, primary_key=True)
-    migration_name = Column(String, unique=True, index=True)
-    completed_at = Column(DateTime, default=get_timezone_aware_now)
-    description = Column(String)
-
-
 # ─── DatabaseManager ─────────────────────────────────────────────────────────
 
 class DatabaseManager:
@@ -457,12 +448,6 @@ class DatabaseManager:
                 logger.error(f"Error in add_or_update_metadata: {e}")
                 raise
 
-    @staticmethod
-    def get_item(imdb_id):
-        with Session() as session:
-            return session.query(Item).options(
-                joinedload(Item.item_metadata), joinedload(Item.poster)
-            ).filter_by(imdb_id=imdb_id).first()
 
     @staticmethod
     def get_all_items():
@@ -482,61 +467,6 @@ class DatabaseManager:
                 return True
             return False
 
-    @staticmethod
-    def add_or_update_poster(item_id, image_data):
-        with Session() as session:
-            poster = session.query(Poster).filter_by(item_id=item_id).first()
-            if poster:
-                poster.image_data = image_data
-                poster.last_updated = get_timezone_aware_now()
-            else:
-                poster = Poster(item_id=item_id, image_data=image_data)
-                session.add(poster)
-            session.commit()
-
-    @staticmethod
-    def get_poster(imdb_id):
-        with Session() as session:
-            item = session.query(Item).filter_by(imdb_id=imdb_id).first()
-            if item and item.poster:
-                return item.poster.image_data
-        return None
-
-    @staticmethod
-    def delete_all_items():
-        with Session() as session:
-            try:
-                session.query(Item).delete()
-                session.query(Metadata).delete()
-                session.query(Season).delete()
-                session.query(Poster).delete()
-                session.commit()
-                return True
-            except Exception as e:
-                logger.error(f"Error deleting all items: {e}")
-                session.rollback()
-                return False
-
-    @staticmethod
-    @retry_on_db_lock(max_attempts=10, initial_wait=0.2)
-    def remove_metadata(imdb_id: str) -> bool:
-        if engine is None:
-            init_db()
-        with Session() as session:
-            try:
-                item = session.query(Item).options(selectinload(Item.item_metadata)).filter_by(imdb_id=imdb_id).first()
-                if not item:
-                    return False
-                if not item.item_metadata:
-                    return True
-                for meta_record in item.item_metadata:
-                    session.delete(meta_record)
-                session.commit()
-                return True
-            except Exception as e:
-                session.rollback()
-                logger.error(f"Error removing metadata for {imdb_id}: {e}")
-                return False
 
     @staticmethod
     def add_tvdb_to_imdb_mapping(tvdb_id: str, imdb_id: str, media_type: str = 'show') -> bool:
@@ -566,66 +496,4 @@ class DatabaseManager:
                 logger.error(f"Error getting IMDB ID from TVDB ID: {e}")
                 return None
 
-    @staticmethod
-    @retry_on_db_lock()
-    def check_migration_flag(migration_name: str) -> bool:
-        if engine is None:
-            init_db()
-        with Session() as session:
-            try:
-                flag = session.query(MigrationFlag).filter_by(migration_name=migration_name).first()
-                return flag is not None
-            except Exception as e:
-                logger.error(f"Error checking migration flag {migration_name}: {e}")
-                return False
 
-    @staticmethod
-    @retry_on_db_lock()
-    def set_migration_flag(migration_name: str, description: str = "") -> bool:
-        if engine is None:
-            init_db()
-        with Session() as session:
-            try:
-                flag = MigrationFlag(migration_name=migration_name, description=description)
-                session.add(flag)
-                session.commit()
-                return True
-            except Exception as e:
-                logger.error(f"Error setting migration flag {migration_name}: {e}")
-                session.rollback()
-                return False
-
-    @staticmethod
-    @retry_on_db_lock()
-    def clear_migration_flag(migration_name: str) -> bool:
-        if engine is None:
-            init_db()
-        with Session() as session:
-            try:
-                flag = session.query(MigrationFlag).filter_by(migration_name=migration_name).first()
-                if flag:
-                    session.delete(flag)
-                    session.commit()
-                    return True
-                return False
-            except Exception as e:
-                logger.error(f"Error clearing migration flag {migration_name}: {e}")
-                session.rollback()
-                return False
-
-    @staticmethod
-    @retry_on_db_lock()
-    def list_migration_flags() -> list:
-        if engine is None:
-            init_db()
-        with Session() as session:
-            try:
-                flags = session.query(MigrationFlag).all()
-                return [{
-                    'migration_name': flag.migration_name,
-                    'completed_at': flag.completed_at,
-                    'description': flag.description,
-                } for flag in flags]
-            except Exception as e:
-                logger.error(f"Error listing migration flags: {e}")
-                return []

@@ -131,8 +131,6 @@ def resolve_imdb_and_type(guids: List[str], title: str, media_type: str = None) 
                 return imdb_id, media_type or 'tv'
     return None, media_type
 
-def resolve_imdb_from_guids(guids: List[str], title: str, media_type: str) -> str:
-    return resolve_imdb_and_type(guids, title, media_type)[0]
 
 def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool], read_only: bool = False, detail: str = 'Plex RSS') -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     """Fetch a Plex RSS watchlist. read_only=True never suppresses collected titles (used by label sync)."""

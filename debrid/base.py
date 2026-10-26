@@ -13,27 +13,6 @@ import functools
 # Import from the new location: debrid.status
 from debrid.status import TorrentInfoStatus, TorrentFetchStatus
 
-class EncryptedCapabilityDescriptor:
-    """A descriptor that protects capability values from being overridden"""
-    
-    def __init__(self, capability_name: str):
-        self.capability_name = capability_name
-        # Use a random name for the cached value to make it harder to find
-        self.cached_name = f"_{hashlib.sha256(capability_name.encode()).hexdigest()[:8]}"
-    
-    def __get__(self, instance, owner=None):
-        if instance is None:
-            return self
-        # Cache the decrypted value to prevent tampering with _get_encrypted_value
-        if not hasattr(instance, self.cached_name):
-            # Get the value through a chain of protected calls
-            value = instance._get_capability_value(self.capability_name)
-            # Store in instance dict directly to bypass any __setattr__ overrides
-            instance.__dict__[self.cached_name] = value
-        return instance.__dict__[self.cached_name]
-    
-    def __set__(self, instance, value):
-        raise AttributeError("Can't modify capability values")
 
 class DebridProviderError(Exception):
     """Base exception class for all debrid provider errors"""

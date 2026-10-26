@@ -29,13 +29,6 @@ class BaseQueue:
         # Default implementation, queues should override this with more efficient implementations
         return any(i['id'] == item_id for i in self.get_contents())
 
-    def _record_item_entered(self, queue_manager, item: Dict[str, Any]):
-        """Record that an item entered this queue"""
-        if hasattr(queue_manager, 'queue_timer') and item and 'id' in item:
-            queue_name = self.__class__.__name__.replace('Queue', '')
-            item_id = item['id']
-            item_identifier = queue_manager.generate_identifier(item)
-            queue_manager.queue_timer.item_entered_queue(item_id, queue_name, item_identifier)
 
     def _record_item_exited(self, queue_manager, item: Dict[str, Any]):
         """Record that an item exited this queue"""

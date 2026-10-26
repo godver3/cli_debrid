@@ -1578,44 +1578,6 @@ def update_item_state(item_id: int, new_state: str) -> bool:
         if conn:
             conn.close()
 
-def cleanup_show_metadata(imdb_id: str) -> bool:
-    """
-    Clean up tv_shows table after show deletion
-    Removes show metadata and version status tracking
-
-    Args:
-        imdb_id: IMDB identifier of the show
-
-    Returns:
-        True if successful, False otherwise
-    """
-    conn = get_db_connection()
-    try:
-        # Remove from tv_shows table
-        conn.execute('DELETE FROM tv_shows WHERE imdb_id = ?', (imdb_id,))
-
-        # Remove from tv_show_version_status table if it exists
-        try:
-            conn.execute('DELETE FROM tv_show_version_status WHERE imdb_id = ?', (imdb_id,))
-        except sqlite3.OperationalError:
-            # Table might not exist, that's okay
-            pass
-
-        conn.commit()
-        logging.info(f"Cleaned up metadata for show {imdb_id}")
-        return True
-    except Exception as e:
-        logging.error(f"Error cleaning up show metadata for {imdb_id}: {e}")
-        try:
-            if conn:
-                conn.rollback()
-        except Exception as rb_ex:
-            logging.error(f"Rollback failed: {rb_ex}")
-        return False
-    finally:
-        if conn:
-            conn.close()
-
 
 def remove_duplicate_items(dry_run: bool = False, nas_filter: str = 'all',
                            exclude_patterns: Optional[List[str]] = None) -> dict:

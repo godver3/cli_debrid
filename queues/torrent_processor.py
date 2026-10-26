@@ -36,9 +36,6 @@ class TorrentProcessingError(Exception):
     """Base exception for torrent processing errors"""
     pass
 
-class NoVideoFilesError(TorrentProcessingError):
-    """Raised when a torrent has no valid video files"""
-    pass
 
 class TorrentAdditionError(TorrentProcessingError):
     """Raised when a torrent fails to be added to the debrid service"""

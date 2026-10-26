@@ -128,15 +128,6 @@ class ShowLabelCache:
         self.cache[cache_key] = time.time()
         logging.debug(f"[LabelCache] STORED: Label '{label}' for show {show_id}")
 
-    def clear_expired(self):
-        """Remove expired entries from cache"""
-        now = time.time()
-        expired_keys = [k for k, v in self.cache.items() if now - v >= self.ttl]
-        for key in expired_keys:
-            del self.cache[key]
-        if expired_keys:
-            logging.debug(f"[LabelCache] Cleared {len(expired_keys)} expired entries")
-
 
 # Global show label cache instance
 _show_label_cache = ShowLabelCache()
@@ -651,57 +642,6 @@ def remove_label_from_plex(item_id: int, label: str) -> bool:
     except Exception as e:
         logging.error(f"Error removing label '{label}' from Plex for item {item_id}: {e}", exc_info=True)
         return False
-
-
-def get_items_by_label(label: str) -> List[Dict[str, Any]]:
-    """
-    Get all items that have a specific label
-
-    Args:
-        label: Label to search for
-
-    Returns:
-        List of item dictionaries with id, title, type, plex_labels
-    """
-    label = sanitize_label(label)
-    if not label:
-        return []
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        # Query items where plex_labels JSON contains the label
-        cursor.execute('''
-            SELECT id, title, type, year, plex_labels, content_source
-            FROM media_items
-            WHERE plex_labels LIKE ?
-        ''', (f'%"{label}"%',))
-
-        items = []
-        for row in cursor.fetchall():
-            plex_labels = parse_plex_labels(row['plex_labels'])
-
-            # Verify label is actually in the parsed data (not just substring match)
-            if label in plex_labels:
-                items.append({
-                    'id': row['id'],
-                    'title': row['title'],
-                    'type': row['type'],
-                    'year': row['year'],
-                    'content_source': row['content_source'],
-                    'label_sources': plex_labels[label]['sources'],
-                    'label_count': plex_labels[label]['count']
-                })
-
-        return items
-
-    except Exception as e:
-        logging.error(f"Error getting items by label '{label}': {e}", exc_info=True)
-        return []
-    finally:
-        cursor.close()
-        conn.close()
 
 
 def get_labels_for_item(item_id: int) -> Dict[str, List[str]]:

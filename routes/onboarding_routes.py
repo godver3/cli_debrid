@@ -368,21 +368,7 @@ def update_can_proceed():
     else:
         return jsonify({'success': False, 'error': 'Invalid step'}), 400
     
-def add_scraper_onboarding(form_data):
-    scraper_type = form_data.get('scraper_type')
-    scraper_config = {
-        'enabled': True,
-    }
-    add_scraper(scraper_type, scraper_config)
 
-def add_content_source_onboarding(form_data):
-    source_type = form_data.get('source_type')
-    source_config = {
-        'enabled': True,
-        'display_name': form_data.get('source_display_name'),
-        'versions': form_data.getlist('source_versions')
-    }
-    add_content_source(source_type, source_config)
 
 @onboarding_bp.route('/setup_admin', methods=['GET', 'POST'])
 @login_required

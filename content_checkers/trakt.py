@@ -22,21 +22,16 @@ from utilities.trakt_coordinator import GlobalTraktCoordinator
 REQUEST_TIMEOUT = 10  # seconds
 TRAKT_API_URL = "https://api.trakt.tv"
 # Add default delays for rate limiting
-DEFAULT_REMOVAL_DELAY = 2  # seconds between watchlist removals
 DEFAULT_INITIAL_RETRY_DELAY = 3  # seconds for rate limit retry
 
 # Pagination configuration for large lists
 PAGINATION_LIMIT = 100  # Max items per page (Trakt API limit)
 PAGINATION_DELAY = 0.5  # Delay between pagination requests (seconds)
-PAGINATION_BATCH_SIZE = 5  # Extra delay every N pages
-PAGINATION_BATCH_DELAY = 2.0  # Extra delay after batch (seconds)
 
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 LAST_ACTIVITY_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_last_activity.pkl')
 TRAKT_WATCHLIST_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_watchlist_cache.pkl')
-TRAKT_LISTS_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_lists_cache.pkl')
-TRAKT_COLLECTION_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_collection_cache.pkl')
 TRAKT_IMDB_ID_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_imdb_id_cache.pkl')
 CACHE_EXPIRY_DAYS = 7
 
@@ -348,132 +343,9 @@ class TraktRateLimiter:
                 'last_429_time': self.last_429_time
             }
 
-# Phase 3.1: Request Queue with Global Coordinator
-class TraktRequestCoordinator:
-    """
-    Centralized coordinator for all Trakt API requests.
-    Provides request queuing, priority management, and telemetry.
-    """
-    def __init__(self, rate_limiter):
-        from queue import PriorityQueue
-        from threading import Lock, Event
-        import threading
-
-        self.rate_limiter = rate_limiter
-        self.request_queue = PriorityQueue()
-        self.lock = Lock()
-        self.enabled = True
-
-        # Telemetry tracking
-        self.total_requests = 0
-        self.successful_requests = 0
-        self.failed_requests = 0
-        self.requests_by_priority = {'high': 0, 'normal': 0}
-        self.start_time = time.time()
-
-        # Worker thread
-        self.worker_thread = None
-        self.shutdown_event = Event()
-
-    def start_worker(self):
-        """Start background worker thread to process request queue"""
-        if self.worker_thread is None or not self.worker_thread.is_alive():
-            self.shutdown_event.clear()
-            self.worker_thread = threading.Thread(
-                target=self._process_queue,
-                daemon=True,
-                name="TraktRequestWorker"
-            )
-            self.worker_thread.start()
-            logging.info("Trakt request coordinator worker started")
-
-    def _process_queue(self):
-        """Background worker that processes queued requests"""
-        while not self.shutdown_event.is_set():
-            try:
-                # Get next request from queue (blocks with timeout)
-                priority, timestamp, request_func, args, kwargs, result_callback = \
-                    self.request_queue.get(timeout=1.0)
-
-                # Execute the request
-                try:
-                    result = request_func(*args, **kwargs)
-                    if result_callback:
-                        result_callback(result, None)
-                    with self.lock:
-                        self.successful_requests += 1
-                except Exception as e:
-                    if result_callback:
-                        result_callback(None, e)
-                    with self.lock:
-                        self.failed_requests += 1
-                    logging.error(f"Request in queue failed: {e}")
-                finally:
-                    self.request_queue.task_done()
-
-            except Exception:
-                # Queue timeout - continue loop
-                pass
-
-    def queue_request(self, request_func, args=(), kwargs=None, priority='normal', callback=None):
-        """
-        Queue a Trakt API request for execution.
-
-        Args:
-            request_func: Function to call
-            args: Tuple of positional arguments
-            kwargs: Dict of keyword arguments
-            priority: 'high' or 'normal'
-            callback: Optional callback(result, error) when complete
-
-        Returns:
-            Queued request timestamp
-        """
-        if kwargs is None:
-            kwargs = {}
-
-        timestamp = time.time()
-        # Priority queue uses lower numbers for higher priority
-        priority_value = 0 if priority == 'high' else 1
-
-        with self.lock:
-            self.total_requests += 1
-            self.requests_by_priority[priority] += 1
-
-        self.request_queue.put((priority_value, timestamp, request_func, args, kwargs, callback))
-        return timestamp
-
-    def get_telemetry(self):
-        """Get telemetry data about request processing"""
-        with self.lock:
-            uptime = time.time() - self.start_time
-            success_rate = (self.successful_requests / self.total_requests * 100) if self.total_requests > 0 else 0
-
-            return {
-                'total_requests': self.total_requests,
-                'successful_requests': self.successful_requests,
-                'failed_requests': self.failed_requests,
-                'success_rate': success_rate,
-                'high_priority_requests': self.requests_by_priority['high'],
-                'normal_priority_requests': self.requests_by_priority['normal'],
-                'queue_size': self.request_queue.qsize(),
-                'uptime_seconds': uptime
-            }
-
-    def shutdown(self):
-        """Shutdown the coordinator and worker thread"""
-        self.shutdown_event.set()
-        if self.worker_thread:
-            self.worker_thread.join(timeout=5.0)
-        logging.info("Trakt request coordinator shutdown")
-
-
 # Global rate limiter instance
 _trakt_rate_limiter = TraktRateLimiter()
 
-# Global request coordinator (Phase 3.1)
-_request_coordinator = TraktRequestCoordinator(_trakt_rate_limiter)
-# Note: Worker thread started on first use to avoid startup overhead
 
 def _set_task_priority(priority='normal'):
     """
@@ -485,46 +357,6 @@ def _set_task_priority(priority='normal'):
     """
     _trakt_rate_limiter.current_task_priority = priority
 
-def get_trakt_telemetry():
-    """
-    Phase 3.3: Get comprehensive telemetry about Trakt API usage.
-
-    Returns:
-        Dict containing rate limiter stats, coordinator stats, and health metrics
-    """
-    rate_limiter_stats = _trakt_rate_limiter.get_stats()
-    coordinator_stats = _request_coordinator.get_telemetry()
-
-    # Combine and enrich
-    telemetry = {
-        'rate_limiter': rate_limiter_stats,
-        'coordinator': coordinator_stats,
-        'health': {
-            'status': 'healthy' if not rate_limiter_stats['cooldown_active'] else 'cooldown',
-            'api_budget_used': rate_limiter_stats['budget_percentage'],
-            'requests_per_second': coordinator_stats['successful_requests'] / max(coordinator_stats['uptime_seconds'], 1),
-            'current_delay': rate_limiter_stats['per_request_delay'],
-            'scaling_active': rate_limiter_stats['adaptive_scaling_factor'] > 1.0
-        },
-        'warnings': []
-    }
-
-    # Generate warnings
-    if rate_limiter_stats['budget_percentage'] > 0.9:
-        telemetry['warnings'].append('API budget critically high (>90%)')
-    elif rate_limiter_stats['budget_percentage'] > 0.8:
-        telemetry['warnings'].append('API budget elevated (>80%)')
-
-    if rate_limiter_stats['cooldown_active']:
-        telemetry['warnings'].append(f"In cooldown for {rate_limiter_stats['cooldown_remaining']:.0f}s")
-
-    if rate_limiter_stats['consecutive_429s'] > 0:
-        telemetry['warnings'].append(f"Recent 429 errors: {rate_limiter_stats['consecutive_429s']}")
-
-    if coordinator_stats['queue_size'] > 10:
-        telemetry['warnings'].append(f"Request queue backlog: {coordinator_stats['queue_size']}")
-
-    return telemetry
 
 def load_trakt_credentials() -> Dict[str, str]:
     try:
@@ -698,20 +530,6 @@ def get_trakt_sources() -> Dict[str, List[Dict[str, Any]]]:
         'friend_watchlist': friend_watchlist_sources
     }
 
-def clean_trakt_urls(urls: str) -> List[str]:
-    # Split the URLs and clean each one
-    url_list = [url.strip() for url in urls.split(',')]
-    cleaned_urls = []
-    for url in url_list:
-        # Remove everything from '?' to the end
-        cleaned = re.sub(r'\?.*$', '', url)
-        # Ensure the URL starts with 'https://'
-        if not cleaned.startswith('http://') and not cleaned.startswith('https://'):
-            cleaned = 'https://' + cleaned
-        # Only add the URL if it doesn't contain 'asc'
-        if 'asc' not in cleaned:
-            cleaned_urls.append(cleaned)
-    return cleaned_urls
 
 def parse_trakt_list_url(url: str) -> Dict[str, str]:
     parsed_url = urlparse(url)

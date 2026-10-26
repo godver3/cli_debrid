@@ -1254,9 +1254,6 @@ def queue_stream():
 
     return Response(generate(), mimetype='text/event-stream')
 
-def get_paginated_items(queue_name, page, per_page):
-    # Implementation of get_paginated_items function
-    pass
 
 def get_items_processed_per_hour():
     """Return the number of items collected in the last hour. Cached for 15 minutes to reduce DB load."""

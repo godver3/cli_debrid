@@ -24,9 +24,6 @@ _LOG_FILE = 'backup_log.json'
 _BACKUP_SUBDIR = 'debrid_backups'
 
 # Slot filenames — keyed by provider prefix + slot label
-_SLOT_1D = '{provider}_backup_1d.json'
-_SLOT_3D = '{provider}_backup_3d.json'
-_SLOT_7D = '{provider}_backup_7d.json'
 
 
 def get_backup_dir() -> str:
@@ -717,15 +714,6 @@ RESTORE_PROVIDERS = {
     'debridlink':  'Debrid-Link',
     'premiumize':  'Premiumize',
 }
-
-
-_CACHED_STATUSES = frozenset([
-    'downloaded',   # Real-Debrid
-    'Ready',        # AllDebrid
-    'cached',       # Torbox / generic
-    'complete',     # Debrid-Link
-    'finished',     # Premiumize
-])
 
 
 def restore_from_file_to_provider(filename: str, provider_id: str, api_key: str,
@@ -1595,13 +1583,3 @@ def _cleanup_pm(api_key: str, settings: dict) -> dict:
     }
 
 
-def get_cleanup_settings() -> dict:
-    """Returns cleanup settings for the UI."""
-    from utilities.settings import get_setting
-    return {
-        'enabled':        get_setting('Debrid Cleanup', 'enabled', default=False),
-        'delete_errors':  get_setting('Debrid Cleanup', 'delete_errors', default=True),
-        'delete_dupes':   get_setting('Debrid Cleanup', 'delete_dupes', default=True),
-        'delete_stalled': get_setting('Debrid Cleanup', 'delete_stalled', default=False),
-        'stalled_days':   int(get_setting('Debrid Cleanup', 'stalled_days', default=3)),
-    }

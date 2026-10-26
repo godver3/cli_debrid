@@ -866,18 +866,6 @@ def parse_sort(sort_by):
     }
     return sort_map.get(sort_by, ('title', 'asc'))
 
-def sort_items(items, field, order):
-    """Sort items by field and order"""
-    reverse = (order == 'desc')
-
-    if field == 'title':
-        return sorted(items, key=lambda x: (x.get('title') or '').lower(), reverse=reverse)
-    elif field == 'year':
-        return sorted(items, key=lambda x: x.get('year') or 0, reverse=reverse)
-    elif field == 'collected_at':
-        return sorted(items, key=lambda x: x.get('collected_at') or '', reverse=reverse)
-
-    return items
 
 def format_library_item(item, episode_counts=None, poster_cache=None, upcoming_release_dates=None):
     """

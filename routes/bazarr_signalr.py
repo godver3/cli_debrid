@@ -113,22 +113,6 @@ def broadcast_movie_added(movie_resource: Dict[str, Any]):
     thread.start()
 
 
-def broadcast_series_added(series_resource: Dict[str, Any]):
-    """Broadcast a series added event for new series."""
-    broadcast_event('series', {
-        'resource': series_resource,
-        'action': 'added'
-    })
-
-
-def broadcast_series_updated(series_resource: Dict[str, Any]):
-    """Broadcast a series updated event."""
-    broadcast_event('series', {
-        'resource': series_resource,
-        'action': 'updated'
-    })
-
-
 def broadcast_episode_file_added(
     episode_file_resource: Dict[str, Any],
     series_resource: Optional[Dict[str, Any]] = None
@@ -308,7 +292,3 @@ def notify_media_collected(media_item: Dict[str, Any], media_type: str):
         logging.error(f"[SignalR] Error notifying Bazarr: {e}")
 
 
-def get_connection_count() -> int:
-    """Get the number of active SignalR connections."""
-    with _queue_lock:
-        return len(_event_queues)

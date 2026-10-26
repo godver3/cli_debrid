@@ -1,6 +1,4 @@
 import time
-from functools import wraps
-from typing import Callable
 
 class RateLimiter:
     """Rate limiter for API calls"""
@@ -15,12 +13,3 @@ class RateLimiter:
             time.sleep((1 / self.calls_per_second) - time_since_last_call)
         self.last_call = time.time()
 
-def rate_limited_request(func: Callable) -> Callable:
-    """Decorator to rate limit API requests"""
-    rate_limiter = RateLimiter(calls_per_second=0.5)
-    
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        rate_limiter.wait()
-        return func(*args, **kwargs)
-    return wrapper

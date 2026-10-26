@@ -3,9 +3,6 @@ from typing import List, Dict, Any, Optional
 from concurrent.futures import as_completed, TimeoutError
 from utilities.log_context import ContextThreadPoolExecutor
 import concurrent.futures
-import os
-import json
-from datetime import datetime
 import time
 from .nyaa import scrape_nyaa, contains_target_episode
 from .jackett import scrape_jackett_instance
@@ -426,16 +423,9 @@ class ScraperManager:
         # Log the final report
         self._log_scraper_report(title, year, instance_summary)
 
-        # --- Add logging of detailed results to separate file ---
-        self._log_detailed_results(title, year, all_results)
-        # --- End detailed results logging ---
-
         # --- Enrich results with additional metadata ---
         enriched_results = self._enrich_results(all_results, instance_summary)
         # --- End enrichment ---
-
-        # Log the detailed results (now potentially enriched) to separate file
-        self._log_detailed_results(title, year, enriched_results)
 
         # Return the enriched results
         return enriched_results
@@ -526,28 +516,3 @@ class ScraperManager:
                 report_lines.append(f"  - {instance} ({scraper_type}): Found {count} results.")
         
         logging.info("\n".join(report_lines))
-
-    def _log_detailed_results(self, title: str, year: int, all_results: List[Dict[str, Any]]):
-        """Helper function to log all gathered results to a separate file."""
-        # disable for now
-        return
-    
-        log_dir = os.environ.get('USER_LOGS', '/user/logs') # Get log directory from environment
-        results_log_path = os.path.join(log_dir, 'scraper_results.log')
-        
-        try:
-            # Create a structured log entry
-            log_entry = {
-                "timestamp": datetime.now().isoformat(),
-                "search_query": f"{title} ({year})",
-                "total_results": len(all_results),
-                "results": all_results
-            }
-            
-            # Append the JSON entry to the log file
-            with open(results_log_path, 'a', encoding='utf-8') as f:
-                json.dump(log_entry, f, ensure_ascii=False, indent=2) # Use indent for readability
-                f.write('\n') # Add newline for separation between entries
-            logging.info(f"Detailed scraper results logged to {results_log_path}")
-        except Exception as e:
-            logging.error(f"Failed to log detailed scraper results to {results_log_path}: {e}")

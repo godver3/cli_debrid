@@ -710,14 +710,6 @@ class RealDebridProvider(DebridProvider):
             logging.error(f"Error adding torrent: {str(e)}")
             raise
 
-    def get_available_hosts(self) -> Optional[list]:
-        """Get list of available torrent hosts"""
-        try:
-            result = make_request('GET', '/torrents/availableHosts', self.api_key)
-            return result
-        except Exception as e:
-            logging.error(f"Error getting available hosts: {str(e)}")
-            return None
 
     @timed_lru_cache(seconds=1)
     def get_active_downloads(self) -> Tuple[int, int]:

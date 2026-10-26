@@ -159,33 +159,6 @@ def sync_queues_after_rescrape(item_ids):
     except Exception as exc:
         logging.warning(f"Rescrape: Post-rescrape queue sync failed: {exc}")
 
-def get_item_size_gb(location_on_disk, original_path_for_symlink):
-    file_path_to_check = None
-    if original_path_for_symlink:
-        try:
-            if os.path.exists(original_path_for_symlink):
-                file_path_to_check = original_path_for_symlink
-        except Exception: # Handle potential errors with long paths, permissions etc.
-            pass # Fall through to location_on_disk or return 0
-
-    if not file_path_to_check and location_on_disk:
-        try:
-            if os.path.exists(location_on_disk):
-                file_path_to_check = location_on_disk
-        except Exception:
-            pass
-
-    if file_path_to_check:
-        try:
-            size_bytes = os.path.getsize(file_path_to_check)
-            return round(size_bytes / (1024 * 1024 * 1024), 2)  # GB with 2 decimal places
-        except OSError:
-            logging.debug(f"OSError getting size for {file_path_to_check}")
-            return 0.0
-        except Exception as e:
-            logging.debug(f"Unexpected error getting size for {file_path_to_check}: {e}")
-            return 0.0
-    return 0.0
 
 # ---------------------------------------------------------------------------
 # Lightweight statistics helper – counts collected movies / shows / episodes

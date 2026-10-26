@@ -750,21 +750,6 @@ def _extract_aliases(translations: list) -> dict:
     return dict(aliases)
 
 
-def _get_trakt_episode_air_date(imdb_id: str, season: int, episode: int) -> str | None:
-    """Fetch episode first_aired from Trakt as fallback when TVDB has incomplete data."""
-    try:
-        from . import trakt_client
-        seasons_data, source = trakt_client.get_show_seasons_and_episodes(imdb_id, include_specials=True)
-        if seasons_data and season in seasons_data:
-            season_data = seasons_data[season]
-            if 'episodes' in season_data and episode in season_data['episodes']:
-                ep_data = season_data['episodes'][episode]
-                return ep_data.get('first_aired')
-    except Exception as e:
-        logger.debug(f"Could not fetch Trakt episode data for {imdb_id} S{season:02d}E{episode:02d}: {e}")
-    return None
-
-
 def _batch_fetch_episode_air_dates(imdb_id: str, tmdb_id: int = None) -> dict:
     """Batch-fetch all episode air dates from TMDB first (fast), then Trakt as fallback.
 

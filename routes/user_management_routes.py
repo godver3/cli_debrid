@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, render_template, redirect, url_for, flash
-from flask_login import login_required, current_user, login_user, logout_user
+from flask_login import login_required, current_user, logout_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from routes.extensions import db
 from .auth_routes import User, _generate_api_token
@@ -113,32 +113,3 @@ def regenerate_api_token():
     current_user.api_token = _generate_api_token()
     db.session.commit()
     return jsonify({'success': True, 'api_token': current_user.api_token})
-
-# Modify the register route
-@user_management_bp.route('/register', methods=['GET', 'POST'])
-@admin_required
-def register():
-    if not is_user_system_enabled():
-        return redirect(url_for('root.root'))
-    
-    if current_user.is_authenticated:
-        return redirect(url_for('root.root'))
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        existing_user = User.query.filter_by(username=username).first()
-        if existing_user:
-            flash('Username already exists.', 'error')
-            return redirect(url_for('register'))
-        hashed_password = generate_password_hash(password)
-        new_user = User(username=username, password=hashed_password, onboarding_complete=True)
-        if User.query.count() == 0:
-            new_user.role = 'admin'
-        else:
-            new_user.role = 'user'  # Default role for new users
-        db.session.add(new_user)
-        db.session.commit()
-        login_user(new_user)
-        flash('Registered successfully.', 'success')
-        return redirect(url_for('root.root'))
-    return render_template('register.html')

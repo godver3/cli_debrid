@@ -1936,11 +1936,6 @@ def _find_plex_owner_of_file(plex, item_title, item_path, episode_title=None):
     return None, None
 
 
-def _plex_has_file(plex, item_title, item_path, episode_title=None) -> bool:
-    """True if Plex already has a media part with item_path's file name under item_title."""
-    return _find_plex_owner_of_file(plex, item_title, item_path, episode_title)[0] is not None
-
-
 def _file_management_plex():
     """PlexServer for the configured file-management mode, or None if not configured."""
     if get_setting('File Management', 'file_collection_management') == 'Plex':

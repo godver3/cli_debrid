@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request, render_template, Response, curren
 from utilities.settings import load_config, validate_url, save_config
 from utilities.settings_schema import SETTINGS_SCHEMA
 import logging
-from queues.config_manager import add_scraper, clean_notifications, get_content_source_settings, update_content_source, get_version_settings, add_content_source, delete_content_source, save_config, get_enabled_content_sources
+from queues.config_manager import add_scraper, clean_notifications, get_content_source_settings, get_version_settings, add_content_source, delete_content_source, save_config, get_enabled_content_sources
 from routes.models import admin_required, onboarding_required, user_required
 from .utils import is_user_system_enabled
 import traceback
@@ -2162,21 +2162,6 @@ def get_reverse_parser_settings():
     
     return jsonify(reverse_parser_settings)
 
-def update_nested_settings(current, new):
-    for key, value in new.items():
-        if isinstance(value, dict):
-            if key not in current or not isinstance(current[key], dict):
-                current[key] = {}
-            if key == 'Content Sources':
-                for source_id, source_config in value.items():
-                    if source_id in current[key]:
-                        update_content_source(source_id, source_config)
-                    else:
-                        add_content_source(source_config['type'], source_config)
-            else:
-                update_nested_settings(current[key], value)
-        else:
-            current[key] = value
 
 @settings_bp.route('/versions/add', methods=['POST'])
 @admin_required
@@ -2695,14 +2680,6 @@ def get_content_source_settings_route():
             'traceback': traceback.format_exc()
         }), 500
 
-@settings_bp.route('/get_scraping_versions', methods=['GET'])
-def get_scraping_versions():
-    try:
-        config = load_config()
-        versions = config.get('Scraping', {}).get('versions', {}).keys()
-        return jsonify({'versions': list(versions)})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 @settings_bp.route('/get_version_settings')
 def get_version_settings_route():
@@ -2788,14 +2765,6 @@ def save_single_setting():
     set_setting(section, key, value)
     return jsonify({'status': 'success'})
 
-def update_required_settings(form_data):
-    config = load_config()
-    config['Plex']['url'] = form_data.get('plex_url')
-    config['Plex']['token'] = form_data.get('plex_token')
-    config['Plex']['shows_libraries'] = form_data.get('shows_libraries')
-    config['Plex']['movies_libraries'] = form_data.get('movies_libraries')
-    config['RealDebrid']['api_key'] = form_data.get('realdebrid_api_key')
-    save_config(config)
 
 @settings_bp.route('/notifications/enabled', methods=['GET'])
 def get_enabled_notifications():

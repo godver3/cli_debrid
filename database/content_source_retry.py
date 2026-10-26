@@ -223,36 +223,6 @@ def mark_retry_completed(retry_id: int, success: bool = True, error: Optional[st
         logging.error(f"[RETRY_QUEUE] Failed to mark retry completed: {e}")
 
 
-def get_retry_queue_stats() -> Dict[str, Any]:
-    """Get statistics about the retry queue"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN completed = FALSE THEN 1 ELSE 0 END) as pending,
-                SUM(CASE WHEN completed = TRUE THEN 1 ELSE 0 END) as completed,
-                SUM(CASE WHEN retry_count >= max_retries AND completed = FALSE THEN 1 ELSE 0 END) as failed
-            FROM content_source_removal_retry
-        ''')
-
-        row = cursor.fetchone()
-        conn.close()
-
-        return {
-            'total': row[0] or 0,
-            'pending': row[1] or 0,
-            'completed': row[2] or 0,
-            'failed': row[3] or 0
-        }
-
-    except Exception as e:
-        logging.error(f"[RETRY_QUEUE] Failed to get stats: {e}")
-        return {'total': 0, 'pending': 0, 'completed': 0, 'failed': 0}
-
-
 def cleanup_old_completed_retries(days: int = 7):
     """Remove completed retry entries older than specified days"""
     try:

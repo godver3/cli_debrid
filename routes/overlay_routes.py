@@ -138,12 +138,6 @@ def _get_overlay_manager():
     return _overlay_manager
 
 
-def _reset_overlay_manager():
-    """Force recreation of the OverlayManager on next use (e.g. after settings change)."""
-    global _overlay_manager
-    _overlay_manager = None
-
-
 def _get_media_client():
     """Get a media server client (PlexClient or JellyfinClient) using app settings."""
     if is_jellyfin_mode():
@@ -153,11 +147,6 @@ def _get_media_client():
     plex_url   = get_setting('Plex', 'url',   default='').rstrip('/')
     plex_token = get_setting('Plex', 'token', default='')
     return PlexClient(plex_url, plex_token)
-
-
-def _get_plex_client():
-    """Backward-compatible alias for _get_media_client (used by existing route code)."""
-    return _get_media_client()
 
 
 def _get_layout_manager():

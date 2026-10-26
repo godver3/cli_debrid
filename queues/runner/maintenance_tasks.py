@@ -965,18 +965,6 @@ class MaintenanceTasks:
         except Exception as e:
             logging.error(f"Background task: General error during library size cache refresh: {e}", exc_info=True)
 
-    # Add the new long-running task method
-    def task_artificial_long_run(self):
-        task_name = 'task_artificial_long_run'
-        logging.info(f"'{task_name}' has started.")
-        
-        duration_seconds = 120 # Run for 2 minutes
-        
-        logging.info(f"'{task_name}' will now sleep for {duration_seconds} seconds.")
-        time.sleep(duration_seconds)
-        
-        logging.info(f"'{task_name}' has finished sleeping and is now complete.")
-
     def task_upgrade_hub_scan(self):
         """Scheduled nightly scan for better-quality releases via Zilean."""
         try:

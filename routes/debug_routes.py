@@ -445,18 +445,6 @@ def delete_database():
         logging.error(f"Error deleting database: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
 
-def move_item_to_queue(item_id, target_queue):
-    from database import get_db_connection
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute('UPDATE media_items SET state = ? WHERE id = ?', (target_queue, item_id))
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        conn.close()
 
 @debug_bp.route('/api/bulk_queue_contents', methods=['GET'])
 def get_queue_contents():

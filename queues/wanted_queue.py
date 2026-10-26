@@ -48,29 +48,6 @@ class WantedQueue:
     def remove_item(self, item: Dict[str, Any]):
         logging.debug(f"WantedQueue.remove_item called for ID {item.get('id', 'N/A')} - item state managed in DB.")
 
-    def _reconcile_with_existing_items(self, item: Dict[str, Any]) -> bool:
-        """
-        Check if an item already exists in Collected or Upgrading state with the same version.
-        If found, remove the current item from the wanted state.
-
-        Args:
-            item: The item dictionary to check for reconciliation (must contain id, version, type, identifiers)
-
-        Returns:
-            bool: True if item was reconciled (found existing and removed from Wanted), False otherwise
-        """
-        try:
-            item_id = item['id']
-            # Check if a collected/upgrading version already exists
-            if check_existing_media_item(item, item.get('version'), ['Collected', 'Upgrading']):
-                logging.info(f"Item ID {item_id} (Version: {item.get('version')}) already exists in Collected/Upgrading state. Removing duplicate from Wanted.")
-                # Remove the wanted item from the database directly
-                remove_from_media_items(item_id)
-                return True
-            return False
-        except Exception as e:
-            logging.error(f"Error during wanted item reconciliation check for ID {item_id}: {str(e)}")
-            return False # Assume not reconciled on error
 
     def _is_within_alternate_scrape_window(self, item, now=None):
         if not get_setting('Debug', 'use_alternate_scrape_time_strategy', False):

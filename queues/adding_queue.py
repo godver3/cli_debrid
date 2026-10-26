@@ -313,10 +313,6 @@ class AddingQueue:
         self._held_summary = None  # last "nothing actionable" counts logged at INFO
         self._held_summary_at = 0.0
 
-    def reinitialize_provider(self):
-        """Reinitialize the debrid provider and processors"""
-        self.debrid_provider = get_debrid_provider()
-        self.torrent_processor = TorrentProcessor(self.debrid_provider)
         
     def update(self):
         """Update the queue with current items in 'Adding' state"""

@@ -269,38 +269,3 @@ def reapply_single_collection_poster(rating_key: str) -> dict:
         return {'success': False, 'message': str(e)}
 
 
-def cleanup_uploaded_posters() -> int:
-    """Delete non-selected uploaded posters from managed smart collections."""
-    import requests
-    state = _migrate_state(_load_state())
-    collections = state.get('collections', {})
-    if not collections:
-        return 0
-
-    plex_url = get_setting('Plex', 'url', '').rstrip('/')
-    plex_token = get_setting('Plex', 'token', '')
-    if not plex_url or not plex_token:
-        return 0
-
-    headers = {'X-Plex-Token': plex_token, 'Accept': 'application/json'}
-    deleted = 0
-
-    for rk in collections.keys():
-        try:
-            r = requests.get(f"{plex_url}/library/metadata/{rk}/posters", headers=headers, timeout=10)
-            if r.status_code != 200:
-                continue
-            for p in r.json().get('MediaContainer', {}).get('Metadata', []):
-                pk = p.get('ratingKey', '')
-                if pk.startswith('upload://') and not p.get('selected'):
-                    requests.delete(
-                        f"{plex_url}/library/metadata/{rk}/posters",
-                        params={'url': pk},
-                        headers={'X-Plex-Token': plex_token},
-                        timeout=10
-                    )
-                    deleted += 1
-        except Exception as e:
-            logger.debug(f"[SmartCollections] Cleanup error for rk={rk}: {e}")
-
-    return deleted

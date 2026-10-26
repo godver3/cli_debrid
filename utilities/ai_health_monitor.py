@@ -288,6 +288,3 @@ def start_health_monitor():
         _monitor.start()
 
 
-def stop_health_monitor():
-    """Call on app shutdown."""
-    _monitor.stop()

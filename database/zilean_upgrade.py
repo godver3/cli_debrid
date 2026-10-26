@@ -50,66 +50,6 @@ def _add_trackers(magnet: str) -> str:
     return magnet + ''.join(f'&tr={t}' for t in _COMMON_TRACKERS)
 
 
-def _batch_check_rd_cache(hashes: List[str], batch_size: int = 25) -> Dict[str, bool]:
-    """
-    Check which hashes are instantly available (cached) on Real-Debrid.
-
-    Uses /torrents/instantAvailability/h1/h2/.../hN — a single lightweight GET
-    per batch, no torrents added to account, returns immediately.
-
-    Returns dict mapping lowercase hash -> True (cached) / False (not cached).
-    Missing hashes default to False.
-    """
-    import time as _time
-
-    if not hashes:
-        return {}
-
-    try:
-        from debrid.real_debrid.api import make_request, get_api_key
-        api_key = get_api_key()
-    except Exception as e:
-        logger.warning(f"[UPGRADE_HUB] Could not get RD API key for cache check: {e}")
-        return {}
-
-    results: Dict[str, bool] = {}
-    lower_hashes = [h.lower() for h in hashes if h]
-    max_retries = 4
-
-    for i in range(0, len(lower_hashes), batch_size):
-        batch = lower_hashes[i:i + batch_size]
-        endpoint = '/torrents/instantAvailability/' + '/'.join(batch)
-        success = False
-        for attempt in range(max_retries):
-            try:
-                data = make_request('GET', endpoint, api_key)
-                if not isinstance(data, dict):
-                    for h in batch:
-                        results[h] = False
-                else:
-                    for h in batch:
-                        rd_list = data.get(h, {}).get('rd', [])
-                        results[h] = bool(rd_list)
-                success = True
-                break
-            except Exception as e:
-                err_str = str(e)
-                if '429' in err_str and attempt < max_retries - 1:
-                    wait = 5 * (2 ** attempt)  # 5s, 10s, 20s
-                    logger.warning(f"[UPGRADE_HUB] Cache check 429 rate-limit (batch {i // batch_size + 1}), retrying in {wait}s…")
-                    _time.sleep(wait)
-                else:
-                    logger.warning(f"[UPGRADE_HUB] instantAvailability batch failed: {e}")
-                    for h in batch:
-                        results[h] = False
-                    break
-        # Throttle between batches to avoid rate-limiting
-        if success and i + batch_size < len(lower_hashes):
-            _time.sleep(1.5)
-
-    return results
-
-
 # ---------------------------------------------------------------------------
 # In-memory state
 # ---------------------------------------------------------------------------

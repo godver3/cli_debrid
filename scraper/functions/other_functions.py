@@ -1,6 +1,5 @@
 import logging
 import re
-from routes.api_tracker import api
 from typing import Dict, Any, Tuple, Optional, Union
 import pykakasi
 from scraper.functions.common import round_size, trim_magnet
@@ -51,44 +50,6 @@ def smart_search(pattern, text):
     else:
         return pattern.lower() in text.lower()
 
-def test_regex_patterns():
-    """Test function to demonstrate valid and invalid regex patterns."""
-    # Valid pattern examples
-    valid_pattern = r"S\d{2}E\d{2}"  # Matches patterns like S01E01
-    test_text = "Show.S01E02.1080p"
-    result = smart_search(valid_pattern, test_text)
-    logging.info(f"Valid pattern '{valid_pattern}' on text '{test_text}': {result}")
-    
-    # Invalid pattern example (unmatched parenthesis)
-    invalid_pattern = r"S\d{2}E\d{2})"  # Missing opening parenthesis
-    result = smart_search(invalid_pattern, test_text)
-    logging.info(f"Invalid pattern '{invalid_pattern}' on text '{test_text}': {result}")
-
-    # Test TS patterns
-    # Invalid TS pattern (bad escape at end)
-    bad_ts_pattern = r"\.TS.\\"  # This is the problematic pattern
-    test_ts_text = "Movie.TS.1080p"
-    result = smart_search(bad_ts_pattern, test_ts_text)
-    logging.info(f"Bad TS pattern '{bad_ts_pattern}' on text '{test_ts_text}': {result}")
-    
-    # Correct TS pattern
-    good_ts_pattern = r"\.TS\."  # Properly escaped dots
-    result = smart_search(good_ts_pattern, test_ts_text)
-    logging.info(f"Good TS pattern '{good_ts_pattern}' on text '{test_ts_text}': {result}")
-
-def get_tmdb_season_info(tmdb_id: int, season_number: int, api_key: str) -> Optional[Dict[str, Any]]:
-    url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "accept": "application/json"
-    }
-    try:
-        response = api.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error fetching TMDB season info: {e}")
-        return None
 
 def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[str, Any]:
     result = {
@@ -141,23 +102,3 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
     
     return result
 
-def extract_season_episode(parsed_info: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
-    seasons = parsed_info.get('seasons', [])
-    episodes = parsed_info.get('episodes', [])
-    
-    # Get first season and episode if available
-    season = seasons[0] if seasons else None
-    episode = episodes[0] if episodes else None
-    
-    return season, episode
-
-def extract_title_and_se(parsed_info: Dict[str, Any]) -> Tuple[str, Optional[int], Optional[int]]:
-    title = parsed_info.get('title', '')
-    seasons = parsed_info.get('seasons', [])
-    episodes = parsed_info.get('episodes', [])
-    
-    # Get first season and episode if available
-    season = seasons[0] if seasons else None
-    episode = episodes[0] if episodes else None
-    
-    return title, season, episode

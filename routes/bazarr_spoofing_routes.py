@@ -1424,38 +1424,6 @@ def api_info():
 # SignalR Endpoints
 # ============================================================================
 
-def check_signalr_auth() -> Optional[tuple]:
-    """
-    Check SignalR authentication - lighter check that returns error tuple or None.
-
-    Returns:
-        None if authentication passes, or (response, status_code) tuple on failure
-    """
-    if not is_symlinked_mode():
-        return jsonify({'error': 'Not found'}), 404
-
-    if not get_setting('Bazarr Integration', 'enabled', False):
-        return jsonify({'error': 'Not found'}), 404
-
-    # Get API key from header, query param, or negotiate token
-    api_key = (request.headers.get('X-Api-Key')
-               or request.args.get('apikey')
-               or request.args.get('access_token'))
-
-    configured_key = get_setting('Bazarr Integration', 'api_key', '')
-
-    logging.debug(f"[SignalR] auth check path={request.path} has_key={bool(api_key)} headers={dict(request.headers)} args={dict(request.args)}")
-
-    if not api_key:
-        logging.warning(f"[SignalR] auth failed: missing API key for {request.path}")
-        return jsonify({'error': 'Unauthorized'}), 401
-
-    if not configured_key or api_key != configured_key:
-        logging.warning(f"[SignalR] auth failed: invalid API key for {request.path}")
-        return jsonify({'error': 'Unauthorized'}), 401
-
-    return None
-
 
 @bazarr_bp.route('/signalr/messages/negotiate', methods=['GET', 'POST'])
 @bazarr_bp.route('/signalr/negotiate', methods=['GET', 'POST'])

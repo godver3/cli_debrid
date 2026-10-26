@@ -75,7 +75,6 @@ import logging
 import shutil
 import signal
 import time
-from routes.api_tracker import api
 from utilities.settings import get_setting
 import requests
 import re
@@ -597,12 +596,6 @@ def signal_handler(signum, frame):
         stop_global_profiling()
         sys.exit(0)
 
-def update_web_ui_state(state):
-    try:
-        port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
-        api.post(f'http://localhost:{port}/api/update_program_state', json={'state': state})
-    except api.exceptions.RequestException:
-        logging.error("Failed to update web UI state")
 
 def package_app():
     try:
@@ -972,157 +965,6 @@ def stop_program(from_signal=False):
     if not from_signal:
         os.kill(os.getpid(), signal.SIGINT)
 
-def update_media_locations():
-    """
-    Startup function that reviews database items and updates their location_on_disk field
-    by checking the zurg_all_folder location.
-    """
-    import os
-    from database.core import get_db_connection
-    import logging
-    from time import time
-    import subprocess
-    import shlex
-    from collections import defaultdict
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    BATCH_SIZE = 1000
-    MAX_WORKERS = 4  # Number of parallel workers
-
-    def build_file_map(zurg_all_folder):
-        """Build a map of filenames to their full paths using find"""
-        cmd = f"find {shlex.quote(zurg_all_folder)} -type f"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            logging.error(f"Error running find command: {result.stderr}")
-            return {}
-        
-        # Create a map of filename -> list of full paths
-        file_map = defaultdict(list)
-        for path in result.stdout.splitlines():
-            if path:
-                filename = os.path.basename(path)
-                file_map[filename].append(path)
-        
-        logging.info(f"Built file map with {len(file_map)} unique filenames")
-        return file_map
-
-    def process_batch(items_batch, file_map, zurg_all_folder):
-        """Process a batch of items and return updates"""
-        updates = []
-        for item_id, filled_by_file, media_type in items_batch:
-            if not filled_by_file:
-                continue
-
-            # Check if file exists in our map
-            if filled_by_file in file_map:
-                paths = file_map[filled_by_file]
-                if len(paths) == 1:
-                    # Single match - use it
-                    updates.append((paths[0], item_id))
-                else:
-                    # Multiple matches - try to find best match
-                    # First try exact folder match
-                    direct_path = os.path.join(zurg_all_folder, filled_by_file, filled_by_file)
-                    if direct_path in paths:
-                        updates.append((direct_path, item_id))
-                    else:
-                        # Just use the first match
-                        updates.append((paths[0], item_id))
-                        if len(paths) > 1:
-                            logging.debug(f"Multiple matches found for {filled_by_file}, using {paths[0]}")
-            else:
-                logging.error(f"Could not find location for item {item_id} with file {filled_by_file}")
-        
-        return updates
-
-    zurg_all_folder = get_setting('File Management', 'zurg_all_folder')
-    if not zurg_all_folder:
-        logging.error("zurg_all_folder not set in settings")
-        return
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        # Build file map first
-        start_time = time()
-        file_map = build_file_map(zurg_all_folder)
-        logging.info(f"Built file map in {time() - start_time:.1f} seconds")
-
-        # Get all media items that need updating
-        cursor.execute("""
-            SELECT id, filled_by_file, type 
-            FROM media_items 
-            WHERE filled_by_file IS NOT NULL 
-            AND (location_on_disk IS NULL OR location_on_disk = '')
-            AND type != 'movie'
-        """)
-        items = cursor.fetchall()
-        total_items = len(items)
-        logging.info(f"Found {total_items} items to process")
-
-        # Process items in parallel batches
-        start_time = time()
-        all_updates = []
-        
-        # Split items into batches
-        batches = [items[i:i + BATCH_SIZE] for i in range(0, len(items), BATCH_SIZE)]
-        
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            # Submit all batches to the thread pool
-            future_to_batch = {
-                executor.submit(process_batch, batch, file_map, zurg_all_folder): batch 
-                for batch in batches
-            }
-            
-            # Process completed batches
-            for future in as_completed(future_to_batch):
-                batch = future_to_batch[future]
-                try:
-                    updates = future.result()
-                    if updates:
-                        # Execute database updates
-                        cursor.executemany(
-                            "UPDATE media_items SET location_on_disk = ? WHERE id = ?",
-                            updates
-                        )
-                        conn.commit()
-                        processed = len(updates)
-                        all_updates.extend(updates)
-                        elapsed = time() - start_time
-                        items_per_sec = len(all_updates) / elapsed if elapsed > 0 else 0
-                        logging.info(f"Progress: {len(all_updates)}/{total_items} items ({items_per_sec:.1f} items/sec)")
-                except Exception as e:
-                    logging.error(f"Error processing batch: {str(e)}")
-
-        elapsed = time() - start_time
-        items_per_sec = total_items / elapsed if elapsed > 0 else 0
-        logging.info(f"Finished updating media locations. Processed {total_items} items in {elapsed:.1f} seconds ({items_per_sec:.1f} items/sec)")
-        logging.info(f"Successfully updated {len(all_updates)} items")
-
-    except Exception as e:
-        logging.error(f"Error updating media locations: {str(e)}")
-        conn.rollback()
-    finally:
-        conn.close()
-
-def open_log_file():
-    log_dir = os.environ.get('USER_LOGS', '/user/logs')
-    log_file_path = os.path.join(log_dir, 'debug.log')
-
-    if os.path.exists(log_file_path):
-        try:
-            if platform.system() == 'Windows':
-                os.startfile(log_file_path)
-            elif platform.system() == 'Darwin':
-                subprocess.call(['open', log_file_path])
-            else:
-                subprocess.call(['xdg-open', log_file_path])
-        except Exception as e:
-            logging.error(f"Failed to open log file: {e}")
-    else:
-        logging.error("Log file does not exist.")
 
 def fix_notification_settings():
     """Check and fix notification settings during startup."""
@@ -1651,24 +1493,6 @@ def main():
     setup_directories()
     backup_config()
     backup_database(skip_if_recent=True, skip_hours=6)  # Skip if backup exists from last 6 hours
-    
-    # Purge content source cache files on startup
-    # try:
-    #     logging.info("Purging content source cache files on startup...")
-    #     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-    #     deleted_count = 0
-    #     for filename in os.listdir(db_content_dir):
-    #         if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
-    #             file_path = os.path.join(db_content_dir, filename)
-    #             try:
-    #                 os.remove(file_path)
-    #                 logging.debug(f"Deleted cache file: {file_path}")
-    #                 deleted_count += 1
-    #             except OSError as e:
-    #                 logging.warning(f"Could not delete cache file {file_path}: {e}")
-    #     logging.info(f"Deleted {deleted_count} content source cache files.")
-    # except Exception as e:
-    #     logging.error(f"Error purging content source cache files: {str(e)}")
     
     # Verify database health before proceeding
     if not verify_database_health(startup=True):
