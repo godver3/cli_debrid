@@ -78,7 +78,20 @@
     <div class="discover-tabs-scroll-wrap">
     <div class="discover-tabs">
         <button type="button" class="tab-btn active" data-tab="trending">Trending</button>
-        <button type="button" class="tab-btn" data-tab="recommendations" id="recommendations-tab-btn">Recommendations</button>
+        <!-- Recommendations dropdown - Trakt / Scrob / Plex (per user), same look as Top 10 -->
+        <div id="recommendations-tabs" class="flixpatrol-tabs-container">
+            <div class="flixpatrol-dropdown-wrapper">
+                <button type="button" class="tab-btn flixpatrol-dropdown-trigger" data-tab="recommendations" id="recommendations-tab-btn">
+                    <span id="recommendations-dropdown-label">Recommendations</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m6 9 6 6 6-6"/>
+                    </svg>
+                </button>
+                <div id="recommendations-dropdown-menu" class="flixpatrol-dropdown-menu">
+                    <!-- Sources and users are inserted by JS -->
+                </div>
+            </div>
+        </div>
         <!-- FlixPatrol dropdown - Top 10 streaming charts (no API key required) -->
         <div id="flixpatrol-tabs" class="flixpatrol-tabs-container">
             <div class="flixpatrol-dropdown-wrapper">
@@ -1081,11 +1094,6 @@
 
         <!-- Recommendations content (hidden by default) -->
         <div id="recommendations-content" style="display:none;">
-            <!-- Whose watch history drives the library recommendations (hidden until the viewer history task has run) -->
-            <div class="rec-viewer-bar" id="rec-viewer-bar" style="display:none;">
-                <label for="rec-viewer-select">Recommendations for</label>
-                <select id="rec-viewer-select" class="sort-select"></select>
-            </div>
             <!-- Movies Row -->
             <div class="category-section" id="rec-movies-section">
                 <div class="category-header">

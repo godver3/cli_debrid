@@ -379,6 +379,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             const trendingContent = document.getElementById('trending-content');
             const searchResults = document.getElementById('search-results');
             if (trendingContent) trendingContent.style.display = 'none';
+            if (recommendationsContent) recommendationsContent.style.display = 'none';
             if (searchResults) searchResults.style.display = 'block';
         } else {
             // Only load trending if nothing is saved
@@ -2058,6 +2059,7 @@ function handleSearch() {
 
     // Show search results, hide trending content
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
 
     // Reset page and auto-load count for new search
@@ -2274,6 +2276,7 @@ function applyAdvancedFilters(closeDrawer = true) {
     // MDBList and FlixPatrol re-call their loaders so mediaType is sent to the API.
     if (currentTab === 'mdblist' && window.mdblistState && window.mdblistState.currentList) {
         if (trendingContent) trendingContent.style.display = 'none';
+        if (recommendationsContent) recommendationsContent.style.display = 'none';
         if (searchResults) searchResults.style.display = 'block';
         if (closeDrawer && typeof closeFilters === 'function') closeFilters();
         loadMDBListContent(window.mdblistState.currentList.key);
@@ -2281,6 +2284,7 @@ function applyAdvancedFilters(closeDrawer = true) {
     }
     if (currentTab === 'flixpatrol' && window.flixpatrolState && window.flixpatrolState.currentPlatform) {
         if (trendingContent) trendingContent.style.display = 'none';
+        if (recommendationsContent) recommendationsContent.style.display = 'none';
         if (searchResults) searchResults.style.display = 'block';
         if (closeDrawer && typeof closeFilters === 'function') closeFilters();
         loadFlixPatrolContent(window.flixpatrolState.currentPlatform.id, window.flixpatrolState.currentPeriod || 'today');
@@ -2288,6 +2292,7 @@ function applyAdvancedFilters(closeDrawer = true) {
     }
     if (currentTab === 'personal' && window.personalState && window.personalState.currentSelection) {
         if (trendingContent) trendingContent.style.display = 'none';
+        if (recommendationsContent) recommendationsContent.style.display = 'none';
         if (searchResults) searchResults.style.display = 'block';
         if (closeDrawer && typeof closeFilters === 'function') closeFilters();
         loadPersonalContent();
@@ -2309,6 +2314,7 @@ function applyAdvancedFilters(closeDrawer = true) {
 
     // Switch to filtered results view (hide trending, show search results grid)
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
 
     // Close filter drawer after applying (only if explicitly requested, e.g., from Apply button)
@@ -2632,59 +2638,168 @@ async function loadTrending() {
 }
 
 /**
- * Load personalised recommendations from the best connected provider.
- * The backend prefers Trakt, then Scrob For You, then the user's own library.
+ * Load personalised recommendations from the source picked in the
+ * Recommendations dropdown (Trakt, Scrob, or a Plex/Emby/Jellyfin user).
+ * Without a pick the backend's default applies: Trakt, then Scrob, then the library.
  */
 let _trendingLoaded = false; // Only fetch once per page load
-let _recLoaded = false;  // Only fetch once per page load (per chosen viewer)
-let _recViewersLoaded = false;
-const REC_VIEWER_KEY = 'discover.recViewer';
+let _recLoaded = false;  // Only fetch once per page load (per chosen source/user)
+const REC_SOURCE_KEY = 'discoverRecSource';
+const REC_SERVER_LABELS = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+window.recState = { sources: null, selection: null };  // selection: {source, viewer}
 
-/**
- * Fill the "Recommendations for" picker from the synced Plex/Emby/Jellyfin users.
- * Stays hidden when there are none (Trakt/Scrob, or the viewer history task is off).
- */
-async function loadRecommendationViewers() {
-    if (_recViewersLoaded) return;
-    _recViewersLoaded = true;
-    const bar = document.getElementById('rec-viewer-bar');
-    const select = document.getElementById('rec-viewer-select');
-    if (!bar || !select) return;
+async function loadRecommendationSources() {
+    if (window.recState.sources) return window.recState.sources;
     try {
-        const resp = await fetch('/discover/api/recommendations/viewers');
+        const resp = await fetch('/discover/api/recommendations/sources');
         const data = await resp.json();
-        const viewers = data.viewers || [];
-        if (viewers.length === 0) return;
-
-        const sourceLabel = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
-        const multipleSources = new Set(viewers.map(v => v.source)).size > 1;
-        select.innerHTML = '';
-        for (const v of viewers) {
-            const opt = document.createElement('option');
-            opt.value = v.id;
-            opt.textContent = multipleSources ? `${v.name} (${sourceLabel[v.source] || v.source})` : v.name;
-            select.appendChild(opt);
-        }
-        const everyone = document.createElement('option');
-        everyone.value = 'all';
-        everyone.textContent = 'Everyone';
-        select.appendChild(everyone);
-
-        let saved = null;
-        try { saved = localStorage.getItem(REC_VIEWER_KEY); } catch (e) { /* storage unavailable */ }
-        const valid = [...select.options].some(o => o.value === saved);
-        select.value = valid ? saved : (data.default || viewers[0].id);
-
-        select.addEventListener('change', () => {
-            try { localStorage.setItem(REC_VIEWER_KEY, select.value); } catch (e) { /* storage unavailable */ }
-            _recLoaded = false;
-            loadRecommendations();
-        });
-        bar.style.display = 'flex';
+        window.recState.sources = data.sources || [];
     } catch (error) {
-        console.error('[Discover] Recommendation viewers error:', error);
+        console.error('[Discover] Recommendation sources error:', error);
+        window.recState.sources = [];
     }
+
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(REC_SOURCE_KEY) || 'null'); } catch (e) { /* storage unavailable */ }
+    window.recState.selection = saved && recSelectionValid(saved) ? saved : recDefaultSelection();
+    populateRecommendationsDropdown();
+    updateRecommendationsLabel();
+    return window.recState.sources;
 }
+
+function recSource(id) {
+    return (window.recState.sources || []).find(s => s.id === id);
+}
+
+function recDefaultSelection() {
+    const first = (window.recState.sources || [])[0];
+    if (!first) return null;
+    return first.id === 'library' ? { source: 'library', viewer: first.default_viewer || 'main' } : { source: first.id };
+}
+
+function recSelectionValid(sel) {
+    const src = recSource(sel.source);
+    if (!src) return false;
+    if (src.id !== 'library') return true;
+    return sel.viewer === 'all' || sel.viewer === 'main' || (src.viewers || []).some(v => v.id === sel.viewer);
+}
+
+function recSelectionName(sel) {
+    const src = sel && recSource(sel.source);
+    if (!src) return 'Recommendations';
+    if (src.id !== 'library') return `${src.name} Recommendations`;
+    if (sel.viewer === 'all') return `${src.name}: Everyone`;
+    const viewer = (src.viewers || []).find(v => v.id === sel.viewer);
+    return viewer ? `${REC_SERVER_LABELS[viewer.source] || src.name}: ${viewer.name}` : `${src.name} Recommendations`;
+}
+
+function updateRecommendationsLabel() {
+    const label = document.getElementById('recommendations-dropdown-label');
+    if (label) label.textContent = recSelectionName(window.recState.selection);
+}
+
+function populateRecommendationsDropdown() {
+    const menu = document.getElementById('recommendations-dropdown-menu');
+    if (!menu) return;
+    menu.innerHTML = '';
+    const current = window.recState.selection || {};
+
+    const addHeader = (text) => {
+        const header = document.createElement('div');
+        header.className = 'flixpatrol-dropdown-header';
+        header.textContent = text;
+        menu.appendChild(header);
+    };
+    const addItem = (text, sel) => {
+        const item = document.createElement('div');
+        item.className = 'flixpatrol-dropdown-item';
+        if (current.source === sel.source && (sel.source !== 'library' || current.viewer === sel.viewer)) {
+            item.classList.add('selected');
+        }
+        const name = document.createElement('span');
+        name.className = 'platform-name';
+        name.textContent = text;
+        item.appendChild(name);
+        item.addEventListener('click', () => selectRecommendationSource(sel));
+        menu.appendChild(item);
+    };
+
+    const services = (window.recState.sources || []).filter(s => s.id !== 'library');
+    if (services.length) {
+        addHeader('Accounts');
+        services.forEach(s => addItem(s.name, { source: s.id }));
+    }
+
+    const library = recSource('library');
+    if (!library) {
+        if (!services.length) addHeader('Nothing connected');
+        return;
+    }
+    const viewers = library.viewers || [];
+    if (!viewers.length) {
+        addHeader(library.name);
+        addItem('Your library', { source: 'library', viewer: 'main' });
+        return;
+    }
+    // One group per media server, then everyone together
+    const servers = [...new Set(viewers.map(v => v.source))];
+    servers.forEach(server => {
+        addHeader(REC_SERVER_LABELS[server] || server);
+        viewers.filter(v => v.source === server)
+            .forEach(v => addItem(v.name, { source: 'library', viewer: v.id }));
+    });
+    addItem('Everyone', { source: 'library', viewer: 'all' });
+}
+
+function selectRecommendationSource(sel) {
+    window.recState.selection = sel;
+    try { localStorage.setItem(REC_SOURCE_KEY, JSON.stringify(sel)); } catch (e) { /* storage unavailable */ }
+    updateRecommendationsLabel();
+    populateRecommendationsDropdown();
+
+    const menu = document.getElementById('recommendations-dropdown-menu');
+    const btn = document.getElementById('recommendations-tab-btn');
+    if (menu) menu.classList.remove('open');
+    if (btn) btn.classList.remove('open');
+
+    _recLoaded = false;
+    switchTab('recommendations');
+}
+
+function bindRecommendationsDropdown() {
+    const btn = document.getElementById('recommendations-tab-btn');
+    const menu = document.getElementById('recommendations-dropdown-menu');
+    if (!btn || !menu) return;
+
+    btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const isOpen = menu.classList.toggle('open');
+        btn.classList.toggle('open', isOpen);
+        if (isOpen) {
+            closeAllDropdowns(btn);
+            await loadRecommendationSources();
+            if (window.innerWidth <= 768) {
+                const rect = btn.getBoundingClientRect();
+                menu.style.top = (rect.bottom + 8) + 'px';
+                const menuWidth = menu.offsetWidth || 200;
+                const left = Math.min(rect.left, window.innerWidth - menuWidth - 8);
+                menu.style.left = Math.max(8, left) + 'px';
+            }
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!btn.contains(e.target) && !menu.contains(e.target)) {
+            menu.classList.remove('open');
+            btn.classList.remove('open');
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    bindRecommendationsDropdown();
+    setTimeout(loadRecommendationSources, 120);
+});
 
 async function loadRecommendations() {
     beginContentLoad();
@@ -2702,10 +2817,14 @@ async function loadRecommendations() {
         const noProviderMsg = document.getElementById('rec-no-provider');
         const noResultsMsg = document.getElementById('rec-no-results');
 
-        await loadRecommendationViewers();
-        const viewerSelect = document.getElementById('rec-viewer-select');
-        const viewer = viewerSelect && viewerSelect.value ? `&viewer=${encodeURIComponent(viewerSelect.value)}` : '';
-        const resp = await fetch(`/discover/api/recommendations?type=all${viewer}`);
+        await loadRecommendationSources();
+        const sel = window.recState.selection;
+        let query = '';
+        if (sel) {
+            query += `&source=${encodeURIComponent(sel.source)}`;
+            if (sel.viewer) query += `&viewer=${encodeURIComponent(sel.viewer)}`;
+        }
+        const resp = await fetch(`/discover/api/recommendations?type=all${query}`);
         if (!resp.ok) throw new Error('HTTP error fetching recommendations');
         const data = await resp.json();
 
@@ -7478,7 +7597,8 @@ function closeAllDropdowns(except) {
     [
         { btn: 'mdblist-dropdown-btn', menu: 'mdblist-dropdown-menu' },
         { btn: 'personal-dropdown-btn', menu: 'personal-dropdown-menu' },
-        { btn: 'flixpatrol-dropdown-btn', menu: 'flixpatrol-dropdown-menu' }
+        { btn: 'flixpatrol-dropdown-btn', menu: 'flixpatrol-dropdown-menu' },
+        { btn: 'recommendations-tab-btn', menu: 'recommendations-dropdown-menu' }
     ].forEach(({ btn, menu }) => {
         const b = document.getElementById(btn);
         const m = document.getElementById(menu);
@@ -7567,6 +7687,7 @@ async function selectMDBList(list) {
 
     // Show search results container, hide trending content
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
 
     // Load the list content
@@ -7824,6 +7945,7 @@ async function selectFlixPatrolPlatform(platform, period = 'today') {
 
     // Show search results container, hide trending content
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
 
     // Load the platform's Top 10 content
@@ -8580,6 +8702,7 @@ async function loadAllSelectedLists() {
     const trendingContent = document.getElementById('trending-content');
     const searchResults = document.getElementById('search-results');
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
     window.discoverState.listModeActive = true;
     const _earlyGrid = document.getElementById('results-grid');
@@ -8842,6 +8965,7 @@ async function loadSidebarListContent(source, listId) {
     // Show search results area, hide trending — clear grid immediately so old results
     // don't flash while the new list fetch is in-flight
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
     if (resultsGrid) resultsGrid.innerHTML = '';
 
@@ -9998,6 +10122,7 @@ async function selectPersonalList(sel, restoring = false) {
     window.discoverState.page = 1;
 
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults)   searchResults.style.display = 'block';
 
     await loadPersonalContent();

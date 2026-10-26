@@ -1142,20 +1142,6 @@ body[data-theme="tangerine"] .discover-subtitle {
     overflow: hidden;
 }
 
-.rec-viewer-bar {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin-bottom: 1rem;
-    font-size: 0.85rem;
-    color: #9ca3af;
-}
-
-.rec-viewer-bar select {
-    max-width: 100%;
-}
-
 /* Legacy classes kept for compatibility */
 .result-content { display: none; }
 
@@ -3192,6 +3178,7 @@ body[data-theme="tangerine"] .discover-subtitle {
 
     .discover-tabs > .tab-btn,
     .discover-tabs > #flixpatrol-tabs,
+    .discover-tabs > #recommendations-tabs,
     .mdblist-tabs-container {
         flex-shrink: 0;
     }
