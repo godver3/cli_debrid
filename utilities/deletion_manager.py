@@ -999,6 +999,31 @@ class DeletionManager:
                         result['sources_failed'].append(source_name)
                         result['details'][source_name] = {'success': False, 'message': str(e)}
 
+            # Check the user's own Trakt Watchlist (not Friends' watchlists, which we can't edit).
+            # item_source_types holds full type names ("Trakt Watchlist_1" -> "Trakt Watchlist").
+            watchlist_enabled = any(
+                cfg.get('type') == 'Trakt Watchlist' and cfg.get('enabled', False)
+                for cfg in content_sources.values()
+            )
+            if watchlist_enabled and item_source_types and 'Trakt Watchlist' not in item_source_types:
+                logging.info(f"[CONTENT_SOURCE_REMOVAL] ⏭️  Skipping Trakt Watchlist - item not from it")
+            elif watchlist_enabled:
+                result['sources_attempted'].append('Trakt_Watchlist')
+                try:
+                    from content_checkers.trakt import remove_from_trakt_watchlist
+                    removal_result = remove_from_trakt_watchlist([item])
+                    result['details']['Trakt_Watchlist'] = removal_result
+                    if removal_result.get('success'):
+                        logging.info(f"[CONTENT_SOURCE_REMOVAL] ✓ Removed from Trakt Watchlist: {removal_result.get('message')}")
+                        result['sources_succeeded'].append('Trakt_Watchlist')
+                    else:
+                        logging.warning(f"[CONTENT_SOURCE_REMOVAL] ✗ Failed to remove from Trakt Watchlist: {removal_result.get('message')}")
+                        result['sources_failed'].append('Trakt_Watchlist')
+                except Exception as e:
+                    logging.error(f"[CONTENT_SOURCE_REMOVAL] Exception removing from Trakt Watchlist: {e}")
+                    result['sources_failed'].append('Trakt_Watchlist')
+                    result['details']['Trakt_Watchlist'] = {'success': False, 'message': str(e)}
+
             # Check Trakt Collection from Content Sources
             trakt_collection_sources = []
             logging.debug(f"[CONTENT_SOURCE_REMOVAL] Checking content sources for Trakt Collection...")

@@ -1954,12 +1954,13 @@ def remove_from_trakt_list(list_slug: str, items: list, username: str = None) ->
         logging.error(f"Error removing from Trakt list '{list_slug}': {e}")
         return {'success': False, 'removed': 0, 'message': str(e)}
 
-def remove_from_trakt_collection(items: list) -> dict:
+def _remove_via_trakt_sync(items: list, kind: str) -> dict:
     """
-    Remove items from Trakt collection (different from watchlist/lists)
+    Remove items from the authenticated user's Trakt collection or watchlist
 
     Args:
         items: List of items to remove, each with 'tmdb_id', 'imdb_id' and 'type'
+        kind: 'collection' or 'watchlist' (the /sync/<kind>/remove endpoint)
 
     Returns:
         dict: {'success': bool, 'removed': int, 'message': str}
@@ -1967,7 +1968,8 @@ def remove_from_trakt_collection(items: list) -> dict:
     try:
         # Set normal priority so deletion waits for cooldown instead of proceeding
         _set_task_priority('normal')
-        logging.info(f"[TRAKT_COLLECTION] Starting removal for {len(items)} item(s)")
+        tag = f"[TRAKT_{kind.upper()}]"
+        logging.info(f"{tag} Starting removal for {len(items)} item(s)")
 
         # Build removal payload
         movies = []
@@ -1980,12 +1982,12 @@ def remove_from_trakt_collection(items: list) -> dict:
             item_type = item.get('type', '').lower()
             item_title = item.get('title', 'Unknown')
 
-            logging.debug(f"[TRAKT_COLLECTION] Processing '{item_title}': type={item_type}, tmdb_id={tmdb_id}, imdb_id={imdb_id}")
+            logging.debug(f"{tag} Processing '{item_title}': type={item_type}, tmdb_id={tmdb_id}, imdb_id={imdb_id}")
 
             # Need at least one ID to remove from Trakt
             if not tmdb_id and not imdb_id:
                 skipped_items.append(f"{item_title} (no TMDB or IMDB ID)")
-                logging.warning(f"[TRAKT_COLLECTION] Skipping '{item_title}': missing both TMDB and IMDB ID")
+                logging.warning(f"{tag} Skipping '{item_title}': missing both TMDB and IMDB ID")
                 continue
 
             # Build IDs dict - prefer TMDB ID, fallback to IMDB ID
@@ -1997,15 +1999,15 @@ def remove_from_trakt_collection(items: list) -> dict:
 
             if item_type == 'movie':
                 movies.append({'ids': ids})
-                logging.debug(f"[TRAKT_COLLECTION] Added movie: {ids}")
+                logging.debug(f"{tag} Added movie: {ids}")
             elif item_type in ['episode', 'show']:
                 shows.append({'ids': ids})
-                logging.debug(f"[TRAKT_COLLECTION] Added show: {ids}")
+                logging.debug(f"{tag} Added show: {ids}")
             else:
-                logging.warning(f"[TRAKT_COLLECTION] Unknown type '{item_type}' for '{item_title}'")
+                logging.warning(f"{tag} Unknown type '{item_type}' for '{item_title}'")
 
         if not movies and not shows:
-            logging.error(f"[TRAKT_COLLECTION] No valid items to remove")
+            logging.error(f"{tag} No valid items to remove")
             return {'success': False, 'removed': 0, 'message': 'No valid items to remove'}
 
         removal_data = {}
@@ -2014,15 +2016,15 @@ def remove_from_trakt_collection(items: list) -> dict:
         if shows:
             removal_data['shows'] = shows
 
-        logging.info(f"[TRAKT_COLLECTION] Sending removal request: {len(movies)} movies, {len(shows)} shows")
-        logging.debug(f"[TRAKT_COLLECTION] Payload: {json.dumps(removal_data, indent=2)}")
+        logging.info(f"{tag} Sending removal request: {len(movies)} movies, {len(shows)} shows")
+        logging.debug(f"{tag} Payload: {json.dumps(removal_data, indent=2)}")
 
-        # Call Trakt API - collection removal endpoint
-        response = make_trakt_request('post', "/sync/collection/remove", data=removal_data)
+        # Call Trakt API - sync removal endpoint
+        response = make_trakt_request('post', f"/sync/{kind}/remove", data=removal_data)
 
         if response and response.status_code == 200:
             result = response.json()
-            logging.info(f"[TRAKT_COLLECTION] API Response: {json.dumps(result, indent=2)}")
+            logging.info(f"{tag} API Response: {json.dumps(result, indent=2)}")
 
             removed_movies = result.get('deleted', {}).get('movies', 0)
             removed_shows = result.get('deleted', {}).get('shows', 0)
@@ -2032,31 +2034,41 @@ def remove_from_trakt_collection(items: list) -> dict:
             total_removed = removed_movies + removed_shows + removed_episodes
 
             if not_found_movies or not_found_shows:
-                logging.warning(f"[TRAKT_COLLECTION] Items not found: {len(not_found_movies)} movies, {len(not_found_shows)} shows")
-                logging.debug(f"[TRAKT_COLLECTION] Not found details: {result.get('not_found', {})}")
+                logging.warning(f"{tag} Items not found: {len(not_found_movies)} movies, {len(not_found_shows)} shows")
+                logging.debug(f"{tag} Not found details: {result.get('not_found', {})}")
 
-            logging.info(f"[TRAKT_COLLECTION] Removed {total_removed} items ({removed_movies} movies, {removed_shows} shows, {removed_episodes} episodes)")
+            logging.info(f"{tag} Removed {total_removed} items ({removed_movies} movies, {removed_shows} shows, {removed_episodes} episodes)")
             return {
                 'success': True,
                 'removed': total_removed,
-                'message': f'Removed {total_removed} item(s) from collection'
+                'message': f'Removed {total_removed} item(s) from {kind}'
             }
         elif response:
             error_text = response.text if hasattr(response, 'text') else 'Unknown error'
-            logging.error(f"[TRAKT_COLLECTION] Failed: HTTP {response.status_code}")
-            logging.error(f"[TRAKT_COLLECTION] Response: {error_text}")
+            logging.error(f"{tag} Failed: HTTP {response.status_code}")
+            logging.error(f"{tag} Response: {error_text}")
             return {
                 'success': False,
                 'removed': 0,
                 'message': f'HTTP {response.status_code}: {error_text}'
             }
         else:
-            logging.error(f"[TRAKT_COLLECTION] No response from Trakt API")
+            logging.error(f"{tag} No response from Trakt API")
             return {'success': False, 'removed': 0, 'message': 'No response from Trakt API'}
 
     except Exception as e:
-        logging.error(f"Error removing from Trakt collection: {e}")
+        logging.error(f"Error removing from Trakt {kind}: {e}")
         return {'success': False, 'removed': 0, 'message': str(e)}
+
+
+def remove_from_trakt_collection(items: list) -> dict:
+    """Remove items from the user's Trakt collection. Returns {'success', 'removed', 'message'}."""
+    return _remove_via_trakt_sync(items, 'collection')
+
+
+def remove_from_trakt_watchlist(items: list) -> dict:
+    """Remove items from the user's own Trakt watchlist. Returns {'success', 'removed', 'message'}."""
+    return _remove_via_trakt_sync(items, 'watchlist')
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
