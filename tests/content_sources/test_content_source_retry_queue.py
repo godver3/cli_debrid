@@ -92,6 +92,16 @@ class ContentSourceRetryQueueTest(unittest.TestCase):
         self._make_due()
         self.assertEqual(self.csr.process_retry_queue(), 0)
 
+    def test_requeue_while_pending_does_not_use_up_retries(self):
+        self.removal.side_effect = TimeoutError('down')
+        for _ in range(6):  # e.g. the same show deleted again before its retry ran
+            self.dm_mod.DeletionManager().remove_from_content_source(dict(ITEM))
+        rows = self._rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0][1], rows[0][2]), (0, 0))
+        self._make_due()
+        self.assertEqual(self.csr.process_retry_queue(), 1)  # still picked up
+
     def test_successful_removal_queues_nothing(self):
         self.removal.return_value = {'success': True, 'message': 'removed'}
         self.dm_mod.DeletionManager().remove_from_content_source(dict(ITEM))

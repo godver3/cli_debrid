@@ -883,7 +883,12 @@ class MaintenanceTasks:
         from main import verify_database_health
 
         try:
+            paused_for_db = self.queue_paused and (self.pause_info or {}).get("error_type") == "DB_HEALTH"
             if not verify_database_health():
+                if paused_for_db:
+                    # Already paused and notified; keep holding until a check passes
+                    logging.error("Database health check still failing - queue stays paused")
+                    return
                 logging.error("Database health check failed during periodic check")
                 # Update pause_info for DB health
                 self.pause_info = {
@@ -898,10 +903,15 @@ class MaintenanceTasks:
                 # Send notification about database corruption
                 try:
                     from routes.notifications import send_program_crash_notification
-                    send_program_crash_notification("Database corruption detected - program must be restarted to recreate databases")
+                    send_program_crash_notification(
+                        "Database corruption detected (see logs for which database) - queue paused. "
+                        "Restore the database from a backup; the queue resumes when the hourly check passes.")
 
                 except Exception as e:
                     logging.error(f"Failed to send database corruption notification: {str(e)}")
+            elif paused_for_db:
+                logging.info("Database health check passed - resuming queue paused for DB_HEALTH")
+                self.resume_queue()
             else:
                 logging.info("Periodic database health check passed")
         except Exception as e:

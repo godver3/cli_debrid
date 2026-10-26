@@ -634,7 +634,6 @@ def package_app():
             "--hidden-import", "database",
             "--hidden-import", "database.core",
             "--hidden-import", "database.collected_items",
-            "--hidden-import", "database.blacklist",
             "--hidden-import", "database.schema_management",
             "--hidden-import", "database.poster_management",
             "--hidden-import", "database.statistics",
@@ -987,7 +986,8 @@ def verify_database_health(startup: bool = False):
     Read-only health check of media_items.db and cli_battery.db.
 
     Skipped at startup to keep boot fast; the hourly task_check_database_health
-    and the DB_HEALTH pause supervisor run it. Returns False only on real
+    runs it (and keeps running while the queue is paused for DB_HEALTH, so it
+    resumes the queue once a check passes). Returns False only on real
     corruption (quick_check reports problems or the file is not a database) so
     the caller can pause the queue and notify. A locked/busy database is
     inconclusive and passes. Never modifies, moves or deletes the files.

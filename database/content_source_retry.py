@@ -76,21 +76,20 @@ def add_to_retry_queue(imdb_id: str, title: str, item_type: str, item_data: Dict
         existing = cursor.fetchone()
 
         if existing:
-            # Update existing entry
+            # Already pending: refresh its data but keep its schedule. Only a retry
+            # attempt (mark_retry_completed) counts against max_retries; counting
+            # re-queues too could reach the cap with no attempt left to close it.
             retry_id, retry_count = existing
-            next_retry = datetime.now() + timedelta(minutes=2 ** min(retry_count, 5))  # Exponential backoff
 
             cursor.execute('''
                 UPDATE content_source_removal_retry
-                SET retry_count = retry_count + 1,
-                    next_retry_at = ?,
-                    last_attempt_at = ?,
+                SET last_attempt_at = ?,
                     last_error = ?,
                     item_data = ?
                 WHERE id = ?
-            ''', (next_retry, datetime.now(), error, json.dumps(item_data), retry_id))
+            ''', (datetime.now(), error, json.dumps(item_data), retry_id))
 
-            logging.info(f"[RETRY_QUEUE] Updated retry entry for {title} ({imdb_id}) - attempt {retry_count + 1}, next retry at {next_retry}")
+            logging.info(f"[RETRY_QUEUE] {title} ({imdb_id}) already queued ({retry_count} retries so far) - refreshed its data")
         else:
             # Add new entry with first retry in 2 minutes
             next_retry = datetime.now() + timedelta(minutes=2)

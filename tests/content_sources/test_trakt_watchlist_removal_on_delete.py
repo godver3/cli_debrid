@@ -59,6 +59,17 @@ class TraktWatchlistRemovalTest(unittest.TestCase):
             self._remove(sources, item)
         remove.assert_not_called()
 
+    def test_source_limited_to_shows_leaves_movies_alone(self):
+        sources = {'Trakt Watchlist_1': {'type': 'Trakt Watchlist', 'enabled': True, 'media_type': 'Shows'}}
+        movie = {'tmdb_id': 5, 'imdb_id': 'tt5', 'type': 'movie', 'title': 'M', 'content_source': 'Trakt Watchlist_1'}
+        show = dict(movie, type='show', title='S')
+        with mock.patch.object(self.trakt, 'remove_from_trakt_watchlist',
+                               return_value={'success': True, 'removed': 1, 'message': 'ok'}) as remove:
+            self._remove(sources, movie)
+            remove.assert_not_called()
+            self._remove(sources, show)
+        remove.assert_called_once()
+
     def test_friends_watchlist_alone_does_not_touch_users_watchlist(self):
         sources = {'Friends Trakt Watchlist_1': {'type': 'Friends Trakt Watchlist', 'enabled': True}}
         item = {'tmdb_id': 5, 'type': 'movie', 'title': 'M', 'content_source': 'Friends Trakt Watchlist_1'}

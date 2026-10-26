@@ -1000,8 +1000,16 @@ class DeletionManager:
 
             # Check the user's own Trakt Watchlist (not Friends' watchlists, which we can't edit).
             # item_source_types holds full type names ("Trakt Watchlist_1" -> "Trakt Watchlist").
+            # Like the other sources, a source limited to Movies or Shows only covers that type.
+            def _watchlist_covers(cfg):
+                source_media_type = cfg.get('media_type', 'All')
+                if source_media_type == 'Movies':
+                    return media_type == 'movie'
+                if source_media_type == 'Shows':
+                    return media_type in ('show', 'episode')
+                return True
             watchlist_enabled = any(
-                cfg.get('type') == 'Trakt Watchlist' and cfg.get('enabled', False)
+                cfg.get('type') == 'Trakt Watchlist' and cfg.get('enabled', False) and _watchlist_covers(cfg)
                 for cfg in content_sources.values()
             )
             if watchlist_enabled and item_source_types and 'Trakt Watchlist' not in item_source_types:

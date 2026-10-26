@@ -1503,7 +1503,8 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             logging.debug(f"Jobs already tracked as paused by this mechanism: {sorted(list(self.paused_jobs_by_queue))}")
 
             # Define tasks that should never be paused (essential monitoring tasks)
-            never_pause_tasks = {'task_check_service_connectivity', 'task_heartbeat'}
+            # task_check_database_health resumes a DB_HEALTH pause once the database checks out
+            never_pause_tasks = {'task_check_service_connectivity', 'task_heartbeat', 'task_check_database_health'}
 
             for job in all_jobs:
                 job_id = job.id
@@ -2849,8 +2850,9 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             # Check all pause types, not just CONNECTION_ERROR
             current_pause_type = self.pause_info.get("error_type") if self.pause_info else None
             
-            # For scheduled pauses, don't use fail-safe
-            if current_pause_type == "SYSTEM_SCHEDULED":
+            # For scheduled pauses, don't use fail-safe. A DB_HEALTH pause is held until
+            # task_check_database_health sees a healthy database again.
+            if current_pause_type in ("SYSTEM_SCHEDULED", "DB_HEALTH"):
                 return
 
             # How long has it been since the connectivity failure was first detected?

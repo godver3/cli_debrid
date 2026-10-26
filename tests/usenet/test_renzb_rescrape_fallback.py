@@ -87,6 +87,21 @@ class ReNzbRescrapeFallbackTest(unittest.TestCase):
                          ['Show.S01E02.Rejected', 'Show.S01E02.Good'])
         item, job_id, best, _results = update_db.call_args.args
         self.assertEqual((item['id'], job_id, best['title']), (7, 'job-2', 'Show.S01E02.Good.Named'))
+        # The indexer's title stays the exclusion key for later repairs
+        self.assertEqual(best['original_title'], 'Show.S01E02.Good')
+
+    def test_stops_after_max_submits(self):
+        candidates = [{'title': f'Show.S01E02.R{i}', 'nzb_url': f'http://x/{i}'} for i in range(6)]
+        submit = mock.Mock(return_value=('job-x', '', 'failed'))
+        with mock.patch.object(self.re_mod, '_scrape_for_replacement', return_value=candidates), \
+             mock.patch.object(self.re_mod, '_is_junk_replacement_result', return_value=False), \
+             mock.patch.object(self.re_mod, '_submit_and_confirm_replacement', submit), \
+             mock.patch.object(self.re_mod, '_update_db_for_repair') as update_db:
+            resp = self._post()
+
+        self.assertFalse(resp.get_json()['success'])
+        self.assertEqual(submit.call_count, self.dm._RENZB_MAX_RESCRAPE_SUBMITS)
+        update_db.assert_not_called()
 
     def test_all_candidates_rejected_reports_failure(self):
         with mock.patch.object(self.re_mod, '_scrape_for_replacement', return_value=[{'title': 'a'}]), \

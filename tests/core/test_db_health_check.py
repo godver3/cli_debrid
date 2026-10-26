@@ -69,5 +69,63 @@ class VerifyDatabaseHealthTest(unittest.TestCase):
         self.assertTrue(self.main.verify_database_health(startup=True))
 
 
+class DatabaseHealthTaskPauseTest(unittest.TestCase):
+    """task_check_database_health pauses once, holds the pause, and resumes on a passing check.
+
+    The pause used to pause this task too, and the fail-safe watchdog force-resumed
+    every pause after 3 minutes, so a corrupt database gave an hourly 3-minute pause
+    and an hourly notification saying a restart would recreate the databases.
+    """
+    def setUp(self):
+        import main
+        from queues.runner.maintenance_tasks import MaintenanceTasks
+        self.main = main
+        runner = MaintenanceTasks()
+        runner.queue_paused = False
+        runner.pause_info = {}
+
+        def pause():
+            runner.queue_paused = True
+
+        def resume():
+            runner.queue_paused = False
+            runner.pause_info = {}
+        runner.pause_queue = mock.Mock(side_effect=pause)
+        runner.resume_queue = mock.Mock(side_effect=resume)
+        self.runner = runner
+        self.notify = mock.patch('routes.notifications.send_program_crash_notification').start()
+        self.addCleanup(mock.patch.stopall)
+
+    def _run(self, healthy):
+        with mock.patch.object(self.main, 'verify_database_health', return_value=healthy):
+            self.runner.task_check_database_health()
+
+    def test_pauses_and_notifies_once_then_resumes_when_healthy(self):
+        self._run(False)
+        self._run(False)
+        self.assertEqual(self.runner.pause_queue.call_count, 1)
+        self.assertEqual(self.notify.call_count, 1)
+        self.assertNotIn('recreate', self.notify.call_args.args[0])
+        self.runner.resume_queue.assert_not_called()
+
+        self._run(True)
+        self.runner.resume_queue.assert_called_once()
+        self.assertFalse(self.runner.queue_paused)
+
+    def test_passing_check_leaves_other_pauses_alone(self):
+        self.runner.queue_paused = True
+        self.runner.pause_info = {'error_type': 'CONNECTION_ERROR'}
+        self._run(True)
+        self.runner.resume_queue.assert_not_called()
+
+    def test_watchdog_does_not_force_resume_a_db_health_pause(self):
+        from queues.run_program import ProgramRunner
+        fake = mock.Mock(queue_paused=True, pause_info={'error_type': 'DB_HEALTH'},
+                         connectivity_failure_time=None)
+        ProgramRunner._fail_safe_resume_if_stuck(fake)
+        fake.resume_queue.assert_not_called()
+        self.assertIsNone(fake.connectivity_failure_time)
+
+
 if __name__ == '__main__':
     unittest.main()

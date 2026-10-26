@@ -291,6 +291,9 @@ def index():
 
 _plex_trash_items_cache = {'items': None, 'ts': 0}
 
+# ReNZB re-scrape fallback: most candidates submitted before giving up
+_RENZB_MAX_RESCRAPE_SUBMITS = 3
+
 
 @debrid_manager_bp.route('/api/active')
 @admin_required
@@ -790,9 +793,15 @@ def api_nzb_reinsert():
                     _update_db_for_repair, _is_junk_replacement_result,
                 )
                 results = _scrape_for_replacement(item, broken_nzb_title=nzb_title)
+                # Each submit can wait ~30s for the provider, and this runs inside the request
+                attempts_left = _RENZB_MAX_RESCRAPE_SUBMITS
                 for candidate in results or []:
                     if _is_junk_replacement_result(candidate):
                         continue
+                    if attempts_left <= 0:
+                        logging.warning(f"[ReNZB] item={item_id} gave up after {_RENZB_MAX_RESCRAPE_SUBMITS} rejected candidates")
+                        break
+                    attempts_left -= 1
                     job_id, submitted_title, disposition = _submit_and_confirm_replacement(
                         candidate, item['title'], item=item)
                     if disposition in ('failed', 'rejected') or not job_id:
@@ -800,6 +809,9 @@ def api_nzb_reinsert():
                         continue
                     new_job_id = job_id
                     best = dict(candidate)
+                    # Keep the indexer's title as the exclusion key, as the repair engine does,
+                    # so a later repair can't resubmit this NZB under its pre-submission name.
+                    best.setdefault('original_title', best.get('title', ''))
                     if submitted_title:
                         best['title'] = submitted_title
                     method = 'rescrape'
