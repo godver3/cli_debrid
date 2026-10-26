@@ -2663,7 +2663,6 @@ async function loadRecommendationSources() {
     try { saved = JSON.parse(localStorage.getItem(REC_SOURCE_KEY) || 'null'); } catch (e) { /* storage unavailable */ }
     window.recState.selection = saved && recSelectionValid(saved) ? saved : recDefaultSelection();
     populateRecommendationsDropdown();
-    updateRecommendationsLabel();
     return window.recState.sources;
 }
 
@@ -2682,20 +2681,6 @@ function recSelectionValid(sel) {
     if (!src) return false;
     if (src.id !== 'library') return true;
     return sel.viewer === 'all' || sel.viewer === 'main' || (src.viewers || []).some(v => v.id === sel.viewer);
-}
-
-function recSelectionName(sel) {
-    const src = sel && recSource(sel.source);
-    if (!src) return 'Recommendations';
-    if (src.id !== 'library') return `${src.name} Recommendations`;
-    if (sel.viewer === 'all') return `${src.name}: Everyone`;
-    const viewer = (src.viewers || []).find(v => v.id === sel.viewer);
-    return viewer ? `${REC_SERVER_LABELS[viewer.source] || src.name}: ${viewer.name}` : `${src.name} Recommendations`;
-}
-
-function updateRecommendationsLabel() {
-    const label = document.getElementById('recommendations-dropdown-label');
-    if (label) label.textContent = recSelectionName(window.recState.selection);
 }
 
 function populateRecommendationsDropdown() {
@@ -2725,10 +2710,7 @@ function populateRecommendationsDropdown() {
     };
 
     const services = (window.recState.sources || []).filter(s => s.id !== 'library');
-    if (services.length) {
-        addHeader('Accounts');
-        services.forEach(s => addItem(s.name, { source: s.id }));
-    }
+    services.forEach(s => addItem(s.name, { source: s.id }));
 
     const library = recSource('library');
     if (!library) {
@@ -2754,7 +2736,6 @@ function populateRecommendationsDropdown() {
 function selectRecommendationSource(sel) {
     window.recState.selection = sel;
     try { localStorage.setItem(REC_SOURCE_KEY, JSON.stringify(sel)); } catch (e) { /* storage unavailable */ }
-    updateRecommendationsLabel();
     populateRecommendationsDropdown();
 
     const menu = document.getElementById('recommendations-dropdown-menu');
