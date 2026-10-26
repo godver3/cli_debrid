@@ -1049,7 +1049,7 @@ document.addEventListener('scrapingContentLoaded', function() {
                         {% if key == 'language_code' %}
                             <p class="settings-description">Preferred language code(s), comma-separated (e.g., fr, es, ja). The first language found will be used. See ISO 639-1.</p>
                         {% elif key == 'foreign_language_penalty' %}
-                            <p class="settings-description">Penalty for a release tagged with a different audio language (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. 0 disables.</p>
+                            <p class="settings-description">Penalty for a release tagged with a different audio language (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), releases tagged DUAL or with the version's language get a small tiebreaker bonus instead (this amount × Language Weight, at most 50; half for a bare MULTi/DL). Untagged releases are never penalized. 0 disables both.</p>
                         {% endif %}
                     {% endif %}
                 </div>
