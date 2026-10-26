@@ -51,7 +51,7 @@ class LibraryRecommendationsTest(unittest.TestCase):
         conn = sqlite3.connect(os.path.join(self.tmp.name, 'watch_history.db'))
         conn.execute(
             'CREATE TABLE watch_history (title TEXT, type TEXT, watched_at TIMESTAMP, '
-            'imdb_id TEXT, tmdb_id TEXT, show_title TEXT)'
+            'imdb_id TEXT, tmdb_id TEXT, show_title TEXT, season INTEGER, episode INTEGER)'
         )
         conn.executemany(
             'INSERT INTO watch_history (title, type, watched_at, imdb_id, tmdb_id, show_title) '
@@ -106,6 +106,36 @@ class LibraryRecommendationsTest(unittest.TestCase):
         lr._file_cache = None  # forces a reload from disk, like a restart
         self.assertEqual([r['id'] for r in lr.build_recommendations('key')], [20])
         self.assertEqual(len(self.tmdb_calls), calls)
+
+    def test_rewatches_count_most_and_shows_get_depth(self):
+        self.assertEqual(lr._taste_weight('movie', 1, 1), 1)
+        self.assertEqual(lr._taste_weight('movie', 2, 1), 2)
+        self.assertEqual(lr._taste_weight('movie', 9, 1), 4)  # capped at 4 watches
+        self.assertEqual(lr._taste_weight('tv', 20, 20), 2)       # 20 distinct episodes
+        self.assertEqual(lr._taste_weight('tv', 40, 20), 4)       # watched through twice
+
+    def test_old_rewatched_favourite_outranks_one_recent_watch(self):
+        now = datetime.now()
+        old = (now - timedelta(days=500)).strftime('%Y-%m-%d %H:%M:%S')
+        self._watch([
+            ('Heat', 'movie', old, None, '949', None),
+            ('Heat', 'movie', (now - timedelta(days=520)).strftime('%Y-%m-%d %H:%M:%S'), None, '949', None),
+            ('Heat', 'movie', (now - timedelta(days=540)).strftime('%Y-%m-%d %H:%M:%S'), None, '949', None),
+            ('Ronin', 'movie', now.strftime('%Y-%m-%d %H:%M:%S'), None, '8195', None),
+        ])
+        seeds, _ = lr._collect_seeds('key')
+        weights = {s['title']: s['weight'] for s in seeds}
+        self.assertGreater(weights['Heat'], weights['Ronin'])
+
+    def test_movies_and_shows_have_separate_seed_budgets(self):
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        rows = [(f'm{i}', 'movie', now, None, str(1000 + i), None) for i in range(30)]
+        rows += [(f'e{i}', 'episode', now, None, '1399', 'Game of Thrones') for i in range(3)]
+        self._watch(rows)
+        seeds, _ = lr._collect_seeds('key')
+        kinds = [s['key'][0] for s in seeds]
+        self.assertEqual(kinds.count('movie'), lr.SEEDS_PER_TYPE)
+        self.assertEqual(kinds.count('tv'), 1)
 
     def test_nothing_to_seed_from_returns_empty(self):
         self.assertEqual(lr.build_recommendations('key'), [])

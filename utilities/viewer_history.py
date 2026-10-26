@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS plays (
     imdb_id TEXT,
     title TEXT,
     last_watched TIMESTAMP,
-    plays INTEGER DEFAULT 1
+    plays INTEGER DEFAULT 1,
+    items INTEGER DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS plays_viewer ON plays (source, user_id);
 """
@@ -47,6 +48,8 @@ def _db_path():
 def _connect():
     conn = sqlite3.connect(_db_path(), timeout=30)
     conn.executescript(_SCHEMA)
+    if 'items' not in {row[1] for row in conn.execute("PRAGMA table_info(plays)")}:
+        conn.execute("ALTER TABLE plays ADD COLUMN items INTEGER DEFAULT 1")
     return conn
 
 
@@ -54,7 +57,9 @@ def _store(source, viewers, plays):
     """Replace everything stored for one source.
 
     viewers: [(user_id, name, is_main)]
-    plays: {(user_id, media_type, tmdb_id, imdb_id): {'title', 'last', 'plays'}}
+    plays: {(user_id, media_type, tmdb_id, imdb_id): {'title', 'last', 'plays', 'keys'}}
+    ``plays`` counts every view; ``keys`` holds the distinct movies/episodes viewed,
+    so plays > len(keys) means rewatches.
     """
     conn = _connect()
     try:
@@ -66,11 +71,12 @@ def _store(source, viewers, plays):
                 [(source, str(uid), name, int(bool(main))) for uid, name, main in viewers],
             )
             conn.executemany(
-                "INSERT INTO plays (source, user_id, media_type, tmdb_id, imdb_id, title, last_watched, plays) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO plays (source, user_id, media_type, tmdb_id, imdb_id, title, last_watched, plays, items) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (source, str(uid), mt, tmdb, imdb, p['title'],
-                     p['last'].strftime('%Y-%m-%d %H:%M:%S') if p['last'] else None, p['plays'])
+                     p['last'].strftime('%Y-%m-%d %H:%M:%S') if p['last'] else None,
+                     p['plays'], max(len(p.get('keys') or ()), 1))
                     for (uid, mt, tmdb, imdb), p in plays.items()
                 ],
             )
@@ -78,12 +84,14 @@ def _store(source, viewers, plays):
         conn.close()
 
 
-def _add_play(plays, uid, mt, ids, title, watched_at):
+def _add_play(plays, uid, mt, ids, title, watched_at, item_key, count=1):
+    """Record ``count`` views of one movie/episode (``item_key``) under its title."""
     tmdb, imdb = ids
     if not tmdb and not imdb:
         return
-    entry = plays.setdefault((str(uid), mt, tmdb, imdb), {'title': title, 'last': None, 'plays': 0})
-    entry['plays'] += 1
+    entry = plays.setdefault((str(uid), mt, tmdb, imdb), {'title': title, 'last': None, 'plays': 0, 'keys': set()})
+    entry['plays'] += max(count, 1)
+    entry['keys'].add(str(item_key))
     if watched_at and (entry['last'] is None or watched_at > entry['last']):
         entry['last'] = watched_at
 
@@ -124,12 +132,15 @@ def sync_plex():
         if entry.type == 'movie':
             key = entry.ratingKey
         elif entry.type == 'episode':
-            key = getattr(entry, 'grandparentRatingKey', None)
+            # History entries leave grandparentRatingKey empty; the show's key is
+            # the tail of grandparentKey (/library/metadata/<key>).
+            key = getattr(entry, 'grandparentRatingKey', None) or \
+                str(getattr(entry, 'grandparentKey', None) or '').rsplit('/', 1)[-1] or None
         else:
             continue
         hit = by_key.get(str(key))
         if hit and entry.accountID:
-            _add_play(plays, entry.accountID, hit[0], hit[1], hit[2], entry.viewedAt)
+            _add_play(plays, entry.accountID, hit[0], hit[1], hit[2], entry.viewedAt, entry.ratingKey)
 
     _store('plex', viewers, plays)
     return len(viewers), len(plays)
@@ -190,12 +201,15 @@ def sync_emby():
                 series[s['Id']] = (_emby_ids(s.get('ProviderIds')), s.get('Name'))
 
         for item in items:
-            watched_at = _emby_date((item.get('UserData') or {}).get('LastPlayedDate'))
+            user_data = item.get('UserData') or {}
+            watched_at = _emby_date(user_data.get('LastPlayedDate'))
+            count = user_data.get('PlayCount') or 1
             if item.get('Type') == 'Movie':
-                _add_play(plays, uid, 'movie', _emby_ids(item.get('ProviderIds')), item.get('Name'), watched_at)
+                _add_play(plays, uid, 'movie', _emby_ids(item.get('ProviderIds')), item.get('Name'),
+                          watched_at, item.get('Id'), count)
             elif item.get('SeriesId') in series:
                 ids, name = series[item['SeriesId']]
-                _add_play(plays, uid, 'tv', ids, name or item.get('SeriesName'), watched_at)
+                _add_play(plays, uid, 'tv', ids, name or item.get('SeriesName'), watched_at, item.get('Id'), count)
 
     _store(source, viewers, plays)
     return len(viewers), len(plays)
@@ -235,10 +249,10 @@ def main_viewer_id():
 
 
 def get_plays(viewer_id):
-    """(media_type, tmdb_id, imdb_id, title, last_watched, plays) rows for one viewer, or 'all'."""
+    """(media_type, tmdb_id, imdb_id, title, last_watched, plays, items) for one viewer, or 'all'."""
     if not viewer_id or not os.path.exists(_db_path()):
         return []
-    query = "SELECT media_type, tmdb_id, imdb_id, title, last_watched, plays FROM plays"
+    query = "SELECT media_type, tmdb_id, imdb_id, title, last_watched, plays, items FROM plays"
     args = ()
     if viewer_id != 'all':
         source, _, user_id = viewer_id.partition(':')

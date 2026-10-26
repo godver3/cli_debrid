@@ -32,7 +32,11 @@ class FakePlex:
         t = datetime(2026, 10, 1, 20, 0)
         return [
             NS(type='movie', ratingKey=10, accountID=1, viewedAt=t),
-            NS(type='episode', ratingKey=21, grandparentRatingKey=20, accountID=5, viewedAt=t),
+            # real history entries carry grandparentKey, not grandparentRatingKey
+            NS(type='episode', ratingKey=21, grandparentRatingKey=None,
+               grandparentKey='/library/metadata/20', accountID=5, viewedAt=t),
+            NS(type='episode', ratingKey=21, grandparentRatingKey=None,
+               grandparentKey='/library/metadata/20', accountID=5, viewedAt=datetime(2026, 9, 1)),
             NS(type='episode', ratingKey=22, grandparentRatingKey=20, accountID=5, viewedAt=datetime(2026, 10, 2)),
             NS(type='episode', ratingKey=99, grandparentRatingKey=98, accountID=5, viewedAt=t),  # deleted show
             NS(type='track', ratingKey=30, accountID=1, viewedAt=t),
@@ -100,7 +104,7 @@ class ViewerHistoryTest(unittest.TestCase):
         sam = vh.get_plays('plex:5')
         self.assertEqual(len(sam), 1)
         self.assertEqual(sam[0][:4], ('tv', '95396', None, 'Severance'))
-        self.assertEqual(sam[0][5], 2)  # two episodes
+        self.assertEqual(sam[0][5:], (3, 2))  # three plays of two distinct episodes
         self.assertEqual(sam[0][4], '2026-10-02 00:00:00')
         self.assertEqual(len(vh.get_plays('all')), 2)
 

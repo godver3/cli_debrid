@@ -26,10 +26,12 @@ SEED_TTL = 7 * 24 * 3600        # per-seed TMDB recommendations
 IMDB_MAP_TTL = 30 * 24 * 3600   # imdb -> tmdb lookups (they don't change)
 RESULT_TTL = 3600               # the finished, scored list
 
-MAX_SEEDS = 40
-MAX_WATCH_SEEDS = 30            # leave room for collected titles when there is history
+SEEDS_PER_TYPE = 20             # movies seed movie recs and shows seed show recs, each its own budget
 COLLECTED_WEIGHT = 0.5          # a collected title says less than a watched one
-RECENCY_HALF_LIFE_DAYS = 90
+RECENCY_HALF_LIFE_DAYS = 365
+RECENCY_FLOOR = 0.3             # an old favourite still counts
+REWATCH_BOOST = 1.0             # per extra full rewatch, up to MAX_REWATCHES
+MAX_REWATCHES = 4
 MIN_VOTE_COUNT = 10
 MAX_PER_TYPE = 40
 
@@ -80,16 +82,30 @@ def _save_file_cache():
 
 
 def _recency(ts, now):
-    """1.0 for today, halving every RECENCY_HALF_LIFE_DAYS."""
+    """1.0 for today, halving every RECENCY_HALF_LIFE_DAYS, never below RECENCY_FLOOR."""
     if not ts:
-        return 0.25
+        return RECENCY_FLOOR
     if not isinstance(ts, datetime):
         try:
             ts = datetime.fromisoformat(str(ts).replace('Z', '')[:19])
         except ValueError:
-            return 0.25
+            return RECENCY_FLOOR
     age_days = max((now - ts).total_seconds() / 86400, 0)
-    return 0.5 ** (age_days / RECENCY_HALF_LIFE_DAYS)
+    return max(0.5 ** (age_days / RECENCY_HALF_LIFE_DAYS), RECENCY_FLOOR)
+
+
+def _taste_weight(media_type, plays, items):
+    """How much a watched title says about taste, before recency.
+
+    Shows: more distinct episodes count up to 2x. Rewatches (plays beyond the
+    distinct movies/episodes watched) count most: each full extra watch adds
+    REWATCH_BOOST, so watching something twice is 2x and four times 4x.
+    """
+    items = max(items or 1, 1)
+    plays = max(plays or 1, items)
+    depth = 1 + min(items - 1, 19) / 19 if media_type == 'tv' else 1
+    rewatches = min(plays / items, MAX_REWATCHES) - 1
+    return depth * (1 + REWATCH_BOOST * rewatches)
 
 
 def _watch_rows():
@@ -100,7 +116,7 @@ def _watch_rows():
         conn = sqlite3.connect(path)
         try:
             return conn.execute(
-                "SELECT type, tmdb_id, imdb_id, title, show_title, watched_at "
+                "SELECT type, tmdb_id, imdb_id, title, show_title, watched_at, season, episode "
                 "FROM watch_history WHERE watched_at IS NOT NULL "
                 "ORDER BY watched_at DESC LIMIT 5000"
             ).fetchall()
@@ -174,29 +190,40 @@ def _resolve_viewer(viewer):
 
 
 def _history(viewer):
-    """(media_type, tmdb_id, imdb_id, title, watched_at, plays) for the viewer.
+    """(media_type, tmdb_id, imdb_id, title, watched_at, plays, items) for the viewer.
 
-    The owner-only watch_history.db counts as the main user's history.
+    viewer_history.db is the source. The owner-only watch_history.db stands in
+    for the main user (and everyone) only when viewer_history has nothing.
     """
     from utilities import viewer_history
-    rows = []
-    if viewer in ('main', 'all'):
-        for db_type, tmdb_id, imdb_id, title, show_title, watched_at in _watch_rows():
-            mt = _media_type(db_type)
-            rows.append((mt, tmdb_id, imdb_id, title if mt == 'movie' else (show_title or title), watched_at, 1))
     source_viewer = viewer_history.main_viewer_id() if viewer == 'main' else viewer
     try:
-        rows.extend(viewer_history.get_plays(source_viewer))
+        rows = list(viewer_history.get_plays(source_viewer))
     except Exception as e:
         logging.debug(f"Library recommendations: viewer_history read failed: {e}")
-    return rows
+        rows = []
+    if rows or viewer not in ('main', 'all'):
+        return rows
+
+    grouped = {}
+    for db_type, tmdb_id, imdb_id, title, show_title, watched_at, season, episode in _watch_rows():
+        mt = _media_type(db_type)
+        entry = grouped.setdefault((mt, tmdb_id, imdb_id), {
+            'title': title if mt == 'movie' else (show_title or title), 'last': None, 'plays': 0, 'keys': set()})
+        entry['plays'] += 1
+        entry['keys'].add((season, episode))
+        if watched_at and (entry['last'] is None or str(watched_at) > str(entry['last'])):
+            entry['last'] = watched_at
+    return [(mt, tmdb, imdb, e['title'], e['last'], e['plays'], len(e['keys']))
+            for (mt, tmdb, imdb), e in grouped.items()]
 
 
 def _collect_seeds(api_key, viewer='main'):
     """Return (seeds, excluded_keys). A seed is {key, title, weight, verb}.
 
-    The collection tops up the main user's and everyone's seeds; another user's
-    recommendations come from their own history only.
+    Up to SEEDS_PER_TYPE movies and as many shows, so each list is built from
+    its own kind. The collection tops up the main user's and everyone's seeds;
+    another user's recommendations come from their own history only.
     """
     now = datetime.now()
     excluded = set()
@@ -204,51 +231,52 @@ def _collect_seeds(api_key, viewer='main'):
     watched = {}
     unresolved = {}
 
-    def add(key, name, watched_at, plays):
-        entry = watched.setdefault(key, {'title': name, 'last': None, 'plays': 0})
+    def add(key, name, watched_at, plays, items):
+        entry = watched.setdefault(key, {'title': name, 'last': None, 'plays': 0, 'items': 0})
         entry['plays'] += plays or 1
+        entry['items'] += items or 1
         if watched_at and (entry['last'] is None or str(watched_at) > str(entry['last'])):
             entry['last'] = watched_at
 
-    for mt, tmdb_id, imdb_id, name, watched_at, plays in _history(viewer):
+    for mt, tmdb_id, imdb_id, name, watched_at, plays, items in _history(viewer):
         if tmdb_id:
-            add((mt, str(tmdb_id)), name, watched_at, plays)
+            add((mt, str(tmdb_id)), name, watched_at, plays, items)
         elif imdb_id:
-            unresolved.setdefault(imdb_id, []).append((mt, name, watched_at, plays))
+            unresolved.setdefault(imdb_id, []).append((mt, name, watched_at, plays, items))
 
     if unresolved:
         resolved = _resolve_imdb(list(unresolved), api_key)
         for imdb_id, entries in unresolved.items():
-            for mt, name, watched_at, plays in entries:
+            for mt, name, watched_at, plays, items in entries:
                 if imdb_id in resolved and resolved[imdb_id][0] == mt:
-                    add((mt, resolved[imdb_id][1]), name, watched_at, plays)
+                    add((mt, resolved[imdb_id][1]), name, watched_at, plays, items)
 
     excluded.update(watched)
-    watch_seeds = []
+    by_type = {'movie': [], 'tv': []}
     for key, e in watched.items():
-        # A show watched for ten episodes counts double a one-episode sample.
-        depth = 1 + min(e['plays'] - 1, 9) / 9
-        watch_seeds.append({'key': key, 'title': e['title'], 'verb': 'watched',
-                            'weight': _recency(e['last'], now) * depth})
-    watch_seeds.sort(key=lambda s: s['weight'], reverse=True)
-    seeds = watch_seeds[:MAX_WATCH_SEEDS]
+        by_type[key[0]].append({'key': key, 'title': e['title'], 'verb': 'watched',
+                                'weight': _recency(e['last'], now) * _taste_weight(key[0], e['plays'], e['items'])})
 
     # Anything in the library is dropped for every viewer: the list is for
     # deciding what to add. Only the main user's and everyone's seeds get the
     # collection top-up.
     collection_seeds = viewer in ('main', 'all')
-    collected = []
+    collected = {'movie': [], 'tv': []}
     try:
         for db_type, tmdb_id, is_collected, title, collected_at in _library_rows():
             key = (_media_type(db_type), str(tmdb_id))
             excluded.add(key)
             if collection_seeds and is_collected and key not in watched:
-                collected.append({'key': key, 'title': title, 'verb': 'collected',
-                                  'weight': COLLECTED_WEIGHT * _recency(collected_at, now)})
+                collected[key[0]].append({'key': key, 'title': title, 'verb': 'collected',
+                                          'weight': COLLECTED_WEIGHT * _recency(collected_at, now)})
     except Exception as e:
         logging.warning(f"Library recommendations: media_items read failed: {e}")
-    collected.sort(key=lambda s: s['weight'], reverse=True)
-    seeds += collected[:MAX_SEEDS - len(seeds)]
+
+    seeds = []
+    for mt in ('movie', 'tv'):
+        picked = sorted(by_type[mt], key=lambda s: s['weight'], reverse=True)[:SEEDS_PER_TYPE]
+        fill = sorted(collected[mt], key=lambda s: s['weight'], reverse=True)
+        seeds += picked + fill[:SEEDS_PER_TYPE - len(picked)]
 
     try:
         from database.manual_blacklist import get_manual_blacklist
