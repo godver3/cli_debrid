@@ -361,6 +361,7 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             'task_verify_plex_removals': 900,      # Run every 15 minutes (if enabled) - supports both Plex and Jellyfin/Emby
             'task_reconcile_queues': 3600,         # Run every 1 hour
             'task_check_database_health': 3600,    # Run every hour
+            'task_retry_content_source_removals': 300,  # Every 5 minutes; no-op unless a removal failed
             'task_sync_time': 3600,                # Run every hour
             'task_check_trakt_early_releases': 7200,# Run every 2 hours (reduced to minimize API calls)
             'task_update_show_ids': 40600,         # Run every ~11 hours
@@ -577,6 +578,7 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             # Combined/High Frequency Tasks
             'task_update_queue_views',
             'task_send_notifications',
+            'task_retry_content_source_removals',
             'task_nzb_health_check',
             'task_nzb_playback_repair_completion',
             'task_nzb_playback_cleanup_retry',

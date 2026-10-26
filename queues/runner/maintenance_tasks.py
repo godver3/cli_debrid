@@ -873,6 +873,13 @@ class MaintenanceTasks:
         elif exception[0]:
             logging.error(f"Download stats refresh failed: {str(exception[0])}")
 
+    def task_retry_content_source_removals(self):
+        """Retry content-source removals that failed during a delete (see content_source_retry)."""
+        from database.content_source_retry import process_retry_queue
+        attempted = process_retry_queue()
+        if attempted:
+            logging.info(f"[RETRY_QUEUE] Retried {attempted} content source removal(s)")
+
     def task_check_database_health(self):
         """Periodic task to verify database health and handle any corruption."""
         from main import verify_database_health

@@ -190,8 +190,9 @@ def mark_retry_completed(retry_id: int, success: bool = True, error: Optional[st
 
             if row:
                 retry_count, max_retries = row
+                attempts = retry_count + 1  # including the one that just failed
 
-                if retry_count >= max_retries:
+                if attempts >= max_retries:
                     # Exceeded max retries, mark as completed (failed)
                     cursor.execute('''
                         UPDATE content_source_removal_retry
@@ -203,8 +204,8 @@ def mark_retry_completed(retry_id: int, success: bool = True, error: Optional[st
                     ''', (datetime.now(), datetime.now(), f"Max retries exceeded: {error}", retry_id))
                     logging.warning(f"[RETRY_QUEUE] Retry {retry_id} exceeded max retries ({max_retries})")
                 else:
-                    # Schedule next retry with exponential backoff
-                    next_retry = datetime.now() + timedelta(minutes=2 ** min(retry_count, 5))
+                    # Exponential backoff after the first retry at +2 min: 4, 8, 16, 32 min
+                    next_retry = datetime.now() + timedelta(minutes=2 ** min(attempts + 1, 5))
                     cursor.execute('''
                         UPDATE content_source_removal_retry
                         SET retry_count = retry_count + 1,
@@ -213,7 +214,7 @@ def mark_retry_completed(retry_id: int, success: bool = True, error: Optional[st
                             last_error = ?
                         WHERE id = ?
                     ''', (next_retry, datetime.now(), error, retry_id))
-                    logging.info(f"[RETRY_QUEUE] Scheduled retry {retry_id} for {next_retry} (attempt {retry_count + 1}/{max_retries})")
+                    logging.info(f"[RETRY_QUEUE] Scheduled retry {retry_id} for {next_retry} (attempt {attempts + 1}/{max_retries})")
 
         conn.commit()
         conn.close()
@@ -276,3 +277,30 @@ def cleanup_old_completed_retries(days: int = 7):
     except Exception as e:
         logging.error(f"[RETRY_QUEUE] Failed to cleanup old retries: {e}")
         return 0
+
+
+def process_retry_queue(limit: int = 10) -> int:
+    """Retry due content-source removals; returns how many were attempted.
+
+    Run by task_retry_content_source_removals. remove_from_content_source queues
+    an item when a source's removal fails (e.g. a Trakt/Overseerr timeout), so a
+    deleted show isn't re-added by the next content-source sync.
+    """
+    items = get_retry_queue_items(limit=limit)
+    if items:
+        from utilities.deletion_manager import DeletionManager
+        manager = DeletionManager()
+        for entry in items:
+            try:
+                result = manager.remove_from_content_source(entry['item_data'], queue_retry=False)
+                failed = result.get('sources_failed') or []
+                if failed:
+                    mark_retry_completed(entry['id'], success=False,
+                                         error=f"Failed: {', '.join(failed)} ({result.get('message', '')})")
+                else:
+                    mark_retry_completed(entry['id'], success=True)
+            except Exception as e:
+                logging.error(f"[RETRY_QUEUE] Retry of {entry.get('title')} ({entry.get('imdb_id')}) errored: {e}")
+                mark_retry_completed(entry['id'], success=False, error=str(e))
+    cleanup_old_completed_retries()
+    return len(items)

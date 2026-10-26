@@ -135,6 +135,11 @@
       "action": "Run a read-only database corruption check.",
       "runs": "Always on."
     },
+    "task_retry_content_source_removals": {
+      "description": "When you delete something and removing it from a content source (Overseerr, a Trakt list or collection) fails, for example on a timeout, the removal is queued here and retried so the next sync doesn't add the item back.",
+      "action": "Retry the queued content source removals that are due.",
+      "runs": "Always on. Retries after 2, 4, 8, 16 and 32 minutes, then gives up; does nothing when the queue is empty."
+    },
     "task_backup_database": {
       "description": "Copies cli_mount's databases every run. Backs up media_items.db only when the program is idle, so the database isn't locked during busy processing.",
       "action": "Back up the databases.",

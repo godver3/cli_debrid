@@ -1092,7 +1092,7 @@ class DeletionManager:
     # Content Source Management (Layer 6)
     # =======================================================================
 
-    def remove_from_content_source(self, item: dict) -> dict:
+    def remove_from_content_source(self, item: dict, queue_retry: bool = True) -> dict:
         """
         Remove item from all enabled content sources to prevent re-addition
 
@@ -1102,6 +1102,8 @@ class DeletionManager:
 
         Args:
             item: Media item dict with imdb_id, tmdb_id, type fields
+            queue_retry: if a source fails, queue the item for
+                task_retry_content_source_removals (off when called by that task)
 
         Returns:
             dict: {
@@ -1586,7 +1588,25 @@ class DeletionManager:
             result['message'] = f'Unexpected error: {str(e)}'
             result['success'] = False
 
+        if queue_retry and result['sources_failed']:
+            self._queue_content_source_retry(item, result['message'])
+
         return result
+
+    @staticmethod
+    def _queue_content_source_retry(item: dict, error: str):
+        """Queue a failed removal so a timed-out source doesn't re-add the item later."""
+        from database.content_source_retry import add_to_retry_queue
+        # Only what removal reads, and only JSON-safe values (rows carry datetimes)
+        keys = ('id', 'imdb_id', 'tmdb_id', 'type', 'title', 'year', 'season_number',
+                'episode_number', 'version', 'content_source', 'content_sources')
+        item_data = {k: item[k] for k in keys
+                     if k in item and isinstance(item[k], (str, int, float, bool, type(None)))}
+        media_id = item.get('imdb_id') or (f"tmdb:{item['tmdb_id']}" if item.get('tmdb_id') else None)
+        if not media_id:
+            logging.warning(f"[CONTENT_SOURCE_REMOVAL] Not queuing retry for {item.get('title')}: no imdb/tmdb id")
+            return
+        add_to_retry_queue(media_id, item.get('title', ''), item.get('type', ''), item_data, error=error)
 
     def check_content_sources(self, item: dict) -> dict:
         """
