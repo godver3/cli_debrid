@@ -32,6 +32,25 @@ def _is_excluded_release(item: Dict[str, Any], result: Dict[str, Any]) -> bool:
         return excluded == candidate
 
 
+def _other_season_episodes_pending(item: Dict[str, Any]) -> bool:
+    """True when another episode of the item's show+season is Wanted or Scraping.
+
+    On a lookup error it answers True, keeping the old pack-first behaviour.
+    """
+    try:
+        from database import get_all_media_items
+        return any(
+            ep.get('type') == 'episode'
+            and ep.get('id') != item.get('id')
+            and ep.get('season_number') == item.get('season_number')
+            and ep.get('state') in ('Wanted', 'Scraping')
+            for ep in get_all_media_items(imdb_id=item.get('imdb_id')) or []
+        )
+    except Exception as e:
+        logging.warning(f"Could not check other pending episodes for {item.get('imdb_id')}: {e}")
+        return True
+
+
 class ScrapingQueue:
     # How long an item waits after being deferred for a sibling in Adding
     DEFER_SECONDS = 60
@@ -710,11 +729,18 @@ class ScrapingQueue:
                             logging.info(f"Item {item_identifier} is new and 'skip_initial_multi_scrape_for_new_content' is enabled. Forcing single episode scrape for initial attempt.")
                         is_multi_pack = False
                         
-                    # If item is an episode and older than 7 days, force multi-pack for initial scrape
+                    # If item is an episode and older than 7 days, force multi-pack for initial scrape,
+                    # unless it's the only episode of its season wanted (e.g. one episode moved back
+                    # to Wanted): a pack scrape rejects every single-episode release, so a lone
+                    # episode scrapes singles first and the no-results fallback below tries packs.
                     if item_to_process['type'] == 'episode' and is_older_than_7_days:
-                        if not is_multi_pack: # Log only if we are changing it
-                            logging.info(f"Episode {item_identifier} is older than 7 days. Forcing multi-pack scrape for initial attempt.")
-                        is_multi_pack = True
+                        if not is_multi_pack and not _other_season_episodes_pending(item_to_process):
+                            logging.info(f"Episode {item_identifier} is older than 7 days but no other episode of its season is wanted. "
+                                         f"Scraping single episodes first; season packs only if that finds nothing.")
+                        else:
+                            if not is_multi_pack: # Log only if we are changing it
+                                logging.info(f"Episode {item_identifier} is older than 7 days. Forcing multi-pack scrape for initial attempt.")
+                            is_multi_pack = True
                     
                     # --- NZB Batch Detection ---
                     # If usenet is enabled and this is an episode, check if 5+ episodes of the
