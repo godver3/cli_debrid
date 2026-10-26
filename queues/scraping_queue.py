@@ -405,7 +405,11 @@ class ScrapingQueue:
                         _coal_title = (_sibling_nzb[4] or '') if _sibling_nzb else ''  # original_scraped_torrent_title
                         _coal_file = (_sibling_nzb[1] or '') if _sibling_nzb else ''  # filled_by_file
                         _coal_job_title = (_sibling_nzb[3] or '') if _sibling_nzb else ''  # filled_by_title
-                        if _sibling_nzb and is_likely_season_pack(_coal_title, _coal_file, _coal_job_title):
+                        from utilities.rescrape_helpers import replacement_blocks_pack_reuse
+                        if (_sibling_nzb and is_likely_season_pack(_coal_title, _coal_file, _coal_job_title)
+                                and replacement_blocks_pack_reuse(item_to_process, _coal_job_title or _coal_title, _sibling_nzb[0])):
+                            logging.info(f'[NZBPack] {item_identifier}: sibling pack job {_sibling_nzb[0]} is the release being replaced - not coalescing')
+                        elif _sibling_nzb and is_likely_season_pack(_coal_title, _coal_file, _coal_job_title):
                             _job_id = _sibling_nzb[0]
                             # Verify the shared job is still actually queryable on the provider
                             # before reusing it - a job that completed and was since cleaned up

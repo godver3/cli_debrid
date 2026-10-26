@@ -561,7 +561,7 @@ class TorrentProcessor:
             # filename while the episode marker survives only in filled_by_title.
             if not is_likely_season_pack(check_title, filled_by_title):
                 return None
-            if rescrape_blocks_pack_reuse(item, check_title):
+            if rescrape_blocks_pack_reuse(item, check_title, torrent_id):
                 return None
             from utilities.session_bad_torrents import is_torrent_known_unplayable
             for provider in self._providers:
@@ -949,7 +949,7 @@ class TorrentProcessor:
                         _mem_job = _mem_item.get('filled_by_torrent_id')
                         _mem_id = _mem_job[4:] if _mem_job and _mem_job.startswith('nzb:') else _mem_job
                         if _mem_is_pack:
-                            if rescrape_blocks_pack_reuse(item, _mem_check_title):
+                            if rescrape_blocks_pack_reuse(item, _mem_check_title, _mem_job):
                                 continue
                             # Verify the shared pack job is still actually queryable on the
                             # provider before reusing it - a job that completed and was since
@@ -1017,7 +1017,7 @@ class TorrentProcessor:
                         # when the title/filename precedence above doesn't.
                         _sibling_is_pack = _is_likely_season_pack_db(_sibling_check_title, _sibling[3] or '')
                         if _sibling_is_pack:
-                            if rescrape_blocks_pack_reuse(item, _sibling_check_title):
+                            if rescrape_blocks_pack_reuse(item, _sibling_check_title, _sibling[0]):
                                 _sibling_is_pack = False
                             else:
                                 # Verify the shared pack job is still actually queryable on the
