@@ -1081,7 +1081,7 @@ def recommendations():
     if provider == 'library':
         try:
             from utilities.library_recommendations import get_library_recommendations
-            results = get_library_recommendations()
+            results = get_library_recommendations(request.args.get('viewer') or None)
         except Exception as e:
             logging.error(f"Library recommendations error: {e}")
             return jsonify({'success': False, 'results': [], 'error': str(e)}), 500
@@ -1101,6 +1101,24 @@ def recommendations():
         'total_results': 0,
         'error': 'No recommendation provider configured',
     })
+
+
+@discover_bp.route('/api/recommendations/viewers')
+@user_required
+def recommendation_viewers():
+    """People whose watch history can drive the library recommendations.
+
+    Empty unless the provider is ``library`` and the viewer history task has run.
+    """
+    if get_recommendation_provider() != 'library':
+        return jsonify({'success': True, 'viewers': [], 'default': None})
+    from utilities.viewer_history import get_viewers, main_viewer_id
+    try:
+        viewers = get_viewers()
+    except Exception as e:
+        logging.error(f"Recommendation viewers error: {e}")
+        viewers = []
+    return jsonify({'success': True, 'viewers': viewers, 'default': main_viewer_id() if viewers else None})
 
 
 @discover_bp.route('/api/genres')

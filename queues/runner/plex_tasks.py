@@ -1822,6 +1822,14 @@ class PlexTasks:
         except Exception as e:
             logging.error(f"Error retrieving Plex watch history: {str(e)}")
 
+    def task_sync_viewer_history(self):
+        """Pull every Plex account's and Emby/Jellyfin user's watch history for
+        Discover recommendations. Off until turned on in the Task Manager."""
+        from utilities.viewer_history import sync_all
+        from utilities.library_recommendations import clear_result_cache
+        sync_all()
+        clear_result_cache()
+
     def task_sync_plex_labels(self):
         """
         Sync Plex labels for Collected items

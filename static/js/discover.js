@@ -2636,7 +2636,55 @@ async function loadTrending() {
  * The backend prefers Trakt, then Scrob For You, then the user's own library.
  */
 let _trendingLoaded = false; // Only fetch once per page load
-let _recLoaded = false;  // Only fetch once per page load
+let _recLoaded = false;  // Only fetch once per page load (per chosen viewer)
+let _recViewersLoaded = false;
+const REC_VIEWER_KEY = 'discover.recViewer';
+
+/**
+ * Fill the "Recommendations for" picker from the synced Plex/Emby/Jellyfin users.
+ * Stays hidden when there are none (Trakt/Scrob, or the viewer history task is off).
+ */
+async function loadRecommendationViewers() {
+    if (_recViewersLoaded) return;
+    _recViewersLoaded = true;
+    const bar = document.getElementById('rec-viewer-bar');
+    const select = document.getElementById('rec-viewer-select');
+    if (!bar || !select) return;
+    try {
+        const resp = await fetch('/discover/api/recommendations/viewers');
+        const data = await resp.json();
+        const viewers = data.viewers || [];
+        if (viewers.length === 0) return;
+
+        const sourceLabel = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+        const multipleSources = new Set(viewers.map(v => v.source)).size > 1;
+        select.innerHTML = '';
+        for (const v of viewers) {
+            const opt = document.createElement('option');
+            opt.value = v.id;
+            opt.textContent = multipleSources ? `${v.name} (${sourceLabel[v.source] || v.source})` : v.name;
+            select.appendChild(opt);
+        }
+        const everyone = document.createElement('option');
+        everyone.value = 'all';
+        everyone.textContent = 'Everyone';
+        select.appendChild(everyone);
+
+        let saved = null;
+        try { saved = localStorage.getItem(REC_VIEWER_KEY); } catch (e) { /* storage unavailable */ }
+        const valid = [...select.options].some(o => o.value === saved);
+        select.value = valid ? saved : (data.default || viewers[0].id);
+
+        select.addEventListener('change', () => {
+            try { localStorage.setItem(REC_VIEWER_KEY, select.value); } catch (e) { /* storage unavailable */ }
+            _recLoaded = false;
+            loadRecommendations();
+        });
+        bar.style.display = 'flex';
+    } catch (error) {
+        console.error('[Discover] Recommendation viewers error:', error);
+    }
+}
 
 async function loadRecommendations() {
     beginContentLoad();
@@ -2654,7 +2702,10 @@ async function loadRecommendations() {
         const noProviderMsg = document.getElementById('rec-no-provider');
         const noResultsMsg = document.getElementById('rec-no-results');
 
-        const resp = await fetch('/discover/api/recommendations?type=all');
+        await loadRecommendationViewers();
+        const viewerSelect = document.getElementById('rec-viewer-select');
+        const viewer = viewerSelect && viewerSelect.value ? `&viewer=${encodeURIComponent(viewerSelect.value)}` : '';
+        const resp = await fetch(`/discover/api/recommendations?type=all${viewer}`);
         if (!resp.ok) throw new Error('HTTP error fetching recommendations');
         const data = await resp.json();
 

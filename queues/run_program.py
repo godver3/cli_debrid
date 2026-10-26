@@ -359,6 +359,7 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             'task_run_library_maintenance': 12 * 60 * 60, # Run every twelve hours (if enabled)
             'task_sync_library_metadata': 24 * 60 * 60,  # Run every 24 hours (if enabled)
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours (if enabled)
+            'task_sync_viewer_history': 6 * 60 * 60,  # Run every 6 hours (if enabled) - per-user history for Discover recommendations
             'task_refresh_plex_tokens': 24 * 60 * 60,   # Run every 24 hours
             'task_sync_plex_labels': 30 * 60,           # Run every 30 minutes
             'task_process_plex_reported_issues': 30, # Run every 30 seconds (if enabled) - Plex has no push for reports
@@ -732,7 +733,7 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
                 logging.info(f"Disabled '{_ext_scan_task}' as the setting is off or mode is not Symlinked/Local.")
 
 
-        if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):
+        if get_setting('Debug', 'do_not_add_plex_watch_history_items_to_queue', False):
              task_name = 'task_get_plex_watch_history'
              is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
              if not is_toggled_off and task_name not in self.enabled_tasks:

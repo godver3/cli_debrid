@@ -1,10 +1,13 @@
 """Discover recommendations built from the user's own library.
 
-Used when neither Trakt nor Scrob is connected. Seeds come from the Plex
-watch history (watch_history.db), topped up with recently collected titles.
+Used when neither Trakt nor Scrob is connected. Seeds come from one viewer's
+watch history (utilities/viewer_history: any Plex account or Emby/Jellyfin
+user; the main user also gets the owner-only watch_history.db), or everyone's.
+The main user's and everyone's seeds are topped up with recently collected titles.
 Each seed's TMDB recommendations are fetched once a week and cached on disk;
-a title suggested by several seeds ranks higher. Anything already in the
-database (any state), already watched, or on the manual blacklist is dropped.
+a title suggested by several seeds ranks higher. For the main user,
+anything already in the database (any state) is dropped; for every viewer,
+titles they watched and the manual blacklist are dropped.
 """
 
 import json
@@ -36,7 +39,7 @@ _CACHE_FILE = os.path.join(_db_dir, 'library_recommendations_cache.json')
 _lock = threading.Lock()        # file cache
 _build_lock = threading.Lock()  # one build at a time
 _file_cache = None
-_result_cache = {'data': None, 'expires': 0.0}
+_result_cache = {}             # viewer -> {'data', 'expires'}
 
 _KEEP_FIELDS = (
     'id', 'title', 'name', 'overview', 'poster_path', 'backdrop_path',
@@ -160,33 +163,65 @@ def _resolve_imdb(imdb_ids, api_key):
     return {i: (e['type'], e['id']) for i, e in out.items() if e.get('id')}
 
 
-def _collect_seeds(api_key):
-    """Return (seeds, excluded_keys). A seed is {key, title, weight, verb}."""
+def _resolve_viewer(viewer):
+    """'main', 'all', or a viewer id such as 'plex:3'. The main user's own id maps to 'main'."""
+    if not viewer or viewer == 'main':
+        return 'main'
+    if viewer == 'all':
+        return 'all'
+    from utilities.viewer_history import main_viewer_id
+    return 'main' if viewer == main_viewer_id() else viewer
+
+
+def _history(viewer):
+    """(media_type, tmdb_id, imdb_id, title, watched_at, plays) for the viewer.
+
+    The owner-only watch_history.db counts as the main user's history.
+    """
+    from utilities import viewer_history
+    rows = []
+    if viewer in ('main', 'all'):
+        for db_type, tmdb_id, imdb_id, title, show_title, watched_at in _watch_rows():
+            mt = _media_type(db_type)
+            rows.append((mt, tmdb_id, imdb_id, title if mt == 'movie' else (show_title or title), watched_at, 1))
+    source_viewer = viewer_history.main_viewer_id() if viewer == 'main' else viewer
+    try:
+        rows.extend(viewer_history.get_plays(source_viewer))
+    except Exception as e:
+        logging.debug(f"Library recommendations: viewer_history read failed: {e}")
+    return rows
+
+
+def _collect_seeds(api_key, viewer='main'):
+    """Return (seeds, excluded_keys). A seed is {key, title, weight, verb}.
+
+    The collection tops up the main user's and everyone's seeds; another user's
+    recommendations come from their own history only.
+    """
     now = datetime.now()
     excluded = set()
 
     watched = {}
     unresolved = {}
-    for db_type, tmdb_id, imdb_id, title, show_title, watched_at in _watch_rows():
-        mt = _media_type(db_type)
-        name = title if mt == 'movie' else (show_title or title)
+
+    def add(key, name, watched_at, plays):
+        entry = watched.setdefault(key, {'title': name, 'last': None, 'plays': 0})
+        entry['plays'] += plays or 1
+        if watched_at and (entry['last'] is None or str(watched_at) > str(entry['last'])):
+            entry['last'] = watched_at
+
+    for mt, tmdb_id, imdb_id, name, watched_at, plays in _history(viewer):
         if tmdb_id:
-            key = (mt, str(tmdb_id))
+            add((mt, str(tmdb_id)), name, watched_at, plays)
         elif imdb_id:
-            unresolved.setdefault(imdb_id, (mt, name, watched_at))
-            continue
-        else:
-            continue
-        entry = watched.setdefault(key, {'title': name, 'last': watched_at, 'plays': 0})
-        entry['plays'] += 1
+            unresolved.setdefault(imdb_id, []).append((mt, name, watched_at, plays))
 
     if unresolved:
         resolved = _resolve_imdb(list(unresolved), api_key)
-        for imdb_id, (mt, name, watched_at) in unresolved.items():
-            if imdb_id in resolved and resolved[imdb_id][0] == mt:
-                key = (mt, resolved[imdb_id][1])
-                entry = watched.setdefault(key, {'title': name, 'last': watched_at, 'plays': 0})
-                entry['plays'] += 1
+        for imdb_id, entries in unresolved.items():
+            for mt, name, watched_at, plays in entries:
+                if imdb_id in resolved and resolved[imdb_id][0] == mt:
+                    add((mt, resolved[imdb_id][1]), name, watched_at, plays)
 
     excluded.update(watched)
     watch_seeds = []
@@ -198,9 +233,12 @@ def _collect_seeds(api_key):
     watch_seeds.sort(key=lambda s: s['weight'], reverse=True)
     seeds = watch_seeds[:MAX_WATCH_SEEDS]
 
+    # For the main user (and everyone) anything in the library is known already.
+    # Another user may not have seen it, so it stays and shows its Collected badge.
+    owner_view = viewer in ('main', 'all')
     collected = []
     try:
-        for db_type, tmdb_id, is_collected, title, collected_at in _library_rows():
+        for db_type, tmdb_id, is_collected, title, collected_at in _library_rows() if owner_view else []:
             key = (_media_type(db_type), str(tmdb_id))
             excluded.add(key)
             if is_collected and key not in watched:
@@ -253,9 +291,9 @@ def _reason(contributions):
     return f"Because you {verb} {' and '.join(names)}"
 
 
-def build_recommendations(api_key):
+def build_recommendations(api_key, viewer='main'):
     """Score every seed's TMDB recommendations; return discover-shaped results."""
-    seeds, excluded = _collect_seeds(api_key)
+    seeds, excluded = _collect_seeds(api_key, viewer)
     if not seeds:
         return []
 
@@ -288,20 +326,27 @@ def build_recommendations(api_key):
         per_type[mt].append(item)
 
     logging.info(
-        f"Library recommendations: {len(seeds)} seeds -> {len(per_type['movie'])} movies, "
+        f"Library recommendations ({viewer}): {len(seeds)} seeds -> {len(per_type['movie'])} movies, "
         f"{len(per_type['tv'])} shows"
     )
     return per_type['movie'] + per_type['tv']
 
 
-def get_library_recommendations():
+def get_library_recommendations(viewer=None):
     """Cached wrapper around build_recommendations. Returns a fresh list each call."""
     api_key = str(get_setting('TMDB', 'api_key', '') or '').strip()
     if not api_key:
         return []
+    viewer = _resolve_viewer(viewer)
     with _build_lock:
-        if _result_cache['data'] is None or time.time() >= _result_cache['expires']:
-            _result_cache['data'] = build_recommendations(api_key)
-            _result_cache['expires'] = time.time() + RESULT_TTL
-        return [dict(item) for item in _result_cache['data']]
+        entry = _result_cache.get(viewer)
+        if entry is None or time.time() >= entry['expires']:
+            entry = {'data': build_recommendations(api_key, viewer), 'expires': time.time() + RESULT_TTL}
+            _result_cache[viewer] = entry
+        return [dict(item) for item in entry['data']]
 
+
+def clear_result_cache():
+    """Drop the finished lists (seed caches stay), e.g. after a history sync."""
+    with _build_lock:
+        _result_cache.clear()
