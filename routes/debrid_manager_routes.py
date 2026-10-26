@@ -791,19 +791,29 @@ def api_nzb_reinsert():
         if not new_job_id:
             logging.info(f"[ReNZB] item={item_id} falling back to re-scrape")
             try:
-                from usenet.repair_engine import _scrape_for_replacement, _submit_replacement, _update_db_for_repair
+                from usenet.repair_engine import (
+                    _scrape_for_replacement, _submit_and_confirm_replacement,
+                    _update_db_for_repair, _is_junk_replacement_result,
+                )
                 results = _scrape_for_replacement(item, broken_nzb_title=nzb_title)
-                if results:
-                    best = results[0]
-                    new_job_id = _submit_replacement(best, item['title'])
-                    if new_job_id:
-                        method = 'rescrape'
-                        new_release_title = best.get('title') or nzb_title
-                        used_url = best.get('nzb_url') or ''
-                        logging.info(f"[ReNZB] item={item_id} re-scraped and submitted, job={new_job_id}")
-                        _update_db_for_repair(item, new_job_id, best, results)
-                        _plex_trash_items_cache['items'] = None
-                        return jsonify({'success': True, 'job_id': new_job_id, 'method': method, 'new_release_title': new_release_title})
+                for candidate in results or []:
+                    if _is_junk_replacement_result(candidate):
+                        continue
+                    job_id, submitted_title, disposition = _submit_and_confirm_replacement(
+                        candidate, item['title'], item=item)
+                    if disposition in ('failed', 'rejected') or not job_id:
+                        logging.warning(f"[ReNZB] item={item_id} candidate {disposition}: {candidate.get('title')!r}")
+                        continue
+                    new_job_id = job_id
+                    best = dict(candidate)
+                    if submitted_title:
+                        best['title'] = submitted_title
+                    method = 'rescrape'
+                    new_release_title = best.get('title') or nzb_title
+                    logging.info(f"[ReNZB] item={item_id} re-scraped and submitted, job={new_job_id}")
+                    _update_db_for_repair(item, new_job_id, best, results)
+                    _plex_trash_items_cache['items'] = None
+                    return jsonify({'success': True, 'job_id': new_job_id, 'method': method, 'new_release_title': new_release_title})
             except Exception as _e2:
                 logging.error(f"[ReNZB] item={item_id} Step 2 failed: {_e2}", exc_info=True)
 

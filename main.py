@@ -1152,80 +1152,61 @@ def fix_notification_settings():
     except Exception as e:
         logging.error(f"Error checking notification settings: {e}")
 
-def verify_database_health():
+def verify_database_health(startup: bool = False):
     """
-    Verifies the health of both media_items.db and cli_battery.db databases.
-    If corruption is detected, backs up the corrupted database and creates a new one.
+    Read-only health check of media_items.db and cli_battery.db.
+
+    Skipped at startup to keep boot fast; the hourly task_check_database_health
+    and the DB_HEALTH pause supervisor run it. Returns False only on real
+    corruption (quick_check reports problems or the file is not a database) so
+    the caller can pause the queue and notify. A locked/busy database is
+    inconclusive and passes. Never modifies, moves or deletes the files.
     """
-    logging.info("Skipping health verification - task will periodically verify health.")
-    return True
+    if startup:
+        logging.info("Skipping health verification at startup - task will periodically verify health.")
+        return True
     logging.info("Verifying database health...")
-    
-    # Get database paths
+
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
     media_items_path = os.path.join(db_content_dir, 'media_items.db')
     cli_battery_path = os.path.join(db_content_dir, 'cli_battery.db')
-    
+
     def check_db_health(db_path, db_name):
         if not os.path.exists(db_path):
             logging.warning(f"{db_name} does not exist, will be created during initialization")
             return True
-            
+
+        conn = None
         try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            
-            # Try to perform a simple query
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
-            
-            # Verify database integrity
-            cursor.execute("PRAGMA integrity_check")
-            result = cursor.fetchone()
-            
-            cursor.close()
-            conn.close()
-            
-            if result[0] != "ok":
-                raise sqlite3.DatabaseError(f"Integrity check failed: {result[0]}")
-                
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
+            rows = conn.execute("PRAGMA quick_check").fetchall()
+            problems = [r[0] for r in rows if r and r[0] != "ok"]
+            if problems:
+                logging.error(f"{db_name} failed quick_check: {problems[:5]}")
+                return False
             logging.info(f"{db_name} health check passed")
             return True
-            
-        except sqlite3.DatabaseError as e:
-            logging.error(f"{db_name} is corrupted: {str(e)}")
-            
-            # Create backup of corrupted database
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            backup_path = f"{db_path}.corrupted_{timestamp}"
-            try:
-                shutil.copy2(db_path, backup_path)
-                logging.info(f"Created backup of corrupted {db_name} at {backup_path}")
-            except Exception as backup_error:
-                logging.error(f"Failed to create backup of corrupted {db_name}: {str(backup_error)}")
-            
-            # Delete corrupted database
-            try:
-                os.remove(db_path)
-                logging.info(f"Removed corrupted {db_name}")
-            except Exception as del_error:
-                logging.error(f"Failed to remove corrupted {db_name}: {str(del_error)}")
-                return False
-            
+        except sqlite3.OperationalError as e:
+            # Locked/busy or transient I/O: can't tell, so don't raise a corruption alarm.
+            logging.warning(f"{db_name} health check inconclusive: {e}")
             return True
-        
-        except Exception as e:
-            logging.error(f"Error checking {db_name} health: {str(e)}")
+        except sqlite3.DatabaseError as e:
+            logging.error(f"{db_name} is corrupted: {e}")
             return False
-    
-    # Check both databases
+        except Exception as e:
+            logging.error(f"Error checking {db_name} health: {e}")
+            return True
+        finally:
+            if conn is not None:
+                conn.close()
+
     media_items_ok = check_db_health(media_items_path, "media_items.db")
     cli_battery_ok = check_db_health(cli_battery_path, "cli_battery.db")
-    
+
     if not media_items_ok or not cli_battery_ok:
         logging.error("Database health check failed")
         return False
-    
+
     logging.info("Database health check completed successfully")
     return True
 
@@ -1690,7 +1671,7 @@ def main():
     #     logging.error(f"Error purging content source cache files: {str(e)}")
     
     # Verify database health before proceeding
-    if not verify_database_health():
+    if not verify_database_health(startup=True):
         logging.error("Database health check failed. Please check the logs and resolve any issues.")
         return
     

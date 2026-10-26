@@ -897,32 +897,8 @@ class DeletionManager:
         # In symlink mode, Plex removal happens automatically on next library scan
         # We don't actively call Plex API here - just report that removal is pending
         if self.plex_enabled:
-            try:
-                from utilities.plex_functions import check_item_in_plex
-                item_title = item.get('title', '')
-                item_path = symlink_path
-
-                # Quick check if item is still in Plex (this is informational only)
-                # Note: Plex may not have scanned yet, so item might still appear
-                in_plex = check_item_in_plex(item_title, item_path) if item_title else None
-
-                if in_plex is False:
-                    result['plex_removed'] = True
-                    logging.info(f"[SYMLINK_VALIDATION] Item confirmed removed from Plex: {item_title}")
-                elif in_plex is True:
-                    result['plex_removed'] = False
-                    logging.info(f"[SYMLINK_VALIDATION] Item still in Plex (pending scan): {item_title}")
-                else:
-                    # Could not determine - assume pending
-                    result['plex_removed'] = False
-                    logging.debug(f"[SYMLINK_VALIDATION] Could not determine Plex status for: {item_title}")
-            except ImportError:
-                # check_item_in_plex function doesn't exist yet - that's OK
-                result['plex_removed'] = False
-                logging.debug(f"[SYMLINK_VALIDATION] Plex validation function not available")
-            except Exception as e:
-                result['plex_removed'] = False
-                logging.debug(f"[SYMLINK_VALIDATION] Error checking Plex status: {e}")
+            result['plex_removed'] = False
+            logging.debug(f"[SYMLINK_VALIDATION] Plex removal pending next library scan: {item.get('title', '')}")
         else:
             # No Plex configured
             result['plex_removed'] = True
@@ -1195,27 +1171,6 @@ class DeletionManager:
             logging.warning(f"[CONTENT_SOURCE_REMOVAL] No content_source field found - will check all enabled sources (slower)")
 
         try:
-            # Check Trakt Watchlist - SKIP if item not from Trakt
-            if item_source_types and 'Trakt' not in item_source_types:
-                logging.info(f"[CONTENT_SOURCE_REMOVAL] ⏭️  Skipping Trakt Watchlist - item not from Trakt source")
-            else:
-                trakt_watchlist_enabled = get_setting('Trakt', 'trakt_get_watchlist', False)
-                logging.info(f"[CONTENT_SOURCE_REMOVAL] Trakt Watchlist enabled: {trakt_watchlist_enabled}")
-                if trakt_watchlist_enabled:
-                    result['sources_attempted'].append('Trakt_Watchlist')
-                    try:
-                        from content_checkers.trakt import remove_from_trakt_watchlist
-                        removal_result = remove_from_trakt_watchlist([item])
-                        result['details']['Trakt_Watchlist'] = removal_result
-                        if removal_result.get('success'):
-                            result['sources_succeeded'].append('Trakt_Watchlist')
-                        else:
-                            result['sources_failed'].append('Trakt_Watchlist')
-                    except Exception as e:
-                        logging.error(f"Error removing from Trakt Watchlist: {e}")
-                        result['sources_failed'].append('Trakt_Watchlist')
-                        result['details']['Trakt_Watchlist'] = {'success': False, 'message': str(e)}
-
             # Check Trakt Personal Lists from Content Sources
             content_sources = get_setting('Content Sources', default={})
             trakt_list_sources = []

@@ -1460,7 +1460,7 @@ class CheckingQueue:
                             # Trigger targeted Plex scan once per item, async
                             if torrent_id not in self._nzb_plex_scan_triggered:
                                 self._nzb_plex_scan_triggered.add(torrent_id)
-                                _scan_mount = get_setting('Plex', 'mounted_file_location', '').rstrip('') or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/')
+                                _scan_mount = get_setting('Plex', 'mounted_file_location', '').rstrip('/') or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/')
                                 _scan_folder = _sample.get('debrid_folder_name') or _sample.get('filled_by_title') or ''
                                 _scan_itype = _sample.get('type', 'movie')
                                 if _scan_mount and _scan_folder:

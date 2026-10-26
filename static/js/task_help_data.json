@@ -131,8 +131,8 @@
       "runs": "Always on. Does nothing if no notifications are queued."
     },
     "task_check_database_health": {
-      "description": "Checks that media_items.db is readable and not corrupt. If it's corrupt, the queue pauses and a notification is sent, because the program needs a restart to rebuild the database.",
-      "action": "Run a database integrity check.",
+      "description": "Runs a read-only check that media_items.db and cli_battery.db are not corrupt. If one is, the queue pauses and a notification is sent so you can restore it from a backup. The check never changes the files, and a busy (locked) database doesn't count as corrupt.",
+      "action": "Run a read-only database corruption check.",
       "runs": "Always on."
     },
     "task_backup_database": {

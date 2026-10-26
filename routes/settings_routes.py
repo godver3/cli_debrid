@@ -2752,10 +2752,41 @@ def save_version_settings():
         
         config['Scraping']['versions'][version] = settings
         save_config(config)
-        
+
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/save_single_setting', methods=['POST'])
+@admin_required
+def save_single_setting():
+    """Instant-save one schema-defined setting (used by the logo picker)."""
+    from utilities.settings import set_setting
+    section = request.form.get('section', '')
+    key = request.form.get('key', '')
+    value = request.form.get('value', '')
+
+    schema = SETTINGS_SCHEMA.get(section, {}).get(key)
+    if not isinstance(schema, dict):
+        return jsonify({'status': 'error', 'error': f'Unknown setting {section}.{key}'}), 400
+
+    setting_type = schema.get('type')
+    if setting_type == 'boolean':
+        value = value.lower() in ('true', '1', 'on', 'yes')
+    elif setting_type == 'integer':
+        try:
+            value = int(value)
+        except ValueError:
+            return jsonify({'status': 'error', 'error': f'{key} must be an integer'}), 400
+    elif setting_type != 'string':
+        return jsonify({'status': 'error', 'error': f'{key} cannot be saved individually'}), 400
+
+    choices = schema.get('choices')
+    if choices and value not in choices:
+        return jsonify({'status': 'error', 'error': f'Invalid value for {key}'}), 400
+
+    set_setting(section, key, value)
+    return jsonify({'status': 'success'})
 
 def update_required_settings(form_data):
     config = load_config()

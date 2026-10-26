@@ -701,8 +701,9 @@ class UpgradingQueue:
         show_season_episode_counts = None
         if content_type == 'episode' and query_season:
             try:
-                from metadata.metadata import get_show_season_episode_counts
-                show_season_episode_counts = get_show_season_episode_counts(item.get('tmdb_id'))
+                # Same source the scraper ranks new candidates with, so both sides compare alike
+                from database.database_reading import get_all_season_episode_counts
+                show_season_episode_counts = get_all_season_episode_counts(item.get('tmdb_id'))
             except Exception as e:
                 logging.debug(f"Could not get season episode counts for scoring: {e}")
         

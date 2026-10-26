@@ -3713,7 +3713,7 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
     if backfill and not bypass:
         if mode in ['Symlink', 'Symlinked/Local']:
             # Symlink mode: use location_on_disk as-is
-            mount_path = get_setting('File Management', 'symlinked_directory', '')
+            mount_path = get_setting('File Management', 'symlinked_files_path', '')
             if mount_path and os.path.isdir(mount_path):
                 use_filesystem_first = True
                 logging.info(f"[BACKFILL_FS] Using filesystem-first approach for Symlink mode")
