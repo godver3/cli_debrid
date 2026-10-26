@@ -182,5 +182,22 @@ class PerViewerRecommendationsTest(unittest.TestCase):
         self.assertEqual(self.run_for('all'), [('movie', 1), ('movie', 3), ('tv', 2)])
 
 
+
+class ViewerHistoryTaskDefaultTest(unittest.TestCase):
+    def wanted(self, settings):
+        from queues import run_program
+        with patch.object(run_program, 'get_setting', side_effect=lambda s, k, d='', **kw: settings.get((s, k), d)):
+            return run_program.viewer_history_task_wanted()
+
+    def test_on_with_a_media_server_and_tmdb_key(self):
+        tmdb = {('TMDB', 'api_key'): 'k'}
+        self.assertTrue(self.wanted({**tmdb, ('Plex', 'url'): 'http://plex', ('Plex', 'token'): 't'}))
+        self.assertTrue(self.wanted({**tmdb, ('Debug', 'emby_jellyfin_url'): 'http://jf',
+                                     ('Debug', 'emby_jellyfin_token'): 'k'}))
+
+    def test_off_without_tmdb_key_or_media_server(self):
+        self.assertFalse(self.wanted({('Plex', 'url'): 'http://plex', ('Plex', 'token'): 't'}))
+        self.assertFalse(self.wanted({('TMDB', 'api_key'): 'k'}))
+
 if __name__ == '__main__':
     unittest.main()

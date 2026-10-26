@@ -1824,7 +1824,7 @@ class PlexTasks:
 
     def task_sync_viewer_history(self):
         """Pull every Plex account's and Emby/Jellyfin user's watch history for
-        Discover recommendations. Off until turned on in the Task Manager."""
+        Discover recommendations. On by default when a media server and TMDB key are set up."""
         from utilities.viewer_history import sync_all
         from utilities.library_recommendations import clear_result_cache
         sync_all()
