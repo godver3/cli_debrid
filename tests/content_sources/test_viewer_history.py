@@ -166,8 +166,8 @@ class PerViewerRecommendationsTest(unittest.TestCase):
         # picking the main user's own id is the same list
         self.assertEqual(self.run_for('plex:1'), [('movie', 1), ('movie', 3)])
 
-    def test_other_user_gets_their_history_only_and_keeps_library_titles(self):
-        self.assertEqual(self.run_for('plex:5'), [('movie', 1), ('movie', 500), ('tv', 2)])
+    def test_other_user_gets_their_history_only_without_library_titles(self):
+        self.assertEqual(self.run_for('plex:5'), [('movie', 1), ('tv', 2)])
 
     def test_everyone_merges_histories(self):
         self.assertEqual(self.run_for('all'), [('movie', 1), ('movie', 3), ('tv', 2)])

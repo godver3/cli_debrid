@@ -5,9 +5,9 @@ watch history (utilities/viewer_history: any Plex account or Emby/Jellyfin
 user; the main user also gets the owner-only watch_history.db), or everyone's.
 The main user's and everyone's seeds are topped up with recently collected titles.
 Each seed's TMDB recommendations are fetched once a week and cached on disk;
-a title suggested by several seeds ranks higher. For the main user,
-anything already in the database (any state) is dropped; for every viewer,
-titles they watched and the manual blacklist are dropped.
+a title suggested by several seeds ranks higher. Anything already in the
+database (any state), anything the viewer watched, and the manual blacklist
+are dropped.
 """
 
 import json
@@ -233,15 +233,16 @@ def _collect_seeds(api_key, viewer='main'):
     watch_seeds.sort(key=lambda s: s['weight'], reverse=True)
     seeds = watch_seeds[:MAX_WATCH_SEEDS]
 
-    # For the main user (and everyone) anything in the library is known already.
-    # Another user may not have seen it, so it stays and shows its Collected badge.
-    owner_view = viewer in ('main', 'all')
+    # Anything in the library is dropped for every viewer: the list is for
+    # deciding what to add. Only the main user's and everyone's seeds get the
+    # collection top-up.
+    collection_seeds = viewer in ('main', 'all')
     collected = []
     try:
-        for db_type, tmdb_id, is_collected, title, collected_at in _library_rows() if owner_view else []:
+        for db_type, tmdb_id, is_collected, title, collected_at in _library_rows():
             key = (_media_type(db_type), str(tmdb_id))
             excluded.add(key)
-            if is_collected and key not in watched:
+            if collection_seeds and is_collected and key not in watched:
                 collected.append({'key': key, 'title': title, 'verb': 'collected',
                                   'weight': COLLECTED_WEIGHT * _recency(collected_at, now)})
     except Exception as e:
