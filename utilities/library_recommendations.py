@@ -3,7 +3,8 @@
 Used when neither Trakt nor Scrob is connected. Seeds come from one viewer's
 watch history (utilities/viewer_history: any Plex account or Emby/Jellyfin
 user; the main user also gets the owner-only watch_history.db), or everyone's.
-The main user's and everyone's seeds are topped up with recently collected titles.
+Everyone's seeds are topped up with recently collected titles; the main user's
+only for a kind (movies or shows) they have no watch history for.
 Each seed's TMDB recommendations are fetched once a week and cached on disk;
 a title suggested by several seeds ranks higher. Anything already in the
 database (any state), anything the viewer watched, and the manual blacklist
@@ -180,13 +181,20 @@ def _resolve_imdb(imdb_ids, api_key):
 
 
 def _resolve_viewer(viewer):
-    """'main', 'all', or a viewer id such as 'plex:3'. The main user's own id maps to 'main'."""
+    """'main', 'all', or a synced viewer id such as 'plex:3'; None for an unknown id.
+
+    The main user's own id maps to 'main'.
+    """
     if not viewer or viewer == 'main':
         return 'main'
     if viewer == 'all':
         return 'all'
-    from utilities.viewer_history import main_viewer_id
-    return 'main' if viewer == main_viewer_id() else viewer
+    from utilities.viewer_history import get_viewers
+    viewers = get_viewers()
+    if viewer not in {v['id'] for v in viewers}:
+        return None
+    main = next((v['id'] for v in viewers if v['is_main']), viewers[0]['id'])
+    return 'main' if viewer == main else viewer
 
 
 def _history(viewer):
@@ -222,8 +230,10 @@ def _collect_seeds(api_key, viewer='main'):
     """Return (seeds, excluded_keys). A seed is {key, title, weight, verb}.
 
     Up to SEEDS_PER_TYPE movies and as many shows, so each list is built from
-    its own kind. The collection tops up the main user's and everyone's seeds;
-    another user's recommendations come from their own history only.
+    its own kind. The collection tops up everyone's seeds, and stands in for the
+    main user's history of a kind they've watched none of (no media server yet,
+    or nothing synced). Another user's recommendations come from their own
+    history only.
     """
     now = datetime.now()
     excluded = set()
@@ -258,8 +268,8 @@ def _collect_seeds(api_key, viewer='main'):
                                 'weight': _recency(e['last'], now) * _taste_weight(key[0], e['plays'], e['items'])})
 
     # Anything in the library is dropped for every viewer: the list is for
-    # deciding what to add. Only the main user's and everyone's seeds get the
-    # collection top-up.
+    # deciding what to add. Only the main user's and everyone's seeds can use
+    # the collection (see the docstring).
     collection_seeds = viewer in ('main', 'all')
     collected = {'movie': [], 'tv': []}
     try:
@@ -275,6 +285,9 @@ def _collect_seeds(api_key, viewer='main'):
     seeds = []
     for mt in ('movie', 'tv'):
         picked = sorted(by_type[mt], key=lambda s: s['weight'], reverse=True)[:SEEDS_PER_TYPE]
+        if viewer == 'main' and picked:
+            seeds += picked
+            continue
         fill = sorted(collected[mt], key=lambda s: s['weight'], reverse=True)
         seeds += picked + fill[:SEEDS_PER_TYPE - len(picked)]
 
@@ -367,6 +380,8 @@ def get_library_recommendations(viewer=None):
     if not api_key:
         return []
     viewer = _resolve_viewer(viewer)
+    if viewer is None:
+        return []
     with _build_lock:
         entry = _result_cache.get(viewer)
         if entry is None or time.time() >= entry['expires']:

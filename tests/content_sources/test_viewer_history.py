@@ -170,16 +170,22 @@ class PerViewerRecommendationsTest(unittest.TestCase):
         with patch.object(lr, 'get_setting', return_value='key'):
             return sorted((r['media_type'], r['id']) for r in lr.get_library_recommendations(viewer))
 
-    def test_main_user_gets_own_history_plus_collection_without_library_titles(self):
-        self.assertEqual(self.run_for(None), [('movie', 1), ('movie', 3)])
+    def test_main_user_gets_own_history_only_without_library_titles(self):
+        # Inception (collected) seeds nothing: the main user has watched movies
+        self.assertEqual(self.run_for(None), [('movie', 1)])
         # picking the main user's own id is the same list
-        self.assertEqual(self.run_for('plex:1'), [('movie', 1), ('movie', 3)])
+        self.assertEqual(self.run_for('plex:1'), [('movie', 1)])
 
     def test_other_user_gets_their_history_only_without_library_titles(self):
         self.assertEqual(self.run_for('plex:5'), [('movie', 1), ('tv', 2)])
 
     def test_everyone_merges_histories(self):
         self.assertEqual(self.run_for('all'), [('movie', 1), ('movie', 3), ('tv', 2)])
+
+    def test_unknown_viewer_gets_nothing_and_is_not_cached(self):
+        self.assertEqual(self.run_for('plex:999'), [])
+        self.assertEqual(self.run_for('garbage'), [])
+        self.assertEqual(lr._result_cache, {})
 
 
 
