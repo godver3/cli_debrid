@@ -1791,14 +1791,23 @@ def main():
     # --- End migration ---
 
     # Batch set deprecated settings
-    set_setting('Debug', 'skip_initial_plex_update', False)
     set_setting('Scraping', 'jackett_seeders_only', True)
     set_setting('Scraping', 'enable_upgrading_cleanup', True)
     set_setting('Sync Deletions', 'sync_deletions', True)
     #set_setting('Debrid Provider', 'provider', 'RealDebrid')
     set_setting('Debug', 'rescrape_missing_files', False)
-    set_setting('Debug', 'anime_renaming_using_anidb', True)
     set_setting('Debug', 'symlink_organize_by_type', True)
+
+    # Removed settings: skip_initial_plex_update (startup never scans Plex when
+    # Collected items exist) and anime_renaming_using_anidb (disabled since 0.7.10)
+    config = load_config()
+    removed = [k for k in ('skip_initial_plex_update', 'anime_renaming_using_anidb')
+               if k in config.get('Debug', {})]
+    if removed:
+        for key in removed:
+            del config['Debug'][key]
+        save_config(config)
+        logging.info(f"Removed retired settings: {', '.join(removed)}")
 
     # Add check for Hybrid uncached management setting
     if get_setting('Scraping', 'uncached_content_handling') == 'Hybrid':

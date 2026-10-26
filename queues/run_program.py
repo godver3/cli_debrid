@@ -1771,11 +1771,9 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             logging.info("Skipping initialization as this is a restart (mid-run)")
             return
             
-        skip_initial_plex_update = get_setting('Debug', 'skip_initial_plex_update', False)
-        
         disable_initialization = get_setting('Debug', 'disable_initialization', '')
         if not disable_initialization:
-            initialize(skip_initial_plex_update)
+            initialize()
             logging.info("Initialization complete")
         else:
             logging.info("Initialization disabled, skipping...")

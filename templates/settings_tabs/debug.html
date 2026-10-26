@@ -118,7 +118,7 @@
         </div>
     </div>
     <div class="settings-section-content">
-        {% for key in ['skip_initial_plex_update', 'enable_plex_removal_caching', 'plex_removal_cache_delay_minutes', 'cinesync_path', 'enable_unmatched_items_check'] %}
+        {% for key in ['enable_plex_removal_caching', 'plex_removal_cache_delay_minutes', 'cinesync_path', 'enable_unmatched_items_check'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">

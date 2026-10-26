@@ -847,11 +847,6 @@ SETTINGS_SCHEMA = {
             "default": "DEBUG",
             "choices": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
         },
-        "skip_initial_plex_update": {
-            "type": "boolean",
-            "description": "Skip Plex initial collection scan",
-            "default": False
-        },
         "disable_unblacklisting": {
             "type": "boolean",
             "description": "Disable automatic unblacklisting of items from the blacklisted queue",
@@ -961,11 +956,6 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "List of filenames or folder names to filter out, comma separated",
             "default": ""
-        },
-        "anime_renaming_using_anidb": {
-            "type": "boolean",
-            "description": "Use AniDB to rename anime episodes instead of Trakt metadata (symlinking only)",
-            "default": False
         },
         "enable_separate_anime_folders": {
             "type": "boolean",

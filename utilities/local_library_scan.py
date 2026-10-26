@@ -9,7 +9,6 @@ import re
 from datetime import datetime
 import time
 import threading
-from utilities.anidb_functions import format_filename_with_anidb
 from database.database_writing import update_media_item_state, update_media_item
 from utilities.post_processing import handle_state_change
 from database.symlink_verification import add_symlinked_file_for_verification, add_path_for_removal_verification, remove_verification_by_media_item_id
@@ -893,41 +892,6 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                     episode_vars['season_year'] = item.get('year', '')  # Fallback to show year
             else:
                 episode_vars['season_year'] = item.get('year', '')  # Fallback to show year
-            
-            genres_for_anime_check = item.get('genres', '') or ''
-            if isinstance(genres_for_anime_check, str):
-                try:
-                    import json
-                    genres_for_anime_check = json.loads(genres_for_anime_check)
-                except json.JSONDecodeError:
-                    genres_for_anime_check = [g.strip() for g in genres_for_anime_check.split(',') if g.strip()]
-            if not isinstance(genres_for_anime_check, list):
-                genres_for_anime_check = [str(genres_for_anime_check)]
-            is_anime_for_rename = any('anime' in genre.lower() for genre in genres_for_anime_check)
-
-            # anidb_metadata_used = False
-            # if get_setting('Debug', 'anime_renaming_using_anidb', False) and is_anime_for_rename and not skip_jikan_lookup:
-            #     logging.info(f"[SymlinkPath] Anime detected and AniDB renaming enabled. Attempting to get AniDB metadata for '{item.get('title')} S{episode_vars.get('season_number')}E{episode_vars.get('episode_number')}")
-            #     from utilities.anidb_functions import get_anidb_metadata_for_item # Ensure this import is correct
-            #     anime_metadata = get_anidb_metadata_for_item(item)
-            #     if anime_metadata:
-            #         logging.info(f"[SymlinkPath] Successfully got AniDB metadata: {anime_metadata}")
-            #         anidb_metadata_used = True
-            #         episode_vars.update({
-            #             'season_number': int(anime_metadata.get('season_number', episode_vars['season_number'])),
-            #             'episode_number': int(anime_metadata.get('episode_number', episode_vars['episode_number'])),
-            #             'episode_title': anime_metadata.get('episode_title', episode_vars['episode_title'])
-            #         })
-            #         if anime_metadata.get('title'): template_vars['title'] = anime_metadata['title']
-            #         if anime_metadata.get('year'): template_vars['year'] = anime_metadata['year']
-            #     else:
-            #         logging.warning(f"[SymlinkPath] Failed to get AniDB metadata for '{item.get('title')}'. Using original item data.")
-            # else:
-            #     logging.debug(f"[SymlinkPath] AniDB renaming not used. Is Anime: {is_anime_for_rename}, Setting Enabled: {get_setting('Debug', 'anime_renaming_using_anidb', False)}")
-            
-            # Temporarily disabled AniDB/Jikan API calls
-            anidb_metadata_used = False
-            logging.debug(f"[SymlinkPath] AniDB renaming temporarily disabled. Is Anime: {is_anime_for_rename}")
             
             template_vars.update(episode_vars)
             
