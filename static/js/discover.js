@@ -2783,7 +2783,8 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 async function loadRecommendations() {
-    beginContentLoad();
+    // A newer pick (or another tab) bumps the generation, so a late response is dropped
+    const gen = beginContentLoad();
     if (recommendationsContent) recommendationsContent.style.display = 'block';
     if (trendingContent) trendingContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'none';
@@ -2808,6 +2809,7 @@ async function loadRecommendations() {
         const resp = await fetch(`/discover/api/recommendations?type=all${query}`);
         if (!resp.ok) throw new Error('HTTP error fetching recommendations');
         const data = await resp.json();
+        if (isStaleContentLoad(gen)) return;
 
         if (!data.success) {
             if (noProviderMsg) noProviderMsg.style.display = 'block';
@@ -2845,7 +2847,7 @@ async function loadRecommendations() {
 
     } catch (error) {
         console.error('[Discover] Recommendations error:', error);
-        showError();
+        if (!isStaleContentLoad(gen)) showError();
     } finally {
         clearLoadingFlag();
     }
