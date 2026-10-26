@@ -12,12 +12,13 @@ from unittest import mock
 import database
 from queues.scraping_queue import _other_season_episodes_pending
 
-ITEM = {'id': 5, 'imdb_id': 'tt1', 'type': 'episode', 'season_number': 3, 'episode_number': 5, 'state': 'Scraping'}
+ITEM = {'id': 5, 'imdb_id': 'tt1', 'type': 'episode', 'season_number': 3, 'episode_number': 5, 'state': 'Scraping',
+        'version': '1080p'}
 
 
-def _ep(id_, season, state):
+def _ep(id_, season, state, version='1080p'):
     return {'id': id_, 'imdb_id': 'tt1', 'type': 'episode', 'season_number': season,
-            'episode_number': id_, 'state': state}
+            'episode_number': id_, 'state': state, 'version': version}
 
 
 def check(rows):
@@ -36,6 +37,11 @@ def test_other_episode_of_the_season_wanted():
 
 def test_pending_episode_in_another_season_does_not_count():
     assert not check([dict(ITEM), _ep(9, 2, 'Wanted')])
+
+
+def test_another_versions_wanted_episode_does_not_count():
+    assert not check([dict(ITEM), _ep(6, 3, 'Wanted', '2160p')])
+    assert check([dict(ITEM), _ep(6, 3, 'Wanted', '1080p*')])  # starred (upgrade) form of the same version
 
 
 def test_lookup_error_keeps_pack_first():

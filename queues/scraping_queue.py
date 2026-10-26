@@ -33,16 +33,19 @@ def _is_excluded_release(item: Dict[str, Any], result: Dict[str, Any]) -> bool:
 
 
 def _other_season_episodes_pending(item: Dict[str, Any]) -> bool:
-    """True when another episode of the item's show+season is Wanted or Scraping.
+    """True when another episode of the item's show+season+version is Wanted or Scraping.
 
-    On a lookup error it answers True, keeping the old pack-first behaviour.
+    A season pack is grabbed per version, so another version's wanted episodes don't
+    count. On a lookup error it answers True, keeping the old pack-first behaviour.
     """
     try:
         from database import get_all_media_items
+        version = (item.get('version') or '').rstrip('*')
         return any(
             ep.get('type') == 'episode'
             and ep.get('id') != item.get('id')
             and ep.get('season_number') == item.get('season_number')
+            and (ep.get('version') or '').rstrip('*') == version
             and ep.get('state') in ('Wanted', 'Scraping')
             for ep in get_all_media_items(imdb_id=item.get('imdb_id')) or []
         )
