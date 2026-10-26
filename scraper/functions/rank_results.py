@@ -42,6 +42,10 @@ def check_preferred(patterns_weights, fields, is_bonus):
 _MULTI_AUDIO_RE = re.compile(r'(?i)\b(?:multi|dual)\b(?![ ._-]?subs?\b)|(?<!web[ ._-])\bdl\b')
 # DUAL on a foreign-language title is, by convention, the original plus an English dub.
 _DUAL_AUDIO_RE = re.compile(r'(?i)\bdual\b(?![ ._-]?subs?\b)')
+# Cap on the extra-audio bonus: a tiebreaker between otherwise close releases (Squid
+# Game S01's DUAL releases lost by ~20 points on bitrate), not enough to bury an
+# untagged release that's clearly better, since many untagged releases do have English.
+_EXTRA_AUDIO_BONUS_CAP = 50.0
 
 
 def _release_tags(torrent_title, extracted_title):
@@ -461,8 +465,9 @@ def rank_result_key(
         # For a title whose original language isn't the preferred one (Squid Game is 'ko'),
         # an untagged release usually has only the original audio. Untagged releases stay
         # unpenalized (some do carry the preferred track); a release that says it carries
-        # extra audio (MULTi, DUAL, or the preferred language tagged) gets the same amount
-        # as a bonus instead, so it beats a higher-bitrate original-audio-only release.
+        # extra audio (MULTi, DUAL, or the preferred language tagged) gets a bonus of up
+        # to _EXTRA_AUDIO_BONUS_CAP instead, so it wins a close call against an
+        # original-audio-only release.
         # How sure the release is about carrying the preferred track sets the size:
         # named in the audio (ENG, English Audio) or DUAL: full bonus. A bare MULTi
         # usually does but doesn't promise it (French-scene MULTi is French + original,
@@ -471,11 +476,12 @@ def rank_result_key(
         if original_language and original_language.lower() != preferred_language_lower:
             original_lower = original_language.lower()
             other_dubs = [l for l in audio_languages if l not in (preferred_language_lower, original_lower, 'multi')]
+            full_bonus = min(_EXTRA_AUDIO_BONUS_CAP, foreign_language_penalty_setting * language_weight)
             if preferred_language_lower in audio_languages or (_DUAL_AUDIO_RE.search(release_tags) and not other_dubs):
-                extra_audio_bonus = foreign_language_penalty_setting * language_weight
+                extra_audio_bonus = full_bonus
                 language_reason += f" + Bonus {extra_audio_bonus:.0f} for extra audio on a '{original_lower}' title (audio {audio_languages})"
             elif _MULTI_AUDIO_RE.search(release_tags) and not other_dubs:
-                extra_audio_bonus = foreign_language_penalty_setting * language_weight / 2
+                extra_audio_bonus = full_bonus / 2
                 language_reason += f" + Bonus {extra_audio_bonus:.0f} for untagged multi-audio on a '{original_lower}' title (preferred track not named)"
     # --- End Preferred Audio/Sub Language Ranking ---
 
