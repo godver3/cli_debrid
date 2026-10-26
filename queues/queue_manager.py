@@ -772,7 +772,7 @@ class QueueManager:
         if debrid_provider:
             extra['debrid_provider'] = debrid_provider
 
-        updated_item = self._move_item_to_queue(
+        self._move_item_to_queue(
             item,
             from_queue if from_queue in ["Adding", "Wanted"] else None,
             "Checking",
@@ -782,13 +782,11 @@ class QueueManager:
             filled_by_file=filled_by_file,
             filled_by_torrent_id=torrent_id,
             debrid_folder_name=debrid_folder_name,
+            # Set before the item joins the queue so its notification says Downloading
+            # (re-adding it afterwards listed the item twice).
+            queue_fields={'downloading': item['downloading']} if 'downloading' in item else None,
             **extra,
         )
-        
-        # Copy downloading flag from original item
-        if updated_item and 'downloading' in item:
-            updated_item['downloading'] = item['downloading']
-            self.queues["Checking"].add_item(updated_item)  # Re-add with updated flag
 
     @logs_for_item
     def move_to_sleeping(self, item: Dict[str, Any], from_queue: str):
@@ -805,15 +803,9 @@ class QueueManager:
 
         logging.debug(f"Moving item {item_identifier} to Sleeping queue")
 
-        from database import get_wake_count
-        wake_count = get_wake_count(item['id'])
-        logging.debug(f"Wake count before moving to Sleeping: {wake_count}")
-
-        updated_item = self._move_item_to_queue(item, from_queue, "Sleeping", "Sleeping")
-
-        if updated_item:
-            updated_item['wake_count'] = wake_count
-            self.queues["Sleeping"].add_item(updated_item)  # Re-add with wake count
+        # SleepingQueue.add_item reads the wake count from the DB itself; adding
+        # again here listed the item twice (and sent the notification twice).
+        self._move_item_to_queue(item, from_queue, "Sleeping", "Sleeping")
 
     @logs_for_item
     def move_to_unreleased(self, item: Dict[str, Any], from_queue: str):
@@ -974,7 +966,7 @@ class QueueManager:
         return True
 
     @logs_for_item
-    def _move_item_to_queue(self, item, from_queue, to_queue_name, new_state, new_version=None, **additional_params):
+    def _move_item_to_queue(self, item, from_queue, to_queue_name, new_state, new_version=None, queue_fields=None, **additional_params):
         """
         Common method to handle moving items between queues.
         
@@ -984,6 +976,7 @@ class QueueManager:
             to_queue_name: The target queue name 
             new_state: The new state for the item
             new_version: [Optional] The new version for the item
+            queue_fields: [Optional] In-memory fields (not DB columns) set on the item before it joins the target queue
             additional_params: Additional parameters to pass to update_media_item_state
         
         Returns:
@@ -1024,6 +1017,8 @@ class QueueManager:
             # 'updated_item' is now the dictionary returned by the update function
             
             # Add the item to the target queue
+            if queue_fields:
+                updated_item.update(queue_fields)
             if to_queue_name in self.queues:
                 # Record entry into target queue 
                 self.queue_timer.item_entered_queue(updated_item['id'], to_queue_name, item_identifier)

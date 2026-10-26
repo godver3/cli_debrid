@@ -170,6 +170,21 @@ SETTING_BACKED_TASKS = {
 }
 
 
+def viewer_history_task_wanted():
+    """task_sync_viewer_history is on by default when its sync has somewhere to read
+    from (Plex, or Emby/Jellyfin) and the library recommendations it feeds can run
+    (a TMDB key). A Task Manager toggle still overrides this."""
+    if not str(get_setting('TMDB', 'api_key', '') or '').strip():
+        return False
+    plex = get_setting('Plex', 'url', '') and get_setting('Plex', 'token', '')
+    emby = (str(get_setting('Debug', 'emby_jellyfin_url', '') or '').strip()
+            and str(get_setting('Debug', 'emby_jellyfin_token', '') or '').strip())
+    return bool(plex or emby)
+
+
+VIEWER_HISTORY_FIRST_RUN_DELAY = 300  # first sync soon after startup when there's no history yet
+
+
 # ProgramRunner's task methods live in queues/runner/, one mixin per area.
 from queues.runner.content_sources import ContentSourceTasks
 from queues.runner.connectivity import ConnectivityTasks
@@ -359,6 +374,7 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             'task_run_library_maintenance': 12 * 60 * 60, # Run every twelve hours (if enabled)
             'task_sync_library_metadata': 24 * 60 * 60,  # Run every 24 hours (if enabled)
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours (if enabled)
+            'task_sync_viewer_history': 6 * 60 * 60,  # Run every 6 hours (if enabled) - per-user history for Discover recommendations
             'task_refresh_plex_tokens': 24 * 60 * 60,   # Run every 24 hours
             'task_sync_plex_labels': 30 * 60,           # Run every 30 minutes
             'task_process_plex_reported_issues': 30, # Run every 30 seconds (if enabled) - Plex has no push for reports
@@ -732,7 +748,7 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
                 logging.info(f"Disabled '{_ext_scan_task}' as the setting is off or mode is not Symlinked/Local.")
 
 
-        if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):
+        if get_setting('Debug', 'do_not_add_plex_watch_history_items_to_queue', False):
              task_name = 'task_get_plex_watch_history'
              is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
              if not is_toggled_off and task_name not in self.enabled_tasks:
@@ -744,6 +760,18 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             if task_name in self.enabled_tasks and not is_toggled_on:
                  self.enabled_tasks.remove(task_name)
                  logging.info(f"Disabled '{task_name}' as Debug setting is off.")
+
+        # Per-user watch history for Discover recommendations: on by default.
+        _viewer_task = 'task_sync_viewer_history'
+        if viewer_history_task_wanted():
+            if saved_states.get(self._normalize_task_name(_viewer_task), True) is not False \
+                    and _viewer_task not in self.enabled_tasks:
+                self.enabled_tasks.add(_viewer_task)
+                logging.info(f"Enabled '{_viewer_task}' (media server and TMDB key configured).")
+        elif _viewer_task in self.enabled_tasks \
+                and saved_states.get(self._normalize_task_name(_viewer_task), False) is not True:
+            self.enabled_tasks.remove(_viewer_task)
+            logging.info(f"Disabled '{_viewer_task}' as no media server or TMDB key is configured.")
 
         # Check for limited environment and enable library maintenance task by default
         from utilities.set_supervisor_env import is_limited_environment
@@ -1251,6 +1279,9 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
                 # *** START STAGGER EDIT: Apply stagger delay for Trakt tasks ***
                 # Get the stagger delay for this task (0 if not a Trakt task)
                 delay = trakt_task_stagger_map.get(task_name, 0)
+                if task_name == 'task_sync_viewer_history' and not os.path.exists(
+                        os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'viewer_history.db')):
+                    delay = VIEWER_HISTORY_FIRST_RUN_DELAY
 
                 # Attempt to schedule with the appropriate delay
                 if self._schedule_task(task_name, interval, initial_run=True, initial_delay_seconds=delay):

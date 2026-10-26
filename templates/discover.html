@@ -78,7 +78,20 @@
     <div class="discover-tabs-scroll-wrap">
     <div class="discover-tabs">
         <button type="button" class="tab-btn active" data-tab="trending">Trending</button>
-        <button type="button" class="tab-btn" data-tab="recommendations" id="recommendations-tab-btn">Recommendations</button>
+        <!-- Recommendations dropdown - Trakt / Scrob / Plex (per user), same look as Top 10 -->
+        <div id="recommendations-tabs" class="flixpatrol-tabs-container">
+            <div class="flixpatrol-dropdown-wrapper">
+                <button type="button" class="tab-btn flixpatrol-dropdown-trigger" data-tab="recommendations" id="recommendations-tab-btn">
+                    <span id="recommendations-dropdown-label">Recommendations</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m6 9 6 6 6-6"/>
+                    </svg>
+                </button>
+                <div id="recommendations-dropdown-menu" class="flixpatrol-dropdown-menu">
+                    <!-- Sources and users are inserted by JS -->
+                </div>
+            </div>
+        </div>
         <!-- FlixPatrol dropdown - Top 10 streaming charts (no API key required) -->
         <div id="flixpatrol-tabs" class="flixpatrol-tabs-container">
             <div class="flixpatrol-dropdown-wrapper">
@@ -1097,13 +1110,14 @@
             </div>
             <!-- No recommendation provider message -->
             <div id="rec-no-provider" style="display:none; text-align:center; padding:40px; color:#888;">
-                <p>Recommendations require an authenticated Trakt account or a configured Scrob connection.</p>
-                <p>Connect either one—or both—in Settings → Additional Settings. No content-source entry is required.</p>
+                <p>Recommendations need a TMDB API key, an authenticated Trakt account or a configured Scrob connection.</p>
+                <p>With only a TMDB key, recommendations come from your Plex watch history and recently collected titles. Trakt or Scrob, when connected, take over. No content-source entry is required.</p>
                 <p>For Scrob, customize Favourite Movie Genres and/or Favourite Show Genres in your profile. Content Language and Disliked Genres further refine the results.</p>
                 <p>To exclude your existing Plex library and watched titles, connect Plex under Scrob → Connections → Media Players, enable Plex → Scrob Collection Status and Watched Status, then run a manual pull or enable automatic pulls. Playback Events and the Plex webhook are optional and only needed for real-time activity.</p>
             </div>
             <div id="rec-no-results" style="display:none; text-align:center; padding:40px; color:#888;">
                 <p>No personalized recommendations are available yet.</p>
+                <p>Without Trakt or Scrob, recommendations are built from your Plex watch history and collected titles, so they appear once something is watched or collected.</p>
                 <p>For Scrob, confirm the connection and customize Favourite Movie Genres and/or Favourite Show Genres in your profile. Content Language and Disliked Genres further refine the results.</p>
                 <p>To exclude your existing Plex library and watched titles, connect Plex under Scrob → Connections → Media Players, enable Plex → Scrob Collection Status and Watched Status, then run a manual pull or enable automatic pulls. Playback Events and the Plex webhook are optional and only needed for real-time activity.</p>
             </div>

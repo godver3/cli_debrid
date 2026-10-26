@@ -290,6 +290,11 @@
       "action": "Sync the pending Plex labels.",
       "runs": "Off by default. Does nothing unless a content source has Plex labels enabled."
     },
+    "task_sync_viewer_history": {
+      "description": "Downloads what every Plex account and Emby/Jellyfin user has watched on your servers (last 2 years), so Discover → Recommendations can show suggestions for each person.",
+      "action": "Sync everyone's watch history now.",
+      "runs": "Every 6 hours when Plex or Emby/Jellyfin and a TMDB key are set up (first run 5 minutes after startup). Can be turned off here."
+    },
     "task_process_plex_reported_issues": {
       "description": "Checks every 30 seconds for issues reported with Plex's Report Issue on items in your library (Plex has no way to push them). A reported movie or episode is sent back to Wanted to get a different release, and the current file keeps playing until the new one is in. The reporter gets a reply in Plex when it's picked up and again once it's replaced. Reports on a whole show or season are only flagged for you.",
       "action": "Check for new reported issues now.",

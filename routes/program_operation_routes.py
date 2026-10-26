@@ -954,6 +954,7 @@ def get_task_timings():
         'task_overlay_cleanup',
         'task_sync_plex_labels',
         'task_process_plex_reported_issues',
+        'task_sync_viewer_history',
         'task_process_bulk_subtitles',
         'task_backup_debrid',
         'task_cleanup_debrid',

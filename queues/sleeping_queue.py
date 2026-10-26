@@ -71,8 +71,13 @@ class SleepingQueue:
         # Fetch wake count from DB when adding
         from database import get_wake_count
         item['wake_count'] = get_wake_count(item['id'])
+        already_queued = self.contains_item_id(item['id'])
+        self.items = [i for i in self.items if i['id'] != item['id']]
         self.items.append(item)
         self.sleeping_queue_times[item['id']] = datetime.now()
+        if already_queued:
+            logging.debug(f"Replaced item already in Sleeping queue: {item['id']} (Wake count: {item['wake_count']})")
+            return
         logging.debug(f"Added item to Sleeping queue: {item['id']} (Wake count: {item['wake_count']})")
                 
         from routes.notifications import send_notifications

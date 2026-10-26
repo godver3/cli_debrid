@@ -643,19 +643,28 @@ def _get_watch_history():
             conn = sqlite3.connect(watch_db)
             c = conn.cursor()
             c.execute("""
-                SELECT title, type, watched_at, rating, genres
+                SELECT title, type, watched_at, show_title
                 FROM watch_history
-                ORDER BY watched_at DESC LIMIT 80
+                WHERE watched_at IS NOT NULL
+                ORDER BY watched_at DESC LIMIT 2000
             """)
             rows = c.fetchall()
             conn.close()
-            if rows:
-                lines = ["  Source: Plex watch history (with ratings)"]
-                for title, mtype, watched_at, rating, genres in rows:
-                    rating_str = f" rated {rating}/10" if rating else ''
-                    genre_str = f" [{genres}]" if genres else ''
-                    ts = (watched_at or '')[:10]
-                    lines.append(f"  {ts} {mtype}: {title}{rating_str}{genre_str}")
+            # One line per movie/show, most recent first; episodes count under their show
+            seen = {}
+            for title, mtype, watched_at, show_title in rows:
+                is_episode = mtype == 'episode'
+                name = (show_title or title) if is_episode else title
+                key = ('show' if is_episode else 'movie', name)
+                if key in seen:
+                    seen[key]['plays'] += 1
+                elif len(seen) < 80:
+                    seen[key] = {'last': str(watched_at or '')[:10], 'plays': 1}
+            if seen:
+                lines = ["  Source: Plex watch history"]
+                for (mtype, name), e in seen.items():
+                    count = f" ({e['plays']} episodes)" if mtype == 'show' and e['plays'] > 1 else ''
+                    lines.append(f"  {e['last']} {mtype}: {name}{count}")
                 return '\n'.join(lines)
         except Exception as e:
             logger.debug(f"AI context: watch_history.db read failed: {e}")

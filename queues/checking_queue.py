@@ -990,6 +990,7 @@ class CheckingQueue:
             return 'unknown'
 
     def add_item(self, item: Dict[str, Any]):
+        self.items = [i for i in self.items if i['id'] != item['id']]
         self.items.append(item)
         self.checking_queue_times[item['id']] = time.time()
         logging.debug(f"Added item {item['id']} to checking queue")

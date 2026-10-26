@@ -42,6 +42,24 @@ class TestRecommendationProviderSelection(unittest.TestCase):
         ):
             self.assertEqual(recommendation_provider.get_recommendation_provider(), 'scrob')
 
+    @patch('utilities.recommendation_provider.get_setting')
+    def test_library_is_offered_after_trakt_and_scrob(self, get_setting):
+        get_setting.side_effect = lambda section, key, default='': {
+            ('Trakt', 'client_id'): 'client-id',
+            ('Trakt', 'client_secret'): 'client-secret',
+            ('TMDB', 'api_key'): 'tmdb-key',
+        }.get((section, key), default)
+
+        with provider_modules(
+            {'OAUTH_TOKEN': 'token'},
+            {'base_url': 'http://scrob', 'api_key': 'key'},
+        ):
+            self.assertEqual(
+                recommendation_provider.get_available_recommendation_providers(),
+                ['trakt', 'scrob', 'library'],
+            )
+            self.assertEqual(recommendation_provider.get_recommendation_provider(), 'trakt')
+
     @patch('utilities.recommendation_provider.get_setting', return_value='')
     def test_no_provider_when_neither_is_configured(self, _setting):
         with provider_modules({}, None):

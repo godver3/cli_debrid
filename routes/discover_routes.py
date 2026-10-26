@@ -16,7 +16,7 @@ from flask import Blueprint, render_template, jsonify, request, redirect, url_fo
 from flask_login import current_user
 from utilities.tmdb_cache import cache_response, get_cached_db_statuses, get_cached_episode_info, get_tmdb_json, TMDB_JSON_TTL
 from utilities.settings import get_setting
-from utilities.recommendation_provider import get_recommendation_provider
+from utilities.recommendation_provider import get_available_recommendation_providers
 from utilities.reverse_parser import get_default_version
 from utilities.mdblist_api import (
     is_mdblist_configured,
@@ -1053,10 +1053,12 @@ def tmdb_shows(list_type):
 @discover_bp.route('/api/recommendations')
 @user_required
 def recommendations():
-    """Route the Discover recommendations tab to the best connected provider.
+    """Recommendations from one connected provider.
 
-    Trakt remains preferred to preserve the existing recommendations. Scrob's
-    personalized ``For You`` feed is the automatic fallback. Content-source
+    ``source`` picks trakt, scrob or library; without it (or if it isn't
+    connected) the default is used: Trakt, then Scrob's ``For You``, then
+    recommendations built from the watch history and collection via TMDB.
+    ``viewer`` picks whose history drives the library ones. Content-source
     entries are intentionally irrelevant here; they control automatic Wanted
     ingestion, while this endpoint only displays recommendations.
     """
@@ -1064,7 +1066,10 @@ def recommendations():
     if media_type not in ('all', 'movie', 'tv'):
         media_type = 'all'
 
-    provider = get_recommendation_provider()
+    available = get_available_recommendation_providers()
+    provider = request.args.get('source')
+    if provider not in available:
+        provider = available[0] if available else None
     if provider == 'trakt':
         return redirect(url_for(
             '.trakt_special_list',
@@ -1077,6 +1082,22 @@ def recommendations():
             list_type='For You',
             type=media_type,
         ))
+    if provider == 'library':
+        try:
+            from utilities.library_recommendations import get_library_recommendations
+            results = get_library_recommendations(request.args.get('viewer') or None)
+        except Exception as e:
+            logging.error(f"Library recommendations error: {e}")
+            return jsonify({'success': False, 'results': [], 'error': str(e)}), 500
+        if media_type != 'all':
+            results = [r for r in results if r['media_type'] == media_type]
+        add_db_status_and_episode_info(results, use_battery=False)
+        return jsonify({
+            'success': True,
+            'provider': 'library',
+            'results': results,
+            'total_results': len(results),
+        })
 
     return jsonify({
         'success': False,
@@ -1084,6 +1105,43 @@ def recommendations():
         'total_results': 0,
         'error': 'No recommendation provider configured',
     })
+
+
+@discover_bp.route('/api/recommendations/sources')
+@user_required
+def recommendation_sources():
+    """What the Recommendations dropdown offers.
+
+    ``sources`` lists the connected providers in default order. The library
+    entry carries the synced Plex/Emby/Jellyfin users (empty until the viewer
+    history task has run) and its own name: the media server it learns from.
+    """
+    sources = []
+    for provider in get_available_recommendation_providers():
+        if provider == 'trakt':
+            sources.append({'id': 'trakt', 'name': 'Trakt'})
+        elif provider == 'scrob':
+            sources.append({'id': 'scrob', 'name': 'Scrob'})
+        else:
+            from utilities.viewer_history import get_viewers, main_viewer_id
+            try:
+                viewers = get_viewers()
+            except Exception as e:
+                logging.error(f"Recommendation viewers error: {e}")
+                viewers = []
+            if get_setting('Plex', 'url', ''):
+                name = 'Plex'
+            elif viewers:
+                name = {'jellyfin': 'Jellyfin', 'emby': 'Emby'}.get(viewers[0]['source'], 'Library')
+            else:
+                name = 'Library'
+            sources.append({
+                'id': 'library',
+                'name': name,
+                'viewers': viewers,
+                'default_viewer': main_viewer_id() if viewers else 'main',
+            })
+    return jsonify({'success': True, 'sources': sources, 'default': sources[0]['id'] if sources else None})
 
 
 @discover_bp.route('/api/genres')
