@@ -19,29 +19,20 @@ import webbrowser
 import socket
 import sqlite3
 from datetime import datetime
-import json
 import tracemalloc
-
-# Import Windows-specific modules only on Windows
-if platform.system() == 'Windows':
-    import win32gui
-    import win32con
 
 # Existing imports
 import shutil
 import requests
-import re
 import subprocess
-from utilities.settings import set_setting
 from utilities.settings import get_setting
 from logging_config import stop_global_profiling, start_global_profiling
 import babelfish
 from content_checkers.plex_watchlist import validate_plex_tokens
 from routes.notifications import (
-    setup_crash_handler, 
-    register_shutdown_handler, 
+    setup_crash_handler,
+    register_shutdown_handler,
     register_startup_handler,
-    send_program_stop_notification
 )
 from database import schema_management
 
@@ -77,8 +68,6 @@ import signal
 import time
 from utilities.settings import get_setting
 import requests
-import re
-from utilities.settings import set_setting
 import subprocess
 import threading
 from logging_config import stop_global_profiling, start_global_profiling
@@ -362,7 +351,6 @@ def backup_database(skip_if_recent=False, skip_hours=6):
         bool: True if backup was successful or skipped, False on error
     """
     import sqlite3
-    import time
 
     try:
         # Get db_content directory from environment variable
@@ -969,7 +957,7 @@ def stop_program(from_signal=False):
 def fix_notification_settings():
     """Check and fix notification settings during startup."""
     try:
-        from utilities.settings import load_config, save_config
+        from utilities.settings import load_config
         config = load_config()
         needs_update = False
 
@@ -2211,8 +2199,6 @@ def main():
     # Start the system tray icon if running as a packaged Windows app
     if is_frozen() and platform.system() == 'Windows':
         # Import Windows-specific modules only on Windows
-        import win32gui
-        import win32con
         # Start the system tray icon
         tray_thread = threading.Thread(target=setup_tray_icon)
         tray_thread.daemon = True

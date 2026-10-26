@@ -1,10 +1,8 @@
 import logging
 from typing import List, Dict, Any, Optional, Callable, Tuple
 import os
-import sys  # Import sys module
 from utilities.settings import get_setting
 import shutil
-from pathlib import Path
 import re
 from datetime import datetime
 import time
@@ -14,7 +12,6 @@ from utilities.post_processing import handle_state_change
 from database.symlink_verification import add_symlinked_file_for_verification, add_path_for_removal_verification, remove_verification_by_media_item_id
 from database.database_reading import get_all_media_items, get_media_item_by_id, get_season_year
 from scraper.functions.ptt_parser import parse_with_ptt
-import json # Ensure json is imported
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 # Check MediaInfo availability at module load (optional dependency)

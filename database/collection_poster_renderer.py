@@ -17,7 +17,7 @@ from utilities.paths import config_dir
 from typing import Optional, Tuple, List
 
 try:
-    from PIL import Image, ImageDraw, ImageFilter
+    from PIL import Image, ImageDraw
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
@@ -953,7 +953,6 @@ def generate_preview_images():
 def regenerate_all_previews():
     """Force regeneration of all preview images (for admin use)."""
     if PREVIEW_DIR.exists():
-        import shutil
         for f in PREVIEW_DIR.glob('design_*.jpg'):
             f.unlink(missing_ok=True)
     generate_preview_images()

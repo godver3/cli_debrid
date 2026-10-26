@@ -4,13 +4,11 @@ from utilities.settings import get_setting
 from routes.api_tracker import api
 from scraper.scraper import scrape
 from debrid import extract_hash_from_magnet
-from queues.adding_queue import AddingQueue
 import re
 from fuzzywuzzy import fuzz
 from routes.poster_cache import get_cached_poster_url, cache_poster_url, get_cached_media_meta, cache_media_meta
 from flask import request, url_for
 from urllib.parse import urlparse
-from debrid.base import DebridProvider
 from debrid import get_debrid_provider
 # Provider-agnostic: avoid direct Real-Debrid import
 import time
@@ -1185,7 +1183,6 @@ def get_tmdb_data(tmdb_id: int, media_type: str, season: Optional[int] = None, e
         return {}
 
 def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int] = None, allow_specials: bool = False) -> Dict[str, Any]:
-    from metadata.metadata import get_all_season_episode_counts, get_show_airtime_by_imdb_id
     logging.info(f"Starting web scrape for TV Show: {title}, media_id: {media_id}, season: {season}, allow_specials: {allow_specials}")
     
     trakt_client_id = get_setting('Trakt', 'client_id')

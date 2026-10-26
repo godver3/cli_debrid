@@ -44,8 +44,6 @@ class ConnectivityTasks:
                 self.handle_connectivity_failure(failed_services)
 
     def handle_connectivity_failure(self, failed_services_details=None): # MODIFIED: expects detailed list
-        from routes.program_operation_routes import check_service_connectivity # Keep this for potential re-check logic
-        from routes.extensions import app
 
         current_pause_info = {
             "reason_string": "Connectivity failure - waiting for services to be available",
@@ -95,7 +93,6 @@ class ConnectivityTasks:
 
     def check_connectivity_status(self):
         from routes.program_operation_routes import check_service_connectivity
-        from routes.extensions import app
 
         if not self.connectivity_failure_time:
             return 

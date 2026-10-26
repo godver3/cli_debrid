@@ -1,7 +1,7 @@
 import logging
 import re
 from typing import List, Dict, Any, Tuple, Optional
-from scraper.functions.similarity_checks import similarity, normalize_title
+from scraper.functions.similarity_checks import normalize_title
 from scraper.functions.other_functions import smart_search
 from fuzzywuzzy import fuzz
 

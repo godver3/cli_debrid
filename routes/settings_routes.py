@@ -1,10 +1,10 @@
 from flask import Blueprint, jsonify, request, render_template, Response, current_app, make_response
-from utilities.settings import load_config, validate_url, save_config
+from utilities.settings import load_config, save_config
 from utilities.settings_schema import SETTINGS_SCHEMA
 import logging
 from queues.config_manager import add_scraper, clean_notifications, get_content_source_settings, get_version_settings, add_content_source, delete_content_source, save_config, get_enabled_content_sources
 from routes.models import admin_required, onboarding_required, user_required
-from .utils import is_user_system_enabled
+from .utils import is_user_system_enabled  # noqa: F401  (re-exported; other routes import it from here)
 import traceback
 import json
 import os
@@ -16,8 +16,6 @@ from routes.notifications import (
     send_ntfy_notification, 
     send_email_notification
 )
-import re
-import time
 from content_checkers.trakt import fetch_liked_trakt_lists_details
 from database.database_writing import update_version_name # Ensure this is imported
 import sys
@@ -947,7 +945,7 @@ def get_scrob_lists():
 
 @settings_bp.route('/content-sources/overseerr-users')
 def get_overseerr_users():
-    from utilities.settings import get_setting, get_all_settings
+    from utilities.settings import get_all_settings
     source_id = request.args.get('source_id', '')
     try:
         all_settings = get_all_settings()
@@ -3728,14 +3726,14 @@ def get_collection_poster_previews():
 def serve_collection_poster_preview(design_id):
     """Serve a poster design preview image."""
     from flask import send_file
-    from database.collection_poster_renderer import DESIGNS, PREVIEW_DIR, generate_preview_images
+    from database.collection_poster_renderer import DESIGNS, PREVIEW_DIR
     if design_id not in DESIGNS:
         return jsonify({'error': 'Invalid design ID'}), 404
     preview_file = PREVIEW_DIR / DESIGNS[design_id]['preview']
     if not preview_file.exists() and design_id > 0:
         # Generate just this one design
         try:
-            from database.collection_poster_renderer import DESIGN_RENDERERS, SOURCE_ICONS, get_source_icon
+            from database.collection_poster_renderer import DESIGN_RENDERERS, get_source_icon
             renderer = DESIGN_RENDERERS.get(design_id)
             if renderer:
                 img = renderer(
@@ -3763,7 +3761,7 @@ def serve_collection_poster_preview(design_id):
 def get_plex_smart_collections():
     """Get all smart collections from Plex with enabled state and shared poster settings."""
     try:
-        from database.plex_smart_collections import get_all_smart_collections, _load_state, _migrate_state
+        from database.plex_smart_collections import get_all_smart_collections
         collections = get_all_smart_collections()
         _psc = load_config().get('Plex Smart Collections', {})
         saved_colls = _psc.get('collections', {}) if isinstance(_psc, dict) else {}

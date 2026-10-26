@@ -6,13 +6,11 @@ import logging
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 from utilities.plex_label_manager import (
     get_labels_for_item,
-    add_label_to_item,
     remove_label_from_item,
     apply_labels_for_item,
     get_label_config_for_source,
-    determine_labels_for_item,
     parse_plex_labels,
-    sanitize_label
+    sanitize_label,
 )
 from utilities.settings import get_all_settings
 import sqlite3

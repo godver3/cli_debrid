@@ -3,16 +3,14 @@ from .core import get_db_connection
 import asyncio
 import aiohttp
 from .poster_management import get_poster_url
-from routes.poster_cache import get_cached_poster_url, cache_poster_url, clean_expired_cache
+from routes.poster_cache import get_cached_poster_url, cache_poster_url
 from utilities.settings import get_setting
-from flask import request, url_for
-from urllib.parse import urlparse
+from flask import url_for
 from datetime import datetime, timedelta
 import json
 import os
 import time
 from functools import wraps
-import random
 from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
 import threading
 import sqlite3

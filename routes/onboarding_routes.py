@@ -10,7 +10,6 @@ import platform
 from routes.trakt_routes import check_trakt_auth_status
 import json
 import requests
-import uuid
 import urllib.parse
 from .models import admin_required
 
@@ -900,7 +899,7 @@ def discover_plex_servers():
     """Discover available Plex servers using X-Plex-Token."""
     try:
         from plexapi.myplex import MyPlexAccount
-        from plexapi.exceptions import Unauthorized, NotFound
+        from plexapi.exceptions import Unauthorized
         
         token = request.args.get('token')
         if not token:

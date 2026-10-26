@@ -7,21 +7,20 @@ Auth: POST /login with {"apikey": "..."} → bearer token (valid ~28 days).
 Rate limiting: No preemptive tracking; 429s handled with exponential backoff.
 """
 
-import json
 import time
-import logging
 import threading
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode
 
 import requests
 
 from .logger_config import logger
 from .database import (
-    Session as DbSession, managed_session,
-    TVDBToIMDBMapping, DatabaseManager,
+    managed_session,
+    TVDBToIMDBMapping,
+    DatabaseManager,
 )
 
 # One pooled session: keeps TLS connections to the API alive across calls.
@@ -965,7 +964,6 @@ def _get_trakt_status(imdb_id: str) -> Optional[str]:
         pass
 
     try:
-        from . import trakt_client
         from .trakt_client import TRAKT_BASE_URL, _make_request as trakt_request
         resp = trakt_request(f"{TRAKT_BASE_URL}/shows/{imdb_id}?extended=full")
         if resp and resp.status_code == 200:

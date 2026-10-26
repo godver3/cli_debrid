@@ -4,10 +4,8 @@ Poster Cache Cleanup
 Manages poster cache, including cleanup, backup, and restoration of original posters.
 """
 
-import hashlib
 import logging
 import os
-import shutil
 import sqlite3
 import threading
 import time

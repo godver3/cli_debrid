@@ -27,7 +27,7 @@ import json
 import logging
 import os
 import threading
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from utilities.settings import get_setting
 

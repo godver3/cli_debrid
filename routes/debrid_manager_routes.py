@@ -1,17 +1,12 @@
 import json
 import logging
-import os
-import re
-import subprocess
 import threading
 import time
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Blueprint, render_template, jsonify, request
 from debrid import get_debrid_provider, get_provider_display_name, get_debrid_providers
 from database.torrent_tracking import get_recent_additions
 from .models import admin_required
-from utilities.jellyfin_auth import jellyfin_auth_headers
 
 debrid_manager_bp = Blueprint('debrid_manager', __name__)
 
@@ -428,7 +423,6 @@ def api_active_files_delete():
         from database.database_writing import update_media_item_state
         from database.database_reading import get_media_item_by_id
         from usenet.repair_engine import _delete_from_plex
-        from usenet.climount_client import get_climount_client
         import re as _re
 
         data = request.get_json(silent=True) or {}

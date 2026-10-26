@@ -16,7 +16,7 @@ class TestBasicSetup(unittest.TestCase):
     def test_imports(self):
         """Test that we can import the required modules."""
         try:
-            from scraper.functions.filter_results import filter_results
+            from scraper.functions.filter_results import filter_results  # noqa: F401  (import check)
             self.assertTrue(True, "Successfully imported filter_results")
         except ImportError as e:
             self.fail(f"Failed to import filter_results: {e}")
@@ -24,7 +24,7 @@ class TestBasicSetup(unittest.TestCase):
     def test_ptt_parser_import(self):
         """Test that we can import the PTT parser."""
         try:
-            from scraper.functions.ptt_parser import parse_with_ptt
+            from scraper.functions.ptt_parser import parse_with_ptt  # noqa: F401  (import check)
             self.assertTrue(True, "Successfully imported parse_with_ptt")
         except ImportError as e:
             self.fail(f"Failed to import parse_with_ptt: {e}")

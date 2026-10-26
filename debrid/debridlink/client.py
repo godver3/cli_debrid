@@ -15,18 +15,16 @@ Key design notes:
   - Status field: integer (undocumented values) — use downloadPercent/downloaded
 """
 
-import asyncio
 import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
-from ..base import DebridProvider, ProviderUnavailableError, TooManyDownloadsError, TorrentAdditionError
-from ..common import extract_hash_from_magnet, is_video_file, is_unwanted_file, timed_lru_cache
+from ..base import DebridProvider, ProviderUnavailableError, TorrentAdditionError
+from ..common import extract_hash_from_magnet, is_video_file, timed_lru_cache
 from ..status import TorrentFetchStatus, TorrentInfoStatus, TorrentStatus
 from .api import get_api_key, get_all_torrents, make_request
-from .exceptions import DebridLinkAPIError, DebridLinkAuthError
 from utilities.settings import get_setting
 
 logger = logging.getLogger(__name__)
@@ -333,7 +331,7 @@ class DebridLinkProvider(DebridProvider):
                 files = info.get('files', [])
                 video_files = [f for f in files if is_video_file(f.get('path', ''))]
                 if hash_value and (files or value.get('name')):
-                    from database.torrent_tracking import update_torrent_tracking, record_torrent_addition
+                    from database.torrent_tracking import update_torrent_tracking
                     updated_item_data = {
                         'filled_by_title':   info.get('filename', ''),
                         'debrid_folder_name': info.get('filename', ''),

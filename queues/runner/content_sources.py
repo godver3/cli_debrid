@@ -433,7 +433,7 @@ class ContentSourceTasks:
                                     if cutoff_date_skipped > 0:
                                         logging.debug(f"Batch {source}: Skipped {cutoff_date_skipped} items due to cutoff date")
 
-                                from database import add_collected_items, add_wanted_items
+                                from database import add_wanted_items
                                 # Pass the CONVERTED versions dict to add_wanted_items
                                 report.filters_done(all_items)
                                 report.added(len(all_items), add_wanted_items(all_items, versions_to_inject or versions_dict, unblacklist=unblacklist_on_source_run))
@@ -557,7 +557,7 @@ class ContentSourceTasks:
                                 if cutoff_date_skipped > 0:
                                     logging.debug(f"{source}: Skipped {cutoff_date_skipped} items due to cutoff date")
 
-                            from database import add_collected_items, add_wanted_items
+                            from database import add_wanted_items
                             # Pass the CONVERTED versions_dict to add_wanted_items
                             report.filters_done(all_items)
                             report.added(len(all_items), add_wanted_items(all_items, versions_dict, unblacklist=unblacklist_on_source_run))

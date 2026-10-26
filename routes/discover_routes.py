@@ -25,13 +25,11 @@ from utilities.mdblist_api import (
     get_user_lists as get_mdblist_user_lists,
     fetch_custom_list_items,
     test_api_connection as test_mdblist_connection,
-    CURATED_LISTS
 )
 from utilities.flixpatrol_api import (
     get_available_platforms as get_flixpatrol_platforms,
     fetch_top10 as fetch_flixpatrol_top10,
     fetch_top10_weekly as fetch_flixpatrol_top10_weekly,
-    get_title_ids_from_flixpatrol
 )
 from routes.models import user_required
 
@@ -2198,7 +2196,7 @@ def delete_adaptive_list(source_id):
     Delete an adaptive list content source
     """
     try:
-        from utilities.settings import get_all_settings, set_setting
+        from utilities.settings import get_all_settings
         from queues.config_manager import load_config, save_config
 
         # Get current settings
@@ -4341,7 +4339,7 @@ def _prewarm_discover_cache():
                     logging.warning("[Prewarm] Skipping remaining FlixPatrol platforms after repeated failures this run")
                     break
                 try:
-                    from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _ac
+                    from concurrent.futures import ThreadPoolExecutor as _TPE
                     result = fetch_flixpatrol_top10(platform_key, media_type='all')
                     if 'error' in result:
                         _fp_consecutive_failures += 1

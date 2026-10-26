@@ -18,8 +18,7 @@ import shutil
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Optional, Set
-from datetime import datetime
+from typing import List, Optional
 from utilities.settings import get_setting
 
 # State priority mapping (lower number = higher priority = keep)

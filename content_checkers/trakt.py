@@ -6,13 +6,12 @@ from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
 from utilities.settings import get_all_settings
 import trakt.core
-import threading
 import time
 import pickle
 import os
-from database.database_reading import get_all_media_items, get_media_item_presence, get_media_item_presence_overall
+from database.database_reading import get_all_media_items, get_media_item_presence_overall
 from database.database_writing import update_media_item
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from utilities.settings import get_setting
 import random
 from time import sleep

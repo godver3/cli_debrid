@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 from concurrent.futures import as_completed
 from utilities.log_context import ContextThreadPoolExecutor
 from utilities.settings import get_setting
-from urllib.parse import urlencode, quote_plus
+from urllib.parse import quote_plus
 import re
 import json
 from scraper.functions.common import trim_magnet

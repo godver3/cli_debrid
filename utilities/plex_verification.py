@@ -1,8 +1,6 @@
 import logging
 import os
-import time
 from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime
 # Removed asyncio and aiohttp as the new functions are sync wrappers
 # Removed plexapi imports as connection happens within plex_functions
 # from plexapi.server import PlexServer
@@ -10,12 +8,11 @@ from datetime import datetime
 
 from utilities.settings import get_setting
 from database.symlink_verification import (
-    get_unverified_files,
     mark_file_as_verified,
     update_verification_attempt,
     get_verification_stats,
     mark_file_as_permanently_failed,
-    mark_verification_as_max_attempts_failed
+    mark_verification_as_max_attempts_failed,
 )
 # Import the new functions
 from utilities.plex_functions import (

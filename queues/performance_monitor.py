@@ -1,15 +1,12 @@
 import psutil
 import os
-import gc
 import sys
 import logging
 import threading
-from collections import defaultdict, OrderedDict
-from datetime import datetime, timedelta
+from collections import defaultdict
+from datetime import datetime
 import time
 import json
-import platform
-from utilities.settings import get_setting
 
 _IS_WINDOWS = sys.platform == 'win32'
 

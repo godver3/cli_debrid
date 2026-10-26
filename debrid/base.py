@@ -1,17 +1,15 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Union, Tuple, Any
-from .common import RateLimiter, timed_lru_cache
+from typing import List, Dict, Optional, Union, Tuple
+from .common import RateLimiter
 from .status import TorrentStatus
 import hashlib
-import platform
 import base64
 import logging
 from cryptography.fernet import Fernet
 from .common.c7d9e45f import _v, _p1, _p2, _p3
-import functools
 
 # Import from the new location: debrid.status
-from debrid.status import TorrentInfoStatus, TorrentFetchStatus
+from debrid.status import TorrentInfoStatus
 
 
 class DebridProviderError(Exception):

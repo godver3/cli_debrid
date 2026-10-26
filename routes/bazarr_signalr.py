@@ -13,7 +13,6 @@ import logging
 import threading
 import time
 from typing import Dict, List, Any, Optional
-from datetime import datetime
 from queue import Queue, Empty
 
 # Delay constants (matching CineSync)

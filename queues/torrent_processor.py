@@ -4,15 +4,12 @@ and addition to debrid service accounts.
 """
 
 import logging
-import re
 import time
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
 import tempfile
 import requests
 import os
-import bencodepy
-import hashlib
 import inspect
 from datetime import datetime, timedelta
 
@@ -21,11 +18,7 @@ from debrid.base import DebridProvider, TooManyDownloadsError, ProviderUnavailab
 from debrid.common import (
     extract_hash_from_magnet,
     extract_hash_from_file,
-    is_video_file,
-    is_unwanted_file,
-    download_and_extract_hash
 )
-from debrid.status import TorrentStatus
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls, is_magnet_not_wanted
 from database.scraper_grabs import record_grab, queue_grab_trigger
 from utilities.settings import get_setting
@@ -299,9 +292,6 @@ class TorrentProcessor:
             import tempfile
             import requests
             import os
-            import bencodepy
-            import hashlib
-            from debrid.common.torrent import torrent_to_magnet
             
             # Create a temporary file to store the torrent
             with tempfile.NamedTemporaryFile(suffix='.torrent', delete=False) as tmp:

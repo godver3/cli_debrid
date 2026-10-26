@@ -526,7 +526,6 @@ def debrid_clear_bad_flags():
     try:
         from usenet.debrid_repair_engine import _dcy_cfg, _dcy_headers
         from routes.api_tracker import api
-        import urllib.parse
 
         url, _ = _dcy_cfg()
         if not url:

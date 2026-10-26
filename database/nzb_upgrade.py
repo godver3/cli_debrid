@@ -468,8 +468,11 @@ def scan_nzb_season_pack(imdb_id: str, season_num: int, season_eps: List[Dict],
                           default_version: str,
                           not_wanted_hashes: Optional[frozenset] = None) -> Optional[Dict]:
     from database.zilean_upgrade import (
-        _get_version_settings, _score_results_with_current,
-        _item_size_gb, _item_filename, _is_upgrade, _is_single_season_pack,
+        _get_version_settings,
+        _score_results_with_current,
+        _item_size_gb,
+        _item_filename,
+        _is_single_season_pack,
     )
     from database.core import get_db_connection
 

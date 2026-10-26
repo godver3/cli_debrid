@@ -1,9 +1,8 @@
-from flask import Flask, redirect, request, jsonify, url_for, session
+from flask import Flask, redirect, request, jsonify
 from flask_login import LoginManager
 import time
 from sqlalchemy import inspect
 from werkzeug.middleware.proxy_fix import ProxyFix
-from flask_login import current_user
 import logging
 from routes.utils import is_user_system_enabled
 from flask_cors import CORS
@@ -366,7 +365,7 @@ CORS(app, resources={r"/*": {
 }})
 
 from flask_login import LoginManager
-from flask import redirect, url_for
+from flask import redirect
 
 login_manager = LoginManager()
 

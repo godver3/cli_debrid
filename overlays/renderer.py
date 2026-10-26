@@ -5,7 +5,6 @@ Renders overlays onto media server posters based on templates.
 """
 
 import logging
-import os
 from io import BytesIO
 from typing import Dict, Any, Optional, Union
 from pathlib import Path
@@ -1538,7 +1537,6 @@ class OverlayRenderer:
           → border stroke
           → top highlight gradient line
         """
-        import math
 
         media_info = media_info or {}
 

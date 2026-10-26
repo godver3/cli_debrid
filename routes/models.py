@@ -1,6 +1,6 @@
 from flask import redirect, url_for, request
 from functools import wraps, lru_cache
-from flask_login import current_user, login_required
+from flask_login import current_user
 from .utils import is_user_system_enabled
 import logging
 import time

@@ -7,18 +7,14 @@ import time
 import threading
 from utilities.settings import get_setting
 import re
-import pytz
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 import requests
 from collections import defaultdict
 import iso8601
-from collections import Counter
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cli_battery.app.direct_api import DirectAPI
 from cli_battery.app import trakt_client
-from cli_battery.app.database import DatabaseManager
-from database.database_reading import get_media_item_presence, get_all_media_items, get_show_episode_identifiers_from_db, get_media_item_ids
 
 # Initialize DirectAPI at module level
 direct_api = DirectAPI()
@@ -579,10 +575,6 @@ def _episodeless_refresh_allowed(imdb_id: str) -> bool:
         return True
 
 def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    from database.database_writing import update_blacklisted_date, update_media_item
-    from database.core import get_db_connection
-    from database.wanted_items import add_wanted_items
-    from database.database_reading import get_media_item_ids
 
     processed_items = {'movies': [], 'episodes': []}
     global trakt_metadata_instance

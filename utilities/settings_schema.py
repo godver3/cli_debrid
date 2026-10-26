@@ -2,7 +2,6 @@
 import os
 import re
 import glob
-from pathlib import Path
 
 def get_available_logos():
     """

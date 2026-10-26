@@ -2,9 +2,9 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Foreign
 from sqlalchemy.orm import sessionmaker, scoped_session, relationship
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime, timezone
-from sqlalchemy import func, inspect as sa_inspect
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import selectinload
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import OperationalError
 from .logger_config import logger
 from sqlalchemy import text, UniqueConstraint, event
 from sqlalchemy.types import JSON

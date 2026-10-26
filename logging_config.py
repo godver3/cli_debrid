@@ -2,13 +2,8 @@ import logging
 import logging.handlers
 from utilities.settings import get_setting
 from utilities.log_redaction import RedactingFormatter, scrub
-import psutil
 import os
-import time
-import threading
 import cProfile
-import pstats
-import io
 import json
 import re
 from datetime import datetime

@@ -1,14 +1,12 @@
-from flask import Blueprint, render_template, flash, redirect, url_for
+from flask import Blueprint, render_template
 import requests
 import os
 import threading
 from utilities.settings import get_setting, get_all_settings
 from typing import Dict, List, Any
-from content_checkers.trakt import ensure_trakt_auth, get_trakt_headers, make_trakt_request, parse_trakt_list_url
+from content_checkers.trakt import ensure_trakt_auth, get_trakt_headers, make_trakt_request
 from content_checkers.plex_watchlist import MyPlexAccount
 import logging
-import feedparser # Keep import for RSS
-from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 # Attempt to import DirectAPI - adjust path if necessary based on your project structure

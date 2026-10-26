@@ -9,11 +9,10 @@ import os
 import sqlite3
 import threading
 import time
-from datetime import datetime, timedelta
-from typing import Dict, Any
+from datetime import datetime
+from typing import Dict
 
 from .overlay_manager import OverlayManager
-from .layout_manager import LayoutManager
 from .activity_logger import log_activity
 from .utils import is_jellyfin_mode, get_jellyfin_url, get_jellyfin_token
 from utilities.settings import get_setting

@@ -1036,8 +1036,10 @@ def sync_collection_for_source(source_id: str, source_data: dict, ordered_imdb_i
     elif poster_design > 0:
         try:
             from database.collection_poster_renderer import (
-                render_collection_poster, upload_collection_poster,
-                fetch_movie_thumbs, compute_poster_hash, get_source_icon
+                render_collection_poster,
+                upload_collection_poster,
+                fetch_movie_thumbs,
+                compute_poster_hash,
             )
             from database.collection_poster_renderer import DESIGNS as _DESIGNS
             poster_accent = coll_cfg.get('poster_accent', '').strip()

@@ -5,7 +5,6 @@ from database.database_reading import get_movie_runtime, get_episode_runtime, ge
 from fuzzywuzzy import fuzz
 from PTT import parse_title
 from scraper.functions.ptt_parser import parse_title_unwrapped
-from babelfish import Language
 from scraper.functions import *
 from scraper.functions.common import detect_season_episode_info
 from functools import lru_cache

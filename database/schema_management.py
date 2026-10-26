@@ -6,7 +6,6 @@ from .nzb_repair_activity import create_nzb_repair_activity_table
 from .nzb_playback_repair import create_nzb_playback_repair_table
 from .scraper_grabs import create_scraper_grabs_table
 from .plex_reported_issues import create_plex_reported_issues_table
-import sqlite3
 import os
 
 

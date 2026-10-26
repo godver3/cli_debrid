@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock
 import sys
 import os
 import logging
@@ -8,7 +8,6 @@ import logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from scraper.functions.filter_results import filter_results
-from scraper.functions.ptt_parser import parse_with_ptt
 
 
 class TestFilterResultsAnimeXEM(unittest.TestCase):

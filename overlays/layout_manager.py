@@ -7,7 +7,6 @@ Manages overlay layout CRUD operations and storage.
 import json
 import logging
 import sqlite3
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 

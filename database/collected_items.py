@@ -14,13 +14,11 @@ _add_collected_lock = threading.Lock()
 import os
 from datetime import datetime, timedelta
 import json
-from .database_writing import add_to_collected_notifications, update_media_item_state, RESET_COLLECTION_STATE_SQL
+from .database_writing import add_to_collected_notifications, RESET_COLLECTION_STATE_SQL
 from utilities.reverse_parser import parser_approximation
-from utilities.settings import get_setting
 from typing import Dict, Any, List
 from utilities.post_processing import handle_state_change
 from cli_battery.app.direct_api import DirectAPI
-import time
 
 def _cache_tmdb_artwork(media_items_batch):
     """
@@ -132,7 +130,7 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
 
 
 def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, data_source='plex'):
-    from datetime import datetime, timedelta
+    from datetime import datetime
     from utilities.settings import get_setting
     from queues.upgrading_queue import log_successful_upgrade
     from metadata.metadata import get_show_airtime_by_imdb_id
@@ -739,7 +737,6 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                         _ci_is_absolute = False
                                         try:
                                             from cli_battery.app.database import Session as _BatSession, Item as _BatItem, Season as _BatSeason, Episode as _BatEp
-                                            from sqlalchemy.orm import selectinload as _sil
                                             with _BatSession() as _bs:
                                                 _bi = _bs.query(_BatItem).filter_by(imdb_id=_fix_imdb).first() if _fix_imdb else None
                                                 if _bi:

@@ -6,6 +6,7 @@ extend-exclude = ["phalanx_db_hyperswarm", "node_modules"]
 [lint]
 select = [
     "E9",     # syntax errors
+    "F401",   # unused imports (renames leave them behind; package __init__ re-exports are exempt below)
     "F63",    # comparisons that are always true/false (is with a literal, assert on a tuple)
     "F7",     # break/continue/return/yield in the wrong place
     "F82",    # undefined names, including a local used before assignment (F823)
@@ -13,3 +14,6 @@ select = [
     "B005",   # .strip()/.rstrip() with a multi-character string (strips characters, not a suffix)
     "B033",   # duplicate values in a set literal
 ]
+
+[lint.per-file-ignores]
+"__init__.py" = ["F401"]  # packages re-export their submodules' names

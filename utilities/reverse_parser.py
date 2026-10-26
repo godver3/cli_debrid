@@ -1,7 +1,6 @@
 import re
 from utilities.settings import get_setting
 import logging
-import json
 
 # Define regex metacharacters for detection at module level
 

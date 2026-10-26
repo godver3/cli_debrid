@@ -399,7 +399,7 @@ class AddingQueue:
         if not self.items:
             return False
 
-        from database import update_media_item, get_all_media_items, get_media_item_by_id
+        from database import update_media_item, get_media_item_by_id
 
         # NZB health checks are handled by task_nzb_health_check (separate scheduled task)
         # so the Adding queue tick is free to process debrid items without blocking.

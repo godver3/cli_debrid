@@ -1,12 +1,9 @@
 from flask import jsonify, Blueprint, render_template, request, redirect, url_for, flash, current_app, Response, stream_with_context
 from flask.json import jsonify
-from queues.initialization import get_all_wanted_from_enabled_sources
 from queues.run_program import (
-    get_and_add_recent_collected_from_plex, 
-    get_and_add_all_collected_from_plex, 
-    ProgramRunner, 
-    run_local_library_scan, 
-    run_recent_local_library_scan
+    get_and_add_recent_collected_from_plex,
+    get_and_add_all_collected_from_plex,
+    ProgramRunner,
 )
 from database.manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist, save_manual_blacklist
 from database.core import add_db_notification
@@ -18,26 +15,23 @@ from routes.models import user_required
 from cli_battery.app.direct_api import DirectAPI
 from database.torrent_tracking import get_recent_additions, get_torrent_history
 import os
-import shutil
 import glob
 from routes.api_tracker import api 
 import time
 from datetime import datetime
 from routes.notifications import send_notifications, get_enabled_notifications
-import requests
 from datetime import datetime, timedelta
-from queues.queue_manager import QueueManager
 from database.not_wanted_magnets import (
-    get_not_wanted_magnets, get_not_wanted_urls,
-    purge_not_wanted_magnets_file, save_not_wanted_magnets,
-    load_not_wanted_urls, save_not_wanted_urls
+    get_not_wanted_magnets,
+    get_not_wanted_urls,
+    save_not_wanted_magnets,
+    save_not_wanted_urls,
 )
 import json
 from debrid import get_debrid_provider
 from utilities.deletion_manager import DeletionManager
 from routes.program_operation_routes import get_program_runner
 import threading
-import queue
 import asyncio
 from utilities.plex_functions import get_collected_from_plex, plex_update_item
 from content_checkers.content_cache_management import (
@@ -47,9 +41,7 @@ from content_checkers.content_cache_management import (
 )
 from content_checkers.source_run_report import SourceRunReport
 from content_checkers.blocked_items import drop_blocked_items
-import traceback
 from database.symlink_verification import get_unverified_files, get_verification_stats
-from content_checkers.content_source_detail import append_content_source_detail
 # Import necessary modules for symlink recovery
 import re
 from pathlib import Path
@@ -7506,11 +7498,6 @@ def cleanup_duplicates_stream():
     def generate_progress():
         """Generator that yields SSE progress events"""
         import json
-        from database.core import get_db_connection
-        from database.database_reading import get_items_by_ids
-        from utilities.plex_functions import remove_file_from_plex
-        from debrid import get_debrid_provider
-        from utilities.deletion_manager import DeletionManager
         
         conn = None
         paused_queue = False
@@ -7581,8 +7568,7 @@ def get_cleanup_progress(session_id):
 def list_database_backups():
     """List all database backups with validation status"""
     try:
-        import sqlite3
-        from main import verify_backup, get_backup_age_category
+        from main import verify_backup
 
         config = load_config()
         db_content_dir = (config.get('db_content_dir') or os.environ.get('USER_DB_CONTENT', '/user/db_content'))
@@ -8171,7 +8157,7 @@ def trim_memory():
     # Clear idle RD library cache to free ~200+ MB from torrent list
     lib_torrents_freed = 0
     try:
-        from routes.debrid_manager_routes import _lib, _lib_last_accessed
+        from routes.debrid_manager_routes import _lib
         with _lib['lock']:
             if _lib['stable'] is not None:
                 lib_torrents_freed = len(_lib['stable'].get('torrents', []))

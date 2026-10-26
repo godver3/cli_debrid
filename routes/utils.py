@@ -1,5 +1,3 @@
-from flask import current_app
-import logging
 from utilities.settings import get_setting
 
 def is_user_system_enabled():

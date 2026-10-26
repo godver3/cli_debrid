@@ -10,7 +10,6 @@ the full application, testing only the core helper functions.
 """
 
 import unittest
-from unittest.mock import Mock, patch, MagicMock
 import sys
 import os
 import json

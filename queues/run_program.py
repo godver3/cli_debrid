@@ -2,13 +2,10 @@ import logging
 import random
 import time
 import os
-import sqlite3
-import plexapi # Added import
 import uuid
 import ctypes
 import platform
 import gc
-from utilities.log_redaction import RedactingFormatter
 # Import tracemalloc
 try:
     import tracemalloc
@@ -27,80 +24,20 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.triggers.interval import IntervalTrigger
 # Add threading.Lock
 import threading # For scheduler lock, concurrent queue processing, AND heavy task lock
-import functools # Added for partial
 import apscheduler.events # Added for listener events
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED, EVENT_JOB_SUBMITTED, EVENT_JOB_MAX_INSTANCES
 from queues.initialization import initialize
-from utilities.settings import get_setting, get_all_settings
-from content_checkers.overseerr import get_wanted_from_overseerr 
-from content_checkers.collected import get_wanted_from_collected
-from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
-from content_checkers.trakt import (
-    get_wanted_from_trakt_lists,
-    get_wanted_from_trakt_watchlist,
-    get_wanted_from_trakt_collection,
-    get_wanted_from_friend_trakt_watchlist,
-    get_wanted_from_special_trakt_lists # New import
-)
-from content_checkers.scrob import (
-    get_wanted_from_scrob_lists,
-    get_wanted_from_scrob_collection,
-    get_wanted_from_scrob_special
-)
-from content_checkers.mdb_list import get_wanted_from_mdblist_source
-from content_checkers.content_source_detail import append_content_source_detail
-from database.not_wanted_magnets import purge_not_wanted_magnets_file
+from utilities.settings import get_setting
 import traceback
 from datetime import datetime, time as dt_time, timezone  # Modified import
 import asyncio
 from utilities.plex_functions import run_get_collected_from_plex, run_get_recent_from_plex
-from routes.notifications import send_notifications
-import requests
-from pathlib import Path
-import pickle
 from utilities.zurg_utilities import run_get_collected_from_zurg, run_get_recent_from_zurg
-import ntplib
-from content_checkers.trakt import check_trakt_early_releases
-from debrid.base import TooManyDownloadsError, RateLimitError
-import tempfile
-from routes.api_tracker import api  # Add this import for the api module
-from plexapi.server import PlexServer
-import json
-from utilities.post_processing import handle_state_change
-from content_checkers.content_cache_management import (
-    load_source_cache, save_source_cache, 
-    should_process_item, update_cache_for_item,
-    metadata_output_ids, item_has_metadata_output, UNRESOLVED_RETRY_HOURS,
-    load_live_content_source_config, normalize_enabled_versions
-)
-from content_checkers.source_run_report import SourceRunReport
-from content_checkers.blocked_items import drop_blocked_items
-from collections import deque # Import deque for efficient queue operations
 from database.symlink_verification import (
-    create_overlay_removal_queue_table,
-    get_pending_removal_paths,
-    update_removal_status, # Renamed from update_removal_verification_status
-    cleanup_old_verified_removals, # Renamed from remove_verified_paths
-    increment_removal_attempt, # Renamed from increment_removal_attempt
-    migrate_plex_removal_database
+    migrate_plex_removal_database,
 )
-from utilities.plex_functions import (
-    get_section_type, # Need this to determine search type
-    find_plex_library_and_section, # Added import
-    remove_file_from_plex, # Added import
-)
-from plexapi.exceptions import NotFound
 import pytz # Added import
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError # Keep this if needed elsewhere, or remove if only _get_local_timezone uses it
-from database.core import get_db_connection # Add DB connection import
-from database.database_reading import get_media_item_by_id
-from utilities.local_library_scan import check_local_file_for_item # Add local scan import
-from cli_battery.app.direct_api import DirectAPI # Import DirectAPI
-import json # Added for loading intervals
 # Add Debrid imports for library size task
-from debrid import get_debrid_provider, ProviderUnavailableError
-from utilities.plex_removal_cache import process_removal_cache # Added import for standalone removal processing
-import sys # Add for checking apscheduler.events
 from collections import defaultdict  # Added alongside deque above for runtime tracking
 # Try to import resource module (Unix only), fallback to time.process_time()
 try:
@@ -3728,13 +3665,11 @@ def get_and_add_recent_collected_from_plex():
 
 def run_local_library_scan():
     # ... (This function seems unused/disabled, no changes needed) ...
-    from utilities.local_library_scan import local_library_scan
     logging.info("Full library scan disabled for now")
     #local_library_scan()
 
 def run_recent_local_library_scan():
     # ... (This function seems unused/disabled, no changes needed) ...
-    from utilities.local_library_scan import recent_local_library_scan
     logging.info("Recent library scan disabled for now")
     #recent_local_library_scan()
 
@@ -3753,7 +3688,6 @@ def _setup_scheduler_listeners(runner_instance):
         logging.info(f"[_setup_scheduler_listeners] runner_instance.scheduler is None. Creating new BackgroundScheduler.")
         
         try:
-            from metadata.metadata import _get_local_timezone # Local import for safety
             tz_setting = get_setting('UI Settings', 'timezone', 'UTC')
             try:
                 tz = pytz.timezone(tz_setting)

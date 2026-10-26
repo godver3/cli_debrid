@@ -10,11 +10,10 @@ Composite variations combine two metadata fields into one badge PNG.
 
 import json
 import logging
-import os
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from utilities.paths import config_dir
 

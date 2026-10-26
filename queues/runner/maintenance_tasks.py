@@ -655,7 +655,6 @@ class MaintenanceTasks:
                             stranded_matches.append((row['id'], dict(sibling), dict(row)))
 
                     if stranded_matches:
-                        import re as _re_sc
                         from usenet import get_usenet_client as _get_dc_sc
                         _dc_sc = _get_dc_sc()
                         _folder_files_cache = {}  # folder_name -> video_files list, avoid repeat lookups
@@ -845,7 +844,6 @@ class MaintenanceTasks:
     def task_refresh_download_stats(self):
         """Task to refresh the download stats cache"""
         import threading
-        import time
         from database.statistics import get_cached_download_stats
         
         result = [None]

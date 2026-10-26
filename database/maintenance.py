@@ -8,7 +8,6 @@ def update_show_ids():
     from cli_battery.app.direct_api import DirectAPI
     import os
     from fuzzywuzzy import fuzz
-    import re
     import json
     api = DirectAPI()
 
@@ -193,8 +192,6 @@ def update_show_titles():
     import sqlite3
     from cli_battery.app.direct_api import DirectAPI
     import os
-    from fuzzywuzzy import fuzz
-    import re
     import json
     api = DirectAPI()
 
@@ -291,7 +288,6 @@ def update_movie_ids():
     from cli_battery.app.direct_api import DirectAPI
     import os
     from fuzzywuzzy import fuzz
-    import re
     import json
     api = DirectAPI()
 
@@ -473,8 +469,6 @@ def update_movie_titles():
     import sqlite3
     from cli_battery.app.direct_api import DirectAPI
     import os
-    from fuzzywuzzy import fuzz
-    import re
     import json
     api = DirectAPI()
 
@@ -1083,7 +1077,6 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links):
                     sleep(1)  # Give the filesystem a moment to register the change
                     
                     # Then remove from Plex
-                    from utilities.plex_functions import remove_file_from_plex
                     # Get episode title if this is a TV show
                     cursor.execute("""
                         SELECT type, episode_title 

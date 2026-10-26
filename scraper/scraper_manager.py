@@ -1,6 +1,6 @@
 import logging
 from typing import List, Dict, Any, Optional
-from concurrent.futures import as_completed, TimeoutError
+from concurrent.futures import TimeoutError
 from utilities.log_context import ContextThreadPoolExecutor
 import concurrent.futures
 import time
@@ -14,7 +14,6 @@ from .zilean import scrape_zilean_instance
 from .old_nyaa import scrape_nyaa_instance as scrape_old_nyaa_instance
 from .newznab import scrape_newznab_instance
 from utilities.settings import get_setting
-import re
 import threading
 
 # --- Scraper circuit-breaker: skip repeatedly-timing-out scrapers for a backoff window ---

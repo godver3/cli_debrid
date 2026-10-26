@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Tests for live content-source version resolution."""
 
-import os
 import unittest
 from unittest.mock import patch
 

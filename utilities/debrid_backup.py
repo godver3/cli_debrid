@@ -17,7 +17,7 @@ import logging
 import os
 import shutil
 import time
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 _LOG_TAG = '[DEBRID_BACKUP]'
 _LOG_FILE = 'backup_log.json'
@@ -256,7 +256,7 @@ def run_backup(force: bool = False) -> dict:
         return {'success': False, 'message': 'Backup disabled', 'skipped': True}
 
     try:
-        from debrid import get_debrid_provider, ProviderUnavailableError
+        from debrid import get_debrid_provider
         provider = get_debrid_provider()
     except Exception as e:
         return {'success': False, 'message': f'Provider unavailable: {e}'}
@@ -434,7 +434,6 @@ def restore_from_file(filename: str, dry_run: bool = False) -> dict:
     Uses selectFiles heuristic: video files > 10% of largest file size.
     Returns: {success, added, skipped, failed, total}
     """
-    import re
     import requests
 
     path = os.path.join(get_backup_dir(), filename)
@@ -1049,15 +1048,13 @@ def run_cleanup(force: bool = False) -> dict:
 
     Returns: {success, deleted_errors, deleted_dupes, deleted_stalled, total_deleted, message}
     """
-    import requests
-    from datetime import datetime
 
     settings = _get_settings()
     if not settings['cleanup_enabled'] and not force:
         return {'success': False, 'message': 'Cleanup disabled', 'skipped': True}
 
     try:
-        from debrid import get_debrid_provider, ProviderUnavailableError
+        from debrid import get_debrid_provider
         provider = get_debrid_provider()
     except Exception as e:
         return {'success': False, 'message': f'Provider unavailable: {e}'}

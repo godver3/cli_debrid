@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import feedparser
 from typing import List, Dict, Any, Optional, Tuple, Union
 from utilities.settings import get_setting
-from database.database_reading import get_media_item_presence, get_media_item_presence_overall
+from database.database_reading import get_media_item_presence_overall
 import requests
 import xml.etree.ElementTree as ET
 from .skipped_items import SkippedItems

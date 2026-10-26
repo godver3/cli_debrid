@@ -12,10 +12,9 @@ from ..common import (
     extract_hash_from_magnet,
     timed_lru_cache,
     is_video_file,
-    is_unwanted_file
 )
 from ..status import TorrentStatus
-from .api import make_request, get_all_magnets
+from .api import make_request
 from database.not_wanted_magnets import add_to_not_wanted
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from utilities.settings import get_setting

@@ -5,7 +5,6 @@ REST API endpoints for overlay management.
 """
 
 import logging
-import os
 import re
 import sqlite3
 from flask import Blueprint, jsonify, request, send_file, render_template, abort
@@ -51,7 +50,6 @@ def _serve_from_thumb_cache(cache_path: Path):
         age = __import__('time').time() - cache_path.stat().st_mtime
         if age > 86400:  # 24-hour TTL
             return None
-        from io import BytesIO
         from flask import Response
         data = cache_path.read_bytes()
         if not data:
@@ -2205,7 +2203,6 @@ def get_cleanup_stats():
 
         # Current backup directory size + orphaned count
         from overlays.cache_cleanup import PosterCacheManager
-        from pathlib import Path
         manager = PosterCacheManager(None)
         backup_stats = manager.get_backup_stats()
 

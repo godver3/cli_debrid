@@ -5,10 +5,9 @@ Handles interactions with Plex Media Server API for overlay operations.
 """
 
 import logging
-import os
 import xml.etree.ElementTree as ET
 from io import BytesIO
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 from urllib.parse import urljoin
 
 import requests

@@ -1941,7 +1941,7 @@ def refresh_show_metadata(media_id, queue_missing=True):
                 save_cache(cache)
                 logging.info(f"Cleared poster/backdrop cache for show {tmdb_id}")
                 # Re-fetch fresh poster and cache it immediately
-                from routes.poster_cache import cache_poster_url, get_cached_poster_url
+                from routes.poster_cache import cache_poster_url
                 from utilities.settings import get_setting as _gs
                 import requests as _req
                 _api_key = _gs('TMDB', 'api_key', default='')

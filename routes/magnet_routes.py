@@ -1,4 +1,4 @@
-from flask import Blueprint, request, render_template, flash, redirect, url_for, jsonify, session
+from flask import Blueprint, request, render_template, flash, redirect, url_for, jsonify
 import threading as _threading
 _assignment_store = {}  # token -> assignment data, avoids session size/race issues
 _assignment_store_lock = _threading.Lock()
@@ -6,7 +6,6 @@ from debrid import get_debrid_provider
 from database.database_writing import add_media_item, replace_collected_item
 from .models import admin_required
 from queues.config_manager import load_config
-from queues.checking_queue import CheckingQueue
 from datetime import datetime, timezone
 from queues.media_matcher import MediaMatcher
 import logging
@@ -15,7 +14,7 @@ from cli_battery.app.direct_api import DirectAPI
 from cli_battery.app import trakt_client
 import os
 import re
-from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
+from database.torrent_tracking import update_torrent_tracking
 from content_checkers.content_source_detail import append_content_source_detail
 from scraper.functions.ptt_parser import parse_with_ptt
 import requests 
@@ -1268,9 +1267,7 @@ def prepare_manual_assignment():
                     return jsonify({'success': False, 'error': f'Failed to submit NZB to {get_usenet_provider_display_name()}'}), 500
                 # Track in queue directly — NZB already submitted, skip re-submission
                 from database.database_writing import add_media_item
-                from database.database_reading import get_media_item_by_id
                 from metadata.metadata import get_metadata, get_release_date
-                from queues.queue_manager import QueueManager
                 import json as _json
                 checking_id = f"nzb:{job_id}"
                 nzb_title = torrent_file.filename

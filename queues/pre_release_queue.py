@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from database.database_writing import update_media_item_state
 from scraper.scraper import scrape
 from utilities.settings import get_setting

@@ -6,7 +6,6 @@ from utilities.web_scraper import search_trakt, parse_search_term, get_available
 from cli_battery.app.direct_api import DirectAPI
 from database.wanted_items import add_wanted_items
 import logging
-import re
 from utilities.settings import load_config
 
 content_requestor_bp = Blueprint('content', __name__)

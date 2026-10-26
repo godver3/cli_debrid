@@ -4,7 +4,6 @@ import re
 from typing import Dict, Any
 from difflib import SequenceMatcher
 from fuzzywuzzy import fuzz
-from PTT import parse_title
 import unicodedata
 from scraper.functions import *
 from scraper.functions.ptt_parser import parse_with_ptt

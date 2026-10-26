@@ -1,7 +1,7 @@
 import logging
 import time
 from typing import Dict, Any, Optional, Union
-from queues.run_program import get_and_add_recent_collected_from_plex, run_recent_local_library_scan
+from queues.run_program import get_and_add_recent_collected_from_plex
 from utilities.local_library_scan import check_local_file_for_item
 from utilities.plex_functions import plex_update_item
 from utilities.emby_functions import emby_update_item
@@ -11,8 +11,6 @@ from debrid import get_debrid_provider
 from utilities.settings import get_setting
 from debrid.common import timed_lru_cache, extract_hash_from_magnet, download_and_extract_hash
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
-from pathlib import Path
-import os
 from datetime import datetime
 from queues.upgrading_queue import UpgradingQueue
 from routes.notifications import send_upgrade_failed_notification
@@ -1009,7 +1007,7 @@ class CheckingQueue:
                 logging.error(f"Failed to check initial progress for item {item['id']}: {str(e)}")
 
         from routes.notifications import send_notifications
-        from routes.settings_routes import get_enabled_notifications, get_enabled_notifications_for_category
+        from routes.settings_routes import get_enabled_notifications_for_category
         from routes.extensions import app
         from database.database_reading import get_media_item_by_id
 

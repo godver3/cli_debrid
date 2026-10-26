@@ -1,21 +1,18 @@
-from flask import Blueprint, jsonify, request, render_template, session, make_response
+from flask import Blueprint, jsonify, request, render_template
 from datetime import datetime, timedelta
 import threading
 import time
 import logging
 import asyncio
-import os
 from utilities.settings import get_setting, set_setting
 from .models import user_required, onboarding_required 
 from routes.extensions import app_start_time
-from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
+from debrid import get_debrid_provider, ProviderUnavailableError
 from .program_operation_routes import get_program_status
-import json
 import math
 from functools import wraps
 # Provider-agnostic: avoid direct Real-Debrid import
 from typing import Optional, Dict, List, Any
-import calendar
 from database.database_writing import move_to_wanted_for_replacement
 
 def format_file_size(size_gb):
@@ -246,7 +243,7 @@ def get_movies_for_calendar(days_past: int = 7, days_future: int = 28, start_dat
 def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1, start_date_override_iso: Optional[str] = None, end_date_override_iso: Optional[str] = None, include_all_upcoming: bool = False):
     # include_all_upcoming keeps future episodes that are already in flight or collected;
     # the home page's Airing Soon hides them, but the calendar must show every episode.
-    from metadata.metadata import get_show_airtime_by_imdb_id, _get_local_timezone
+    from metadata.metadata import _get_local_timezone
     from database import get_db_connection
     conn = get_db_connection()
     try:
@@ -534,7 +531,6 @@ def root():
     # Get collection counts from the optimized summary function
     collection_start = time.perf_counter()
     from database.statistics import get_statistics_summary
-    from database.database_reading import get_item_count_by_state
     counts = get_statistics_summary()
     stats['total_movies'] = counts['total_movies']
     stats['total_shows'] = counts['total_shows']

@@ -678,7 +678,6 @@ def api_bad_torrent_audit_delete():
     deleted = []
     failed = []
 
-    import shutil, errno
     for name in names:
         entry_path = os.path.join(bad_folder, name)
         try:

@@ -1,6 +1,6 @@
 import logging
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 import json
 import os
@@ -23,7 +23,6 @@ from queues.pending_uncached_queue import PendingUncachedQueue
 from queues.upgrading_queue import UpgradingQueue
 from queues.final_check_queue import FinalCheckQueue
 from queues.pre_release_queue import PreReleaseQueue
-from queues.base_queue import BaseQueue
 from utilities.settings import get_setting
 from utilities.log_context import logs_for_item, state_change_logged_by_caller
 
@@ -644,7 +643,6 @@ class QueueManager:
 
         logging.debug(f"Moving item to Checking: {item_identifier}")
 
-        from utilities.settings import get_setting
 
         '''
         # Check if Plex library checks are disabled

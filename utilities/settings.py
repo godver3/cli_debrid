@@ -4,7 +4,6 @@ from urllib.parse import urlparse
 import json
 from utilities.settings_schema import SETTINGS_SCHEMA
 from utilities.file_lock import FileLock
-import time
 import shutil # Added for copy2
 import pickle
 import threading

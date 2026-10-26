@@ -2,10 +2,9 @@ import logging
 import re
 from typing import List, Dict, Any, Tuple, Optional
 from fuzzywuzzy import fuzz
-from PTT import parse_title
 from utilities.settings import get_setting
-from scraper.functions.similarity_checks import improved_title_similarity, normalize_title
-from scraper.functions.file_processing import compare_resolutions, parse_size, calculate_bitrate
+from scraper.functions.similarity_checks import normalize_title
+from scraper.functions.file_processing import parse_size, calculate_bitrate
 from scraper.functions.other_functions import smart_search
 from scraper.functions.adult_terms import adult_terms
 from scraper.functions.common import *

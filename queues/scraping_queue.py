@@ -1,7 +1,6 @@
 import logging
-from typing import Dict, Any, List
-from datetime import datetime, date, timedelta, time as dt_time
-import json
+from typing import Dict, Any
+from datetime import datetime, date, timedelta
 import time
 import os
 import re
@@ -60,7 +59,7 @@ class ScrapingQueue:
 
     def update(self):
         """Synchronize the in-memory queue with the database state."""
-        from database import get_all_media_items, get_media_item_by_id
+        from database import get_all_media_items
         
         # Specific ID for debugging
         DEBUG_ITEM_ID_UPDATE = '177245'
@@ -254,7 +253,7 @@ class ScrapingQueue:
             conn.close()
 
     def process(self, queue_manager):
-        from database import get_all_media_items, get_media_item_by_id, get_db_connection, get_wake_count
+        from database import get_all_media_items, get_media_item_by_id
         processed_count = 0
         had_error = False
         today = date.today()

@@ -2,7 +2,6 @@ import logging
 import re
 from typing import Dict, Any, Tuple, Optional, Union
 import pykakasi
-from scraper.functions.common import round_size, trim_magnet
 from PTT import parse_title
 
 def romanize_japanese(text):

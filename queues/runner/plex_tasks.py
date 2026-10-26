@@ -1979,7 +1979,6 @@ class PlexTasks:
         try:
             from cli_battery.app.direct_api import DirectAPI
             from database.database_reading import get_all_media_items
-            from database.database_writing import update_media_item
             from database.core import get_db_connection
 
             logging.info('[PlexGUIDBackfill] Starting Plex GUID backfill task')

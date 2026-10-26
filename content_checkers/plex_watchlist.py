@@ -19,12 +19,11 @@ from plexapi.myplex import MyPlexAccount
 
 from typing import List, Dict, Any, Tuple
 from utilities.settings import get_setting
-from database.database_reading import get_media_item_presence, get_media_item_presence_overall
+from database.database_reading import get_media_item_presence_overall
 from queues.config_manager import load_config
 from cli_battery.app.direct_api import DirectAPI
 import os
-from datetime import datetime, timedelta
-from .plex_token_manager import update_token_status, get_token_status, load_token_status
+from .plex_token_manager import update_token_status, load_token_status
 from .skipped_items import SkippedItems as _SkippedItems, NO_ID_REASON as _NO_ID_REASON, fetch_error_reason as _fetch_error_reason
 import time
 import aiohttp

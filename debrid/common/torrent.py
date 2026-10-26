@@ -4,7 +4,7 @@ import os
 import logging
 import requests
 import bencodepy
-from typing import Optional, Tuple
+from typing import Optional
 from urllib.parse import urlencode
 from .utils import extract_hash_from_magnet
 from .cache import timed_lru_cache

@@ -1,12 +1,10 @@
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime, timedelta, timezone
-from database.database_writing import add_to_collected_notifications
+from datetime import datetime, timedelta
 from queues.scraping_queue import ScrapingQueue
 from queues.adding_queue import AddingQueue
 from utilities.settings import get_setting
 from utilities.log_context import logs_for_item
-from utilities.plex_functions import remove_file_from_plex
 from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
 import os
 import pickle
@@ -15,11 +13,8 @@ from utilities.atomic_io import atomic_write_bytes
 from database.database_writing import update_media_item
 from database.core import get_db_connection
 from difflib import SequenceMatcher
-from debrid.common import extract_hash_from_magnet, extract_hash_from_file
+from debrid.common import extract_hash_from_magnet
 from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
-from PTT import parse_title
-import re
-from scraper.functions.ptt_parser import parse_with_ptt
 
 class UpgradingQueue:
     def __init__(self):

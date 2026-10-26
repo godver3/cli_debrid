@@ -5,7 +5,6 @@ Methods of ProgramRunner (queues/run_program.py), kept here to keep that file ma
 from content_checkers.trakt import check_trakt_early_releases
 import logging
 from cli_battery.app.direct_api import DirectAPI
-from routes.api_tracker import api
 from datetime import datetime
 from database.core import get_db_connection
 import sqlite3

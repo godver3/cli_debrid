@@ -1,18 +1,14 @@
 import logging
 import time
-from typing import Dict, List, Optional, Union, Tuple
-import bencodepy
-import hashlib
-import tempfile
-import os
+from typing import Dict, List, Optional, Union
 # Remove Enum and dataclass if they were only for the moved types and not used elsewhere locally
 # from enum import Enum # REMOVE if not used by other local things
 # from dataclasses import dataclass # REMOVE if not used by other local things
 import requests
-from ..common.utils import extract_hash_from_magnet, is_valid_hash, process_hashes
+from ..common.utils import is_valid_hash, process_hashes
 from .api import make_request
 # Update this import to get the moved types from debrid.status
-from ..status import TorrentStatus, get_status_flags, TorrentFetchStatus, TorrentInfoStatus
+from ..status import TorrentFetchStatus, TorrentInfoStatus
 from ..base import ProviderUnavailableError
 
 def process_hashes(hashes: Union[str, List[str]], batch_size: int = 100) -> List[str]:

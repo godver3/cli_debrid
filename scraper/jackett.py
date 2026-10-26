@@ -1,9 +1,8 @@
 from routes.api_tracker import api
 import logging
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 from utilities.settings import get_setting
-from urllib.parse import quote, urlencode
-import json
+from urllib.parse import urlencode
 import re
 from database.database_reading import get_episode_details
 from scraper.functions.common import trim_magnet

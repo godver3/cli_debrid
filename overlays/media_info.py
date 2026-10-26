@@ -7,7 +7,6 @@ Based on patterns from original plexmeta.py and plexmeta2.py scripts.
 
 import logging
 import re
-import xml.etree.ElementTree as ET
 from typing import Dict, Any, Optional
 
 

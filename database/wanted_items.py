@@ -1,13 +1,11 @@
 import logging
-from .core import get_db_connection, normalize_string, get_existing_airtime
+from .core import get_db_connection, normalize_string
 from database.manual_blacklist import is_blacklisted
 from typing import List, Dict, Any
 import json
 from datetime import datetime, timezone, timedelta
-import random
 import os
 from queues.config_manager import load_config
-from utilities.settings import get_setting
 from content_checkers.trakt import fetch_items_from_trakt, load_imdb_trakt_cache, save_imdb_trakt_cache
 import re
 
@@ -62,7 +60,6 @@ def _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item):
 
 
 def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, unblacklist: bool = False, force_granular_versions: bool = False):
-    from metadata.metadata import get_show_airtime_by_imdb_id
     from utilities.settings import get_setting
 
     conn = get_db_connection()

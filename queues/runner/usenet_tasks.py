@@ -1122,7 +1122,6 @@ class UsenetTasks:
                                 try:
                                     from usenet.repair_engine import (
                                         _find_db_items_by_entry_name,
-                                        _delete_from_plex,
                                         _delete_from_provider,
                                         _move_to_wanted,
                                         _blacklist_broken_nzb,
@@ -1265,7 +1264,6 @@ class UsenetTasks:
         """Backfill filled_by_torrent_id for collected items on cli_mount mount that have no torrent ID.
         Matches location_on_disk folder name against cli_mount /api/torrents entries."""
         try:
-            import re
             import requests as _req
             from utilities.settings import get_setting
             from database.database_reading import get_all_media_items

@@ -1,7 +1,6 @@
 import logging
 from typing import Dict, List, Optional, Union, Tuple, Any
 from datetime import datetime, timedelta
-import tempfile
 import os
 import time
 import hashlib
@@ -14,15 +13,13 @@ import json
 from ..base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError, TorrentAdditionError, is_provider_fault
 from ..common import (
     extract_hash_from_magnet,
-    download_and_extract_hash,
     timed_lru_cache,
-    torrent_to_magnet,
     is_video_file,
-    is_unwanted_file
+    is_unwanted_file,
 )
 from ..status import TorrentStatus
-from .api import make_request, get_all_torrents, get_all_downloads
-from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+from .api import make_request, get_all_torrents
+from database.not_wanted_magnets import add_to_not_wanted
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from utilities.settings import get_setting
 from .exceptions import RealDebridAuthError, RealDebridAPIError
@@ -863,7 +860,6 @@ class RealDebridProvider(DebridProvider):
         using the Real-Debrid provider.
         """
         # Import here if needed for type hint resolution at runtime and not just static analysis
-        from debrid.status import TorrentInfoStatus 
         # Use the api_key property (or self._internal_api_key directly)
         return rd_get_torrent_info_status(self.api_key, torrent_id)
 

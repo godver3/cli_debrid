@@ -7,7 +7,6 @@ from database.core import get_db_connection
 import requests
 import re
 import time  # Add time import for sleep
-import urllib.parse
 from cli_battery.app.direct_api import DirectAPI # Added import
 import json # Added import
 from datetime import datetime, timezone # Added import

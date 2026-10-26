@@ -6,8 +6,6 @@ Uses caching to minimize API calls (1000 free requests/day limit).
 
 import logging
 import requests
-import json
-import os
 from datetime import datetime, timedelta
 from utilities.settings import get_setting
 

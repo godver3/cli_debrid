@@ -16,10 +16,8 @@ from datetime import datetime
 from time import sleep
 import time # Added for caching
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
-from database.torrent_tracking import get_torrent_history
 from utilities.web_scraper import get_media_meta
-from queues.config_manager import get_content_source_display_names, load_config
-from database import update_media_item_state
+from queues.config_manager import get_content_source_display_names
 from utilities.local_library_scan import convert_item_to_symlink
 from database.database_writing import update_media_item, RESET_COLLECTION_STATE_SQL
 from database.symlink_verification import add_symlinked_file_for_verification

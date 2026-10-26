@@ -19,7 +19,6 @@ Patterns the AI can detect from this log:
 """
 
 import logging
-import os
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)

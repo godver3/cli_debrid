@@ -292,7 +292,6 @@ def _get_zilean_last_import_time(db_cfg: Dict) -> Optional[datetime]:
         val = json.loads(row[0]) if isinstance(row[0], str) else row[0]
         occurred_at = val.get('OccuredAt') or val.get('occuredAt')
         if occurred_at:
-            from datetime import timezone
             return datetime.fromisoformat(str(occurred_at).replace('Z', '+00:00'))
         return None
     except Exception as e:

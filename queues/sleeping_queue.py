@@ -81,7 +81,7 @@ class SleepingQueue:
         logging.debug(f"Added item to Sleeping queue: {item['id']} (Wake count: {item['wake_count']})")
                 
         from routes.notifications import send_notifications
-        from routes.settings_routes import get_enabled_notifications, get_enabled_notifications_for_category
+        from routes.settings_routes import get_enabled_notifications_for_category
         from routes.extensions import app
 
         # Send notification for the state change

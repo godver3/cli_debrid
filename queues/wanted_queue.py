@@ -1,6 +1,6 @@
 import logging
-from datetime import datetime, timedelta, date, time as dt_time
-from typing import Dict, Any, List
+from datetime import datetime, timedelta
+from typing import Dict, Any
 import time
 
 from utilities.settings import get_setting
@@ -8,7 +8,7 @@ from utilities.log_context import logs_for_item
 from queues.scrape_window import in_alternate_scrape_window
 from database.manual_blacklist import is_blacklisted
 from database.core import get_db_connection
-from database.database_reading import get_all_media_items, check_existing_media_item
+from database.database_reading import check_existing_media_item
 from database.database_writing import update_media_item_state, update_blacklisted_date, remove_from_media_items
 
 # Define constants for queue size limits
