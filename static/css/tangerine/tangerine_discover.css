@@ -1131,6 +1131,17 @@ body[data-theme="tangerine"] .discover-subtitle {
     margin: 0;
 }
 
+.result-hover-overlay .result-reason {
+    font-size: 0.7rem;
+    color: #fbbf24;
+    line-height: 1.3;
+    margin: 0 0 4px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
 /* Legacy classes kept for compatibility */
 .result-content { display: none; }
 

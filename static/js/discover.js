@@ -2633,7 +2633,7 @@ async function loadTrending() {
 
 /**
  * Load personalised recommendations from the best connected provider.
- * The backend prefers Trakt and automatically falls back to Scrob For You.
+ * The backend prefers Trakt, then Scrob For You, then the user's own library.
  */
 let _trendingLoaded = false; // Only fetch once per page load
 let _recLoaded = false;  // Only fetch once per page load
@@ -4293,6 +4293,10 @@ function createResultItemHTML(item) {
         : '/static/images/placeholder.png';
     const overview = item.overview || 'No overview available.';
     const rating = item.vote_average ? item.vote_average.toFixed(1) : '';
+    // Library recommendations say which watched/collected titles suggested this one
+    const reasonHtml = item.rec_reason
+        ? `<p class="result-reason">${String(item.rec_reason).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]))}</p>`
+        : '';
 
     // Check for mixed states (TV shows only)
     const mixedStates = detectMixedStates(item);
@@ -4362,6 +4366,7 @@ function createResultItemHTML(item) {
                         ${rating}
                     </span>
                 </div>
+                ${reasonHtml}
                 <p class="result-overview">${overview}</p>
                 <!-- Action buttons row -->
                 <div class="hover-action-bar" style="display:flex!important;flex-direction:row!important;flex-wrap:nowrap!important;gap:6px;align-items:center;justify-content:center;width:100%;position:absolute;bottom:8px;left:0;padding:0 8px;box-sizing:border-box;z-index:10">

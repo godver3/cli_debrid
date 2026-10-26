@@ -1056,7 +1056,8 @@ def recommendations():
     """Route the Discover recommendations tab to the best connected provider.
 
     Trakt remains preferred to preserve the existing recommendations. Scrob's
-    personalized ``For You`` feed is the automatic fallback. Content-source
+    personalized ``For You`` feed is the automatic fallback, then recommendations
+    built from the Plex watch history and collection via TMDB. Content-source
     entries are intentionally irrelevant here; they control automatic Wanted
     ingestion, while this endpoint only displays recommendations.
     """
@@ -1077,6 +1078,22 @@ def recommendations():
             list_type='For You',
             type=media_type,
         ))
+    if provider == 'library':
+        try:
+            from utilities.library_recommendations import get_library_recommendations
+            results = get_library_recommendations()
+        except Exception as e:
+            logging.error(f"Library recommendations error: {e}")
+            return jsonify({'success': False, 'results': [], 'error': str(e)}), 500
+        if media_type != 'all':
+            results = [r for r in results if r['media_type'] == media_type]
+        add_db_status_and_episode_info(results, use_battery=False)
+        return jsonify({
+            'success': True,
+            'provider': 'library',
+            'results': results,
+            'total_results': len(results),
+        })
 
     return jsonify({
         'success': False,

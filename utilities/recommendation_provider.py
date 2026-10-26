@@ -6,7 +6,11 @@ from utilities.settings import get_setting
 
 
 def get_recommendation_provider():
-    """Return ``trakt``, ``scrob``, or ``None`` without contacting either service."""
+    """Return ``trakt``, ``scrob``, ``library`` or ``None`` without contacting any service.
+
+    ``library`` builds recommendations from the Plex watch history and the
+    collection through TMDB, so it only needs the TMDB key.
+    """
     try:
         from content_checkers.trakt import get_trakt_config
 
@@ -26,5 +30,8 @@ def get_recommendation_provider():
             return 'scrob'
     except Exception as e:
         logging.debug(f"Recommendations: Scrob availability check failed: {e}")
+
+    if str(get_setting('TMDB', 'api_key', '') or '').strip():
+        return 'library'
 
     return None
