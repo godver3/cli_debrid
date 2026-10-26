@@ -19,9 +19,11 @@ class FakePlex:
     def __init__(self, *args, **kwargs):
         movie = NS(ratingKey=10, title='Heat', guids=[_guid('tmdb://949'), _guid('imdb://tt0113277')])
         show = NS(ratingKey=20, title='Severance', guids=[_guid('tmdb://95396')])
+        # Plex sometimes has no external ids at all; cli_debrid's own DB fills in
+        bare = NS(ratingKey=40, title='Veep', year=2012, guids=[])
         self.library = NS(sections=lambda: [
             NS(type='movie', all=lambda: [movie]),
-            NS(type='show', all=lambda: [show]),
+            NS(type='show', all=lambda: [show, bare]),
             NS(type='artist', all=lambda: []),
         ])
 
@@ -40,6 +42,7 @@ class FakePlex:
             NS(type='episode', ratingKey=22, grandparentRatingKey=20, accountID=5, viewedAt=datetime(2026, 10, 2)),
             NS(type='episode', ratingKey=99, grandparentRatingKey=98, accountID=5, viewedAt=t),  # deleted show
             NS(type='track', ratingKey=30, accountID=1, viewedAt=t),
+            NS(type='episode', ratingKey=41, grandparentKey='/library/metadata/40', accountID=1, viewedAt=t),
         ]
 
 
@@ -95,8 +98,9 @@ class ViewerHistoryTest(unittest.TestCase):
         self.settings = {('Plex', 'url'): 'http://plex', ('Plex', 'token'): 't'}
         fake_server = types.ModuleType('plexapi.server')
         fake_server.PlexServer = FakePlex
-        with patch.dict(sys.modules, {'plexapi.server': fake_server}):
-            self.assertEqual(vh.sync_plex(), (2, 2))
+        with patch.dict(sys.modules, {'plexapi.server': fake_server}), \
+                patch.object(vh, '_library_ids_by_title', return_value={('tv', 'veep', '2012'): ('2947', 'tt1759761')}):
+            self.assertEqual(vh.sync_plex(), (2, 3))
 
         viewers = vh.get_viewers()
         self.assertEqual([(v['id'], v['is_main']) for v in viewers], [('plex:1', True), ('plex:5', False)])
@@ -106,7 +110,8 @@ class ViewerHistoryTest(unittest.TestCase):
         self.assertEqual(sam[0][:4], ('tv', '95396', None, 'Severance'))
         self.assertEqual(sam[0][5:], (3, 2))  # three plays of two distinct episodes
         self.assertEqual(sam[0][4], '2026-10-02 00:00:00')
-        self.assertEqual(len(vh.get_plays('all')), 2)
+        self.assertEqual(len(vh.get_plays('all')), 3)
+        self.assertIn(('tv', '2947'), {(r[0], r[1]) for r in vh.get_plays('plex:1')})
 
     def test_emby_sync_uses_series_ids_and_first_admin_is_main(self):
         self.settings = {('Debug', 'emby_jellyfin_url'): 'http://jf:8096/', ('Debug', 'emby_jellyfin_token'): 'k'}

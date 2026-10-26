@@ -107,6 +107,29 @@ def _guid_ids(guids):
     return tmdb, imdb
 
 
+def _library_ids_by_title():
+    """{(media_type, lower title, year): (tmdb_id, imdb_id)} from cli_debrid's own database.
+
+    Fallback for Plex items whose metadata has no external ids.
+    """
+    try:
+        from database.core import get_db_connection
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                "SELECT type, title, year, MAX(tmdb_id), MAX(imdb_id) FROM media_items "
+                "WHERE type IN ('movie', 'episode') AND title IS NOT NULL "
+                "AND (tmdb_id IS NOT NULL OR imdb_id IS NOT NULL) GROUP BY type, title, year"
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        logging.debug(f"Viewer history: media_items title lookup unavailable: {e}")
+        return {}
+    return {('movie' if t == 'movie' else 'tv', title.lower(), str(year or '')): (tmdb or None, imdb or None)
+            for t, title, year, tmdb, imdb in rows}
+
+
 def sync_plex():
     """Every account's plays on this Plex server. Returns (viewers, titles) counts."""
     url = get_setting('Plex', 'url', '')
@@ -118,12 +141,18 @@ def sync_plex():
 
     # Library items carry the guids; history entries only carry rating keys.
     by_key = {}
+    by_title = None
     for section in plex.library.sections():
         if section.type not in ('movie', 'show'):
             continue
         mt = 'movie' if section.type == 'movie' else 'tv'
         for item in section.all():
-            by_key[str(item.ratingKey)] = (mt, _guid_ids(getattr(item, 'guids', None)), item.title)
+            ids = _guid_ids(getattr(item, 'guids', None))
+            if not any(ids):
+                if by_title is None:
+                    by_title = _library_ids_by_title()
+                ids = by_title.get((mt, (item.title or '').lower(), str(getattr(item, 'year', '') or '')), ids)
+            by_key[str(item.ratingKey)] = (mt, ids, item.title)
 
     viewers = [(a.id, a.name, a.id == 1) for a in plex.systemAccounts() if a.id and a.name]
     plays = {}
