@@ -1,24 +1,18 @@
-from flask import Blueprint, jsonify, request, render_template, session, make_response
+from flask import Blueprint, jsonify, request, render_template
 from datetime import datetime, timedelta
-from operator import itemgetter
-from itertools import groupby
 import threading
 import time
 import logging
 import asyncio
-import aiohttp
-import os
 from utilities.settings import get_setting, set_setting
 from .models import user_required, onboarding_required 
 from routes.extensions import app_start_time
-from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
+from debrid import get_debrid_provider, ProviderUnavailableError
 from .program_operation_routes import get_program_status
-import json
 import math
 from functools import wraps
 # Provider-agnostic: avoid direct Real-Debrid import
 from typing import Optional, Dict, List, Any
-import calendar
 from database.database_writing import move_to_wanted_for_replacement
 
 def format_file_size(size_gb):
@@ -87,37 +81,6 @@ def get_cached_user_traffic():
 statistics_bp = Blueprint('statistics', __name__)
 root_bp = Blueprint('root', __name__)
 
-def get_airing_soon():
-    from database import get_db_connection
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    today = datetime.now().date()
-    tomorrow = today + timedelta(days=1)
-    
-    query = """
-    SELECT title, release_date, airtime
-    FROM media_items
-    WHERE type = 'episode' AND release_date BETWEEN ? AND ?
-    ORDER BY release_date, airtime
-    """
-    
-    cursor.execute(query, (today.isoformat(), tomorrow.isoformat()))
-    results = cursor.fetchall()
-    
-    conn.close()
-    
-    # Group by title and take the earliest air date/time for each show
-    grouped_results = []
-    for key, group in groupby(results, key=itemgetter(0)):
-        group_list = list(group)
-        grouped_results.append({
-            'title': key,
-            'air_date': group_list[0][1],
-            'air_time': group_list[0][2]
-        })
-    
-    return grouped_results
 
 @cache_for_seconds(60)  # The missing-episodes count scans every episode row
 def get_badge_counts():
@@ -280,7 +243,7 @@ def get_movies_for_calendar(days_past: int = 7, days_future: int = 28, start_dat
 def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1, start_date_override_iso: Optional[str] = None, end_date_override_iso: Optional[str] = None, include_all_upcoming: bool = False):
     # include_all_upcoming keeps future episodes that are already in flight or collected;
     # the home page's Airing Soon hides them, but the calendar must show every episode.
-    from metadata.metadata import get_show_airtime_by_imdb_id, _get_local_timezone
+    from metadata.metadata import _get_local_timezone
     from database import get_db_connection
     conn = get_db_connection()
     try:
@@ -568,7 +531,6 @@ def root():
     # Get collection counts from the optimized summary function
     collection_start = time.perf_counter()
     from database.statistics import get_statistics_summary
-    from database.database_reading import get_item_count_by_state
     counts = get_statistics_summary()
     stats['total_movies'] = counts['total_movies']
     stats['total_shows'] = counts['total_shows']
@@ -979,96 +941,6 @@ def recently_added():
             item['formatted_collected_at'] = 'Unknown'
 
     return jsonify({'recently_added': recently_added})
-
-async def get_recent_from_plex(movie_limit=None, show_limit=None):
-    if movie_limit is None:
-        movie_limit = get_setting('UI Settings', 'recently_added_limit', 7)
-    if show_limit is None:
-        show_limit = get_setting('UI Settings', 'recently_added_limit', 7)
-    plex_url = get_setting('Plex', 'url', '').rstrip('/')
-    plex_token = get_setting('Plex', 'token', '')
-    
-    if not plex_url or not plex_token:
-        return {'movies': [], 'shows': []}
-    
-    headers = {
-        'X-Plex-Token': plex_token,
-        'Accept': 'application/json'
-    }
-
-    async def fetch_metadata(session, item_key):
-        metadata_url = f"{plex_url}{item_key}?includeGuids=1"
-        async with session.get(metadata_url, headers=headers) as response:
-            return await response.json()
-
-    async with aiohttp.ClientSession() as session:
-        # Get library sections
-        async with session.get(f"{plex_url}/library/sections", headers=headers) as response:
-            sections = await response.json()
-
-        recent_movies = []
-        recent_shows = {}
-
-        for section in sections['MediaContainer']['Directory']:
-            if section['type'] == 'movie':
-                async with session.get(f"{plex_url}/library/sections/{section['key']}/recentlyAdded?X-Plex-Container-Start=0&X-Plex-Container-Size={movie_limit}", headers=headers) as response:
-                    data = await response.json()
-                    for item in data['MediaContainer'].get('Metadata', []):
-                        metadata = await fetch_metadata(session, item['key'])
-                        if 'MediaContainer' in metadata and 'Metadata' in metadata['MediaContainer']:
-                            full_metadata = metadata['MediaContainer']['Metadata'][0]
-                            tmdb_id = next((guid['id'] for guid in full_metadata.get('Guid', []) if guid['id'].startswith('tmdb://')), None)
-                            if tmdb_id:
-                                tmdb_id = tmdb_id.split('://')[1]
-                                from metadata.metadata import get_poster_url
-                                poster_url = await get_poster_url(session, tmdb_id, 'movie')
-                                added_at = datetime.fromtimestamp(int(item['addedAt']))
-                                recent_movies.append({
-                                    'title': item['title'],
-                                    'year': item.get('year'),
-                                    'added_at': added_at,
-                                    'poster_url': poster_url
-                                })
-            elif section['type'] == 'show':
-                async with session.get(f"{plex_url}/library/sections/{section['key']}/recentlyAdded?X-Plex-Container-Start=0&X-Plex-Container-Size=100", headers=headers) as response:
-                    data = await response.json()
-                    for item in data['MediaContainer'].get('Metadata', []):
-                        if item['type'] == 'episode' and len(recent_shows) < show_limit:
-                            show_title = item['grandparentTitle']
-                            if show_title not in recent_shows:
-                                show_metadata = await fetch_metadata(session, item['grandparentKey'])
-                                if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
-                                    full_show_metadata = show_metadata['MediaContainer']['Metadata'][0]
-                                    tmdb_id = next((guid['id'] for guid in full_show_metadata.get('Guid', []) if guid['id'].startswith('tmdb://')), None)
-                                    if tmdb_id:
-                                        tmdb_id = tmdb_id.split('://')[1]
-                                        from metadata.metadata import get_poster_url
-                                        poster_url = await get_poster_url(session, tmdb_id, 'tv')
-                                        added_at = datetime.fromtimestamp(int(item['addedAt']))
-                                        recent_shows[show_title] = {
-                                            'title': show_title,
-                                            'added_at': added_at,
-                                            'poster_url': poster_url,
-                                            'seasons': set()
-                                        }
-                            if show_title in recent_shows:
-                                recent_shows[show_title]['seasons'].add(item['parentIndex'])
-                                recent_shows[show_title]['added_at'] = max(
-                                    recent_shows[show_title]['added_at'],
-                                    datetime.fromtimestamp(int(item['addedAt']))
-                                )
-                            if len(recent_shows) == show_limit:
-                                break
-
-        recent_shows = list(recent_shows.values())
-        for show in recent_shows:
-            show['seasons'] = sorted(show['seasons'])
-        recent_shows.sort(key=lambda x: x['added_at'], reverse=True)
-
-    return {
-        'movies': recent_movies[:movie_limit],
-        'shows': recent_shows[:show_limit]
-    }
 
 def format_date(date_string):
     if not date_string:

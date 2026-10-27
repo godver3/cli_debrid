@@ -19,29 +19,20 @@ import webbrowser
 import socket
 import sqlite3
 from datetime import datetime
-import json
 import tracemalloc
-
-# Import Windows-specific modules only on Windows
-if platform.system() == 'Windows':
-    import win32gui
-    import win32con
 
 # Existing imports
 import shutil
 import requests
-import re
 import subprocess
-from utilities.settings import set_setting
 from utilities.settings import get_setting
 from logging_config import stop_global_profiling, start_global_profiling
 import babelfish
 from content_checkers.plex_watchlist import validate_plex_tokens
 from routes.notifications import (
-    setup_crash_handler, 
-    register_shutdown_handler, 
+    setup_crash_handler,
+    register_shutdown_handler,
     register_startup_handler,
-    send_program_stop_notification
 )
 from database import schema_management
 
@@ -75,11 +66,8 @@ import logging
 import shutil
 import signal
 import time
-from routes.api_tracker import api
 from utilities.settings import get_setting
 import requests
-import re
-from utilities.settings import set_setting
 import subprocess
 import threading
 from logging_config import stop_global_profiling, start_global_profiling
@@ -363,7 +351,6 @@ def backup_database(skip_if_recent=False, skip_hours=6):
         bool: True if backup was successful or skipped, False on error
     """
     import sqlite3
-    import time
 
     try:
         # Get db_content directory from environment variable
@@ -597,12 +584,6 @@ def signal_handler(signum, frame):
         stop_global_profiling()
         sys.exit(0)
 
-def update_web_ui_state(state):
-    try:
-        port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
-        api.post(f'http://localhost:{port}/api/update_program_state', json={'state': state})
-    except api.exceptions.RequestException:
-        logging.error("Failed to update web UI state")
 
 def package_app():
     try:
@@ -653,7 +634,6 @@ def package_app():
             "--hidden-import", "database",
             "--hidden-import", "database.core",
             "--hidden-import", "database.collected_items",
-            "--hidden-import", "database.blacklist",
             "--hidden-import", "database.schema_management",
             "--hidden-import", "database.poster_management",
             "--hidden-import", "database.statistics",
@@ -972,162 +952,11 @@ def stop_program(from_signal=False):
     if not from_signal:
         os.kill(os.getpid(), signal.SIGINT)
 
-def update_media_locations():
-    """
-    Startup function that reviews database items and updates their location_on_disk field
-    by checking the zurg_all_folder location.
-    """
-    import os
-    from database.core import get_db_connection
-    import logging
-    from time import time
-    import subprocess
-    import shlex
-    from collections import defaultdict
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    BATCH_SIZE = 1000
-    MAX_WORKERS = 4  # Number of parallel workers
-
-    def build_file_map(zurg_all_folder):
-        """Build a map of filenames to their full paths using find"""
-        cmd = f"find {shlex.quote(zurg_all_folder)} -type f"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            logging.error(f"Error running find command: {result.stderr}")
-            return {}
-        
-        # Create a map of filename -> list of full paths
-        file_map = defaultdict(list)
-        for path in result.stdout.splitlines():
-            if path:
-                filename = os.path.basename(path)
-                file_map[filename].append(path)
-        
-        logging.info(f"Built file map with {len(file_map)} unique filenames")
-        return file_map
-
-    def process_batch(items_batch, file_map, zurg_all_folder):
-        """Process a batch of items and return updates"""
-        updates = []
-        for item_id, filled_by_file, media_type in items_batch:
-            if not filled_by_file:
-                continue
-
-            # Check if file exists in our map
-            if filled_by_file in file_map:
-                paths = file_map[filled_by_file]
-                if len(paths) == 1:
-                    # Single match - use it
-                    updates.append((paths[0], item_id))
-                else:
-                    # Multiple matches - try to find best match
-                    # First try exact folder match
-                    direct_path = os.path.join(zurg_all_folder, filled_by_file, filled_by_file)
-                    if direct_path in paths:
-                        updates.append((direct_path, item_id))
-                    else:
-                        # Just use the first match
-                        updates.append((paths[0], item_id))
-                        if len(paths) > 1:
-                            logging.debug(f"Multiple matches found for {filled_by_file}, using {paths[0]}")
-            else:
-                logging.error(f"Could not find location for item {item_id} with file {filled_by_file}")
-        
-        return updates
-
-    zurg_all_folder = get_setting('File Management', 'zurg_all_folder')
-    if not zurg_all_folder:
-        logging.error("zurg_all_folder not set in settings")
-        return
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        # Build file map first
-        start_time = time()
-        file_map = build_file_map(zurg_all_folder)
-        logging.info(f"Built file map in {time() - start_time:.1f} seconds")
-
-        # Get all media items that need updating
-        cursor.execute("""
-            SELECT id, filled_by_file, type 
-            FROM media_items 
-            WHERE filled_by_file IS NOT NULL 
-            AND (location_on_disk IS NULL OR location_on_disk = '')
-            AND type != 'movie'
-        """)
-        items = cursor.fetchall()
-        total_items = len(items)
-        logging.info(f"Found {total_items} items to process")
-
-        # Process items in parallel batches
-        start_time = time()
-        all_updates = []
-        
-        # Split items into batches
-        batches = [items[i:i + BATCH_SIZE] for i in range(0, len(items), BATCH_SIZE)]
-        
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            # Submit all batches to the thread pool
-            future_to_batch = {
-                executor.submit(process_batch, batch, file_map, zurg_all_folder): batch 
-                for batch in batches
-            }
-            
-            # Process completed batches
-            for future in as_completed(future_to_batch):
-                batch = future_to_batch[future]
-                try:
-                    updates = future.result()
-                    if updates:
-                        # Execute database updates
-                        cursor.executemany(
-                            "UPDATE media_items SET location_on_disk = ? WHERE id = ?",
-                            updates
-                        )
-                        conn.commit()
-                        processed = len(updates)
-                        all_updates.extend(updates)
-                        elapsed = time() - start_time
-                        items_per_sec = len(all_updates) / elapsed if elapsed > 0 else 0
-                        logging.info(f"Progress: {len(all_updates)}/{total_items} items ({items_per_sec:.1f} items/sec)")
-                except Exception as e:
-                    logging.error(f"Error processing batch: {str(e)}")
-
-        elapsed = time() - start_time
-        items_per_sec = total_items / elapsed if elapsed > 0 else 0
-        logging.info(f"Finished updating media locations. Processed {total_items} items in {elapsed:.1f} seconds ({items_per_sec:.1f} items/sec)")
-        logging.info(f"Successfully updated {len(all_updates)} items")
-
-    except Exception as e:
-        logging.error(f"Error updating media locations: {str(e)}")
-        conn.rollback()
-    finally:
-        conn.close()
-
-def open_log_file():
-    log_dir = os.environ.get('USER_LOGS', '/user/logs')
-    log_file_path = os.path.join(log_dir, 'debug.log')
-
-    if os.path.exists(log_file_path):
-        try:
-            if platform.system() == 'Windows':
-                os.startfile(log_file_path)
-            elif platform.system() == 'Darwin':
-                subprocess.call(['open', log_file_path])
-            else:
-                subprocess.call(['xdg-open', log_file_path])
-        except Exception as e:
-            logging.error(f"Failed to open log file: {e}")
-    else:
-        logging.error("Log file does not exist.")
 
 def fix_notification_settings():
     """Check and fix notification settings during startup."""
     try:
-        from utilities.settings import load_config, save_config
+        from utilities.settings import load_config
         config = load_config()
         needs_update = False
 
@@ -1152,80 +981,62 @@ def fix_notification_settings():
     except Exception as e:
         logging.error(f"Error checking notification settings: {e}")
 
-def verify_database_health():
+def verify_database_health(startup: bool = False):
     """
-    Verifies the health of both media_items.db and cli_battery.db databases.
-    If corruption is detected, backs up the corrupted database and creates a new one.
+    Read-only health check of media_items.db and cli_battery.db.
+
+    Skipped at startup to keep boot fast; the hourly task_check_database_health
+    runs it (and keeps running while the queue is paused for DB_HEALTH, so it
+    resumes the queue once a check passes). Returns False only on real
+    corruption (quick_check reports problems or the file is not a database) so
+    the caller can pause the queue and notify. A locked/busy database is
+    inconclusive and passes. Never modifies, moves or deletes the files.
     """
-    logging.info("Skipping health verification - task will periodically verify health.")
-    return True
+    if startup:
+        logging.info("Skipping health verification at startup - task will periodically verify health.")
+        return True
     logging.info("Verifying database health...")
-    
-    # Get database paths
+
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
     media_items_path = os.path.join(db_content_dir, 'media_items.db')
     cli_battery_path = os.path.join(db_content_dir, 'cli_battery.db')
-    
+
     def check_db_health(db_path, db_name):
         if not os.path.exists(db_path):
             logging.warning(f"{db_name} does not exist, will be created during initialization")
             return True
-            
+
+        conn = None
         try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            
-            # Try to perform a simple query
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
-            
-            # Verify database integrity
-            cursor.execute("PRAGMA integrity_check")
-            result = cursor.fetchone()
-            
-            cursor.close()
-            conn.close()
-            
-            if result[0] != "ok":
-                raise sqlite3.DatabaseError(f"Integrity check failed: {result[0]}")
-                
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
+            rows = conn.execute("PRAGMA quick_check").fetchall()
+            problems = [r[0] for r in rows if r and r[0] != "ok"]
+            if problems:
+                logging.error(f"{db_name} failed quick_check: {problems[:5]}")
+                return False
             logging.info(f"{db_name} health check passed")
             return True
-            
-        except sqlite3.DatabaseError as e:
-            logging.error(f"{db_name} is corrupted: {str(e)}")
-            
-            # Create backup of corrupted database
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            backup_path = f"{db_path}.corrupted_{timestamp}"
-            try:
-                shutil.copy2(db_path, backup_path)
-                logging.info(f"Created backup of corrupted {db_name} at {backup_path}")
-            except Exception as backup_error:
-                logging.error(f"Failed to create backup of corrupted {db_name}: {str(backup_error)}")
-            
-            # Delete corrupted database
-            try:
-                os.remove(db_path)
-                logging.info(f"Removed corrupted {db_name}")
-            except Exception as del_error:
-                logging.error(f"Failed to remove corrupted {db_name}: {str(del_error)}")
-                return False
-            
+        except sqlite3.OperationalError as e:
+            # Locked/busy or transient I/O: can't tell, so don't raise a corruption alarm.
+            logging.warning(f"{db_name} health check inconclusive: {e}")
             return True
-        
-        except Exception as e:
-            logging.error(f"Error checking {db_name} health: {str(e)}")
+        except sqlite3.DatabaseError as e:
+            logging.error(f"{db_name} is corrupted: {e}")
             return False
-    
-    # Check both databases
+        except Exception as e:
+            logging.error(f"Error checking {db_name} health: {e}")
+            return True
+        finally:
+            if conn is not None:
+                conn.close()
+
     media_items_ok = check_db_health(media_items_path, "media_items.db")
     cli_battery_ok = check_db_health(cli_battery_path, "cli_battery.db")
-    
+
     if not media_items_ok or not cli_battery_ok:
         logging.error("Database health check failed")
         return False
-    
+
     logging.info("Database health check completed successfully")
     return True
 
@@ -1671,26 +1482,8 @@ def main():
     backup_config()
     backup_database(skip_if_recent=True, skip_hours=6)  # Skip if backup exists from last 6 hours
     
-    # Purge content source cache files on startup
-    # try:
-    #     logging.info("Purging content source cache files on startup...")
-    #     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-    #     deleted_count = 0
-    #     for filename in os.listdir(db_content_dir):
-    #         if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
-    #             file_path = os.path.join(db_content_dir, filename)
-    #             try:
-    #                 os.remove(file_path)
-    #                 logging.debug(f"Deleted cache file: {file_path}")
-    #                 deleted_count += 1
-    #             except OSError as e:
-    #                 logging.warning(f"Could not delete cache file {file_path}: {e}")
-    #     logging.info(f"Deleted {deleted_count} content source cache files.")
-    # except Exception as e:
-    #     logging.error(f"Error purging content source cache files: {str(e)}")
-    
     # Verify database health before proceeding
-    if not verify_database_health():
+    if not verify_database_health(startup=True):
         logging.error("Database health check failed. Please check the logs and resolve any issues.")
         return
     
@@ -1810,14 +1603,23 @@ def main():
     # --- End migration ---
 
     # Batch set deprecated settings
-    set_setting('Debug', 'skip_initial_plex_update', False)
     set_setting('Scraping', 'jackett_seeders_only', True)
     set_setting('Scraping', 'enable_upgrading_cleanup', True)
     set_setting('Sync Deletions', 'sync_deletions', True)
     #set_setting('Debrid Provider', 'provider', 'RealDebrid')
     set_setting('Debug', 'rescrape_missing_files', False)
-    set_setting('Debug', 'anime_renaming_using_anidb', True)
     set_setting('Debug', 'symlink_organize_by_type', True)
+
+    # Removed settings: skip_initial_plex_update (startup never scans Plex when
+    # Collected items exist) and anime_renaming_using_anidb (disabled since 0.7.10)
+    config = load_config()
+    removed = [k for k in ('skip_initial_plex_update', 'anime_renaming_using_anidb')
+               if k in config.get('Debug', {})]
+    if removed:
+        for key in removed:
+            del config['Debug'][key]
+        save_config(config)
+        logging.info(f"Removed retired settings: {', '.join(removed)}")
 
     # Add check for Hybrid uncached management setting
     if get_setting('Scraping', 'uncached_content_handling') == 'Hybrid':
@@ -2397,8 +2199,6 @@ def main():
     # Start the system tray icon if running as a packaged Windows app
     if is_frozen() and platform.system() == 'Windows':
         # Import Windows-specific modules only on Windows
-        import win32gui
-        import win32con
         # Start the system tray icon
         tray_thread = threading.Thread(target=setup_tray_icon)
         tray_thread.daemon = True
@@ -2521,6 +2321,7 @@ def main():
                             logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking database health...")
                             if verify_database_health(): # verify_database_health is in main.py
                                 logging.info("[Supervisor] Database health is OK.")
+                                global_program_runner_instance.db_health_pause_info = None  # lift the hold resume_queue honours
                                 should_attempt_resume = True
                             else:
                                 logging.info("[Supervisor] Database health issues persist.")

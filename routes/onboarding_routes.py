@@ -10,7 +10,6 @@ import platform
 from routes.trakt_routes import check_trakt_auth_status
 import json
 import requests
-import uuid
 import urllib.parse
 from .models import admin_required
 
@@ -368,21 +367,7 @@ def update_can_proceed():
     else:
         return jsonify({'success': False, 'error': 'Invalid step'}), 400
     
-def add_scraper_onboarding(form_data):
-    scraper_type = form_data.get('scraper_type')
-    scraper_config = {
-        'enabled': True,
-    }
-    add_scraper(scraper_type, scraper_config)
 
-def add_content_source_onboarding(form_data):
-    source_type = form_data.get('source_type')
-    source_config = {
-        'enabled': True,
-        'display_name': form_data.get('source_display_name'),
-        'versions': form_data.getlist('source_versions')
-    }
-    add_content_source(source_type, source_config)
 
 @onboarding_bp.route('/setup_admin', methods=['GET', 'POST'])
 @login_required
@@ -914,7 +899,7 @@ def discover_plex_servers():
     """Discover available Plex servers using X-Plex-Token."""
     try:
         from plexapi.myplex import MyPlexAccount
-        from plexapi.exceptions import Unauthorized, NotFound
+        from plexapi.exceptions import Unauthorized
         
         token = request.args.get('token')
         if not token:

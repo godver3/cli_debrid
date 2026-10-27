@@ -1186,56 +1186,6 @@ class MediaMatcher:
         logging.debug(f"Movie match check: '{parsed_title}' vs '{queue_title}' (Ratio: {title_ratio}), Year Match: {year_match} -> Result: {title_match and year_match}")
         return title_match and year_match
 
-    def match_episode(self, parsed: Dict[str, Any], item: Dict[str, Any]) -> bool:
-        """
-        Check if an episode file matches an episode item.
-        Matches based on the queue item title, season, and episode numbers.
-        NOTE: This uses PTT parsed info, assumes 'parsed' is the result of PTT.
-              It's likely NOT used directly by AddingQueue flow anymore.
-        """
-        # Skip files that are likely extras/specials based on filename from PTT result
-        original_filename = parsed.get('original_filename', '').lower() # Use stored basename
-        if any(extra in original_filename for extra in [
-            'deleted scene', 'deleted scenes',
-            'extra', 'extras',
-            'special', 'specials',
-            'behind the scene', 'behind the scenes',
-            'bonus', 'interview',
-            'featurette', 'making of',
-            'alternate'
-        ]):
-            return False
-
-        # Traditional matching
-        parsed_title = self._normalize_title(parsed.get('title', ''))
-        queue_title = self._normalize_title(item.get('series_title', '') or item.get('title', ''))
-        if not parsed_title or not queue_title:
-            return False
-
-        # Title match using fuzzy matching
-        # title_match = parsed_title == queue_title
-        title_ratio = fuzz.ratio(parsed_title, queue_title)
-        title_match = title_ratio > 85 # Use a threshold
-
-        # Get season/episode from item
-        item_season = item.get('season') or item.get('season_number')
-        item_episode = item.get('episode') or item.get('episode_number')
-
-        if item_season is None or item_episode is None:
-            return False
-
-        # Check if the requested season and episode are in the parsed seasons/episodes lists
-        season_match = item_season in parsed.get('seasons', [])
-        episode_match = item_episode in parsed.get('episodes', [])
-
-        # Check fallback episode if PTT episodes are empty
-        if not parsed.get('episodes') and parsed.get('fallback_episode') == item_episode:
-             episode_match = True
-
-        # Match only if title, season, and episode all match
-        match_result = title_match and season_match and episode_match
-        #logging.debug(f"Episode match check: Title Match: {title_match} (Ratio: {title_ratio}), S: {season_match}, E: {episode_match} -> Result: {match_result}")
-        return match_result
 
     @staticmethod
     def is_video_file(filename: str) -> bool:

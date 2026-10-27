@@ -5,7 +5,6 @@ Renders overlays onto media server posters based on templates.
 """
 
 import logging
-import os
 from io import BytesIO
 from typing import Dict, Any, Optional, Union
 from pathlib import Path
@@ -47,118 +46,6 @@ class OverlayRenderer:
         if not Image:
             raise ImportError("PIL/Pillow is required for overlay rendering. Install with: pip install Pillow")
 
-    def render_overlay_poc(self, base_image: Union[str, Path, Image.Image],
-                           media_info: Dict[str, Any]) -> Image.Image:
-        """
-        POC: Render hardcoded overlay template onto base poster.
-
-        This is a proof-of-concept implementation with a hardcoded template.
-        It renders resolution and HDR badges as text in the top-left corner.
-
-        Args:
-            base_image: Path to base poster image or PIL Image object
-            media_info: Dictionary containing media information:
-                - resolution: str (e.g., "2160p", "1080p")
-                - hdr: bool (True if HDR content)
-                - dolby_vision: bool (True if Dolby Vision)
-                - audio_codec: str (e.g., "TrueHD Atmos", "DTS-X")
-                - video_codec: str (e.g., "HEVC", "AVC")
-
-        Returns:
-            PIL Image object with overlay applied
-        """
-        # Load base image
-        if isinstance(base_image, (str, Path)):
-            img = Image.open(base_image)
-        else:
-            img = base_image.copy()
-
-        # Convert to RGBA for transparency support
-        if img.mode != 'RGBA':
-            img = img.convert('RGBA')
-
-        # Create drawing context
-        draw = ImageDraw.Draw(img)
-
-        # Get image dimensions
-        width, height = img.size
-
-        # Calculate badge sizes (proportional to poster size)
-        badge_height = int(height * 0.08)  # 8% of poster height
-        badge_width = int(width * 0.35)    # 35% of poster width
-        margin = int(width * 0.02)         # 2% margin
-
-        # Try to load a nice font, fallback to default
-        try:
-            # Try to use a bold sans-serif font
-            font_size = int(badge_height * 0.5)
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
-        except (OSError, IOError) as _font_err:
-            self.logger.warning(f"Could not load DejaVuSans-Bold for render_overlay_poc, using PIL default: {_font_err}")
-            font = ImageFont.load_default()
-
-        # Build badge text
-        badges = []
-
-        # Resolution badge
-        resolution = media_info.get('resolution', '')
-        if resolution:
-            badges.append(resolution.upper())
-
-        # HDR badges
-        if media_info.get('dolby_vision'):
-            badges.append('DV')
-        elif media_info.get('hdr'):
-            badges.append('HDR')
-
-        # Audio codec badge
-        audio_codec = media_info.get('audio_codec', '')
-        if 'atmos' in audio_codec.lower():
-            badges.append('ATMOS')
-        elif 'dts-x' in audio_codec.lower() or 'dtsx' in audio_codec.lower():
-            badges.append('DTS:X')
-        elif 'truehd' in audio_codec.lower():
-            badges.append('TrueHD')
-        elif 'dts-hd ma' in audio_codec.lower():
-            badges.append('DTS-HD MA')
-
-        # Render badges
-        y_offset = margin
-        for badge_text in badges:
-            # Calculate text size
-            bbox = draw.textbbox((0, 0), badge_text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-
-            # Badge background position
-            x1 = margin
-            y1 = y_offset
-            x2 = x1 + text_width + margin * 2
-            y2 = y1 + text_height + margin
-
-            # Draw semi-transparent background
-            overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
-            overlay_draw = ImageDraw.Draw(overlay)
-            overlay_draw.rounded_rectangle(
-                [(x1, y1), (x2, y2)],
-                radius=5,
-                fill=(0, 0, 0, 180)  # Semi-transparent black
-            )
-            img = Image.alpha_composite(img, overlay)
-
-            # Redraw context after composite
-            draw = ImageDraw.Draw(img)
-
-            # Draw text (white)
-            text_x = x1 + margin
-            text_y = y1 + margin // 2
-            draw.text((text_x, text_y), badge_text, font=font, fill=(255, 255, 255, 255))
-
-            # Move to next badge position
-            y_offset = y2 + margin // 2
-
-        self.logger.info(f"Rendered POC overlay with badges: {', '.join(badges)}")
-        return img
 
     def render_from_template(self, base_image: Union[str, Path, Image.Image],
                             layout_data: Dict[str, Any],
@@ -1650,7 +1537,6 @@ class OverlayRenderer:
           → border stroke
           → top highlight gradient line
         """
-        import math
 
         media_info = media_info or {}
 
@@ -2689,9 +2575,6 @@ class OverlayRenderer:
         def _tw(text, font):
             bb = _td.textbbox((0, 0), text, font=font)
             return bb[2] - bb[0]
-        def _th(text, font):
-            bb = _td.textbbox((0, 0), text, font=font)
-            return bb[3] - bb[1], bb[1]  # height, top-offset
 
         bw_px = 0; hd_label_w = 0; hd_variant_w = 0; vw_px = 0
         if codec_type in ('dts-hd', 'dts-hd-ma', 'dts-hd-hra'):
@@ -3151,28 +3034,6 @@ class OverlayRenderer:
             self.logger.debug(f"font_manager unavailable: {e}")
             return self._load_font('DejaVuSans-Bold' if bold else 'DejaVuSans', size)
 
-    def save_rendered_image(self, image: Image.Image, output_path: Union[str, Path],
-                           format: str = 'JPEG', quality: int = 95) -> None:
-        """
-        Save rendered image to file.
-
-        Args:
-            image: PIL Image object
-            output_path: Output file path
-            format: Image format (JPEG, PNG, etc.)
-            quality: JPEG quality (1-100)
-        """
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Convert RGBA to RGB for JPEG
-        if format.upper() == 'JPEG' and image.mode == 'RGBA':
-            rgb_image = Image.new('RGB', image.size, (255, 255, 255))
-            rgb_image.paste(image, mask=image.split()[3])  # Use alpha channel as mask
-            image = rgb_image
-
-        image.save(output_path, format=format, quality=quality)
-        self.logger.info(f"Saved rendered overlay to {output_path}")
 
     def image_to_bytes(self, image: Image.Image, format: str = 'JPEG',
                        quality: int = 95) -> bytes:

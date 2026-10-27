@@ -68,8 +68,6 @@ def get_tooltips():
     tooltips = get_tooltip_schema()
     return jsonify(tooltips)
 
-def is_api_request():
-    return request.path.startswith('/api/') or request.accept_mimetypes.best in ['application/json', 'text/javascript']
 
 def is_html_request():
     return 'text/html' in request.accept_mimetypes.values()
@@ -126,7 +124,6 @@ def index():
     return render_template('over_usage.html', blocked_domains=blocked_domains, is_rate_limited=True, hourly_limit=hourly_limit, five_minute_limit=five_minute_limit)
 
 # Create a new Blueprint for admin routes
-admin_bp = Blueprint('admin', __name__)
 
 @app.route('/reset_rate_limits')
 def reset_rate_limits():

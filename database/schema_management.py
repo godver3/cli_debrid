@@ -2,31 +2,12 @@ import logging
 from .core import get_db_connection, initialize_notifications_table
 from .torrent_tracking import create_torrent_tracking_table
 from .content_source_retry import create_retry_queue_table
-from .upgrade_hub_activity import create_upgrade_hub_activity_table
 from .nzb_repair_activity import create_nzb_repair_activity_table
 from .nzb_playback_repair import create_nzb_playback_repair_table
 from .scraper_grabs import create_scraper_grabs_table
 from .plex_reported_issues import create_plex_reported_issues_table
-import sqlite3
 import os
 
-
-def create_database():
-    create_tables()
-    create_torrent_tracking_table()
-    create_retry_queue_table()
-    create_upgrade_hub_activity_table()
-    create_nzb_repair_activity_table()
-    create_nzb_playback_repair_table()
-    create_scraper_grabs_table()
-    create_plex_reported_issues_table()
-    #TODO: create_upgrading_table()
-
-    # Add statistics-specific indexes
-    create_statistics_indexes()
-
-    # Create materialized views for statistics
-    create_statistics_summary_table()
 
 def migrate_schema():
     conn = get_db_connection()
@@ -891,6 +872,7 @@ def verify_database():
     create_tables()
     migrate_schema()
     create_torrent_tracking_table()
+    create_retry_queue_table()
     create_nzb_repair_activity_table()
     # verify_database() is the startup path for existing installations.
     # create_database() is only used for a brand-new database, so keeping the
@@ -1137,78 +1119,6 @@ def create_tables():
         if conn:
             conn.close()
 
-def purge_database(content_type=None, state=None):
-    conn = get_db_connection()
-    try:
-        query = 'DELETE FROM media_items WHERE 1=1'
-        params = []
-
-        if content_type != 'all':
-            query += ' AND type = ?'
-            params.append(content_type)
-
-        if state == 'working':
-            query += ' AND state NOT IN (?, ?, ?)'
-            params.extend(['Wanted', 'Collected', 'Blacklisted'])
-        elif state != 'all':
-            query += ' AND state = ?'
-            params.append(state)
-
-        logging.debug(f"Executing query: {query} with params: {params}")
-        conn.execute(query, params)
-        conn.commit()
-        logging.info(f"Database purged successfully for type '{content_type}' and state '{state}'.")
-
-        # Get db_content directory from environment variable with fallback
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        trakt_cache_file = os.path.join(db_content_dir, 'trakt_last_activity.pkl')
-        
-        if os.path.exists(trakt_cache_file):
-            os.remove(trakt_cache_file)
-            logging.info(f"Deleted Trakt cache file: {trakt_cache_file}")
-        else:
-            logging.info(f"Trakt cache file not found: {trakt_cache_file}")
-
-    except Exception as e:
-        logging.error(f"Error purging database: {e}")
-    finally:
-        conn.close()
-    create_tables()
-
-def create_statistics_indexes():
-    """Create indexes specifically for statistics queries"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Drop existing indexes if they exist to allow recreation
-    cursor.execute("DROP INDEX IF EXISTS idx_media_airing_improved")
-    cursor.execute("DROP INDEX IF EXISTS idx_media_airing_prefilter")
-    cursor.execute("DROP INDEX IF EXISTS idx_media_episodes_min_rowid")
-    cursor.execute("DROP INDEX IF EXISTS idx_media_episodes_min_id")
-    
-    # Create specific index for release date filtering on episodes (helps with temp table creation)
-    cursor.execute("""
-    CREATE INDEX IF NOT EXISTS idx_media_airing_prefilter ON media_items (
-        type, release_date, title
-    ) WHERE type = 'episode'
-    """)
-    
-    # Create index to help with the min id subquery
-    cursor.execute("""
-    CREATE INDEX IF NOT EXISTS idx_media_episodes_min_id ON media_items (
-        title, season_number, episode_number, id
-    ) WHERE type = 'episode'
-    """)
-    
-    # Create more specific index for the main airing query with ordered columns
-    cursor.execute("""
-    CREATE INDEX IF NOT EXISTS idx_media_airing_improved ON media_items (
-        type, title, release_date, airtime, season_number, episode_number, state
-    ) WHERE type = 'episode'
-    """)
-    
-    conn.commit()
-    conn.close()
 
 def create_statistics_summary_table():
     """Create the statistics summary table and its indexes"""

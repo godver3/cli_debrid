@@ -5,7 +5,6 @@ REST API endpoints for overlay management.
 """
 
 import logging
-import os
 import re
 import sqlite3
 from flask import Blueprint, jsonify, request, send_file, render_template, abort
@@ -51,7 +50,6 @@ def _serve_from_thumb_cache(cache_path: Path):
         age = __import__('time').time() - cache_path.stat().st_mtime
         if age > 86400:  # 24-hour TTL
             return None
-        from io import BytesIO
         from flask import Response
         data = cache_path.read_bytes()
         if not data:
@@ -138,12 +136,6 @@ def _get_overlay_manager():
     return _overlay_manager
 
 
-def _reset_overlay_manager():
-    """Force recreation of the OverlayManager on next use (e.g. after settings change)."""
-    global _overlay_manager
-    _overlay_manager = None
-
-
 def _get_media_client():
     """Get a media server client (PlexClient or JellyfinClient) using app settings."""
     if is_jellyfin_mode():
@@ -153,11 +145,6 @@ def _get_media_client():
     plex_url   = get_setting('Plex', 'url',   default='').rstrip('/')
     plex_token = get_setting('Plex', 'token', default='')
     return PlexClient(plex_url, plex_token)
-
-
-def _get_plex_client():
-    """Backward-compatible alias for _get_media_client (used by existing route code)."""
-    return _get_media_client()
 
 
 def _get_layout_manager():
@@ -2216,7 +2203,6 @@ def get_cleanup_stats():
 
         # Current backup directory size + orphaned count
         from overlays.cache_cleanup import PosterCacheManager
-        from pathlib import Path
         manager = PosterCacheManager(None)
         backup_stats = manager.get_backup_stats()
 

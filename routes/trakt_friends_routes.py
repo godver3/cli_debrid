@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request, render_template, redirect, url_for, session
+from flask import Blueprint, jsonify, request, render_template
 import logging
 import json
 import os

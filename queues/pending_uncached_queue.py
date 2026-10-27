@@ -291,26 +291,6 @@ class PendingUncachedQueue:
         update_media_item_state(item['id'], 'Wanted')
         self.remove_item(item)
 
-    def _get_parsed_scrape_results(self, item: Dict[str, Any]):
-        scrape_results = item.get('scrape_results', [])
-        if isinstance(scrape_results, str):
-            try:
-                return json.loads(scrape_results)
-            except json.JSONDecodeError:
-                logging.error(f"Failed to parse scrape_results for {item.get('id')}")
-                return []
-        elif isinstance(scrape_results, list) and all(isinstance(x, str) for x in scrape_results):
-            try:
-                joined_string = ''.join(scrape_results)
-                return json.loads(joined_string)
-            except json.JSONDecodeError:
-                logging.error(f"Failed to parse joined scrape_results for {item.get('id')}")
-                return []
-        elif isinstance(scrape_results, list):
-            return scrape_results
-        else:
-            logging.error(f"Invalid scrape_results format for {item.get('id')}")
-            return []
 
     def contains_item_id(self, item_id):
         """Check if the queue contains an item with the given ID"""

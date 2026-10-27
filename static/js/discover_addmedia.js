@@ -1224,48 +1224,63 @@
         }
     }
 
-    // Add torrent to Real-Debrid
+    // Add torrent (or NZB) to the debrid / usenet provider
     async function addToRealDebrid(magnet, torrentData) {
-        if (!magnet) {
+        const isNzb = (torrentData.protocol === 'nzb') || (torrentData.nzb_url && !magnet);
+        const isNzbPack = isNzb && !!torrentData.is_nzb_season_pack;
+        if (!magnet && !isNzb) {
             displayError('No magnet link available');
             return;
         }
 
         showLoadingState('Adding torrent, please wait...');
 
+        // Same form fields as scraper.js addToRealDebrid — /scraper/add_to_debrid reads request.form
+        const formData = new FormData();
+        formData.append('magnet_link', magnet || '');
+        formData.append('title', torrentData.title || '');
+        formData.append('year', torrentData.year || '');
+        formData.append('media_type', torrentData.media_type || '');
+        formData.append('season', torrentData.season || '');
+        formData.append('episode', torrentData.episode || '');
+        formData.append('version', torrentData.version || '');
+        formData.append('tmdb_id', torrentData.tmdb_id || '');
+        formData.append('genres', torrentData.genres || '');
+        formData.append('original_scraped_torrent_title', torrentData.original_title || torrentData.title || '');
+        formData.append('current_score', torrentData.score_breakdown?.total_score || '0');
+        ['source', 'scraper_type', 'scraper_instance', 'indexer'].forEach(k => {
+            if (torrentData[k]) formData.append(k, torrentData[k]);
+        });
+        if (isNzbPack) {
+            formData.append('protocol', 'nzb');
+            formData.append('episode_nzb_urls', JSON.stringify(torrentData.episode_nzb_urls || {}));
+            formData.append('fallback_nzb_urls', JSON.stringify(torrentData.fallback_nzb_urls || {}));
+            formData.append('episode_filenames', JSON.stringify(torrentData.episode_filenames || {}));
+            formData.append('pack_waterfall_level', torrentData.waterfall_level || '');
+        } else if (isNzb) {
+            formData.append('protocol', 'nzb');
+            formData.append('nzb_url', torrentData.nzb_url || magnet || '');
+        }
+
         try {
-            const response = await fetch('/add_item', {
+            const response = await fetch('/scraper/add_to_debrid', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    magnet: magnet,
-                    title: torrentData.title,
-                    year: torrentData.year,
-                    version: torrentData.version,
-                    media_type: torrentData.media_type,
-                    season: torrentData.season,
-                    episode: torrentData.episode,
-                    tmdb_id: torrentData.tmdb_id,
-                    genres: torrentData.genres,
-                    original_title: torrentData.original_title
-                })
+                body: formData
             });
 
-            const result = await response.json();
+            const result = await response.json().catch(() => ({}));
             hideLoadingState();
 
-            if (result.success) {
-                displaySuccess(result.message || 'Successfully added to Real-Debrid');
+            if (response.ok && !result.error) {
+                displaySuccess(result.message || 'Successfully added');
                 closeOverlay();
             } else {
-                displayError(result.error || 'Failed to add to Real-Debrid');
+                displayError(result.error || `Failed to add (HTTP ${response.status})`);
             }
         } catch (error) {
             hideLoadingState();
-            console.error('Error adding to Real-Debrid:', error);
-            displayError('An error occurred while adding to Real-Debrid');
+            console.error('Error adding item:', error);
+            displayError('An error occurred while adding the item');
         }
     }
 

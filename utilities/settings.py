@@ -2,10 +2,8 @@ import os
 import logging
 from urllib.parse import urlparse
 import json
-import ast
 from utilities.settings_schema import SETTINGS_SCHEMA
 from utilities.file_lock import FileLock
-import time
 import shutil # Added for copy2
 import pickle
 import threading
@@ -465,29 +463,6 @@ def set_setting(section, key, value):
     # Save the updated config (uses dynamic paths internally now)
     save_config(config)
 
-def parse_string_dicts(obj):
-    if isinstance(obj, dict):
-        return {k: parse_string_dicts(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [parse_string_dicts(item) for item in obj]
-    elif isinstance(obj, str):
-        try:
-            return parse_string_dicts(ast.literal_eval(obj))
-        except (ValueError, SyntaxError):
-            return obj
-    else:
-        return obj
-
-def deserialize_config(config):
-    if isinstance(config, dict):
-        return {k: deserialize_config(v) for k, v in config.items() if not k.isdigit()}
-    elif isinstance(config, list):
-        if config and isinstance(config[0], list) and len(config[0]) == 2:
-            # This is likely a preferred filter list
-            return [tuple(item) for item in config]
-        return [deserialize_config(item) for item in config]
-    else:
-        return config
 
 def validate_url(url):
     if not url or not isinstance(url, str): # Check type
@@ -532,14 +507,6 @@ def get_scraping_settings():
 
     return scraping_settings
 
-def get_jackett_settings():
-    config = load_config()
-    jackett_settings = {}
-    instances = config.get('Jackett', {})
-    for instance, settings in instances.items():
-        jackett_settings[f"{instance}"] = (settings)
-        
-    return jackett_settings
 
 def merge_configs(base, overlay):
     """Recursively merge two config dictionaries."""

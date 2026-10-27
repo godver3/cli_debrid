@@ -368,24 +368,6 @@ def _detect_duplicate_episodes(episodes):
     
     return duplicate_groups
 
-def _deduplicate_episodes(episodes, duplicate_groups):
-    """
-    Deduplicate episodes by keeping the one with the lower season number
-    (assuming season 1 is the canonical season).
-    """
-    # Create a set of episode IDs to exclude
-    exclude_ids = set()
-    
-    for group in duplicate_groups:
-        # Sort episodes by season number, keep the one with lower season
-        sorted_episodes = sorted(group['episodes'], key=lambda x: x['season_number'])
-        
-        # Mark all but the first (lowest season) for exclusion
-        for episode in sorted_episodes[1:]:
-            exclude_ids.add(episode['id'])
-    
-    # Filter out excluded episodes
-    return [ep for ep in episodes if ep['id'] not in exclude_ids]
 
 def cleanup_duplicate_episodes(tmdb_id):
     """

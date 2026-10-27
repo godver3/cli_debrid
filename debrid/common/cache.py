@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Any, Callable
-import logging
 
 def timed_lru_cache(seconds: int, maxsize: int = 128):
     """

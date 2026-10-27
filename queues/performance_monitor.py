@@ -1,15 +1,12 @@
 import psutil
 import os
-import gc
 import sys
 import logging
 import threading
-from collections import defaultdict, OrderedDict
-from datetime import datetime, timedelta
+from collections import defaultdict
+from datetime import datetime
 import time
 import json
-import platform
-from utilities.settings import get_setting
 
 _IS_WINDOWS = sys.platform == 'win32'
 
@@ -115,12 +112,6 @@ class PerformanceMonitor:
             self.monitor_thread.start()
             self.performance_logger.info("Started performance monitoring")
     
-    def stop_monitoring(self):
-        """Stop performance monitoring"""
-        try:
-            pass
-        except Exception as e:
-            self.performance_logger.error(f"Error stopping performance monitoring: {e}")
     
     def _monitor_loop(self):
         """Main monitoring loop that collects various performance metrics"""

@@ -131,9 +131,14 @@
       "runs": "Always on. Does nothing if no notifications are queued."
     },
     "task_check_database_health": {
-      "description": "Checks that media_items.db is readable and not corrupt. If it's corrupt, the queue pauses and a notification is sent, because the program needs a restart to rebuild the database.",
-      "action": "Run a database integrity check.",
+      "description": "Runs a read-only check that media_items.db and cli_battery.db are not corrupt. If one is, the queue pauses and a notification is sent so you can restore it from a backup. The check never changes the files, and a busy (locked) database doesn't count as corrupt.",
+      "action": "Run a read-only database corruption check.",
       "runs": "Always on."
+    },
+    "task_retry_content_source_removals": {
+      "description": "When you delete something and removing it from a content source (Overseerr, a Trakt list or collection) fails, for example on a timeout, the removal is queued here and retried so the next sync doesn't add the item back.",
+      "action": "Retry the queued content source removals that are due.",
+      "runs": "Always on. Retries after 2, 4, 8, 16 and 32 minutes, then gives up; does nothing when the queue is empty."
     },
     "task_backup_database": {
       "description": "Copies cli_mount's databases every run. Backs up media_items.db only when the program is idle, so the database isn't locked during busy processing.",

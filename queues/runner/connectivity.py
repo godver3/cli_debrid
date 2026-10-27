@@ -7,31 +7,6 @@ import time
 
 
 class ConnectivityTasks:
-    def force_connectivity_check(self):
-        """Force an immediate connectivity check and handle recovery if services are back"""
-        from routes.program_operation_routes import check_service_connectivity
-        
-        logging.info("[Force Connectivity Check] Manually triggered connectivity check")
-        
-        connectivity_ok, failed_services = check_service_connectivity()
-        
-        if connectivity_ok and self.connectivity_failure_time:
-            # Services are back!
-            logging.info("[Force Connectivity Check] Services restored! Clearing failure state and resuming queue.")
-            self.connectivity_failure_time = None
-            self.connectivity_retry_count = 0
-            self.pause_info = {
-                "reason_string": None, "error_type": None, "service_name": None,
-                "status_code": None, "retry_count": 0
-            }
-            self.resume_queue()
-            return True
-        elif not connectivity_ok:
-            logging.warning(f"[Force Connectivity Check] Services still unavailable: {[s.get('service') for s in failed_services]}")
-            return False
-        else:
-            logging.info("[Force Connectivity Check] All services operational")
-            return True
 
     def task_check_service_connectivity(self):
         """Check connectivity to required services"""
@@ -69,8 +44,6 @@ class ConnectivityTasks:
                 self.handle_connectivity_failure(failed_services)
 
     def handle_connectivity_failure(self, failed_services_details=None): # MODIFIED: expects detailed list
-        from routes.program_operation_routes import check_service_connectivity # Keep this for potential re-check logic
-        from routes.extensions import app
 
         current_pause_info = {
             "reason_string": "Connectivity failure - waiting for services to be available",
@@ -120,7 +93,6 @@ class ConnectivityTasks:
 
     def check_connectivity_status(self):
         from routes.program_operation_routes import check_service_connectivity
-        from routes.extensions import app
 
         if not self.connectivity_failure_time:
             return 

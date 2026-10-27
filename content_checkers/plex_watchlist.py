@@ -19,13 +19,11 @@ from plexapi.myplex import MyPlexAccount
 
 from typing import List, Dict, Any, Tuple
 from utilities.settings import get_setting
-from database.database_reading import get_media_item_presence, get_media_item_presence_overall
+from database.database_reading import get_media_item_presence_overall
 from queues.config_manager import load_config
 from cli_battery.app.direct_api import DirectAPI
 import os
-import pickle
-from datetime import datetime, timedelta
-from .plex_token_manager import update_token_status, get_token_status, load_token_status
+from .plex_token_manager import update_token_status, load_token_status
 from .skipped_items import SkippedItems as _SkippedItems, NO_ID_REASON as _NO_ID_REASON, fetch_error_reason as _fetch_error_reason
 import time
 import aiohttp
@@ -35,26 +33,8 @@ from types import SimpleNamespace
 
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-PLEX_WATCHLIST_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'plex_watchlist_cache.pkl')
-OTHER_PLEX_WATCHLIST_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'other_plex_watchlist_cache.pkl')
 CACHE_EXPIRY_DAYS = 7
 
-def load_plex_cache(cache_file):
-    try:
-        if os.path.exists(cache_file):
-            with open(cache_file, 'rb') as f:
-                return pickle.load(f)
-    except (EOFError, pickle.UnpicklingError, FileNotFoundError) as e:
-        logging.warning(f"Error loading Plex watchlist cache: {e}. Creating a new cache.")
-    return {}
-
-def save_plex_cache(cache, cache_file):
-    try:
-        os.makedirs(os.path.dirname(cache_file), exist_ok=True)
-        with open(cache_file, 'wb') as f:
-            pickle.dump(cache, f)
-    except Exception as e:
-        logging.error(f"Error saving Plex watchlist cache: {e}")
 
 async def _fetch_item_details_once(session, item_data, plex_token_str):
     """

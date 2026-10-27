@@ -4,7 +4,6 @@ import re
 from typing import Dict, Any
 from difflib import SequenceMatcher
 from fuzzywuzzy import fuzz
-from PTT import parse_title
 import unicodedata
 from scraper.functions import *
 from scraper.functions.ptt_parser import parse_with_ptt
@@ -90,16 +89,6 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
 
     return similarity  # Already a float between 0 and 1
 
-def preprocess_title(title):
-    # Remove only non-resolution quality terms
-    terms_to_remove = ['web-dl', 'webrip', 'bluray', 'dvdrip']
-    for term in terms_to_remove:
-        title = re.sub(r'\b' + re.escape(term) + r'\b', '', title, flags=re.IGNORECASE)
-    # Remove any resulting double periods
-    title = re.sub(r'\.{2,}', '.', title)
-    # Remove any resulting double spaces
-    title = re.sub(r'\s+', ' ', title)
-    return title.strip()
 
 @lru_cache(maxsize=1024)
 def normalize_title(title: str) -> str:

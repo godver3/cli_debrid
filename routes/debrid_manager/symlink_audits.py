@@ -161,7 +161,7 @@ def _walk_rclone_dir(top_dir):
 
 def _run_symlink_audit_bg(rclone_dir, symlink_dir):
     """Background thread: walk dirs, build results, store in _symlink_audit_state."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor
     try:
         # Step 1: build symlink target index
         target_to_links = defaultdict(list)

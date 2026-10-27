@@ -1,21 +1,18 @@
-from flask import jsonify, request, current_app, Blueprint, logging, render_template, flash, redirect, url_for
-from routes import admin_required, user_required
+from flask import jsonify, request, current_app, Blueprint, logging, render_template
+from routes import admin_required
 from .database_routes import perform_database_migration 
 from routes.extensions import initialize_app 
 from queues.config_manager import load_config 
 from utilities.settings import get_setting
 import threading
 from queues.run_program import ProgramRunner, _setup_scheduler_listeners
-from flask_login import login_required
 from requests.exceptions import RequestException
 from routes.api_tracker import api
 import logging
 import time
-import socket
 import os
 import re
 import signal
-import psutil
 import sys
 import subprocess
 import xml.etree.ElementTree as ET
@@ -23,12 +20,8 @@ from routes.notifications import (
     send_queue_start_notification,
     send_queue_stop_notification
 )
-from apscheduler.triggers.interval import IntervalTrigger
-from datetime import timezone
-import pytz
 from datetime import datetime, timedelta
 import json
-from content_checkers.trakt import is_refresh_token_expired
 from utilities.jellyfin_auth import jellyfin_auth_headers
 
 program_operation_bp = Blueprint('program_operation', __name__)

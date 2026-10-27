@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, date
 from utilities.settings import get_setting
 from utilities.log_context import logs_for_item
 from queues.config_manager import get_version_settings, load_config
-from database.database_reading import check_existing_media_item, get_media_item_by_id, get_media_item_presence
+from database.database_reading import check_existing_media_item, get_media_item_by_id
 from database.database_writing import (
     update_release_date_and_state,
     update_media_item_state,

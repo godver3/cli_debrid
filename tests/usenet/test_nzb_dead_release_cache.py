@@ -12,7 +12,6 @@ the rest of this suite) that _process_nzb_result is actually wired to check
 and populate the cache.
 """
 
-import os
 import unittest
 
 from pathlib import Path

@@ -9,10 +9,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import logging
 from typing import List, Dict, Any, Optional
 from routes.api_tracker import api
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 from bs4 import BeautifulSoup
 import re
-from scraper.functions import *
 from database.database_writing import update_anime_format, get_anime_format
 
 def scrape_nyaa_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:

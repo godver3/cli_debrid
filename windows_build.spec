@@ -171,7 +171,6 @@ a = Analysis(
         'database',
         'database.core',
         'database.collected_items',
-        'database.blacklist',
         'database.schema_management',
         'database.poster_management',
         'database.statistics',

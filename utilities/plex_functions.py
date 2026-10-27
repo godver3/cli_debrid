@@ -4,14 +4,12 @@ import logging
 from utilities.settings import get_setting
 import time
 from typing import Dict, List, Any, Tuple, Optional
-import ast
 import re
 import plexapi.server
 import plexapi.exceptions
 import plexapi.library
 import os
 from pathlib import Path
-from cli_battery.app.direct_api import DirectAPI
 from plexapi.server import PlexServer
 from plexapi.library import LibrarySection
 from database.database_reading import get_media_item_by_id
@@ -521,7 +519,6 @@ async def process_movies_chunk(session: aiohttp.ClientSession, plex_url: str, he
     return results
 
 async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
-    from metadata.metadata import get_metadata, get_release_date
     genres = [genre['tag'] for genre in movie.get('Genre', []) if 'tag' in genre]
     filtered_genres = filter_genres(genres)
     # logging.info(f"Movie: {movie['title']}")
@@ -1234,7 +1231,6 @@ def filter_genres(genres):
     return filtered
 
 async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
-    from metadata.metadata import get_metadata, get_release_date
     genres = [genre['tag'] for genre in movie.get('Genre', []) if 'tag' in genre]
     filtered_genres = filter_genres(genres)
     logging.info(f"Movie: {movie['title']}")
@@ -1934,11 +1930,6 @@ def _find_plex_owner_of_file(plex, item_title, item_path, episode_title=None):
                 if any(os.path.basename(part.file) == target for part in media.parts):
                     return owner, media
     return None, None
-
-
-def _plex_has_file(plex, item_title, item_path, episode_title=None) -> bool:
-    """True if Plex already has a media part with item_path's file name under item_title."""
-    return _find_plex_owner_of_file(plex, item_title, item_path, episode_title)[0] is not None
 
 
 def _file_management_plex():

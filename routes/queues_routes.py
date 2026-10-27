@@ -6,16 +6,15 @@ import logging
 from .program_operation_routes import get_program_status
 from queues.initialization import get_initialization_status
 from queues.run_program import is_initial_sync_running
-from utilities.settings import get_setting
 import json
 import time
-from database.database_reading import get_all_media_items, get_item_count_by_state, get_item_counts_by_states
+from database.database_reading import get_all_media_items, get_item_counts_by_states
 
 # Add rate limiting and caching improvements to prevent bombarding Real-Debrid API
 import time
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Union, Tuple
+from typing import Dict, Optional
 import json
 import threading
 from collections import defaultdict
@@ -1254,9 +1253,6 @@ def queue_stream():
 
     return Response(generate(), mimetype='text/event-stream')
 
-def get_paginated_items(queue_name, page, per_page):
-    # Implementation of get_paginated_items function
-    pass
 
 def get_items_processed_per_hour():
     """Return the number of items collected in the last hour. Cached for 15 minutes to reduce DB load."""

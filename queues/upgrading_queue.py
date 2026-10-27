@@ -1,12 +1,10 @@
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime, timedelta, timezone
-from database.database_writing import add_to_collected_notifications
+from datetime import datetime, timedelta
 from queues.scraping_queue import ScrapingQueue
 from queues.adding_queue import AddingQueue
 from utilities.settings import get_setting
 from utilities.log_context import logs_for_item
-from utilities.plex_functions import remove_file_from_plex
 from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
 import os
 import pickle
@@ -15,11 +13,8 @@ from utilities.atomic_io import atomic_write_bytes
 from database.database_writing import update_media_item
 from database.core import get_db_connection
 from difflib import SequenceMatcher
-from debrid.common import extract_hash_from_magnet, extract_hash_from_file
+from debrid.common import extract_hash_from_magnet
 from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
-from PTT import parse_title
-import re
-from scraper.functions.ptt_parser import parse_with_ptt
 
 class UpgradingQueue:
     def __init__(self):
@@ -168,12 +163,6 @@ class UpgradingQueue:
         # --- Log SUCCESS *after* saving ---
         logging.info(f"Saved state snapshot for item {item_id} (Total states stored for item: {len(self.upgrade_states[item_id])})")
 
-    def get_last_stable_state(self, item_id: str) -> Optional[Dict[str, Any]]:
-        """Get the most recent stable state for an item"""
-        if item_id not in self.upgrade_states or not self.upgrade_states[item_id]:
-            return None
-        
-        return self.upgrade_states[item_id][-1]['state']
 
     def restore_item_state(self, item: Dict[str, Any]) -> bool:
         """Restore item to its last stable state"""
@@ -261,44 +250,6 @@ class UpgradingQueue:
         })
         self.save_failed_upgrades()
 
-    @logs_for_item
-    def revert_failed_upgrade(self, item: Dict[str, Any]):
-        """Revert an item back to its previous state when an upgrade fails"""
-        logging.info(f"Reverting failed upgrade for item {self.generate_identifier(item)}")
-        
-        # Get the previous file information
-        upgrading_from = item.get('upgrading_from')
-        upgrading_from_torrent_id = item.get('upgrading_from_torrent_id')
-        
-        if upgrading_from:
-            # Update the database to revert the upgrade
-            conn = get_db_connection()
-            try:
-                conn.execute('BEGIN TRANSACTION')
-                conn.execute('''
-                    UPDATE media_items
-                    SET filled_by_file = ?,
-                        filled_by_torrent_id = ?,
-                        upgrading_from = NULL,
-                        upgrading_from_torrent_id = NULL,
-                        state = 'Upgrading',
-                        last_updated = ?
-                    WHERE id = ?
-                ''', (
-                    upgrading_from,
-                    upgrading_from_torrent_id,
-                    datetime.now(),
-                    item['id']
-                ))
-                conn.commit()
-                logging.info(f"Successfully reverted upgrade for item {self.generate_identifier(item)}")
-            except Exception as e:
-                conn.rollback()
-                logging.error(f"Failed to revert upgrade: {str(e)}")
-            finally:
-                conn.close()
-        else:
-            logging.warning(f"No previous version found for item {self.generate_identifier(item)}")
 
     def update(self):
         from database import get_all_media_items
@@ -701,8 +652,9 @@ class UpgradingQueue:
         show_season_episode_counts = None
         if content_type == 'episode' and query_season:
             try:
-                from metadata.metadata import get_show_season_episode_counts
-                show_season_episode_counts = get_show_season_episode_counts(item.get('tmdb_id'))
+                # Same source the scraper ranks new candidates with, so both sides compare alike
+                from database.database_reading import get_all_season_episode_counts
+                show_season_episode_counts = get_all_season_episode_counts(item.get('tmdb_id'))
             except Exception as e:
                 logging.debug(f"Could not get season episode counts for scoring: {e}")
         
@@ -1389,17 +1341,6 @@ class UpgradingQueue:
         else:
             logging.warning(f"No new values obtained from AddingQueue for item {self.generate_identifier(item)} during upgrade finalization.")
 
-    def check_multi_pack(self, item: Dict[str, Any]) -> bool:
-        if item['type'] != 'episode':
-            return False
-
-        return any(
-            other_item['type'] == 'episode' and
-            other_item['imdb_id'] == item['imdb_id'] and
-            other_item['season_number'] == item['season_number'] and
-            other_item['id'] != item['id']
-            for other_item in self.items
-        )
 
     @staticmethod
     def generate_identifier(item: Dict[str, Any]) -> str:
@@ -1416,17 +1357,6 @@ class UpgradingQueue:
         """Check if the queue contains an item with the given ID"""
         return any(i['id'] == item_id for i in self.items)
 
-    def _normalize_title_for_comparison(self, title_string: Optional[str]) -> str:
-        """Normalizes a title string by replacing spaces with periods for comparison."""
-        if not title_string:
-            return ""
-        try:
-            # Only replace spaces with periods
-            return title_string.replace(' ', '.')
-        except Exception as e:
-            # Fallback in case of unexpected error, return original (though unlikely for replace)
-            logging.error(f"Unexpected error during simple title normalization: '{title_string}'. Error: {e}. Returning original string.")
-            return title_string
 
 def log_successful_upgrade(item: Dict[str, Any]):
     # Get db_content directory from environment variable with fallback

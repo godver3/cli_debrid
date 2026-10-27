@@ -4,15 +4,12 @@ and addition to debrid service accounts.
 """
 
 import logging
-import re
 import time
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
 import tempfile
 import requests
 import os
-import bencodepy
-import hashlib
 import inspect
 from datetime import datetime, timedelta
 
@@ -21,11 +18,7 @@ from debrid.base import DebridProvider, TooManyDownloadsError, ProviderUnavailab
 from debrid.common import (
     extract_hash_from_magnet,
     extract_hash_from_file,
-    is_video_file,
-    is_unwanted_file,
-    download_and_extract_hash
 )
-from debrid.status import TorrentStatus
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls, is_magnet_not_wanted
 from database.scraper_grabs import record_grab, queue_grab_trigger
 from utilities.settings import get_setting
@@ -36,9 +29,6 @@ class TorrentProcessingError(Exception):
     """Base exception for torrent processing errors"""
     pass
 
-class NoVideoFilesError(TorrentProcessingError):
-    """Raised when a torrent has no valid video files"""
-    pass
 
 class TorrentAdditionError(TorrentProcessingError):
     """Raised when a torrent fails to be added to the debrid service"""
@@ -302,9 +292,6 @@ class TorrentProcessor:
             import tempfile
             import requests
             import os
-            import bencodepy
-            import hashlib
-            from debrid.common.torrent import torrent_to_magnet
             
             # Create a temporary file to store the torrent
             with tempfile.NamedTemporaryFile(suffix='.torrent', delete=False) as tmp:
@@ -574,7 +561,7 @@ class TorrentProcessor:
             # filename while the episode marker survives only in filled_by_title.
             if not is_likely_season_pack(check_title, filled_by_title):
                 return None
-            if rescrape_blocks_pack_reuse(item, check_title):
+            if rescrape_blocks_pack_reuse(item, check_title, torrent_id):
                 return None
             from utilities.session_bad_torrents import is_torrent_known_unplayable
             for provider in self._providers:
@@ -962,7 +949,7 @@ class TorrentProcessor:
                         _mem_job = _mem_item.get('filled_by_torrent_id')
                         _mem_id = _mem_job[4:] if _mem_job and _mem_job.startswith('nzb:') else _mem_job
                         if _mem_is_pack:
-                            if rescrape_blocks_pack_reuse(item, _mem_check_title):
+                            if rescrape_blocks_pack_reuse(item, _mem_check_title, _mem_job):
                                 continue
                             # Verify the shared pack job is still actually queryable on the
                             # provider before reusing it - a job that completed and was since
@@ -1030,7 +1017,7 @@ class TorrentProcessor:
                         # when the title/filename precedence above doesn't.
                         _sibling_is_pack = _is_likely_season_pack_db(_sibling_check_title, _sibling[3] or '')
                         if _sibling_is_pack:
-                            if rescrape_blocks_pack_reuse(item, _sibling_check_title):
+                            if rescrape_blocks_pack_reuse(item, _sibling_check_title, _sibling[0]):
                                 _sibling_is_pack = False
                             else:
                                 # Verify the shared pack job is still actually queryable on the

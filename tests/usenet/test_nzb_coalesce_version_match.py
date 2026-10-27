@@ -11,7 +11,6 @@ to confirm cross-version reuse is blocked while same-version reuse
 """
 
 import os
-import re
 import sqlite3
 import unittest
 

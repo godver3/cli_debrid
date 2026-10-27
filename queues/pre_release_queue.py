@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from database.database_writing import update_media_item_state
 from scraper.scraper import scrape
 from utilities.settings import get_setting
@@ -142,9 +142,6 @@ class PreReleaseQueue:
         except Exception as e:
             logging.error(f"Error updating pre-release queue: {str(e)}")
 
-    def get_contents(self):
-        """Get current queue contents"""
-        return self.items.copy()
 
     def add_item(self, item: Dict[str, Any]):
         """Add an item to the queue"""
@@ -157,9 +154,6 @@ class PreReleaseQueue:
         self.items = [i for i in self.items if i['id'] != item['id']]
         logging.debug(f"Removed item {item.get('id')} from pre-release queue")
 
-    def contains_item_id(self, item_id):
-        """Check if an item with the given ID is in the queue"""
-        return any(item['id'] == item_id for item in self.items)
 
     def should_perform_daily_scrape(self, item_id: str, current_time: datetime) -> bool:
         """Check if we should perform a daily scrape for this item"""

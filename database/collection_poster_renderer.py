@@ -17,7 +17,7 @@ from utilities.paths import config_dir
 from typing import Optional, Tuple, List
 
 try:
-    from PIL import Image, ImageDraw, ImageFilter
+    from PIL import Image, ImageDraw
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
@@ -63,14 +63,6 @@ def _rgba(h: str, a: int = 255) -> Tuple[int, int, int, int]:
     return (r, g, b, a)
 
 
-def _darken(color: Tuple, factor: float = 0.5) -> Tuple:
-    return tuple(max(0, int(c * factor)) for c in color)
-
-
-def _lighten(color: Tuple, factor: float = 1.5) -> Tuple:
-    return tuple(min(255, int(c * factor)) for c in color)
-
-
 # ── Drawing primitives ─────────────────────────────────────────────────────────
 
 def _radial_glow(size: Tuple[int, int], color_rgb: Tuple, radius: float = 0.4,
@@ -88,34 +80,6 @@ def _radial_glow(size: Tuple[int, int], color_rgb: Tuple, radius: float = 0.4,
             alpha = max(0, int(opacity * (1 - min(1.0, d))))
             pix[px, py] = (r, g, b, alpha)
     return glow
-
-
-def _rounded_rect(draw: ImageDraw.Draw, xy: Tuple, radius: int,
-                  fill=None, outline=None, width: int = 1):
-    """Draw a rounded rectangle."""
-    x0, y0, x1, y1 = xy
-    if fill:
-        draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=fill,
-                               outline=outline, width=width)
-    elif outline:
-        draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=None,
-                               outline=outline, width=width)
-
-
-def _linear_gradient(size: Tuple, c1: Tuple, c2: Tuple, angle: float = 150) -> Image.Image:
-    """Create a linear gradient image."""
-    img = Image.new('RGBA', size)
-    pix = img.load()
-    w, h = size
-    rad = math.radians(angle - 90)
-    dx, dy = math.cos(rad), math.sin(rad)
-    for py in range(h):
-        for px in range(w):
-            nx = px / (w - 1) if w > 1 else 0.5
-            ny = py / (h - 1) if h > 1 else 0.5
-            t = max(0.0, min(1.0, (w*(nx-0.5)*dx + h*(ny-0.5)*dy) / math.sqrt(w*w+h*h) + 0.5))
-            pix[px, py] = tuple(int(c1[i] + (c2[i]-c1[i])*t) for i in range(4))
-    return img
 
 
 def _load_icon(path: str, size: int = 76) -> Optional[Image.Image]:
@@ -194,77 +158,11 @@ def _text_size(draw: ImageDraw.Draw, text: str, font) -> Tuple[int, int]:
         return len(text) * 10, 20
 
 
-def _draw_text_shadow(draw: ImageDraw.Draw, pos: Tuple, text: str, font,
-                      fill: Tuple, shadow_offset: int = 2, shadow_opacity: int = 80):
-    """Draw text with a drop shadow."""
-    sx, sy = pos[0] + shadow_offset, pos[1] + shadow_offset
-    draw.text((sx, sy), text, font=font, fill=(0, 0, 0, shadow_opacity))
-    draw.text(pos, text, font=font, fill=fill)
-
-
 def _paste_icon(canvas: Image.Image, icon: Image.Image, x: int, y: int):
     """Paste an RGBA icon onto canvas."""
     if icon.mode != 'RGBA':
         icon = icon.convert('RGBA')
     canvas.paste(icon, (x, y), icon)
-
-
-def _draw_circle_icon_ring(canvas: Image.Image, draw: ImageDraw.Draw,
-                           cx: int, cy: int, r: int,
-                           ring_color: Tuple, fill_color: Tuple,
-                           icon: Optional[Image.Image] = None,
-                           letter: str = '', letter_color: Tuple = (255,255,255,255),
-                           font=None):
-    """Draw a circle ring with optional icon or letter inside."""
-    # Fill
-    draw.ellipse([cx-r, cy-r, cx+r, cy+r], fill=fill_color)
-    # Ring border
-    draw.ellipse([cx-r, cy-r, cx+r, cy+r], outline=ring_color, width=3)
-    if icon:
-        icon_size = int(r * 1.1)
-        icon_r = icon.resize((icon_size, icon_size), Image.LANCZOS)
-        _paste_icon(canvas, icon_r, cx - icon_size//2, cy - icon_size//2)
-    elif letter:
-        if font:
-            tw, th = _text_size(draw, letter, font)
-            draw.text((cx - tw//2, cy - th//2), letter, font=font, fill=letter_color)
-
-
-def _card_gradient_colors(card_index: int, accent_rgb: Tuple) -> Tuple[Tuple, Tuple]:
-    """Generate per-card gradient colors based on index and accent."""
-    palettes = [
-        ((8, 18, 32), (20, 50, 80)),    # dark blue
-        ((20, 10, 30), (45, 15, 60)),   # dark purple
-        ((30, 8, 12), (65, 15, 25)),    # dark red
-        ((10, 18, 12), (20, 40, 25)),   # dark green
-    ]
-    c1, c2 = palettes[card_index % 4]
-    # Blend a hint of accent color into c2
-    a = accent_rgb
-    c2_blended = (
-        min(255, c2[0] + a[0]//8),
-        min(255, c2[1] + a[1]//8),
-        min(255, c2[2] + a[2]//8),
-    )
-    return (c1[0], c1[1], c1[2], 255), (c2_blended[0], c2_blended[1], c2_blended[2], 255)
-
-
-def _card_glow_color(card_index: int, accent_rgb: Tuple) -> Tuple:
-    """Get per-card glow color."""
-    bases = [
-        (40, 100, 200),  # blue
-        (120, 60, 220),  # purple
-        (200, 40, 60),   # red
-        (40, 160, 80),   # green
-    ]
-    b = bases[card_index % 4]
-    # Mix with accent
-    a = accent_rgb
-    return (
-        (b[0] + a[0]) // 2,
-        (b[1] + a[1]) // 2,
-        (b[2] + a[2]) // 2,
-    )
 
 
 def _build_card_grid(canvas: Image.Image, movie_thumbs: List[Optional[Image.Image]],
@@ -347,39 +245,6 @@ def _build_card_grid(canvas: Image.Image, movie_thumbs: List[Optional[Image.Imag
                 title = titles[i][:22] + '…' if len(titles[i]) > 22 else titles[i]
                 draw.text((cx + 12, cy + card_h - 48), title,
                           font=bottom_title_font, fill=title_color)
-
-
-
-def _draw_plex_logo_box(canvas: Image.Image, draw: ImageDraw.Draw,
-                        x: int, y: int, size: int, bg_color: Tuple):
-    """Draw a Plex-style logo box (rounded square with chevron)."""
-    # Box
-    draw.rounded_rectangle([x, y, x+size, y+size], radius=size//4, fill=bg_color)
-    # Chevron arrow pointing right
-    bg = (bg_color[0]//4, bg_color[1]//4, bg_color[2]//4, 255)
-    cx, cy = x + size//2, y + size//2
-    s = size // 4
-    chevron = [
-        (cx - s, cy - s*2),
-        (cx + s, cy),
-        (cx - s, cy + s*2),
-        (cx - s + s//2, cy + s*2),
-        (cx + s + s//2, cy),
-        (cx - s + s//2, cy - s*2),
-    ]
-    draw.polygon(chevron, fill=bg)
-
-
-def _draw_pill_badge(draw: ImageDraw.Draw, x: int, y: int, text: str,
-                     font, text_color: Tuple, bg_color: Tuple, border_color: Tuple):
-    """Draw a rounded pill badge with text."""
-    if not font:
-        return
-    tw, th = _text_size(draw, text, font)
-    px, py = 16, 8
-    draw.rounded_rectangle([x, y, x+tw+px*2, y+th+py*2], radius=24,
-                            fill=bg_color, outline=border_color, width=1)
-    draw.text((x+px, y+py), text, font=font, fill=text_color)
 
 
 def _draw_eyebrow(draw: ImageDraw.Draw, x: int, y: int, text: str,
@@ -522,62 +387,6 @@ def render_design_1(collection_name: str, eyebrow: str, accent: str,
     return canvas.convert('RGB')
 
 
-def render_design_2(collection_name: str, eyebrow: str, accent: str,
-                    icon_path: str, movie_thumbs: List, source_type: str,
-                    overlay_opacity: int = 60, glow_opacity: int = 80,
-                    glow_radius: int = 55) -> Image.Image:
-    """Animation — left-aligned, Plex logo box, genre pill, sparkle symbols."""
-    accent_rgb = _hex(accent)
-    canvas = _base_canvas('#06040e')
-    canvas = _top_glow(canvas, accent_rgb, opacity=glow_opacity, cx=0.0, cy=-0.1, radius=glow_radius/100)
-    canvas = _bottom_right_glow(canvas, (255, 180, 0), opacity=40)
-    draw = ImageDraw.Draw(canvas)
-
-    f_title = _load_font('Nunito', 86, bold=True)
-    f_eyebrow = _load_font('DM Sans', 32, bold=True)
-    f_pill = _load_font('DM Sans', 18)
-    f_card_title = _load_font('Nunito', 30, bold=True)
-    f_symbol = _load_font('DM Sans', 28)
-
-    # Logo box top-left
-    box_size = 76
-    draw.rounded_rectangle([40, 52, 40+box_size, 52+box_size],
-                            radius=18, fill=(accent_rgb[0], accent_rgb[1], accent_rgb[2], 255))
-    icon = _load_icon(icon_path, 50) if icon_path else None
-    if icon:
-        _paste_icon(canvas, icon.resize((50, 50), Image.LANCZOS), 40+13, 52+13)
-    else:
-        # Chevron
-        _draw_plex_logo_box(canvas, draw, 40, 52, box_size,
-                            (accent_rgb[0], accent_rgb[1], accent_rgb[2], 255))
-
-    # Genre pill top-right
-    _draw_pill_badge(draw, W-200, 58, 'Collection', f_pill,
-                     (accent_rgb[0], accent_rgb[1], accent_rgb[2], 220),
-                     (accent_rgb[0], accent_rgb[1], accent_rgb[2], 25),
-                     (accent_rgb[0], accent_rgb[1], accent_rgb[2], 60))
-
-    # Text
-    tx, ty = 40, 155
-    ey_h = _draw_eyebrow(draw, tx, ty, eyebrow, f_eyebrow,
-                         (accent_rgb[0], accent_rgb[1], accent_rgb[2], 200))
-    ty += ey_h
-    _draw_title(draw, tx, ty, collection_name, f_title, (255, 255, 255, 255), W-80)
-
-    # Grid with sparkle
-    grid_y = 454
-    card_w, card_h = 308, 462
-    _build_card_grid(canvas, movie_thumbs, accent_rgb, grid_y,
-                     card_w, card_h, pad_x=182, gap=32, overlay_opacity=overlay_opacity,
-                     corner_symbol='✦', symbol_font=f_symbol,
-                     bottom_title_font=f_card_title, titles=[''] * 4)
-
-    footer_y = grid_y + card_h*2 + 32 + 24
-    _footer_line(draw, footer_y)
-    _footer_pips(draw, accent_rgb, footer_y + 14)
-    return canvas.convert('RGB')
-
-
 def render_design_3(collection_name: str, eyebrow: str, accent: str,
                     icon_path: str, movie_thumbs: List, source_type: str,
                     overlay_opacity: int = 60, glow_opacity: int = 80,
@@ -691,59 +500,6 @@ def render_design_4(collection_name: str, eyebrow: str, accent: str,
     return canvas.convert('RGB')
 
 
-def render_design_5(collection_name: str, eyebrow: str, accent: str,
-                    icon_path: str, movie_thumbs: List, source_type: str,
-                    overlay_opacity: int = 60, glow_opacity: int = 80,
-                    glow_radius: int = 55) -> Image.Image:
-    """Indian Cinema — saffron accent, tricolor stripe, language tags."""
-    accent_rgb = _hex(accent)
-    canvas = _base_canvas('#09060e')
-    canvas = _top_glow(canvas, (255, 100, 0), opacity=80, cx=0.5, cy=-0.08)
-    canvas = _bottom_right_glow(canvas, (200, 0, 80), opacity=35)
-    draw = ImageDraw.Draw(canvas)
-
-    f_title = _load_font('DM Sans', 86, bold=True)
-    f_eyebrow = _load_font('DM Sans', 32, bold=True)
-    f_card_title = _load_font('DM Sans', 30, bold=True)
-    f_tag = _load_font('DM Sans', 20, bold=True)
-
-    # Logo box
-    icon = _load_icon(icon_path, 0) if icon_path else None
-    if icon:
-        # Scale icon to fit within 400x124 preserving aspect ratio (scale up or down)
-        max_w, max_h = 400, 124
-        ratio = min(max_w / icon.width, max_h / icon.height)
-        new_w = int(icon.width * ratio)
-        new_h = int(icon.height * ratio)
-        icon = icon.resize((new_w, new_h), Image.LANCZOS)
-        _paste_icon(canvas, icon, W//2 - icon.width//2, 44 + (max_h - icon.height)//2)
-
-    # Tricolor flag strip top-right
-    flag_colors = [(255, 153, 51), (255, 255, 255), (19, 136, 8)]
-    for i, fc in enumerate(flag_colors):
-        fx = W - 52 - (2-i)*22
-        draw.rounded_rectangle([fx, 60, fx+14, 104], radius=2, fill=(*fc, 220))
-
-    tx, ty = 40, 155
-    ey_h = _draw_eyebrow(draw, tx, ty, eyebrow, f_eyebrow,
-                         (accent_rgb[0], accent_rgb[1], accent_rgb[2], 200))
-    ty += ey_h
-    _draw_title(draw, tx, ty, collection_name, f_title, (255, 255, 255, 255), W-80)
-
-    grid_y = 454
-    card_w, card_h = 308, 462
-    _build_card_grid(canvas, movie_thumbs, accent_rgb, grid_y,
-                     card_w, card_h, pad_x=182, gap=32, overlay_opacity=overlay_opacity,
-                     show_tag=True, tags=['HI', 'TA', 'TE', 'HI'], tag_font=f_tag,
-                     tag_color=(accent_rgb[0], accent_rgb[1], accent_rgb[2], 220),
-                     bottom_title_font=f_card_title, titles=[''] * 4)
-
-    footer_y = grid_y + card_h*2 + 32 + 24
-    _footer_line(draw, footer_y)
-    _footer_pips(draw, accent_rgb, footer_y + 14)
-    return canvas.convert('RGB')
-
-
 def render_design_6(collection_name: str, eyebrow: str, accent: str,
                     icon_path: str, movie_thumbs: List, source_type: str,
                     overlay_opacity: int = 60, glow_opacity: int = 80,
@@ -811,58 +567,6 @@ def render_design_6(collection_name: str, eyebrow: str, accent: str,
                          fill=(accent_rgb[0], accent_rgb[1], accent_rgb[2], 200))
         else:
             draw.ellipse([cx2-5, footer_y+10, cx2+5, footer_y+20], fill=(50, 50, 50, 200))
-    return canvas.convert('RGB')
-
-
-def render_design_7(collection_name: str, eyebrow: str, accent: str,
-                    icon_path: str, movie_thumbs: List, source_type: str,
-                    overlay_opacity: int = 60, glow_opacity: int = 80,
-                    glow_radius: int = 55) -> Image.Image:
-    """Curated List / Plex Foreign redesign — centered vertical, globe emoji, ordinal numbers."""
-    accent_rgb = _hex(accent)
-    canvas = _base_canvas('#111008')
-    canvas = _top_glow(canvas, accent_rgb, opacity=glow_opacity, cx=0.5, cy=-0.08, radius=glow_radius/100)
-    draw = ImageDraw.Draw(canvas)
-
-    f_title = _load_font('Syne', 76, bold=True)
-    f_service = _load_font('DM Sans', 20)
-    f_card_title = _load_font('Syne', 30, bold=True)
-    f_ord = _load_font('Syne', 22, bold=True)
-    f_glob = _load_font('DM Sans', 26)
-
-    # Centered logo box
-    box_size = 88
-    bx = W//2 - box_size//2
-    draw.rounded_rectangle([bx, 44, bx+box_size, 44+box_size],
-                            radius=20, fill=(accent_rgb[0], accent_rgb[1], accent_rgb[2], 255))
-    icon = _load_icon(icon_path, 60) if icon_path else None
-    if icon:
-        _paste_icon(canvas, icon.resize((60, 60), Image.LANCZOS), bx+14, 44+14)
-
-    # Service tag centered
-    svc = eyebrow or 'Curated Collection'
-    if f_service:
-        sw, sh = _text_size(draw, svc.upper(), f_service)
-        draw.text((W//2 - sw//2, 148), svc.upper(), font=f_service,
-                  fill=(accent_rgb[0], accent_rgb[1], accent_rgb[2], 200))
-
-    # Centered title
-    if f_title:
-        tw, th = _text_size(draw, collection_name, f_title)
-        draw.text((W//2 - tw//2, 190), collection_name, font=f_title,
-                  fill=(255, 255, 255, 255))
-
-    # Grid with ordinal numbers + globe
-    grid_y = 454
-    card_w, card_h = 308, 462
-    _build_card_grid(canvas, movie_thumbs, accent_rgb, grid_y,
-                     card_w, card_h, pad_x=182, gap=32, overlay_opacity=overlay_opacity,
-                     corner_symbol='🌍', symbol_font=f_glob,
-                     show_numbers=True, number_font=f_ord,
-                     bottom_title_font=f_card_title, titles=[''] * 4)
-
-    footer_y = grid_y + card_h*2 + 32 + 24
-    _footer_pips(draw, accent_rgb, footer_y + 14)
     return canvas.convert('RGB')
 
 
@@ -1249,7 +953,6 @@ def generate_preview_images():
 def regenerate_all_previews():
     """Force regeneration of all preview images (for admin use)."""
     if PREVIEW_DIR.exists():
-        import shutil
         for f in PREVIEW_DIR.glob('design_*.jpg'):
             f.unlink(missing_ok=True)
     generate_preview_images()

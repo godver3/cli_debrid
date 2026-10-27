@@ -17,16 +17,13 @@ import logging
 import os
 import shutil
 import time
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 _LOG_TAG = '[DEBRID_BACKUP]'
 _LOG_FILE = 'backup_log.json'
 _BACKUP_SUBDIR = 'debrid_backups'
 
 # Slot filenames — keyed by provider prefix + slot label
-_SLOT_1D = '{provider}_backup_1d.json'
-_SLOT_3D = '{provider}_backup_3d.json'
-_SLOT_7D = '{provider}_backup_7d.json'
 
 
 def get_backup_dir() -> str:
@@ -259,7 +256,7 @@ def run_backup(force: bool = False) -> dict:
         return {'success': False, 'message': 'Backup disabled', 'skipped': True}
 
     try:
-        from debrid import get_debrid_provider, ProviderUnavailableError
+        from debrid import get_debrid_provider
         provider = get_debrid_provider()
     except Exception as e:
         return {'success': False, 'message': f'Provider unavailable: {e}'}
@@ -437,7 +434,6 @@ def restore_from_file(filename: str, dry_run: bool = False) -> dict:
     Uses selectFiles heuristic: video files > 10% of largest file size.
     Returns: {success, added, skipped, failed, total}
     """
-    import re
     import requests
 
     path = os.path.join(get_backup_dir(), filename)
@@ -717,15 +713,6 @@ RESTORE_PROVIDERS = {
     'debridlink':  'Debrid-Link',
     'premiumize':  'Premiumize',
 }
-
-
-_CACHED_STATUSES = frozenset([
-    'downloaded',   # Real-Debrid
-    'Ready',        # AllDebrid
-    'cached',       # Torbox / generic
-    'complete',     # Debrid-Link
-    'finished',     # Premiumize
-])
 
 
 def restore_from_file_to_provider(filename: str, provider_id: str, api_key: str,
@@ -1061,15 +1048,13 @@ def run_cleanup(force: bool = False) -> dict:
 
     Returns: {success, deleted_errors, deleted_dupes, deleted_stalled, total_deleted, message}
     """
-    import requests
-    from datetime import datetime
 
     settings = _get_settings()
     if not settings['cleanup_enabled'] and not force:
         return {'success': False, 'message': 'Cleanup disabled', 'skipped': True}
 
     try:
-        from debrid import get_debrid_provider, ProviderUnavailableError
+        from debrid import get_debrid_provider
         provider = get_debrid_provider()
     except Exception as e:
         return {'success': False, 'message': f'Provider unavailable: {e}'}
@@ -1595,13 +1580,3 @@ def _cleanup_pm(api_key: str, settings: dict) -> dict:
     }
 
 
-def get_cleanup_settings() -> dict:
-    """Returns cleanup settings for the UI."""
-    from utilities.settings import get_setting
-    return {
-        'enabled':        get_setting('Debrid Cleanup', 'enabled', default=False),
-        'delete_errors':  get_setting('Debrid Cleanup', 'delete_errors', default=True),
-        'delete_dupes':   get_setting('Debrid Cleanup', 'delete_dupes', default=True),
-        'delete_stalled': get_setting('Debrid Cleanup', 'delete_stalled', default=False),
-        'stalled_days':   int(get_setting('Debrid Cleanup', 'stalled_days', default=3)),
-    }

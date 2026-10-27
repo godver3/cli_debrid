@@ -1,11 +1,8 @@
 from flask import Blueprint, redirect, url_for, flash, render_template, request, make_response, session
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from flask_sqlalchemy import SQLAlchemy
+from flask_login import UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from functools import wraps
 import os
 import logging
-from utilities.settings import load_config
 from routes.onboarding_routes import get_next_onboarding_step
 from routes.extensions import db, login_manager
 from .utils import is_user_system_enabled
@@ -68,10 +65,6 @@ class User(UserMixin, db.Model):
     # API token for external access (OpenClaw, homepage widgets, etc.)
     api_token = db.Column(db.String(48), nullable=True, unique=True)
 
-    @property
-    def is_sso_user(self):
-        """True if this account was created via SSO and has no local password."""
-        return bool(self.oidc_sub) and not self.password
 
 def init_db(app):
     db.init_app(app)

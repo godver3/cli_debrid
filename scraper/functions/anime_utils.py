@@ -7,7 +7,6 @@ import threading
 import time
 import unicodedata
 from typing import Dict, Any, List, Optional, Tuple
-# from utilities.anidb_functions import get_anidb_metadata_for_item  # Disabled for now
 
 # Known anime that use absolute episode numbering
 ABSOLUTE_NUMBERED_ANIME = {

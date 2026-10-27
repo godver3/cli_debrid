@@ -1,7 +1,6 @@
 from flask import Blueprint, render_template, jsonify
 from debrid.common.utils import format_torrent_status
 from debrid import get_debrid_provider
-from utilities.settings import get_setting
 from .models import user_required
 
 # Create Blueprint

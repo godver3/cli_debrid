@@ -1,33 +1,25 @@
 import logging
 import re
-from routes.api_tracker import api
-from typing import List, Dict, Any, Tuple, Optional, Union
-from difflib import SequenceMatcher
+from typing import List, Dict, Any, Tuple, Optional
 from utilities.settings import get_setting
 import time
 from datetime import datetime, timedelta, timezone
-from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count, get_all_season_episode_counts
-from database.database_writing import update_anime_format, update_preferred_alias, get_preferred_alias
-from fuzzywuzzy import fuzz
+from database.database_reading import get_all_season_episode_counts
+from database.database_writing import get_preferred_alias
 import os
 from utilities.plex_functions import filter_genres
-import pykakasi
-from babelfish import Language
 from .scraper_manager import ScraperManager
 from queues.config_manager import load_config
-import unicodedata
-import sys
-from PTT import parse_title
-from pathlib import Path
 from scraper.functions import *
 from scraper.functions.anime_utils import (
-    convert_anime_episode_format_smart, detect_absolute_numbering, stored_absolute_episode,
-    resolve_absolute_episode, is_latin_script, pick_romanized_alias,
+    stored_absolute_episode,
+    resolve_absolute_episode,
+    is_latin_script,
+    pick_romanized_alias,
 )
 from scraper.functions.movie_episodes import movie_episode_info, movie_search_title
 from cli_battery.app.episode_order import show_episode_order
 from cli_battery.app.direct_api import DirectAPI
-import json
 import threading
 from concurrent.futures import as_completed
 from utilities.log_context import ContextThreadPoolExecutor
@@ -115,7 +107,7 @@ from utilities.anime_detection import original_language as _original_language
 
 
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, skip_cache_check: bool = False, check_pack_wantedness: bool = False) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
-    from metadata.metadata import get_tmdb_id_and_media_type, get_metadata, get_media_country_code
+    from metadata.metadata import get_media_country_code
     logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}, skip_cache_check={skip_cache_check}, check_pack_wantedness={check_pack_wantedness}")
     logging.debug(f"[scrape_main] Initializing for '{title}' ({year}).")
 

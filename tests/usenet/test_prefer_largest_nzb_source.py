@@ -37,7 +37,6 @@ def lls(monkeypatch):
 
     noop = lambda *a, **k: None
     _stub("utilities.settings", get_setting=lambda *a, **k: k.get("default"))
-    _stub("utilities.anidb_functions", format_filename_with_anidb=noop)
     _stub("database", get_db_connection=noop)
     _stub("database.database_writing", update_media_item_state=noop,
           update_media_item=lambda item_id, **kw: persisted.append((item_id, kw)))

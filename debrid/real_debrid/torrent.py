@@ -1,19 +1,14 @@
 import logging
 import time
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Union, Tuple
-import bencodepy
-import hashlib
-import tempfile
-import os
+from typing import Dict, List, Optional, Union
 # Remove Enum and dataclass if they were only for the moved types and not used elsewhere locally
 # from enum import Enum # REMOVE if not used by other local things
 # from dataclasses import dataclass # REMOVE if not used by other local things
 import requests
-from ..common.utils import extract_hash_from_magnet, is_valid_hash, process_hashes
+from ..common.utils import is_valid_hash, process_hashes
 from .api import make_request
 # Update this import to get the moved types from debrid.status
-from ..status import TorrentStatus, get_status_flags, TorrentFetchStatus, TorrentInfoStatus
+from ..status import TorrentFetchStatus, TorrentInfoStatus
 from ..base import ProviderUnavailableError
 
 def process_hashes(hashes: Union[str, List[str]], batch_size: int = 100) -> List[str]:
@@ -134,28 +129,6 @@ def add_torrent(api_key: str, magnet_link: str, temp_file_path: Optional[str] = 
             logging.error(f"Error adding torrent: {str(e)}")
             raise
 
-def select_files(api_key: str, torrent_id: str, file_ids: List[int]) -> None:
-    """Select specific files from a torrent"""
-    # Add retry mechanism for rate limit errors
-    max_retries = 3
-    retry_delay = 5  # Start with 5 seconds delay
-    
-    for retry_attempt in range(max_retries):
-        try:
-            data = {'files': ','.join(map(str, file_ids))}
-            make_request('POST', f'/torrents/selectFiles/{torrent_id}', api_key, data=data)
-            return  # Success, exit function
-        except ProviderUnavailableError as e:
-            if "429" in str(e) and retry_attempt < max_retries - 1:
-                wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
-                logging.warning(f"Rate limit (429) hit when selecting files. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
-                time.sleep(wait_time)
-            else:
-                # Not a 429 error or we've exhausted retries
-                raise
-        except Exception as e:
-            logging.error(f"Error selecting files: {str(e)}")
-            raise
 
 def get_torrent_files(api_key: str, hash_value: str) -> List[Dict]:
     """Get list of files in a torrent"""
@@ -248,29 +221,3 @@ def list_active_torrents(api_key: str) -> List[Dict]:
 
     return all_torrents
 
-def cleanup_stale_torrents(api_key: str) -> None:
-    """Remove stale torrents that are older than 24 hours"""
-    try:
-        torrents = list_active_torrents(api_key)
-        for torrent in torrents:
-            added_date = datetime.fromtimestamp(torrent['added'])
-            if datetime.now() - added_date > timedelta(hours=24):
-                try:
-                    # Use make_request directly instead of the deprecated remove_torrent function
-                    result = make_request('DELETE', f'/torrents/delete/{torrent["id"]}', api_key)
-                    # Check if the request was successful (either None for backward compatibility or success dict)
-                    if result is None or (isinstance(result, dict) and result.get('success')):
-                        logging.info(f"Removed stale torrent {torrent['id']}")
-                    else:
-                        logging.error(f"Failed to remove stale torrent {torrent['id']}: unexpected response format {result}")
-                except ProviderUnavailableError as e:
-                    if "429" in str(e):
-                        logging.warning(f"Rate limit hit when removing stale torrent {torrent['id']}. Will continue with next torrent.")
-                        # Add a small delay before continuing to the next torrent
-                        time.sleep(5)
-                    else:
-                        logging.error(f"Provider error removing stale torrent {torrent['id']}: {str(e)}")
-                except Exception as e:
-                    logging.error(f"Error removing stale torrent {torrent['id']}: {str(e)}")
-    except Exception as e:
-        logging.error(f"Error during stale torrent cleanup: {str(e)}")

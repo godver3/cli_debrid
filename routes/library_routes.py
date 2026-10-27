@@ -866,18 +866,6 @@ def parse_sort(sort_by):
     }
     return sort_map.get(sort_by, ('title', 'asc'))
 
-def sort_items(items, field, order):
-    """Sort items by field and order"""
-    reverse = (order == 'desc')
-
-    if field == 'title':
-        return sorted(items, key=lambda x: (x.get('title') or '').lower(), reverse=reverse)
-    elif field == 'year':
-        return sorted(items, key=lambda x: x.get('year') or 0, reverse=reverse)
-    elif field == 'collected_at':
-        return sorted(items, key=lambda x: x.get('collected_at') or '', reverse=reverse)
-
-    return items
 
 def format_library_item(item, episode_counts=None, poster_cache=None, upcoming_release_dates=None):
     """
@@ -1953,7 +1941,7 @@ def refresh_show_metadata(media_id, queue_missing=True):
                 save_cache(cache)
                 logging.info(f"Cleared poster/backdrop cache for show {tmdb_id}")
                 # Re-fetch fresh poster and cache it immediately
-                from routes.poster_cache import cache_poster_url, get_cached_poster_url
+                from routes.poster_cache import cache_poster_url
                 from utilities.settings import get_setting as _gs
                 import requests as _req
                 _api_key = _gs('TMDB', 'api_key', default='')

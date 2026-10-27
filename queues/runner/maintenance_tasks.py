@@ -655,7 +655,6 @@ class MaintenanceTasks:
                             stranded_matches.append((row['id'], dict(sibling), dict(row)))
 
                     if stranded_matches:
-                        import re as _re_sc
                         from usenet import get_usenet_client as _get_dc_sc
                         _dc_sc = _get_dc_sc()
                         _folder_files_cache = {}  # folder_name -> video_files list, avoid repeat lookups
@@ -845,7 +844,6 @@ class MaintenanceTasks:
     def task_refresh_download_stats(self):
         """Task to refresh the download stats cache"""
         import threading
-        import time
         from database.statistics import get_cached_download_stats
         
         result = [None]
@@ -873,30 +871,56 @@ class MaintenanceTasks:
         elif exception[0]:
             logging.error(f"Download stats refresh failed: {str(exception[0])}")
 
+    def task_retry_content_source_removals(self):
+        """Retry content-source removals that failed during a delete (see content_source_retry)."""
+        from database.content_source_retry import process_retry_queue
+        attempted = process_retry_queue()
+        if attempted:
+            logging.info(f"[RETRY_QUEUE] Retried {attempted} content source removal(s)")
+
     def task_check_database_health(self):
         """Periodic task to verify database health and handle any corruption."""
         from main import verify_database_health
 
         try:
+            already_failing = bool(self.db_health_pause_info)
             if not verify_database_health():
+                if already_failing:
+                    # Already paused and notified; keep holding until a check passes
+                    logging.error("Database health check still failing - queue stays paused")
+                    if not self.queue_paused:  # the pause was throttled
+                        self.pause_info = dict(self.db_health_pause_info)
+                        self.pause_queue()
+                    return
                 logging.error("Database health check failed during periodic check")
-                # Update pause_info for DB health
-                self.pause_info = {
+                # resume_queue keeps the queue paused while this is set
+                self.db_health_pause_info = {
                     "reason_string": "Database corruption detected - check logs for details",
                     "error_type": "DB_HEALTH",
                     "service_name": "System Database",
                     "status_code": None,
                     "retry_count": 0
                 }
+                self.pause_info = dict(self.db_health_pause_info)
                 self.pause_queue()
 
                 # Send notification about database corruption
                 try:
                     from routes.notifications import send_program_crash_notification
-                    send_program_crash_notification("Database corruption detected - program must be restarted to recreate databases")
+                    send_program_crash_notification(
+                        "Database corruption detected (see logs for which database) - queue paused. "
+                        "Restore the database from a backup; the queue resumes when the hourly check passes.")
 
                 except Exception as e:
                     logging.error(f"Failed to send database corruption notification: {str(e)}")
+            elif already_failing:
+                self.db_health_pause_info = None
+                if self.queue_paused and (self.pause_info or {}).get("error_type") == "DB_HEALTH":
+                    logging.info("Database health check passed - resuming queue paused for DB_HEALTH")
+                    self.resume_queue()
+                else:
+                    # Another pause (e.g. a connection error) took over; its own recovery resumes
+                    logging.info("Database health check passed - DB_HEALTH hold lifted")
             else:
                 logging.info("Periodic database health check passed")
         except Exception as e:
@@ -957,18 +981,6 @@ class MaintenanceTasks:
              logging.error(f"Background task: Runtime error during library size cache refresh: {e_runtime}", exc_info=True)
         except Exception as e:
             logging.error(f"Background task: General error during library size cache refresh: {e}", exc_info=True)
-
-    # Add the new long-running task method
-    def task_artificial_long_run(self):
-        task_name = 'task_artificial_long_run'
-        logging.info(f"'{task_name}' has started.")
-        
-        duration_seconds = 120 # Run for 2 minutes
-        
-        logging.info(f"'{task_name}' will now sleep for {duration_seconds} seconds.")
-        time.sleep(duration_seconds)
-        
-        logging.info(f"'{task_name}' has finished sleeping and is now complete.")
 
     def task_upgrade_hub_scan(self):
         """Scheduled nightly scan for better-quality releases via Zilean."""

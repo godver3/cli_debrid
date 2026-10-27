@@ -1,25 +1,13 @@
-from flask import Blueprint, render_template, flash, redirect, url_for
+from flask import Blueprint, render_template
 import requests
 import os
 import threading
-from datetime import datetime, timedelta
 from utilities.settings import get_setting, get_all_settings
 from typing import Dict, List, Any
-from content_checkers.trakt import ensure_trakt_auth, get_trakt_headers, make_trakt_request, parse_trakt_list_url
+from content_checkers.trakt import ensure_trakt_auth, get_trakt_headers, make_trakt_request
 from content_checkers.plex_watchlist import MyPlexAccount
 import logging
-import feedparser # Keep import for RSS
-from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
-
-# --- Connection status cache ---
-_connections_cache = {
-    'results': None,
-    'timestamp': None,
-    'refreshing': False,
-}
-_connections_cache_lock = threading.Lock()
-_CACHE_TTL = timedelta(seconds=60)  # Serve cached results for up to 60s
 
 # Attempt to import DirectAPI - adjust path if necessary based on your project structure
 try:
@@ -943,69 +931,6 @@ def check_non_nyaa_scrapers():
                 
     return scraper_statuses
 
-def check_scrapers_connections():
-    """Check connections to all enabled scrapers, running Nyaa first to avoid proxy conflicts."""
-    from queues.config_manager import load_config
-    
-    config = load_config()
-    scrapers = config.get('Scrapers', {})
-    scraper_statuses = []
-
-    enabled_scrapers = {
-        scraper_id: scraper_config 
-        for scraper_id, scraper_config in scrapers.items() 
-        if scraper_config.get('enabled', False)
-    }
-
-    if not enabled_scrapers:
-        return []
-
-    # Separate Nyaa scrapers from others to avoid proxy conflicts
-    nyaa_scrapers = {}
-    other_scrapers = {}
-    
-    for scraper_id, scraper_config in enabled_scrapers.items():
-        if scraper_config.get('type') == 'Nyaa':
-            nyaa_scrapers[scraper_id] = scraper_config
-        else:
-            other_scrapers[scraper_id] = scraper_config
-
-    # Run Nyaa scrapers first (sequentially) to avoid proxy conflicts
-    for scraper_id, scraper_config in nyaa_scrapers.items():
-        try:
-            status = check_scraper_connection(scraper_id, scraper_config)
-            if status:
-                scraper_statuses.append(status)
-        except Exception as exc:
-            log.error(f'Nyaa scraper {scraper_id} check generated an exception: {exc}', exc_info=True)
-            scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
-
-    # Run all other scrapers in parallel with fixed worker limit
-    if other_scrapers:
-        with ThreadPoolExecutor(max_workers=min(5, len(other_scrapers))) as executor:
-            future_to_scraper = {
-                executor.submit(check_scraper_connection, scraper_id, scraper_config): (scraper_id, scraper_config)
-                for scraper_id, scraper_config in other_scrapers.items()
-            }
-            
-            # We don't use a timeout on as_completed to avoid raising an exception
-            # that would stop us from processing already completed results.
-            # Instead, future.result(timeout=...) is used inside the loop.
-            for future in as_completed(future_to_scraper):
-                scraper_id, scraper_config = future_to_scraper[future]
-                try:
-                    # Use a timeout for getting the result of each future
-                    status = future.result(timeout=3) # 5-second timeout per scraper
-                    if status:
-                        scraper_statuses.append(status)
-                except TimeoutError:
-                    log.warning(f'Scraper check for {scraper_id} timed out.')
-                    scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
-                except Exception as exc:
-                    log.error(f'Scraper {scraper_id} check generated an exception: {exc}', exc_info=True)
-                    scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
-                
-    return scraper_statuses
 
 def create_timeout_status(scraper_type: str, scraper_id: str) -> Dict[str, Any]:
     """Generates a standardized timeout status for scraper checks."""
@@ -1627,77 +1552,6 @@ def api_stream_content_sources():
 
     return Response(generate(), mimetype='text/event-stream',
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-
-
-def _run_all_connection_checks():
-    """Run all connection checks and return results dict. Used by cache refresh."""
-    results = {
-        'cli_battery_status': None,
-        'plex_status': None,
-        'jellyfin_status': None,
-        'mounted_files_status': None,
-        'phalanx_db_status': None,
-        'trakt_status': None,
-        'scraper_statuses': [],
-        'content_source_statuses': [],
-    }
-
-    jellyfin_url = get_cached_setting('Debug', 'emby_jellyfin_url')
-    jellyfin_token = get_cached_setting('Debug', 'emby_jellyfin_token')
-
-    tasks = {
-        'cli_battery_status': check_cli_battery_connection,
-        'mounted_files_status': check_mounted_files_connection,
-        'phalanx_db_status': check_phalanx_db_connection,
-        'trakt_status': check_trakt_connection,
-        'nyaa_scraper_statuses': check_nyaa_scrapers_only,
-        'non_nyaa_scraper_statuses': check_non_nyaa_scrapers,
-        'content_source_statuses': check_content_sources_connections,
-    }
-
-    if jellyfin_url and jellyfin_token:
-        tasks['jellyfin_status'] = check_jellyfin_connection
-    else:
-        tasks['plex_status'] = check_plex_connection
-
-    with ThreadPoolExecutor(max_workers=min(6, len(tasks))) as executor:
-        future_to_task = {executor.submit(func): name for name, func in tasks.items()}
-        try:
-            for future in as_completed(future_to_task, timeout=25):
-                task_name = future_to_task[future]
-                try:
-                    task_result = future.result()
-                    if task_name in ['nyaa_scraper_statuses', 'non_nyaa_scraper_statuses']:
-                        results['scraper_statuses'].extend(task_result)
-                    else:
-                        results[task_name] = task_result
-                except Exception as exc:
-                    log.error(f"Task {task_name} generated an exception: {exc}", exc_info=True)
-                    if task_name not in ['nyaa_scraper_statuses', 'non_nyaa_scraper_statuses', 'content_source_statuses']:
-                        results[task_name] = {'name': task_name, 'connected': False, 'error': str(exc), 'details': {}}
-        except TimeoutError:
-            log.warning("Connections check timed out after 25 seconds.")
-
-    return results
-
-
-def _refresh_connections_cache():
-    """Run checks in background and update cache. Ensures only one refresh runs at a time."""
-    with _connections_cache_lock:
-        if _connections_cache['refreshing']:
-            return
-        _connections_cache['refreshing'] = True
-
-    try:
-        results = _run_all_connection_checks()
-        with _connections_cache_lock:
-            _connections_cache['results'] = results
-            _connections_cache['timestamp'] = datetime.now()
-    except Exception as exc:
-        log.error(f"Background connection cache refresh failed: {exc}", exc_info=True)
-    finally:
-        with _connections_cache_lock:
-            _connections_cache['refreshing'] = False
 
 
 @connections_bp.route('/')

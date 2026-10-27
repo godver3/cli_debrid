@@ -1,7 +1,6 @@
 import logging
-from typing import Dict, Any, List
-from datetime import datetime, date, timedelta, time as dt_time
-import json
+from typing import Dict, Any
+from datetime import datetime, date, timedelta
 import time
 import os
 import re
@@ -33,6 +32,28 @@ def _is_excluded_release(item: Dict[str, Any], result: Dict[str, Any]) -> bool:
         return excluded == candidate
 
 
+def _other_season_episodes_pending(item: Dict[str, Any]) -> bool:
+    """True when another episode of the item's show+season+version is Wanted or Scraping.
+
+    A season pack is grabbed per version, so another version's wanted episodes don't
+    count. On a lookup error it answers True, keeping the old pack-first behaviour.
+    """
+    try:
+        from database import get_all_media_items
+        version = (item.get('version') or '').rstrip('*')
+        return any(
+            ep.get('type') == 'episode'
+            and ep.get('id') != item.get('id')
+            and ep.get('season_number') == item.get('season_number')
+            and (ep.get('version') or '').rstrip('*') == version
+            and ep.get('state') in ('Wanted', 'Scraping')
+            for ep in get_all_media_items(imdb_id=item.get('imdb_id')) or []
+        )
+    except Exception as e:
+        logging.warning(f"Could not check other pending episodes for {item.get('imdb_id')}: {e}")
+        return True
+
+
 class ScrapingQueue:
     # How long an item waits after being deferred for a sibling in Adding
     DEFER_SECONDS = 60
@@ -60,7 +81,7 @@ class ScrapingQueue:
 
     def update(self):
         """Synchronize the in-memory queue with the database state."""
-        from database import get_all_media_items, get_media_item_by_id
+        from database import get_all_media_items
         
         # Specific ID for debugging
         DEBUG_ITEM_ID_UPDATE = '177245'
@@ -254,7 +275,7 @@ class ScrapingQueue:
             conn.close()
 
     def process(self, queue_manager):
-        from database import get_all_media_items, get_media_item_by_id, get_db_connection, get_wake_count
+        from database import get_all_media_items, get_media_item_by_id
         processed_count = 0
         had_error = False
         today = date.today()
@@ -387,7 +408,11 @@ class ScrapingQueue:
                         _coal_title = (_sibling_nzb[4] or '') if _sibling_nzb else ''  # original_scraped_torrent_title
                         _coal_file = (_sibling_nzb[1] or '') if _sibling_nzb else ''  # filled_by_file
                         _coal_job_title = (_sibling_nzb[3] or '') if _sibling_nzb else ''  # filled_by_title
-                        if _sibling_nzb and is_likely_season_pack(_coal_title, _coal_file, _coal_job_title):
+                        from utilities.rescrape_helpers import replacement_blocks_pack_reuse
+                        if (_sibling_nzb and is_likely_season_pack(_coal_title, _coal_file, _coal_job_title)
+                                and replacement_blocks_pack_reuse(item_to_process, _coal_job_title or _coal_title, _sibling_nzb[0])):
+                            logging.info(f'[NZBPack] {item_identifier}: sibling pack job {_sibling_nzb[0]} is the release being replaced - not coalescing')
+                        elif _sibling_nzb and is_likely_season_pack(_coal_title, _coal_file, _coal_job_title):
                             _job_id = _sibling_nzb[0]
                             # Verify the shared job is still actually queryable on the provider
                             # before reusing it - a job that completed and was since cleaned up
@@ -711,11 +736,18 @@ class ScrapingQueue:
                             logging.info(f"Item {item_identifier} is new and 'skip_initial_multi_scrape_for_new_content' is enabled. Forcing single episode scrape for initial attempt.")
                         is_multi_pack = False
                         
-                    # If item is an episode and older than 7 days, force multi-pack for initial scrape
+                    # If item is an episode and older than 7 days, force multi-pack for initial scrape,
+                    # unless it's the only episode of its season wanted (e.g. one episode moved back
+                    # to Wanted): a pack scrape rejects every single-episode release, so a lone
+                    # episode scrapes singles first and the no-results fallback below tries packs.
                     if item_to_process['type'] == 'episode' and is_older_than_7_days:
-                        if not is_multi_pack: # Log only if we are changing it
-                            logging.info(f"Episode {item_identifier} is older than 7 days. Forcing multi-pack scrape for initial attempt.")
-                        is_multi_pack = True
+                        if not is_multi_pack and not _other_season_episodes_pending(item_to_process):
+                            logging.info(f"Episode {item_identifier} is older than 7 days but no other episode of its season is wanted. "
+                                         f"Scraping single episodes first; season packs only if that finds nothing.")
+                        else:
+                            if not is_multi_pack: # Log only if we are changing it
+                                logging.info(f"Episode {item_identifier} is older than 7 days. Forcing multi-pack scrape for initial attempt.")
+                            is_multi_pack = True
                     
                     # --- NZB Batch Detection ---
                     # If usenet is enabled and this is an episode, check if 5+ episodes of the

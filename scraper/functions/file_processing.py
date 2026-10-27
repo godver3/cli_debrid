@@ -5,7 +5,6 @@ from database.database_reading import get_movie_runtime, get_episode_runtime, ge
 from fuzzywuzzy import fuzz
 from PTT import parse_title
 from scraper.functions.ptt_parser import parse_title_unwrapped
-from babelfish import Language
 from scraper.functions import *
 from scraper.functions.common import detect_season_episode_info
 from functools import lru_cache
@@ -139,10 +138,6 @@ def calculate_bitrate(size_gb, runtime_minutes):
     bitrate_mbps = (size_bits / runtime_seconds) / 1000  # Convert to Mbps
     return round(bitrate_mbps, 2)
 
-def detect_resolution(parsed_info: Dict[str, Any]) -> str:
-    # First try to get resolution from PTT result
-    resolution = parsed_info.get('resolution', 'Unknown')
-    return resolution
 
 def _process_single_title(args):
     """Helper for threaded execution inside batch_parse_torrent_info.

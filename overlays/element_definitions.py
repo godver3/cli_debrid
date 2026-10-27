@@ -375,42 +375,8 @@ ELEMENT_DEFINITIONS = {
 }
 
 
-def get_element_definition(category: str, element_id: str) -> dict:
-    """Get definition for a specific element."""
-    if category in ELEMENT_DEFINITIONS:
-        return ELEMENT_DEFINITIONS[category].get(element_id)
-    return None
-
-
 def get_all_elements_by_category() -> dict:
     """Get all element definitions grouped by category."""
     return ELEMENT_DEFINITIONS
 
 
-def create_element_instance(category: str, element_id: str, overrides: dict = None) -> dict:
-    """
-    Create an element instance with defaults merged with overrides.
-
-    Args:
-        category: Element category (basic, rating_badges, quick_badges)
-        element_id: Specific element ID within the category
-        overrides: Dictionary of properties to override defaults
-
-    Returns:
-        Element instance dictionary
-    """
-    definition = get_element_definition(category, element_id)
-    if not definition:
-        raise ValueError(f"Unknown element: {category}/{element_id}")
-
-    instance = {
-        'id': f"{element_id}_{category}",  # Unique instance ID
-        'type': definition['type'],
-        'name': definition['name'],
-        **definition['defaults']
-    }
-
-    if overrides:
-        instance.update(overrides)
-
-    return instance

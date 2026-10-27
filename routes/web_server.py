@@ -1,22 +1,16 @@
-from flask import Flask, redirect, url_for, send_from_directory, jsonify, session
-from flask_session import Session
+from flask import send_from_directory
 import time
-from queues.queue_manager import QueueManager
 import logging
 import os
 from datetime import datetime
 from routes.template_utils import render_settings, render_content_sources
 import json
 from routes.program_operation_routes import program_is_running, start_server, get_program_status
-from sqlalchemy import inspect
-from flask_login import LoginManager
-from flask_sqlalchemy import SQLAlchemy
-from routes.extensions import db, app, app_start_time
+from routes.extensions import app
 from routes.auth_routes import init_db
-from flask_login import current_user
 import sys
 
-from routes import register_blueprints, auth_bp
+from routes import register_blueprints
 
 # Get db_content directory from environment variable with fallback
 db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -177,13 +171,6 @@ def zfill_filter(value, width=None):
         return ""
     return str(value).zfill(width if width is not None else 2)
 
-@app.route('/')
-def index():
-    from routes.settings_routes import is_user_system_enabled
-    if not is_user_system_enabled() or current_user.is_authenticated:
-        return redirect(url_for('root.root'))
-    else:
-        return redirect(url_for('auth.login'))
 
 @app.route('/favicon.ico')
 def favicon():

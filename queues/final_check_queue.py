@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from utilities.settings import get_setting
 from queues.base_queue import BaseQueue # <-- Change this line

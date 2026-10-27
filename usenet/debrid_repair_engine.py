@@ -31,11 +31,6 @@ _repair_lock = _threading.Lock()
 # cli_mount client helpers
 # ---------------------------------------------------------------------------
 
-def _get_client():
-    """Return the active cli_mount client."""
-    from usenet.climount_client import get_climount_client
-    return get_climount_client()
-
 
 def _dcy_cfg():
     from utilities.settings import get_setting
@@ -47,8 +42,6 @@ def _dcy_cfg():
 def _dcy_headers():
     _, token = _dcy_cfg()
     return {'Authorization': f'Bearer {token}'} if token else {}
-
-
 
 
 # ---------------------------------------------------------------------------

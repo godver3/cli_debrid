@@ -1,6 +1,6 @@
 import logging
 from typing import List, Dict, Any, Tuple
-from utilities.settings import get_all_settings, get_setting
+from utilities.settings import get_all_settings
 import os
 import pickle
 from datetime import datetime, timedelta

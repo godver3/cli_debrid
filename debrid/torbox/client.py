@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import bencodepy
 
 from ..base import DebridProvider, ProviderUnavailableError, TooManyDownloadsError, TorrentAdditionError
-from ..common import extract_hash_from_magnet, is_unwanted_file, is_video_file, timed_lru_cache
+from ..common import extract_hash_from_magnet, timed_lru_cache
 from ..status import TorrentFetchStatus, TorrentInfoStatus, TorrentStatus
 from .api import get_all_torrents, get_api_key, get_data_payload, make_request
 from .exceptions import TorboxAPIError, TorboxAuthError

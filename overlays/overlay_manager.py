@@ -9,7 +9,6 @@ import json
 import logging
 import sqlite3
 import threading
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -868,13 +867,6 @@ class OverlayManager:
             self.logger.warning(f"Best-version-by-ms-id query failed for ms_item_id={ms_item_id}: {e}")
         return None
 
-    def _best_episode_data_for_show(self, imdb_id: str) -> Optional[Dict[str, Any]]:
-        """Compatibility wrapper — delegates to _best_version."""
-        return self._best_version(imdb_id, 'episode')
-
-    def _best_movie_version(self, imdb_id: str) -> Optional[Dict[str, Any]]:
-        """Compatibility wrapper — delegates to _best_version."""
-        return self._best_version(imdb_id, 'movie')
 
     def _build_media_info_from_db(self, item: Dict[str, Any],
                                    _best_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

@@ -854,15 +854,6 @@ function createGridCard(item) {
     // Add click handler for card (navigate to details)
     card.addEventListener('click', () => handleCardClick(item));
 
-    // Add action button handlers (prevent event bubbling to card click)
-    const actionButtons = card.querySelectorAll('.action-icon');
-    actionButtons.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation(); // Prevent card click
-            handleActionClick(btn.dataset.action, item);
-        });
-    });
-
     // Fetch missing poster asynchronously
     if (needsFetch) {
         if (fetchUseImdb) {
@@ -1134,79 +1125,6 @@ function handleCardClick(item) {
     } else {
         console.log('Clicked item:', item);
     }
-}
-
-function handleActionClick(action, item) {
-    switch (action) {
-        case 'refresh':
-            // Refresh metadata for this item
-            refreshItemMetadata(item);
-            break;
-        case 'delete':
-            // Delete this item
-            deleteItem(item);
-            break;
-        case 'details':
-            // Navigate to detail page (same as card click)
-            handleCardClick(item);
-            break;
-        default:
-            console.warn('Unknown action:', action);
-    }
-}
-
-async function refreshItemMetadata(item) {
-    try {
-        const response = await fetch(`/library/refresh_metadata/${item.tmdb_id}`, {
-            method: 'POST'
-        });
-
-        if (response.ok) {
-            showSuccess(`Refreshing metadata for "${item.title}"`);
-            // Reload library after a delay
-            setTimeout(() => resetAndReload(), 2000);
-        } else {
-            showError(`Failed to refresh metadata for "${item.title}"`);
-        }
-    } catch (error) {
-        console.error('Error refreshing metadata:', error);
-        showError('Network error while refreshing metadata');
-    }
-}
-
-async function deleteItem(item) {
-    showPopup({
-        type: 'confirm',
-        title: 'Delete Item',
-        message: `Delete "${item.title}"? This will remove it from the library.`,
-        confirmText: 'Delete',
-        cancelText: 'Cancel',
-        onConfirm: async function() {
-            try {
-                if (window.DeletionCommon) {
-                    // Use deletion common if available
-                    const result = await window.DeletionCommon.executeDelete([item.id], {
-                        layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache']
-                    });
-
-                    if (result && result.success) {
-                        showSuccess(`Successfully deleted "${item.title}"`);
-                        resetAndReload();
-                    }
-                } else {
-                    showError('Deletion system not available');
-                }
-            } catch (error) {
-                console.error('Error deleting item:', error);
-                showError(`Error deleting "${item.title}"`);
-            }
-        }
-    });
-}
-
-function showSuccess(message) {
-    // TODO: Implement success toast/notification
-    console.log('SUCCESS:', message);
 }
 
 function updateResultsInfo() {

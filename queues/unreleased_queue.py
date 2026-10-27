@@ -3,7 +3,7 @@ from typing import Dict, Any
 from datetime import datetime, timedelta, time as dt_time
 from utilities.settings import get_setting
 from queues.scrape_window import in_alternate_scrape_window
-from database.database_reading import get_all_media_items, stream_all_media_items
+from database.database_reading import stream_all_media_items
 import time
 
 class UnreleasedQueue:

@@ -121,14 +121,6 @@ def extract_nzb_segment_id(nzb_xml: str) -> str:
     return ''
 
 
-def load_not_wanted_nzb_segments():
-    return set(_cached_set(NOT_WANTED_NZB_SEGMENTS_FILE)[0])
-
-
-def save_not_wanted_nzb_segments(s):
-    _write_pickled_set(NOT_WANTED_NZB_SEGMENTS_FILE, s)
-
-
 def add_to_not_wanted_nzb_segment(segment_id: str):
     if not segment_id:
         return
@@ -189,14 +181,6 @@ def extract_nzb_guid(url_or_guid: str) -> str:
     if re.match(r'^[0-9a-f]{16,}$', url_or_guid.strip(), re.IGNORECASE):
         return url_or_guid.strip().lower()
     return ''
-
-
-def load_not_wanted_nzb_guids():
-    return set(_cached_set(NOT_WANTED_NZB_GUIDS_FILE)[0])
-
-
-def save_not_wanted_nzb_guids(s):
-    _write_pickled_set(NOT_WANTED_NZB_GUIDS_FILE, s)
 
 
 def add_to_not_wanted_nzb_guid(url_or_guid: str):

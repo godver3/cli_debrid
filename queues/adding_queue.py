@@ -313,10 +313,6 @@ class AddingQueue:
         self._held_summary = None  # last "nothing actionable" counts logged at INFO
         self._held_summary_at = 0.0
 
-    def reinitialize_provider(self):
-        """Reinitialize the debrid provider and processors"""
-        self.debrid_provider = get_debrid_provider()
-        self.torrent_processor = TorrentProcessor(self.debrid_provider)
         
     def update(self):
         """Update the queue with current items in 'Adding' state"""
@@ -403,7 +399,7 @@ class AddingQueue:
         if not self.items:
             return False
 
-        from database import update_media_item, get_all_media_items, get_media_item_by_id
+        from database import update_media_item, get_media_item_by_id
 
         # NZB health checks are handled by task_nzb_health_check (separate scheduled task)
         # so the Adding queue tick is free to process debrid items without blocking.

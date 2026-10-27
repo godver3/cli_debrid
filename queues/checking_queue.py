@@ -1,7 +1,7 @@
 import logging
 import time
 from typing import Dict, Any, Optional, Union
-from queues.run_program import get_and_add_recent_collected_from_plex, run_recent_local_library_scan
+from queues.run_program import get_and_add_recent_collected_from_plex
 from utilities.local_library_scan import check_local_file_for_item
 from utilities.plex_functions import plex_update_item
 from utilities.emby_functions import emby_update_item
@@ -11,8 +11,6 @@ from debrid import get_debrid_provider
 from utilities.settings import get_setting
 from debrid.common import timed_lru_cache, extract_hash_from_magnet, download_and_extract_hash
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
-from pathlib import Path
-import os
 from datetime import datetime
 from queues.upgrading_queue import UpgradingQueue
 from routes.notifications import send_upgrade_failed_notification
@@ -1009,7 +1007,7 @@ class CheckingQueue:
                 logging.error(f"Failed to check initial progress for item {item['id']}: {str(e)}")
 
         from routes.notifications import send_notifications
-        from routes.settings_routes import get_enabled_notifications, get_enabled_notifications_for_category
+        from routes.settings_routes import get_enabled_notifications_for_category
         from routes.extensions import app
         from database.database_reading import get_media_item_by_id
 
@@ -1460,7 +1458,7 @@ class CheckingQueue:
                             # Trigger targeted Plex scan once per item, async
                             if torrent_id not in self._nzb_plex_scan_triggered:
                                 self._nzb_plex_scan_triggered.add(torrent_id)
-                                _scan_mount = get_setting('Plex', 'mounted_file_location', '').rstrip('') or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/')
+                                _scan_mount = get_setting('Plex', 'mounted_file_location', '').rstrip('/') or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/')
                                 _scan_folder = _sample.get('debrid_folder_name') or _sample.get('filled_by_title') or ''
                                 _scan_itype = _sample.get('type', 'movie')
                                 if _scan_mount and _scan_folder:
@@ -1796,64 +1794,6 @@ class CheckingQueue:
                 logging.info("Triggering queue reconciliation after recent Plex scan.")
                 program_runner.task_reconcile_queues()
 
-    def move_items_to_wanted(self, items, queue_manager, adding_queue=None, torrent_id=None):
-        """
-        Move items from the checking queue back to the wanted queue.
-        
-        This is typically used when a torrent is no longer available on Real-Debrid.
-        
-        Args:
-            items (list): List of items to move back to wanted
-            queue_manager (QueueManager): Queue manager instance
-            adding_queue (AddingQueue, optional): Adding queue instance
-            torrent_id (str, optional): ID of the torrent that was removed
-        """
-        if not items:
-            logging.debug("No items to move back to Wanted")
-            return
-        
-        logging.info(f"Moving {len(items)} items back to Wanted state")
-        
-        # Process magnets first
-        magnets_to_add = []
-        for item in items:
-            magnet = item.get('filled_by_magnet')
-            if magnet and magnet not in magnets_to_add:
-                magnets_to_add.append(magnet)
-        
-        # Add magnets to not-wanted list
-        for magnet in magnets_to_add:
-            try:
-                item_identifier = queue_manager.generate_identifier(items[0]) if items else "unknown"
-                
-                # Check if magnet is actually an HTTP link
-                if magnet.startswith('http'):
-                    logging.debug(f"Magnet is HTTP link, downloading torrent first for {item_identifier}")
-                    hash_value = download_and_extract_hash(magnet)
-                    from database.not_wanted_magnets import add_to_not_wanted
-                    add_to_not_wanted(hash_value)
-                    from database.not_wanted_magnets import add_to_not_wanted_urls
-                    add_to_not_wanted_urls(magnet)
-                    logging.info(f"Added hash {hash_value} and URL to not wanted lists for {item_identifier}")
-                else:
-                    hash_value = extract_hash_from_magnet(magnet)
-                    from database.not_wanted_magnets import add_to_not_wanted
-                    add_to_not_wanted(hash_value)
-                    logging.info(f"Added hash {hash_value} to not wanted list for {item_identifier}")
-            except Exception as e:
-                logging.error(f"Failed to process magnet for not wanted: {str(e)}")
-        
-        # Move items back to Wanted state
-        for item in items:
-            try:
-                item_identifier = queue_manager.generate_identifier(item)
-                queue_manager.move_to_wanted(item, "Checking")
-                logging.info(f"Successfully moved item back to Wanted: {item_identifier}")
-            except Exception as e:
-                logging.error(f"Failed to move item {item_identifier} back to Wanted: {str(e)}")
-            
-            # Remove from checking queue
-            self.remove_item(item)
 
     def clean_up_checking_times(self):
         """Clean up old entries from checking times and progress cache"""

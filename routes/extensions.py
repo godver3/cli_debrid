@@ -1,9 +1,8 @@
-from flask import Flask, redirect, request, jsonify, url_for, session
+from flask import Flask, redirect, request, jsonify
 from flask_login import LoginManager
 import time
 from sqlalchemy import inspect
 from werkzeug.middleware.proxy_fix import ProxyFix
-from flask_login import current_user
 import logging
 from routes.utils import is_user_system_enabled
 from flask_cors import CORS
@@ -366,32 +365,10 @@ CORS(app, resources={r"/*": {
 }})
 
 from flask_login import LoginManager
-from flask import redirect, url_for
-from functools import wraps
+from flask import redirect
 
 login_manager = LoginManager()
 
-def init_login_manager(app):
-    login_manager.init_app(app)
-    login_manager.login_view = 'auth.login'
-    login_manager.refresh_view = 'auth.login'
-    login_manager.needs_refresh_message = 'Please log in again to confirm your identity'
-    login_manager.needs_refresh_message_category = 'info'
-    login_manager.session_protection = 'strong'
-    
-    def login_required(func):
-        @wraps(func)
-        def decorated_view(*args, **kwargs):
-            from routes.settings_routes import is_user_system_enabled
-            if not is_user_system_enabled():
-                return func(*args, **kwargs)
-            if not login_manager._login_disabled:
-                if not login_manager.current_user.is_authenticated:
-                    return login_manager.unauthorized()
-            return func(*args, **kwargs)
-        return decorated_view
-
-    login_manager.login_required = login_required
 
 login_manager.init_app(app)
 login_manager.login_view = 'auth.login'
@@ -429,17 +406,6 @@ def initialize_app():
             logging.info(f"Generated API tokens for {len(users_without_token)} existing user(s)")
         create_default_admin()
 
-def is_behind_proxy():
-    return request.headers.get('X-Forwarded-Proto') is not None
-
-@app.before_request
-def handle_https():
-    pass
-
-@app.before_request
-def check_user_system():
-    if request.path.startswith('/webhook') or request.path.startswith('/static') or request.path.startswith('/debug'):
-        return
 
 @app.before_request
 def configure_session():

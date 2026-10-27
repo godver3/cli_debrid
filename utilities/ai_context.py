@@ -672,7 +672,7 @@ def _get_watch_history():
     # 2. Trakt API — watched history + ratings
     try:
         import requests as req
-        from content_checkers.trakt import ensure_trakt_auth, get_trakt_config
+        from content_checkers.trakt import ensure_trakt_auth
         from utilities.settings import get_setting
 
         access_token = ensure_trakt_auth()

@@ -1,18 +1,13 @@
-from flask import jsonify, Blueprint, current_app
+from flask import jsonify, Blueprint
 from utilities.settings import get_setting
 from trakt.core import get_device_code, get_device_token
-import time
 import json
 import os
-import sys
 import traceback
-from routes.api_tracker import api
 import logging
 from pathlib import Path
-import re
 from .models import admin_required
 from datetime import datetime, timedelta, timezone
-from content_checkers.trakt import _should_refresh_token
 
 trakt_bp = Blueprint('trakt', __name__)
 

@@ -33,10 +33,10 @@ from ..base import (
     DebridProvider, TooManyDownloadsError, ProviderUnavailableError,
     TorrentAdditionError, RateLimitError
 )
-from ..common import extract_hash_from_magnet, timed_lru_cache, is_video_file, is_unwanted_file
+from ..common import extract_hash_from_magnet, timed_lru_cache
 from ..status import TorrentStatus, TorrentInfoStatus, TorrentFetchStatus
-from .api import make_request, get_api_key, TRANSFER_STATUS_MAP
-from .exceptions import PremiumizeAuthError, PremiumizeAPIError
+from .api import make_request, get_api_key
+from .exceptions import PremiumizeAuthError
 from utilities.settings import get_setting
 
 logger = logging.getLogger(__name__)

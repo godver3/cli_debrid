@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import asyncio
 import importlib.util
 import logging
 import os

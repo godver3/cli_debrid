@@ -1058,13 +1058,6 @@ export function updateSettings() {
             .filter(v => v);
     }
 
-    const animeRenamingUsingAnidb = document.getElementById('scraping-anime_renaming_using_anidb');
-    
-    if (animeRenamingUsingAnidb) {
-        settingsData['Scraping']['anime_renaming_using_anidb'] = animeRenamingUsingAnidb.checked;
-
-    } else {
-    }
 
     const debridProvider = document.getElementById('debrid provider-provider');
 

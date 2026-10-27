@@ -1,14 +1,12 @@
 from routes.api_tracker import api
 import logging
-from typing import List, Dict, Any, Tuple
-from utilities.settings import get_setting, load_config as get_jackett_settings
-from urllib.parse import quote, urlencode
-import json
+from typing import List, Dict, Any
+from utilities.settings import get_setting
+from urllib.parse import urlencode
 import re
 from database.database_reading import get_episode_details
 from scraper.functions.common import trim_magnet
 
-JACKETT_FILTER = "!status:failing,test:passed"
 
 def rename_special_characters(text: str) -> str:
     replacements = [
@@ -38,29 +36,6 @@ def rename_special_characters(text: str) -> str:
     
     return text
 
-def scrape_jackett(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, tmdb_id: str = None, is_translated_search: bool = False) -> List[Dict[str, Any]]:
-    #logging.info(f"Starting Jackett scrape for: {title} ({year}) - Type: {content_type}")
-    #logging.info(f"Parameters - IMDB: {imdb_id}, Season: {season}, Episode: {episode}, Multi: {multi}, Genres: {genres}, TMDB ID: {tmdb_id}, Translated: {is_translated_search}")
-    
-    jackett_results = []
-    all_settings = get_jackett_settings()
-    
-    #logging.debug(f"Loaded Jackett settings: {json.dumps(all_settings.get('Scrapers', {}), indent=2)}")
-    jackett_instances = all_settings.get('Scrapers', {})
-    jackett_filter = "!status:failing,test:passed"
-    for instance, settings in jackett_instances.items():
-        if instance.startswith('Jackett'):
-            if not settings.get('enabled', False):
-                logging.debug(f"Jackett instance '{instance}' is disabled, skipping")
-                continue
-            
-            try:
-                # Pass the is_translated_search flag down
-                instance_results = scrape_jackett_instance(instance, settings, imdb_id, title, year, content_type, season, episode, multi, genres, tmdb_id, is_translated_search)
-                jackett_results.extend(instance_results)
-            except Exception as e:
-                logging.error(f"Error scraping Jackett instance '{instance}': {str(e)}", exc_info=True)
-    return jackett_results
 
 def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, tmdb_id: str = None, is_translated_search: bool = False) -> List[Dict[str, Any]]:
     logging.info(f"Scraping Jackett instance: {instance} (Translated Search: {is_translated_search})")

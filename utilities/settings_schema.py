@@ -2,7 +2,6 @@
 import os
 import re
 import glob
-from pathlib import Path
 
 def get_available_logos():
     """
@@ -757,7 +756,7 @@ SETTINGS_SCHEMA = {
                 "foreign_language_penalty": {
                     "type": "number",
                     "default": 30,
-                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), the same amount is a bonus for releases tagged MULTi, DUAL or with the version's language, since untagged ones usually carry only the original audio. 0 disables both."
+                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), releases tagged DUAL or with the version's language get a small tiebreaker bonus instead (this amount × Language Weight, at most 50; half for a bare MULTi/DL). Untagged releases are never penalized. 0 disables both."
                 },
                 "wake_count": {
                     "type": "integer",
@@ -846,11 +845,6 @@ SETTINGS_SCHEMA = {
             "description": "Logging level for console output and file logging",
             "default": "DEBUG",
             "choices": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        },
-        "skip_initial_plex_update": {
-            "type": "boolean",
-            "description": "Skip Plex initial collection scan",
-            "default": False
         },
         "disable_unblacklisting": {
             "type": "boolean",
@@ -961,11 +955,6 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "List of filenames or folder names to filter out, comma separated",
             "default": ""
-        },
-        "anime_renaming_using_anidb": {
-            "type": "boolean",
-            "description": "Use AniDB to rename anime episodes instead of Trakt metadata (symlinking only)",
-            "default": False
         },
         "enable_separate_anime_folders": {
             "type": "boolean",

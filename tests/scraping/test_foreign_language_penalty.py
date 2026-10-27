@@ -128,13 +128,59 @@ class ForeignLanguagePenaltyTests(unittest.TestCase):
         untagged = _score(dbtv, original_language='ko')
         self.assertEqual(untagged['extra_audio_bonus'], 0)
         self.assertEqual(untagged['foreign_language_penalty'], 0)
+        # English named in the audio, or DUAL: full bonus.
         for title in ('Squid.Game.S01E02.Hell.1080p.NF.WEB-DL.DUAL.DDP5.1.Atmos.x264-AGLET',
-                      'Squid Game 2021 S01E08 1080p NF WEB-DL MULTI DDP5 1 H 264-DUSKLiGHT',
-                      'Squid.Game.S01E09.FiNAL.MULTi.1080p.NF.WEB.DDP5.1.H264-TFA',
                       'Squid.Game.S01E01.1080p.NF.WEB-DL.Dual-Audio.DDP5.1.x264-X',
-                      'Squid.Game.S01E01.1080p.NF.WEB-DL.KOR.ENG.DDP5.1.x264-X'):
+                      'Squid.Game.S01E01.1080p.NF.WEB-DL.KOR.ENG.DDP5.1.x264-X',
+                      'Squid Game S03 1080p ENG ITA KOR H265-TheBlackKing'):
             with self.subTest(title=title):
-                self.assertEqual(_score(title, original_language='ko')['extra_audio_bonus'], 90)
+                self.assertEqual(_score(title, original_language='ko')['extra_audio_bonus'], 50)
+        # A bare MULTi usually carries English but doesn't say so: half.
+        for title in ('Squid Game 2021 S01E08 1080p NF WEB-DL MULTI DDP5 1 H 264-DUSKLiGHT',
+                      'Squid.Game.S01E09.FiNAL.MULTi.1080p.NF.WEB.DDP5.1.H264-TFA'):
+            with self.subTest(title=title):
+                self.assertEqual(_score(title, original_language='ko')['extra_audio_bonus'], 25)
+
+    def test_extra_audio_bonus_is_capped(self):
+        # A tiebreaker, not 300 points over every untagged release (100 x 3 here).
+        dual = 'Squid.Game.S01E02.Hell.1080p.NF.WEB-DL.DUAL.DDP5.1.Atmos.x264-AGLET'
+        multi = 'Squid Game 2021 S01E08 1080p NF WEB-DL MULTI DDP5 1 H 264-DUSKLiGHT'
+        self.assertEqual(_score(dual, original_language='ko', foreign_language_penalty=100)['extra_audio_bonus'], 50)
+        self.assertEqual(_score(multi, original_language='ko', foreign_language_penalty=100)['extra_audio_bonus'], 25)
+        # Below the cap the settings still scale it.
+        self.assertEqual(_score(dual, original_language='ko', foreign_language_penalty=10)['extra_audio_bonus'], 30)
+
+    def test_untagged_with_much_higher_bitrate_beats_dual(self):
+        dbtv = _result('Squid.Game.S01E01.2021.1080p.Netflix.WEB-DL.AVC.DDP.5.1.Atmos-DBTV')
+        dbtv['bitrate'], dbtv['size'] = 18000, 3.6
+        dual = _result('Squid.Game.S01E01.1080p.NF.WEB-DL.DUAL.DDP5.1.Atmos.x264-AGLET')
+        dual['bitrate'], dual['size'] = 3000, 0.6
+        version = {'max_resolution': '1080p', 'language_code': 'en', 'foreign_language_penalty': 100, 'bitrate_weight': 5}
+        keys = {r['title']: rank_result_key(r, [dbtv, dual], 'Squid Game', 2021, 1, 1, False, 'episode', version,
+                                            preferred_language='en', original_language='ko')
+                for r in (dbtv, dual)}
+        self.assertLess(keys[dbtv['title']], keys[dual['title']])
+
+    def test_multi_naming_other_dubs_but_not_english_earns_no_bonus(self):
+        # Tsundere-Raws' Squid Game S03 MULTi is French/Japanese/Korean, no English.
+        for title in ('Squid Game S03 MULTi 1080p WEB x264 E-AC-3 -Tsundere-Raws (NF) (VF, FRENCH, VOSTFR, Multi-Audio)',
+                      'Squid.Game.S01E01.GERMAN.DL.1080p.WEB.x264-X'):
+            with self.subTest(title=title):
+                self.assertEqual(_score(title, original_language='ko')['extra_audio_bonus'], 0)
+
+    def test_named_english_beats_higher_bitrate_bare_multi(self):
+        # Squid Game S03E05 auto-picked the bare-MULTi Tsundere-Raws pack (no English)
+        # over an ENG-tagged pack because both got the full bonus and it had more bitrate.
+        multi = _result('Squid Game S03 MULTi 1080p WEB x264 E-AC-3 -Tsundere-Raws (NF)')
+        multi['bitrate'] = 9000
+        eng = _result('Squid Game S03 1080p ENG ITA KOR H265-TheBlackKing')
+        eng['bitrate'] = 5000
+        version = {'max_resolution': '1080p', 'language_code': 'en'}
+        keys = {}
+        for r in (multi, eng):
+            keys[r['title']] = rank_result_key(r, [multi, eng], 'Squid Game', 2021, 3, 5, True, 'episode',
+                                               version, preferred_language='en', original_language='ko')
+        self.assertLess(keys[eng['title']], keys[multi['title']])
 
     def test_extra_audio_bonus_needs_foreign_original(self):
         dual = 'How.I.Met.Your.Mother.S01E18.1080p.WEB-DL.DUAL.DDP5.1.x264-X'

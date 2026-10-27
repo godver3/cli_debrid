@@ -2,17 +2,12 @@ import logging
 import logging.handlers
 from utilities.settings import get_setting
 from utilities.log_redaction import RedactingFormatter, scrub
-import psutil
 import os
-import time
-import threading
 import cProfile
-import pstats
-import io
 import json
 import re
 from datetime import datetime
-from queues.performance_monitor import monitor, start_performance_monitoring
+from queues.performance_monitor import start_performance_monitoring
 
 # Global profiler
 global_profiler = cProfile.Profile()
@@ -44,15 +39,6 @@ def stop_global_profiling():
     except Exception as e:
         logging.warning(f"Failed to stop profiling: {str(e)}")
 
-class OverwriteFileHandler(logging.FileHandler):
-    def __init__(self, filename, mode='w', encoding=None, delay=False):
-        super().__init__(filename, mode, encoding, delay)
-    
-    def emit(self, record):
-        # Open the file in write mode ('w') for each emission
-        self.baseFilename = self.baseFilename
-        with open(self.baseFilename, 'w', encoding=self.encoding) as f:
-            f.write(self.format(record) + self.terminator)
 
 class DynamicConsoleHandler(logging.StreamHandler):
     def __init__(self):
@@ -148,9 +134,6 @@ class APSchedulerMaxInstancesWarningFilter(logging.Filter):
             return False  # Suppress this warning
         return True
 
-def log_system_stats():
-    """Start the performance monitoring system"""
-    monitor.start_monitoring()
 
 # Create a filter to exclude logs from specific files
 class ExcludeFilter(logging.Filter):

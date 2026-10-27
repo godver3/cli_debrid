@@ -7,53 +7,18 @@ import time
 import threading
 from utilities.settings import get_setting
 import re
-import pytz
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 import requests
 from collections import defaultdict
 import iso8601
-from collections import Counter
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cli_battery.app.direct_api import DirectAPI
 from cli_battery.app import trakt_client
-from cli_battery.app.database import DatabaseManager
-from database.database_reading import get_media_item_presence, get_all_media_items, get_show_episode_identifiers_from_db, get_media_item_ids
 
 # Initialize DirectAPI at module level
 direct_api = DirectAPI()
 
-
-# Cache for Jackett enabled check to avoid loading config on every call
-_jackett_enabled_cache = None
-_jackett_check_time = 0
-_JACKETT_CACHE_TTL = 60  # Cache for 60 seconds
-
-def _has_jackett_enabled():
-    """
-    Check if any Jackett scrapers are enabled (cached for 60s to avoid repeated config loads)
-
-    Returns:
-        bool: True if at least one Jackett scraper is enabled
-    """
-    global _jackett_enabled_cache, _jackett_check_time
-    current_time = time.time()
-
-    # Return cached value if still fresh
-    if _jackett_enabled_cache is not None and (current_time - _jackett_check_time) < _JACKETT_CACHE_TTL:
-        return _jackett_enabled_cache
-
-    # Load config and check for Jackett
-    from queues.config_manager import load_config
-    config = load_config()
-
-    _jackett_enabled_cache = any(
-        isinstance(s, dict) and s.get('type') == 'Jackett' and s.get('enabled', False)
-        for s in config.get('Scrapers', {}).values()
-    )
-    _jackett_check_time = current_time
-
-    return _jackett_enabled_cache
 
 def parse_json_string(s):
     try:
@@ -610,10 +575,6 @@ def _episodeless_refresh_allowed(imdb_id: str) -> bool:
         return True
 
 def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    from database.database_writing import update_blacklisted_date, update_media_item
-    from database.core import get_db_connection
-    from database.wanted_items import add_wanted_items
-    from database.database_reading import get_media_item_ids
 
     processed_items = {'movies': [], 'episodes': []}
     global trakt_metadata_instance
@@ -1848,31 +1809,6 @@ def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
         return DEFAULT_AIRTIME
     return show_metadata.get('airs', {}).get('time', DEFAULT_AIRTIME)
 
-def test_metadata_processing():
-    test_items = [
-        # Movies
-        {'imdb_id': 'tt0111161', 'media_type': 'movie'},  # The Shawshank Redemption
-        {'imdb_id': 'tt0068646', 'media_type': 'movie'},  # The Godfather
-        {'tmdb_id': 155, 'media_type': 'movie'},  # The Dark Knight
-
-        # TV Shows
-        {'imdb_id': 'tt0944947', 'media_type': 'tv'},  # Game of Thrones
-        {'imdb_id': 'tt0903747', 'media_type': 'tv'},  # Breaking Bad
-        {'tmdb_id': 1396, 'media_type': 'tv'},  # Breaking Bad (using TMDB ID)
-    ]
-
-    processed_data = process_metadata(test_items)
-
-    print("Processed Movies:")
-    for movie in processed_data['movies']:
-        print(f"- {movie['title']} ({movie['year']}) - IMDb: {movie['imdb_id']}, TMDB: {movie['tmdb_id']}")
-
-    print("\nProcessed TV Show Episodes:")
-    for episode in processed_data['episodes'][:10]:  # Limiting to first 10 episodes for brevity
-        print(f"- {episode['title']} S{episode['season_number']:02d}E{episode['episode_number']:02d}: {episode['episode_title']}")
-
-    print(f"\nTotal movies processed: {len(processed_data['movies'])}")
-    print(f"Total episodes processed: {len(processed_data['episodes'])}")
 
 def extract_tmdb_id(data):
     if isinstance(data, dict):
@@ -1924,21 +1860,6 @@ def get_tmdb_id_and_media_type(imdb_id: str) -> Tuple[Optional[int], Optional[st
     logging.error(f"Could not determine media type for IMDb ID {imdb_id}")
     return None, None
     
-def get_runtime(imdb_id: str, media_type: str) -> Optional[int]:
-    if media_type == 'movie':
-        metadata, _ = DirectAPI.get_movie_metadata(imdb_id)
-    else:
-        metadata, _ = DirectAPI.get_show_metadata(imdb_id)
-    
-    runtime = metadata.get('runtime')
-    
-    if runtime is not None:
-        try:
-            return int(runtime)
-        except ValueError:
-            logging.warning(f"Invalid runtime value for {imdb_id}: {runtime}")
-    
-    return None
 
 def get_media_country_code(imdb_id: str, media_type: str) -> Optional[str]:
     """

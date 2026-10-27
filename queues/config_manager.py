@@ -361,80 +361,6 @@ def delete_content_source(source_id):
         logging.warning(f"[{process_id}] Content source {source_id} not found in config")
         return False
 
-def update_content_source(source_id, source_config):
-    from content_checkers.plex_watchlist import validate_plex_tokens
-
-    process_id = str(uuid.uuid4())[:8]
-    logging.debug(f"[{process_id}] Starting update_content_source process for source_id: {source_id}")
-    
-    config = load_config()
-    if 'Content Sources' in config and source_id in config['Content Sources']:
-        # Store the old config to check for changes
-        old_config = config['Content Sources'].get(source_id, {})
-        
-        # Validate and update only the fields present in the schema
-        source_type = source_id.split('_')[0]
-        schema = SETTINGS_SCHEMA['Content Sources']['schema'][source_type]
-        for key, value in source_config.items():
-            if key in schema or key in ['versions', 'enabled', 'display_name']:
-                if key == 'versions':
-                    # Ensure versions is always a list
-                    if isinstance(value, bool):
-                        value = []
-                    elif isinstance(value, str):
-                        value = [value]
-                    elif not isinstance(value, list):
-                        value = list(value)
-                config['Content Sources'][source_id][key] = value
-        
-        log_config_state(f"[{process_id}] Config after updating content source", config)
-        save_config(config)
-
-        # If this is an Other Plex Watchlist whose token/username changed, validate it. This runs
-        # after the save (validate_plex_tokens reads config from disk, so before it checked the
-        # old token) and can never block saving the source.
-        if (source_config.get('type') == 'Other Plex Watchlist' and
-            (old_config.get('token') != source_config.get('token') or
-             old_config.get('username') != source_config.get('username'))):
-            try:
-                token_status = validate_plex_tokens()
-                username = source_config.get('username')
-                if token_status.get(username, {}).get('valid') is False:
-                    logging.error(f"Invalid Plex token for newly added/updated user {username}")
-            except Exception as e:
-                logging.warning(f"Could not validate the Plex token for {source_config.get('username')}: {e}")
-        
-        # Explicitly reset provider and reinitialize components after updating content source
-        from debrid import reset_provider
-        reset_provider()
-        from queues.queue_manager import QueueManager
-        QueueManager().reinitialize()
-        from queues.run_program import ProgramRunner
-        ProgramRunner().reinitialize()
-        logging.debug(f"[{process_id}] Successfully updated content source: {source_id}")
-        return True
-    else:
-        logging.error(f"[{process_id}] Content source not found: {source_id}")
-        return False
-
-def update_all_content_sources(content_sources):
-    process_id = str(uuid.uuid4())[:8]
-    logging.debug(f"[{process_id}] Starting update_all_content_sources process")
-    
-    config = load_config()
-    config['Content Sources'] = content_sources
-    log_config_state(f"[{process_id}] Config after updating all content sources", config)
-    save_config(config)
-    
-    # Explicitly reset provider and reinitialize components after updating all content sources
-    from debrid import reset_provider
-    reset_provider()
-    from queues.queue_manager import QueueManager
-    QueueManager().reinitialize()
-    from queues.run_program import ProgramRunner
-    ProgramRunner().reinitialize()
-    logging.debug(f"[{process_id}] Successfully updated all content sources")
-    return True
 
 def add_scraper(scraper_type, scraper_config):
     process_id = str(uuid.uuid4())[:8]  # Generate a unique ID for this process
@@ -609,31 +535,12 @@ def get_content_source_settings():
         logging.error(f"Error in get_content_source_settings: {str(e)}", exc_info=True)
         raise
 
-def update_scraper(scraper_id, scraper_config):
-    config = load_config()
-    if 'Scrapers' in config and scraper_id in config['Scrapers']:
-        # Validate and update only the fields present in the schema
-        scraper_type = scraper_id.split('_')[0]
-        schema = SETTINGS_SCHEMA['Scrapers']['schema'][scraper_type]
-        for key, value in scraper_config.items():
-            if key in schema:
-                config['Scrapers'][scraper_id][key] = value
-        save_config(config)
-        return True
-    return False
 
 def clean_notifications(config):
     if 'Notifications' in config:
         config['Notifications'] = {k: v for k, v in config['Notifications'].items() if v is not None}
     return config
 
-def trim_trailing_slashes(config):
-    """Trim trailing slashes from file paths in the Debug section."""
-    if 'Debug' in config:
-        for key in ['original_files_path', 'symlinked_files_path']:
-            if key in config['Debug'] and isinstance(config['Debug'][key], str):
-                config['Debug'][key] = config['Debug'][key].rstrip('/')
-    return config
 
 def get_enabled_content_sources():
     """Get a list of configured content sources (ignoring per-source enabled flags)."""

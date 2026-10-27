@@ -16,7 +16,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 from .logger_config import logger
-from .database import init_db, Session as DbSession, Item, Season, Episode, Metadata, managed_session
+from .database import Item, Season, Episode, managed_session
 from .staleness import is_stale, should_recheck_null_airdate
 from . import trakt_client
 from . import tvdb_client

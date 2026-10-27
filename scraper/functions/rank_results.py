@@ -1,7 +1,7 @@
 import logging
 import re
 from typing import List, Dict, Any, Tuple, Optional
-from scraper.functions.similarity_checks import similarity, normalize_title
+from scraper.functions.similarity_checks import normalize_title
 from scraper.functions.other_functions import smart_search
 from fuzzywuzzy import fuzz
 
@@ -40,6 +40,12 @@ def check_preferred(patterns_weights, fields, is_bonus):
 # MULTi, DUAL (bare or Dual-Audio) and the scene 'DL' dual-language tag; WEB-DL and
 # Multi-Subs/Dual.Subs don't count.
 _MULTI_AUDIO_RE = re.compile(r'(?i)\b(?:multi|dual)\b(?![ ._-]?subs?\b)|(?<!web[ ._-])\bdl\b')
+# DUAL on a foreign-language title is, by convention, the original plus an English dub.
+_DUAL_AUDIO_RE = re.compile(r'(?i)\bdual\b(?![ ._-]?subs?\b)')
+# Cap on the extra-audio bonus: a tiebreaker between otherwise close releases (Squid
+# Game S01's DUAL releases lost by ~20 points on bitrate), not enough to bury an
+# untagged release that's clearly better, since many untagged releases do have English.
+_EXTRA_AUDIO_BONUS_CAP = 50.0
 
 
 def _release_tags(torrent_title, extracted_title):
@@ -459,12 +465,24 @@ def rank_result_key(
         # For a title whose original language isn't the preferred one (Squid Game is 'ko'),
         # an untagged release usually has only the original audio. Untagged releases stay
         # unpenalized (some do carry the preferred track); a release that says it carries
-        # extra audio (MULTi, DUAL, or the preferred language tagged) gets the same amount
-        # as a bonus instead, so it beats a higher-bitrate original-audio-only release.
+        # extra audio (MULTi, DUAL, or the preferred language tagged) gets a bonus of up
+        # to _EXTRA_AUDIO_BONUS_CAP instead, so it wins a close call against an
+        # original-audio-only release.
+        # How sure the release is about carrying the preferred track sets the size:
+        # named in the audio (ENG, English Audio) or DUAL: full bonus. A bare MULTi
+        # usually does but doesn't promise it (French-scene MULTi is French + original,
+        # e.g. Tsundere-Raws' Squid Game S03 had no English): half. Audio that names
+        # dubs without the preferred language (VF/FRENCH, GERMAN.DL): none.
         if original_language and original_language.lower() != preferred_language_lower:
-            if preferred_language_lower in audio_languages or _MULTI_AUDIO_RE.search(release_tags):
-                extra_audio_bonus = foreign_language_penalty_setting * language_weight
-                language_reason += f" + Bonus {extra_audio_bonus:.0f} for extra audio on a '{original_language.lower()}' title (audio {audio_languages})"
+            original_lower = original_language.lower()
+            other_dubs = [l for l in audio_languages if l not in (preferred_language_lower, original_lower, 'multi')]
+            full_bonus = min(_EXTRA_AUDIO_BONUS_CAP, foreign_language_penalty_setting * language_weight)
+            if preferred_language_lower in audio_languages or (_DUAL_AUDIO_RE.search(release_tags) and not other_dubs):
+                extra_audio_bonus = full_bonus
+                language_reason += f" + Bonus {extra_audio_bonus:.0f} for extra audio on a '{original_lower}' title (audio {audio_languages})"
+            elif _MULTI_AUDIO_RE.search(release_tags) and not other_dubs:
+                extra_audio_bonus = full_bonus / 2
+                language_reason += f" + Bonus {extra_audio_bonus:.0f} for untagged multi-audio on a '{original_lower}' title (preferred track not named)"
     # --- End Preferred Audio/Sub Language Ranking ---
 
     normalized_language = language_score # Use the raw score
@@ -809,36 +827,6 @@ def rank_result_key(
 
     # Add the score breakdown to the result
     result['score_breakdown'] = score_breakdown
-
-    # Log detailed score breakdown
-    # logging.debug(f"Score breakdown for '{torrent_title}':")
-    # logging.debug(f"├─ Num Items Covered (for ranking): {num_items}") # Add this to logging if needed
-    # logging.debug(f"├─ Title Similarity: {score_breakdown['similarity_score']:.2f} (weight: {similarity_weight})")
-    # logging.debug(f"├─ Resolution: {score_breakdown['resolution_score']:.2f} (weight: {resolution_weight})")
-    # logging.debug(f"├─ HDR: {score_breakdown['hdr_score']:.2f} (weight: {hdr_weight})")
-    # logging.debug(f"├─ Size: {score_breakdown['size_score']:.2f} (weight: {size_weight})")
-    # logging.debug(f"├─ Bitrate: {score_breakdown['bitrate_score']:.2f} (weight: {bitrate_weight})")
-    # logging.debug(f"├─ Country: {score_breakdown['country_score']:.2f} (weight: {country_weight}, reason: {country_reason})")
-    # logging.debug(f"├─ Language: {score_breakdown['language_score']:.2f} (weight: {language_weight}, reason: {language_reason})")
-    # logging.debug(f"├─ Year Match: {score_breakdown['year_match_score']:.2f} (base: {year_match}, weight: {year_match_weight}, reason: {year_reason})")
-    # if content_type.lower() == 'episode':
-    #     logging.debug(f"├─ Season Match: {score_breakdown['season_match_score']:.2f} (base: {season_match_score})")
-    #     logging.debug(f"├─ Episode Match: {score_breakdown['episode_match_score']:.2f} (base: {episode_match_score})")
-    #     if score_breakdown['is_multi_pack']:
-    #         logging.debug(f"├─ Multi-pack: {score_breakdown['multi_pack_score']:.2f} ({score_breakdown['num_items']} items)")
-    #     if score_breakdown['single_episode_score']:
-    #         logging.debug(f"├─ Single Episode Penalty: {score_breakdown['single_episode_score']:.2f}")
-    # if score_breakdown['content_type_score']:
-    #     logging.debug(f"├─ Content Type Score: {score_breakdown['content_type_score']:.2f}")
-    # if preferred_filter_in_breakdown:
-    #     logging.debug("├─ Preferred Filter Bonuses:")
-    #     for pattern, score in preferred_filter_in_breakdown.items():
-    #         logging.debug(f"│  ├─ {pattern}: +{score}")
-    # if preferred_filter_out_breakdown:
-    #     logging.debug("├─ Preferred Filter Penalties:")
-    #     for pattern, score in preferred_filter_out_breakdown.items():
-    #         logging.debug(f"│  ├─ {pattern}: {score}")
-    # logging.debug(f"└─ Total Score: {score_breakdown['total_score']:.2f}")
 
     # Return negative total_score to sort in descending order
     # Year match raw score is used as a tie-breaker
