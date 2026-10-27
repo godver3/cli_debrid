@@ -105,6 +105,26 @@ def _swaps_a_title_word(parsed_title, target_title):
     return bool(unmatched(parsed_words, target_words)) and bool(unmatched(target_words, parsed_words))
 
 
+def _inserts_a_title_word(parsed_title, target_title):
+    """True when parsed_title is target_title with a word added in the middle:
+    'spider.man.the.new.animated.series' against 'spider.man.the.animated.series'
+    is the 2003 show, not the 1994 one, and scores high enough to pass. Numbers
+    don't count ('resident.evil.3.extinction')."""
+    parsed = [w for w in re.split(r'[^a-z0-9]+', parsed_title) if w and w not in _TITLE_FILLER_WORDS and not w.isdigit()]
+    target = [w for w in re.split(r'[^a-z0-9]+', target_title) if w and w not in _TITLE_FILLER_WORDS and not w.isdigit()]
+    if len(target) < 2 or len(parsed) <= len(target):
+        return False
+    positions, j = [], 0
+    for word in target:
+        while j < len(parsed) and parsed[j] != word:
+            j += 1
+        if j == len(parsed):
+            return False
+        positions.append(j)
+        j += 1
+    return positions[-1] - positions[0] + 1 > len(target)
+
+
 def filter_results(
     results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str,
     season: int, episode: int, multi: bool, version_settings: Dict[str, Any],
@@ -826,6 +846,19 @@ def filter_results(
                 if targets and all(_swaps_a_title_word(normalized_parsed_title, t) for t in targets):
                     result['filter_reason'] = f"Different title: '{normalized_parsed_title}' swaps a word of '{normalized_query_title}' (similarity {best_sim:.2f})"
                     logging.info(f"Rejected: Different title '{normalized_parsed_title}' vs '{normalized_query_title}' (similarity {best_sim:.2f}) for '{original_title}' (Size: {result['size']:.2f}GB)")
+                    continue
+
+            # A word added inside the title ('The New Animated Series') is another show,
+            # unless an alias spells it that way.
+            if (not is_anime and not is_ufc and normalized_parsed_title and best_sim >= result_similarity_threshold
+                    and _inserts_a_title_word(normalized_parsed_title, normalized_query_title)):
+                alias_titles = [*normalized_aliases]
+                for alias_list in item_aliases.values():
+                    if isinstance(alias_list, list):
+                        alias_titles.extend(normalize_title(a).lower() for a in alias_list if isinstance(a, str))
+                if not any(fuzz.ratio(normalized_parsed_title, a) >= 95 for a in alias_titles if a):
+                    result['filter_reason'] = f"Different title: '{normalized_parsed_title}' adds a word inside '{normalized_query_title}'"
+                    logging.info(f"Rejected: Different title '{normalized_parsed_title}' adds a word inside '{normalized_query_title}' for '{original_title}' (Size: {result['size']:.2f}GB)")
                     continue
 
             if best_sim < result_similarity_threshold:

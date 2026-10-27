@@ -53,6 +53,24 @@ class SwapHelperTests(unittest.TestCase):
         self.assertFalse(_swaps_a_title_word("the.colour.purple", "the.color.purple"))  # near spelling
         self.assertFalse(_swaps_a_title_word("", "american.dad"))
 
+    def test_inserted_word(self):
+        from scraper.functions.filter_results import _inserts_a_title_word
+        self.assertTrue(_inserts_a_title_word("spider.man.the.new.animated.series", "spider.man.the.animated.series"))
+        self.assertFalse(_inserts_a_title_word("resident.evil.3.extinction", "resident.evil.extinction"))
+        self.assertFalse(_inserts_a_title_word("marvels.daredevil", "daredevil"))  # prefix, not inside
+        self.assertFalse(_inserts_a_title_word("spider.man.the.animated.series", "spider.man.the.animated.series"))
+
+
+class SpiderManNewAnimatedSeriesTests(unittest.TestCase):
+    def test_2003_show_rejected_for_1994_show(self):
+        from scraper.functions.filter_results import filter_results
+        titles = ["Spider-Man.The.New.Animated.Series.S01E01.Heroes.and.Villains.1080p.Upscale.DVDRip.AC3.x264-GRP",
+                  "Spider-Man.The.Animated.Series.S01E01.Night.of.the.Lizard.1080p.BluRay.x264-GRP"]
+        passed, _ = filter_results([_result(t, 1.2) for t in titles], "3092", "Spider-Man: The Animated Series", 1994,
+                                   "episode", 1, 1, False, VERSION, 22, 13, {1: 13}, ["Animation"], [],
+                                   imdb_id="tt0112175")
+        self.assertEqual({titles[1]}, {r["original_title"] for r in passed})
+
 
 if __name__ == '__main__':
     unittest.main()
