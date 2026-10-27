@@ -1392,7 +1392,13 @@ def refresh_release_dates(force_bypass_cache: bool = False):
             return show_metadata_by_imdb[imdb_id]
 
     def _process_one_refresh_item(index, item):
+        """Look up one item's release data; return its pending DB update (or None).
+
+        Workers never write: eight concurrent writers made SQLite report 'database is
+        locked' on every startup. The caller applies the returned updates one at a time.
+        """
         nonlocal cache_hits, cache_misses, completed_count
+        pending_update = None
         try:
             item_dict = dict(item)
             title = item_dict.get('title', 'Unknown Title')
@@ -1720,8 +1726,8 @@ def refresh_release_dates(force_bypass_cache: bool = False):
 
                 logging.info(f"Changes detected for {title} (DB ID: {db_item_id}). Current state: {item_dict['state']}, New state: {new_state}. Updating database.")
                 item_dict['no_early_release_original'] = item_dict.get('no_early_release', False)
-                update_release_date_and_state(
-                    db_item_id, new_release_date, new_state, airtime=new_airtime,
+                update_kwargs = dict(
+                    airtime=new_airtime,
                     early_release=item_dict.get('early_release', False),
                     physical_release_date=new_physical_release_date if media_type == 'movie' else None,
                     theatrical_release_date=new_theatrical_release_date if media_type == 'movie' else None,
@@ -1730,11 +1736,11 @@ def refresh_release_dates(force_bypass_cache: bool = False):
                     expected_state=item_dict['state']
                 )
                 log_msg = f"Updated DB for ID {db_item_id}: State={new_state}, ReleaseDate={new_release_date}"
-                if media_type == 'movie': 
+                if media_type == 'movie':
                     log_msg += f" and physical release date of: {new_physical_release_date}"
                     log_msg += f" and theatrical release date of: {new_theatrical_release_date}"
                 if media_type == 'episode': log_msg += f" and airtime of: {new_airtime}"
-                logging.info(log_msg)
+                pending_update = ((db_item_id, new_release_date, new_state), update_kwargs, log_msg)
             else:
                 logging.info(f"No changes needed for {title} (DB ID: {db_item_id})")
 
@@ -1759,6 +1765,7 @@ def refresh_release_dates(force_bypass_cache: bool = False):
 
         except Exception as e:
             logging.error(f"Error processing item {index} (DB ID: {item_dict.get('id', 'N/A')}): {str(e)}", exc_info=True)
+        return pending_update
 
     from concurrent.futures import ThreadPoolExecutor as _TPE_refresh
     _refresh_workers = min(8, max(1, len(items_to_refresh)))
@@ -1767,8 +1774,17 @@ def refresh_release_dates(force_bypass_cache: bool = False):
             _refresh_pool.submit(_process_one_refresh_item, index, item)
             for index, item in enumerate(items_to_refresh, 1)
         ]
+        # Single writer: apply each result here, in submission order, as it completes.
         for _fut in _refresh_futures:
-            _fut.result()
+            pending = _fut.result()
+            if not pending:
+                continue
+            args, kwargs, log_msg = pending
+            try:
+                update_release_date_and_state(*args, **kwargs)
+                logging.info(log_msg)
+            except Exception as e:
+                logging.error(f"Error saving refreshed release data for DB ID {args[0]}: {e}", exc_info=True)
 
     # Save final cache state
     trakt.save_imdb_trakt_cache(imdb_trakt_cache)
