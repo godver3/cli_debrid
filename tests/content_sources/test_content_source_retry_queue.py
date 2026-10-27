@@ -102,6 +102,46 @@ class ContentSourceRetryQueueTest(unittest.TestCase):
         self._make_due()
         self.assertEqual(self.csr.process_retry_queue(), 1)  # still picked up
 
+    def _readd(self, content_source, state='Wanted'):
+        conn = sqlite3.connect(self.db)
+        conn.execute('CREATE TABLE IF NOT EXISTS media_items (id INTEGER PRIMARY KEY, imdb_id TEXT, '
+                     'tmdb_id TEXT, type TEXT, state TEXT, content_source TEXT)')
+        conn.execute('INSERT INTO media_items (imdb_id, tmdb_id, type, state, content_source) '
+                     'VALUES (?, ?, ?, ?, ?)', ('tt0000005', '55', 'movie', state, content_source))
+        conn.commit()
+        conn.close()
+
+    def _fail_then_make_due(self):
+        self.removal.side_effect = TimeoutError('down')
+        self.dm_mod.DeletionManager().remove_from_content_source(dict(ITEM))
+        self.removal.reset_mock()
+        self._make_due()
+
+    def test_user_request_after_the_delete_cancels_the_retry(self):
+        self._fail_then_make_due()
+        self._readd('content_requester')  # requested again from Discover
+        self.assertEqual(self.csr.process_retry_queue(), 1)
+        self.removal.assert_not_called()
+        _imdb, retry_count, completed, _data, last_error = self._rows()[0]
+        self.assertEqual((retry_count, completed), (0, 1))
+        self.assertIn('requested again', last_error)
+
+    def test_sync_putting_the_item_back_still_retries(self):
+        self._fail_then_make_due()
+        self._readd('Overseerr_1')  # the next sync re-added it: what the retry is for
+        self.removal.side_effect = None
+        self.removal.return_value = {'success': True, 'message': 'removed'}
+        self.assertEqual(self.csr.process_retry_queue(), 1)
+        self.removal.assert_called_once()
+
+    def test_blacklisted_user_row_does_not_cancel(self):
+        self._fail_then_make_due()
+        self._readd('content_requester', state='Blacklisted')
+        self.removal.side_effect = None
+        self.removal.return_value = {'success': True, 'message': 'removed'}
+        self.csr.process_retry_queue()
+        self.removal.assert_called_once()
+
     def test_successful_removal_queues_nothing(self):
         self.removal.return_value = {'success': True, 'message': 'removed'}
         self.dm_mod.DeletionManager().remove_from_content_source(dict(ITEM))

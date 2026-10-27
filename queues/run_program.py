@@ -170,6 +170,9 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
         self.connectivity_failure_time = None
         self.connectivity_retry_count = 0 # This will now primarily be for logging/timing, actual count in pause_info
         self.queue_paused = False
+        # Set while task_check_database_health finds corruption: holds the queue paused
+        # until a check passes, whatever other pause ends in the meantime
+        self.db_health_pause_info = None
 
         # PAUSE/RESUME THROTTLING: Prevent rapid pause/resume cycles
         self.last_pause_time = None
@@ -1545,6 +1548,16 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
         logging.info(f"Queue paused. Attempted to pause all running jobs (except essential monitoring tasks)... Reason: {log_reason}")
 
     def resume_queue(self):
+        # A failing database health check holds the pause. Connectivity coming back, a
+        # library delete or a cli_mount sync finishing clear pause_info and call this
+        # too; put the DB_HEALTH pause back instead of resuming.
+        if self.db_health_pause_info:
+            self.pause_info = dict(self.db_health_pause_info)
+            if not self.queue_paused:
+                self.pause_queue()
+            logging.info("[Resume Queue] Not resuming - the database health check is still failing")
+            return
+
         # THROTTLING: Prevent rapid resume operations
         from datetime import datetime
         now = datetime.now()

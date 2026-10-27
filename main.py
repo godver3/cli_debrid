@@ -2321,6 +2321,7 @@ def main():
                             logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking database health...")
                             if verify_database_health(): # verify_database_health is in main.py
                                 logging.info("[Supervisor] Database health is OK.")
+                                global_program_runner_instance.db_health_pause_info = None  # lift the hold resume_queue honours
                                 should_attempt_resume = True
                             else:
                                 logging.info("[Supervisor] Database health issues persist.")

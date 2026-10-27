@@ -83,6 +83,7 @@ class DatabaseHealthTaskPauseTest(unittest.TestCase):
         runner = MaintenanceTasks()
         runner.queue_paused = False
         runner.pause_info = {}
+        runner.db_health_pause_info = None
 
         def pause():
             runner.queue_paused = True
@@ -118,6 +119,24 @@ class DatabaseHealthTaskPauseTest(unittest.TestCase):
         self._run(True)
         self.runner.resume_queue.assert_not_called()
 
+    def test_throttled_pause_is_retried_without_a_second_notification(self):
+        self.runner.pause_queue.side_effect = None  # pause_queue's cooldown skipped the pause
+        self._run(False)
+        self.assertFalse(self.runner.queue_paused)
+        self.runner.pause_queue.side_effect = lambda: setattr(self.runner, 'queue_paused', True)
+        self._run(False)
+        self.assertEqual(self.runner.pause_queue.call_count, 2)
+        self.assertTrue(self.runner.queue_paused)
+        self.assertEqual(self.runner.pause_info['error_type'], 'DB_HEALTH')
+        self.assertEqual(self.notify.call_count, 1)
+
+    def test_passing_check_after_another_pause_took_over_only_lifts_the_hold(self):
+        self._run(False)
+        self.runner.pause_info = {'error_type': 'CONNECTION_ERROR'}
+        self._run(True)
+        self.runner.resume_queue.assert_not_called()
+        self.assertIsNone(self.runner.db_health_pause_info)
+
     def test_watchdog_does_not_force_resume_a_db_health_pause(self):
         from queues.run_program import ProgramRunner
         fake = mock.Mock(queue_paused=True, pause_info={'error_type': 'DB_HEALTH'},
@@ -125,6 +144,50 @@ class DatabaseHealthTaskPauseTest(unittest.TestCase):
         ProgramRunner._fail_safe_resume_if_stuck(fake)
         fake.resume_queue.assert_not_called()
         self.assertIsNone(fake.connectivity_failure_time)
+
+
+class ResumeQueueHoldsDbHealthPauseTest(unittest.TestCase):
+    """ProgramRunner.resume_queue keeps a DB_HEALTH pause while the check is failing.
+
+    Connectivity recovery, library deletes, bulk actions and cli_mount syncs clear
+    pause_info and call resume_queue when their own pause ends; that used to lift a
+    DB_HEALTH pause too, until the next hourly check paused and notified again.
+    """
+    HELD = {'reason_string': 'Database corruption detected - check logs for details',
+            'error_type': 'DB_HEALTH', 'service_name': 'System Database',
+            'status_code': None, 'retry_count': 0}
+
+    def _fake(self, queue_paused=True):
+        return mock.Mock(queue_paused=queue_paused, db_health_pause_info=dict(self.HELD),
+                         pause_info={'reason_string': None, 'error_type': None},
+                         scheduler_lock=mock.MagicMock(), last_resume_time=None)
+
+    def test_other_pause_ending_does_not_resume(self):
+        from queues.run_program import ProgramRunner
+        fake = self._fake()
+        ProgramRunner.resume_queue(fake)
+        self.assertTrue(fake.queue_paused)
+        self.assertEqual(fake.pause_info, self.HELD)
+        fake.scheduler.resume_job.assert_not_called()
+        fake.pause_queue.assert_not_called()
+
+    def test_unpaused_queue_is_paused_again(self):
+        from queues.run_program import ProgramRunner
+        fake = self._fake(queue_paused=False)
+        ProgramRunner.resume_queue(fake)
+        fake.pause_queue.assert_called_once()
+        self.assertEqual(fake.pause_info, self.HELD)
+
+    def test_resumes_normally_once_the_hold_is_lifted(self):
+        from queues.run_program import ProgramRunner
+        fake = self._fake()
+        fake.db_health_pause_info = None
+        fake.paused_jobs_by_queue = set()
+        fake.scheduler.state = 1
+        with mock.patch('queues.queue_manager.QueueManager'):
+            ProgramRunner.resume_queue(fake)
+        self.assertFalse(fake.queue_paused)
+        self.assertIsNone(fake.pause_info['error_type'])
 
 
 if __name__ == '__main__':

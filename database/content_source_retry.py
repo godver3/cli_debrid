@@ -248,12 +248,59 @@ def cleanup_old_completed_retries(days: int = 7):
         return 0
 
 
+def _readded_by_user(item_data: Dict[str, Any]) -> bool:
+    """True when the user has added the item back since the delete.
+
+    The delete removed its rows, so an active row added by the user's own request
+    (Discover/Scraper/Magnet Assigner, the same sources wanted_items treats as
+    user-initiated) is a re-add after it. A row a content-source sync put back has
+    that source's name instead, so it doesn't count: that is what the retry is for.
+    """
+    item_type = 'movie' if item_data.get('type') == 'movie' else 'episode'
+    id_clauses, params = [], [item_type]
+    if item_data.get('imdb_id'):
+        id_clauses.append('imdb_id = ?')
+        params.append(item_data['imdb_id'])
+    if item_data.get('tmdb_id'):
+        id_clauses.append('CAST(tmdb_id AS TEXT) = ?')
+        params.append(str(item_data['tmdb_id']))
+    if not id_clauses:
+        return False
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM media_items WHERE type = ? AND (" + ' OR '.join(id_clauses) + ") "
+            "AND content_source IN ('content_requester', 'Magnet_Assigner') "
+            "AND state != 'Blacklisted' LIMIT 1", params).fetchone()
+        return row is not None
+    except Exception as e:
+        # Can't tell: retry as before rather than skip a removal the user asked for
+        logging.warning(f"[RETRY_QUEUE] Re-add check failed for {item_data.get('title')}: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def _cancel_retry(retry_id: int, reason: str):
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE content_source_removal_retry
+            SET completed = TRUE, completed_at = ?, last_error = ?
+            WHERE id = ?
+        ''', (datetime.now(), reason, retry_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def process_retry_queue(limit: int = 10) -> int:
     """Retry due content-source removals; returns how many were attempted.
 
     Run by task_retry_content_source_removals. remove_from_content_source queues
     an item when a source's removal fails (e.g. a Trakt/Overseerr timeout), so a
-    deleted show isn't re-added by the next content-source sync.
+    deleted show isn't re-added by the next content-source sync. An item the user
+    has requested again since the delete is left in its sources.
     """
     items = get_retry_queue_items(limit=limit)
     if items:
@@ -261,6 +308,11 @@ def process_retry_queue(limit: int = 10) -> int:
         manager = DeletionManager()
         for entry in items:
             try:
+                if _readded_by_user(entry['item_data']):
+                    logging.info(f"[RETRY_QUEUE] {entry.get('title')} ({entry.get('imdb_id')}) was requested again "
+                                 f"since the delete - cancelling its content source removal")
+                    _cancel_retry(entry['id'], 'Cancelled: requested again after the delete')
+                    continue
                 result = manager.remove_from_content_source(entry['item_data'], queue_retry=False)
                 failed = result.get('sources_failed') or []
                 if failed:

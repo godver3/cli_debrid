@@ -883,21 +883,25 @@ class MaintenanceTasks:
         from main import verify_database_health
 
         try:
-            paused_for_db = self.queue_paused and (self.pause_info or {}).get("error_type") == "DB_HEALTH"
+            already_failing = bool(self.db_health_pause_info)
             if not verify_database_health():
-                if paused_for_db:
+                if already_failing:
                     # Already paused and notified; keep holding until a check passes
                     logging.error("Database health check still failing - queue stays paused")
+                    if not self.queue_paused:  # the pause was throttled
+                        self.pause_info = dict(self.db_health_pause_info)
+                        self.pause_queue()
                     return
                 logging.error("Database health check failed during periodic check")
-                # Update pause_info for DB health
-                self.pause_info = {
+                # resume_queue keeps the queue paused while this is set
+                self.db_health_pause_info = {
                     "reason_string": "Database corruption detected - check logs for details",
                     "error_type": "DB_HEALTH",
                     "service_name": "System Database",
                     "status_code": None,
                     "retry_count": 0
                 }
+                self.pause_info = dict(self.db_health_pause_info)
                 self.pause_queue()
 
                 # Send notification about database corruption
@@ -909,9 +913,14 @@ class MaintenanceTasks:
 
                 except Exception as e:
                     logging.error(f"Failed to send database corruption notification: {str(e)}")
-            elif paused_for_db:
-                logging.info("Database health check passed - resuming queue paused for DB_HEALTH")
-                self.resume_queue()
+            elif already_failing:
+                self.db_health_pause_info = None
+                if self.queue_paused and (self.pause_info or {}).get("error_type") == "DB_HEALTH":
+                    logging.info("Database health check passed - resuming queue paused for DB_HEALTH")
+                    self.resume_queue()
+                else:
+                    # Another pause (e.g. a connection error) took over; its own recovery resumes
+                    logging.info("Database health check passed - DB_HEALTH hold lifted")
             else:
                 logging.info("Periodic database health check passed")
         except Exception as e:
