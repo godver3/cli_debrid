@@ -758,6 +758,11 @@ SETTINGS_SCHEMA = {
                     "default": 30,
                     "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), releases tagged DUAL or with the version's language get a small tiebreaker bonus instead (this amount × Language Weight, at most 50; half for a bare MULTi/DL). Untagged releases are never penalized. 0 disables both."
                 },
+                "audio_description_penalty": {
+                    "type": "number",
+                    "default": 10000,
+                    "description": "Penalty for an audio-description release (e.g. 'with Audio Description'), whose audio is narrated for blind viewers. The default 10000 ranks one below every other release, so it is only picked when nothing else is available; with a Minimum Scrape Score set, it falls below that and is dropped instead. Use a negative number to prefer them instead, or 0 to treat them like any other release."
+                },
                 "wake_count": {
                     "type": "integer",
                     "default": None,

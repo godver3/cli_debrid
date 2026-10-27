@@ -1329,6 +1329,35 @@ def _refreshed_episode_runtime(metadata, season_number, episode_number) -> Optio
             return minutes
     return None
 
+def _movie_refresh_state(item_dict, release_date, physical_release_date, today):
+    """Wanted or Unreleased for a movie, by the same rule as the Wanted and
+    Unreleased queues: the physical date only gates a version with
+    require_physical_release. Otherwise release_date (the earliest digital or
+    physical date) decides, so a movie out on digital isn't held until its disc
+    (By Any Means: digital 2026-10-20, physical 2026-12-15, bounced from Wanted
+    to Unreleased on every refresh)."""
+    if item_dict.get('early_release', False):
+        logging.info("Movie is an early release, setting state to Wanted")
+        return "Wanted"
+    version = (item_dict.get('version') or '').rstrip('*')
+    version_settings = (get_setting('Scraping', 'versions', {}) or {}).get(version, {}) or {}
+    if version_settings.get('require_physical_release', False):
+        date_str, label = physical_release_date, "Physical release date"
+    else:
+        date_str, label = release_date, "Release date"
+    if not date_str or date_str == 'Unknown':
+        logging.info(f"No valid {label.lower()} found, setting state to Unreleased")
+        return "Unreleased"
+    try:
+        date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        logging.warning(f"Invalid {label.lower()} format: {date_str}. Setting state to Wanted")
+        return "Wanted"
+    state = "Wanted" if date <= today else "Unreleased"
+    logging.info(f"{label} {date} is {'past' if state == 'Wanted' else 'in the future'}, setting state to {state}")
+    return state
+
+
 def refresh_release_dates(force_bypass_cache: bool = False):
     """Recheck release dates for all in-flight movies/episodes.
 
@@ -1358,11 +1387,9 @@ def refresh_release_dates(force_bypass_cache: bool = False):
     logging.info(f"Found {len(items_to_refresh)} items to refresh")
 
     # One worker per item - items_to_refresh is already a flat, read-only list.
-    # DB writes (update_release_date_and_state) happen directly from worker
-    # threads, unchanged in content: each write is self-contained (no item
-    # depends on another's write) and this reuses the same WAL + 30s-busy-timeout
-    # connection pattern already trusted elsewhere in this codebase for
-    # concurrent DB access. imdb_trakt_cache and the hit/miss counters are
+    # Workers only look up release data and return their DB update; the loop
+    # after the pool applies them one at a time from this thread, since eight
+    # concurrent writers made SQLite report 'database is locked'. imdb_trakt_cache and the hit/miss counters are
     # shared across workers (only touched in the movie early-release branch,
     # gated behind the trakt_early_releases setting) and are protected by
     # cache_lock. The periodic Trakt-cache checkpoint save is likewise
@@ -1392,7 +1419,13 @@ def refresh_release_dates(force_bypass_cache: bool = False):
             return show_metadata_by_imdb[imdb_id]
 
     def _process_one_refresh_item(index, item):
+        """Look up one item's release data; return its pending DB update (or None).
+
+        Workers never write: eight concurrent writers made SQLite report 'database is
+        locked' on every startup. The caller applies the returned updates one at a time.
+        """
         nonlocal cache_hits, cache_misses, completed_count
+        pending_update = None
         try:
             item_dict = dict(item)
             title = item_dict.get('title', 'Unknown Title')
@@ -1587,38 +1620,8 @@ def refresh_release_dates(force_bypass_cache: bool = False):
                 elif skip_early_release_check:
                     logging.info(f"Skipping Trakt early release check for {title} ({imdb_id}) due to no_early_release flag.")
                 
-                new_state = item_dict['state']
-                today = datetime.now().date()
-                if item_dict.get('early_release', False):
-                    new_state = "Wanted"
-                    logging.info(f"Movie is an early release, setting state to Wanted")
-                elif new_physical_release_date and new_physical_release_date != 'Unknown':
-                    try:
-                        physical_release_dt = datetime.strptime(new_physical_release_date, "%Y-%m-%d").date()
-                        if physical_release_dt <= today:
-                             new_state = "Wanted"
-                             logging.info(f"Physical release date {physical_release_dt} is past, setting state to Wanted")
-                        else:
-                             new_state = "Unreleased"
-                             logging.info(f"Physical release date {physical_release_dt} is in the future, setting state to Unreleased")
-                    except ValueError:
-                         logging.warning(f"Invalid physical release date format: {new_physical_release_date}. Keeping state as {new_state}")
-                         new_state = "Wanted"
-                elif new_release_date and new_release_date != 'Unknown':
-                    try:
-                        release_dt = datetime.strptime(new_release_date, "%Y-%m-%d").date()
-                        if release_dt <= today:
-                            new_state = "Wanted"
-                            logging.info(f"Release date {release_dt} is past, setting state to Wanted")
-                        else:
-                            new_state = "Unreleased"
-                            logging.info(f"Release date {release_dt} is in the future, setting state to Unreleased")
-                    except ValueError:
-                        logging.warning(f"Invalid release date format: {new_release_date}. Keeping state as {new_state}")
-                        new_state = "Wanted"
-                else:
-                    new_state = "Unreleased"
-                    logging.info(f"No valid release dates found, setting state to Unreleased")
+                new_state = _movie_refresh_state(item_dict, new_release_date, new_physical_release_date,
+                                                 datetime.now().date())
                 
                 new_airtime = None
 
@@ -1720,8 +1723,8 @@ def refresh_release_dates(force_bypass_cache: bool = False):
 
                 logging.info(f"Changes detected for {title} (DB ID: {db_item_id}). Current state: {item_dict['state']}, New state: {new_state}. Updating database.")
                 item_dict['no_early_release_original'] = item_dict.get('no_early_release', False)
-                update_release_date_and_state(
-                    db_item_id, new_release_date, new_state, airtime=new_airtime,
+                update_kwargs = dict(
+                    airtime=new_airtime,
                     early_release=item_dict.get('early_release', False),
                     physical_release_date=new_physical_release_date if media_type == 'movie' else None,
                     theatrical_release_date=new_theatrical_release_date if media_type == 'movie' else None,
@@ -1730,11 +1733,11 @@ def refresh_release_dates(force_bypass_cache: bool = False):
                     expected_state=item_dict['state']
                 )
                 log_msg = f"Updated DB for ID {db_item_id}: State={new_state}, ReleaseDate={new_release_date}"
-                if media_type == 'movie': 
+                if media_type == 'movie':
                     log_msg += f" and physical release date of: {new_physical_release_date}"
                     log_msg += f" and theatrical release date of: {new_theatrical_release_date}"
                 if media_type == 'episode': log_msg += f" and airtime of: {new_airtime}"
-                logging.info(log_msg)
+                pending_update = ((db_item_id, new_release_date, new_state), update_kwargs, log_msg)
             else:
                 logging.info(f"No changes needed for {title} (DB ID: {db_item_id})")
 
@@ -1759,6 +1762,7 @@ def refresh_release_dates(force_bypass_cache: bool = False):
 
         except Exception as e:
             logging.error(f"Error processing item {index} (DB ID: {item_dict.get('id', 'N/A')}): {str(e)}", exc_info=True)
+        return pending_update
 
     from concurrent.futures import ThreadPoolExecutor as _TPE_refresh
     _refresh_workers = min(8, max(1, len(items_to_refresh)))
@@ -1767,8 +1771,17 @@ def refresh_release_dates(force_bypass_cache: bool = False):
             _refresh_pool.submit(_process_one_refresh_item, index, item)
             for index, item in enumerate(items_to_refresh, 1)
         ]
+        # Single writer: apply each result here, in submission order, as it completes.
         for _fut in _refresh_futures:
-            _fut.result()
+            pending = _fut.result()
+            if not pending:
+                continue
+            args, kwargs, log_msg = pending
+            try:
+                update_release_date_and_state(*args, **kwargs)
+                logging.info(log_msg)
+            except Exception as e:
+                logging.error(f"Error saving refreshed release data for DB ID {args[0]}: {e}", exc_info=True)
 
     # Save final cache state
     trakt.save_imdb_trakt_cache(imdb_trakt_cache)

@@ -2104,6 +2104,18 @@ def main():
             save_config(config)
     # --- End foreign_language_penalty migration ---
 
+    # --- Add migration for audio_description_penalty in versions ---
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions_updated = False
+        for version_name, version_config in config['Scraping']['versions'].items():
+            if isinstance(version_config, dict) and 'audio_description_penalty' not in version_config:
+                version_config['audio_description_penalty'] = 10000
+                versions_updated = True
+                logging.info(f"Adding default audio_description_penalty 10000 to version {version_name}")
+        if versions_updated:
+            save_config(config)
+    # --- End audio_description_penalty migration ---
+
     # --- Add migration for anime_filter_mode in versions ---
     if 'Scraping' in config and 'versions' in config['Scraping']:
         versions_updated = False

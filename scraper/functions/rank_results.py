@@ -46,6 +46,11 @@ _DUAL_AUDIO_RE = re.compile(r'(?i)\bdual\b(?![ ._-]?subs?\b)')
 # Game S01's DUAL releases lost by ~20 points on bitrate), not enough to bury an
 # untagged release that's clearly better, since many untagged releases do have English.
 _EXTRA_AUDIO_BONUS_CAP = 50.0
+# Audio-description releases (Kitsune's "... with Audio Description ...") carry a
+# narration track for blind viewers. A bare "AD" tag isn't matched: it collides with
+# real titles ("Ad Astra", "A.D. The Bible Continues").
+_AUDIO_DESCRIPTION_RE = re.compile(
+    r'(?i)audio[\s._-]*descri(?:ption|bed)|descriptive[\s._-]+audio|described[\s._-]+video')
 
 
 def _release_tags(torrent_title, extracted_title):
@@ -109,6 +114,11 @@ def rank_result_key(
         foreign_language_penalty_setting = abs(float(version_settings.get('foreign_language_penalty', 30)))
     except (TypeError, ValueError):
         foreign_language_penalty_setting = 30.0
+    # Signed: a negative setting is a bonus, for users who want audio-description copies.
+    try:
+        audio_description_penalty_setting = float(version_settings.get('audio_description_penalty', 10000))
+    except (TypeError, ValueError):
+        audio_description_penalty_setting = 10000.0
 
     # Upgrade Hub mode: size, bitrate, country and language are irrelevant when
     # comparing quality upgrades — they cause REMUX files to be mis-scored and
@@ -485,6 +495,16 @@ def rank_result_key(
                 language_reason += f" + Bonus {extra_audio_bonus:.0f} for untagged multi-audio on a '{original_lower}' title (preferred track not named)"
     # --- End Preferred Audio/Sub Language Ranking ---
 
+    # Only the release tags, so a title that is itself about audio description isn't hit.
+    # With no year before it ("By Any Means with Audio Description 1080p"), PTT folds the
+    # phrase into the parsed title, so that counts too unless the searched title has it.
+    audio_description_penalty = 0.0
+    if audio_description_penalty_setting and (
+            _AUDIO_DESCRIPTION_RE.search(_release_tags(torrent_title, extracted_title))
+            or (_AUDIO_DESCRIPTION_RE.search(extracted_title or '')
+                and not _AUDIO_DESCRIPTION_RE.search(query or ''))):
+        audio_description_penalty = -audio_description_penalty_setting
+
     normalized_language = language_score # Use the raw score
 
     # Apply weights
@@ -622,6 +642,7 @@ def rank_result_key(
         language_code_penalty +
         foreign_language_penalty +
         extra_audio_bonus +
+        audio_description_penalty +
         indexer_bonus +
         scraper_priority +
         version_scraper_priority
@@ -772,7 +793,7 @@ def rank_result_key(
                      f"{season_match_score * 5:.2f} (season) + {episode_match_score * 5:.2f} (ep) + " +
                      f"{multi_pack_score:.2f} (pack_bonus) + {single_episode_score:.2f} (single_ep_penalty) + " +
                      f"{preferred_filter_score:.2f} (pref_filter) + {content_type_score:.2f} (content_type) + " +
-                     f"{language_code_penalty:.2f} (lang_code_penalty) + {foreign_language_penalty:.2f} (foreign_lang_penalty) + {extra_audio_bonus:.2f} (extra_audio_bonus)")
+                     f"{language_code_penalty:.2f} (lang_code_penalty) + {foreign_language_penalty:.2f} (foreign_lang_penalty) + {extra_audio_bonus:.2f} (extra_audio_bonus) + {audio_description_penalty:.2f} (audio_description_penalty)")
         logging.info(f"  Calculated Total Score (before rounding for breakdown): {total_score}")
         logging.info(f"--- End Detailed Score Debug for: {target_debug_title} ---")
     # --- END DEBUG LOGGING FOR SPECIFIC TITLE ---
@@ -798,6 +819,7 @@ def rank_result_key(
         'language_code_penalty': language_code_penalty, # Add language code penalties
         'foreign_language_penalty': foreign_language_penalty,
         'extra_audio_bonus': extra_audio_bonus,
+        'audio_description_penalty': audio_description_penalty,
         'version_scraper_priority_score': version_scraper_priority, # Add per-version scraper priority score
         'scraper_priority_score': scraper_priority, # Add global scraper priority score
         'total_score': round(total_score, 2)

@@ -40,8 +40,19 @@ class RefreshReadsShowOnceTests(unittest.TestCase):
             time.sleep(0.05)  # long enough for the other workers to pile up on the same show
             return SHOWS[imdb_id], 'battery'
 
+        self.writers_now = 0
+        self.max_writers = 0
+        self.write_threads = set()
+
         def write(db_id, release_date, state, airtime=None, **kwargs):
+            with self.load_lock:
+                self.writers_now += 1
+                self.max_writers = max(self.max_writers, self.writers_now)
+                self.write_threads.add(threading.get_ident())
+            time.sleep(0.005)
             self.writes[db_id] = (release_date, state, airtime)
+            with self.load_lock:
+                self.writers_now -= 1
 
         def items_in(state=None, **kwargs):
             return list(self.items) if state == 'Unreleased' else []
@@ -77,6 +88,23 @@ class RefreshReadsShowOnceTests(unittest.TestCase):
         # No first_aired: release date Unknown, airtime from the show's airs
         self.assertEqual(self.writes[100][0], 'Unknown')
         self.assertEqual(self.writes[100][2], '21:00')
+
+    def test_db_writes_come_from_one_thread(self):
+        # Concurrent writers made SQLite report 'database is locked' on every startup.
+        md.refresh_release_dates()
+        self.assertEqual(len(self.writes), 21)
+        self.assertEqual(self.max_writers, 1)
+        self.assertEqual(self.write_threads, {threading.get_ident()})
+
+    def test_failed_write_does_not_stop_the_rest(self):
+        def flaky(db_id, release_date, state, airtime=None, **kwargs):
+            if db_id == 5:
+                raise RuntimeError('boom')
+            self.writes[db_id] = (release_date, state, airtime)
+        with mock.patch('database.update_release_date_and_state', side_effect=flaky):
+            md.refresh_release_dates()
+        self.assertEqual(len(self.writes), 20)
+        self.assertNotIn(5, self.writes)
 
     def test_airtime_still_fetches_when_not_given(self):
         self.assertEqual(md.get_episode_airtime('tt2', 3, 1), '21:00')
