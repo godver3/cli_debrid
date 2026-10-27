@@ -1387,11 +1387,9 @@ def refresh_release_dates(force_bypass_cache: bool = False):
     logging.info(f"Found {len(items_to_refresh)} items to refresh")
 
     # One worker per item - items_to_refresh is already a flat, read-only list.
-    # DB writes (update_release_date_and_state) happen directly from worker
-    # threads, unchanged in content: each write is self-contained (no item
-    # depends on another's write) and this reuses the same WAL + 30s-busy-timeout
-    # connection pattern already trusted elsewhere in this codebase for
-    # concurrent DB access. imdb_trakt_cache and the hit/miss counters are
+    # Workers only look up release data and return their DB update; the loop
+    # after the pool applies them one at a time from this thread, since eight
+    # concurrent writers made SQLite report 'database is locked'. imdb_trakt_cache and the hit/miss counters are
     # shared across workers (only touched in the movie early-release branch,
     # gated behind the trakt_early_releases setting) and are protected by
     # cache_lock. The periodic Trakt-cache checkpoint save is likewise

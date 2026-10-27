@@ -496,8 +496,13 @@ def rank_result_key(
     # --- End Preferred Audio/Sub Language Ranking ---
 
     # Only the release tags, so a title that is itself about audio description isn't hit.
+    # With no year before it ("By Any Means with Audio Description 1080p"), PTT folds the
+    # phrase into the parsed title, so that counts too unless the searched title has it.
     audio_description_penalty = 0.0
-    if audio_description_penalty_setting and _AUDIO_DESCRIPTION_RE.search(_release_tags(torrent_title, extracted_title)):
+    if audio_description_penalty_setting and (
+            _AUDIO_DESCRIPTION_RE.search(_release_tags(torrent_title, extracted_title))
+            or (_AUDIO_DESCRIPTION_RE.search(extracted_title or '')
+                and not _AUDIO_DESCRIPTION_RE.search(query or ''))):
         audio_description_penalty = -audio_description_penalty_setting
 
     normalized_language = language_score # Use the raw score

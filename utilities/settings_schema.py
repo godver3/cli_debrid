@@ -761,7 +761,7 @@ SETTINGS_SCHEMA = {
                 "audio_description_penalty": {
                     "type": "number",
                     "default": 10000,
-                    "description": "Penalty for an audio-description release (e.g. 'with Audio Description'), whose audio is narrated for blind viewers. The default 10000 means one is only picked when nothing else is available. Use a negative number to prefer them instead, or 0 to treat them like any other release."
+                    "description": "Penalty for an audio-description release (e.g. 'with Audio Description'), whose audio is narrated for blind viewers. The default 10000 ranks one below every other release, so it is only picked when nothing else is available; with a Minimum Scrape Score set, it falls below that and is dropped instead. Use a negative number to prefer them instead, or 0 to treat them like any other release."
                 },
                 "wake_count": {
                     "type": "integer",

@@ -51,6 +51,16 @@ class AudioDescriptionPenaltyTests(unittest.TestCase):
                                content_type='movie')
                 self.assertEqual(score['audio_description_penalty'], -10000)
 
+    def test_phrase_folded_into_parsed_title(self):
+        # No year before the phrase, so PTT reads it as part of the title.
+        for title in ('By Any Means with Audio Description 2026 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune',
+                      'By.Any.Means.with.Audio.Description.1080p.AMZN.WEB-DL-Kitsune'):
+            with self.subTest(title=title):
+                self.assertIn('Audio Description', parse_title(title)['title'])
+                score = _score(title, query='By Any Means', year=2026, season=None, episode=None,
+                               content_type='movie')
+                self.assertEqual(score['audio_description_penalty'], -10000)
+
     def test_titles_and_bare_ad_tag_not_penalized(self):
         cases = [('Ad.Astra.2019.1080p.BluRay.x264-SPARKS', 'Ad Astra', 2019),
                  ('Audio.Description.Explained.2023.1080p.WEB-DL-GRP', 'Audio Description Explained', 2023),
