@@ -47,6 +47,10 @@
         [
           "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
           10000
+        ],
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
+          10000
         ]
       ],
       "require_physical_release": true,
@@ -101,6 +105,10 @@
       "preferred_filter_out": [
         [
           "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ],
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
           10000
         ]
       ],
@@ -180,6 +188,10 @@
         [
           "www",
           1000
+        ],
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
+          10000
         ]
       ],
       "require_physical_release": false,
@@ -271,6 +283,10 @@
         [
           "\\b(MULTI)\\b",
           200
+        ],
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
+          10000
         ]
       ],
       "require_physical_release": false,
@@ -296,7 +312,12 @@
       "size_weight": 3,
       "bitrate_weight": 3,
       "preferred_filter_in": [],
-      "preferred_filter_out": [],
+      "preferred_filter_out": [
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
+          10000
+        ]
+      ],
       "filter_in": [
         "1080p.BluRay|1080p.bluray"
       ],
@@ -449,6 +470,10 @@
         [
           "\\b(MULTI)\\b",
           200
+        ],
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
+          10000
         ]
       ],
       "require_physical_release": false,
@@ -579,6 +604,10 @@
         ],
         [
           "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ],
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
           10000
         ]
       ],

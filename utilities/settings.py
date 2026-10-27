@@ -1,3 +1,4 @@
+import copy
 import os
 import logging
 from urllib.parse import urlparse
@@ -559,7 +560,7 @@ def ensure_settings_file():
                                 default_version_config = {}
                                 for v_key, v_value_schema in version_defaults.items():
                                     if isinstance(v_value_schema, dict) and 'default' in v_value_schema:
-                                        default_version_config[v_key] = v_value_schema.get('default')
+                                        default_version_config[v_key] = copy.deepcopy(v_value_schema.get('default'))
                                 config[section][key]['Default'] = default_version_config
                                 logging.debug(f"ensure_settings_file: Added default 'Default' version settings.")
                          else:

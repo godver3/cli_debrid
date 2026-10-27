@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request, render_template, Response, current_app, make_response
 from utilities.settings import load_config, save_config
-from utilities.settings_schema import SETTINGS_SCHEMA
+from utilities.settings_schema import SETTINGS_SCHEMA, AUDIO_DESCRIPTION_PENALTY
+import copy
 import logging
 from queues.config_manager import add_scraper, clean_notifications, get_content_source_settings, get_version_settings, add_content_source, delete_content_source, save_config, get_enabled_content_sources
 from routes.models import admin_required, onboarding_required, user_required
@@ -295,6 +296,10 @@ HARDCODED_DEFAULT_VERSIONS = {
         [
           "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
           10000
+        ],
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
+          10000
         ]
       ],
       "require_physical_release": True,
@@ -349,6 +354,10 @@ HARDCODED_DEFAULT_VERSIONS = {
       "preferred_filter_out": [
         [
           "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ],
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
           10000
         ]
       ],
@@ -428,6 +437,10 @@ HARDCODED_DEFAULT_VERSIONS = {
         [
           "www",
           1000
+        ],
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
+          10000
         ]
       ],
       "require_physical_release": False,
@@ -519,6 +532,10 @@ HARDCODED_DEFAULT_VERSIONS = {
         [
           "\\b(MULTI)\\b",
           200
+        ],
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
+          10000
         ]
       ],
       "require_physical_release": False,
@@ -544,7 +561,12 @@ HARDCODED_DEFAULT_VERSIONS = {
       "size_weight": 3,
       "bitrate_weight": 3,
       "preferred_filter_in": [],
-      "preferred_filter_out": [],
+      "preferred_filter_out": [
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
+          10000
+        ]
+      ],
       "filter_in": [
         "1080p.BluRay|1080p.bluray"
       ],
@@ -697,6 +719,10 @@ HARDCODED_DEFAULT_VERSIONS = {
         [
           "\\b(MULTI)\\b",
           200
+        ],
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
+          10000
         ]
       ],
       "require_physical_release": False,
@@ -827,6 +853,10 @@ HARDCODED_DEFAULT_VERSIONS = {
         ],
         [
           "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ],
+        [
+          "audio.?descri(ption|bed)|descriptive.audio|described.video",
           10000
         ]
       ],
@@ -2200,7 +2230,7 @@ def add_version():
         'fallback_version': 'None',
         'anime_filter_mode': 'None',
         'preferred_filter_in': [],
-        'preferred_filter_out': [],
+        'preferred_filter_out': [list(AUDIO_DESCRIPTION_PENALTY)],
         'filter_in': [],
         'filter_out': [],
         'require_physical_release': False,
@@ -2906,7 +2936,7 @@ def build_default_version():
         'year_match_weight': version_schema['year_match_weight']['default'],
         'foreign_language_penalty': version_schema['foreign_language_penalty']['default'],
         'preferred_filter_in': version_schema['preferred_filter_in']['default'],
-        'preferred_filter_out': version_schema['preferred_filter_out']['default'],
+        'preferred_filter_out': copy.deepcopy(version_schema['preferred_filter_out']['default']),
         'filter_in': version_schema['filter_in']['default'],
         'filter_out': version_schema['filter_out']['default'],
         'min_size_gb': version_schema['min_size_gb']['default'],

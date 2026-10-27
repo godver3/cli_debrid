@@ -35,6 +35,11 @@ def get_available_logos():
 # Get available logo options dynamically
 AVAILABLE_LOGOS = get_available_logos()
 
+# Preferred Filter Out entry every new version starts with: audio-description
+# releases (Kitsune's "... with Audio Description ...") carry a narration track
+# for blind viewers, so they only win when nothing else is available.
+AUDIO_DESCRIPTION_PENALTY = ["audio.?descri(ption|bed)|descriptive.audio|described.video", 10000]
+
 SETTINGS_SCHEMA = {
     "SSO": {
         "tab": "Additional Settings",
@@ -798,7 +803,7 @@ SETTINGS_SCHEMA = {
                 },
                 "preferred_filter_out": {
                     "type": "list",
-                    "default": []
+                    "default": [AUDIO_DESCRIPTION_PENALTY]
                 },
                 "require_physical_release": {
                     "type": "boolean",
