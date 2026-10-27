@@ -106,6 +106,22 @@ class RefreshReadsShowOnceTests(unittest.TestCase):
         self.assertEqual(len(self.writes), 20)
         self.assertNotIn(5, self.writes)
 
+    def test_released_items_mid_scrape_keep_their_state(self):
+        # The startup refresh sent American Dad's Scraping episodes back to Wanted,
+        # and the in-flight season-pack scrape threw its results away.
+        SHOWS['tt3'] = {'airs': {'time': '22:00', 'timezone': 'America/New_York'},
+                        'seasons': {1: {'episodes': {1: {'first_aired': '2005-02-07T03:00:00Z'},
+                                                     2: {'first_aired': '2005-05-02T02:00:00Z'},
+                                                     3: {'first_aired': '2005-05-09T02:00:00Z'}}}}}
+        self.addCleanup(SHOWS.pop, 'tt3')
+        self.items = [dict(_episode(201, 'tt3', 1, 1), state='Scraping'),
+                      dict(_episode(202, 'tt3', 1, 2), state='Final_Check'),
+                      dict(_episode(203, 'tt3', 1, 3), state='Sleeping')]
+        md.refresh_release_dates()
+        self.assertEqual(self.writes[201][1], 'Scraping')
+        self.assertEqual(self.writes[202][1], 'Final_Check')
+        self.assertEqual(self.writes[203][1], 'Wanted')  # Sleeping still wakes, as before
+
     def test_airtime_still_fetches_when_not_given(self):
         self.assertEqual(md.get_episode_airtime('tt2', 3, 1), '21:00')
         self.assertEqual(self.loads, [('tt2', False)])

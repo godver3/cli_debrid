@@ -1712,6 +1712,12 @@ def refresh_release_dates(force_bypass_cache: bool = False):
                         else: new_state = "Wanted" if release_date_dt <= today else "Unreleased"; logging.info(f"Episode release date is {release_date_dt}, today is {today}, setting state to {new_state}")
                     except ValueError: new_state = "Wanted"; logging.warning(f"Invalid release date format: {new_release_date}. Setting state to Wanted.")
 
+            # A released item that's mid-scrape or in final check stays put. Sending
+            # it back to Wanted made the in-flight scrape throw its results away
+            # (American Dad S01E01's season pack, dropped by the startup refresh).
+            if new_state == "Wanted" and item_dict['state'] in ("Scraping", "Final_Check"):
+                new_state = item_dict['state']
+
             if (new_state != item_dict['state'] or
                 new_release_date != item_dict.get('release_date') or
                 (media_type == 'episode' and new_airtime != item_dict.get('airtime')) or

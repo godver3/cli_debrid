@@ -81,6 +81,30 @@ def tv_release_year_matches(release_year: int, show_year: Optional[int], season_
     return release_year == show_year or abs(release_year - season_year) <= 1
 
 
+_TITLE_FILLER_WORDS = {'the', 'a', 'an', 'and', 'amp', 'of', 'in', 'on', 'to'}
+
+
+def _title_words(normalized):
+    return {w for w in re.split(r'[^a-z0-9]+', normalized) if w and not w.isdigit() and w not in _TITLE_FILLER_WORDS}
+
+
+def _swaps_a_title_word(parsed_title, target_title):
+    """True when parsed_title trades one of target_title's words for a different
+    word: 'american.woman' against 'american.dad'. A shared opening word carries
+    the fuzzy score past the threshold on its own (American Woman 0.785, American
+    Gods 0.80 for American Dad!). Near-spellings count as the same word."""
+    parsed_words, target_words = _title_words(parsed_title), _title_words(target_title)
+    if not parsed_words or not target_words:
+        return False
+    # Same letters split differently: 'spider.man' / 'spiderman', 'vhs.94' / 'v.h.s.94'
+    if ''.join(sorted(parsed_words)) == ''.join(sorted(target_words)) or \
+            re.sub(r'[^a-z]', '', parsed_title) == re.sub(r'[^a-z]', '', target_title):
+        return False
+    def unmatched(words, others):
+        return {w for w in words if not any(w == o or fuzz.ratio(w, o) >= 85 for o in others)}
+    return bool(unmatched(parsed_words, target_words)) and bool(unmatched(target_words, parsed_words))
+
+
 def filter_results(
     results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str,
     season: int, episode: int, multi: bool, version_settings: Dict[str, Any],
@@ -786,6 +810,23 @@ def filter_results(
                 logging.info(f"  API aliases fetched: {len(item_aliases)} categories")
                 for alias_cat, alias_list in item_aliases.items():
                     logging.info(f"    {alias_cat}: {alias_list[:3]}...")  # Show first 3 aliases per category
+
+            # --- DIFFERENT-SHOW WORD CHECK ---
+            # A fuzzy pass (under 0.9) where the release swaps a word of the title and
+            # of every alias for another word is a different show that shares words.
+            if (not is_anime and not is_ufc and normalized_parsed_title
+                    and result_similarity_threshold <= best_sim < 0.9):
+                targets = [normalized_query_title, *normalized_aliases]
+                if normalized_translated_title:
+                    targets.append(normalized_translated_title)
+                for alias_list in item_aliases.values():
+                    if isinstance(alias_list, list):
+                        targets.extend(normalize_title(a).lower() for a in alias_list if isinstance(a, str))
+                targets = [t for t in targets if _title_words(t)]  # non-Latin aliases normalize to ''
+                if targets and all(_swaps_a_title_word(normalized_parsed_title, t) for t in targets):
+                    result['filter_reason'] = f"Different title: '{normalized_parsed_title}' swaps a word of '{normalized_query_title}' (similarity {best_sim:.2f})"
+                    logging.info(f"Rejected: Different title '{normalized_parsed_title}' vs '{normalized_query_title}' (similarity {best_sim:.2f}) for '{original_title}' (Size: {result['size']:.2f}GB)")
+                    continue
 
             if best_sim < result_similarity_threshold:
                 # Log the failure reason including all comparison scores
