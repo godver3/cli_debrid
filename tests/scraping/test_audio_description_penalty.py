@@ -1,50 +1,69 @@
-"""New versions ship with a Preferred Filter Out penalty for audio-description
-releases.
-
-Live: Kitsune's "with Audio Description" WEB-DLs (Slow Horses S04E04/S05E05,
-By Any Means) ranked like any other WEB-DL and were collected, so the user got a
-narration track for blind viewers instead of the normal audio.
-"""
-import json
+"""Audio-description releases rank below normal ones by default. Repro: Kitsune's
+'... with Audio Description ...' WEB-DLs (Slow Horses S04E04/S05E05, By Any Means)
+ranked like any other WEB-DL and were collected, giving a narration track for blind
+viewers. The per-version audio_description_penalty (default 10000) is subtracted;
+a negative setting makes it a bonus, 0 disables it."""
 import os
+import sys
+import unittest
 
-import pytest
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from scraper.functions.other_functions import smart_search
-from utilities.settings_schema import AUDIO_DESCRIPTION_PENALTY, SETTINGS_SCHEMA
+from PTT import parse_title
 
-PATTERN = AUDIO_DESCRIPTION_PENALTY[0]
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from scraper.functions.rank_results import rank_result_key
+from utilities.settings_schema import SETTINGS_SCHEMA
 
-
-@pytest.mark.parametrize("title", [
-    "Slow Horses S04E04 Returns with Audio Description 1080p ATVP WEB-DL DDP5 1 Atmos H 264-Kitsune",
-    "By.Any.Means.2026.with.Audio.Description.1080p.AMZN.WEB-DL.DDP5.1.H.264-Kitsune",
-    "Some.Movie.2024.1080p.WEB-DL.AudioDescription.DDP5.1-GRP",
-    "Some.Movie.2024.1080p.WEB-DL.Audio-Described.DDP5.1-GRP",
-    "Some.Show.S01E01.Descriptive.Audio.1080p.WEB-DL-GRP",
-    "Some.Show.S01E01.Described.Video.1080p.WEB-DL-GRP",
-])
-def test_pattern_matches_audio_description_releases(title):
-    assert smart_search(PATTERN, title)
+AD = 'Slow Horses S04E04 Returns with Audio Description 1080p ATVP WEB-DL DDP5 1 Atmos H 264-Kitsune'
+NORMAL = 'Slow.Horses.S04E04.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-NTb'
 
 
-@pytest.mark.parametrize("title", [
-    "Slow.Horses.S04E04.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-NTb",
-    "Ad.Astra.2019.1080p.BluRay.x264-SPARKS",
-    "A.D.The.Bible.Continues.S01E01.1080p.WEB-DL-GRP",
-])
-def test_pattern_ignores_normal_releases(title):
-    assert not smart_search(PATTERN, title)
+def _score(title, query='Slow Horses', year=2022, season=4, episode=4, content_type='episode', **settings):
+    version = {'max_resolution': '1080p', 'language_code': 'en'}
+    version.update(settings)
+    parsed = parse_title(title)
+    parsed['resolution_rank'] = 3
+    result = {'title': title, 'original_title': title, 'parsed_info': parsed, 'size': 1.2, 'bitrate': 6000}
+    rank_result_key(result, [result], query, year, season, episode, False, content_type, version,
+                    preferred_language='en')
+    return result['score_breakdown']
 
 
-def test_schema_default_includes_penalty():
-    default = SETTINGS_SCHEMA['Scraping']['versions']['schema']['preferred_filter_out']['default']
-    assert AUDIO_DESCRIPTION_PENALTY in default
+class AudioDescriptionPenaltyTests(unittest.TestCase):
+    def test_default_penalty(self):
+        self.assertEqual(_score(AD)['audio_description_penalty'], -10000)
+        self.assertEqual(_score(NORMAL)['audio_description_penalty'], 0)
+        self.assertLess(_score(AD)['total_score'], _score(NORMAL)['total_score'])
+
+    def test_setting_scales_disables_and_boosts(self):
+        self.assertEqual(_score(AD, audio_description_penalty=500)['audio_description_penalty'], -500)
+        self.assertEqual(_score(AD, audio_description_penalty=0)['audio_description_penalty'], 0)
+        self.assertEqual(_score(AD, audio_description_penalty=-200)['audio_description_penalty'], 200)
+
+    def test_naming_variants(self):
+        for title in ('By.Any.Means.2026.with.Audio.Description.1080p.AMZN.WEB-DL.DDP5.1.H.264-Kitsune',
+                      'By.Any.Means.2026.1080p.WEB-DL.AudioDescription.DDP5.1-GRP',
+                      'By.Any.Means.2026.1080p.WEB-DL.Audio-Described.DDP5.1-GRP',
+                      'By.Any.Means.2026.Descriptive.Audio.1080p.WEB-DL-GRP',
+                      'By.Any.Means.2026.Described.Video.1080p.WEB-DL-GRP'):
+            with self.subTest(title=title):
+                score = _score(title, query='By Any Means', year=2026, season=None, episode=None,
+                               content_type='movie')
+                self.assertEqual(score['audio_description_penalty'], -10000)
+
+    def test_titles_and_bare_ad_tag_not_penalized(self):
+        cases = [('Ad.Astra.2019.1080p.BluRay.x264-SPARKS', 'Ad Astra', 2019),
+                 ('Audio.Description.Explained.2023.1080p.WEB-DL-GRP', 'Audio Description Explained', 2023),
+                 ('Some.Movie.2024.1080p.WEB-DL.DDP5.1.AD.H.264-GRP', 'Some Movie', 2024)]
+        for title, query, year in cases:
+            with self.subTest(title=title):
+                score = _score(title, query=query, year=year, season=None, episode=None, content_type='movie')
+                self.assertEqual(score['audio_description_penalty'], 0)
+
+    def test_schema_default(self):
+        schema = SETTINGS_SCHEMA['Scraping']['versions']['schema']['audio_description_penalty']
+        self.assertEqual(schema['default'], 10000)
 
 
-def test_optional_default_versions_include_penalty():
-    with open(os.path.join(REPO, 'optional_default_versions.json')) as f:
-        versions = json.load(f)['versions']
-    for name, version in versions.items():
-        assert version['preferred_filter_out'].count(AUDIO_DESCRIPTION_PENALTY) == 1, name
+if __name__ == '__main__':
+    unittest.main()
