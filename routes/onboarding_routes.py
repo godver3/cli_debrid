@@ -444,6 +444,11 @@ def add_onboarding_content_source():
 
         new_source_id = add_content_source(source_type, source_config)
 
+        # The runner builds its task list once, so without this the new source
+        # never gets a scheduled task until the app restarts.
+        from routes.settings_routes import _reload_components_after_settings_change
+        _reload_components_after_settings_change('content_source')
+
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
         # Log the error including traceback for better debugging

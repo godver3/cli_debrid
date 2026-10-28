@@ -1735,8 +1735,12 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             
             for source, data in content_sources.items():
                 task_name = f'task_{source}_wanted'
+                # A source added after this runner was built has no task here yet.
+                # Writing enabled=False for it would switch it off in the config.
+                if task_name not in self.task_intervals:
+                    continue
                 current_enabled = task_name in self.enabled_tasks
-                
+
                 if data.get('enabled') != current_enabled:
                     data['enabled'] = current_enabled
                     config_updated = True
