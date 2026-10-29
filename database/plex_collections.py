@@ -1246,3 +1246,62 @@ def check_and_sync_if_needed(source_id: str, source_data: dict, ordered_imdb_ids
     finally:
         with _sync_lock:
             _sync_in_flight.discard(source_id)
+
+
+def create_named_collections_from_tmdb(name: str, items: list) -> dict:
+    """Create or update Plex collections named after a person from TMDB works.
+
+    Only titles already in Plex can be added. Movies and shows go into
+    separate collections when both kinds are present.
+    """
+    plex_url, plex_token = _get_plex_credentials()
+    sections = _get_library_sections(plex_url, plex_token)
+    machine_id = _get_machine_id(plex_url, plex_token)
+
+    movies = [i for i in items if (i.get('media_type') or '') == 'movie']
+    shows = [i for i in items if (i.get('media_type') or '') in ('tv', 'show')]
+    both = bool(movies) and bool(shows)
+
+    created = []
+
+    def _sync(lib_type: str, subset: list, suffix: str):
+        if not subset:
+            return
+        section_key = _find_section_key(sections, lib_type)
+        if not section_key:
+            created.append({'type': lib_type, 'name': None, 'added': 0, 'missing': len(subset),
+                            'error': f'No {lib_type} library section'})
+            return
+        coll_name = f'{name} ({suffix})' if both else name
+        id_map = _get_section_id_map(plex_url, plex_token, section_key, lib_type)
+        rating_keys = []
+        missing = 0
+        seen = set()
+        for item in subset:
+            tmdb_id = str(item.get('id') or item.get('tmdb_id') or '')
+            imdb_id = item.get('imdb_id') or ''
+            rk = None
+            if tmdb_id:
+                rk = id_map.get('tmdb:' + tmdb_id)
+            if not rk and imdb_id:
+                rk = id_map.get(imdb_id)
+            if rk and rk not in seen:
+                rating_keys.append(rk)
+                seen.add(rk)
+            else:
+                missing += 1
+        rk = _get_or_create_collection(plex_url, plex_token, section_key, coll_name, lib_type, '!')
+        if rating_keys:
+            _add_items_to_collection(plex_url, plex_token, machine_id, rk, rating_keys)
+        created.append({
+            'type': lib_type,
+            'name': coll_name,
+            'rating_key': rk,
+            'added': len(rating_keys),
+            'missing': missing,
+        })
+
+    _sync('movie', movies, 'Movies')
+    _sync('show', shows, 'Shows')
+    return {'collections': created}
+

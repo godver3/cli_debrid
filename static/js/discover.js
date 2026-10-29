@@ -17,6 +17,10 @@ window.discoverState = {
     hasMore: true,
     isLoading: false,
     listModeActive: false, // true when list content (MDBList/FlixPatrol/Personal/sidebar) is displayed
+    personId: null,
+    personRole: 'all',
+    person: null,
+    bulkPersonRequest: false,
     contentGen: 0, // bumped by every load that replaces the results view; see beginContentLoad()
     autoLoadCount: 0, // Track consecutive auto-loads to prevent infinite loops
     maxAutoLoads: 1,  // Maximum pages to auto-load before requiring user scroll
@@ -340,8 +344,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     const searchQuery = urlParams.get('q');
     const imdbId = urlParams.get('imdb_id');
     const tmdbId = urlParams.get('tmdb_id');
+    const personId = urlParams.get('person');
 
-    if (imdbId || tmdbId || searchQuery) {
+    if (personId) {
+        loadPersonFilmography(personId);
+    } else if (imdbId || tmdbId || searchQuery) {
         // Determine the search term to use
         const searchTerm = imdbId || (tmdbId ? `tmdb:${tmdbId}` : searchQuery);
 
@@ -2066,6 +2073,13 @@ function handleSearch() {
     window.discoverState.page = 1;
     window.discoverState.autoLoadCount = 0;
     searchClearBtn.style.display = 'block';
+    window.discoverState.personId = null;
+    hidePersonBanner();
+    if (!isIDSearch(query)) {
+        loadPeopleMatches(query);
+    } else {
+        hidePeopleMatches();
+    }
     searchContent(query);
 }
 
@@ -2077,6 +2091,10 @@ function clearSearch() {
     searchClearBtn.style.display = 'none';
     window.discoverState.searchTerm = '';
     window.discoverState.filters.searchQuery = '';
+    window.discoverState.personId = null;
+    window.discoverState.person = null;
+    hidePersonBanner();
+    hidePeopleMatches();
     localStorage.removeItem('discoverSearchTerm');
     updateActiveFilters();
     switchTab('trending'); // Fallback to trending
@@ -3630,7 +3648,9 @@ function setMediaType(type) {
     window.discoverState.autoLoadCount = 0;
 
     // Re-search if we have a search term, otherwise apply filters for live update
-    if (window.discoverState.searchTerm) {
+    if (window.discoverState.personId) {
+        loadPersonFilmography(window.discoverState.personId);
+    } else if (window.discoverState.searchTerm) {
         searchContent(window.discoverState.searchTerm);
     } else {
         // Trigger live filter update
@@ -3729,6 +3749,10 @@ function switchTab(tab) {
     // Clear list mode when switching to non-list tabs so TMDB pagination works
     if (tab === 'trending' || tab === 'recommendations') {
         window.discoverState.listModeActive = false;
+        window.discoverState.personId = null;
+        window.discoverState.person = null;
+        hidePersonBanner();
+        hidePeopleMatches();
         // Clear personal/list selections so refresh stays on this tab
         localStorage.removeItem('discoverPersonal');
         localStorage.removeItem('discoverMDBList');
@@ -9493,7 +9517,7 @@ function showVersionModal(content) {
     subEl.innerHTML = `<i class="fa-solid ${icon}"></i> ${content.title}${content.year ? ' (' + content.year + ')' : ''}`;
     versionCheckboxes.appendChild(subEl);
 
-    if (content.mediaType === 'tv') {
+    if (content.mediaType === 'tv' && !content.bulk) {
         const typeLabel = document.createElement('div');
         typeLabel.className = 'section-label';
         typeLabel.textContent = 'Request Type';
@@ -9735,6 +9759,14 @@ async function handleVersionConfirm() {
 
     if (selectedVersions.length === 0) {
         showPopup({ type: 'warning', title: 'Required', message: 'Please select at least one version' });
+        return;
+    }
+
+    if (window.discoverState.bulkPersonRequest) {
+        closeVersionModal();
+        const items = window.discoverState.bulkPersonRequest;
+        window.discoverState.bulkPersonRequest = false;
+        await requestPersonFilmography(items, selectedVersions);
         return;
     }
 
@@ -10196,3 +10228,246 @@ function bindPersonalEvents() {
 document.addEventListener('DOMContentLoaded', function() {
     setTimeout(initPersonal, 150);
 });
+
+function escapeDiscoverText(value) {
+    return String(value || '').replace(/[&<>"']/g, (ch) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
+}
+
+function peopleMatchesEl() {
+    return document.getElementById('people-matches');
+}
+
+function personBannerEl() {
+    return document.getElementById('person-banner');
+}
+
+function hidePeopleMatches() {
+    const el = peopleMatchesEl();
+    if (el) {
+        el.style.display = 'none';
+        el.innerHTML = '';
+    }
+}
+
+function hidePersonBanner() {
+    const el = personBannerEl();
+    if (el) {
+        el.style.display = 'none';
+        el.innerHTML = '';
+    }
+}
+
+function personPhoto(path, size) {
+    return path
+        ? `https://image.tmdb.org/t/p/${size}${path}`
+        : '/static/images/placeholder.png';
+}
+
+async function loadPeopleMatches(query) {
+    const el = peopleMatchesEl();
+    if (!el || !query || query.length < 2) {
+        hidePeopleMatches();
+        return;
+    }
+    try {
+        const response = await fetch(`/discover/api/people?query=${encodeURIComponent(query)}`);
+        if (!response.ok) return;
+        const data = await response.json();
+        const people = data.results || [];
+        if (!people.length || searchInput.value.trim() !== query) {
+            hidePeopleMatches();
+            return;
+        }
+        el.innerHTML = people.map((person) => {
+            const dept = person.known_for_department || 'Person';
+            const known = (person.known_for || []).join(', ');
+            return `<button type="button" class="person-chip" data-person-id="${person.id}">
+                <img src="${personPhoto(person.profile_path, 'w185')}" alt="" onerror="this.src='/static/images/placeholder.png'">
+                <span class="person-chip-text">
+                    <span class="person-chip-name">${escapeDiscoverText(person.name)}</span>
+                    <span class="person-chip-meta">${escapeDiscoverText(dept)}${known ? ' · ' + escapeDiscoverText(known) : ''}</span>
+                </span>
+            </button>`;
+        }).join('');
+        el.style.display = 'flex';
+        el.querySelectorAll('.person-chip').forEach((chip) => {
+            chip.addEventListener('click', () => loadPersonFilmography(chip.dataset.personId));
+        });
+    } catch (error) {
+        console.error('[Discover] Person search error:', error);
+    }
+}
+
+function renderPersonBanner(person, counts) {
+    const el = personBannerEl();
+    if (!el || !person) return;
+    const role = window.discoverState.personRole || 'all';
+    const dept = person.known_for_department || '';
+    el.innerHTML = `
+        <img class="person-banner-photo" src="${personPhoto(person.profile_path, 'w185')}" alt="" onerror="this.src='/static/images/placeholder.png'">
+        <div class="person-banner-info">
+            <div class="person-banner-name">${escapeDiscoverText(person.name)}</div>
+            <div class="person-banner-meta">${escapeDiscoverText(dept)}${person.birthday ? ' · ' + escapeDiscoverText(person.birthday.slice(0, 4)) : ''}</div>
+            <div class="person-role-tabs">
+                <button type="button" data-role="all" class="${role === 'all' ? 'active' : ''}">All (${counts.all || 0})</button>
+                <button type="button" data-role="acting" class="${role === 'acting' ? 'active' : ''}">Acting (${counts.acting || 0})</button>
+                <button type="button" data-role="directing" class="${role === 'directing' ? 'active' : ''}">Directing (${counts.directing || 0})</button>
+            </div>
+        </div>
+        <div class="person-banner-actions">
+            <button type="button" class="action-btn action-btn-primary action-btn-sm" id="person-request-all">Request all missing</button>
+            <button type="button" class="action-btn action-btn-sm" id="person-plex-collection">Create Plex collection</button>
+        </div>`;
+    el.style.display = 'flex';
+    el.querySelectorAll('[data-role]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            window.discoverState.personRole = btn.dataset.role;
+            loadPersonFilmography(window.discoverState.personId);
+        });
+    });
+    const requestBtn = document.getElementById('person-request-all');
+    if (requestBtn) requestBtn.addEventListener('click', startPersonRequestAll);
+    const plexBtn = document.getElementById('person-plex-collection');
+    if (plexBtn) plexBtn.addEventListener('click', createPersonPlexCollection);
+}
+
+async function loadPersonFilmography(personId) {
+    const gen = beginContentLoad();
+    window.discoverState.personId = String(personId);
+    window.discoverState.hasMore = false;
+    window.discoverState.page = 1;
+    hidePeopleMatches();
+    if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
+    if (searchResults) searchResults.style.display = 'block';
+    try {
+        setLoadingFlag();
+        const params = new URLSearchParams({
+            role: window.discoverState.personRole || 'all',
+            type: window.discoverState.mediaType || 'all',
+        });
+        const response = await fetch(`/discover/api/person/${personId}?${params}`);
+        const data = await response.json();
+        if (isStaleContentLoad(gen)) return;
+        if (!response.ok) {
+            showPopup({ type: 'error', title: 'Error', message: data.error || 'Could not load this person' });
+            return;
+        }
+        window.discoverState.person = data.person;
+        renderPersonBanner(data.person, data.counts || {});
+        renderResults(data.results || []);
+        updateResultsInfo({ total_results: (data.results || []).length, page: 1, total_pages: 1 });
+        if (window.history.replaceState) {
+            window.history.replaceState({}, document.title, `/discover?person=${personId}`);
+        }
+    } catch (error) {
+        if (error.name === 'AbortError') return;
+        console.error('[Discover] Person filmography error:', error);
+        showError();
+    } finally {
+        clearLoadingFlag();
+    }
+}
+
+function missingPersonWorks() {
+    return (window.discoverState.currentResults || []).filter((item) => {
+        const status = (item.db_status || 'missing').toLowerCase();
+        return status !== 'collected' && status !== 'blacklisted';
+    });
+}
+
+function startPersonRequestAll() {
+    const items = missingPersonWorks();
+    if (!items.length) {
+        showPopup({ type: 'success', title: 'Nothing to request', message: 'Everything in this list is already collected or blacklisted.' });
+        return;
+    }
+    window.discoverState.bulkPersonRequest = items;
+    showVersionModal({
+        bulk: true,
+        mediaType: 'mixed',
+        title: window.discoverState.person?.name || 'this person',
+        year: `${items.length} titles`,
+    });
+}
+
+async function requestPersonFilmography(items, versions) {
+    showLoadingMessage(`Requesting ${items.length} titles…`);
+    let requested = 0;
+    let already = 0;
+    const failed = [];
+    try {
+        for (let i = 0; i < items.length; i += 15) {
+            const chunk = items.slice(i, i + 15).map((item) => ({
+                id: item.id,
+                media_type: item.media_type,
+                title: item.title || item.name,
+                release_date: item.release_date || item.first_air_date || '',
+            }));
+            const response = await fetch('/discover/api/request-batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items: chunk, versions }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                failed.push({ title: chunk[0]?.title, error: data.error || 'Request failed' });
+                continue;
+            }
+            requested += data.requested || 0;
+            already += data.already || 0;
+            (data.failed || []).forEach((row) => failed.push(row));
+        }
+        hideLoadingMessage();
+        const failNote = failed.length ? ` ${failed.length} could not be requested.` : '';
+        showPopup({
+            type: failed.length && !requested ? 'error' : 'success',
+            title: 'Request all',
+            message: `Requested ${requested} titles (${already} already in your versions).${failNote}`,
+        });
+        if (window.discoverState.personId) {
+            loadPersonFilmography(window.discoverState.personId);
+        }
+    } catch (error) {
+        hideLoadingMessage();
+        console.error('[Discover] Request all error:', error);
+        showPopup({ type: 'error', title: 'Error', message: 'Could not request this filmography' });
+    }
+}
+
+async function createPersonPlexCollection() {
+    const personId = window.discoverState.personId;
+    if (!personId) return;
+    showLoadingMessage('Creating Plex collection…');
+    try {
+        const response = await fetch(`/discover/api/person/${personId}/plex-collection`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                role: window.discoverState.personRole || 'all',
+                type: window.discoverState.mediaType || 'all',
+            }),
+        });
+        const data = await response.json();
+        hideLoadingMessage();
+        if (!response.ok) {
+            showPopup({ type: 'error', title: 'Plex collection', message: data.error || 'Could not create the collection' });
+            return;
+        }
+        const parts = (data.collections || []).map((c) => {
+            if (c.error) return c.error;
+            return `${c.name}: added ${c.added}, ${c.missing} not in Plex yet`;
+        });
+        showPopup({
+            type: 'success',
+            title: 'Plex collection',
+            message: parts.join('. ') || 'Collection updated. Only titles already in Plex can be added; request the rest, then run this again.',
+        });
+    } catch (error) {
+        hideLoadingMessage();
+        console.error('[Discover] Plex collection error:', error);
+        showPopup({ type: 'error', title: 'Plex collection', message: 'Could not create the collection' });
+    }
+}

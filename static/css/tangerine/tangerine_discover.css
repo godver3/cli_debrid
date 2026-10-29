@@ -258,6 +258,131 @@ body[data-theme="tangerine"] .discover-subtitle {
     background: rgba(225, 124, 82, 0.1);
 }
 
+.people-matches {
+    display: flex;
+    gap: 0.75rem;
+    overflow-x: auto;
+    padding: 0 0 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.person-chip {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-width: 220px;
+    max-width: 280px;
+    padding: 0.5rem 0.75rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+}
+
+.person-chip:hover {
+    border-color: #e17c52;
+    background: rgba(225, 124, 82, 0.08);
+}
+
+.person-chip img,
+.person-banner-photo {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: rgba(255, 255, 255, 0.08);
+    flex-shrink: 0;
+}
+
+.person-chip-text {
+    min-width: 0;
+}
+
+.person-chip-name,
+.person-banner-name {
+    font-weight: 600;
+    font-size: 0.92rem;
+}
+
+.person-chip-meta,
+.person-banner-meta {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.person-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+}
+
+.person-banner-photo {
+    width: 72px;
+    height: 72px;
+}
+
+.person-banner-info {
+    flex: 1;
+    min-width: 180px;
+}
+
+.person-role-tabs {
+    display: flex;
+    gap: 0.35rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.person-role-tabs button,
+.person-banner-actions .action-btn {
+    font-size: 0.8rem;
+}
+
+.person-role-tabs button {
+    padding: 0.25rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: transparent;
+    color: #d1d5db;
+    cursor: pointer;
+}
+
+.person-role-tabs button.active {
+    background: #e17c52;
+    border-color: #e17c52;
+    color: #fff;
+}
+
+.person-banner-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.cast-card-link {
+    cursor: pointer;
+}
+
+.person-credit-link {
+    color: #e17c52;
+    text-decoration: none;
+}
+
+.person-credit-link:hover {
+    text-decoration: underline;
+}
+
 /* ==========================================================================
    Tab Navigation
    ========================================================================== */
