@@ -10467,7 +10467,7 @@ async function ensurePersonPlexCollection() {
     try {
         const result = await postPersonPlexCollection();
         if (!result.ok) {
-            if (result.data && /Plex collections need File Management/.test(result.data.error || '')) {
+            if (result.data && /Plex URL or token not configured/.test(result.data.error || '')) {
                 return '';
             }
             return result.data && result.data.error ? ` Collection: ${result.data.error}` : '';

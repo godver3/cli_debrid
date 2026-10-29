@@ -17,7 +17,7 @@ This page allows you to browse and discover movies and shows using TMDB data, wi
 
 *   Enter a title, actor, director, IMDB ID, or TMDB ID in the search box to find content.
 *   Matching people appear as chips above the title results. Click a person to see their filmography (Acting, Directing, or All).
-*   From a person page you can **Request all missing** titles. That also creates a Plex collection named after that person (any actor or director, not a hardcoded list). Titles already in Plex go in immediately; the rest are added on later collection syncs once they land. Movies and shows get separate collections when both are present. **Update Plex collection** refreshes it without requesting anything new.
+*   From a person page you can **Request all missing** titles. That also creates a Plex collection named after that person (any actor or director). Works whenever a Plex URL and token are set, including Symlinked/Local. Titles already in Plex go in immediately; the rest are added on later collection syncs once they land. Movies and shows get separate collections when both are present. **Update Plex collection** refreshes it without requesting anything new.
 *   On a title's detail page, cast and directors link to the same person view.
 *   Results update as you type with a brief debounce delay.
 *   Press `Enter` to search or `Esc` to clear.

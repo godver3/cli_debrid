@@ -44,7 +44,7 @@ class DiscoverPeopleRoutesTests(unittest.TestCase):
         self.client = app.test_client()
         self.settings = {
             'TMDB': {'api_key': 'tmdb-key'},
-            'File Management': {'file_collection_management': 'Plex'},
+            'Plex': {'url': 'http://plex:32400', 'token': 'token'},
         }
         for patch in [
             mock.patch.object(models, 'is_user_system_enabled', return_value=False),

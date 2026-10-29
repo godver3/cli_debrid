@@ -98,8 +98,17 @@ def _update_source_state(source_id: str, updates: dict) -> None:
 # ── Plex credentials ─────────────────────────────────────────────────────────
 
 def _get_plex_credentials() -> tuple:
+    """Plex API credentials from either file-management mode.
+
+    Collections are created through the Plex API, so Symlinked/Local is fine
+    as long as a Plex URL and token are set (Required Plex settings, or the
+    symlink Plex URL/token).
+    """
     plex_url = get_setting('Plex', 'url', '').rstrip('/')
     plex_token = get_setting('Plex', 'token', '')
+    if not plex_url or not plex_token:
+        plex_url = get_setting('File Management', 'plex_url_for_symlink', '').rstrip('/')
+        plex_token = get_setting('File Management', 'plex_token_for_symlink', '')
     if not plex_url or not plex_token:
         raise ValueError("Plex URL or token not configured")
     return plex_url, plex_token
@@ -1284,7 +1293,9 @@ def refresh_saved_person_collections(force: bool = False) -> None:
     now = time.time()
     if not force and (now - _person_refresh_ts) < _PERSON_REFRESH_TTL:
         return
-    if get_setting('File Management', 'file_collection_management', '') != 'Plex':
+    try:
+        _get_plex_credentials()
+    except ValueError:
         return
     people = (_load_state().get(_PERSON_COLLECTIONS_KEY) or {})
     if not people:

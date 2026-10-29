@@ -1003,8 +1003,6 @@ def person_plex_collection(person_id):
     """Create Plex collections from this person's titles that are already in Plex."""
     from utilities.tmdb_people import person_details_url, person_payload
     try:
-        if get_setting('File Management', 'file_collection_management', '') != 'Plex':
-            return jsonify({'error': 'Plex collections need File Management set to Plex'}), 400
         data = request.get_json(silent=True) or {}
         role = data.get('role') or 'all'
         media_type = data.get('type') or 'all'
