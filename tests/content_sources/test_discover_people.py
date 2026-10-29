@@ -104,6 +104,18 @@ class DiscoverPeopleRoutesTests(unittest.TestCase):
         self.assertEqual(args[0], 'Christopher Nolan')
         self.assertEqual(args[1][0]['title'], 'Inception')
 
+    def test_plex_collection_remembers_the_person_for_later_fills(self):
+        created = {'collections': [{'name': 'Tom Hanks', 'added': 0, 'missing': 1}]}
+        person = dict(PERSON, id=31, name='Tom Hanks')
+        with mock.patch.object(self.dr, 'get_tmdb_json', return_value=person), \
+             mock.patch('database.plex_collections.create_named_collections_from_tmdb', return_value=created), \
+             mock.patch('database.plex_collections.remember_person_collection') as remember:
+            data = self.client.post('/discover/api/person/31/plex-collection', json={'role': 'acting'}).get_json()
+        self.assertTrue(data['success'])
+        remember.assert_called_once()
+        self.assertEqual(remember.call_args[0][0], 31)
+        self.assertEqual(remember.call_args[0][1], 'Tom Hanks')
+
 
 @unittest.skipUnless(Flask, 'flask not installed')
 class RequestFilmographyItemTests(unittest.TestCase):

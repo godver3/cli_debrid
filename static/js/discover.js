@@ -10318,7 +10318,7 @@ function renderPersonBanner(person, counts) {
         </div>
         <div class="person-banner-actions">
             <button type="button" class="action-btn action-btn-primary action-btn-sm" id="person-request-all">Request all missing</button>
-            <button type="button" class="action-btn action-btn-sm" id="person-plex-collection">Create Plex collection</button>
+            <button type="button" class="action-btn action-btn-sm" id="person-plex-collection">Update Plex collection</button>
         </div>`;
     el.style.display = 'flex';
     el.querySelectorAll('[data-role]').forEach((btn) => {
@@ -10421,11 +10421,12 @@ async function requestPersonFilmography(items, versions) {
             (data.failed || []).forEach((row) => failed.push(row));
         }
         hideLoadingMessage();
+        const collectionNote = await ensurePersonPlexCollection();
         const failNote = failed.length ? ` ${failed.length} could not be requested.` : '';
         showPopup({
             type: failed.length && !requested ? 'error' : 'success',
             title: 'Request all',
-            message: `Requested ${requested} titles (${already} already in your versions).${failNote}`,
+            message: `Requested ${requested} titles (${already} already in your versions).${failNote}${collectionNote}`,
         });
         if (window.discoverState.personId) {
             loadPersonFilmography(window.discoverState.personId);
@@ -10437,33 +10438,62 @@ async function requestPersonFilmography(items, versions) {
     }
 }
 
-async function createPersonPlexCollection() {
+async function postPersonPlexCollection() {
     const personId = window.discoverState.personId;
-    if (!personId) return;
-    showLoadingMessage('Creating Plex collection…');
+    if (!personId) return { ok: false, error: 'No person selected' };
+    const response = await fetch(`/discover/api/person/${personId}/plex-collection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            role: window.discoverState.personRole || 'all',
+            type: window.discoverState.mediaType || 'all',
+        }),
+    });
+    const data = await response.json();
+    return { ok: response.ok, data };
+}
+
+function personCollectionSummary(data) {
+    const collections = (data && data.collections) || [];
+    if (!collections.length) return '';
+    return collections.map((c) => {
+        if (c.error) return c.error;
+        const pending = c.missing ? `, ${c.missing} will be added as they collect` : '';
+        return `${c.name}: ${c.added} already in Plex${pending}`;
+    }).join('. ');
+}
+
+async function ensurePersonPlexCollection() {
     try {
-        const response = await fetch(`/discover/api/person/${personId}/plex-collection`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                role: window.discoverState.personRole || 'all',
-                type: window.discoverState.mediaType || 'all',
-            }),
-        });
-        const data = await response.json();
+        const result = await postPersonPlexCollection();
+        if (!result.ok) {
+            if (result.data && /Plex collections need File Management/.test(result.data.error || '')) {
+                return '';
+            }
+            return result.data && result.data.error ? ` Collection: ${result.data.error}` : '';
+        }
+        const summary = personCollectionSummary(result.data);
+        const name = (result.data && result.data.person) || 'this person';
+        return summary ? ` Created the ${name} Plex collection. ${summary}.` : ` Created a Plex collection for ${name}.`;
+    } catch (error) {
+        console.error('[Discover] Plex collection after request-all:', error);
+        return '';
+    }
+}
+
+async function createPersonPlexCollection() {
+    showLoadingMessage('Updating Plex collection…');
+    try {
+        const result = await postPersonPlexCollection();
         hideLoadingMessage();
-        if (!response.ok) {
-            showPopup({ type: 'error', title: 'Plex collection', message: data.error || 'Could not create the collection' });
+        if (!result.ok) {
+            showPopup({ type: 'error', title: 'Plex collection', message: (result.data && result.data.error) || 'Could not create the collection' });
             return;
         }
-        const parts = (data.collections || []).map((c) => {
-            if (c.error) return c.error;
-            return `${c.name}: added ${c.added}, ${c.missing} not in Plex yet`;
-        });
         showPopup({
             type: 'success',
             title: 'Plex collection',
-            message: parts.join('. ') || 'Collection updated. Only titles already in Plex can be added; request the rest, then run this again.',
+            message: personCollectionSummary(result.data) || 'Collection updated. Titles not in Plex yet are added after they collect.',
         });
     } catch (error) {
         hideLoadingMessage();

@@ -1248,6 +1248,59 @@ def check_and_sync_if_needed(source_id: str, source_data: dict, ordered_imdb_ids
             _sync_in_flight.discard(source_id)
 
 
+_PERSON_COLLECTIONS_KEY = '_person_collections'
+_person_refresh_ts = 0.0
+_PERSON_REFRESH_TTL = 600
+
+
+def remember_person_collection(person_id, name: str, role: str, media_type: str, items: list) -> None:
+    """Keep a person's filmography so later Plex scans can add newly collected titles."""
+    slim = []
+    for item in items:
+        tmdb_id = item.get('id') or item.get('tmdb_id')
+        media = item.get('media_type')
+        if not tmdb_id or media not in ('movie', 'tv', 'show'):
+            continue
+        slim.append({
+            'id': tmdb_id,
+            'media_type': 'tv' if media == 'show' else media,
+            'imdb_id': item.get('imdb_id') or '',
+        })
+    state = _load_state()
+    people = state.get(_PERSON_COLLECTIONS_KEY) or {}
+    people[str(person_id)] = {
+        'name': name,
+        'role': role or 'all',
+        'type': media_type or 'all',
+        'items': slim,
+    }
+    state[_PERSON_COLLECTIONS_KEY] = people
+    _save_state(state)
+
+
+def refresh_saved_person_collections(force: bool = False) -> None:
+    """Re-add titles that have since appeared in Plex for every saved person collection."""
+    global _person_refresh_ts
+    now = time.time()
+    if not force and (now - _person_refresh_ts) < _PERSON_REFRESH_TTL:
+        return
+    if get_setting('File Management', 'file_collection_management', '') != 'Plex':
+        return
+    people = (_load_state().get(_PERSON_COLLECTIONS_KEY) or {})
+    if not people:
+        return
+    _person_refresh_ts = now
+    for entry in people.values():
+        name = entry.get('name')
+        items = entry.get('items') or []
+        if not name or not items:
+            continue
+        try:
+            create_named_collections_from_tmdb(name, items)
+        except Exception as e:
+            logger.warning(f"[PlexCollections] Person collection refresh for '{name}' failed: {e}")
+
+
 def create_named_collections_from_tmdb(name: str, items: list) -> dict:
     """Create or update Plex collections named after a person from TMDB works.
 

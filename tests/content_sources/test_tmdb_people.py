@@ -118,5 +118,30 @@ class FilmographyTests(unittest.TestCase):
         self.assertEqual(card['known_for'], ['Forrest Gump', 'Band of Brothers', 'Cast Away'])
 
 
+class PersonCollectionMemoryTests(unittest.TestCase):
+    def test_stores_any_person_under_their_tmdb_id(self):
+        import json
+        import tempfile
+        import threading
+        from unittest import mock
+        try:
+            from database import plex_collections as pc
+        except Exception:
+            self.skipTest('database.plex_collections unavailable')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'plex_collection_state.json')
+            with mock.patch.object(pc, '_STATE_FILE', path), mock.patch.object(pc, '_state_lock', threading.Lock()):
+                pc.remember_person_collection(31, 'Tom Hanks', 'acting', 'all', [
+                    {'id': 13, 'media_type': 'movie'},
+                ])
+                pc.remember_person_collection(525, 'Christopher Nolan', 'directing', 'movie', [
+                    {'id': 27205, 'media_type': 'movie'},
+                ])
+            stored = json.loads(open(path).read())['_person_collections']
+        self.assertEqual(set(stored), {'31', '525'})
+        self.assertEqual(stored['31']['name'], 'Tom Hanks')
+        self.assertEqual(stored['525']['name'], 'Christopher Nolan')
+
+
 if __name__ == '__main__':
     unittest.main()

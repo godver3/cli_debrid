@@ -1018,8 +1018,9 @@ def person_plex_collection(person_id):
         works = payload['results']
         if media_type in ('movie', 'tv'):
             works = [w for w in works if w.get('media_type') == media_type]
-        from database.plex_collections import create_named_collections_from_tmdb
+        from database.plex_collections import create_named_collections_from_tmdb, remember_person_collection
         name = payload['person']['name'] or f'Person {person_id}'
+        remember_person_collection(person_id, name, role, media_type, works)
         result = create_named_collections_from_tmdb(name, works)
         return jsonify({'success': True, 'person': name, **result})
     except ValueError as e:
