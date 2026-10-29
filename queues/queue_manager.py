@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 import json
 import os
+import threading
 import time
 
 from database.database_writing import update_media_item_state, add_media_item
@@ -212,6 +213,9 @@ def _format_duration(seconds):
     return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
 
 
+_wanted_pass_lock = threading.Lock()
+
+
 class QueueManager:
     _instance = None
 
@@ -380,7 +384,15 @@ class QueueManager:
             logging.error(f"Error processing Checking queue: {str(e)}", exc_info=True)
 
     def process_wanted(self):
-        self._process_queue_safely("Wanted")
+        # The scheduled tick and the post-add kick from add_wanted_items can land
+        # together; two passes would both batch-move the same show's episodes.
+        if not _wanted_pass_lock.acquire(blocking=False):
+            logging.debug("Skipping Wanted queue processing: another pass is already running")
+            return
+        try:
+            self._process_queue_safely("Wanted")
+        finally:
+            _wanted_pass_lock.release()
 
     def process_scraping(self):
         # Skip processing if paused

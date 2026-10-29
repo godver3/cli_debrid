@@ -307,7 +307,10 @@ def add_friend_source(auth_id):
         
         # Add the content source
         source_id = add_content_source('Friends Trakt Watchlist', source_config)
-        
+
+        from routes.settings_routes import _reload_components_after_settings_change
+        _reload_components_after_settings_change('content_source')
+
         return jsonify({
             'success': True,
             'source_id': source_id

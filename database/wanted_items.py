@@ -1,3 +1,4 @@
+import threading
 import logging
 from .core import get_db_connection, normalize_string
 from database.manual_blacklist import is_blacklisted
@@ -1085,13 +1086,17 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
             except Exception as e:
                 logging.error(f"Failed to send Wanted state change notifications: {str(e)}")
 
-        # Immediately trigger a Wanted queue run if new items were added
+        # Kick a Wanted queue run if new items were added. Runs in the background:
+        # moving a big show (401 episodes) to Scraping takes minutes, and callers
+        # like the Request button would otherwise hold their HTTP response open.
         if items_added > 0:
-            try:
-                from queues.queue_manager import QueueManager
-                QueueManager().process_wanted()
-            except Exception as e:
-                logging.error(f"Error processing Wanted queue after adding items: {str(e)}", exc_info=True)
+            def _kick_wanted():
+                try:
+                    from queues.queue_manager import QueueManager
+                    QueueManager().process_wanted()
+                except Exception as e:
+                    logging.error(f"Error processing Wanted queue after adding items: {str(e)}", exc_info=True)
+            threading.Thread(target=_kick_wanted, name="wanted-kick", daemon=True).start()
         
         # Generate skip summary report
         skip_report = []

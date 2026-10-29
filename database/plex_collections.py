@@ -98,8 +98,17 @@ def _update_source_state(source_id: str, updates: dict) -> None:
 # ── Plex credentials ─────────────────────────────────────────────────────────
 
 def _get_plex_credentials() -> tuple:
+    """Plex API credentials from either file-management mode.
+
+    Collections are created through the Plex API, so Symlinked/Local is fine
+    as long as a Plex URL and token are set (Required Plex settings, or the
+    symlink Plex URL/token).
+    """
     plex_url = get_setting('Plex', 'url', '').rstrip('/')
     plex_token = get_setting('Plex', 'token', '')
+    if not plex_url or not plex_token:
+        plex_url = get_setting('File Management', 'plex_url_for_symlink', '').rstrip('/')
+        plex_token = get_setting('File Management', 'plex_token_for_symlink', '')
     if not plex_url or not plex_token:
         raise ValueError("Plex URL or token not configured")
     return plex_url, plex_token
@@ -1246,3 +1255,117 @@ def check_and_sync_if_needed(source_id: str, source_data: dict, ordered_imdb_ids
     finally:
         with _sync_lock:
             _sync_in_flight.discard(source_id)
+
+
+_PERSON_COLLECTIONS_KEY = '_person_collections'
+_person_refresh_ts = 0.0
+_PERSON_REFRESH_TTL = 600
+
+
+def remember_person_collection(person_id, name: str, role: str, media_type: str, items: list) -> None:
+    """Keep a person's filmography so later Plex scans can add newly collected titles."""
+    slim = []
+    for item in items:
+        tmdb_id = item.get('id') or item.get('tmdb_id')
+        media = item.get('media_type')
+        if not tmdb_id or media not in ('movie', 'tv', 'show'):
+            continue
+        slim.append({
+            'id': tmdb_id,
+            'media_type': 'tv' if media == 'show' else media,
+            'imdb_id': item.get('imdb_id') or '',
+        })
+    state = _load_state()
+    people = state.get(_PERSON_COLLECTIONS_KEY) or {}
+    people[str(person_id)] = {
+        'name': name,
+        'role': role or 'all',
+        'type': media_type or 'all',
+        'items': slim,
+    }
+    state[_PERSON_COLLECTIONS_KEY] = people
+    _save_state(state)
+
+
+def refresh_saved_person_collections(force: bool = False) -> None:
+    """Re-add titles that have since appeared in Plex for every saved person collection."""
+    global _person_refresh_ts
+    now = time.time()
+    if not force and (now - _person_refresh_ts) < _PERSON_REFRESH_TTL:
+        return
+    try:
+        _get_plex_credentials()
+    except ValueError:
+        return
+    people = (_load_state().get(_PERSON_COLLECTIONS_KEY) or {})
+    if not people:
+        return
+    _person_refresh_ts = now
+    for entry in people.values():
+        name = entry.get('name')
+        items = entry.get('items') or []
+        if not name or not items:
+            continue
+        try:
+            create_named_collections_from_tmdb(name, items)
+        except Exception as e:
+            logger.warning(f"[PlexCollections] Person collection refresh for '{name}' failed: {e}")
+
+
+def create_named_collections_from_tmdb(name: str, items: list) -> dict:
+    """Create or update Plex collections named after a person from TMDB works.
+
+    Only titles already in Plex can be added. Movies and shows go into
+    separate collections when both kinds are present.
+    """
+    plex_url, plex_token = _get_plex_credentials()
+    sections = _get_library_sections(plex_url, plex_token)
+    machine_id = _get_machine_id(plex_url, plex_token)
+
+    movies = [i for i in items if (i.get('media_type') or '') == 'movie']
+    shows = [i for i in items if (i.get('media_type') or '') in ('tv', 'show')]
+    both = bool(movies) and bool(shows)
+
+    created = []
+
+    def _sync(lib_type: str, subset: list, suffix: str):
+        if not subset:
+            return
+        section_key = _find_section_key(sections, lib_type)
+        if not section_key:
+            created.append({'type': lib_type, 'name': None, 'added': 0, 'missing': len(subset),
+                            'error': f'No {lib_type} library section'})
+            return
+        coll_name = f'{name} ({suffix})' if both else name
+        id_map = _get_section_id_map(plex_url, plex_token, section_key, lib_type)
+        rating_keys = []
+        missing = 0
+        seen = set()
+        for item in subset:
+            tmdb_id = str(item.get('id') or item.get('tmdb_id') or '')
+            imdb_id = item.get('imdb_id') or ''
+            rk = None
+            if tmdb_id:
+                rk = id_map.get('tmdb:' + tmdb_id)
+            if not rk and imdb_id:
+                rk = id_map.get(imdb_id)
+            if rk and rk not in seen:
+                rating_keys.append(rk)
+                seen.add(rk)
+            else:
+                missing += 1
+        rk = _get_or_create_collection(plex_url, plex_token, section_key, coll_name, lib_type, '!')
+        if rating_keys:
+            _add_items_to_collection(plex_url, plex_token, machine_id, rk, rating_keys)
+        created.append({
+            'type': lib_type,
+            'name': coll_name,
+            'rating_key': rk,
+            'added': len(rating_keys),
+            'missing': missing,
+        })
+
+    _sync('movie', movies, 'Movies')
+    _sync('show', shows, 'Shows')
+    return {'collections': created}
+

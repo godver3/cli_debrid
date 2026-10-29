@@ -652,6 +652,11 @@ class ContentSourceTasks:
                         )
                         _t.start()
                         logging.info(f"[PlexCollections] Sync thread started for {source} ({len(ordered_pairs)} items in list)")
+                        try:
+                            from database.plex_collections import refresh_saved_person_collections
+                            refresh_saved_person_collections()
+                        except Exception as _pce_person:
+                            logging.debug(f"[PlexCollections] Person collection refresh skipped: {_pce_person}")
                     except Exception as _pce:
                         logging.error(f"[PlexCollections] Failed to start sync for {source}: {_pce}")
             else:

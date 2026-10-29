@@ -62,7 +62,7 @@
                 type="text"
                 id="search-input"
                 class="form-control"
-                placeholder="Search movies/shows or enter IMDb/TMDB ID..."
+                placeholder="Search movies, shows, actors, directors, or an IMDb/TMDB ID..."
                 autocomplete="off"
             >
             <button id="search-clear-btn" class="search-clear-btn" style="display: none;" title="Clear search" aria-label="Clear search">
@@ -1125,6 +1125,8 @@
 
         <!-- Search Results Grid (hidden by default, shown when searching) -->
         <div id="search-results" style="display: none;">
+            <div id="people-matches" class="people-matches" style="display: none;"></div>
+            <div id="person-banner" class="person-banner" style="display: none;"></div>
             <!-- Results Info Bar -->
             <div class="results-info-bar" id="results-info">
                 <span class="results-count" id="results-count"></span>

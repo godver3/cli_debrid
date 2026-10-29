@@ -35,11 +35,13 @@ Match priority:
 import logging
 import re
 import time
+from itertools import chain
 
 logger = logging.getLogger(__name__)
 
 _LIVE_STATES = "('Collected','Checking','Upgrading')"
 _LAST_SYNC_SETTING_KEY = 'last_climount_sync'
+_SYNC_PAGE_SIZE = 250
 
 
 def _get_last_sync_ts() -> int:
@@ -70,24 +72,78 @@ def _same_cli_ids(current, wanted: dict) -> bool:
         return False
 
 
-def _fetch_changes(since_ts: int) -> list:
+def _iter_change_pages(since_ts: int, state: dict = None):
+    """Yield cli_mount changes one bounded page at a time.
+
+    Current cli_mount returns ``{"changes": [...], "has_more": bool}`` when
+    page/limit are supplied. Older releases ignore those parameters and return
+    the legacy bare list, which remains supported here. Paging prevents a full
+    library sync from being materialized inside cli_mount at the same time CLI
+    is decoding it -- especially important when both processes share DUMB's
+    container memory limit.
+    """
+    if state is None:
+        state = {}
+    state['complete'] = False
     try:
         from usenet.climount_client import get_climount_client
         from routes.api_tracker import api
         client = get_climount_client()
         if not client or not client.is_enabled():
-            return []
+            state['complete'] = True
+            return
         url = f'{client.base_url}/api/sync/changes'
-        if since_ts > 0:
-            url += f'?since={since_ts}'
-        r = api.get(url, headers=client._headers(), timeout=60)
-        if r.status_code != 200:
-            logger.warning(f'[CMSync] /api/sync/changes returned HTTP {r.status_code}')
-            return []
-        return r.json() or []
+        page = 1
+        while True:
+            params = {'page': page, 'limit': _SYNC_PAGE_SIZE}
+            if since_ts > 0:
+                params['since'] = since_ts
+            r = api.get(
+                url,
+                params=params,
+                headers=client._headers(),
+                timeout=60,
+            )
+            if r.status_code != 200:
+                logger.warning(
+                    f'[CMSync] /api/sync/changes page {page} returned HTTP {r.status_code}'
+                )
+                return
+
+            payload = r.json() or []
+            if isinstance(payload, list):
+                # Legacy cli_mount: page/limit were ignored and this is the
+                # complete response. Do not request it repeatedly.
+                state['complete'] = True
+                yield payload
+                return
+            if not isinstance(payload, dict):
+                logger.warning('[CMSync] /api/sync/changes returned an invalid payload')
+                return
+
+            batch = payload.get('changes') or []
+            if not isinstance(batch, list):
+                logger.warning('[CMSync] /api/sync/changes returned invalid page data')
+                return
+            has_more = bool(payload.get('has_more'))
+            if not has_more:
+                state['complete'] = True
+            yield batch
+            if not has_more:
+                return
+            if not batch:
+                logger.warning(
+                    '[CMSync] /api/sync/changes reported has_more with an empty page; stopping'
+                )
+                return
+            page += 1
     except Exception as e:
         logger.warning(f'[CMSync] fetch_changes error: {e}')
-        return []
+
+
+def _fetch_changes(since_ts: int) -> list:
+    """Compatibility helper for callers that explicitly need one complete list."""
+    return list(chain.from_iterable(_iter_change_pages(since_ts)))
 
 
 def _extract_infohash_from_magnet(magnet: str) -> str:
@@ -273,12 +329,16 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
     since_ts = 0 if force_full else _get_last_sync_ts()
     now_ts = int(time.time())
 
-    changes = _fetch_changes(since_ts)
-    summary['fetched'] = len(changes)
-
-    if not changes:
-        _set_last_sync_ts(now_ts)
+    fetch_state = {}
+    page_iter = iter(_iter_change_pages(since_ts, fetch_state))
+    first_page = next(page_iter, [])
+    if not first_page:
+        if fetch_state.get('complete'):
+            _set_last_sync_ts(now_ts)
         return summary
+    # Flatten lazily so each decoded response page can be released before the
+    # next one is fetched instead of retaining the full mount library in CLI.
+    changes = chain.from_iterable(chain((first_page,), page_iter))
 
     try:
         from database.core import get_db_connection
@@ -335,6 +395,7 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
             _batch_count = 0
 
             for entry in changes:
+                summary['fetched'] += 1
                 try:
                     lookup_map = nzb_map if entry.get('protocol') == 'nzb' else torrent_map
                     item_ids = _find_item_ids(conn, entry, infohash_map=lookup_map, location_map=location_map)
@@ -530,7 +591,10 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
         logger.error(f'[CMSync] DB error: {e}', exc_info=True)
         summary['errors'] += 1
 
-    _set_last_sync_ts(now_ts)
+    if fetch_state.get('complete'):
+        _set_last_sync_ts(now_ts)
+    else:
+        logger.warning('[CMSync] Sync was incomplete; preserving the previous timestamp for retry')
 
     # --- Orphan pass: find Collected items missing torrent_id that aren't on NAS ---
     # Runs after every delta sync to catch items that were never matched.
