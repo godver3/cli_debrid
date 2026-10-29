@@ -279,6 +279,7 @@ body[data-theme="tangerine"] .discover-subtitle {
     cursor: pointer;
     text-align: left;
     color: inherit;
+    overflow: hidden;
 }
 
 .person-chip:hover {
@@ -297,13 +298,27 @@ body[data-theme="tangerine"] .discover-subtitle {
 }
 
 .person-chip-text {
+    flex: 1 1 auto;
     min-width: 0;
+    overflow: hidden;
 }
 
 .person-chip-name,
 .person-banner-name {
     font-weight: 600;
     font-size: 0.92rem;
+}
+
+.person-chip-name,
+.person-chip-meta {
+    display: block;
+    max-width: 100%;
+}
+
+.person-chip-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .person-chip-meta,
