@@ -1,6 +1,7 @@
 import logging
 import os
 import platform
+import re
 
 def update_show_ids():
     """Update show IDs (imdb_id and tmdb_id) in the database if they don't match the direct API."""
@@ -894,6 +895,40 @@ def run_plex_library_maintenance():
     except Exception as e:
         logging.error(f"Error in Plex library maintenance: {str(e)}")
 
+NO_LOCATION_GRACE_HOURS = 6
+_IMDB_IN_LIBRARY_NAME = re.compile(r' - (tt\d+)(?: - |\.\w+$)')
+_EPISODE_IN_LIBRARY_NAME = re.compile(r' - S(\d+)E(\d+)(?:-?E\d+)? - ')
+
+
+def _hours_since(timestamp):
+    """Return the age of a database timestamp, treating invalid values as old."""
+    from datetime import datetime
+
+    try:
+        return (datetime.now() - datetime.fromisoformat(str(timestamp))).total_seconds() / 3600
+    except (TypeError, ValueError):
+        return float('inf')
+
+
+def _library_path(symlink_base_path, stored_path):
+    """Resolve either an absolute or library-relative location_on_disk value."""
+    if not stored_path or os.path.isabs(stored_path):
+        return stored_path
+    return os.path.join(symlink_base_path, stored_path)
+
+
+def _media_key_from_library_name(path):
+    """Return (IMDb ID, season, episode) when the configured name contains them."""
+    name = os.path.basename(path or '')
+    imdb = _IMDB_IN_LIBRARY_NAME.search(name)
+    if not imdb:
+        return None
+    episode = _EPISODE_IN_LIBRARY_NAME.search(name)
+    if episode:
+        return (imdb.group(1), int(episode.group(1)), int(episode.group(2)))
+    return (imdb.group(1), None, None)
+
+
 def check_database_symlinks(cursor, symlink_base_path):
     """
     Phase 1: Check all symlinks registered in the database.
@@ -909,11 +944,14 @@ def check_database_symlinks(cursor, symlink_base_path):
             type,
             original_path_for_symlink,
             location_on_disk,
-            version
-        FROM media_items 
+            version,
+            last_updated
+        FROM media_items
         WHERE state IN ('Collected', 'Upgrading')
-        AND original_path_for_symlink IS NOT NULL
-        AND location_on_disk IS NOT NULL
+        AND (
+            (location_on_disk IS NOT NULL AND location_on_disk != '')
+            OR (state = 'Collected' AND (location_on_disk IS NULL OR location_on_disk = ''))
+        )
     """)
     db_items = cursor.fetchall()
     total_items = len(db_items)
@@ -924,8 +962,14 @@ def check_database_symlinks(cursor, symlink_base_path):
         if idx % 500 == 0:
             logging.info(f"Progress: {idx}/{total_items} items checked ({(idx/total_items)*100:.1f}%)")
             
-        item_id, title, item_type, original_path, location_on_disk, version = item
-        full_symlink_path = os.path.join(symlink_base_path, location_on_disk)
+        item_id, title, item_type, original_path, location_on_disk, version, last_updated = item
+        if not location_on_disk:
+            # A just-collected row can briefly precede its filesystem update.
+            if _hours_since(last_updated) >= NO_LOCATION_GRACE_HOURS:
+                broken_links.append((item_id, title, None, None, "no_location", version))
+            continue
+
+        full_symlink_path = _library_path(symlink_base_path, location_on_disk)
         parent_folder = os.path.dirname(full_symlink_path)
         checked_folders.add(parent_folder)
         
@@ -957,7 +1001,7 @@ def check_database_symlinks(cursor, symlink_base_path):
     logging.info(f"Phase 1 complete - Found {len(broken_links)} broken links")
     return broken_links, checked_folders
 
-def check_orphaned_symlinks(cursor, symlink_base_path, checked_folders):
+def check_orphaned_symlinks(cursor, symlink_base_path):
     """
     Phase 2: Find symlinks in the filesystem that aren't tracked in the database.
     Returns a list of orphaned symlinks.
@@ -986,16 +1030,12 @@ def check_orphaned_symlinks(cursor, symlink_base_path, checked_folders):
     # First count directories for progress tracking
     logging.info("Counting directories to process...")
     for root, dirs, _ in os.walk(symlink_base_path):
-        if root not in checked_folders:
-            total_dirs += 1
+        total_dirs += 1
     logging.info(f"Found {total_dirs} directories to check")
 
-    # Walk the symlink directory
+    # Scan every directory. A tracked link and an untracked stale/live link can
+    # coexist in the same folder, so Phase 1 visiting a folder cannot exclude it.
     for root, _, files in os.walk(symlink_base_path):
-        # Skip folders we already checked in Phase 1
-        if root in checked_folders:
-            continue
-            
         processed_dirs += 1
         if processed_dirs % 10 == 0 or processed_dirs == total_dirs:
             logging.info(f"Progress: {processed_dirs}/{total_dirs} directories checked ({(processed_dirs/total_dirs)*100:.1f}%)")
@@ -1037,7 +1077,7 @@ def check_orphaned_symlinks(cursor, symlink_base_path, checked_folders):
     logging.info(f"\nPhase 2 complete - Found {len(orphaned_links)} orphaned symlinks in {processed_dirs} directories")
     return orphaned_links
 
-def handle_maintenance_actions(cursor, broken_links, orphaned_links):
+def handle_maintenance_actions(cursor, broken_links, orphaned_links, symlink_base_path):
     """
     Phase 3: Take action on broken and orphaned symlinks.
     - Remove orphaned symlinks from disk
@@ -1045,7 +1085,20 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links):
     """
     logging.info("\n=== Phase 3: Taking Action on Issues ===")
     
-    # Handle orphaned symlinks first - just remove them from disk
+    # A valid untracked symlink may have been imported or created by another
+    # tool. Keep it instead of destructively treating every orphan as stale.
+    live_untracked = {
+        _media_key_from_library_name(link['path'])
+        for link in orphaned_links
+        if link['target_exists']
+    }
+    live_untracked.discard(None)
+    live_orphans = sum(1 for link in orphaned_links if link['target_exists'])
+    if live_orphans:
+        logging.info(f"\nKeeping {live_orphans} untracked symlink(s) that still resolve")
+    orphaned_links = [link for link in orphaned_links if not link['target_exists']]
+
+    # Remove only orphaned symlinks whose targets are gone.
     if orphaned_links:
         logging.info(f"\nRemoving {len(orphaned_links)} orphaned symlinks")
         for link in orphaned_links:
@@ -1061,6 +1114,7 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links):
     # Handle broken symlinks
     if broken_links:
         logging.info(f"\nProcessing {len(broken_links)} broken symlinks")
+        requeued_missing = set()
         for item_id, title, symlink_path, target_path, reason, version in broken_links:
             logging.info(f"\nProcessing: {title}")
             logging.info(f"  Symlink: {symlink_path}")
@@ -1070,7 +1124,7 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links):
             
             try:
                 # First remove the symlink if it exists
-                if os.path.lexists(symlink_path):
+                if symlink_path and os.path.lexists(symlink_path):
                     os.unlink(symlink_path)
                     logging.info("  Removed broken symlink from disk")
                     from time import sleep
@@ -1114,32 +1168,20 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links):
                 if item_type == 'movie':
                     # For movies, compare version and imdb_id
                     cursor.execute("""
-                        SELECT COUNT(*) 
-                        FROM media_items 
+                        SELECT location_on_disk
+                        FROM media_items
                         WHERE state IN ('Collected', 'Upgrading')
                         AND version LIKE ?
                         AND id != ?
                         AND type = 'movie'
                         AND imdb_id = (SELECT imdb_id FROM media_items WHERE id = ?)
-                        AND location_on_disk IS NOT NULL
-                        AND EXISTS (
-                            SELECT 1 
-                            FROM media_items m2 
-                            WHERE m2.id = media_items.id 
-                            AND m2.location_on_disk IS NOT NULL
-                            AND EXISTS (
-                                SELECT 1 
-                                FROM media_items m3 
-                                WHERE m3.location_on_disk = m2.location_on_disk 
-                                AND m3.id = m2.id
-                            )
-                        )
+                        AND location_on_disk IS NOT NULL AND location_on_disk != ''
                     """, (f"%{clean_version}%", item_id, item_id))
                 else:
                     # For TV shows, compare version, imdb_id, season_number, and episode_number
                     cursor.execute("""
-                        SELECT COUNT(*) 
-                        FROM media_items 
+                        SELECT location_on_disk
+                        FROM media_items
                         WHERE state IN ('Collected', 'Upgrading')
                         AND version LIKE ?
                         AND id != ?
@@ -1147,22 +1189,29 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links):
                         AND imdb_id = (SELECT imdb_id FROM media_items WHERE id = ?)
                         AND season_number = (SELECT season_number FROM media_items WHERE id = ?)
                         AND episode_number = (SELECT episode_number FROM media_items WHERE id = ?)
-                        AND location_on_disk IS NOT NULL
-                        AND EXISTS (
-                            SELECT 1 
-                            FROM media_items m2 
-                            WHERE m2.id = media_items.id 
-                            AND m2.location_on_disk IS NOT NULL
-                            AND EXISTS (
-                                SELECT 1 
-                                FROM media_items m3 
-                                WHERE m3.location_on_disk = m2.location_on_disk 
-                                AND m3.id = m2.id
-                            )
-                        )
+                        AND location_on_disk IS NOT NULL AND location_on_disk != ''
                     """, (f"%{clean_version}%", item_id, item_id, item_id, item_id))
                 
-                remaining_items = cursor.fetchone()[0]
+                remaining_items = sum(
+                    1 for (location,) in cursor.fetchall()
+                    if os.path.exists(_library_path(symlink_base_path, location))
+                )
+
+                cursor.execute(
+                    "SELECT imdb_id, season_number, episode_number FROM media_items WHERE id = ?",
+                    (item_id,)
+                )
+                identity = cursor.fetchone()
+                if identity and tuple(identity) in live_untracked:
+                    logging.info("  A playable untracked file for this title is already in the library")
+                    continue
+
+                missing_key = (*tuple(identity), clean_version) if identity else None
+                if missing_key and missing_key in requeued_missing:
+                    logging.info("  An equivalent missing item was already moved to Wanted; deleting duplicate")
+                    cursor.execute("DELETE FROM media_items WHERE id = ?", (item_id,))
+                    cursor.connection.commit()
+                    continue
                 
                 logging.info(f"  Version: {clean_version}")
                 logging.info(f"  Remaining items with same version and identifiers: {remaining_items}")
@@ -1173,6 +1222,8 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links):
                     try:
                         from routes.debug_routes import move_item_to_wanted
                         move_item_to_wanted(item_id, None)
+                        if missing_key:
+                            requeued_missing.add(missing_key)
                         logging.info(f"  Successfully moved item to Wanted state for rescraping")
                     except Exception as e:
                         logging.error(f"  Error moving item to Wanted state: {str(e)}")
@@ -1232,8 +1283,17 @@ def run_symlink_library_maintenance(skip_phase_1=False, skip_phase_2=False):
                 logging.error(f"Original files path {original_files_path} does not exist. Maintenance cannot proceed as target files cannot be verified.")
                 return
             try:
-                os.listdir(original_files_path) # Check accessibility
-                logging.info(f"Original files path {original_files_path} is accessible.")
+                original_contents = os.listdir(original_files_path)
+                if not original_contents:
+                    logging.error(
+                        f"Original files path {original_files_path} is empty. Maintenance cannot proceed "
+                        "because the source mount may be unavailable."
+                    )
+                    return
+                logging.info(
+                    f"Original files path {original_files_path} is accessible and contains "
+                    f"{len(original_contents)} item(s)."
+                )
             except OSError as e:
                 logging.error(f"Error accessing original files path {original_files_path}: {str(e)}. Maintenance cannot proceed as target files cannot be verified.")
                 return
@@ -1282,7 +1342,7 @@ def run_symlink_library_maintenance(skip_phase_1=False, skip_phase_2=False):
             # Phase 2: Check for orphaned symlinks
             if not skip_phase_2:
                 logging.info("\n=== Phase 2: Checking for Orphaned Symlinks ===")
-                orphaned_links = check_orphaned_symlinks(cursor, symlink_base_path, checked_folders)
+                orphaned_links = check_orphaned_symlinks(cursor, symlink_base_path)
                 
                 # Report orphaned links
                 if orphaned_links:
@@ -1310,7 +1370,7 @@ def run_symlink_library_maintenance(skip_phase_1=False, skip_phase_2=False):
                 logging.info("\nSkipping Phase 2 (Debug Mode)")
             
             # Phase 3: Take action on issues
-            handle_maintenance_actions(cursor, broken_links, orphaned_links)
+            handle_maintenance_actions(cursor, broken_links, orphaned_links, symlink_base_path)
             
             logging.info("\nSymlink library maintenance completed")
             
