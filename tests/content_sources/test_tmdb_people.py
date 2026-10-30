@@ -2,6 +2,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -141,6 +142,52 @@ class PersonCollectionMemoryTests(unittest.TestCase):
         self.assertEqual(set(stored), {'31', '525'})
         self.assertEqual(stored['31']['name'], 'Tom Hanks')
         self.assertEqual(stored['525']['name'], 'Christopher Nolan')
+
+
+class PersonPlexCollectionMatchingTests(unittest.TestCase):
+    def test_matches_tmdb_credit_to_plex_item_by_exact_title_and_year(self):
+        try:
+            from database import plex_collections as pc
+        except Exception:
+            self.skipTest('database.plex_collections unavailable')
+
+        work = {
+            'id': 2059,
+            'media_type': 'movie',
+            'title': 'National Treasure',
+            'release_date': '2004-11-19',
+        }
+        title_key = pc._title_year_key('National Treasure', 2004)
+        with mock.patch.object(pc, '_get_plex_credentials', return_value=('http://plex', 'token')), \
+             mock.patch.object(pc, '_get_library_sections', return_value={
+                 '1': {'type': 'movie', 'title': 'Movies'},
+             }), \
+             mock.patch.object(pc, '_get_machine_id', return_value='machine'), \
+             mock.patch.object(pc, '_get_section_id_map', return_value={title_key: '101'}), \
+             mock.patch.object(pc, '_get_or_create_collection', return_value='500'), \
+             mock.patch.object(pc, '_add_items_to_collection') as add:
+            result = pc.create_named_collections_from_tmdb('Nicolas Cage', [work])
+
+        add.assert_called_once_with('http://plex', 'token', 'machine', '500', ['101'])
+        self.assertEqual(result['collections'][0]['added'], 1)
+        self.assertEqual(result['collections'][0]['missing'], 0)
+
+    def test_title_year_fallback_is_not_used_when_plex_match_is_ambiguous(self):
+        try:
+            from database import plex_collections as pc
+        except Exception:
+            self.skipTest('database.plex_collections unavailable')
+
+        response = mock.Mock()
+        response.json.return_value = {'MediaContainer': {'Metadata': [
+            {'ratingKey': '101', 'title': 'The Movie', 'year': 2004, 'Guid': []},
+            {'ratingKey': '102', 'title': 'The Movie', 'year': 2004, 'Guid': []},
+        ]}}
+        response.raise_for_status.return_value = None
+        with mock.patch.object(pc.requests, 'get', return_value=response):
+            id_map = pc._get_section_id_map('http://plex', 'token', '1', 'movie')
+
+        self.assertNotIn(pc._title_year_key('The Movie', 2004), id_map)
 
 
 if __name__ == '__main__':
