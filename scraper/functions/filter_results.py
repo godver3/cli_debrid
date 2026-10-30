@@ -88,6 +88,29 @@ def _title_words(normalized):
     return {w for w in re.split(r'[^a-z0-9]+', normalized) if w and not w.isdigit() and w not in _TITLE_FILLER_WORDS}
 
 
+def _exact_title_key(normalized):
+    """Return the punctuation-insensitive key used only for exact title matches.
+
+    Release names commonly replace stylised punctuation with another separator
+    (WALL·E / Wall-E / WALL.E).  Fuzzy matching should still see the original
+    word boundaries, but an otherwise exact parsed title must not miss solely
+    because those separators differ.
+    """
+    return re.sub(r'[^a-z0-9]', '', normalized or '')
+
+
+def _same_exact_title(left, right):
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    left_key = _exact_title_key(left)
+    right_key = _exact_title_key(right)
+    # Collapsing separators can join genuinely different word boundaries, so
+    # reserve it for the short-title problem it solves (WALL·E / Wall-E).
+    return bool(left_key) and len(left_key) <= 5 and left_key == right_key
+
+
 def _swaps_a_title_word(parsed_title, target_title):
     """True when parsed_title trades one of target_title's words for a different
     word: 'american.woman' against 'american.dad'. A shared opening word carries
@@ -339,6 +362,10 @@ def filter_results(
                 parsed_title_str = title_before_markers(original_title)
             # logging.debug(f"  - Parsed info title: '{parsed_title_str}', parsed_info keys: {list(parsed_info.keys()) if parsed_info else 'None'}")
             normalized_parsed_title = normalize_title(parsed_title_str).lower() if parsed_title_str else None
+            exact_main_title_match = (
+                bool(normalized_parsed_title)
+                and _same_exact_title(normalized_parsed_title, normalized_query_title)
+            )
 
             # Parenthesized alternative title extracted from torrent filename
             # e.g. "El renacido (The Revenant) 2015 SPANISH" → "The Revenant"
@@ -430,6 +457,12 @@ def filter_results(
                 # Fallback to original logic if no parsed title
                 main_title_sim = main_sim_set
 
+            # The parsed title is the semantic part of the release name.  Once it
+            # exactly matches the requested title, filename metadata must not turn
+            # that match into 0.97 and make short titles fail a 1.0 threshold.
+            if exact_main_title_match:
+                main_title_sim = 1.0
+
             # Special handling for common acronym variations (like SHIELD)
             # Only apply if we haven't already applied a length penalty (to avoid overriding penalties)
             if normalized_parsed_title:
@@ -463,8 +496,11 @@ def filter_results(
             alias_similarities = []
             if normalized_aliases:
                 for alias in normalized_aliases:
+                    alias_exact = bool(normalized_parsed_title) and _same_exact_title(normalized_parsed_title, alias)
                     # Compare parsed title against alias when available, otherwise query against alias
-                    if normalized_parsed_title:
+                    if alias_exact:
+                        alias_sim = 1.0
+                    elif normalized_parsed_title:
                         alias_sim_set = fuzz.token_set_ratio(normalized_parsed_title, alias) / 100.0
                         alias_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, alias) / 100.0
                         alias_sim = (alias_sim_set + alias_sim_sort) / 2.0
@@ -493,7 +529,7 @@ def filter_results(
                     # This penalizes when the alias being compared is significantly longer than the parsed/query title
                     alias_length = len(alias)
                     comparison_length = len(normalized_parsed_title) if normalized_parsed_title else len(normalized_query_title)
-                    if alias_length > 0 and alias_length > comparison_length * 1.5:
+                    if not alias_exact and alias_length > 0 and alias_length > comparison_length * 1.5:
                         alias_ratio = comparison_length / alias_length
                         alias_penalty_factor = max(0.3, alias_ratio)  # Minimum 30% of original similarity
                         alias_original_sim = alias_sim
@@ -506,8 +542,13 @@ def filter_results(
             # --- Translated Title Similarity ---
             translated_title_sim = 0.0
             if normalized_translated_title:
+                translated_exact = bool(normalized_parsed_title) and _same_exact_title(
+                    normalized_parsed_title, normalized_translated_title
+                )
                 trans_sim_set = fuzz.token_set_ratio(normalized_result_title, normalized_translated_title) / 100.0
-                if normalized_parsed_title:
+                if translated_exact:
+                    translated_title_sim = 1.0
+                elif normalized_parsed_title:
                     trans_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, normalized_translated_title) / 100.0
                     translated_title_sim = (trans_sim_set + trans_sim_sort) / 2.0
                 else:
@@ -528,7 +569,7 @@ def filter_results(
                 # This penalizes when the translated title being compared is significantly longer than the query title
                 trans_length = len(normalized_translated_title)
                 query_length = len(normalized_query_title)
-                if trans_length > 0 and trans_length > query_length * 1.5:
+                if not translated_exact and trans_length > 0 and trans_length > query_length * 1.5:
                     trans_ratio = query_length / trans_length
                     trans_penalty_factor = max(0.3, trans_ratio)  # Minimum 30% of original similarity
                     trans_original_sim = translated_title_sim
@@ -539,9 +580,12 @@ def filter_results(
             # PTT parses "El renacido" as the title but the real match is "(The Revenant)"
             paren_title_sim = 0.0
             if normalized_paren_title:
-                paren_sim_set = fuzz.token_set_ratio(normalized_query_title, normalized_paren_title) / 100.0
-                paren_sim_sort = fuzz.token_sort_ratio(normalized_query_title, normalized_paren_title) / 100.0
-                paren_title_sim = (paren_sim_set + paren_sim_sort) / 2.0
+                if _same_exact_title(normalized_query_title, normalized_paren_title):
+                    paren_title_sim = 1.0
+                else:
+                    paren_sim_set = fuzz.token_set_ratio(normalized_query_title, normalized_paren_title) / 100.0
+                    paren_sim_sort = fuzz.token_sort_ratio(normalized_query_title, normalized_paren_title) / 100.0
+                    paren_title_sim = (paren_sim_set + paren_sim_sort) / 2.0
                 if paren_title_sim >= 0.85:
                     logging.info(f"Parenthesized title match: '{paren_title_str}' sim={paren_title_sim:.2f} for query '{title}'")
 
@@ -664,8 +708,13 @@ def filter_results(
             for alias_list in item_aliases.values():
                 for alias in alias_list:
                     normalized_api_alias = normalize_title(alias).lower()
+                    alias_exact = bool(normalized_parsed_title) and _same_exact_title(
+                        normalized_parsed_title, normalized_api_alias
+                    )
                     # Compare parsed title against API alias when available, otherwise query against API alias
-                    if normalized_parsed_title:
+                    if alias_exact:
+                        final_alias_sim = 1.0
+                    elif normalized_parsed_title:
                         alias_sim_set = fuzz.token_set_ratio(normalized_parsed_title, normalized_api_alias) / 100.0
                         alias_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, normalized_api_alias) / 100.0
                         final_alias_sim = (alias_sim_set + alias_sim_sort) / 2.0
@@ -696,7 +745,7 @@ def filter_results(
 
                     # Check if parsed title is longer than the API alias (lowered threshold to 1.2x for better detection)
                     # Also check for significant word differences even at similar lengths
-                    if api_alias_length > 0 and comparison_length > api_alias_length * 1.2:
+                    if not alias_exact and api_alias_length > 0 and comparison_length > api_alias_length * 1.2:
                         length_ratio = api_alias_length / comparison_length
                         api_alias_penalty_factor = max(0.3, length_ratio)  # Minimum 30% of original similarity
                         api_alias_original_sim = final_alias_sim
@@ -704,7 +753,7 @@ def filter_results(
 
                     # Additional check: If titles are similar length but have different non-year content, apply penalty
                     # This catches cases like "dragon.ball.daima" vs "dragon.ball.1986" or "dragon.ball.z" vs "dragon.ball"
-                    elif api_alias_length > 0 and final_alias_sim > 0.7 and normalized_parsed_title:
+                    elif not alias_exact and api_alias_length > 0 and final_alias_sim > 0.7 and normalized_parsed_title:
                         # Extract non-numeric words from both titles to check for content differences
                         # Include single-character words (like 'Z', 'X', 'GT') which are significant in anime titles
                         alias_words = set(w.lower() for w in normalized_api_alias.split('.') if not w.isdigit() and w)

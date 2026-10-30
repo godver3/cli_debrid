@@ -40,6 +40,7 @@ SCRIPT = textwrap.dedent('''
     old = add(**base, episode_number=1, state='Collected', version='Anime*', filled_by_file='old.mkv',
               filled_by_title='Old Pack', filled_by_torrent_id='OLD', location_on_disk='/sym/Gintama S01E01 old.mkv',
               original_path_for_symlink='/mnt/Old Pack/old.mkv', original_filename='old.mkv',
+              size=26.86,
               collected_at='2026-01-01 00:00:00', original_collected_at='2026-01-01 00:00:00')
     other_version = add(**base, episode_number=2, state='Collected', version='1080p', filled_by_file='x.mkv',
                         filled_by_torrent_id='X', location_on_disk='/sym/x.mkv')
@@ -57,7 +58,7 @@ SCRIPT = textwrap.dedent('''
     row = dict(conn.execute("SELECT * FROM media_items WHERE id = ?", (old,)).fetchone())
     out['row'] = {k: row[k] for k in ('state', 'version', 'filled_by_file', 'filled_by_torrent_id',
                                       'location_on_disk', 'original_path_for_symlink', 'original_filename',
-                                      'collected_at', 'original_collected_at', 'replaced_files')}
+                                      'size', 'collected_at', 'original_collected_at', 'replaced_files')}
     out['rows'] = conn.execute("SELECT COUNT(*) FROM media_items").fetchone()[0]
     print('RESULT ' + json.dumps(out, default=str))
 ''')
@@ -85,7 +86,7 @@ class ReplaceCollectedItemTests(unittest.TestCase):
         self.assertEqual(row['version'], 'Anime')
         self.assertEqual(row['filled_by_file'], '[CBT] Gintama 001-002.mkv')
         self.assertEqual(row['filled_by_torrent_id'], 'NEW')
-        for cleared in ('location_on_disk', 'original_path_for_symlink', 'original_filename', 'collected_at'):
+        for cleared in ('location_on_disk', 'original_path_for_symlink', 'original_filename', 'size', 'collected_at'):
             self.assertIsNone(row[cleared], cleared)
         self.assertIsNotNone(row['original_collected_at'])
 

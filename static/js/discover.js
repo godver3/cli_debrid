@@ -2075,11 +2075,7 @@ function handleSearch() {
     searchClearBtn.style.display = 'block';
     window.discoverState.personId = null;
     hidePersonBanner();
-    if (!isIDSearch(query)) {
-        loadPeopleMatches(query);
-    } else {
-        hidePeopleMatches();
-    }
+    hidePeopleMatches();
     searchContent(query);
 }
 
@@ -2561,6 +2557,14 @@ async function searchContent(query) {
 
         updatePagination();
         updateResultsInfo(data);
+
+        // Title/show results are the primary search response. Start the slower
+        // actor/director lookup only after those cards have rendered so a
+        // single-worker server or constrained browser connection pool cannot
+        // put person search in front of the results the user asked for.
+        if (isInitialLoad && !isIDSearch(query)) {
+            loadPeopleMatches(query);
+        }
 
         // Auto-load more if content doesn't fill viewport (so user can scroll)
         // Limit auto-loads to prevent infinite loops
@@ -10243,12 +10247,21 @@ function personBannerEl() {
     return document.getElementById('person-banner');
 }
 
+function restoreEmptyStatePosition() {
+    const anchor = document.getElementById('empty-state-anchor');
+    const state = emptyState || document.getElementById('empty-state');
+    if (anchor && state && anchor.nextElementSibling !== state) {
+        anchor.insertAdjacentElement('afterend', state);
+    }
+}
+
 function hidePeopleMatches() {
     const el = peopleMatchesEl();
     if (el) {
         el.style.display = 'none';
         el.innerHTML = '';
     }
+    restoreEmptyStatePosition();
 }
 
 function hidePersonBanner() {
@@ -10292,6 +10305,12 @@ async function loadPeopleMatches(query) {
             </button>`;
         }).join('');
         el.style.display = 'flex';
+        // When title search is empty but a person matched, keep the person chip
+        // above the empty message instead of leaving it below the whole state.
+        const state = emptyState || document.getElementById('empty-state');
+        if (state && state.classList.contains('active')) {
+            el.insertAdjacentElement('afterend', state);
+        }
         el.querySelectorAll('.person-chip').forEach((chip) => {
             chip.addEventListener('click', () => loadPersonFilmography(chip.dataset.personId));
         });
