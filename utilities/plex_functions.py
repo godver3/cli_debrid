@@ -3316,9 +3316,9 @@ def update_item_with_plex_info(item_id: int, file_path: str = None, skip_plex_se
             if size_gb is not None or resolution is not None or location:
                 conn.execute('''
                     UPDATE media_items
-                    SET size = COALESCE(size, ?),
-                        resolution = COALESCE(resolution, ?),
-                        location_on_disk = COALESCE(location_on_disk, ?)
+                    SET size = COALESCE(?, size),
+                        resolution = COALESCE(?, resolution),
+                        location_on_disk = COALESCE(?, location_on_disk)
                     WHERE id = ?
                 ''', (size_gb, resolution, location, item_id))
                 conn.commit()

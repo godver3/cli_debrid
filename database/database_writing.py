@@ -129,6 +129,7 @@ def replace_collected_item(item: dict) -> Optional[int]:
                    location_on_disk = NULL,
                    original_path_for_symlink = NULL,
                    original_filename = NULL,
+                   size = NULL,
                    collected_at = NULL,
                    upgrading_from = NULL,
                    upgrading = NULL,
