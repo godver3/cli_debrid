@@ -901,13 +901,15 @@ _EPISODE_IN_LIBRARY_NAME = re.compile(r' - S(\d+)E(\d+)(?:-?E\d+)? - ')
 
 
 def _hours_since(timestamp):
-    """Return the age of a database timestamp, treating invalid values as old."""
+    """Return the age of a database timestamp, or None when it is missing or invalid."""
     from datetime import datetime
 
+    if not timestamp:
+        return None
     try:
         return (datetime.now() - datetime.fromisoformat(str(timestamp))).total_seconds() / 3600
     except (TypeError, ValueError):
-        return float('inf')
+        return None
 
 
 def _library_path(symlink_base_path, stored_path):
@@ -915,6 +917,24 @@ def _library_path(symlink_base_path, stored_path):
     if not stored_path or os.path.isabs(stored_path):
         return stored_path
     return os.path.join(symlink_base_path, stored_path)
+
+
+def _is_inside(path, base):
+    """True when path sits under base, compared without following symlinks."""
+    try:
+        path = os.path.abspath(path)
+        base = os.path.abspath(base)
+        return os.path.commonpath([path, base]) == base
+    except ValueError:
+        return False
+
+
+def _configured_version_count():
+    try:
+        from utilities.settings import get_setting
+        return len(get_setting('Scraping', 'versions', {}) or {})
+    except Exception:
+        return 0
 
 
 def _media_key_from_library_name(path):
@@ -927,6 +947,23 @@ def _media_key_from_library_name(path):
     if episode:
         return (imdb.group(1), int(episode.group(1)), int(episode.group(2)))
     return (imdb.group(1), None, None)
+
+
+def _untracked_link_for(live_untracked, identity, clean_version):
+    """Claim a playable untracked library link that can stand in for a broken row.
+
+    The link must name the row's version, unless only one version is configured.
+    A claimed link is removed so no second row adopts it.
+    """
+    if not identity:
+        return None
+    links = live_untracked.get(tuple(identity)) or []
+    for link in links:
+        name = os.path.basename(link['path']).casefold()
+        if (clean_version and clean_version.casefold() in name) or _configured_version_count() == 1:
+            links.remove(link)
+            return link
+    return None
 
 
 def check_database_symlinks(cursor, symlink_base_path):
@@ -964,12 +1001,18 @@ def check_database_symlinks(cursor, symlink_base_path):
             
         item_id, title, item_type, original_path, location_on_disk, version, last_updated = item
         if not location_on_disk:
+            # Only rows that were symlinked in this mode count. Rows collected in
+            # Plex mode never had a location, so a missing one proves nothing.
             # A just-collected row can briefly precede its filesystem update.
-            if _hours_since(last_updated) >= NO_LOCATION_GRACE_HOURS:
+            age = _hours_since(last_updated)
+            if original_path and age is not None and age >= NO_LOCATION_GRACE_HOURS:
                 broken_links.append((item_id, title, None, None, "no_location", version))
             continue
 
         full_symlink_path = _library_path(symlink_base_path, location_on_disk)
+        if not _is_inside(full_symlink_path, symlink_base_path):
+            # Plex-mode rows store the real file on the mount; not a library symlink.
+            continue
         parent_folder = os.path.dirname(full_symlink_path)
         checked_folders.add(parent_folder)
         
@@ -978,9 +1021,8 @@ def check_database_symlinks(cursor, symlink_base_path):
             broken_links.append((item_id, title, full_symlink_path, None, "missing_symlink", version))
             continue
             
-        # Verify it's actually a symlink
+        # A regular file in the library is playable as-is; never treat it as broken.
         if not os.path.islink(full_symlink_path):
-            broken_links.append((item_id, title, full_symlink_path, None, "not_symlink", version))
             continue
             
         # Get the target and check if it exists
@@ -1087,12 +1129,11 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links, symlink_bas
     
     # A valid untracked symlink may have been imported or created by another
     # tool. Keep it instead of destructively treating every orphan as stale.
-    live_untracked = {
-        _media_key_from_library_name(link['path'])
-        for link in orphaned_links
-        if link['target_exists']
-    }
-    live_untracked.discard(None)
+    live_untracked = {}
+    for link in orphaned_links:
+        key = _media_key_from_library_name(link['path']) if link['target_exists'] else None
+        if key:
+            live_untracked.setdefault(key, []).append(link)
     live_orphans = sum(1 for link in orphaned_links if link['target_exists'])
     if live_orphans:
         logging.info(f"\nKeeping {live_orphans} untracked symlink(s) that still resolve")
@@ -1123,8 +1164,9 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links, symlink_bas
             logging.info(f"  Issue: {reason}")
             
             try:
-                # First remove the symlink if it exists
-                if symlink_path and os.path.lexists(symlink_path):
+                # First remove the symlink if it exists. Only ever unlink a symlink:
+                # a regular file here is real media, not a library link.
+                if symlink_path and os.path.islink(symlink_path):
                     os.unlink(symlink_path)
                     logging.info("  Removed broken symlink from disk")
                     from time import sleep
@@ -1202,8 +1244,14 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links, symlink_bas
                     (item_id,)
                 )
                 identity = cursor.fetchone()
-                if identity and tuple(identity) in live_untracked:
-                    logging.info("  A playable untracked file for this title is already in the library")
+                adopt = _untracked_link_for(live_untracked, identity, clean_version)
+                if adopt:
+                    cursor.execute(
+                        "UPDATE media_items SET location_on_disk = ?, original_path_for_symlink = ? WHERE id = ?",
+                        (adopt['path'], adopt['target'], item_id)
+                    )
+                    cursor.connection.commit()
+                    logging.info(f"  Pointed item at the playable untracked file already in the library: {adopt['path']}")
                     continue
 
                 missing_key = (*tuple(identity), clean_version) if identity else None

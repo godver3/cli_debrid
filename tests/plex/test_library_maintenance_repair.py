@@ -72,6 +72,50 @@ def test_old_collected_row_without_location_is_repairable_but_recent_row_is_not(
     assert broken == [(1, 'Silo', None, None, 'no_location', '1080p')]
 
 
+def test_row_without_location_needs_symlink_evidence_and_a_timestamp():
+    conn = _connection()
+    # Collected in Plex mode: never had a symlink source.
+    _insert(conn, 1, location=None, original=None, updated=str(datetime.now() - timedelta(days=30)))
+    _insert(conn, 2, location=None, episode=2)
+    conn.execute("UPDATE media_items SET last_updated = NULL WHERE id = 2")
+    conn.commit()
+
+    broken, _ = maintenance.check_database_symlinks(conn.cursor(), '/library')
+
+    assert broken == []
+
+
+def test_plex_mode_mount_path_is_never_checked_or_deleted(tmp_path):
+    library = tmp_path / 'library'
+    library.mkdir()
+    mount_file = tmp_path / 'mount' / 'Silo.S03E01.mkv'
+    mount_file.parent.mkdir()
+    mount_file.write_bytes(b'media')
+    conn = _connection()
+    _insert(conn, 1, location=str(mount_file), original=None)
+
+    broken, _ = maintenance.check_database_symlinks(conn.cursor(), str(library))
+    assert broken == []
+
+    maintenance.handle_maintenance_actions(
+        conn.cursor(),
+        [(1, 'Silo', str(mount_file), None, 'not_symlink', None)],
+        [],
+        str(library),
+    )
+    assert mount_file.read_bytes() == b'media'
+
+
+def test_regular_file_in_library_is_not_broken(tmp_path):
+    (tmp_path / 'Silo.mkv').write_bytes(b'media')
+    conn = _connection()
+    _insert(conn, 1, location='Silo.mkv')
+
+    broken, _ = maintenance.check_database_symlinks(conn.cursor(), str(tmp_path))
+
+    assert broken == []
+
+
 def test_two_missing_database_copies_queue_one_repair_and_delete_duplicate(tmp_path):
     conn = _connection()
     _insert(conn, 1, location='missing-one.mkv')
@@ -140,6 +184,46 @@ def test_valid_orphaned_symlink_is_preserved(tmp_path):
 
     assert link.is_symlink()
     assert link.exists()
+
+
+def _broken_row_with_untracked_link(tmp_path, link_name):
+    conn = _connection()
+    _insert(conn, 1, location='missing.mkv')
+    target = tmp_path / 'source.mkv'
+    target.touch()
+    link = tmp_path / link_name
+    link.symlink_to(target)
+    orphaned = maintenance.check_orphaned_symlinks(conn.cursor(), str(tmp_path))
+    broken = [(1, 'Silo', str(tmp_path / 'missing.mkv'), None, 'missing_symlink', '1080p')]
+    return conn, link, target, orphaned, broken
+
+
+def test_broken_row_adopts_untracked_link_of_its_version(tmp_path):
+    conn, link, target, orphaned, broken = _broken_row_with_untracked_link(
+        tmp_path, 'Silo (2026) - S03E01 - Episode - tt14688458 - 1080p.mkv')
+
+    with mock.patch.object(maintenance, '_configured_version_count', return_value=2):
+        maintenance.handle_maintenance_actions(conn.cursor(), broken, orphaned, str(tmp_path))
+
+    assert conn.execute(
+        "SELECT state, location_on_disk, original_path_for_symlink FROM media_items WHERE id = 1"
+    ).fetchone() == ('Collected', str(link), str(target))
+
+
+def test_untracked_link_of_another_version_is_not_adopted(tmp_path):
+    conn, _link, _target, orphaned, broken = _broken_row_with_untracked_link(
+        tmp_path, 'Silo (2026) - S03E01 - Episode - tt14688458 - 2160p.mkv')
+    moved = []
+    debug_routes = types.ModuleType('routes.debug_routes')
+    debug_routes.move_item_to_wanted = lambda item_id, _title: moved.append(item_id)
+    routes = types.ModuleType('routes')
+    routes.__path__ = []
+
+    with mock.patch.object(maintenance, '_configured_version_count', return_value=2), \
+         mock.patch.dict(sys.modules, {'routes': routes, 'routes.debug_routes': debug_routes}):
+        maintenance.handle_maintenance_actions(conn.cursor(), broken, orphaned, str(tmp_path))
+
+    assert moved == [1]
 
 
 def test_empty_library_mount_aborts_before_destructive_actions(tmp_path):
