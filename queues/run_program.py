@@ -1528,10 +1528,9 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
                      except Exception as e:
                          logging.error(f"Error pausing job '{job_id}': {e}")
                 elif job.next_run_time is None:
-                    logging.debug(f"Job '{job_id}' was already paused. Ensuring it's tracked.")
-                    # Ensure it's tracked if it was already paused by other means
-                    if job_id not in self.paused_jobs_by_queue:
-                        self.paused_jobs_by_queue.add(job_id)
+                    # Paused by something else (e.g. disabled in the Task Manager). Don't
+                    # track it, or resume_queue would switch the disabled task back on.
+                    logging.debug(f"Job '{job_id}' was already paused. Leaving it untracked.")
                 elif job_id in self.paused_jobs_by_queue:
                      logging.debug(f"Job '{job_id}' was already in paused_jobs_by_queue set. Skipping pause action.")
 
@@ -2346,6 +2345,8 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
              return True # Consider successful if not defined/already disabled
 
         with self.scheduler_lock:
+            # Disabled while the queue is paused: resume_queue must not resume it.
+            self.paused_jobs_by_queue.discard(job_id)
             job = self.scheduler.get_job(job_id)
             if job:
                  if job.next_run_time is None: # Already paused

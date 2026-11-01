@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import random as _random
+import re
 import threading
 import time
 import urllib.parse
@@ -166,9 +167,19 @@ def _find_section_key(sections: dict, lib_type: str) -> Optional[str]:
     return None
 
 
+def _title_year_key(title, year_or_date) -> str:
+    """Stable fallback key for Plex items whose external GUIDs are incomplete."""
+    title = re.sub(r'\s+', ' ', str(title or '')).strip().casefold()
+    year = str(year_or_date or '')[:4]
+    if not title or len(year) != 4 or not year.isdigit():
+        return ''
+    return f'title:{year}:{title}'
+
+
 def _get_section_id_map(plex_url: str, token: str, section_key: str, lib_type: str) -> dict:
     """
-    Return {imdb_id: ratingKey, tmdb_id: ratingKey} for all items in a Plex section.
+    Return external-ID and unambiguous title/year keys mapped to ratingKey for
+    all items in a Plex section.
     Results are cached for _SECTION_ITEMS_CACHE_TTL seconds.
     Used to resolve section-local ratingKeys before adding items to a collection.
     """
@@ -188,16 +199,32 @@ def _get_section_id_map(plex_url: str, token: str, section_key: str, lib_type: s
         )
         resp.raise_for_status()
         id_map = {}
+        ambiguous_title_keys = set()
         for item in resp.json().get('MediaContainer', {}).get('Metadata', []):
             rk = str(item.get('ratingKey', ''))
             if not rk:
                 continue
+            has_tmdb_guid = False
             for guid in item.get('Guid', []):
                 gid = guid.get('id', '')
                 if gid.startswith('imdb://'):
                     id_map[gid[7:]] = rk
                 elif gid.startswith('tmdb://'):
                     id_map['tmdb:' + gid[7:]] = rk
+                    has_tmdb_guid = True
+            # Some Plex agents expose only an IMDb GUID while TMDB person
+            # credits contain only a TMDB ID. Exact title + year gives those
+            # existing library items a safe fallback without guessing between
+            # remakes. Ambiguous duplicate keys are deliberately discarded.
+            # Items with a TMDB GUID already match by ID; a credit that missed
+            # that ID is a different title, so they get no fallback key.
+            title_key = '' if has_tmdb_guid else _title_year_key(item.get('title'), item.get('year'))
+            if title_key:
+                if title_key in id_map and id_map[title_key] != rk:
+                    id_map.pop(title_key, None)
+                    ambiguous_title_keys.add(title_key)
+                elif title_key not in ambiguous_title_keys:
+                    id_map[title_key] = rk
         _section_items_cache[cache_key] = {'data': id_map, 'ts': now}
         return id_map
     except Exception as e:
@@ -1349,6 +1376,13 @@ def create_named_collections_from_tmdb(name: str, items: list) -> dict:
                 rk = id_map.get('tmdb:' + tmdb_id)
             if not rk and imdb_id:
                 rk = id_map.get(imdb_id)
+            if not rk:
+                title_key = _title_year_key(
+                    item.get('title') or item.get('name'),
+                    item.get('release_date') or item.get('first_air_date') or item.get('year'),
+                )
+                if title_key:
+                    rk = id_map.get(title_key)
             if rk and rk not in seen:
                 rating_keys.append(rk)
                 seen.add(rk)
