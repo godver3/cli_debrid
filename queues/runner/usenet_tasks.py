@@ -76,6 +76,10 @@ class UsenetTasks:
             # Shared folder-wait counter dict (closure captures this)
             _job_folder_wait_counts = self._nzb_folder_wait_counts
             _folder_wait_max = self._NZB_FOLDER_WAIT_MAX
+            # Jobs whose 99 below is our own "done, waiting for the queue/folder"
+            # placeholder rather than provider progress. Those waits have their own
+            # tick caps; the download timeout must not read them as a stalled download.
+            _placeholder_jobs = set()
 
             def _poll_job(job_id):
                 try:
@@ -120,6 +124,7 @@ class UsenetTasks:
                                 else:
                                     logging.debug(f'[NZB] job {job_id} not in queue yet (tick {_ghost_wait}/3) — waiting')
                                     progress = 99
+                                    _placeholder_jobs.add(job_id)
                         if progress == 100:
                             items_for_job = _job_groups[job_id]
                             nzb_title = items_for_job[0].get('filled_by_file', '') or items_for_job[0].get('original_scraped_torrent_title', '')
@@ -143,6 +148,7 @@ class UsenetTasks:
                             else:
                                 logging.debug(f'[NZB] job {job_id} complete but folder not found (tick {wait_count}/{_folder_wait_max}) — waiting')
                                 progress = 99
+                                _placeholder_jobs.add(job_id)
                         elif progress == 100:
                             _job_folder_wait_counts.pop(job_id, None)
                     return job_id, progress, entry_name, actual_file_size, None
@@ -177,6 +183,7 @@ class UsenetTasks:
             _health_results = {}
             for jid, (prog, entry, actual_size, err) in _job_results.items():
                 if prog == 100 and entry:
+                    ProgramRunner._nzb_provider_last_progress = datetime.now()
                     _health_results[entry] = None  # None = inconclusive, proceed to Checking
                     self._nzb_confirmed_complete[jid] = entry  # remember this job was complete+folder found
                     adding_queue._nzb_downloading_job_ids.discard(jid)  # no longer downloading
@@ -522,10 +529,20 @@ class UsenetTasks:
                         _download_timeout_hours = float(_gs('Usenet Provider', 'nzb_download_timeout_hours', 2.0))
                         _job_started = self._nzb_job_started_at.get(job_id)
                         _timed_out_dl = False
-                        if _job_started and _download_timeout_hours > 0:
+                        if job_id in _placeholder_jobs:
+                            pass  # finished at the provider; the folder/ghost waits decide
+                        elif _job_started and _download_timeout_hours > 0:
                             _age_hours = (datetime.now() - _job_started).total_seconds() / 3600.0
                             if _age_hours > _download_timeout_hours:
                                 _timed_out_dl = True
+                            # cli_mount has no "queued" state: a job waiting in its backlog
+                            # reads as downloading at 0%. While the provider is still finishing
+                            # other jobs, a 0% job is waiting its turn, not stalled.
+                            _last_provider_progress = ProgramRunner._nzb_provider_last_progress
+                            if _timed_out_dl and progress == 0 and _last_provider_progress:
+                                _idle_hours = (datetime.now() - _last_provider_progress).total_seconds() / 3600.0
+                                if _idle_hours <= _download_timeout_hours:
+                                    _timed_out_dl = False
                         if not _timed_out_dl:
                             # Mark job as actively downloading after 1 minute so Adding queue skips it
                             _job_id_dl = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
