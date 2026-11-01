@@ -34,6 +34,10 @@ class UsenetTasks:
                 return
 
             _tick_start = _time.monotonic()
+            # No completion seen since startup yet: start the provider-idle clock now,
+            # so a restart doesn't time out every 0% job still waiting in the backlog.
+            if ProgramRunner._nzb_provider_last_progress is None:
+                ProgramRunner._nzb_provider_last_progress = datetime.now()
 
             from usenet import get_usenet_client
             from utilities.settings import get_setting as _gs
@@ -183,7 +187,8 @@ class UsenetTasks:
             _health_results = {}
             for jid, (prog, entry, actual_size, err) in _job_results.items():
                 if prog == 100 and entry:
-                    ProgramRunner._nzb_provider_last_progress = datetime.now()
+                    if jid not in self._nzb_confirmed_complete:  # first sighting only; a finished job left in Adding isn't new progress
+                        ProgramRunner._nzb_provider_last_progress = datetime.now()
                     _health_results[entry] = None  # None = inconclusive, proceed to Checking
                     self._nzb_confirmed_complete[jid] = entry  # remember this job was complete+folder found
                     adding_queue._nzb_downloading_job_ids.discard(jid)  # no longer downloading
@@ -539,7 +544,9 @@ class UsenetTasks:
                             # reads as downloading at 0%. While the provider is still finishing
                             # other jobs, a 0% job is waiting its turn, not stalled.
                             _last_provider_progress = ProgramRunner._nzb_provider_last_progress
-                            if _timed_out_dl and progress == 0 and _last_provider_progress:
+                            # Capped, so a job stuck at 0% still goes eventually.
+                            if (_timed_out_dl and progress == 0 and _last_provider_progress
+                                    and _age_hours <= _download_timeout_hours * self._NZB_QUEUED_TIMEOUT_MULTIPLIER):
                                 _idle_hours = (datetime.now() - _last_provider_progress).total_seconds() / 3600.0
                                 if _idle_hours <= _download_timeout_hours:
                                     _timed_out_dl = False

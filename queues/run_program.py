@@ -2127,7 +2127,8 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
     _NZB_HEALTH_MAX_JOBS_PER_TICK = 30   # cap jobs polled per tick
     _nzb_health_job_cursor: int = 0      # where the next capped tick starts polling
     _nzb_job_started_at: dict = {}       # job_id → datetime its download clock started (timeout anchor)
-    _nzb_provider_last_progress = None   # datetime a job last completed at the provider (None = none seen yet)
+    _nzb_provider_last_progress = None   # datetime a job last completed at the provider (seeded on first tick)
+    _NZB_QUEUED_TIMEOUT_MULTIPLIER = 12  # a 0% job waits at most this many timeouts while the provider is busy
     _NZB_HEALTH_JOB_TIMEOUT = 20         # seconds per job poll before giving up
     _NZB_HEALTH_SKIP_THRESHOLD = 20.0   # if last run took this long, skip next tick
     _nzb_folder_wait_counts: dict = {}   # job_id → consecutive ticks where folder not found

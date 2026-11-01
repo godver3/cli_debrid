@@ -168,12 +168,40 @@ class NzbHealthPollProgressTests(unittest.TestCase):
             self._tick(runner, client)
         self.assertTrue(any('job0 stalled at 0%' in line for line in logs.output), logs.output)
 
+    def test_first_tick_after_restart_does_not_time_out_backlog(self):
+        runner, _ = _runner(1)
+        client = _FakeClimountClient(progress=0)
+        runner._nzb_job_started_at['job0'] = datetime.now() - timedelta(hours=3)
+        self._assert_no_stall(runner, client)
+        self.assertIsNotNone(ProgramRunner._nzb_provider_last_progress)
+
+    def test_zero_percent_job_stalls_past_cap_even_while_provider_is_busy(self):
+        runner, _ = _runner(1)
+        client = _FakeClimountClient(progress=0)
+        runner._nzb_job_started_at['job0'] = datetime.now() - timedelta(
+            hours=2.0 * ProgramRunner._NZB_QUEUED_TIMEOUT_MULTIPLIER + 1)
+        ProgramRunner._nzb_provider_last_progress = datetime.now() - timedelta(minutes=10)
+        with mock.patch('database.nzb_playback_repair.reject_active_candidate', return_value=False), \
+             self.assertLogs(level='WARNING') as logs:
+            self._tick(runner, client)
+        self.assertTrue(any('job0 stalled at 0%' in line for line in logs.output), logs.output)
+
+    def test_already_confirmed_job_does_not_refresh_provider_progress(self):
+        runner, _ = _runner(1)
+        client = _FakeClimountClient(progress=1.0, folder='Movie.0')
+        idle_since = datetime.now() - timedelta(hours=3)
+        ProgramRunner._nzb_provider_last_progress = idle_since
+        with mock.patch.object(ProgramRunner, '_nzb_confirmed_complete', {'job0': 'Movie.0'}):
+            self._tick(runner, client)
+        self.assertEqual(ProgramRunner._nzb_provider_last_progress, idle_since)
+
     def test_finished_job_marks_provider_progress(self):
         runner, _ = _runner(1)
         client = _FakeClimountClient(progress=1.0, folder='Movie.0')
+        ProgramRunner._nzb_provider_last_progress = datetime.now() - timedelta(hours=3)
         with mock.patch.object(ProgramRunner, '_nzb_confirmed_complete', {}):
             self._tick(runner, client)
-        self.assertIsNotNone(ProgramRunner._nzb_provider_last_progress)
+        self.assertLess(datetime.now() - ProgramRunner._nzb_provider_last_progress, timedelta(minutes=1))
 
 
 if __name__ == '__main__':
