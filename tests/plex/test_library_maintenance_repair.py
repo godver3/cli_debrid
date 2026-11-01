@@ -1,6 +1,5 @@
 """Regression coverage for Symlinked/Local library maintenance repairs."""
 import importlib.util
-import os
 from pathlib import Path
 import sqlite3
 import sys
