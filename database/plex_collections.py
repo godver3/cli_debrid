@@ -204,17 +204,21 @@ def _get_section_id_map(plex_url: str, token: str, section_key: str, lib_type: s
             rk = str(item.get('ratingKey', ''))
             if not rk:
                 continue
+            has_tmdb_guid = False
             for guid in item.get('Guid', []):
                 gid = guid.get('id', '')
                 if gid.startswith('imdb://'):
                     id_map[gid[7:]] = rk
                 elif gid.startswith('tmdb://'):
                     id_map['tmdb:' + gid[7:]] = rk
+                    has_tmdb_guid = True
             # Some Plex agents expose only an IMDb GUID while TMDB person
             # credits contain only a TMDB ID. Exact title + year gives those
             # existing library items a safe fallback without guessing between
             # remakes. Ambiguous duplicate keys are deliberately discarded.
-            title_key = _title_year_key(item.get('title'), item.get('year'))
+            # Items with a TMDB GUID already match by ID; a credit that missed
+            # that ID is a different title, so they get no fallback key.
+            title_key = '' if has_tmdb_guid else _title_year_key(item.get('title'), item.get('year'))
             if title_key:
                 if title_key in id_map and id_map[title_key] != rk:
                     id_map.pop(title_key, None)

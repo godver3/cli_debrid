@@ -184,10 +184,30 @@ class PersonPlexCollectionMatchingTests(unittest.TestCase):
             {'ratingKey': '102', 'title': 'The Movie', 'year': 2004, 'Guid': []},
         ]}}
         response.raise_for_status.return_value = None
-        with mock.patch.object(pc.requests, 'get', return_value=response):
+        with mock.patch.object(pc.requests, 'get', return_value=response), \
+             mock.patch.dict(pc._section_items_cache, clear=True):
             id_map = pc._get_section_id_map('http://plex', 'token', '1', 'movie')
 
         self.assertNotIn(pc._title_year_key('The Movie', 2004), id_map)
+
+    def test_title_year_fallback_skips_items_with_a_tmdb_guid(self):
+        try:
+            from database import plex_collections as pc
+        except Exception:
+            self.skipTest('database.plex_collections unavailable')
+
+        response = mock.Mock()
+        response.json.return_value = {'MediaContainer': {'Metadata': [
+            {'ratingKey': '101', 'title': 'Hamlet', 'year': 1996, 'Guid': [{'id': 'tmdb://10549'}]},
+            {'ratingKey': '102', 'title': 'Solaris', 'year': 2002, 'Guid': [{'id': 'imdb://tt0307479'}]},
+        ]}}
+        response.raise_for_status.return_value = None
+        with mock.patch.object(pc.requests, 'get', return_value=response), \
+             mock.patch.dict(pc._section_items_cache, clear=True):
+            id_map = pc._get_section_id_map('http://plex', 'token', '1', 'movie')
+
+        self.assertNotIn(pc._title_year_key('Hamlet', 1996), id_map)
+        self.assertEqual(id_map[pc._title_year_key('Solaris', 2002)], '102')
 
 
 if __name__ == '__main__':
