@@ -9,6 +9,7 @@ def _healthy(bench):
     assert m['task_errors'] == 0, bench.task_errors
     assert m['false_collections'] == 0
     assert m['sent_back_to_wanted'] == 0
+    assert bench.logs('.', level='ERROR') == []
     return m
 
 

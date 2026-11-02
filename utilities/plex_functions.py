@@ -212,8 +212,12 @@ async def get_library_contents(session: aiohttp.ClientSession, plex_url: str, li
     logger.info(f"Fetching FIRST page from library {library_key}{type_str}, size: {effective_page_size}")
     first_page = await fetch_data(session, base_url, first_headers, semaphore)
 
-    if 'MediaContainer' not in first_page or 'Metadata' not in first_page['MediaContainer']:
+    if 'MediaContainer' not in first_page:
         logger.error(f"Failed to retrieve valid MediaContainer for first page of library {library_key}{type_str}")
+        return []
+    if 'Metadata' not in first_page['MediaContainer']:
+        # Plex leaves Metadata out for an empty library (failed fetches come back with an empty list).
+        logger.info(f"Library {library_key}{type_str} is empty")
         return []
 
     all_metadata.extend(first_page['MediaContainer'].get('Metadata', []))
