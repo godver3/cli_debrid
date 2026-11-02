@@ -1936,14 +1936,25 @@ def _find_plex_owner_of_file(plex, item_title, item_path, episode_title=None):
     return None, None
 
 
+def plex_connection_settings():
+    """(url, token) of the Plex server for the file-management mode, '' when unset.
+
+    Plex mode uses Plex.url/token, or the *_for_symlink fields when those are
+    blank (both hold the same server when filled). Symlink mode uses only the
+    *_for_symlink fields: leaving them blank there means "don't scan Plex", even
+    when Plex.url is set for watchlists.
+    """
+    symlink = ((get_setting('File Management', 'plex_url_for_symlink', default='') or '').strip().rstrip('/'),
+               (get_setting('File Management', 'plex_token_for_symlink', default='') or '').strip())
+    if get_setting('File Management', 'file_collection_management') != 'Plex':
+        return symlink if all(symlink) else ('', '')
+    main = ((get_setting('Plex', 'url') or '').strip().rstrip('/'), (get_setting('Plex', 'token') or '').strip())
+    return main if all(main) else symlink if all(symlink) else ('', '')
+
+
 def _file_management_plex():
     """PlexServer for the configured file-management mode, or None if not configured."""
-    if get_setting('File Management', 'file_collection_management') == 'Plex':
-        plex_url = (get_setting('Plex', 'url') or '').rstrip('/')
-        plex_token = get_setting('Plex', 'token')
-    else:
-        plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
-        plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
+    plex_url, plex_token = plex_connection_settings()
     if not plex_url or not plex_token:
         return None
     return plexapi.server.PlexServer(plex_url, plex_token, timeout=30)
@@ -2422,12 +2433,12 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
                 logger.error(f"Error updating item in Jellyfin: {str(e)}. Falling back to Plex.")
                 # Continue to Plex update below
         
-        # Proceed with Plex update (original logic)
-        plex_url = get_setting('File Management', 'plex_url_for_symlink', '').rstrip('/')
-        plex_token = get_setting('File Management', 'plex_token_for_symlink', '')
-        
+        # Proceed with Plex update (original logic). Plex mode scans with Plex.url/token:
+        # reading only the symlink fields left Plex-mode configs without them never scanning.
+        plex_url, plex_token = plex_connection_settings()
+
         if not plex_url or not plex_token:
-            logger.warning("Plex URL or token not configured for symlink updates.")
+            logger.warning("Plex URL or token not configured; can't ask Plex to scan.")
             return False
             
         # Initialise Plex client (timeout on connection itself)
@@ -2462,7 +2473,7 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
 
         # Add small delay for symlink mode to allow filesystem to settle
         # This prevents race condition between symlink creation and Plex scan
-        if plex_url:  # We're in symlink mode (plex_url_for_symlink is set)
+        if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
             time.sleep(0.5)  # 500ms delay
             logger.debug("Added 500ms delay for symlink mode to allow filesystem to settle")
 
