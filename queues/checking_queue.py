@@ -1412,13 +1412,15 @@ class CheckingQueue:
                                 _i for _i in current_items_for_torrent if _norm_ver(_i.get('version')) == _group_ver
                             ]
                         self._resolve_nzb_file_info(torrent_id, current_items_for_torrent)
-                        # Reload items from DB so updated fields are visible to symlink/plex checks
-                        from database import get_all_media_items
-                        current_items_for_torrent = [
-                            dict(item) for item in get_all_media_items(state='Checking')
-                            if item.get('filled_by_torrent_id') == torrent_id
+                        # Reload items from DB so updated fields are visible to symlink/plex checks.
+                        # Only this job's rows: reading every Checking row here, once per finished
+                        # job, made each pass N x N while finished jobs waited for Plex.
+                        from database import get_media_items_by_torrent_id
+                        current_items_for_torrent = sorted((
+                            dict(item) for item in get_media_items_by_torrent_id(torrent_id)
+                            if item.get('state') == 'Checking'
                             and _norm_ver(item.get('version')) == _group_ver
-                        ]
+                        ), key=lambda item: item['id'])
                         # If resolve still hasn't found the file after multiple attempts, move back to Wanted
                         import os as _os
                         _sample = current_items_for_torrent[0] if current_items_for_torrent else {}
