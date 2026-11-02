@@ -86,6 +86,7 @@ class CheckingQueue:
             cls._instance.missing_strikes = {} # Tracks consecutive 'missing' polls for torrents
             cls._instance._torrent_providers = {}  # torrent_id -> provider name that holds it
             cls._instance._rediscovery_exhausted = set()  # probed the whole chain, nobody had it
+            cls._instance._plex_stall_held_at = {}  # torrent_id -> last time its timeout was held for a stuck Plex
         return cls._instance
 
     def __init__(self):
@@ -1162,29 +1163,69 @@ class CheckingQueue:
                 del self.unknown_strikes[torrent_id]
                 logging.debug(f"Cleaned up unknown strikes for torrent {torrent_id} as it has no more associated items.")
             self.missing_strikes.pop(torrent_id, None)
+            self._plex_stall_held_at.pop(torrent_id, None)
         
-        # Also clean up any uncached torrent tracking if this was the last item
+        # Also clean up any uncached torrent tracking if this was the last item.
+        # Look the item up by ID instead of re-deriving its hash: for http links
+        # that meant downloading the .torrent/.nzb again from the indexer on every
+        # removal (NZBs have no hash, so the download was always wasted).
         try:
-            if item.get('filled_by_magnet'):
-                magnet = item.get('filled_by_magnet')
-                hash_value = None
-                if magnet.startswith('http'):
-                    hash_value = download_and_extract_hash(magnet)
-                else:
-                    hash_value = extract_hash_from_magnet(magnet)
-                
-                if hash_value and hash_value in self.uncached_torrents:
-                    # Remove this item ID from tracking
-                    if item['id'] in self.uncached_torrents[hash_value]['item_ids']:
-                        self.uncached_torrents[hash_value]['item_ids'].remove(item['id'])
-                        logging.debug(f"Removed item {item['id']} from uncached torrent tracking for hash {hash_value[:8]}...")
-                    
+            for hash_value in list(self.uncached_torrents.keys()):
+                item_ids = self.uncached_torrents[hash_value]['item_ids']
+                if item['id'] in item_ids:
+                    item_ids.remove(item['id'])
+                    logging.debug(f"Removed item {item['id']} from uncached torrent tracking for hash {hash_value[:8]}...")
+
                     # If no more items with this hash, remove the hash from tracking
-                    if not self.uncached_torrents[hash_value]['item_ids']:
+                    if not item_ids:
                         del self.uncached_torrents[hash_value]
                         logging.debug(f"Removed hash {hash_value[:8]}... from uncached tracking as it has no more items")
         except Exception as e:
             logging.error(f"Error cleaning up uncached torrent tracking for item {item['id']}: {str(e)}")
+
+    # Longest a finished NZB is held in Checking for a stuck Plex before the normal
+    # timeout (not-wanted + rescrape) applies anyway.
+    PLEX_STALL_MAX_WAIT = 6 * 3600
+
+    def _hold_finished_nzb_for_stuck_plex(self, torrent_id, items, oldest_item_time, now):
+        """Keep a finished NZB in Checking when Plex, not the file, is why it isn't collected.
+
+        In Plex mode the Checking timeout fires when Plex hasn't added the item. If the
+        job is done and its folder is on the mount but Plex is unreachable or hasn't yet
+        got through the releases that finished before this one, the release is fine:
+        not-wanting it only gets the same release grabbed again from another indexer,
+        into the same backed-up Plex.
+        """
+        if not str(torrent_id).startswith('nzb:'):
+            return False
+        if get_setting('File Management', 'file_collection_management') != 'Plex':
+            return False
+        if now - oldest_item_time > self.PLEX_STALL_MAX_WAIT:
+            return False
+        # Other NZB jobs that reached Checking before this one and are still waiting.
+        waiting_ahead = len({
+            i.get('filled_by_torrent_id') for i in self.items
+            if str(i.get('filled_by_torrent_id') or '').startswith('nzb:')
+            and i.get('filled_by_torrent_id') != torrent_id
+            and self.checking_queue_times.get(i['id'], now) < oldest_item_time
+        })
+        from utilities.plex_health import plex_stalled_since
+        reason = plex_stalled_since(oldest_item_time, waiting_ahead)
+        if not reason:
+            return False
+        sample = items[0] if items else {}
+        mount = (get_setting('Plex', 'mounted_file_location', '').rstrip('/')
+                 or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/'))
+        folder = sample.get('debrid_folder_name') or sample.get('filled_by_title') or ''
+        from usenet.mount_layout import resolve_nzb_job_dir
+        if not resolve_nzb_job_dir(mount, folder):
+            return False
+        self._plex_stall_held_at[torrent_id] = now
+        logging.info(
+            f"[NZB] {torrent_id} finished and is on the mount but {reason}; keeping it in Checking "
+            f"instead of not-wanting it ({(now - oldest_item_time) / 60:.0f} min so far, "
+            f"gives up after {self.PLEX_STALL_MAX_WAIT // 3600}h)")
+        return True
 
     def _calculate_dynamic_queue_period(self, items):
         """Calculate a dynamic queue period based on the number of items.
@@ -1647,10 +1688,15 @@ class CheckingQueue:
                     oldest_item_time = min((self.checking_queue_times.get(item['id'], current_time) for item in current_items_for_torrent), default=current_time)
                     time_in_queue = current_time - oldest_item_time
                     checking_queue_limit = self._calculate_dynamic_queue_period(current_items_for_torrent)
+                    # A hold for a stuck Plex restarts the clock: the job gets a full
+                    # period again from the last time Plex was seen stuck.
+                    waited = current_time - max(oldest_item_time, self._plex_stall_held_at.get(torrent_id, 0))
                     
                     logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds (dynamic limit: {checking_queue_limit} seconds for {len(current_items_for_torrent)} items)")
                     
-                    if time_in_queue > checking_queue_limit:
+                    if waited > checking_queue_limit and self._hold_finished_nzb_for_stuck_plex(torrent_id, current_items_for_torrent, oldest_item_time, current_time):
+                        continue
+                    if waited > checking_queue_limit:
                         if str(torrent_id).startswith('nzb:'):
                             logging.info(f"NZB {torrent_id} content not found within {checking_queue_limit}s — adding to not-wanted and moving back to Wanted")
                             from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nzb_guid_t
