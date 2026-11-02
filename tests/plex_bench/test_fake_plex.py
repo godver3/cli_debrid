@@ -58,6 +58,17 @@ def test_scans_queue_and_run_one_at_a_time(plex):
     assert len(plex.indexed_paths()) == 3
 
 
+def test_identical_queued_scans_are_merged_running_ones_are_not(plex):
+    server = PlexServer(plex.url, plex.token)
+    movies = server.library.sections()[0]
+    folder = os.path.join(plex.root, 'movies/Dune.2021.1080p-GRP')
+    movies.update(path=folder)           # starts at once
+    movies.update(path=folder)           # queued behind it
+    movies.update(path=folder)           # same as the queued one: merged
+    plex.advance(plex.clock.time())
+    assert [e['accepted'] for e in plex.scans_requested] == [True, True, False]
+
+
 def test_lookups_cli_debrid_uses(plex):
     server = PlexServer(plex.url, plex.token)
     _scan_everything(plex, server)
@@ -67,18 +78,23 @@ def test_lookups_cli_debrid_uses(plex):
     assert found[0].media[0].parts[0].file.endswith(MOVIE)
     episode = server.fetchItems('/library/sections/2/all?file=Show.S01E02.1080p-GRP.mkv&type=4')[0]
     assert (episode.parentIndex, episode.index) == (1, 2)
-    assert movies.search(guid='imdb://tt1160419')[0].title == 'Dune'
-    show = shows.search(guid='imdb://tt9999')[0]
+    # Like a real Plex with the new agents: only the plex:// guid matches.
+    dune = found[0]
+    assert movies.search(guid='imdb://tt1160419') == []
+    assert movies.search(guid=dune.guid)[0].ratingKey == dune.ratingKey
+    show = server.fetchItem(episode.grandparentRatingKey)
     assert show.episode(season=1, episode=2).ratingKey == episode.ratingKey
+    with pytest.raises(Exception):  # a show library needs type=4 for ?file=
+        server.fetchItems('/library/sections/2/all?file=Show.S01E02.1080p-GRP.mkv')
 
 
-def test_recently_added_json_groups_a_season(plex):
+def test_recently_added_json_lists_episodes(plex):
     server = PlexServer(plex.url, plex.token)
     _scan_everything(plex, server)
     req = urllib.request.Request(plex.url + '/library/sections/2/recentlyAdded?X-Plex-Container-Size=200',
                                  headers={'X-Plex-Token': plex.token, 'Accept': 'application/json'})
     data = json.load(urllib.request.urlopen(req))['MediaContainer']['Metadata']
-    assert [(m['type'], m['index'], isinstance(m['addedAt'], int)) for m in data] == [('season', 1, True)]
+    assert [(m['type'], m['index'], isinstance(m['addedAt'], int)) for m in data] == [('episode', 2, True), ('episode', 1, True)]
 
 
 def test_wrong_token_and_faults(plex):

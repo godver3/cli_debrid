@@ -16,10 +16,12 @@ Knobs on ``FakePlex.behavior`` make it slow, stuck, flaky or unreachable, so the
 bench can reproduce what users report. Everything it is asked is logged in
 ``requests`` with the simulated time, for the bench report.
 
-Fidelity notes (checked against plexapi and the app's parsing, not a live PMS):
-``?file=`` matches a substring of the part path; ``guid=`` matches the item's
-own guid or any of its external Guid tags; recently-added groups a season's
-episodes into the season when ``group_seasons`` is on.
+Checked against a real Plex Media Server (1.41/1.42, new Plex agents) on
+2026-11-01; README.md lists what was compared. In short: scans run one at a
+time and a request identical to one still queued is merged; ``?file=`` is a
+case-insensitive substring of the part path; ``guid=`` only matches the item's
+own plex:// guid, never imdb:// or tmdb://; a show library's ``?file=`` without
+``type=4`` is an HTTP 500; section recently-added lists episodes, not seasons.
 """
 
 import json
@@ -103,13 +105,13 @@ class Behavior:
     scan_per_file_s: float = 1.0         # per video file under the scanned path
     full_scan_s: float = 120.0           # a refresh with no path
     scanner_stuck: bool = False          # takes requests, finishes none
-    coalesce_queued_scans: bool = False  # drop a request identical to one still queued
+    coalesce_queued_scans: bool = True   # merge a request identical to one still queued (real Plex does)
     max_queue: Optional[int] = None      # requests beyond this are silently dropped
     unmatched_files: str = 'local'       # 'local': add with a local:// guid; 'skip': don't add
     never_index: set = field(default_factory=set)  # basenames the scanner skips (bad files)
     index_delay_s: float = 0.0           # extra time between a scan finishing and items appearing
     # Library listing
-    group_seasons: bool = True           # recently-added shows a season for several new episodes of it
+    group_seasons: bool = False          # list a season instead of its new episodes (real section listings don't)
     # Requests
     latency_s: Dict[str, float] = field(default_factory=dict)  # path regex -> simulated seconds per request
     faults: List[Fault] = field(default_factory=list)
@@ -383,6 +385,9 @@ class FakePlex:
         want_json = 'application/json' in (h.headers.get('Accept') or '')
         try:
             status, container = self._route(method, path, query)
+        except _HTTPError as exc:
+            record['status'] = exc.status
+            return self._send(h, exc.status, '<html>Internal Server Error</html>', 'text/html')
         except Exception as exc:  # a bug in the fake shouldn't look like Plex
             record['status'] = 599
             return self._send(h, 500, f'fake plex error: {exc!r}', 'text/plain')
@@ -413,7 +418,9 @@ class FakePlex:
             if path == '/activities':
                 acts = []
                 if self.current_scan or self.scan_queue:
-                    acts.append(('Activity', {'type': 'library.update.section', 'title': 'Scanning', 'progress': '0'}, []))
+                    title = self.sections.get((self.current_scan or self.scan_queue[0]).section_key, {}).get('title', '')
+                    acts.append(('Activity', {'uuid': uuid.uuid4().hex, 'type': 'library.update.section',
+                                              'title': f'Scanning {title}', 'progress': '0', 'cancellable': '0'}, []))
                 return 200, _mc({}, acts)
             m = re.fullmatch(r'/library/sections/(\w+)(/.*)?', path)
             if m:
@@ -460,6 +467,7 @@ class FakePlex:
         else:
             self.scan_queue.append(ScanJob(section_key, path, now))
             self.max_queue_seen = max(self.max_queue_seen, len(self.scan_queue))
+            self.advance(now)  # an idle scanner starts on it straight away
         return _mc({})
 
     def _section_all(self, section, q):
@@ -468,11 +476,14 @@ class FakePlex:
         want = want or ('movie' if section['type'] == 'movie' else 'show')
         items = [i for i in self.items.values() if i.section_key == section['key'] and i.type == want]
         if 'file' in q:
+            if section['type'] == 'show' and type_num != '4':
+                raise _HTTPError(500)
             needle = q['file'].lower()
             items = [i for i in self._with_files(items) if any(needle in p.lower() for p, _ in i.files)]
         if 'guid' in q:
             wanted = {g.strip() for g in q['guid'].split(',')}
-            items = [i for i in items if i.guid in wanted or wanted & set(i.guids)]
+            # Only the item's own guid: imdb:// and tmdb:// tags never match.
+            items = [i for i in items if i.guid in wanted]
         if 'title' in q:
             needle = q['title'].lower()
             items = [i for i in items if needle in i.title.lower()]
@@ -601,6 +612,12 @@ class FakePlex:
         field_types = [('FieldType', {'type': t}, [('Operator', {'key': o, 'title': o}, []) for o in os_])
                        for t, os_ in ops.items()]
         return _mc({'size': '0'}, [('Meta', {}, type_nodes + field_types)])
+
+
+class _HTTPError(Exception):
+    def __init__(self, status):
+        super().__init__(status)
+        self.status = status
 
 
 def _is_under(path, root):

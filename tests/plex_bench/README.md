@@ -55,21 +55,34 @@ Things to reach for:
   `time_to(item_id)`, `false_collections()`, `metrics()`, `logs(regex)`, `plex.requests`,
   `plex.scans_requested` / `scans_completed`, `usenet.removed`.
 
-## Fidelity: unconfirmed against a real Plex
+## Fidelity: checked against a real Plex
 
-The fake follows plexapi and the app's own parsing, and hasn't been compared with
-a live Plex Media Server. These assumptions change the conclusions and should be
-checked against a throwaway PMS before relying on them:
+On 2026-11-01 the fake was compared with a throwaway Plex Media Server
+(`plexinc/pms-docker`, new Plex agents, unclaimed, `ALLOWED_NETWORKS` for
+token-less access) scanning short ffmpeg test clips. What the real server did, and
+the fake now does:
 
-1. Plex runs scan requests one at a time and does **not** merge a request
-   identical to one already queued (`coalesce_queued_scans=False`).
-2. `?file=<name>` matches a substring of the part path.
-3. `guid=imdb://...` on `/library/sections/N/all` matches external Guid tags
-   (with the new Plex agents it may only match `plex://` guids, in which case the
-   GUID fallback in `task_check_plex_files` never matches anything in real life).
-4. Section `recentlyAdded` groups several new episodes of a season into the season.
-5. An empty section's JSON has no `Metadata` key (it's why every bench run logs
-   "Failed to retrieve valid MediaContainer for first page of library N").
+1. Scans run one at a time on one thread. A refresh identical to one still waiting
+   in the queue is merged (80 requests became 62 scans); a repeat of a folder that
+   is already being scanned, or is done, runs again.
+2. `?file=` is a case-insensitive substring of the part path (a basename, part of
+   one, or the full path all match). In a show library it needs `type=4`, and
+   without it Plex answers HTTP 500.
+3. `guid=` on `/library/sections/N/all` matches only the item's own `plex://`
+   guid. `imdb://`/`tmdb://` match nothing, also through plexapi's
+   `section.search(guid=...)`, even though the item carries those Guid tags.
+4. Section `recentlyAdded` lists new episodes as episodes (three new episodes of
+   one season came back as three episodes, not the season).
+5. An empty section's JSON has no `Metadata` key.
+6. During a scan `/activities` has a `library.update.section` activity titled
+   "Scanning <library>", and the section's `refreshing` attribute is true.
+7. A refresh for a missing folder, or for a path outside the library's locations,
+   still answers 200. The outside path is never scanned.
+8. A file Plex can't match is still added, with a `local://` guid.
+
+Not compared: scan speed on a FUSE mount (the fake's defaults are guesses), and
+what Plex does with a file whose content is identical to one already indexed (it
+treats it as the same file moved, so test clips must differ).
 
 Only the NZB path (cli_mount layout, `<mount>/<category>/<job>`) is modelled so
 far; debrid torrents and Zurg's flat `__all__` layout are not.
