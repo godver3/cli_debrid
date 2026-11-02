@@ -2450,7 +2450,7 @@ def plex_is_scanning() -> Optional[bool]:
     """
     now = time.time()
     with _scanning_lock:
-        if _scanning_cache['value'] is not None and now - _scanning_cache['at'] < _SCANNING_CACHE_SECONDS:
+        if _scanning_cache['value'] is not None and 0 <= now - _scanning_cache['at'] < _SCANNING_CACHE_SECONDS:
             return _scanning_cache['value']
     container = _plex_json('/activities')
     value = None
@@ -2479,14 +2479,21 @@ def _plex_sections_for(item_type: str) -> Optional[List[Dict[str, Any]]]:
     return sections
 
 
-def find_plex_items_by_filename(filename: str, item_type: str) -> Optional[List[Dict[str, Any]]]:
+def find_plex_items_by_filename(filename: str, item_type: str,
+                                _sections_cache: Optional[Dict[str, Any]] = None) -> Optional[List[Dict[str, Any]]]:
     """Plex metadata for the items with a part named exactly ``filename``.
 
-    [] when Plex doesn't have it, None when Plex didn't answer.
+    [] when Plex doesn't have it, None when Plex didn't answer. Pass the same dict
+    as ``_sections_cache`` to look up several files with one library listing.
     """
     if not filename:
         return []
-    sections = _plex_sections_for(item_type)
+    if _sections_cache is not None and item_type in _sections_cache:
+        sections = _sections_cache[item_type]
+    else:
+        sections = _plex_sections_for(item_type)
+        if _sections_cache is not None and sections is not None:
+            _sections_cache[item_type] = sections
     if sections is None:
         return None
     params = {'file': filename, 'includeGuids': 1, 'type': 4 if item_type == 'episode' else 1}
@@ -2513,11 +2520,12 @@ def collect_from_plex(items: List[Dict[str, Any]]) -> Optional[Tuple[int, int]]:
     entries = []
     found_files = 0
     show_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    sections_cache: Dict[str, Any] = {}
     for item in items:
         filename = os.path.basename(item.get('filled_by_file') or '')
         if not filename:
             continue
-        metas = find_plex_items_by_filename(filename, item.get('type') or 'movie')
+        metas = find_plex_items_by_filename(filename, item.get('type') or 'movie', sections_cache)
         if metas is None:
             return None
         if not metas:

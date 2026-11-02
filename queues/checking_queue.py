@@ -1208,6 +1208,9 @@ class CheckingQueue:
     # Most scan requests started in one pass. Each runs in its own thread; without a
     # cap, thousands of jobs retrying through a Plex outage start that many threads.
     PLEX_SCANS_PER_PASS = 50
+    # Most expired Plex-mode releases decided in one pass. Each asks Plex about every
+    # file in it; the rest wait for the next pass (30 s) with their clocks unchanged.
+    PLEX_VERDICTS_PER_PASS = 25
 
     def _plex_mode_verdict(self, torrent_id, items, finished_at, now):
         """What to do with a Plex-mode release whose Checking period ran out.
@@ -1323,6 +1326,7 @@ class CheckingQueue:
         current_time = time.time()
         items_to_remove = []
         plex_scan_budget = self.PLEX_SCANS_PER_PASS
+        plex_verdict_budget = self.PLEX_VERDICTS_PER_PASS
 
         # Ensure these are initialized here if they were inside the removed block
         adding_queue = AddingQueue()
@@ -1776,6 +1780,9 @@ class CheckingQueue:
                     logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds, {current_time - finished_at:.1f} since it finished (dynamic limit: {checking_queue_limit} seconds for {len(current_items_for_torrent)} items)")
 
                     if waited > checking_queue_limit and plex_mode:
+                        if plex_verdict_budget <= 0:
+                            continue
+                        plex_verdict_budget -= 1
                         verdict, reason = self._plex_mode_verdict(torrent_id, current_items_for_torrent, finished_at, current_time)
                         if verdict == 'collected':
                             logging.info(f"{torrent_id}: {reason}")

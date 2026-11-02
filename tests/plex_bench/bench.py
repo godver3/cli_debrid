@@ -329,6 +329,7 @@ class PlexBench:
         mp.setattr(run_program.ProgramRunner, '_instance', None)
         mp.setattr(run_program, '_last_plex_recent_scan_time', None)
         mp.setattr(plex_functions, '_plex_mode_scans', {})
+        mp.setattr(plex_functions, '_scanning_cache', {'at': 0.0, 'value': None})
         # fetch_data waits RETRY_DELAY real seconds between attempts; simulated
         # time doesn't move during a task, so waiting buys nothing here.
         mp.setattr(plex_functions, 'RETRY_DELAY', 0)
@@ -505,6 +506,8 @@ class PlexBench:
         began = _perf()
         try:
             if task == 'Checking':
+                # The runner's task_update_queue_views reloads every queue from the
+                # database every 30 s; here that happens right before each pass.
                 self.checking.update()
                 self.qm.process_checking(self.runner)
             else:
