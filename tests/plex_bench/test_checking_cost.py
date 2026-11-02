@@ -33,3 +33,16 @@ def test_checking_pass_reads_grow_linearly_with_finished_nzbs(plex_bench, monkey
     # report) ~6.8 million.
     rows = _rows_read_in_one_pass(plex_bench, monkeypatch, 40)
     assert rows <= 4 * 40, f'{rows} rows read in one pass for 40 finished NZBs'
+
+
+def test_scan_requests_started_per_pass_are_capped(plex_bench):
+    # Each scan request runs in its own thread. Jobs retry a scan Plex refused, so
+    # without a cap a long outage with thousands waiting starts thousands of threads.
+    bench = plex_bench(checking_queue_period=3600)
+    cap = bench.checking.PLEX_SCANS_PER_PASS
+    for n in range(cap + 10):
+        bench.add_movie(f'Movie {n}', 2011, f'tt52000{n:03d}', download_s=30)
+    bench.run(seconds=35)  # passes at +1 s (downloading) and +31 s (all finished)
+    assert len(bench.plex.scans_requested) == cap
+    bench.run(seconds=30)  # the rest go out on the next pass
+    assert len(bench.plex.scans_requested) == cap + 10

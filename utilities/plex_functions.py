@@ -1130,7 +1130,6 @@ async def get_recent_from_plex(scan_all_libraries: bool = False):
                 if 'MediaContainer' in recent_data and 'Metadata' in recent_data['MediaContainer']:
                     recent_items = recent_data['MediaContainer']['Metadata']
                     logger.info(f"Retrieved {len(recent_items)} recent items from library {library_title}")
-                    plex_health.record_recently_added(library_key, [i.get('addedAt') for i in recent_items])
 
                     for item in recent_items:
                         item_type = item.get('type')
@@ -2409,6 +2408,150 @@ def claim_plex_mode_scan(path: str) -> bool:
             for k in [k for k, t in _plex_mode_scans.items() if now - t >= PLEX_MODE_SCAN_COOLDOWN]:
                 del _plex_mode_scans[k]
     return True
+
+
+# --- Asking Plex about one release (Plex mode's Checking timeout) -------------------
+#
+# Checked against a real Plex Media Server: ?file= matches a case-insensitive
+# substring of the part path (and a show library needs type=4 or it answers 500), so
+# matches are re-checked against the exact basename; while a library is scanned,
+# /activities lists a 'library.update.section' activity.
+
+PLEX_LOOKUP_TIMEOUT = 15
+_SCANNING_CACHE_SECONDS = 30
+_scanning_cache: Dict[str, Any] = {'at': 0.0, 'value': None}
+_scanning_lock = threading.Lock()
+
+
+def _plex_json(path: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """GET a Plex endpoint as JSON. None (and a recorded failure) when Plex doesn't answer."""
+    url, token = plex_connection_settings()
+    if not url or not token:
+        return None
+    try:
+        response = requests.get(f'{url}{path}', params=params or {}, timeout=PLEX_LOOKUP_TIMEOUT,
+                                headers={'X-Plex-Token': token, 'Accept': 'application/json'})
+        response.raise_for_status()
+        return response.json().get('MediaContainer', {}) if response.content else {}
+    except Exception as e:
+        logger.warning(f"Plex didn't answer {path}: {e}")
+        plex_health.record_contact_failure()
+        return None
+
+
+def plex_is_scanning() -> Optional[bool]:
+    """True while Plex is scanning a library, False when idle, None if Plex didn't answer.
+
+    Cached for 30 s: every held release in a Checking pass asks the same question.
+    """
+    now = time.time()
+    with _scanning_lock:
+        if _scanning_cache['value'] is not None and now - _scanning_cache['at'] < _SCANNING_CACHE_SECONDS:
+            return _scanning_cache['value']
+    container = _plex_json('/activities')
+    value = None
+    if container is not None:
+        value = any(str(a.get('type', '')).startswith('library.update.section')
+                    for a in container.get('Activity', []) or [])
+    with _scanning_lock:
+        _scanning_cache.update(at=now, value=value)
+    return value
+
+
+def _plex_sections_for(item_type: str) -> Optional[List[Dict[str, Any]]]:
+    """The configured Plex libraries that can hold ``item_type`` ('movie' or 'episode')."""
+    container = _plex_json('/library/sections')
+    if container is None:
+        return None
+    plex_type = 'show' if item_type == 'episode' else 'movie'
+    sections = [d for d in container.get('Directory', []) or [] if d.get('type') == plex_type]
+    setting = get_setting('Plex', 'shows_libraries' if plex_type == 'show' else 'movie_libraries', '')
+    if setting:
+        all_libraries = {d.get('title'): str(d.get('key')) for d in sections}
+        by_key = {str(d.get('key')): d.get('title') for d in sections}
+        allowed = set(process_library_names(setting, all_libraries, by_key))
+        if allowed:
+            sections = [d for d in sections if str(d.get('key')) in allowed]
+    return sections
+
+
+def find_plex_items_by_filename(filename: str, item_type: str) -> Optional[List[Dict[str, Any]]]:
+    """Plex metadata for the items with a part named exactly ``filename``.
+
+    [] when Plex doesn't have it, None when Plex didn't answer.
+    """
+    if not filename:
+        return []
+    sections = _plex_sections_for(item_type)
+    if sections is None:
+        return None
+    params = {'file': filename, 'includeGuids': 1, 'type': 4 if item_type == 'episode' else 1}
+    found = []
+    for section in sections:
+        container = _plex_json(f"/library/sections/{section.get('key')}/all", params)
+        if container is None:
+            return None
+        for meta in container.get('Metadata', []) or []:
+            parts = [p.get('file') or '' for m in meta.get('Media', []) or [] for p in m.get('Part', []) or []]
+            if any(os.path.basename(p) == filename for p in parts):
+                found.append(meta)
+    return found
+
+
+def collect_from_plex(items: List[Dict[str, Any]]) -> Optional[Tuple[int, int]]:
+    """Collect the Checking items whose file Plex already has, the way the recent scan would.
+
+    Returns (files Plex has, items no longer in Checking afterwards), or None when
+    Plex didn't answer. Used before giving up on a release: Plex can have added it
+    since the last recently-added pass, and replacing it then deletes a file Plex
+    is serving.
+    """
+    entries = []
+    found_files = 0
+    show_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    for item in items:
+        filename = os.path.basename(item.get('filled_by_file') or '')
+        if not filename:
+            continue
+        metas = find_plex_items_by_filename(filename, item.get('type') or 'movie')
+        if metas is None:
+            return None
+        if not metas:
+            continue
+        found_files += 1
+        for meta in metas:
+            if meta.get('type') == 'episode':
+                show_key = str(meta.get('grandparentRatingKey') or '')
+                if show_key not in show_cache:
+                    container = _plex_json(f'/library/metadata/{show_key}', {'includeGuids': 1})
+                    if container is None:
+                        return None
+                    shows = container.get('Metadata', []) or []
+                    show_cache[show_key] = shows[0] if shows else None
+                show = show_cache[show_key]
+                if not show:
+                    continue
+                show_imdb, show_tmdb = extract_show_ids(show)
+                entries += asyncio.run(process_recent_episode(
+                    meta, show.get('title'), meta.get('parentIndex'), show_imdb, show_tmdb, show))
+            else:
+                entries += asyncio.run(process_recent_movie(meta))
+    if not entries:
+        return found_files, 0
+    from database import add_collected_items
+    from database.core import get_db_connection
+    add_collected_items(entries, recent=True)
+    ids = [item['id'] for item in items if item.get('id') is not None]
+    if not ids:
+        return found_files, 0
+    conn = get_db_connection()
+    try:
+        still = conn.execute(
+            f"SELECT COUNT(*) FROM media_items WHERE id IN ({','.join('?' * len(ids))}) AND state = 'Checking'",
+            ids).fetchone()[0]
+    finally:
+        conn.close()
+    return found_files, len(ids) - still
 
 
 def plex_update_item(item: Dict[str, Any]) -> bool:
