@@ -135,17 +135,19 @@ def test_stuck_scanner_does_not_burn_releases(plex_bench):
     assert bench.logs('Plex is still scanning; keeping it in Checking')
 
 
-def test_stuck_scanner_gives_up_at_the_cap(plex_bench):
-    # ...but not forever: 6 h after the download finished, the normal timeout applies.
+def test_stuck_scanner_gives_up_at_the_cap(plex_bench, monkeypatch):
+    # ...but not forever: the normal timeout applies once the cap (6 h after the
+    # download finished; 1 h here to keep the run short) has passed.
     bench = plex_bench(checking_queue_period=PERIOD)
+    monkeypatch.setattr(type(bench.checking), 'PLEX_STALL_MAX_WAIT', 3600)
     bench.plex.behavior.scanner_stuck = True
     release = bench.add_movie('Movie', 2010, 'tt7300001', download_s=60)
 
-    bench.run(hours=7)
+    bench.run(hours=1.5)
 
     assert bench.state_of(release) == ['Wanted']
     wanted_at = next(t for t, s in bench.history[release.item_ids[0]] if s == 'Wanted')
-    assert 6 * 3600 <= wanted_at - release.submitted_at <= 6 * 3600 + 2 * PERIOD
+    assert 3600 <= wanted_at - release.submitted_at <= 3600 + 2 * PERIOD
 
 
 def test_collected_by_file_lookup_when_recently_added_misses_it(plex_bench):

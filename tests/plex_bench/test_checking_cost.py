@@ -4,6 +4,7 @@ Finished NZBs stay in Checking until Plex adds them, which with a slow or stuck
 Plex is a long time (and longer since the #555 hold). Every pass handles each of
 them again, so the cost of a pass has to stay linear in their number.
 """
+from tests.plex_bench.fake_plex import Fault
 
 
 def _rows_read_in_one_pass(plex_bench, monkeypatch, finished):
@@ -46,3 +47,17 @@ def test_scan_requests_started_per_pass_are_capped(plex_bench):
     assert len(bench.plex.scans_requested) == cap
     bench.run(seconds=30)  # the rest go out on the next pass
     assert len(bench.plex.scans_requested) == cap + 10
+
+
+def test_expired_releases_decided_per_pass_are_capped(plex_bench):
+    # Each expired release asks Plex about its files. Many expiring at once must not
+    # turn one Checking pass into hundreds of Plex requests.
+    bench = plex_bench(checking_queue_period=600)
+    cap = bench.checking.PLEX_VERDICTS_PER_PASS
+    bench.plex.behavior.faults.append(Fault(r'/recentlyAdded$', 'error'))  # only the lookup collects
+    for n in range(cap + 10):
+        bench.add_movie(f'Movie {n}', 2011, f'tt53000{n:03d}', download_s=30)
+    bench.run(minutes=12)  # all finished at +31 s; the period runs out just past +631 s
+    first = [t for t, _, _ in bench.logs('Plex already has it; collected')]
+    assert len(first) == cap + 10
+    assert len([t for t in first if t == min(first)]) == cap
