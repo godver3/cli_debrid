@@ -2632,9 +2632,11 @@ def details_page(tmdb_id, media_type):
     Detail page for missing/not-in-library content
     Shows TMDB data with option to request/search
     """
+    from utilities.web_scraper import get_available_versions
     from .utils import is_user_system_enabled
 
     tmdb_api_key = get_setting('TMDB', 'api_key', '')
+    versions = get_available_versions()
 
     # Check permissions - User and Admin can search, Requester cannot
     if not is_user_system_enabled():
@@ -2646,6 +2648,7 @@ def details_page(tmdb_id, media_type):
                          tmdb_id=tmdb_id,
                          media_type=media_type,
                          tmdb_configured=bool(tmdb_api_key),
+                         versions=versions,
                          has_user_permissions=has_user_permissions)
 
 @discover_bp.route('/details/<int:tmdb_id>/<media_type>/data')
