@@ -12,6 +12,7 @@ import threading
 import time as _time
 
 _REAL_DATETIME = _dt.datetime
+_REAL_SLEEP = _time.sleep
 _REAL_DATE = _dt.date
 
 
@@ -21,6 +22,7 @@ class SimClock:
         # (CURRENT_TIMESTAMP) are close to what the app sees.
         self._now = float(int(start if start is not None else _time.time()))
         self._lock = threading.Lock()
+        self._owner = threading.get_ident()  # the thread that runs the bench
         self.sleeps = 0
 
     def time(self):
@@ -37,8 +39,13 @@ class SimClock:
             self._now = max(self._now, float(value))
 
     def sleep(self, seconds):
-        # The app sleeps between retries; in the bench that's instant. Time only
-        # moves when the bench scheduler moves it.
+        # The app sleeps between retries; on the bench's own thread that's instant
+        # (time only moves when the bench scheduler moves it). Background threads
+        # really sleep: the app has loops like `while True: ...; time.sleep(5)`, and
+        # a no-op sleep turns those into busy loops that starve the bench.
+        if threading.get_ident() != self._owner:
+            _REAL_SLEEP(seconds)
+            return
         self.sleeps += 1
 
     def install(self, monkeypatch):
