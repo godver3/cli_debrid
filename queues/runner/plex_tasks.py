@@ -24,6 +24,22 @@ from utilities import plex_health
 from database.symlink_verification import update_removal_status
 
 
+def _category_folder_paths(base_path, folder_names, filename):
+    """(folder name, file path) for release folders that sit in a category folder under base_path.
+
+    The flat <base>/<release>/<file> paths are tried first by the callers; this adds
+    <base>/<category>/<release>/<file> for mounts laid out that way (usenet.mount_layout).
+    """
+    from usenet.mount_layout import resolve_nzb_job_dir
+    found = []
+    for name in dict.fromkeys(n for n in folder_names if n):
+        for candidate in dict.fromkeys((name, os.path.splitext(name)[0])):
+            job_dir = resolve_nzb_job_dir(base_path, candidate)
+            if job_dir and os.path.dirname(job_dir) != os.path.normpath(base_path):
+                found.append((candidate, os.path.join(job_dir, filename)))
+    return found
+
+
 class PlexTasks:
     def task_plex_full_scan(self):
         from queues.run_program import backfill_resolution_from_stored_paths, get_and_add_all_collected_from_plex  # defined there; imported when called
@@ -375,6 +391,12 @@ class PlexTasks:
                 # 7. Direct path under base
                 paths_to_check.append(os.path.join(base_path, current_filename))
 
+                # 8. Same folder names one level down: cli_mount and nzbdav keep jobs in
+                # category folders (<mount>/<category>/<release>).
+                paths_to_check += [path for _name, path in _category_folder_paths(
+                    base_path, [debrid_folder_name, original_scraped_torrent_title, real_debrid_original_title, filled_by_title],
+                    current_filename)]
+
                 # --- Check paths in order ---
                 file_found_on_disk = False
                 actual_file_path = None
@@ -635,6 +657,13 @@ class PlexTasks:
                 direct_path = os.path.join(base_path, current_filename)
                 paths_to_check_info.append({'name': None, 'path': direct_path, 'type': 'direct_under_base'})
 
+                # 8. Same folder names one level down: cli_mount and nzbdav keep jobs in
+                # category folders (<mount>/<category>/<release>).
+                for _cat_name, _cat_path in _category_folder_paths(
+                        base_path, [debrid_folder_name, original_scraped_torrent_title, real_debrid_original_title, filled_by_title],
+                        current_filename):
+                    paths_to_check_info.append({'name': _cat_name, 'path': _cat_path, 'type': 'category_folder'})
+
                 file_found_on_disk = False
                 actual_file_path = None
                 folder_name_for_plex_scan = None 
@@ -667,17 +696,17 @@ class PlexTasks:
                     if not _ffprobe_gate_or_reject(item_dict, actual_file_path, cache_key):
                         continue
 
-                    # Option C: Direct Plex library lookup.
-                    # Try 1: file path search (most reliable — checks exact file Plex should have indexed).
-                    # Try 2: GUID search (fallback — sometimes unreliable in Plex).
+                    # After the first three runs, look again every fifth run only: items now
+                    # stay here until Plex adds them, and each look is a request per library.
+                    if current_tick > 3 and current_tick % 5:
+                        continue
+
+                    # Direct Plex library lookup: does Plex have this exact file?
                     _force_collect_reason = None
-                    _imdb_id = item_dict['imdb_id']
-                    _tmdb_id = item_dict['tmdb_id']
                     _item_type_lookup = 'show' if item_dict['type'] == 'episode' else item_dict['type']
                     # File path search: ask Plex "do you have this exact file?"
                     # Plex ?file= matches against full Plex path; URL-encode the filename.
                     _plex_location = None
-                    _new_basename = os.path.basename(item_dict['filled_by_file'] or '')
                     _plex_rating_key = None
                     if actual_file_path:
                         from urllib.parse import quote as _urlquote
@@ -689,6 +718,10 @@ class PlexTasks:
                             try:
                                 _type_param = '&type=4' if _is_episode else ''
                                 _fp_results = plex.fetchItems(f'/library/sections/{_section.key}/all?file={_urlquote(_plex_filename)}{_type_param}')
+                                # ?file= is a substring match: keep items with this exact file.
+                                _fp_results = [r for r in _fp_results
+                                               if any(os.path.basename(getattr(_pt, 'file', '') or '') == _plex_filename
+                                                      for _md in getattr(r, 'media', []) for _pt in getattr(_md, 'parts', []))]
                                 if _fp_results:
                                     _force_collect_reason = f"file indexed in Plex confirmed (tick {current_tick})"
                                     try:
@@ -708,96 +741,11 @@ class PlexTasks:
                                     break
                             except Exception as _e_fp:
                                 logging.debug(f"[PlexCheck] File path search failed for item {item_id}: {_e_fp}")
-                    # GUID search fallback
-                    if not _force_collect_reason and (_imdb_id or _tmdb_id):
-                        for _section in sections:
-                            if _section.type != _item_type_lookup:
-                                continue
-                            try:
-                                _results = []
-                                if _imdb_id:
-                                    _results = _section.search(**{'guid': f'imdb://{_imdb_id}'})
-                                if not _results and _tmdb_id:
-                                    _results = _section.search(**{'guid': f'tmdb://{_tmdb_id}'})
-                                if _results:
-                                    _force_collect_reason = f"direct Plex GUID lookup confirmed in library (tick {current_tick})"
-                                    # Try to extract location_on_disk from the matched Plex item,
-                                    # preferring the part whose filename matches filled_by_file.
-                                    # For episodes: _results is Show objects; must fetch episodes to get parts.
-                                    if not _plex_location and _new_basename:
-                                        try:
-                                            _is_episode = item_dict['type'] == 'episode'
-                                            for _pi in _results:
-                                                _candidates = []
-                                                if _is_episode:
-                                                    # Show object: walk seasons→episodes to find parts
-                                                    try:
-                                                        _sn = item_dict['season_number']
-                                                        _ep = item_dict['episode_number']
-                                                        if _sn is not None and _ep is not None:
-                                                            _episode_obj = _pi.episode(season=int(_sn), episode=int(_ep))
-                                                            _candidates = [_episode_obj] if _episode_obj else []
-                                                        else:
-                                                            _candidates = _pi.episodes()
-                                                    except Exception:
-                                                        _candidates = []
-                                                else:
-                                                    _candidates = [_pi]
-                                                for _candidate in _candidates:
-                                                    for _pm in getattr(_candidate, 'media', []):
-                                                        for _pp in getattr(_pm, 'parts', []):
-                                                            _pp_file = getattr(_pp, 'file', '') or ''
-                                                            if os.path.basename(_pp_file) == _new_basename:
-                                                                _plex_location = _pp_file
-                                                                if not _plex_rating_key:
-                                                                    try:
-                                                                        if _is_episode:
-                                                                            _plex_rating_key = str(getattr(_candidate, 'grandparentRatingKey', None) or getattr(_candidate, 'ratingKey', None) or '')
-                                                                        else:
-                                                                            _plex_rating_key = str(getattr(_candidate, 'ratingKey', '') or '')
-                                                                    except Exception:
-                                                                        pass
-                                                                break
-                                                        if _plex_location:
-                                                            break
-                                                    if _plex_location:
-                                                        break
-                                                if _plex_location:
-                                                    break
-                                        except Exception as _loc_err:
-                                            logging.debug(f"[PlexCheck] Location extraction from GUID results failed for item {item_id}: {_loc_err}")
-                                    # Extract ratingKey even if location not found via file match
-                                    if not _plex_rating_key and _results:
-                                        try:
-                                            _pi0 = _results[0]
-                                            _is_episode = item_dict['type'] == 'episode'
-                                            if _is_episode:
-                                                _plex_rating_key = str(getattr(_pi0, 'ratingKey', '') or '')
-                                            else:
-                                                _plex_rating_key = str(getattr(_pi0, 'ratingKey', '') or '')
-                                        except Exception:
-                                            pass
-                                    if not _plex_location:
-                                        logging.warning(f"[PlexCheck] GUID search found item {item_id} ({item_title_for_log}) in Plex but could not extract location (filled_by_file basename='{_new_basename}')")
-                                    break
-                            except Exception as _e_search:
-                                logging.debug(f"[PlexCheck] Direct GUID search failed for item {item_id}: {_e_search}")
-
-                    # Option B: Time-based fallback using last_updated from DB (restart-resilient).
-                    if not _force_collect_reason:
-                        _last_updated = item_dict['last_updated']
-                        if _last_updated and current_tick > 1:
-                            try:
-                                _lu_dt = datetime.strptime(str(_last_updated), '%Y-%m-%d %H:%M:%S') if isinstance(_last_updated, str) else _last_updated
-                                _mins_in_checking = (datetime.now() - _lu_dt).total_seconds() / 60
-                                if _mins_in_checking > 30:
-                                    _force_collect_reason = f"{_mins_in_checking:.0f}m in Checking (time-based fallback, tick {current_tick})"
-                            except Exception:
-                                pass
-
-                    # Original tick fallback.
-                    if not _force_collect_reason and current_tick > 3:
-                        _force_collect_reason = f"tick {current_tick} exhausted (recentlyAdded did not resolve)"
+                    # Only Plex itself confirms an item here. This used to also mark items
+                    # Collected after 3 runs or 30 min without Plex having them, and on a GUID
+                    # search; a real Plex never matches guid=imdb:// (only its own plex://
+                    # guids), and the timed fallbacks collected files Plex never added. An item
+                    # Plex doesn't confirm stays in Checking for the Checking queue to decide.
 
                     if _force_collect_reason:
                         logging.info(f"[PlexCheck] Marking item {item_id} ('{item_title_for_log}') as Collected: {_force_collect_reason}.")
