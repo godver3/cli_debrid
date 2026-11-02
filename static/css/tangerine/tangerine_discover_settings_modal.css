@@ -135,11 +135,40 @@
 }
 
 .discover-setting-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    flex-shrink: 0;
     width: 18px;
     height: 18px;
+    margin: 0;
+    border: 2px solid #f97316;
+    border-radius: 5px;
+    background-color: #2a2a2a;
     cursor: pointer;
-    accent-color: #f97316;
-    flex-shrink: 0;
+    transition: background-color 0.15s ease;
+}
+
+/* Drawn by hand: some mobile browsers render the native unchecked box dark-on-dark */
+.discover-setting-checkbox:checked {
+    background-color: #f97316;
+}
+
+.discover-setting-checkbox:checked::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 45%;
+    width: 4px;
+    height: 9px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.discover-setting-checkbox:focus-visible {
+    outline: 2px solid #f97316;
+    outline-offset: 2px;
 }
 
 .discover-settings-modal-footer {

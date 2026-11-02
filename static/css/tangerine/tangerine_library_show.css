@@ -2971,8 +2971,13 @@ body[data-theme="tangerine"] td#scraper-source .source-badge {
         width: 100%;
     }
 
+    /* Keep every button on screen: wrap instead of overflowing past the left edge */
     .show-actions {
         top: 0;
+        left: 1rem;
+        right: 1rem;
+        flex-wrap: wrap;
+        justify-content: flex-end;
     }
 
     .episode-row {
