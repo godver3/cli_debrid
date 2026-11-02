@@ -36,3 +36,20 @@ def test_file_discovery_never_collects_what_plex_has_not_added(plex_bench):
 
     assert bench.state_of(release) == ['Checking']
     assert bench.false_collections() == []
+
+
+def test_symlink_mode_without_plex_does_not_retry_scans(plex_bench):
+    # Retrying a refused scan is for Plex mode. In symlink mode with no Plex set up,
+    # plex_update_item always says no; that must stay one quiet attempt per job.
+    bench = plex_bench(checking_queue_period=3600, sync_symlink_plex_url=False)
+    bench.settings['File Management']['file_collection_management'] = 'Symlinked/Local'
+    bench.settings['File Management']['original_files_path'] = bench.mount
+    release = bench.add_movie('Dune', 2021, 'tt1160419', download_s=30)
+
+    bench.run(minutes=15)
+
+    job = f'nzb:{release.job_id}'
+    assert bench.plex.scans_requested == []
+    assert bench.logs("Plex didn't take the scan") == []
+    assert job in bench.checking._nzb_plex_scan_triggered or bench.state_of(release) != ['Checking']
+    assert len(bench.logs('Plex URL or token not configured')) <= 1

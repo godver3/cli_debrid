@@ -1562,8 +1562,11 @@ class CheckingQueue:
                                 _scan_itype = _sample.get('type', 'movie')
                                 if _scan_mount and _scan_folder:
                                     import threading as _threading
+                                    # Retrying a scan only matters in Plex mode, where Plex adding the file is
+                                    # what collects it. Other modes keep one attempt per job, as before.
+                                    _retry_scans = get_setting('File Management', 'file_collection_management') == 'Plex'
                                     def _do_plex_scan(_tid, _mount, _folder, _itype):
-                                        accepted = False
+                                        accepted = not _retry_scans
                                         try:
                                             # Flat (Zurg: <mount>/<job>/) and nested
                                             # (NzbDAV: <mount>/<cat>/<job>/) — see
@@ -1582,7 +1585,7 @@ class CheckingQueue:
                                                 accepted = True
                                                 self._plex_scans.setdefault(_tid, []).append(time.time())
                                                 logging.info(f'[NZB] Plex accepted a scan of {_candidate!r}')
-                                            else:
+                                            elif _retry_scans:
                                                 logging.warning(f"[NZB] Plex didn't take the scan of {_candidate!r}; will ask again")
                                         except Exception as _pe:
                                             logging.warning(f'[NZB] Plex scan failed: {_pe}')
