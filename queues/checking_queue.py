@@ -87,6 +87,10 @@ class CheckingQueue:
             cls._instance._torrent_providers = {}  # torrent_id -> provider name that holds it
             cls._instance._rediscovery_exhausted = set()  # probed the whole chain, nobody had it
             cls._instance._plex_stall_held_at = {}  # torrent_id -> last time its timeout was held for a stuck Plex
+            cls._instance._finished_at = {}  # torrent_id -> first pass that saw it at 100% (Plex mode's timeout clock)
+            cls._instance._plex_scans = {}  # torrent_id -> times Plex accepted a scan of its folder
+            cls._instance._plex_scan_tried_at = {}  # torrent_id -> last time a scan of its folder was sent
+            cls._instance._nzb_plex_scan_triggered = set()  # reset by __init__ too
         return cls._instance
 
     def __init__(self):
@@ -143,6 +147,10 @@ class CheckingQueue:
         for _tid in removed_torrents:
             self._torrent_providers.pop(_tid, None)
             self._rediscovery_exhausted.discard(_tid)
+            # Jobs collected by the recent scan leave through here, not remove_item.
+            for _state in (self._plex_stall_held_at, self._finished_at, self._plex_scans, self._plex_scan_tried_at):
+                _state.pop(_tid, None)
+            self._nzb_plex_scan_triggered.discard(_tid)
 
     def get_contents(self, raw=False):
         # raw=True: skip live API calls, return items as-is (for page render, not SSE stream)
@@ -1164,6 +1172,10 @@ class CheckingQueue:
                 logging.debug(f"Cleaned up unknown strikes for torrent {torrent_id} as it has no more associated items.")
             self.missing_strikes.pop(torrent_id, None)
             self._plex_stall_held_at.pop(torrent_id, None)
+            self._finished_at.pop(torrent_id, None)
+            self._plex_scans.pop(torrent_id, None)
+            self._plex_scan_tried_at.pop(torrent_id, None)
+            self._nzb_plex_scan_triggered.discard(torrent_id)
         
         # Also clean up any uncached torrent tracking if this was the last item.
         # Look the item up by ID instead of re-deriving its hash: for http links
@@ -1184,48 +1196,83 @@ class CheckingQueue:
             logging.error(f"Error cleaning up uncached torrent tracking for item {item['id']}: {str(e)}")
 
     # Longest a finished NZB is held in Checking for a stuck Plex before the normal
-    # timeout (not-wanted + rescrape) applies anyway.
+    # timeout (not-wanted + rescrape) applies anyway, counted from when it finished.
     PLEX_STALL_MAX_WAIT = 6 * 3600
+    # Scans Plex must have accepted for a release before an idle Plex that still
+    # doesn't have it counts as having rejected it. Plex forgets queued scans when it
+    # restarts, so one accepted scan doesn't prove Plex looked.
+    PLEX_SCANS_BEFORE_GIVING_UP = 2
+    # Least time between two scan requests for the same job, so a folder Plex keeps
+    # refusing (no library holds it) isn't sent again every 30 s pass.
+    PLEX_SCAN_RETRY_INTERVAL = 120
+    # Most scan requests started in one pass. Each runs in its own thread; without a
+    # cap, thousands of jobs retrying through a Plex outage start that many threads.
+    PLEX_SCANS_PER_PASS = 50
 
-    def _hold_finished_nzb_for_stuck_plex(self, torrent_id, items, oldest_item_time, now):
-        """Keep a finished NZB in Checking when Plex, not the file, is why it isn't collected.
+    def _plex_mode_verdict(self, torrent_id, items, finished_at, now):
+        """What to do with a Plex-mode release whose Checking period ran out.
 
-        In Plex mode the Checking timeout fires when Plex hasn't added the item. If the
-        job is done and its folder is on the mount but Plex is unreachable or hasn't yet
-        got through the releases that finished before this one, the release is fine:
-        not-wanting it only gets the same release grabbed again from another indexer,
-        into the same backed-up Plex.
+        Returns (verdict, reason): 'collected' (Plex had it; collected now), 'hold'
+        (Plex, not the release, is why it isn't collected yet: keep it in Checking for
+        another period) or 'give_up' (the normal timeout: not-want and replace it).
+        """
+        from utilities import plex_functions, plex_health
+        is_nzb = str(torrent_id).startswith('nzb:')
+
+        # Plex failing to answer: don't ask it about every expired release in turn
+        # (each would wait for the request timeout). One failure covers the pass.
+        if plex_health.recent_failure() is not None:
+            return self._plex_hold_if_nzb(torrent_id, items, finished_at, now, 'Plex is unreachable or timing out')
+
+        # Plex may have added it since the last recently-added pass (read at most every
+        # 5 minutes, and only the newest 200 per library). Replacing it now would delete
+        # a file Plex is serving, and the next pass would add it back as a ghost.
+        lookup = plex_functions.collect_from_plex(items)
+        if lookup is None:
+            return self._plex_hold_if_nzb(torrent_id, items, finished_at, now, 'Plex is unreachable or timing out')
+        found, collected = lookup
+        if collected:
+            return 'collected', f'Plex already has it; collected {collected} item(s)'
+        if found:
+            # Don't delete a file Plex is serving; the recent scan may still match it.
+            if now - finished_at > self.PLEX_STALL_MAX_WAIT:
+                return 'give_up', (f"Plex has the file but it hasn't matched this item in "
+                                   f"{self.PLEX_STALL_MAX_WAIT // 3600}h")
+            return 'hold', "Plex has the file but it couldn't be matched to this item yet"
+        if not is_nzb:
+            return 'give_up', 'not in Plex'
+
+        scanning = plex_functions.plex_is_scanning()
+        if scanning is None or scanning:
+            reason = 'Plex is still scanning' if scanning else 'Plex is unreachable or timing out'
+            return self._plex_hold_if_nzb(torrent_id, items, finished_at, now, reason)
+        scans = len(self._plex_scans.get(torrent_id, []))
+        if scans < self.PLEX_SCANS_BEFORE_GIVING_UP:
+            verdict = self._plex_hold_if_nzb(torrent_id, items, finished_at, now,
+                                             f'Plex is idle and accepted {scans} scan(s) of it; asking again')
+            if verdict[0] == 'hold':
+                # Plex is idle and hasn't added it: ask again before blaming the file.
+                self._nzb_plex_scan_triggered.discard(torrent_id)
+            return verdict
+        return 'give_up', f'Plex is idle, accepted {scans} scans of its folder and did not add it'
+
+    def _plex_hold_if_nzb(self, torrent_id, items, finished_at, now, reason):
+        """('hold', reason) for a finished NZB that's on the mount and inside the cap; else give up.
+
+        Only NZBs are held: debrid torrents keep the plain timeout.
         """
         if not str(torrent_id).startswith('nzb:'):
-            return False
-        if get_setting('File Management', 'file_collection_management') != 'Plex':
-            return False
-        if now - oldest_item_time > self.PLEX_STALL_MAX_WAIT:
-            return False
-        # Other NZB jobs that reached Checking before this one and are still waiting.
-        waiting_ahead = len({
-            i.get('filled_by_torrent_id') for i in self.items
-            if str(i.get('filled_by_torrent_id') or '').startswith('nzb:')
-            and i.get('filled_by_torrent_id') != torrent_id
-            and self.checking_queue_times.get(i['id'], now) < oldest_item_time
-        })
-        from utilities.plex_health import plex_stalled_since
-        reason = plex_stalled_since(oldest_item_time, waiting_ahead)
-        if not reason:
-            return False
+            return 'give_up', 'not in Plex'
+        if now - finished_at > self.PLEX_STALL_MAX_WAIT:
+            return 'give_up', f'still not in Plex {self.PLEX_STALL_MAX_WAIT // 3600}h after it finished ({reason})'
         sample = items[0] if items else {}
         mount = (get_setting('Plex', 'mounted_file_location', '').rstrip('/')
                  or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/'))
         folder = sample.get('debrid_folder_name') or sample.get('filled_by_title') or ''
         from usenet.mount_layout import resolve_nzb_job_dir
         if not resolve_nzb_job_dir(mount, folder):
-            return False
-        self._plex_stall_held_at[torrent_id] = now
-        logging.info(
-            f"[NZB] {torrent_id} finished and is on the mount but {reason}; keeping it in Checking "
-            f"instead of not-wanting it ({(now - oldest_item_time) / 60:.0f} min so far, "
-            f"gives up after {self.PLEX_STALL_MAX_WAIT // 3600}h)")
-        return True
+            return 'give_up', f'its folder is not on the mount ({reason})'
+        return 'hold', reason
 
     def _calculate_dynamic_queue_period(self, items):
         """Calculate a dynamic queue period based on the number of items.
@@ -1275,6 +1322,7 @@ class CheckingQueue:
         """
         current_time = time.time()
         items_to_remove = []
+        plex_scan_budget = self.PLEX_SCANS_PER_PASS
 
         # Ensure these are initialized here if they were inside the removed block
         adding_queue = AddingQueue()
@@ -1498,29 +1546,50 @@ class CheckingQueue:
                             except Exception as _r2e:
                                 logging.debug(f'[CheckingQueue] cli_ids build error: {_r2e}')
 
-                            # Trigger targeted Plex scan once per item, async
-                            if torrent_id not in self._nzb_plex_scan_triggered:
+                            # Ask Plex to scan the job's folder, async. Counted only when Plex takes it:
+                            # a scan Plex refused (down, timing out) is sent again on a later pass, and
+                            # _plex_mode_verdict asks for another before giving up on the release.
+                            from utilities import plex_health as _plex_health
+                            if (torrent_id not in self._nzb_plex_scan_triggered
+                                    and plex_scan_budget > 0
+                                    and _plex_health.recent_failure(60) is None
+                                    and current_time - self._plex_scan_tried_at.get(torrent_id, 0) >= self.PLEX_SCAN_RETRY_INTERVAL):
+                                plex_scan_budget -= 1
                                 self._nzb_plex_scan_triggered.add(torrent_id)
+                                self._plex_scan_tried_at[torrent_id] = current_time
                                 _scan_mount = get_setting('Plex', 'mounted_file_location', '').rstrip('/') or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/')
                                 _scan_folder = _sample.get('debrid_folder_name') or _sample.get('filled_by_title') or ''
                                 _scan_itype = _sample.get('type', 'movie')
                                 if _scan_mount and _scan_folder:
                                     import threading as _threading
-                                    def _do_plex_scan(_mount, _folder, _itype):
+                                    def _do_plex_scan(_tid, _mount, _folder, _itype):
+                                        accepted = False
                                         try:
                                             # Flat (Zurg: <mount>/<job>/) and nested
                                             # (NzbDAV: <mount>/<cat>/<job>/) — see
                                             # usenet.mount_layout.resolve_nzb_job_dir.
                                             from usenet.mount_layout import resolve_nzb_job_dir
+                                            from utilities.plex_functions import plex_mode_scan_due
                                             _candidate = resolve_nzb_job_dir(_mount, _folder)
-                                            if _candidate:
-                                                plex_update_item({'full_path': _candidate, 'location_on_disk': _candidate, 'type': _itype})
-                                                logging.info(f'[NZB] Triggered Plex scan for {_candidate!r}')
+                                            if not _candidate:
+                                                logging.debug(f'[NZB] Folder {_folder!r} not found under {_mount!r} for Plex scan')
                                                 return
-                                            logging.debug(f'[NZB] Folder {_folder!r} not found under {_mount!r} for Plex scan')
+                                            if not plex_mode_scan_due(_candidate):
+                                                # Scanned inside the cooldown (e.g. by task_check_plex_files);
+                                                # plex_update_item would skip it, so don't count it as ours.
+                                                return
+                                            if plex_update_item({'full_path': _candidate, 'location_on_disk': _candidate, 'type': _itype}):
+                                                accepted = True
+                                                self._plex_scans.setdefault(_tid, []).append(time.time())
+                                                logging.info(f'[NZB] Plex accepted a scan of {_candidate!r}')
+                                            else:
+                                                logging.warning(f"[NZB] Plex didn't take the scan of {_candidate!r}; will ask again")
                                         except Exception as _pe:
-                                            logging.debug(f'[NZB] Plex scan failed: {_pe}')
-                                    _threading.Thread(target=_do_plex_scan, args=(_scan_mount, _scan_folder, _scan_itype), daemon=True).start()
+                                            logging.warning(f'[NZB] Plex scan failed: {_pe}')
+                                        finally:
+                                            if not accepted:
+                                                self._nzb_plex_scan_triggered.discard(_tid)
+                                    _threading.Thread(target=_do_plex_scan, args=(torrent_id, _scan_mount, _scan_folder, _scan_itype), daemon=True).start()
 
                     # --- Restored Symlinked/Local processing logic ---
                     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
@@ -1690,14 +1759,32 @@ class CheckingQueue:
                     oldest_item_time = min((self.checking_queue_times.get(item['id'], current_time) for item in current_items_for_torrent), default=current_time)
                     time_in_queue = current_time - oldest_item_time
                     checking_queue_limit = self._calculate_dynamic_queue_period(current_items_for_torrent)
-                    # A hold for a stuck Plex restarts the clock: the job gets a full
-                    # period again from the last time Plex was seen stuck.
-                    waited = current_time - max(oldest_item_time, self._plex_stall_held_at.get(torrent_id, 0))
-                    
-                    logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds (dynamic limit: {checking_queue_limit} seconds for {len(current_items_for_torrent)} items)")
-                    
-                    if waited > checking_queue_limit and self._hold_finished_nzb_for_stuck_plex(torrent_id, current_items_for_torrent, oldest_item_time, current_time):
-                        continue
+                    plex_mode = get_setting('File Management', 'file_collection_management') == 'Plex'
+                    # In Plex mode the period is Plex's time to add the release, so it starts
+                    # when the download finished, not when the item entered Checking (a slow
+                    # download used to leave Plex a minute or two). After a restart this is the
+                    # first pass that sees it finished, which only ever gives Plex longer.
+                    finished_at = self._finished_at.setdefault(torrent_id, current_time)
+                    clock_start = finished_at if plex_mode else oldest_item_time
+                    # A hold restarts the clock: the job gets a full period again from the
+                    # last time it was held.
+                    waited = current_time - max(clock_start, self._plex_stall_held_at.get(torrent_id, 0))
+
+                    logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds, {current_time - finished_at:.1f} since it finished (dynamic limit: {checking_queue_limit} seconds for {len(current_items_for_torrent)} items)")
+
+                    if waited > checking_queue_limit and plex_mode:
+                        verdict, reason = self._plex_mode_verdict(torrent_id, current_items_for_torrent, finished_at, current_time)
+                        if verdict == 'collected':
+                            logging.info(f"{torrent_id}: {reason}")
+                            continue
+                        if verdict == 'hold':
+                            self._plex_stall_held_at[torrent_id] = current_time
+                            logging.info(
+                                f"{torrent_id} finished {(current_time - finished_at) / 60:.0f} min ago and isn't in Plex, "
+                                f"but {reason}; keeping it in Checking instead of replacing it "
+                                f"(gives up {self.PLEX_STALL_MAX_WAIT // 3600}h after it finished)")
+                            continue
+                        logging.info(f"{torrent_id}: giving up, {reason}")
                     if waited > checking_queue_limit:
                         if str(torrent_id).startswith('nzb:'):
                             logging.info(f"NZB {torrent_id} content not found within {checking_queue_limit}s — adding to not-wanted and moving back to Wanted")
