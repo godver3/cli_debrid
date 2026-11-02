@@ -19,6 +19,8 @@ from utilities.plex_functions import get_section_type
 from database.symlink_verification import increment_removal_attempt
 import plexapi
 from utilities.plex_functions import remove_file_from_plex
+from utilities.plex_functions import claim_plex_mode_scan, plex_mode_scan_due, PLEX_MODE_SCAN_COOLDOWN
+from utilities import plex_health
 from database.symlink_verification import update_removal_status
 
 
@@ -117,6 +119,7 @@ class PlexTasks:
 
         except Exception as e:
             logging.error(f"Failed to connect to Plex for file check: {str(e)}")
+            plex_health.record_contact_failure()
             return # Cannot proceed without Plex connection
 
         plex_file_location = get_setting('Plex', 'mounted_file_location', default='/mnt/zurg/__all__')
@@ -1304,6 +1307,13 @@ class PlexTasks:
                         else:
                             deduped_paths.add(scan_path)
 
+                    # Plex mode: drop folders already scanned within the cooldown (by this
+                    # task or the Checking queue) before the cap, so they don't use its slots.
+                    _on_cooldown = {p for p in deduped_paths if not plex_mode_scan_due(p)}
+                    if _on_cooldown:
+                        logging.debug(f"[PlexCheck] Skipping {len(_on_cooldown)} path(s) for '{section.title}' scanned under {PLEX_MODE_SCAN_COOLDOWN}s ago")
+                        deduped_paths -= _on_cooldown
+
                     # Hard cap: never trigger more than 5 scans per section per run.
                     # Remaining paths will be picked up on the next 60s run.
                     _MAX_SCANS_PER_RUN = 25
@@ -1316,6 +1326,7 @@ class PlexTasks:
                         deduped_paths = set(list(deduped_paths)[:_MAX_SCANS_PER_RUN])
 
                     for scan_path in deduped_paths:
+                        claim_plex_mode_scan(scan_path)
                         try:
                             logging.info(f"Triggering Plex section '{section.title}' update scan for path: {scan_path}")
                             section.update(path=scan_path)

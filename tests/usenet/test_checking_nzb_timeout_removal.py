@@ -151,3 +151,147 @@ def test_remove_item_still_clears_uncached_tracking(env):
     })
     queue.remove_item(item)
     assert queue.uncached_torrents == {"b" * 40: {"last_check_time": 0, "item_ids": [2]}}
+
+
+FOLDER = "The.War.Wagon.1967.2160p.UHD.BluRay.x265-B0MBARDiERS"
+HOUR = 3600.0
+
+
+@pytest.fixture
+def stall(env, monkeypatch, tmp_path):
+    """A finished Plex-mode NZB whose folder is on the mount, and a fresh plex_health."""
+    queue, _, _ = env
+    from utilities import plex_health
+    plex_health._reset_for_tests()
+    mount = tmp_path / "mnt" / "__all__"
+    (mount / FOLDER).mkdir(parents=True)
+    settings = {("File Management", "file_collection_management"): "Plex",
+                ("Plex", "mounted_file_location"): str(mount)}
+    monkeypatch.setitem(queue._hold_finished_nzb_for_stuck_plex.__globals__, "get_setting",
+                        lambda s, k, *a, **kw: settings.get((s, k), kw.get("default", a[0] if a else "")))
+    layout = types.ModuleType("usenet.mount_layout")
+    spec = importlib.util.spec_from_file_location("_mount_layout", REPO_ROOT / "usenet" / "mount_layout.py")
+    real = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(real)
+    layout.resolve_nzb_job_dir = real.resolve_nzb_job_dir
+    monkeypatch.setitem(sys.modules, "usenet.mount_layout", layout)
+    queue._plex_stall_held_at = {}
+    items = [{"id": 1, "debrid_folder_name": FOLDER, "filled_by_title": FOLDER}]
+    return queue, plex_health, settings, mount, items
+
+
+def _hold(queue, items, entered, now, tid=JOB):
+    return queue._hold_finished_nzb_for_stuck_plex(tid, items, entered, now)
+
+
+def _waiting(queue, *entered_times, tid_prefix="nzb:ahead"):
+    """Put other finished NZB jobs in Checking that arrived at the given times."""
+    queue.items = [{"id": 100 + n, "filled_by_torrent_id": f"{tid_prefix}-{n}"} for n in range(len(entered_times))]
+    queue.checking_queue_times = {100 + n: t for n, t in enumerate(entered_times)}
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    from utilities import plex_health
+    now = [100 * HOUR]
+    monkeypatch.setattr(plex_health.time, "time", lambda: now[0])
+    return now
+
+
+def test_held_while_plex_is_timing_out(stall, clock):
+    queue, health, _, _, items = stall
+    _waiting(queue)
+    health.record_contact_failure()
+    clock[0] += 300  # failed 5 min ago, inside the window
+    entered = clock[0] - 900
+    assert _hold(queue, items, entered=entered, now=clock[0])
+    assert queue._plex_stall_held_at[JOB] == clock[0]
+
+
+def test_not_held_once_failures_are_old(stall, clock):
+    queue, health, _, _, items = stall
+    _waiting(queue)
+    health.record_contact_failure()
+    clock[0] += health.FAILURE_WINDOW + 1
+    assert not _hold(queue, items, entered=clock[0] - 900, now=clock[0])
+
+
+def test_held_when_plex_is_behind_on_earlier_releases(stall, clock):
+    # 3 releases finished before this one and are still waiting; Plex has added 1 since.
+    queue, health, _, _, items = stall
+    entered = clock[0] - 900
+    _waiting(queue, entered - 300, entered - 200, entered - 100)
+    health.record_recently_added("1", [entered + 60, entered - 4 * HOUR])
+    assert _hold(queue, items, entered=entered, now=clock[0])
+
+
+def test_not_held_when_plex_got_past_this_release(stall, clock):
+    # Plex added more than were waiting ahead, so it skipped this file: old behavior.
+    queue, health, _, _, items = stall
+    entered = clock[0] - 900
+    _waiting(queue, entered - 300)
+    health.record_recently_added("1", [entered + 60, entered + 120])
+    assert not _hold(queue, items, entered=entered, now=clock[0])
+
+
+def test_lone_release_plex_ignores_still_times_out(stall, clock):
+    # Nothing ahead of it and Plex reachable: a file Plex won't add is replaced as before.
+    queue, health, _, _, items = stall
+    entered = clock[0] - 900
+    _waiting(queue)
+    health.record_recently_added("1", [entered - HOUR])
+    assert not _hold(queue, items, entered=entered, now=clock[0])
+
+
+def test_later_arrivals_do_not_count_as_ahead(stall, clock):
+    queue, health, _, _, items = stall
+    entered = clock[0] - 900
+    _waiting(queue, entered + 60, entered + 120)
+    health.record_recently_added("1", [])
+    assert not _hold(queue, items, entered=entered, now=clock[0])
+
+
+def test_not_held_after_restart_with_nothing_known(stall, clock):
+    queue, _, _, _, items = stall
+    entered = clock[0] - 900
+    _waiting(queue, entered - 300)
+    assert not _hold(queue, items, entered=entered, now=clock[0])
+
+
+def test_not_held_past_the_cap(stall, clock):
+    queue, health, _, _, items = stall
+    _waiting(queue)
+    health.record_contact_failure()
+    assert not _hold(queue, items, entered=clock[0] - queue.PLEX_STALL_MAX_WAIT - 1, now=clock[0])
+
+
+def test_not_held_for_torrents(stall, clock):
+    queue, health, _, _, items = stall
+    _waiting(queue)
+    health.record_contact_failure()
+    assert not _hold(queue, items, entered=clock[0] - 900, now=clock[0], tid="RDTORRENTID")
+
+
+def test_not_held_in_symlink_mode(stall, clock):
+    queue, health, settings, _, items = stall
+    settings[("File Management", "file_collection_management")] = "Symlinked/Local"
+    _waiting(queue)
+    health.record_contact_failure()
+    assert not _hold(queue, items, entered=clock[0] - 900, now=clock[0])
+
+
+def test_not_held_when_folder_is_not_on_the_mount(stall, clock):
+    queue, health, _, mount, items = stall
+    (mount / FOLDER).rmdir()
+    _waiting(queue)
+    health.record_contact_failure()
+    assert not _hold(queue, items, entered=clock[0] - 900, now=clock[0])
+
+
+def test_hold_is_forgotten_when_the_job_leaves_checking(stall):
+    queue, _, _, _, _ = stall
+    item = {"id": 1, "filled_by_torrent_id": JOB}
+    _prime_for_removal(queue, [item])
+    queue._plex_stall_held_at = {JOB: HOUR}
+    queue.remove_item(item)
+    assert JOB not in queue._plex_stall_held_at
