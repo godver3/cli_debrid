@@ -11,6 +11,19 @@ import re
 _CAP_RANGE_RE = re.compile(r'\bCap\.(\d{3,4})_(\d{3,4})\b', re.IGNORECASE)
 _CAP_SINGLE_RE = re.compile(r'\bCap\.(\d{3,4})\b', re.IGNORECASE)
 
+# Obfuscated usenet file names: a bare hash ("74c9a5b3...e9.mkv") or a long
+# random alphanumeric run with no separators. PTT reads stray digits out of
+# these as episode/season numbers, so their parse must not be trusted.
+_OBFUSCATED_HEX_RE = re.compile(r'[0-9a-fA-F]{16,}')
+_OBFUSCATED_ALNUM_RE = re.compile(r'(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{24,}')
+
+
+def is_obfuscated_filename(name: str) -> bool:
+    """True when a file name's stem is an obfuscated hash/random string that
+    carries no title, season or episode information."""
+    stem = name.rsplit('.', 1)[0] if '.' in name else name
+    return bool(_OBFUSCATED_HEX_RE.fullmatch(stem) or _OBFUSCATED_ALNUM_RE.fullmatch(stem))
+
 # Pattern to extract a parenthesized alternative title near the start of a filename.
 # Matches: "El renacido (The Revenant) 2015 ..." → "The Revenant"
 # Only matches parentheses within the first ~60 chars to avoid matching years/tags like (2015) or [4K]

@@ -58,7 +58,7 @@ from flask import Response, stream_with_context
 # Import sqlite3 for error handling and add_media_item
 import sqlite3
 from utilities.local_library_scan import convert_item_to_symlink, get_symlink_path, create_symlink, resync_symlinks_with_new_settings
-from scraper.functions.ptt_parser import parse_with_ptt
+from scraper.functions.ptt_parser import parse_with_ptt, is_obfuscated_filename
 from database.database_writing import add_media_item, RESET_COLLECTION_STATE_SQL
 from routes.program_operation_routes import get_program_runner
 from utilities.plex_removal_cache import cache_plex_removal
@@ -3801,6 +3801,18 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
             except Exception as e:
                 logging.error(f"[RcloneScan {task_id}] PTT/Reverse filename parse failed for {item_path.name}: {e}. Skipping.")
                 parser_errors += 1; update_progress(parser_errors=parser_errors); continue
+
+            # An obfuscated hash filename carries nothing but noise: PTT pulls
+            # stray digits out of it as an episode number, turning movies into
+            # "Show (Year)/Season 00/S00E09" episodes. Trust the release folder.
+            if parsed_info_folder and is_obfuscated_filename(item_path.name):
+                logging.debug(f"[RcloneScan {task_id}] Obfuscated filename {item_path.name}; using folder '{folder_name}' parse only")
+                parsed_info_file, parsed_version_file = {}, None
+            # A bare-number folder ("10/10.Cloverfield.Lane.2016...mkv", a
+            # truncated release name) parses as episode 10. Real show folders
+            # like "24/" still get S/E from their files.
+            if folder_name.isdigit():
+                parsed_info_folder = {k: v for k, v in parsed_info_folder.items() if k not in ('season', 'episode')}
 
             def get_prioritized_value(key, from_folder, from_file, default=None):
                 folder_val = from_folder.get(key)
