@@ -115,3 +115,39 @@ def test_non_nzb_ids_are_ignored(env):
     queue, client, _ = env
     queue._remove_abandoned_nzb_job("RDTORRENTID", [{"id": 1}])
     assert client.removed == []
+
+
+def _prime_for_removal(queue, items, uncached=None):
+    queue.items = list(items)
+    queue.checking_queue_times = {}
+    queue.progress_checks = {}
+    queue.unknown_strikes = {}
+    queue.missing_strikes = {}
+    queue.uncached_torrents = uncached or {}
+
+
+def test_remove_item_does_not_download_the_nzb_again(env, monkeypatch):
+    # Every item leaving Checking used to re-download its NZB from the indexer just
+    # to look for a torrent hash it never has - one wasted grab per attempt.
+    queue, _, _ = env
+    fetched = []
+    monkeypatch.setitem(queue.remove_item.__globals__, "download_and_extract_hash",
+                        lambda url, *a, **k: fetched.append(url))
+    item = {"id": 1, "filled_by_torrent_id": JOB,
+            "filled_by_magnet": "https://indexer.example/getnzb?id=abc.nzb&apikey=x"}
+    _prime_for_removal(queue, [item])
+    queue.remove_item(item)
+    assert fetched == []
+    assert queue.items == []
+
+
+def test_remove_item_still_clears_uncached_tracking(env):
+    queue, _, _ = env
+    item = {"id": 1, "filled_by_torrent_id": "RDTORRENTID",
+            "filled_by_magnet": "https://tracker.example/file.torrent"}
+    _prime_for_removal(queue, [item], uncached={
+        "a" * 40: {"last_check_time": 0, "item_ids": [1]},
+        "b" * 40: {"last_check_time": 0, "item_ids": [1, 2]},
+    })
+    queue.remove_item(item)
+    assert queue.uncached_torrents == {"b" * 40: {"last_check_time": 0, "item_ids": [2]}}

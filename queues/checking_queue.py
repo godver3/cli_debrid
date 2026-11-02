@@ -1163,24 +1163,19 @@ class CheckingQueue:
                 logging.debug(f"Cleaned up unknown strikes for torrent {torrent_id} as it has no more associated items.")
             self.missing_strikes.pop(torrent_id, None)
         
-        # Also clean up any uncached torrent tracking if this was the last item
+        # Also clean up any uncached torrent tracking if this was the last item.
+        # Look the item up by ID instead of re-deriving its hash: for http links
+        # that meant downloading the .torrent/.nzb again from the indexer on every
+        # removal (NZBs have no hash, so the download was always wasted).
         try:
-            if item.get('filled_by_magnet'):
-                magnet = item.get('filled_by_magnet')
-                hash_value = None
-                if magnet.startswith('http'):
-                    hash_value = download_and_extract_hash(magnet)
-                else:
-                    hash_value = extract_hash_from_magnet(magnet)
-                
-                if hash_value and hash_value in self.uncached_torrents:
-                    # Remove this item ID from tracking
-                    if item['id'] in self.uncached_torrents[hash_value]['item_ids']:
-                        self.uncached_torrents[hash_value]['item_ids'].remove(item['id'])
-                        logging.debug(f"Removed item {item['id']} from uncached torrent tracking for hash {hash_value[:8]}...")
-                    
+            for hash_value in list(self.uncached_torrents.keys()):
+                item_ids = self.uncached_torrents[hash_value]['item_ids']
+                if item['id'] in item_ids:
+                    item_ids.remove(item['id'])
+                    logging.debug(f"Removed item {item['id']} from uncached torrent tracking for hash {hash_value[:8]}...")
+
                     # If no more items with this hash, remove the hash from tracking
-                    if not self.uncached_torrents[hash_value]['item_ids']:
+                    if not item_ids:
                         del self.uncached_torrents[hash_value]
                         logging.debug(f"Removed hash {hash_value[:8]}... from uncached tracking as it has no more items")
         except Exception as e:
