@@ -39,6 +39,10 @@ class TorrentAdditionError(TorrentProcessingError):
 # the next one is tried.
 NZB_DEFERRED_INDEXER_COOLDOWN = object()
 
+# Per process_results call, for providers whose cache check adds the magnet to the
+# account (AllDebrid, which suspends accounts that generate links without downloading).
+MAX_ACCOUNT_ADDING_CACHE_CHECKS_PER_ITEM = 10
+
 class TorrentProcessor:
     """Handles torrent file/magnet processing and caching checks"""
 
@@ -1473,6 +1477,10 @@ class TorrentProcessor:
         if sibling_pack:
             return sibling_pack
 
+        # Cache checks on a provider that has to add the magnet to answer (AllDebrid)
+        # made for this item so far; capped at MAX_ACCOUNT_ADDING_CACHE_CHECKS_PER_ITEM.
+        account_adding_checks = {}
+
         for idx, result in enumerate(results, 1):
             chosen_result_for_return = None # Initialize variable to hold the chosen result
             try:
@@ -1546,6 +1554,13 @@ class TorrentProcessor:
                 winning_provider = self.debrid_provider  # default to primary
 
                 def _check_one(prov):
+                    if getattr(prov, 'CACHE_CHECK_ADDS_TO_ACCOUNT', False):
+                        _done = account_adding_checks.get(id(prov), 0)
+                        if _done >= MAX_ACCOUNT_ADDING_CACHE_CHECKS_PER_ITEM:
+                            logging.info(f"[{prov.PROVIDER_NAME}] skipping cache check: already checked "
+                                         f"{_done} releases for {item_identifier}")
+                            return prov, None, 'per_item_cap'
+                        account_adding_checks[id(prov)] = _done + 1
                     try:
                         cached, src = self.check_cache_status(
                             magnet if not temp_file else "",
@@ -1567,15 +1582,25 @@ class TorrentProcessor:
                     winning_provider, is_cached, cache_source = _check_one(providers[0])
                 else:
                     _outcomes = {}
-                    with ContextThreadPoolExecutor(max_workers=len(providers)) as _ex:
-                        _futures = {_ex.submit(_check_one, p): p for p in providers}
-                        for _fut in _as_completed(_futures):
-                            _prov, _cached, _src = _fut.result()
+                    # A provider whose check adds the magnet to the account (AllDebrid) is
+                    # left out of the parallel pass and asked below only when no provider
+                    # ranked above it has the release cached, i.e. only when its answer can
+                    # decide the pick.
+                    _parallel = [p for p in providers if not getattr(p, 'CACHE_CHECK_ADDS_TO_ACCOUNT', False)]
+                    if _parallel:
+                        with ContextThreadPoolExecutor(max_workers=len(_parallel)) as _ex:
+                            _futures = {_ex.submit(_check_one, p): p for p in _parallel}
+                            for _fut in _as_completed(_futures):
+                                _prov, _cached, _src = _fut.result()
+                                logging.info(f"[{_prov.PROVIDER_NAME}] cache={_cached} src={_src}")
+                                _outcomes[id(_prov)] = (_cached, _src)
+                    # Take the first cached provider in the configured order rather than
+                    # whichever answered first.
+                    for _prov in providers:
+                        if id(_prov) not in _outcomes:
+                            _prov, _cached, _src = _check_one(_prov)
                             logging.info(f"[{_prov.PROVIDER_NAME}] cache={_cached} src={_src}")
                             _outcomes[id(_prov)] = (_cached, _src)
-                    # Every check has finished by now, so take the first cached provider
-                    # in the configured order rather than whichever answered first.
-                    for _prov in providers:
                         _cached, _src = _outcomes.get(id(_prov), (None, None))
                         if _cached:
                             is_cached = True
