@@ -2,23 +2,22 @@ import logging
 import logging.handlers
 from utilities.settings import get_setting
 from utilities.log_redaction import RedactingFormatter, scrub
-import psutil
 import os
-import time
-import threading
 import cProfile
-import pstats
-import io
 import json
 import re
 from datetime import datetime
-from queues.performance_monitor import monitor, start_performance_monitoring
+from queues.performance_monitor import start_performance_monitoring
 
 # Global profiler
 global_profiler = cProfile.Profile()
 
 def start_global_profiling():
+    """Profile the main thread when CLI_DEBRID_PROFILE is set. Nothing reads the
+    stats otherwise, and on Python 3.12+ cProfile slows every thread (~3x)."""
     global global_profiler
+    if not os.environ.get('CLI_DEBRID_PROFILE'):
+        return
     try:
         # First try to disable any existing profiler
         try:
@@ -40,15 +39,6 @@ def stop_global_profiling():
     except Exception as e:
         logging.warning(f"Failed to stop profiling: {str(e)}")
 
-class OverwriteFileHandler(logging.FileHandler):
-    def __init__(self, filename, mode='w', encoding=None, delay=False):
-        super().__init__(filename, mode, encoding, delay)
-    
-    def emit(self, record):
-        # Open the file in write mode ('w') for each emission
-        self.baseFilename = self.baseFilename
-        with open(self.baseFilename, 'w', encoding=self.encoding) as f:
-            f.write(self.format(record) + self.terminator)
 
 class DynamicConsoleHandler(logging.StreamHandler):
     def __init__(self):
@@ -144,9 +134,6 @@ class APSchedulerMaxInstancesWarningFilter(logging.Filter):
             return False  # Suppress this warning
         return True
 
-def log_system_stats():
-    """Start the performance monitoring system"""
-    monitor.start_monitoring()
 
 # Create a filter to exclude logs from specific files
 class ExcludeFilter(logging.Filter):
@@ -215,19 +202,23 @@ def setup_debug_logging(log_dir):
     debug_handler.addFilter(APSchedulerDebugNoiseFilter())
     debug_handler.addFilter(APSchedulerMaxInstancesWarningFilter())
     
-    formatter = RedactingFormatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(message)s')
+    # item_tag is "[item 123] " while an item is being processed (utilities.log_context)
+    formatter = RedactingFormatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(item_tag)s%(message)s')
     debug_handler.setFormatter(formatter)
     logging.getLogger().addHandler(debug_handler)
 
 def setup_info_logging(log_dir):
     # Add console handler for info logs
     console_handler = DynamicConsoleHandler()
-    console_handler.setFormatter(RedactingFormatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+    console_handler.setFormatter(RedactingFormatter('%(asctime)s - %(item_tag)s%(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
     
     # Add filters to exclude unwanted messages
     console_handler.addFilter(lambda record: not record.name.startswith(('urllib3', 'requests', 'charset_normalizer')))
     console_handler.addFilter(ExcludeFilter())
     console_handler.addFilter(APSchedulerQueueJobFilter())
+    # Same as debug.log: at DEBUG the scheduler logs "Looking for jobs" / "Next
+    # wakeup" twice a second, which filled the supervisord stderr log.
+    console_handler.addFilter(APSchedulerDebugNoiseFilter())
     console_handler.addFilter(APSchedulerMaxInstancesWarningFilter())
     
     # Add handler to root logger
@@ -306,6 +297,10 @@ def setup_logging():
     
     # Clear any existing handlers
     root_logger.handlers.clear()
+
+    # Every record carries item_tag, which the debug and console formats print
+    from utilities.log_context import install_log_record_factory
+    install_log_record_factory()
     
     # Configure handlers
     setup_debug_logging(log_dir)

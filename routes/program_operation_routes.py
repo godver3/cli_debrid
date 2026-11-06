@@ -1,21 +1,18 @@
-from flask import jsonify, request, current_app, Blueprint, logging, render_template, flash, redirect, url_for
-from routes import admin_required, user_required
+from flask import jsonify, request, current_app, Blueprint, logging, render_template
+from routes import admin_required
 from .database_routes import perform_database_migration 
 from routes.extensions import initialize_app 
 from queues.config_manager import load_config 
 from utilities.settings import get_setting
 import threading
 from queues.run_program import ProgramRunner, _setup_scheduler_listeners
-from flask_login import login_required
 from requests.exceptions import RequestException
 from routes.api_tracker import api
 import logging
 import time
-import socket
 import os
 import re
 import signal
-import psutil
 import sys
 import subprocess
 import xml.etree.ElementTree as ET
@@ -23,12 +20,8 @@ from routes.notifications import (
     send_queue_start_notification,
     send_queue_stop_notification
 )
-from apscheduler.triggers.interval import IntervalTrigger
-from datetime import timezone
-import pytz
 from datetime import datetime, timedelta
 import json
-from content_checkers.trakt import is_refresh_token_expired
 from utilities.jellyfin_auth import jellyfin_auth_headers
 
 program_operation_bp = Blueprint('program_operation', __name__)
@@ -873,7 +866,6 @@ def check_program_conditions():
     required_settings = [
         ('Plex', 'url'),
         ('Plex', 'token'),
-        ('Metadata Battery', 'url')
     ]
 
     missing_fields = []
@@ -954,6 +946,8 @@ def get_task_timings():
         'task_overlay_sync',
         'task_overlay_cleanup',
         'task_sync_plex_labels',
+        'task_process_plex_reported_issues',
+        'task_sync_viewer_history',
         'task_process_bulk_subtitles',
         'task_backup_debrid',
         'task_cleanup_debrid',
@@ -1162,6 +1156,17 @@ def disable_task():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+def _sync_setting_backed_tasks(runner):
+    """Write the setting behind each setting-backed task to match its Task Manager toggle."""
+    from queues.run_program import SETTING_BACKED_TASKS
+    from utilities.settings import set_setting
+    for task_name, (section, key) in SETTING_BACKED_TASKS.items():
+        enabled = task_name in runner.enabled_tasks
+        if bool(get_setting(section, key, False)) != enabled:
+            set_setting(section, key, enabled)
+            logging.info(f"Set {section} > {key} to {enabled} to match task '{task_name}'")
+
+
 def _persist_task_toggles_from_runner(runner):
     """Write ProgramRunner's live enabled_tasks state to task_toggles.json.
 
@@ -1222,6 +1227,7 @@ def _persist_task_toggles_from_runner(runner):
         with open(toggles_file_path, 'w') as f:
             json.dump(data_to_save, f, indent=4)
         logging.info(f"Live task toggle states saved to {toggles_file_path}")
+        _sync_setting_backed_tasks(runner)
         return True, None
     except OSError as e:
         logging.error(f"Error writing task toggles file: {str(e)}")

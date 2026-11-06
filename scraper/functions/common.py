@@ -1,8 +1,6 @@
 """Common utility functions shared across the scraper module."""
-import re
 import logging
-from typing import Dict, Any, Union, List, Optional
-from PTT import parse_title
+from typing import Dict, Any, Union
 from scraper.functions.ptt_parser import parse_with_ptt
 
 def trim_magnet(magnet: str):

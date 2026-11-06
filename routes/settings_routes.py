@@ -1,10 +1,10 @@
 from flask import Blueprint, jsonify, request, render_template, Response, current_app, make_response
-from utilities.settings import load_config, validate_url, save_config
+from utilities.settings import load_config, save_config
 from utilities.settings_schema import SETTINGS_SCHEMA
 import logging
-from queues.config_manager import add_scraper, clean_notifications, get_content_source_settings, update_content_source, get_version_settings, add_content_source, delete_content_source, save_config, get_enabled_content_sources
+from queues.config_manager import add_scraper, clean_notifications, get_content_source_settings, get_version_settings, add_content_source, delete_content_source, save_config, get_enabled_content_sources
 from routes.models import admin_required, onboarding_required, user_required
-from .utils import is_user_system_enabled
+from .utils import is_user_system_enabled  # noqa: F401  (re-exported; other routes import it from here)
 import traceback
 import json
 import os
@@ -16,8 +16,6 @@ from routes.notifications import (
     send_ntfy_notification, 
     send_email_notification
 )
-import re
-import time
 from content_checkers.trakt import fetch_liked_trakt_lists_details
 from database.database_writing import update_version_name # Ensure this is imported
 import sys
@@ -947,7 +945,7 @@ def get_scrob_lists():
 
 @settings_bp.route('/content-sources/overseerr-users')
 def get_overseerr_users():
-    from utilities.settings import get_setting, get_all_settings
+    from utilities.settings import get_all_settings
     source_id = request.args.get('source_id', '')
     try:
         all_settings = get_all_settings()
@@ -1550,7 +1548,7 @@ def api_program_settings():
 
         # Merge defaults for each section
         program_settings = {}
-        sections_to_include = ['Scrapers', 'Content Sources', 'Debug', 'Plex', 'Metadata Battery', 'Debrid Provider', 'Usenet Provider']
+        sections_to_include = ['Scrapers', 'Content Sources', 'Debug', 'Plex', 'Debrid Provider', 'Usenet Provider']
         
         for section in sections_to_include:
             if section in SETTINGS_SCHEMA:
@@ -2162,21 +2160,6 @@ def get_reverse_parser_settings():
     
     return jsonify(reverse_parser_settings)
 
-def update_nested_settings(current, new):
-    for key, value in new.items():
-        if isinstance(value, dict):
-            if key not in current or not isinstance(current[key], dict):
-                current[key] = {}
-            if key == 'Content Sources':
-                for source_id, source_config in value.items():
-                    if source_id in current[key]:
-                        update_content_source(source_id, source_config)
-                    else:
-                        add_content_source(source_config['type'], source_config)
-            else:
-                update_nested_settings(current[key], value)
-        else:
-            current[key] = value
 
 @settings_bp.route('/versions/add', methods=['POST'])
 @admin_required
@@ -2213,6 +2196,7 @@ def add_version():
         'similarity_threshold_anime': 0.80,
         'year_match_weight': 3,
         'foreign_language_penalty': 30,
+        'audio_description_penalty': 10000,
         'wake_count': None,
         'fallback_version': 'None',
         'anime_filter_mode': 'None',
@@ -2695,14 +2679,6 @@ def get_content_source_settings_route():
             'traceback': traceback.format_exc()
         }), 500
 
-@settings_bp.route('/get_scraping_versions', methods=['GET'])
-def get_scraping_versions():
-    try:
-        config = load_config()
-        versions = config.get('Scraping', {}).get('versions', {}).keys()
-        return jsonify({'versions': list(versions)})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 @settings_bp.route('/get_version_settings')
 def get_version_settings_route():
@@ -2752,20 +2728,42 @@ def save_version_settings():
         
         config['Scraping']['versions'][version] = settings
         save_config(config)
-        
+
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-def update_required_settings(form_data):
-    config = load_config()
-    config['Plex']['url'] = form_data.get('plex_url')
-    config['Plex']['token'] = form_data.get('plex_token')
-    config['Plex']['shows_libraries'] = form_data.get('shows_libraries')
-    config['Plex']['movies_libraries'] = form_data.get('movies_libraries')
-    config['RealDebrid']['api_key'] = form_data.get('realdebrid_api_key')
-    config['Metadata Battery']['url'] = form_data.get('metadata_battery_url')
-    save_config(config)
+@settings_bp.route('/save_single_setting', methods=['POST'])
+@admin_required
+def save_single_setting():
+    """Instant-save one schema-defined setting (used by the logo picker)."""
+    from utilities.settings import set_setting
+    section = request.form.get('section', '')
+    key = request.form.get('key', '')
+    value = request.form.get('value', '')
+
+    schema = SETTINGS_SCHEMA.get(section, {}).get(key)
+    if not isinstance(schema, dict):
+        return jsonify({'status': 'error', 'error': f'Unknown setting {section}.{key}'}), 400
+
+    setting_type = schema.get('type')
+    if setting_type == 'boolean':
+        value = value.lower() in ('true', '1', 'on', 'yes')
+    elif setting_type == 'integer':
+        try:
+            value = int(value)
+        except ValueError:
+            return jsonify({'status': 'error', 'error': f'{key} must be an integer'}), 400
+    elif setting_type != 'string':
+        return jsonify({'status': 'error', 'error': f'{key} cannot be saved individually'}), 400
+
+    choices = schema.get('choices')
+    if choices and value not in choices:
+        return jsonify({'status': 'error', 'error': f'Invalid value for {key}'}), 400
+
+    set_setting(section, key, value)
+    return jsonify({'status': 'success'})
+
 
 @settings_bp.route('/notifications/enabled', methods=['GET'])
 def get_enabled_notifications():
@@ -2892,6 +2890,38 @@ def update_notification_defaults():
         logging.error(f"Error updating notification defaults: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
+def build_default_version():
+    """Settings for a new 'Default' version, taken from the schema defaults."""
+    version_schema = SETTINGS_SCHEMA['Scraping']['versions']['schema']
+    return {
+        'enable_hdr': version_schema['enable_hdr']['default'],
+        'max_resolution': version_schema['max_resolution']['default'],
+        'resolution_wanted': version_schema['resolution_wanted']['default'],
+        'resolution_weight': version_schema['resolution_weight']['default'],
+        'hdr_weight': version_schema['hdr_weight']['default'],
+        'similarity_weight': version_schema['similarity_weight']['default'],
+        'similarity_threshold': version_schema['similarity_threshold']['default'],
+        'similarity_threshold_anime': version_schema['similarity_threshold_anime']['default'],
+        'size_weight': version_schema['size_weight']['default'],
+        'bitrate_weight': version_schema['bitrate_weight']['default'],
+        'year_match_weight': version_schema['year_match_weight']['default'],
+        'foreign_language_penalty': version_schema['foreign_language_penalty']['default'],
+        'audio_description_penalty': version_schema['audio_description_penalty']['default'],
+        'preferred_filter_in': version_schema['preferred_filter_in']['default'],
+        'preferred_filter_out': version_schema['preferred_filter_out']['default'],
+        'filter_in': version_schema['filter_in']['default'],
+        'filter_out': version_schema['filter_out']['default'],
+        'min_size_gb': version_schema['min_size_gb']['default'],
+        'max_size_gb': version_schema['max_size_gb']['default'],
+        'min_bitrate_mbps': version_schema['min_bitrate_mbps']['default'],
+        'max_bitrate_mbps': version_schema['max_bitrate_mbps']['default'],
+        'wake_count': version_schema['wake_count']['default'],
+        'fallback_version': version_schema['fallback_version']['default'],
+        'anime_filter_mode': version_schema['anime_filter_mode']['default'],
+        'require_physical_release': version_schema['require_physical_release']['default'],
+        'language_code': version_schema['language_code']['default']
+    }
+
 @settings_bp.route('/versions/add_default', methods=['POST'])
 @admin_required
 def add_default_version():
@@ -2900,35 +2930,7 @@ def add_default_version():
         if 'Scraping' not in config:
             config['Scraping'] = {}
 
-        # Get the default version settings from the schema
-        version_schema = SETTINGS_SCHEMA['Scraping']['versions']['schema']
-        default_version = {
-            'enable_hdr': version_schema['enable_hdr']['default'],
-            'max_resolution': version_schema['max_resolution']['default'],
-            'resolution_wanted': version_schema['resolution_wanted']['default'],
-            'resolution_weight': version_schema['resolution_weight']['default'],
-            'hdr_weight': version_schema['hdr_weight']['default'],
-            'similarity_weight': version_schema['similarity_weight']['default'],
-            'similarity_threshold': version_schema['similarity_threshold']['default'],
-            'similarity_threshold_anime': version_schema['similarity_threshold_anime']['default'],
-            'size_weight': version_schema['size_weight']['default'],
-            'bitrate_weight': version_schema['bitrate_weight']['default'],
-            'year_match_weight': version_schema['year_match_weight']['default'],
-            'foreign_language_penalty': version_schema['foreign_language_penalty']['default'],
-            'preferred_filter_in': version_schema['preferred_filter_in']['default'],
-            'preferred_filter_out': version_schema['preferred_filter_out']['default'],
-            'filter_in': version_schema['filter_in']['default'],
-            'filter_out': version_schema['filter_out']['default'],
-            'min_size_gb': version_schema['min_size_gb']['default'],
-            'max_size_gb': version_schema['max_size_gb']['default'],
-            'min_bitrate_mbps': version_schema['min_bitrate_mbps']['default'],
-            'max_bitrate_mbps': version_schema['max_bitrate_mbps']['default'],
-            'wake_count': version_schema['wake_count']['default'],
-            'fallback_version': version_schema['fallback_version']['default'],
-            'anime_filter_mode': version_schema['anime_filter_mode']['default'],
-            'require_physical_release': version_schema['require_physical_release']['default'],
-            'language_code': version_schema['language_code']['default']
-        }
+        default_version = build_default_version()
 
         # Add the default version while preserving existing versions
         if 'versions' not in config['Scraping']:
@@ -2969,6 +2971,7 @@ def add_separate_versions():
             'bitrate_weight': version_schema['bitrate_weight']['default'],
             'year_match_weight': version_schema['year_match_weight']['default'],
             'foreign_language_penalty': version_schema['foreign_language_penalty']['default'],
+            'audio_description_penalty': version_schema['audio_description_penalty']['default'],
             'preferred_filter_in': [],
             'preferred_filter_out': [],
             'filter_in': [],
@@ -3624,6 +3627,7 @@ def add_default_mdblists():
                 'similarity_threshold_anime': 0.80,
                 'year_match_weight': 3,
                 'foreign_language_penalty': 30,
+                'audio_description_penalty': 10000,
                 'wake_count': None,
                 'fallback_version': 'None',
                 'anime_filter_mode': 'None',
@@ -3726,14 +3730,14 @@ def get_collection_poster_previews():
 def serve_collection_poster_preview(design_id):
     """Serve a poster design preview image."""
     from flask import send_file
-    from database.collection_poster_renderer import DESIGNS, PREVIEW_DIR, generate_preview_images
+    from database.collection_poster_renderer import DESIGNS, PREVIEW_DIR
     if design_id not in DESIGNS:
         return jsonify({'error': 'Invalid design ID'}), 404
     preview_file = PREVIEW_DIR / DESIGNS[design_id]['preview']
     if not preview_file.exists() and design_id > 0:
         # Generate just this one design
         try:
-            from database.collection_poster_renderer import DESIGN_RENDERERS, SOURCE_ICONS, get_source_icon
+            from database.collection_poster_renderer import DESIGN_RENDERERS, get_source_icon
             renderer = DESIGN_RENDERERS.get(design_id)
             if renderer:
                 img = renderer(
@@ -3761,7 +3765,7 @@ def serve_collection_poster_preview(design_id):
 def get_plex_smart_collections():
     """Get all smart collections from Plex with enabled state and shared poster settings."""
     try:
-        from database.plex_smart_collections import get_all_smart_collections, _load_state, _migrate_state
+        from database.plex_smart_collections import get_all_smart_collections
         collections = get_all_smart_collections()
         _psc = load_config().get('Plex Smart Collections', {})
         saved_colls = _psc.get('collections', {}) if isinstance(_psc, dict) else {}

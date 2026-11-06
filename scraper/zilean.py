@@ -1,7 +1,6 @@
 from routes.api_tracker import api, requests
 import logging
-from typing import List, Dict, Any, Tuple
-from utilities.settings import load_config
+from typing import List, Dict, Any
 from urllib.parse import urlencode
 
 # Timeout for API requests in seconds

@@ -1,11 +1,7 @@
 from flask import Blueprint, render_template, jsonify, request
-from flask_login import login_required, current_user
-from functools import wraps
-import os
 from pathlib import Path
 from utilities.local_library_scan import scan_for_broken_symlinks, repair_broken_symlink
 import arrow # Import arrow
-from datetime import datetime # Added for strptime if needed, though arrow might handle all
 
 from cli_battery.app.direct_api import DirectAPI
 from utilities.settings import load_config

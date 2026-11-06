@@ -276,4 +276,6 @@ class RedactingFormatter(logging.Formatter):
     """
 
     def format(self, record):
+        if not hasattr(record, 'item_tag'):  # set by utilities.log_context's record factory
+            record.item_tag = ''
         return scrub(super().format(record))

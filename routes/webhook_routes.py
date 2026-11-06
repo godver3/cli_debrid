@@ -1,32 +1,15 @@
-from flask import jsonify, request, Blueprint, current_app
+from flask import jsonify, request, Blueprint
 import logging
 from queues.run_program import process_overseerr_webhook
-from routes.extensions import app
-from queues.queue_manager import QueueManager
-from utilities.local_library_scan import check_local_file_for_item, get_symlink_path, create_symlink
-from utilities.plex_functions import plex_update_item
-from utilities.emby_functions import emby_update_item
 from utilities.settings import get_setting
 from urllib.parse import unquote
 import unicodedata
 import os.path
-from content_checkers.overseerr import get_overseerr_details, get_overseerr_headers
-from routes.api_tracker import api
-from typing import Dict, Any
-from scraper.functions.ptt_parser import parse_with_ptt
-from cli_battery.app.direct_api import DirectAPI
-from fuzzywuzzy import fuzz
-from database.core import get_db_connection
-from utilities.reverse_parser import parse_filename_for_version
 from datetime import datetime, timezone
-from database.database_writing import update_media_item_state, add_media_item, update_release_date_and_state
-from database.database_reading import get_media_item_by_id, get_media_item_presence, get_media_item_by_filename, check_item_exists_by_directory_name, check_item_exists_by_symlink_path, check_item_exists_with_symlink_path_containing
-import json
-import time
+from database.database_reading import get_media_item_by_filename, check_item_exists_by_directory_name, check_item_exists_with_symlink_path_containing
 import requests # Added for TMDB API calls
 import threading # Added for background task
 import uuid # Added for task_id generation
-from pathlib import Path # Added for path manipulation
 from routes.debug_routes import _run_rclone_to_symlink_task # Added for the rclone processing task
 import os # Added for os.path.basename and os.path.join
 

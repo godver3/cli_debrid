@@ -4,7 +4,6 @@ import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 import re
-from routes import admin_required
 
 api_summary_bp = Blueprint('api_summary', __name__)
 real_time_api_bp = Blueprint('real_time_api', __name__)

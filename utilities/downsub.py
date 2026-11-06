@@ -19,7 +19,7 @@ except ImportError:
 # Import subliminal components
 SUBLIMINAL_AVAILABLE = False
 try:
-    from subliminal import download_best_subtitles, save_subtitles, region
+    from subliminal import download_best_subtitles, region
     from subliminal.video import Video
     from babelfish import Language
     import xml.parsers.expat

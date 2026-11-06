@@ -1,21 +1,12 @@
-from flask import Blueprint, render_template, send_file, abort, Response, request, jsonify
+from flask import Blueprint, render_template, abort, Response, request, jsonify
 from database.database_reading import get_all_videos, get_video_by_id
 import os
-import mimetypes
-import re
 import subprocess
-import threading
 import logging
 import sys
 import json
-import tempfile
-import atexit
-from werkzeug.wsgi import FileWrapper
-import time
 from threading import Lock
-import errno
 from threading import Lock
-from collections import defaultdict
 
 # Configure logging
 logging.basicConfig(

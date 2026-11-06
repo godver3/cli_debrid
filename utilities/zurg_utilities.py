@@ -1,5 +1,3 @@
-import requests
-import logging
 
 async def run_get_collected_from_zurg():
     pass

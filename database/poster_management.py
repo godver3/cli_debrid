@@ -1,7 +1,5 @@
 import logging
 from utilities.settings import get_setting
-import asyncio
-from aiohttp import ClientConnectorError, ServerTimeoutError, ClientResponseError
 
 async def get_poster_url(session, tmdb_id, media_type):
     from routes.poster_cache import get_cached_poster_url, cache_poster_url, cache_unavailable_poster, UNAVAILABLE_POSTER

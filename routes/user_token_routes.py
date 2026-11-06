@@ -1,13 +1,10 @@
 from flask import Blueprint, jsonify, request, render_template, session, current_app
-from flask_login import login_required # Assuming you have role checks or just login requirement
 import requests
 import json
 import os
 import uuid
-import time
 from utilities.settings import get_config_dir, load_config, save_config, get_setting # Import main config functions
 from utilities.file_lock import FileLock # For safe JSON writing
-from datetime import datetime # To timestamp the fetch
 from .models import admin_required # Added import for admin_required
 
 user_token_bp = Blueprint('user_token', __name__)

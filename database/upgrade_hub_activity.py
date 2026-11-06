@@ -97,24 +97,6 @@ def add_ignored_items(items: list) -> int:
     return added
 
 
-def get_ignored_items_set() -> frozenset:
-    """
-    Return a frozenset of (imdb_id, season_or_None) tuples for fast scan-time filtering.
-    Also includes (imdb_id, None) for movies.
-    """
-    conn = get_db_connection()
-    try:
-        rows = conn.execute(
-            "SELECT imdb_id, season FROM upgrade_hub_ignored"
-        ).fetchall()
-        return frozenset((r[0], r[1]) for r in rows)
-    except Exception as e:
-        logger.debug(f"[UPGRADE_HUB] get_ignored_items_set error: {e}")
-        return frozenset()
-    finally:
-        conn.close()
-
-
 def get_ignored_items_list() -> list:
     """Return all ignored items as a list of dicts (for management UI)."""
     conn = get_db_connection()

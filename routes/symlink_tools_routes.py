@@ -1,14 +1,11 @@
 from flask import Blueprint, render_template, request, jsonify, flash, redirect, url_for
-from functools import wraps
 import os
 import logging
 from datetime import datetime
-from utilities.settings import get_setting, get_all_settings
-from utilities.local_library_scan import create_symlink, get_symlink_path, sanitize_filename
+from utilities.settings import get_setting
+from utilities.local_library_scan import create_symlink, get_symlink_path
 from database.core import get_db_connection
 from routes.models import admin_required
-from scraper.functions.ptt_parser import parse_with_ptt
-import json
 
 symlink_tools_bp = Blueprint('symlink_tools', __name__)
 

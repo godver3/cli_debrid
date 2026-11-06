@@ -1,12 +1,13 @@
 import logging
-from typing import Dict, Any, List
-from datetime import datetime, date, timedelta, time as dt_time
-import json
+from typing import Dict, Any
+from datetime import datetime, date, timedelta
 import time
 import os
 import re
 
 from utilities.settings import get_setting
+from utilities.log_context import logs_for_item
+from queues.scrape_window import in_alternate_scrape_window
 from scraper.scraper import scrape
 from scraper.functions.anime_utils import absolute_episode_for
 from database.core import retry_on_db_lock
@@ -31,15 +32,56 @@ def _is_excluded_release(item: Dict[str, Any], result: Dict[str, Any]) -> bool:
         return excluded == candidate
 
 
+def _other_season_episodes_pending(item: Dict[str, Any]) -> bool:
+    """True when another episode of the item's show+season+version is Wanted or Scraping.
+
+    A season pack is grabbed per version, so another version's wanted episodes don't
+    count. On a lookup error it answers True, keeping the old pack-first behaviour.
+    """
+    try:
+        from database import get_all_media_items
+        version = (item.get('version') or '').rstrip('*')
+        return any(
+            ep.get('type') == 'episode'
+            and ep.get('id') != item.get('id')
+            and ep.get('season_number') == item.get('season_number')
+            and (ep.get('version') or '').rstrip('*') == version
+            and ep.get('state') in ('Wanted', 'Scraping')
+            for ep in get_all_media_items(imdb_id=item.get('imdb_id')) or []
+        )
+    except Exception as e:
+        logging.warning(f"Could not check other pending episodes for {item.get('imdb_id')}: {e}")
+        return True
+
+
 class ScrapingQueue:
+    # How long an item waits after being deferred for a sibling in Adding
+    DEFER_SECONDS = 60
+
     def __init__(self):
         self.items = []
         # Use a set for efficient ID lookup of in-memory items
         self._item_ids = set()
+        # item_id -> monotonic deadline. update() re-sorts by show every tick, so
+        # moving a deferred item to the back of the list doesn't stick; process()
+        # skips these instead (one show with 5+ episodes at the head froze Scraping).
+        self._deferred_until: Dict[Any, float] = {}
+
+    def _next_item(self):
+        """First item that isn't deferred, or None when every item is."""
+        now = time.monotonic()
+        self._deferred_until = {
+            item_id: until for item_id, until in self._deferred_until.items()
+            if until > now and item_id in self._item_ids
+        }
+        for item in self.items:
+            if item.get('id') not in self._deferred_until:
+                return item
+        return None
 
     def update(self):
         """Synchronize the in-memory queue with the database state."""
-        from database import get_all_media_items, get_media_item_by_id
+        from database import get_all_media_items
         
         # Specific ID for debugging
         DEBUG_ITEM_ID_UPDATE = '177245'
@@ -233,7 +275,7 @@ class ScrapingQueue:
             conn.close()
 
     def process(self, queue_manager):
-        from database import get_all_media_items, get_media_item_by_id, get_db_connection, get_wake_count
+        from database import get_all_media_items, get_media_item_by_id
         processed_count = 0
         had_error = False
         today = date.today()
@@ -242,9 +284,12 @@ class ScrapingQueue:
         # Specific ID for debugging
         DEBUG_ITEM_ID = '177245'
 
-        if self.items:
-            # Peek at the first item instead of popping immediately
-            item_to_process = self.items[0]
+        item_to_process = self._next_item() if self.items else None
+        if self.items and item_to_process is None:
+            logging.debug(f"Scraping queue: all {len(self.items)} item(s) deferred behind related items in Adding")
+            return False
+        if item_to_process is not None:
+            # Peek at the item instead of popping immediately
             item_id_being_processed = item_to_process['id'] # Store ID for later check
             item_identifier = queue_manager.generate_identifier(item_to_process)
             processed_successfully_or_moved = False # Flag to track if item was moved/handled
@@ -363,7 +408,11 @@ class ScrapingQueue:
                         _coal_title = (_sibling_nzb[4] or '') if _sibling_nzb else ''  # original_scraped_torrent_title
                         _coal_file = (_sibling_nzb[1] or '') if _sibling_nzb else ''  # filled_by_file
                         _coal_job_title = (_sibling_nzb[3] or '') if _sibling_nzb else ''  # filled_by_title
-                        if _sibling_nzb and is_likely_season_pack(_coal_title, _coal_file, _coal_job_title):
+                        from utilities.rescrape_helpers import replacement_blocks_pack_reuse
+                        if (_sibling_nzb and is_likely_season_pack(_coal_title, _coal_file, _coal_job_title)
+                                and replacement_blocks_pack_reuse(item_to_process, _coal_job_title or _coal_title, _sibling_nzb[0])):
+                            logging.info(f'[NZBPack] {item_identifier}: sibling pack job {_sibling_nzb[0]} is the release being replaced - not coalescing')
+                        elif _sibling_nzb and is_likely_season_pack(_coal_title, _coal_file, _coal_job_title):
                             _job_id = _sibling_nzb[0]
                             # Verify the shared job is still actually queryable on the provider
                             # before reusing it - a job that completed and was since cleaned up
@@ -412,13 +461,27 @@ class ScrapingQueue:
                 try:
                     adding_queue = queue_manager.queues.get("Adding")
                     if adding_queue and adding_queue.get_contents(): # Check if Adding queue exists and has items
-                        is_in_adding = any(adding_item.get('imdb_id') == item_imdb_id for adding_item in adding_queue.get_contents())
+                        # NZB rows already submitted to cli_mount are owned by health
+                        # check — they used to freeze Scraping for the whole show for
+                        # hours (defer → False → process_scraping breaks the batch).
+                        from queues.adding_queue import adding_item_blocks_scraping
+                        is_in_adding = any(
+                            adding_item.get('imdb_id') == item_imdb_id
+                            and adding_item_blocks_scraping(adding_item)
+                            for adding_item in adding_queue.get_contents()
+                        )
                         if is_in_adding:
                             if str(item_id_being_processed) == DEBUG_ITEM_ID:
                                 # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] DEFERRED - related item found in Adding Queue.")
                                 pass
-                            # logging.info(f"Deferring processing for {item_identifier} (IMDb: {item_imdb_id}) - related item found in Adding Queue.")
-                            return False # Defer processing, keep item in queue
+                            # Skip it for a while so other shows can still scrape this
+                            # tick instead of aborting the whole Scraping batch.
+                            logging.debug(
+                                f"Deferring {item_identifier} (IMDb: {item_imdb_id}) for "
+                                f"{self.DEFER_SECONDS}s - related item in Adding"
+                            )
+                            self._deferred_until[item_id_being_processed] = time.monotonic() + self.DEFER_SECONDS
+                            return True
                         elif str(item_id_being_processed) == DEBUG_ITEM_ID:
                             # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] PASSED Adding Queue check (no related item found).")
                             pass
@@ -673,11 +736,18 @@ class ScrapingQueue:
                             logging.info(f"Item {item_identifier} is new and 'skip_initial_multi_scrape_for_new_content' is enabled. Forcing single episode scrape for initial attempt.")
                         is_multi_pack = False
                         
-                    # If item is an episode and older than 7 days, force multi-pack for initial scrape
+                    # If item is an episode and older than 7 days, force multi-pack for initial scrape,
+                    # unless it's the only episode of its season wanted (e.g. one episode moved back
+                    # to Wanted): a pack scrape rejects every single-episode release, so a lone
+                    # episode scrapes singles first and the no-results fallback below tries packs.
                     if item_to_process['type'] == 'episode' and is_older_than_7_days:
-                        if not is_multi_pack: # Log only if we are changing it
-                            logging.info(f"Episode {item_identifier} is older than 7 days. Forcing multi-pack scrape for initial attempt.")
-                        is_multi_pack = True
+                        if not is_multi_pack and not _other_season_episodes_pending(item_to_process):
+                            logging.info(f"Episode {item_identifier} is older than 7 days but no other episode of its season is wanted. "
+                                         f"Scraping single episodes first; season packs only if that finds nothing.")
+                        else:
+                            if not is_multi_pack: # Log only if we are changing it
+                                logging.info(f"Episode {item_identifier} is older than 7 days. Forcing multi-pack scrape for initial attempt.")
+                            is_multi_pack = True
                     
                     # --- NZB Batch Detection ---
                     # If usenet is enabled and this is an episode, check if 5+ episodes of the
@@ -820,6 +890,13 @@ class ScrapingQueue:
                                         _pre_usable = _pre_results
                                     _debrid_pack_found = bool(_pre_usable) and _is_debrid_season_pack(_pre_usable[0])
                                     if _debrid_pack_found:
+                                        # Adding tries only the packs at the top pack's resolution (see
+                                        # limit_debrid_pack_probe_results): the single episodes were never
+                                        # scraped, so a lower-tier pack (a 720p dub) can be far worse than
+                                        # them. If the debrid service refuses those, the season falls back
+                                        # to single-episode scraping instead.
+                                        for _pr in _pre_results:
+                                            _pr['_debrid_pack_probe'] = True
                                         _prescraped_results = (_pre_results, _pre_filtered)
                                         logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — '
                                                      f'NZB season packs disabled but the top result is a debrid season pack, using it')
@@ -1284,15 +1361,15 @@ class ScrapingQueue:
                 # Don't increment processed_count here, let the main logic do it if needed
 
             finally:
-                # Check if the item we processed is *still* at the front of the list.
+                # Check if the item we processed is *still* in the queue (it need not
+                # be at the front: deferred items ahead of it are skipped).
                 # This means it wasn't successfully moved by any of the processing steps or error handling.
                 if not processed_successfully_or_moved:
-                    # Double check it's the same item we started with
-                    if self.items and self.items[0]['id'] == item_id_being_processed:
+                    if item_id_being_processed in self._item_ids:
                         logging.warning(f"Item {item_identifier} completed processing cycle in ScrapingQueue without being moved. Removing explicitly.")
                         self.remove_item(item_to_process) # Remove the item we peeked at
-                    elif not self.items or self.items[0]['id'] != item_id_being_processed:
-                         logging.warning(f"Item {item_identifier} was expected at index 0 for removal but wasn't found (likely removed concurrently or list empty).")
+                    else:
+                         logging.warning(f"Item {item_identifier} was expected in the queue for removal but wasn't found (likely removed concurrently or list empty).")
 
                 # Increment processed count if we actually started processing this item
                 if processed_an_item_this_cycle:
@@ -1312,6 +1389,7 @@ class ScrapingQueue:
         # Or if we actually processed an item in this call (even if it resulted in removal)
         return len(self.items) > 0 or processed_an_item_this_cycle
 
+    @logs_for_item
     def scrape_with_fallback(self, item, is_multi_pack, queue_manager, skip_filter=False, check_pack_wantedness: bool = False):
         item_identifier = queue_manager.generate_identifier(item)
         original_season = item.get('season_number')
@@ -1843,6 +1921,7 @@ class ScrapingQueue:
 
         return individual_results, individual_filtered_out
      
+    @logs_for_item
     def handle_no_results(self, item: Dict[str, Any], queue_manager):
         item_identifier = queue_manager.generate_identifier(item)
         is_upgrade = item.get('upgrading') or item.get('upgrading_from') is not None
@@ -1968,10 +2047,11 @@ class ScrapingQueue:
             logging.warning(f"No results found for {item_identifier}. Checking wake count limits before moving to Sleeping or Final_Check/Blacklisted.")
             # Get wake count settings for this item's version
             version_settings = get_setting('Scraping', 'versions', {}).get(item.get('version', ''), {})
-            # Fetch the global default wake limit, using 5 as an ultimate fallback
-            global_default_wake_limit = int(get_setting("Queue", "wake_limit", default=5))
-            # Use the version-specific limit if available, otherwise use the global default
-            max_wake_count = version_settings.get('max_wake_count', global_default_wake_limit)
+            # Same rule the Sleeping queue applies (version wake_count, -1 = never sleep,
+            # else global Wake Limit). This used to read a nonexistent 'max_wake_count'
+            # key with a fallback of 5, so version limits above the global one were capped.
+            from queues.sleeping_queue import get_global_wake_limit, resolve_wake_limit
+            max_wake_count = resolve_wake_limit(version_settings, get_global_wake_limit())
 
             # Get current wake count from DB
             from database import get_wake_count
@@ -1995,6 +2075,7 @@ class ScrapingQueue:
             if moved and self.contains_item_id(item.get('id')) and max_wake_count > 0 and current_wake_count < max_wake_count:
                  self.remove_item(item)
 
+    @logs_for_item
     def _try_scrape_time_fallback(self, item: Dict[str, Any], queue_manager) -> bool:
         """Opt-in per version (fallback_at_scrape_time). fallback_version is otherwise only
         applied by blacklist_item(), i.e. after the whole sleep/Final_Check cycle (~20h on
@@ -2164,43 +2245,7 @@ class ScrapingQueue:
         return any(i['id'] == item_id for i in self.items)
 
     def _is_within_alternate_scrape_window(self, item, now=None):
-        if now is None:
-            now = datetime.now()
-        use_alt = get_setting('Debug', 'use_alternate_scrape_time_strategy', False)
-        if not use_alt:
+        if not get_setting('Debug', 'use_alternate_scrape_time_strategy', False):
             return True  # If not enabled, always allow
-        anchor_str = get_setting('Debug', 'alternate_scrape_time_24h', '00:00')
-        try:
-            anchor_time = datetime.strptime(anchor_str, '%H:%M').time()
-        except Exception:
-            anchor_time = dt_time(0, 0)
-        today_anchor = now.replace(hour=anchor_time.hour, minute=anchor_time.minute, second=0, microsecond=0)
-        if now < today_anchor:
-            anchor_dt = today_anchor
-        else:
-            anchor_dt = today_anchor
-        window_start = anchor_dt - timedelta(hours=24)
-        # Get item datetime
-        release_date_str = item.get('release_date')
-        airtime_str = item.get('airtime')
-        if not release_date_str or release_date_str.lower() in ['unknown', 'none']:
-            return False
-        try:
-            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-            if airtime_str:
-                try:
-                    airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
-                except ValueError:
-                    try:
-                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                    except ValueError:
-                        airtime = dt_time(0, 0)
-            else:
-                airtime = dt_time(0, 0)
-            item_dt = datetime.combine(release_date, airtime)
-        except Exception:
-            return False
-        # If the item is older than the window, always allow
-        if item_dt < window_start:
-            return True
-        return window_start <= item_dt <= anchor_dt
+        return in_alternate_scrape_window(item, now)
+

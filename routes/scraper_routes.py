@@ -7,8 +7,7 @@ from debrid import get_debrid_provider
 from .models import user_required, onboarding_required, admin_required, scraper_permission_required, scraper_view_access_required
 from utilities.settings import get_setting, get_all_settings, load_config, save_config
 from database.database_reading import get_all_season_episode_counts, get_media_item_presence_overall, get_media_items_presence_batch
-from utilities.web_scraper import trending_movies, trending_shows, trending_anime, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
-from utilities.web_scraper import get_media_details
+from utilities.web_scraper import trending_movies, trending_shows, trending_anime, web_scrape_tvshow, process_media_selection, process_torrent_selection
 from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
 from utilities.web_scraper import search_trakt
@@ -20,23 +19,23 @@ import requests
 import tempfile
 import os
 import bencodepy
-from debrid.common.torrent import torrent_to_magnet
 import hashlib
-from datetime import datetime, timezone, timedelta
+from datetime import timezone
 from database.torrent_tracking import record_torrent_addition, get_torrent_history, update_torrent_tracking
 from flask_login import current_user
 from .utils import is_user_system_enabled
 import asyncio
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 import re
+import threading
 import time
 import json
 from utilities.web_scraper import get_media_meta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import iso8601
 from utilities.reverse_parser import parse_filename_for_version # Added import
-from utilities.tmdb_cache import cache_response, get_from_cache, set_in_cache, get_cached_db_statuses # Caching support
-from concurrent.futures import ThreadPoolExecutor, as_completed # Parallel API calls
+from utilities.tmdb_cache import get_from_cache, set_in_cache, get_cached_db_statuses  # Caching support
+from concurrent.futures import ThreadPoolExecutor  # Parallel API calls
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -1177,30 +1176,25 @@ def anime_trending():
 
     return render_template('scraper.html', versions=versions, is_requester=is_requester)
 
-def fetch_all_trending_parallel():
-    """
-    Fetch all trending data in parallel for faster loading
-    Uses ThreadPoolExecutor to make API calls simultaneously
-    """
+# Last trending result, served immediately while a refresh runs in the
+# background once it is older than _TRENDING_FRESH_SECONDS. The page used to
+# wait for Trakt + up to 60 TMDB lookups whenever the 60 s cache had expired.
+_TRENDING_FRESH_SECONDS = 60
+_trending_state = {'data': None, 'fetched_at': 0.0, 'refreshing': False}
+_trending_lock = threading.Lock()
+
+
+def _fetch_all_trending_now():
+    """Fetch trending movies, shows and anime in parallel (10 s budget)."""
     start_time = time.time()
-
-    # Try cache first
-    cache_key = 'scraper:all_trending:v2'
-    cached_data = get_from_cache(cache_key)
-    if cached_data:
-        logging.info(f"✅ Cache HIT: all_trending ({time.time() - start_time:.0f}ms)")
-        return cached_data
-
-    logging.info("📡 Cache MISS: Fetching trending data in parallel...")
-
     results = {
         'trendingMovies': [],
         'trendingShows': [],
         'trendingAnime': []
     }
 
-    # Fetch all three in parallel
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    executor = ThreadPoolExecutor(max_workers=3)
+    try:
         futures = {
             'movies': executor.submit(trending_movies),
             'shows': executor.submit(trending_shows),
@@ -1209,7 +1203,7 @@ def fetch_all_trending_parallel():
 
         for key, future in futures.items():
             try:
-                data = future.result(timeout=10)  # 10 second timeout
+                data = future.result(timeout=max(0.1, 10 - (time.time() - start_time)))
                 if key == 'movies' and data and 'trendingMovies' in data:
                     results['trendingMovies'] = data['trendingMovies']
                 elif key == 'shows' and data and 'trendingShows' in data:
@@ -1218,25 +1212,63 @@ def fetch_all_trending_parallel():
                     results['trendingAnime'] = data['trendingAnime']
             except Exception as e:
                 logging.error(f"Error fetching trending {key}: {e}")
-
-    # Cache for 60 seconds
-    set_in_cache(cache_key, results, 60)
+    finally:
+        # Don't wait for a worker that blew the budget (a `with` block would).
+        executor.shutdown(wait=False)
 
     duration = (time.time() - start_time) * 1000
     logging.info(f"✅ Fetched all trending in parallel: {duration:.0f}ms")
-
     return results
+
+
+def _refresh_trending_in_background():
+    try:
+        data = _fetch_all_trending_now()
+        with _trending_lock:
+            _trending_state['data'] = data
+            _trending_state['fetched_at'] = time.time()
+    except Exception as e:
+        logging.error(f"Background trending refresh failed: {e}")
+    finally:
+        with _trending_lock:
+            _trending_state['refreshing'] = False
+
+
+def fetch_all_trending_parallel():
+    """
+    Trending movies, shows and anime for the scraper page.
+
+    Only the very first call waits for the fetch; later calls get the last
+    result straight away and, if it is over a minute old, start one refresh
+    in the background. Callers must not modify the returned dict.
+    """
+    with _trending_lock:
+        data = _trending_state['data']
+        age = time.time() - _trending_state['fetched_at']
+        if data is not None:
+            if age >= _TRENDING_FRESH_SECONDS and not _trending_state['refreshing']:
+                _trending_state['refreshing'] = True
+                threading.Thread(target=_refresh_trending_in_background, name='trending-refresh', daemon=True).start()
+            return data
+
+    logging.info("📡 No trending data yet: fetching in parallel...")
+    data = _fetch_all_trending_now()
+    with _trending_lock:
+        _trending_state['data'] = data
+        _trending_state['fetched_at'] = time.time()
+    return data
 
 @scraper_bp.route('/all_trending', methods=['GET'])
 @user_required
 @scraper_view_access_required
 def all_trending():
     """Combined endpoint that returns all trending data in a single request - NOW WITH PARALLEL FETCHING"""
-    from routes.poster_cache import get_cached_trending_response, cache_trending_response
+    from routes.poster_cache import cache_trending_response
 
     try:
         # OPTIMIZATION: Use parallel fetching with caching
-        trending_data = fetch_all_trending_parallel()
+        # Deep copy: db_status is written into the items below.
+        trending_data = copy.deepcopy(fetch_all_trending_parallel())
 
         # Extract data from parallel fetch results
         trendingMoviesData = {'trendingMovies': trending_data.get('trendingMovies', [])}
@@ -1589,12 +1621,11 @@ def optimization_status():
     Quick diagnostic endpoint to verify optimizations are loaded.
     Access: /scraper/optimization_status
     """
-    import sys
     import inspect
 
     # Check if get_cached_db_statuses function exists
     try:
-        from utilities.tmdb_cache import get_cached_db_statuses, get_cache_stats
+        from utilities.tmdb_cache import get_cached_db_statuses, get_cache_stats  # noqa: F401  (availability probe)
         has_cached_function = True
         cache_stats = get_cache_stats()
     except ImportError:
@@ -1719,7 +1750,6 @@ def select_episode():
 @user_required
 @scraper_view_access_required  # Changed from scraper_permission_required to allow requesters to view but not scrape
 def select_media():
-    from metadata.metadata import get_metadata
     try:
         # Check if the user is a requester and block the scraping action if true
         is_requester = current_user.is_authenticated and current_user.role == 'requester'
@@ -2238,8 +2268,7 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
                     (unknown) is treated the same as level 1 for safety.
     """
     from usenet import get_usenet_client, reset_usenet_client
-    from database.not_wanted_magnets import add_to_not_wanted_nzb_segment, extract_nzb_segment_id
-    from metadata.metadata import get_metadata, get_release_date
+    from metadata.metadata import get_metadata
     from database.database_writing import add_media_item, update_media_item_state, update_media_item
 
     reset_usenet_client()
@@ -2623,7 +2652,6 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
         from database.database_writing import add_media_item
         queue_manager = QueueManager()
 
-        from database.database_reading import get_media_item_by_id
         from database.database_writing import update_media_item_state, update_media_item
 
         # Extract segment ID from NZB XML already fetched above (zero extra HTTP call)
@@ -2795,7 +2823,6 @@ def scraper_tester():
 @scraper_bp.route('/get_item_details', methods=['POST'])
 @user_required
 def get_item_details():
-    from metadata.metadata import get_metadata, get_release_date
     item = request.json
     details = get_details(item)
     
@@ -2870,7 +2897,6 @@ def get_media_meta_endpoint():
 @user_required
 @scraper_permission_required
 def run_scrape():
-    from metadata.metadata import get_metadata, get_release_date, _get_local_timezone, DirectAPI
     data = request.json
     try:
         imdb_id = data.get('imdb_id', '')

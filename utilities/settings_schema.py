@@ -2,7 +2,6 @@
 import os
 import re
 import glob
-from pathlib import Path
 
 def get_available_logos():
     """
@@ -168,7 +167,7 @@ SETTINGS_SCHEMA = {
         },
         "stats_provider_priority": {
             "type": "string",
-            "description": "Choose which provider's stats to display on the Statistics page. Auto uses debrid if configured, otherwise usenet. Select Usenet to always show cli_mount/usenet stats even when a debrid provider is also configured. Select Combined to show the total size and broken count across every debrid provider and usenet together (no subscription days, since that's account-specific).",
+            "description": "Choose which provider's stats to display on the Statistics page. Auto shows Combined when both debrid and usenet are configured, otherwise whichever one is. Select Usenet to always show cli_mount/usenet stats even when a debrid provider is also configured. Select Combined to show the total size across every debrid provider and usenet together, the debrid subscription days, and broken entries split into NZB and debrid.",
             "default": "auto",
             "choices": ["auto", "debrid", "usenet", "combined"]
         }
@@ -284,7 +283,7 @@ SETTINGS_SCHEMA = {
         "tab": "Required Settings",
         "provider": {
             "type": "string",
-            "description": "Debrid service provider",
+            "description": "Debrid service provider. AllDebrid note: AllDebrid can't report whether a release is cached without adding it to your account, and it has suspended accounts that add many releases without downloading them. cli_debrid limits AllDebrid cache checks to 150 per hour and 10 per item and removes the ones it doesn't use; items over the limit wait in Adding. When another provider is also set up, AllDebrid is only checked if the providers ranked above it don't have the release cached.",
             "default": "RealDebrid",
             "choices": ["RealDebrid", "AllDebrid", "Premiumize", "Torbox", "DebridLink"]
         },
@@ -489,14 +488,6 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "[DEPRECATED - Defaults to true] Sync deletions from the Database to Plex",
             "default": False
-        }
-    },
-    "Metadata Battery": {
-        "tab": "Required Settings",
-        "url": {
-            "type": "string",
-            "description": "Metadata Battery URL. Leave as default unless you have set up the Metadata Battery in a different location.",
-            "default": "http://localhost:50051"
         }
     },
     "Queue": {
@@ -765,7 +756,12 @@ SETTINGS_SCHEMA = {
                 "foreign_language_penalty": {
                     "type": "number",
                     "default": 30,
-                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. 0 disables."
+                    "description": "Penalty for a release whose name is tagged with an audio language other than the version's language code (e.g. GERMAN for an 'en' version), multiplied by Language Weight. Subtitle tags (SWESUB, VOSTFR, NORDiC) don't count; MULTi, Dual Audio and DL (dual-language) releases are exempt. For a title whose original language isn't the version's (e.g. a Korean show on an 'en' version), releases tagged DUAL or with the version's language get a small tiebreaker bonus instead (this amount × Language Weight, at most 50; half for a bare MULTi/DL). Untagged releases are never penalized. 0 disables both."
+                },
+                "audio_description_penalty": {
+                    "type": "number",
+                    "default": 10000,
+                    "description": "Penalty for an audio-description release (e.g. 'with Audio Description'), whose audio is narrated for blind viewers. The default 10000 ranks one below every other release, so it is only picked when nothing else is available; with a Minimum Scrape Score set, it falls below that and is dropped instead. Use a negative number to prefer them instead, or 0 to treat them like any other release."
                 },
                 "wake_count": {
                     "type": "integer",
@@ -854,11 +850,6 @@ SETTINGS_SCHEMA = {
             "description": "Logging level for console output and file logging",
             "default": "DEBUG",
             "choices": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        },
-        "skip_initial_plex_update": {
-            "type": "boolean",
-            "description": "Skip Plex initial collection scan",
-            "default": False
         },
         "disable_unblacklisting": {
             "type": "boolean",
@@ -969,11 +960,6 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "List of filenames or folder names to filter out, comma separated",
             "default": ""
-        },
-        "anime_renaming_using_anidb": {
-            "type": "boolean",
-            "description": "Use AniDB to rename anime episodes instead of Trakt metadata (symlinking only)",
-            "default": False
         },
         "enable_separate_anime_folders": {
             "type": "boolean",
@@ -1113,26 +1099,6 @@ SETTINGS_SCHEMA = {
         "truncate_episode_notifications": {
             "type": "boolean",
             "description": "Truncate episode notifications to show only the first episode and a summary of the rest.",
-            "default": False
-        },
-        "apply_to_anime_tv_shows": {
-            "type": "boolean",
-            "description": "Apply subtitle downloads to anime TV show folders (if separate anime folders are enabled)",
-            "default": True
-        },
-        "apply_to_documentary_movies": {
-            "type": "boolean",
-            "description": "Apply subtitle downloads to documentary movie folders (if separate documentary folders are enabled)",
-            "default": True
-        },
-        "apply_to_documentary_tv_shows": {
-            "type": "boolean",
-            "description": "Apply subtitle downloads to documentary TV show folders (if separate documentary folders are enabled)",
-            "default": True
-        },
-        "only_current_file": {
-            "type": "boolean",
-            "description": "Only download subtitles for the current file being processed (instead of scanning all folders)",
             "default": False
         },
         "sanitizer_replacement_character": {
@@ -3260,16 +3226,6 @@ SETTINGS_SCHEMA = {
             "description": "Apply subtitle downloads to anime TV show folders (if separate anime folders are enabled)",
             "default": True
         },
-        "apply_to_documentary_movies": {
-            "type": "boolean",
-            "description": "Apply subtitle downloads to documentary movie folders (if separate documentary folders are enabled)",
-            "default": True
-        },
-        "apply_to_documentary_tv_shows": {
-            "type": "boolean",
-            "description": "Apply subtitle downloads to documentary TV show folders (if separate documentary folders are enabled)",
-            "default": True
-        },
         "only_current_file": {
             "type": "boolean",
             "description": "Only download subtitles for the current file being processed (instead of scanning all folders)",
@@ -3372,12 +3328,6 @@ SETTINGS_SCHEMA = {
     },
     "Library Manager": {
         "tab": "Additional Settings",
-        "primary_artwork_source": {
-            "type": "string",
-            "description": "Artwork source for posters and backdrops. Uses TMDB online movie database (requires TMDB API key).",
-            "default": "TMDB",
-            "choices": ["TMDB"]
-        },
         "ghostlist_mode": {
             "type": "boolean",
             "description": "Add shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting content will mark it as ghosted in the database. When disabled, deleted content can be re-added by dynamic content sources.",
@@ -3589,5 +3539,18 @@ SETTINGS_SCHEMA = {
         "collection_name_pattern": {"type": "string", "description": "Naming pattern for box set collections. {title} = franchise name (e.g. The Godfather).", "default": "{title} Collection"},
         "min_movies": {"type": "number", "description": "Minimum number of owned movies required to create/keep a box set collection.", "default": 2},
         "sort_order": {"type": "string", "description": "Sort order for movies within each box set collection.", "default": "release_date_asc"}
+    },
+    "Plex Reported Issues": {
+        "tab": "Additional Settings",
+        "enabled": {
+            "type": "boolean",
+            "description": "Replace movies and episodes that Plex users report with Plex's Report Issue (the ... menu on an item). The reported item is sent back to Wanted to get a different release, and the current file keeps playing until the new one is in. Reports already in Plex when this is turned on are left alone. Reports on a whole show or season are only flagged, not replaced. New reports are picked up within about 30 seconds. Same switch as the task in the Task Manager.",
+            "default": False
+        },
+        "reply_to_reporter": {
+            "type": "boolean",
+            "description": "Reply in the Plex report thread when a report is picked up and again once the item has been replaced.",
+            "default": True
+        }
     }
 }

@@ -1,8 +1,6 @@
 import logging
 import os
-import time
 from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime
 # Removed asyncio and aiohttp as the new functions are sync wrappers
 # Removed plexapi imports as connection happens within plex_functions
 # from plexapi.server import PlexServer
@@ -10,12 +8,11 @@ from datetime import datetime
 
 from utilities.settings import get_setting
 from database.symlink_verification import (
-    get_unverified_files,
     mark_file_as_verified,
     update_verification_attempt,
     get_verification_stats,
     mark_file_as_permanently_failed,
-    mark_verification_as_max_attempts_failed
+    mark_verification_as_max_attempts_failed,
 )
 # Import the new functions
 from utilities.plex_functions import (
@@ -551,41 +548,8 @@ def run_plex_verification_scan(max_files: int = 500, recent_only: bool = False, 
     """
     return run_media_verification_scan(max_files, recent_only, max_attempts)
 
-# Keep the old function name for backward compatibility  
-def verify_plex_file(file_data: Dict[str, Any], plex_library: Dict[str, List[Dict[str, Any]]]) -> bool:
-    """
-    Backward compatibility wrapper for verify_media_file.
-    """
-    return verify_media_file(file_data, plex_library)
-
 # --- Test Function for Jellyfin/Emby Verification ---
 
-def test_jellyfin_verification_support():
-    """
-    Test function to verify that Jellyfin/Emby verification is working correctly.
-    This function can be called to test the verification system.
-    """
-    logger.info("Testing Jellyfin/Emby verification support...")
-    
-    # Check Jellyfin/Emby configuration
-    jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()
-    jellyfin_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()
-    
-    if not jellyfin_url or not jellyfin_token:
-        logger.info("Jellyfin/Emby not configured. Verification will use Plex.")
-        logger.info("To test Jellyfin/Emby verification, configure emby_jellyfin_url and emby_jellyfin_token in settings.")
-        return False
-    
-    logger.info(f"Jellyfin/Emby configured: {jellyfin_url}")
-    
-    # Test the verification scan
-    try:
-        verified_count, total_processed = run_media_verification_scan(max_files=10, recent_only=False)
-        logger.info(f"Jellyfin/Emby verification test completed: {verified_count} verified out of {total_processed} processed")
-        return True
-    except Exception as e:
-        logger.error(f"Jellyfin/Emby verification test failed: {e}")
-        return False
 
 # Example usage:
 # if __name__ == "__main__":

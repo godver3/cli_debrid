@@ -49,8 +49,6 @@ from database.nzb_repair_activity import (
     MAX_REPAIR_ATTEMPTS,
 )
 from database.not_wanted_magnets import (
-    add_to_not_wanted_nzb_segment,
-    extract_nzb_segment_id,
     is_nzb_segment_not_wanted,
     is_magnet_not_wanted,
     is_url_not_wanted,

@@ -541,7 +541,7 @@ export function updateSettings() {
     }
     
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider', 'Usenet Provider', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Scrob', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider', 'Usenet Provider', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Scrob', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets', 'Plex Reported Issues'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -761,18 +761,6 @@ export function updateSettings() {
     if (ultimateSortOrder) {
         settingsData['Scraping']['ultimate_sort_order'] = ultimateSortOrder.value;
 
-    } else {
-    }
-
-    const metadataBatteryUrl = document.getElementById('metadata battery-url');
-    
-    if (metadataBatteryUrl) {
-        // Ensure 'Metadata Battery' object exists in settingsData
-        if (!settingsData['Metadata Battery']) {
-            settingsData['Metadata Battery'] = {};
-        }
-        settingsData['Metadata Battery']['url'] = metadataBatteryUrl.value;
-    
     } else {
     }
 
@@ -1070,13 +1058,6 @@ export function updateSettings() {
             .filter(v => v);
     }
 
-    const animeRenamingUsingAnidb = document.getElementById('scraping-anime_renaming_using_anidb');
-    
-    if (animeRenamingUsingAnidb) {
-        settingsData['Scraping']['anime_renaming_using_anidb'] = animeRenamingUsingAnidb.checked;
-
-    } else {
-    }
 
     const debridProvider = document.getElementById('debrid provider-provider');
 

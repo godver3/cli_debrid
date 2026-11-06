@@ -1,6 +1,8 @@
 import logging
+from collections import deque
 from typing import Dict, List, Optional, Union, Tuple, Any
 from datetime import datetime
+import threading
 import time
 from urllib.parse import unquote
 import hashlib
@@ -12,10 +14,9 @@ from ..common import (
     extract_hash_from_magnet,
     timed_lru_cache,
     is_video_file,
-    is_unwanted_file
 )
 from ..status import TorrentStatus
-from .api import make_request, get_all_magnets
+from .api import make_request
 from database.not_wanted_magnets import add_to_not_wanted
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from utilities.settings import get_setting
@@ -44,6 +45,38 @@ STATUS_CODE_MAP = {
     11: TorrentStatus.ERROR,
 }
 
+# AllDebrid has no instant-availability lookup, so a cache check uploads the magnet
+# and deletes it again. AD suspends accounts that generate many links without
+# downloading (a user was locked for it), so fresh cache-check uploads are capped
+# per hour across all provider instances. Over the cap, checks answer None and the
+# Adding queue keeps the item waiting instead of failing it.
+CACHE_CHECK_UPLOADS_PER_HOUR = 150
+_CACHE_CHECK_WINDOW_SECONDS = 3600
+_cache_check_uploads = deque()
+_cache_check_lock = threading.Lock()
+
+# Files of a finished (statusCode 4) magnet never change, and every /magnet/files
+# call returns a download link per file, so reuse the list instead of asking again.
+_FILES_CACHE_SECONDS = 1800
+
+
+def _prune_cache_check_uploads(now: float) -> None:
+    while _cache_check_uploads and now - _cache_check_uploads[0] >= _CACHE_CHECK_WINDOW_SECONDS:
+        _cache_check_uploads.popleft()
+
+
+def cache_check_budget_left() -> int:
+    with _cache_check_lock:
+        _prune_cache_check_uploads(time.time())
+        return max(0, CACHE_CHECK_UPLOADS_PER_HOUR - len(_cache_check_uploads))
+
+
+def _record_cache_check_upload() -> None:
+    with _cache_check_lock:
+        now = time.time()
+        _prune_cache_check_uploads(now)
+        _cache_check_uploads.append(now)
+
 
 class AllDebridProvider(DebridProvider):
     """AllDebrid implementation of the DebridProvider interface"""
@@ -51,6 +84,9 @@ class AllDebridProvider(DebridProvider):
     PROVIDER_NAME = "AllDebrid"
     API_BASE_URL = "https://api.alldebrid.com/v4"
     MAX_DOWNLOADS = 20  # AllDebrid typical limit
+    # A cache check adds the magnet to the account (see CACHE_CHECK_UPLOADS_PER_HOUR),
+    # so the torrent processor only asks AD when its answer can decide the pick.
+    CACHE_CHECK_ADDS_TO_ACCOUNT = True
 
     def __init__(self):
         super().__init__()
@@ -58,6 +94,8 @@ class AllDebridProvider(DebridProvider):
         self._cached_torrent_titles = {}  # Store torrent titles for cached content
         self._all_torrent_ids = {}  # Store all torrent IDs for tracking
         self._upload_ready_status = {}  # Store 'ready' field from upload responses (torrent_id -> bool)
+        self._preexisting_torrent_ids = set()  # IDs add_torrent found already on the account
+        self._files_cache = {}  # torrent_id -> (expires_at, files) for finished magnets
         # Only initialize phalanx cache if enabled
         self.phalanx_enabled = get_setting('UI Settings', 'enable_phalanx_db', default=False)
         self.phalanx_cache = PhalanxDBClassManager() if self.phalanx_enabled else None
@@ -160,6 +198,10 @@ class AllDebridProvider(DebridProvider):
                 'error': str(e)
             }
 
+    def cache_check_budget_exhausted(self) -> bool:
+        """True while this hour's cache-check uploads are used up (see CACHE_CHECK_UPLOADS_PER_HOUR)."""
+        return cache_check_budget_left() <= 0
+
     async def is_cached(
         self,
         magnet_links: Union[str, List[str]],
@@ -167,13 +209,14 @@ class AllDebridProvider(DebridProvider):
         result_title: Optional[str] = None,
         result_index: Optional[str] = None,
         remove_uncached: bool = True,
-        remove_cached: bool = False,
+        remove_cached: bool = True,
         skip_phalanx_db: bool = False,
         imdb_id: Optional[str] = None
     ) -> Union[bool, Dict[str, bool], None]:
         """
         Check if one or more magnet links or torrent files are cached on AllDebrid.
-        Uses the instant availability endpoint first, then falls back to add+check if needed.
+        AllDebrid has no instant-availability endpoint, so this adds the magnet and
+        reads its status, then removes it again.
 
         Args:
             magnet_links: Either a magnet link or list of magnet links
@@ -181,7 +224,9 @@ class AllDebridProvider(DebridProvider):
             result_title: Optional title of the result being checked (for logging)
             result_index: Optional index of the result in the list (for logging)
             remove_uncached: Whether to remove uncached torrents after checking (default: True)
-            remove_cached: Whether to remove cached torrents after checking (default: False)
+            remove_cached: Whether to remove cached torrents after checking (default: True,
+                unlike other providers: a cached copy nobody goes on to use stays on the
+                AD account. Callers that add the result next pass False to keep it.)
             skip_phalanx_db: Whether to skip checking PhalanxDB (default: False)
             imdb_id: Optional IMDb ID to check against the database to prevent removal.
 
@@ -261,6 +306,14 @@ class AllDebridProvider(DebridProvider):
             # Note: AllDebrid has no /magnet/instant endpoint
             # Cache status is determined via /magnet/upload response (ready field) or status check
 
+            if self.cache_check_budget_exhausted():
+                logging.warning(
+                    f"{log_prefix} AllDebrid cache-check limit reached ({CACHE_CHECK_UPLOADS_PER_HOUR}/hour) - "
+                    f"not checking this release now"
+                )
+                results[hash_value] = None
+                continue
+
             # Fall back to add torrent + check status
             torrent_id = None
             torrent_was_preexisting = False
@@ -268,8 +321,12 @@ class AllDebridProvider(DebridProvider):
                 # Add the magnet/torrent to AllDebrid
                 torrent_id = self.add_torrent(
                     magnet_link if magnet_link and magnet_link.startswith('magnet:') else None,
-                    temp_file_path
+                    temp_file_path,
+                    cache_check=True,
                 )
+                torrent_was_preexisting = torrent_id in self._preexisting_torrent_ids
+                if torrent_id and not torrent_was_preexisting:
+                    _record_cache_check_upload()
 
                 if not torrent_id:
                     results[hash_value] = False
@@ -284,8 +341,11 @@ class AllDebridProvider(DebridProvider):
                 upload_indicated_ready = self._upload_ready_status.get(torrent_id, False)
                 logging.debug(f"{log_prefix} add_torrent returned: id={torrent_id}, stored ready={upload_indicated_ready}")
 
-                # Get torrent info
-                info = self.get_torrent_info(torrent_id)
+                # Get torrent info. The file list (one AD link per file) is only
+                # needed when the release is cached.
+                info = self.get_torrent_info(torrent_id, include_files=upload_indicated_ready)
+                if info and not upload_indicated_ready and info.get('statusCode') == 4:
+                    info = self.get_torrent_info(torrent_id)
                 if not info:
                     logging.error(f"{log_prefix} Failed to get torrent info for ID: {torrent_id}")
                     # A failed info fetch (rate limit, outage) says nothing about the
@@ -323,11 +383,13 @@ class AllDebridProvider(DebridProvider):
                     # In this case, we know it's not cached, so return False instead of None
                     if status_code in [0, 1, 2, 3]:
                         logging.debug(f"{log_prefix} No video files found but torrent is still processing (statusCode={status_code}), treating as uncached")
-                        # Remove the uncached torrent
-                        try:
-                            self.remove_torrent(torrent_id, "Torrent is not cached - removed after cache check")
-                        except Exception as e:
-                            logging.error(f"{log_prefix} Error removing uncached torrent: {str(e)}")
+                        # Remove the uncached torrent, unless it was already on the account
+                        # (e.g. an uncached download the Checking queue is rechecking)
+                        if remove_uncached and not torrent_was_preexisting:
+                            try:
+                                self.remove_torrent(torrent_id, "Torrent is not cached - removed after cache check")
+                            except Exception as e:
+                                logging.error(f"{log_prefix} Error removing uncached torrent: {str(e)}")
                         results[hash_value] = False
                         continue
                     # If torrent is ready (statusCode 4) but no video files, it's an error case
@@ -528,12 +590,17 @@ class AllDebridProvider(DebridProvider):
             logging.error(f"Error listing active torrents: {str(e)}")
             return []
 
-    def add_torrent(self, magnet_link: Optional[str], temp_file_path: Optional[str] = None) -> Optional[str]:
+    def add_torrent(self, magnet_link: Optional[str], temp_file_path: Optional[str] = None,
+                    cache_check: bool = False) -> Optional[str]:
         """Add a torrent to AllDebrid.
+
+        cache_check: the add only answers "is it cached?", so an upload that isn't
+            ready returns at once instead of waiting for AD to start downloading.
 
         Returns:
             The torrent ID if successful, None otherwise.
-            Also stores the 'ready' status from upload response in self._upload_ready_status[torrent_id].
+            Also stores the 'ready' status from upload response in self._upload_ready_status[torrent_id],
+            and records an ID that was already on the account in self._preexisting_torrent_ids.
         """
         try:
             hash_value = None
@@ -581,6 +648,7 @@ class AllDebridProvider(DebridProvider):
                         # Existing torrent - check if it's ready (statusCode 4)
                         existing_ready = existing.get('statusCode', 0) == 4
                         self._upload_ready_status[existing_id] = existing_ready
+                        self._preexisting_torrent_ids.add(existing_id)
                         return existing_id
 
                 # Add magnet link
@@ -615,11 +683,16 @@ class AllDebridProvider(DebridProvider):
                 logging.error("No torrent ID in response")
                 raise TorrentAdditionError("No torrent ID in response")
 
+            if cache_check and not is_ready:
+                self._upload_ready_status[torrent_id] = False
+                return torrent_id
+
             # AllDebrid doesn't require file selection - it auto-processes all files
-            # Just wait for the torrent to be processed
+            # Just wait for the torrent to be processed. Poll status only; the file
+            # list is fetched once below if the torrent is ready.
             max_attempts = 30
             for attempt in range(max_attempts):
-                info = self.get_torrent_info(torrent_id)
+                info = self.get_torrent_info(torrent_id, include_files=False)
                 if not info:
                     logging.error("Failed to get torrent info")
                     raise TorrentAdditionError("Failed to get torrent info")
@@ -634,6 +707,8 @@ class AllDebridProvider(DebridProvider):
 
                 # Ready or downloading - success
                 if status_code >= 1:  # Downloading or ready
+                    if is_ready or status_code == 4:
+                        info = self.get_torrent_info(torrent_id) or info
                     # Cache the filename
                     if hash_value:
                         self._cached_torrent_titles[hash_value] = info.get('filename', '')
@@ -778,8 +853,12 @@ class AllDebridProvider(DebridProvider):
             logging.error(f"Error getting user traffic: {str(e)}")
             raise ProviderUnavailableError(f"Failed to get user traffic: {str(e)}")
 
-    def get_torrent_info(self, torrent_id: str) -> Optional[Dict]:
-        """Get information about a specific torrent"""
+    def get_torrent_info(self, torrent_id: str, include_files: bool = True) -> Optional[Dict]:
+        """Get information about a specific torrent.
+
+        include_files=False skips /magnet/files, which returns a download link per
+        file, for callers that only need the status (info['files'] is then empty).
+        """
         try:
             # Use v4.1 for nested file tree with query auth
             result = make_request('GET', f'/v4.1/magnet/status', self.api_key, params={'id': torrent_id}, use_query_auth=True)
@@ -819,7 +898,14 @@ class AllDebridProvider(DebridProvider):
             # Try to get files from status response first, then fetch from /magnet/files if needed
             normalized_files = self._extract_files_from_info(info)
 
-            if not normalized_files:
+            cached_files = self._files_cache.get(str(torrent_id))
+            if cached_files and cached_files[0] < time.time():
+                self._files_cache.pop(str(torrent_id), None)
+                cached_files = None
+            if not normalized_files and cached_files and status_code == 4:
+                normalized_files = list(cached_files[1])
+
+            if not normalized_files and include_files:
                 # Fetch files from dedicated endpoint (required for v4.1)
                 logging.debug(f"No files in status response for torrent {torrent_id}, fetching from /magnet/files")
                 try:
@@ -841,6 +927,8 @@ class AllDebridProvider(DebridProvider):
                                     break
                 except Exception as files_err:
                     logging.warning(f"Could not fetch files from /magnet/files: {files_err}")
+                if normalized_files and status_code == 4:
+                    self._files_cache[str(torrent_id)] = (time.time() + _FILES_CACHE_SECONDS, list(normalized_files))
 
             info['files'] = normalized_files
 
@@ -913,8 +1001,9 @@ class AllDebridProvider(DebridProvider):
         try:
             # Get torrent info before removal to get the hash
             hash_value = None
+            self._files_cache.pop(str(torrent_id), None)
             try:
-                info = self.get_torrent_info(torrent_id)
+                info = self.get_torrent_info(torrent_id, include_files=False)
                 if info:
                     hash_value = info.get('hash', '').lower()
             except Exception as e:
@@ -1005,7 +1094,7 @@ class AllDebridProvider(DebridProvider):
         result_title: Optional[str] = None,
         result_index: Optional[str] = None,
         remove_uncached: bool = True,
-        remove_cached: bool = False,
+        remove_cached: bool = True,
         skip_phalanx_db: bool = False,
         imdb_id: Optional[str] = None
     ) -> Union[bool, Dict[str, bool], None]:

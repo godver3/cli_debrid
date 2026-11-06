@@ -987,6 +987,8 @@
         showConnectionStatus(`Reconnecting... (${reconnectAttempts}/${maxReconnectAttempts})`, 'reconnecting', 0);
 
         setTimeout(() => {
+            // Hidden tab: leave isReconnecting set; the visibility handler reconnects.
+            if (document.hidden) return;
             setupQueueStream();
             // Exponential backoff: increase delay for next attempt
             reconnectDelay = Math.min(reconnectDelay * 2, 30000); // Max 30 seconds
@@ -1184,6 +1186,15 @@
 
     // Handle page visibility changes (especially important for mobile)
     document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+            // A background tab doesn't need live queues; closing the stream stops the
+            // server building them every few seconds and frees a browser connection.
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            return;
+        }
         if (document.visibilityState === 'visible') {
             console.log('Page visible – validating queue stream connection');
 

@@ -1,9 +1,8 @@
 """Premiumize API client with rate limiting"""
 
-import logging
 import time
 import threading
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 from ..base import ProviderUnavailableError, RateLimitError
 from .exceptions import PremiumizeAPIError, PremiumizeAuthError

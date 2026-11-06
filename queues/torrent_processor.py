@@ -4,15 +4,12 @@ and addition to debrid service accounts.
 """
 
 import logging
-import re
 import time
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
 import tempfile
 import requests
 import os
-import bencodepy
-import hashlib
 import inspect
 from datetime import datetime, timedelta
 
@@ -21,23 +18,17 @@ from debrid.base import DebridProvider, TooManyDownloadsError, ProviderUnavailab
 from debrid.common import (
     extract_hash_from_magnet,
     extract_hash_from_file,
-    is_video_file,
-    is_unwanted_file,
-    download_and_extract_hash
 )
-from debrid.status import TorrentStatus
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls, is_magnet_not_wanted
 from database.scraper_grabs import record_grab, queue_grab_trigger
 from utilities.settings import get_setting
+from utilities.log_context import logs_for_item
 from utilities.rescrape_helpers import rescrape_blocks_any_pack_reuse, rescrape_blocks_pack_reuse
 
 class TorrentProcessingError(Exception):
     """Base exception for torrent processing errors"""
     pass
 
-class NoVideoFilesError(TorrentProcessingError):
-    """Raised when a torrent has no valid video files"""
-    pass
 
 class TorrentAdditionError(TorrentProcessingError):
     """Raised when a torrent fails to be added to the debrid service"""
@@ -47,6 +38,10 @@ class TorrentAdditionError(TorrentProcessingError):
 # refusing downloads: the result is kept (not dropped from scrape_results) and
 # the next one is tried.
 NZB_DEFERRED_INDEXER_COOLDOWN = object()
+
+# Per process_results call, for providers whose cache check adds the magnet to the
+# account (AllDebrid, which suspends accounts that generate links without downloading).
+MAX_ACCOUNT_ADDING_CACHE_CHECKS_PER_ITEM = 10
 
 class TorrentProcessor:
     """Handles torrent file/magnet processing and caching checks"""
@@ -301,9 +296,6 @@ class TorrentProcessor:
             import tempfile
             import requests
             import os
-            import bencodepy
-            import hashlib
-            from debrid.common.torrent import torrent_to_magnet
             
             # Create a temporary file to store the torrent
             with tempfile.NamedTemporaryFile(suffix='.torrent', delete=False) as tmp:
@@ -573,7 +565,7 @@ class TorrentProcessor:
             # filename while the episode marker survives only in filled_by_title.
             if not is_likely_season_pack(check_title, filled_by_title):
                 return None
-            if rescrape_blocks_pack_reuse(item, check_title):
+            if rescrape_blocks_pack_reuse(item, check_title, torrent_id):
                 return None
             from utilities.session_bad_torrents import is_torrent_known_unplayable
             for provider in self._providers:
@@ -886,6 +878,7 @@ class TorrentProcessor:
             except Exception as e:
                 logging.warning(f"Error removing consolidated-away torrent {old_torrent_id}: {e}")
 
+    @logs_for_item
     def _process_nzb_result(self, result: Dict, item: Optional[Dict] = None, adding_queue_items: Optional[list] = None) -> Optional[Tuple]:
         """Submit an NZB result to the configured Usenet provider and return a synthetic torrent_info tuple."""
         from usenet import get_usenet_client, reset_usenet_client
@@ -960,7 +953,7 @@ class TorrentProcessor:
                         _mem_job = _mem_item.get('filled_by_torrent_id')
                         _mem_id = _mem_job[4:] if _mem_job and _mem_job.startswith('nzb:') else _mem_job
                         if _mem_is_pack:
-                            if rescrape_blocks_pack_reuse(item, _mem_check_title):
+                            if rescrape_blocks_pack_reuse(item, _mem_check_title, _mem_job):
                                 continue
                             # Verify the shared pack job is still actually queryable on the
                             # provider before reusing it - a job that completed and was since
@@ -1028,7 +1021,7 @@ class TorrentProcessor:
                         # when the title/filename precedence above doesn't.
                         _sibling_is_pack = _is_likely_season_pack_db(_sibling_check_title, _sibling[3] or '')
                         if _sibling_is_pack:
-                            if rescrape_blocks_pack_reuse(item, _sibling_check_title):
+                            if rescrape_blocks_pack_reuse(item, _sibling_check_title, _sibling[0]):
                                 _sibling_is_pack = False
                             else:
                                 # Verify the shared pack job is still actually queryable on the
@@ -1427,6 +1420,7 @@ class TorrentProcessor:
         }
         return torrent_info, nzb_url, result
 
+    @logs_for_item
     def process_results(
         self,
         results: list[Dict],
@@ -1482,6 +1476,10 @@ class TorrentProcessor:
         sibling_pack = self._check_sibling_debrid_pack(item, adding_queue_items=adding_queue_items)
         if sibling_pack:
             return sibling_pack
+
+        # Cache checks on a provider that has to add the magnet to answer (AllDebrid)
+        # made for this item so far; capped at MAX_ACCOUNT_ADDING_CACHE_CHECKS_PER_ITEM.
+        account_adding_checks = {}
 
         for idx, result in enumerate(results, 1):
             chosen_result_for_return = None # Initialize variable to hold the chosen result
@@ -1548,13 +1546,21 @@ class TorrentProcessor:
                     temp_item_for_check['imdb_id'] = item.get('imdb_id')
 
                 # Check cache across all providers in parallel — use first hit
-                from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+                from concurrent.futures import as_completed as _as_completed
+                from utilities.log_context import ContextThreadPoolExecutor
                 providers = self._providers
                 is_cached = False
                 cache_source = 'direct_check'
                 winning_provider = self.debrid_provider  # default to primary
 
                 def _check_one(prov):
+                    if getattr(prov, 'CACHE_CHECK_ADDS_TO_ACCOUNT', False):
+                        _done = account_adding_checks.get(id(prov), 0)
+                        if _done >= MAX_ACCOUNT_ADDING_CACHE_CHECKS_PER_ITEM:
+                            logging.info(f"[{prov.PROVIDER_NAME}] skipping cache check: already checked "
+                                         f"{_done} releases for {item_identifier}")
+                            return prov, None, 'per_item_cap'
+                        account_adding_checks[id(prov)] = _done + 1
                     try:
                         cached, src = self.check_cache_status(
                             magnet if not temp_file else "",
@@ -1576,15 +1582,25 @@ class TorrentProcessor:
                     winning_provider, is_cached, cache_source = _check_one(providers[0])
                 else:
                     _outcomes = {}
-                    with ThreadPoolExecutor(max_workers=len(providers)) as _ex:
-                        _futures = {_ex.submit(_check_one, p): p for p in providers}
-                        for _fut in _as_completed(_futures):
-                            _prov, _cached, _src = _fut.result()
+                    # A provider whose check adds the magnet to the account (AllDebrid) is
+                    # left out of the parallel pass and asked below only when no provider
+                    # ranked above it has the release cached, i.e. only when its answer can
+                    # decide the pick.
+                    _parallel = [p for p in providers if not getattr(p, 'CACHE_CHECK_ADDS_TO_ACCOUNT', False)]
+                    if _parallel:
+                        with ContextThreadPoolExecutor(max_workers=len(_parallel)) as _ex:
+                            _futures = {_ex.submit(_check_one, p): p for p in _parallel}
+                            for _fut in _as_completed(_futures):
+                                _prov, _cached, _src = _fut.result()
+                                logging.info(f"[{_prov.PROVIDER_NAME}] cache={_cached} src={_src}")
+                                _outcomes[id(_prov)] = (_cached, _src)
+                    # Take the first cached provider in the configured order rather than
+                    # whichever answered first.
+                    for _prov in providers:
+                        if id(_prov) not in _outcomes:
+                            _prov, _cached, _src = _check_one(_prov)
                             logging.info(f"[{_prov.PROVIDER_NAME}] cache={_cached} src={_src}")
                             _outcomes[id(_prov)] = (_cached, _src)
-                    # Every check has finished by now, so take the first cached provider
-                    # in the configured order rather than whichever answered first.
-                    for _prov in providers:
                         _cached, _src = _outcomes.get(id(_prov), (None, None))
                         if _cached:
                             is_cached = True

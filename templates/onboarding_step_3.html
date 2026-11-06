@@ -16,33 +16,19 @@
             Torrentio and Nyaa are easy to set up and work without any configuration. They're great choices to get started with! After adding a scraper, you'll be able to configure versions to specify what quality and types of releases you want.
         </div>
     </div>
-    <p class="info-message">Scraper settings can only be configured when adding a new scraper. To modify settings, you'll need to delete the existing scraper and create a new one.</p>
+    {% if added_recommended_scraper %}
+    <p class="info-message">We added <b>Torrentio</b> for you. It needs no account or setup, so you can click <b>Configure Versions</b> to move on, or add more scrapers below.</p>
+    {% endif %}
+    {% if use_usenet %}
+    <p class="info-message">You're using usenet, so add at least one <b>Newznab</b> scraper with your indexer's URL and API key (one per indexer).</p>
+    {% endif %}
+    {% if use_debrid and not use_usenet %}
+    <p class="info-message">Debrid needs at least one torrent scraper. Torrentio works with no setup.</p>
+    {% endif %}
     <button id="add-scraper-btn" class="onboarding-btn">Add Scraper</button>
 </div>
 
-<div id="existing-scrapers">
-    {% if settings.Scrapers %}
-        <h3 class="onboarding-title">Scrapers</h3>
-        {% for scraper, config in settings.Scrapers.items() %}
-        <div class="scraper-item">
-            <div class="scraper-header">
-                <span class="onboarding-text">{{ scraper }}</span>
-                <button class="delete-scraper-btn onboarding-btn-delete" data-scraper-id="{{ scraper }}">Delete</button>
-            </div>
-            <div class="scraper-settings">
-                {% for key, value in config.items() %}
-                    {% if key != 'enabled' %}
-                        <div class="setting-item">
-                            <label class="onboarding-text">{{ key|capitalize }}:</label>
-                            <input type="text" id="scraper-{{ scraper }}-{{ key }}" value="{{ value }}" readonly class="setting-value">
-                        </div>
-                    {% endif %}
-                {% endfor %}
-            </div>
-        </div>
-        {% endfor %}
-    {% endif %}
-</div>
+<div id="existing-scrapers"></div>
 
 <script type="module">
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
@@ -77,7 +63,8 @@ document.addEventListener('DOMContentLoaded', function() {
             'Zilean': 'Scraper service. Requires URL.',
             'MediaFusion': 'Scraper service that covers many different services. Good option if Torrentio is not available. Requires URL.',
             'AIOStreams': 'Stremio addon scraper service. Requires URL.',
-            'Prowlarr': 'Advanced indexer manager that connects to multiple torrent sites. Requires URL and API key.'
+            'Prowlarr': 'Advanced indexer manager that connects to multiple torrent sites. Requires URL and API key.',
+            'Newznab': 'A usenet indexer such as NZBGeek or DrunkenSlug. Requires the indexer URL and API key. Add one per indexer.'
         };
 
         // Create dropdown options with descriptions
@@ -113,12 +100,14 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    function showScraperSettingsPopup(scraperType) {
+    // existing/scraperId are set when editing a scraper that's already added.
+    function showScraperSettingsPopup(scraperType, existing = null, scraperId = null) {
         const scraperSchema = SETTINGS_SCHEMA.Scrapers.schema[scraperType];
         let formHtml = '<form id="scraperSettingsForm">';
         let hasSettings = false;
 
         const isNewznab = scraperType === 'Newznab';
+        const isEdit = existing !== null;
 
         // Define descriptions for each setting
         const settingDescriptions = {
@@ -131,8 +120,8 @@ document.addEventListener('DOMContentLoaded', function() {
             'opts': 'Additional options or configuration parameters',
         };
 
-        // For Newznab, add a name field first
-        if (isNewznab) {
+        // For Newznab, add a name field first (the name becomes the scraper's ID, so it can't be edited)
+        if (isNewznab && !isEdit) {
             formHtml += `
                 <div class="form-group" style="margin-bottom: 15px;">
                     <label for="scraper_name" style="display: block; margin-bottom: 5px; color: #f1f1f1;">Name:</label>
@@ -153,11 +142,14 @@ document.addEventListener('DOMContentLoaded', function() {
             if (isNewznab && newznabSkipFields.has(key)) continue;
 
             hasSettings = true;
+            const current = isEdit && key in existing ? existing[key] : value.default;
             let inputHtml = '';
             if (value.type === 'boolean') {
-                inputHtml = `<input type="checkbox" id="${key}" name="${key}" ${value.default ? 'checked' : ''}>`;
+                inputHtml = `<input type="checkbox" id="${key}" name="${key}" ${current ? 'checked' : ''}>`;
+            } else if (value.type === 'integer') {
+                inputHtml = `<input type="number" id="${key}" name="${key}" value="${escapeHtml(current ?? '')}" class="setting-value">`;
             } else if (value.type === 'string') {
-                inputHtml = `<input type="${value.sensitive ? 'password' : 'text'}" id="${key}" name="${key}" value="${value.default || ''}" ${value.validate === 'url' ? 'pattern="https?://.+"' : ''} class="setting-value">`;
+                inputHtml = `<input type="${value.sensitive ? 'password' : 'text'}" id="${key}" name="${key}" value="${escapeHtml(current || '')}" ${value.validate === 'url' ? 'pattern="https?://.+"' : ''} class="setting-value">`;
             }
 
             const description = settingDescriptions[key];
@@ -178,7 +170,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
         formHtml += '</form>';
 
-        if (hasSettings) {
+        if (isEdit) {
+            showPopup({
+                type: POPUP_TYPES.PROMPT,
+                title: `Edit ${scraperId}`,
+                message: hasSettings ? 'Change the scraper settings:' : 'This scraper has no settings.',
+                formHtml: formHtml,
+                confirmText: 'Save',
+                cancelText: 'Cancel',
+                onConfirm: (formData) => updateScraper(scraperId, formData)
+            });
+        } else if (hasSettings) {
             showPopup({
                 type: POPUP_TYPES.PROMPT,
                 title: `Configure ${scraperType} Scraper`,
@@ -229,6 +231,41 @@ document.addEventListener('DOMContentLoaded', function() {
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 message: 'Error adding scraper: ' + error.message,
+            });
+        });
+    }
+
+    function updateScraper(scraperId, scraperConfig) {
+        fetch('/onboarding/scrapers/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scraper_id: scraperId, config: scraperConfig })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) throw new Error(data.error || 'Unknown error');
+            refreshScraperList();
+            showPopup({ type: POPUP_TYPES.SUCCESS, message: `${scraperId} saved.`, autoClose: 3000 });
+        })
+        .catch(error => {
+            showPopup({ type: POPUP_TYPES.ERROR, message: 'Error saving scraper: ' + escapeHtml(error.message) });
+        });
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : String(text);
+        return div.innerHTML.replace(/"/g, '&quot;');
+    }
+
+    let currentScrapers = {};
+
+    function initializeEditButtons() {
+        document.querySelectorAll('.edit-scraper-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const scraperId = this.getAttribute('data-scraper-id');
+                const scraper = currentScrapers[scraperId];
+                if (scraper) showScraperSettingsPopup(scraper.type, scraper, scraperId);
             });
         });
     }
@@ -286,6 +323,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/onboarding/scrapers/get')
             .then(response => response.json())
             .then(data => {
+                currentScrapers = data.scrapers || {};
                 const scraperList = document.getElementById('existing-scrapers');
                 scraperList.innerHTML = '';
                 if (data.scrapers && Object.keys(data.scrapers).length > 0) {
@@ -301,10 +339,12 @@ document.addEventListener('DOMContentLoaded', function() {
                         for (const [key, value] of Object.entries(config)) {
                             if (key !== 'enabled' && key !== 'type') {
                                 hasSettings = true;
+                                const fieldSchema = (SETTINGS_SCHEMA.Scrapers.schema[config.type] || {})[key] || {};
+                                const shown = fieldSchema.sensitive && value ? '••••••••' : value;
                                 settingsHtml += `
                                     <div class="setting-item">
-                                        <label class="onboarding-text">${key.charAt(0).toUpperCase() + key.slice(1)}:</label>
-                                        <input type="text" id="scraper-js-${scraper}-${key}" value="${value}" readonly class="setting-value">
+                                        <label class="onboarding-text">${escapeHtml(key.charAt(0).toUpperCase() + key.slice(1))}:</label>
+                                        <input type="text" value="${escapeHtml(shown)}" readonly class="setting-value">
                                     </div>
                                 `;
                             }
@@ -314,8 +354,11 @@ document.addEventListener('DOMContentLoaded', function() {
                         }
                         scraperItem.innerHTML = `
                             <div class="scraper-header">
-                                <span class="onboarding-text">${scraper}</span>
-                                <button class="delete-scraper-btn onboarding-btn-delete" data-scraper-id="${scraper}">Delete</button>
+                                <span class="onboarding-text">${escapeHtml(scraper)}</span>
+                                <span>
+                                    <button class="edit-scraper-btn onboarding-btn-edit" data-scraper-id="${escapeHtml(scraper)}">Edit</button>
+                                    <button class="delete-scraper-btn onboarding-btn-delete" data-scraper-id="${escapeHtml(scraper)}">Delete</button>
+                                </span>
                             </div>
                             <div class="scraper-settings">
                                 ${settingsHtml}
@@ -324,6 +367,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         scraperList.appendChild(scraperItem);
                     }
                     initializeDeleteButtons();
+                    initializeEditButtons();
                 }
                 updateCanProceed(Object.keys(data.scrapers || {}).length > 0);
             })

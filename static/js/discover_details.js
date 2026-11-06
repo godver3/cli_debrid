@@ -262,7 +262,22 @@ function displayContent(data) {
 
         // Show movie-specific fields
         if (data.directors && data.directors.length > 0) {
-            document.getElementById('movie-director').textContent = data.directors.join(', ');
+            const directorEl = document.getElementById('movie-director');
+            directorEl.replaceChildren();
+            data.directors.forEach((director, index) => {
+                const name = typeof director === 'string' ? director : director.name;
+                const id = typeof director === 'object' ? director.id : null;
+                if (index) directorEl.appendChild(document.createTextNode(', '));
+                if (id) {
+                    const link = document.createElement('a');
+                    link.href = `/discover?person=${id}`;
+                    link.textContent = name;
+                    link.className = 'person-credit-link';
+                    directorEl.appendChild(link);
+                } else {
+                    directorEl.appendChild(document.createTextNode(name));
+                }
+            });
         }
 
         // Show Search button for movies
@@ -378,7 +393,7 @@ function displayCast(cast) {
     const castHeader = document.getElementById('cast-header');
 
     castGrid.innerHTML = cast.map(person => `
-        <div class="cast-card" title="${person.name}${person.character ? ` · ${person.character}` : ''}">
+        <div class="cast-card${person.id ? ' cast-card-link' : ''}" ${person.id ? `data-person-id="${person.id}"` : ''} title="${person.name}${person.character ? ` · ${person.character}` : ''}">
             <img src="${person.profile_path ? `https://image.tmdb.org/t/p/w185${person.profile_path}` : '/static/images/placeholder.png'}"
                  alt="${person.name}"
                  class="cast-photo"
@@ -387,6 +402,12 @@ function displayCast(cast) {
             <div class="cast-character">${person.character || ''}</div>
         </div>
     `).join('');
+    castGrid.querySelectorAll('[data-person-id]').forEach(card => {
+        card.addEventListener('click', (e) => {
+            e.stopPropagation();
+            window.location.href = `/discover?person=${card.dataset.personId}`;
+        });
+    });
 
     // Add click handler for collapse/expand toggle
     if (castHeader) {

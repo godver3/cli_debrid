@@ -231,6 +231,9 @@ def _open_raw_connection(db_path):
 
     # Optimize WAL checkpoint behavior
     conn.execute('PRAGMA wal_autocheckpoint = 1000')
+    # A checkpoint resets the WAL but leaves the file at its high-water mark
+    # (64 MB on a live install, as big as the DB); trim it back to 32 MB.
+    conn.execute('PRAGMA journal_size_limit = 33554432')
 
     # Enable synchronous=NORMAL for better performance with WAL
     conn.execute('PRAGMA synchronous = NORMAL')

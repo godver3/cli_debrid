@@ -88,31 +88,6 @@ document.addEventListener('DOMContentLoaded', function() {
     runScrapeButton.addEventListener('click', runScrape);
     newSearchButton.addEventListener('click', startNewSearch);
 
-    function saveVersionSettings() {
-        const version = document.getElementById('version-select').value;
-        const settings = getModifiedVersionSettings();
-    
-        fetch('/save_version_settings', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ version: version, settings: settings })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showPopup({ type: 'success', title: 'Success', message: 'Settings saved successfully', autoClose: 4000 });
-            } else {
-                showPopup({ type: 'error', title: 'Error', message: 'Error saving settings: ' + data.error, autoClose: 4000 });
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showPopup({ type: 'error', title: 'Error', message: 'An error occurred while saving settings. Please check the console for more details.', autoClose: 4000 });
-        });
-    }
-
     function performSearch() {
         Loading.show();
         const searchTerm = searchInput.value;
@@ -1437,6 +1412,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 'language_score', 'year_match_score', 'season_match_score',
                 'episode_match_score', 'multi_pack_score', 'single_episode_score',
                 'content_type_score', 'language_code_penalty', 'foreign_language_penalty',
+                'extra_audio_bonus', 'audio_description_penalty',
                 'is_multi_pack',
                 'num_items', 'scraper_priority_score', 'version_scraper_priority_score',
                 // preferred_filter_score sits just above its breakdown
@@ -1577,31 +1553,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const hasChanges = JSON.stringify(originalSettings) !== JSON.stringify(modifiedSettings);
         saveButton.disabled = !hasChanges;
         if (visibleButton) visibleButton.style.display = hasChanges ? 'inline-block' : 'none';
-    }
-
-    function revertSettings() {
-        return fetch('/save_version_settings', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                version: currentVersion,
-                settings: originalVersionSettings
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                return;
-            } else {
-                throw new Error(data.error || 'Failed to revert settings');
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showPopup({ type: 'error', title: 'Error', message: `Failed to revert settings: ${error.message}`, autoClose: 4000 });
-        });
     }
 
     function showScrapeSection() {

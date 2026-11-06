@@ -550,6 +550,7 @@ function createListItem(item) {
     row.className = 'list-row';
     row.dataset.id = item.id;
     row.dataset.imdbId = item.imdb_id || '';
+    row.dataset.tmdbId = item.tmdb_id || '';
     row.dataset.type = item.type || '';
     row.dataset.title = item.title || '';
     row.dataset.state = item.state || '';
@@ -677,6 +678,7 @@ function createGridCard(item) {
     card.className = 'media-card';
     card.dataset.id = item.id;
     card.dataset.imdbId = item.imdb_id || '';
+    card.dataset.tmdbId = item.tmdb_id || '';
     card.dataset.type = item.type || '';
     card.dataset.title = item.title || '';
     card.dataset.state = item.state || '';
@@ -851,15 +853,6 @@ function createGridCard(item) {
 
     // Add click handler for card (navigate to details)
     card.addEventListener('click', () => handleCardClick(item));
-
-    // Add action button handlers (prevent event bubbling to card click)
-    const actionButtons = card.querySelectorAll('.action-icon');
-    actionButtons.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation(); // Prevent card click
-            handleActionClick(btn.dataset.action, item);
-        });
-    });
 
     // Fetch missing poster asynchronously
     if (needsFetch) {
@@ -1134,79 +1127,6 @@ function handleCardClick(item) {
     }
 }
 
-function handleActionClick(action, item) {
-    switch (action) {
-        case 'refresh':
-            // Refresh metadata for this item
-            refreshItemMetadata(item);
-            break;
-        case 'delete':
-            // Delete this item
-            deleteItem(item);
-            break;
-        case 'details':
-            // Navigate to detail page (same as card click)
-            handleCardClick(item);
-            break;
-        default:
-            console.warn('Unknown action:', action);
-    }
-}
-
-async function refreshItemMetadata(item) {
-    try {
-        const response = await fetch(`/library/refresh_metadata/${item.tmdb_id}`, {
-            method: 'POST'
-        });
-
-        if (response.ok) {
-            showSuccess(`Refreshing metadata for "${item.title}"`);
-            // Reload library after a delay
-            setTimeout(() => resetAndReload(), 2000);
-        } else {
-            showError(`Failed to refresh metadata for "${item.title}"`);
-        }
-    } catch (error) {
-        console.error('Error refreshing metadata:', error);
-        showError('Network error while refreshing metadata');
-    }
-}
-
-async function deleteItem(item) {
-    showPopup({
-        type: 'confirm',
-        title: 'Delete Item',
-        message: `Delete "${item.title}"? This will remove it from the library.`,
-        confirmText: 'Delete',
-        cancelText: 'Cancel',
-        onConfirm: async function() {
-            try {
-                if (window.DeletionCommon) {
-                    // Use deletion common if available
-                    const result = await window.DeletionCommon.executeDelete([item.id], {
-                        layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache']
-                    });
-
-                    if (result && result.success) {
-                        showSuccess(`Successfully deleted "${item.title}"`);
-                        resetAndReload();
-                    }
-                } else {
-                    showError('Deletion system not available');
-                }
-            } catch (error) {
-                console.error('Error deleting item:', error);
-                showError(`Error deleting "${item.title}"`);
-            }
-        }
-    });
-}
-
-function showSuccess(message) {
-    // TODO: Implement success toast/notification
-    console.log('SUCCESS:', message);
-}
-
 function updateResultsInfo() {
     const displayedCount = libraryState.offset;
     let totalText;
@@ -1410,6 +1330,7 @@ function addCheckboxesToCards() {
         checkbox.innerHTML = `<input type="checkbox"
             data-item-id="${item.dataset.id}"
             data-imdb-id="${item.dataset.imdbId}"
+            data-tmdb-id="${item.dataset.tmdbId || ''}"
             data-item-type="${item.dataset.type}"
             data-title="${item.dataset.title || ''}"
             data-state="${item.dataset.state || ''}"
@@ -1591,9 +1512,10 @@ async function deleteSelectedItems() {
         if (checkbox && checkbox.checked) {
             const itemId = parseInt(checkbox.dataset.itemId);
             const imdbId = checkbox.dataset.imdbId;
+            const tmdbId = checkbox.dataset.tmdbId;
             const itemType = checkbox.dataset.itemType;
             const title = checkbox.dataset.title;
-            itemsToDelete.push({ id: itemId, imdb_id: imdbId, type: itemType, title });
+            itemsToDelete.push({ id: itemId, imdb_id: imdbId, tmdb_id: tmdbId, type: itemType, title });
         }
     });
 
@@ -1630,9 +1552,14 @@ async function deleteSelectedItems() {
     const layersWithoutPlex = allLayers.filter(l => l !== 'media_server');
 
     const doDelete = async (item, layers) => {
+        // The delete endpoints take an IMDb or TMDB ID; TMDB-only items have no IMDb ID
+        const mediaId = item.imdb_id || item.tmdb_id;
+        if (!mediaId) {
+            return { success: false, error: 'No IMDb or TMDB ID to delete by' };
+        }
         const endpoint = item.type === 'movie'
-            ? `/library/delete_movie/${item.imdb_id}`
-            : `/library/delete_show/${item.imdb_id}`;
+            ? `/library/delete_movie/${encodeURIComponent(mediaId)}`
+            : `/library/delete_show/${encodeURIComponent(mediaId)}`;
         const resp = await fetch(endpoint, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},

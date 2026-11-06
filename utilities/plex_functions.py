@@ -4,20 +4,20 @@ import logging
 from utilities.settings import get_setting
 import time
 from typing import Dict, List, Any, Tuple, Optional
-import ast
 import re
 import plexapi.server
 import plexapi.exceptions
 import plexapi.library
 import os
 from pathlib import Path
-from cli_battery.app.direct_api import DirectAPI
 from plexapi.server import PlexServer
 from plexapi.library import LibrarySection
 from database.database_reading import get_media_item_by_id
 import requests
 from plexapi.exceptions import NotFound
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+import threading
+from utilities import plex_health
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -521,7 +521,6 @@ async def process_movies_chunk(session: aiohttp.ClientSession, plex_url: str, he
     return results
 
 async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
-    from metadata.metadata import get_metadata, get_release_date
     genres = [genre['tag'] for genre in movie.get('Genre', []) if 'tag' in genre]
     filtered_genres = filter_genres(genres)
     # logging.info(f"Movie: {movie['title']}")
@@ -1085,6 +1084,7 @@ async def get_recent_from_plex(scan_all_libraries: bool = False):
             plex_directories = libraries_data.get('MediaContainer', {}).get('Directory', [])
             if not plex_directories:
                 logger.warning("No Plex libraries returned (Plex may be unavailable or timing out) — aborting recent scan.")
+                plex_health.record_contact_failure()
                 return {'movies': [], 'episodes': []}
 
             libraries_by_key = {str(library['key']): library['title'] for library in plex_directories}
@@ -1130,6 +1130,7 @@ async def get_recent_from_plex(scan_all_libraries: bool = False):
                 if 'MediaContainer' in recent_data and 'Metadata' in recent_data['MediaContainer']:
                     recent_items = recent_data['MediaContainer']['Metadata']
                     logger.info(f"Retrieved {len(recent_items)} recent items from library {library_title}")
+                    plex_health.record_recently_added(library_key, [i.get('addedAt') for i in recent_items])
 
                     for item in recent_items:
                         item_type = item.get('type')
@@ -1234,7 +1235,6 @@ def filter_genres(genres):
     return filtered
 
 async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
-    from metadata.metadata import get_metadata, get_release_date
     genres = [genre['tag'] for genre in movie.get('Genre', []) if 'tag' in genre]
     filtered_genres = filter_genres(genres)
     logging.info(f"Movie: {movie['title']}")
@@ -1936,11 +1936,6 @@ def _find_plex_owner_of_file(plex, item_title, item_path, episode_title=None):
     return None, None
 
 
-def _plex_has_file(plex, item_title, item_path, episode_title=None) -> bool:
-    """True if Plex already has a media part with item_path's file name under item_title."""
-    return _find_plex_owner_of_file(plex, item_title, item_path, episode_title)[0] is not None
-
-
 def _file_management_plex():
     """PlexServer for the configured file-management mode, or None if not configured."""
     if get_setting('File Management', 'file_collection_management') == 'Plex':
@@ -2368,6 +2363,43 @@ def _mirrored_library_path(directory: str, section_locations, max_levels: int = 
     return None
 
 
+# Plex mode re-scans the same release folder from two places (the Checking queue
+# and task_check_plex_files) every couple of minutes until Plex adds it: 4-6 scans
+# of a folder whose contents never change, which piles up in Plex's scan queue
+# when hundreds of releases finish an hour. Allow one scan per folder per cooldown;
+# a later scan still happens if Plex missed the first. Symlink mode is left alone:
+# season-pack episodes land in the same folder one at a time and need each scan.
+PLEX_MODE_SCAN_COOLDOWN = 600
+_plex_mode_scans: Dict[str, float] = {}
+_plex_mode_scans_lock = threading.Lock()
+
+
+def plex_mode_scan_due(path: str) -> bool:
+    """True unless Plex mode already scanned ``path`` within the cooldown. Doesn't claim it."""
+    if get_setting('File Management', 'file_collection_management') != 'Plex':
+        return True
+    with _plex_mode_scans_lock:
+        last = _plex_mode_scans.get(os.path.normpath(path))
+    return last is None or time.time() - last >= PLEX_MODE_SCAN_COOLDOWN
+
+
+def claim_plex_mode_scan(path: str) -> bool:
+    """True if ``path`` should be scanned now (and records it); False if it's on cooldown."""
+    if get_setting('File Management', 'file_collection_management') != 'Plex':
+        return True
+    key = os.path.normpath(path)
+    now = time.time()
+    with _plex_mode_scans_lock:
+        last = _plex_mode_scans.get(key)
+        if last is not None and now - last < PLEX_MODE_SCAN_COOLDOWN:
+            return False
+        _plex_mode_scans[key] = now
+        if len(_plex_mode_scans) > 5000:
+            for k in [k for k, t in _plex_mode_scans.items() if now - t >= PLEX_MODE_SCAN_COOLDOWN]:
+                del _plex_mode_scans[k]
+    return True
+
+
 def plex_update_item(item: Dict[str, Any]) -> bool:
     # Get display name for logging (title if available, otherwise path)
     item_display = item.get('title')
@@ -2403,6 +2435,7 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
             plex = PlexServer(plex_url, plex_token, timeout=30)
         except Exception as conn_err:
             logger.error(f"Could not connect to Plex server at '{plex_url}': {conn_err}")
+            plex_health.record_contact_failure()
             return False
 
         # Determine the directory we want Plex to rescan
@@ -2443,6 +2476,9 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
         def _update_section_with_timeout(sec, dir_path) -> bool:
             """Run `sec.update(path=dir_path)` in a background thread with a hard timeout."""
             section_name = getattr(sec, 'title', 'Unknown')
+            if not claim_plex_mode_scan(dir_path):
+                logger.debug(f"Skipping Plex section.update for '{section_name}' on '{dir_path}' — scanned under {PLEX_MODE_SCAN_COOLDOWN}s ago")
+                return True
             logger.debug(f"Starting Plex section.update for '{section_name}' on '{dir_path}' (timeout {plex_update_timeout}s)")
             try:
                 with ThreadPoolExecutor(max_workers=1) as _executor:
@@ -3325,9 +3361,9 @@ def update_item_with_plex_info(item_id: int, file_path: str = None, skip_plex_se
             if size_gb is not None or resolution is not None or location:
                 conn.execute('''
                     UPDATE media_items
-                    SET size = COALESCE(size, ?),
-                        resolution = COALESCE(resolution, ?),
-                        location_on_disk = COALESCE(location_on_disk, ?)
+                    SET size = COALESCE(?, size),
+                        resolution = COALESCE(?, resolution),
+                        location_on_disk = COALESCE(?, location_on_disk)
                     WHERE id = ?
                 ''', (size_gb, resolution, location, item_id))
                 conn.commit()

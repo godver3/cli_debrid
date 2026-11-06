@@ -113,29 +113,6 @@ def add_search_performance_indexes():
     finally:
         conn.close()
 
-def remove_statistics_indexes():
-    """Remove statistics indexes if needed"""
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-
-        indexes = [
-            'idx_media_items_collected',
-            'idx_media_items_upgraded',
-            'idx_media_items_collected_counts'
-        ]
-
-        for index in indexes:
-            cursor.execute(f"DROP INDEX IF EXISTS {index}")
-
-        conn.commit()
-        #logging.info("Successfully removed statistics indexes")
-
-    except Exception as e:
-        logging.error(f"Error removing statistics indexes: {str(e)}")
-        conn.rollback()
-    finally:
-        conn.close()
 
 def add_statistics_composite_indexes():
     """Add composite indexes to optimize statistics page queries (Phase 1.3)"""

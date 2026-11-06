@@ -4,16 +4,11 @@ from utilities.settings import get_setting
 from routes.api_tracker import api
 from scraper.scraper import scrape
 from debrid import extract_hash_from_magnet
-from queues.adding_queue import AddingQueue
 import re
 from fuzzywuzzy import fuzz
 from routes.poster_cache import get_cached_poster_url, cache_poster_url, get_cached_media_meta, cache_media_meta
-import asyncio
-import aiohttp
-from database.poster_management import get_poster_url
 from flask import request, url_for
 from urllib.parse import urlparse
-from debrid.base import DebridProvider
 from debrid import get_debrid_provider
 # Provider-agnostic: avoid direct Real-Debrid import
 import time
@@ -330,58 +325,6 @@ def _apply_lego_masters_us_episode_fix_to_trakt_data(trakt_data: List[Dict[str, 
     return renumbered_data
 
 # NEW ASYNC HELPER FUNCTION
-async def _fetch_media_meta_async(session: aiohttp.ClientSession, tmdb_id: str, media_type: str, tmdb_api_key: Optional[str]) -> Optional[Tuple[Optional[str], str, list, float, str]]:
-    """
-    Asynchronously fetches media metadata (details and poster URL) from TMDB.
-    This function is designed to be called in a batch for multiple items.
-    It does not handle caching internally; caching should be done by the caller.
-    Returns a tuple: (poster_url, overview, genres, vote_average, backdrop_path)
-    Poster_url can be None if not found or if an error occurs during its fetch.
-    """
-    if not tmdb_api_key:
-        placeholder_path = "static/images/placeholder.png"
-        return (placeholder_path, "No overview available", [], 0.0, "")
-
-    if media_type == 'tv' or media_type == 'show':
-        details_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
-    else:
-        details_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
-    
-    details_data = None
-    try:
-        # Perform synchronous network call in a separate thread
-        details_response = await asyncio.to_thread(api.get, details_url)
-        details_response.raise_for_status()
-        details_data = details_response.json()
-    except api.exceptions.HTTPError as e:
-        status_code = getattr(getattr(e, 'response', None), 'status_code', None)
-        if status_code == 404:
-            logging.warning(f"TMDB details not found (404) for {media_type} {tmdb_id}: {e}")
-        else:
-            logging.error(f"Error fetching TMDB details for {media_type} {tmdb_id}: {e}")
-        return None 
-    except Exception as e:
-        logging.error(f"Error fetching TMDB details for {media_type} {tmdb_id}: {e}")
-        return None 
-
-    if not details_data:
-        return None
-
-    poster_url_val: Optional[str] = None
-    try:
-        poster_url_val = await get_poster_url(session, tmdb_id, media_type)
-    except Exception as e:
-        logging.error(f"Error fetching poster URL for {media_type} {tmdb_id} via get_poster_url: {e}")
-        # Continue without poster if this specific call fails, poster_url_val remains None
-
-    overview = details_data.get('overview', '')
-    genres = [genre['name'] for genre in details_data.get('genres', [])]
-    vote_average = details_data.get('vote_average', 0)
-    backdrop_path_val = details_data.get('backdrop_path', '')
-    if backdrop_path_val:
-        backdrop_path_val = backdrop_path_val
-
-    return (poster_url_val, overview, genres, vote_average, backdrop_path_val)
 
 
 def _search_tmdb_only(search_term: str, tmdb_api_key: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -612,43 +555,7 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
     if items_to_fetch_concurrently:
         logging.info(f"Identified {len(items_to_fetch_concurrently)} items for concurrent metadata fetching.")
         
-        async def _run_batch_fetch():
-            async with aiohttp.ClientSession() as session:
-                tasks = []
-                for item_to_fetch in items_to_fetch_concurrently:
-                    tasks.append(
-                        _fetch_media_meta_async(
-                            session, 
-                            item_to_fetch['tmdb_id'], 
-                            item_to_fetch['media_type'], 
-                            tmdb_api_key
-                        )
-                    )
-                
-                fetched_results_list = await asyncio.gather(*tasks, return_exceptions=True)
-
-                for i, meta_or_exception in enumerate(fetched_results_list):
-                    item_info = items_to_fetch_concurrently[i]
-                    key = (item_info['tmdb_id'], item_info['media_type'])
-                    
-                    if isinstance(meta_or_exception, Exception):
-                        logging.error(f"Failed to fetch metadata for {item_info['title']} (TMDB ID: {item_info['tmdb_id']}): {meta_or_exception}")
-                        all_media_metadata_map[key] = None # Mark as failed
-                    elif meta_or_exception:
-                        all_media_metadata_map[key] = meta_or_exception
-                        # Cache the successfully fetched data
-                        poster_p = meta_or_exception[0]
-                        if poster_p: # poster_p could be None if get_poster_url failed
-                            cache_poster_url(item_info['tmdb_id'], item_info['media_type'], poster_p)
-                        cache_media_meta(item_info['tmdb_id'], item_info['media_type'], meta_or_exception)
-                        logging.info(f"Fetched and cached metadata for {item_info['media_type']} {item_info['title']} (TMDB ID: {item_info['tmdb_id']})")
-                    else:
-                        all_media_metadata_map[key] = None # Fetch returned None (e.g. details 404)
-                        logging.warning(f"No metadata returned from fetch for {item_info['media_type']} {item_info['title']} (TMDB ID: {item_info['tmdb_id']})")
-
-        # DISABLED: asyncio.run() creates new event loops causing 96% CPU!
-        # asyncio.run(_run_batch_fetch())
-        # FIXED: Synchronous fallback to avoid event loop accumulation
+        # Synchronous on purpose: asyncio.run() per call created new event loops (96% CPU)
         logging.info(f"Fetching metadata synchronously for {len(items_to_fetch_concurrently)} items...")
 
         for item_to_fetch in items_to_fetch_concurrently:
@@ -804,21 +711,6 @@ def get_tmdb_id_from_imdb(imdb_id: str, media_type: str = None) -> Optional[str]
         logging.error(f"Error looking up TMDB ID for IMDB ID {imdb_id}: {e}")
         return None
 
-def get_media_meta_by_imdb(imdb_id: str, media_type: str) -> Optional[Tuple[str, str, list, float, str]]:
-    """
-    Get media metadata using IMDB ID by first converting to TMDB ID.
-
-    Args:
-        imdb_id: The IMDB ID (e.g., 'tt1234567')
-        media_type: 'movie', 'tv', or 'show'
-
-    Returns:
-        Tuple of (poster_url, overview, genres, vote_average, backdrop_path) or None
-    """
-    tmdb_id = get_tmdb_id_from_imdb(imdb_id, media_type)
-    if tmdb_id:
-        return get_media_meta(tmdb_id, media_type)
-    return None
 
 def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, list, float, str]]:
     tmdb_api_key = get_setting('TMDB', 'api_key')
@@ -903,48 +795,6 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         logging.warning(f"TMDb request failed for {media_type} {tmdb_id}: {e}")
         return None
     
-def overseerr_tvshow(title: str, year: Optional[int] = None, media_id: Optional[int] = None, season: Optional[int] = None) -> List[Dict[str, Any]]:
-    overseerr_url = get_setting('Overseerr', 'url')
-    overseerr_api_key = get_setting('Overseerr', 'api_key')
-    
-    if not overseerr_url or not overseerr_api_key:
-        logging.error("Overseerr URL or API key not set. Please configure in settings.")
-        return []
-
-    headers = {
-        'X-Api-Key': overseerr_api_key,
-        'Accept': 'application/json'
-    }
-
-    if media_id and season is not None:
-        search_url = f"{overseerr_url}/api/v1/tv/{media_id}/season/{season}"
-    else:
-        search_url = f"{overseerr_url}/api/v1/tv/{media_id}"
-
-
-    try:
-        response = api.get(search_url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-
-        if data.get('seasons', False):
-            # Grab TV show seasons
-            seasons = data['seasons']
-            
-            logging.info(f"Sorted seasons: {seasons}")
-            return seasons
-        elif data.get('episodes', False):
-            # Grab TV show seasons
-            episodes = data['episodes']
-            
-            logging.info(f"Sorted episodes: {episodes}")
-            return episodes
-        else:
-            logging.warning(f"No results found for show: {title}")
-            return []
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error searching Overseerr: {e}")
-        return []
     
 def parse_search_term(search_term: str) -> Tuple[str, Optional[int], Optional[int], Optional[int], bool]:
     # First, check if the entire search term is a year
@@ -969,10 +819,6 @@ def parse_search_term(search_term: str) -> Tuple[str, Optional[int], Optional[in
         return base_title, season, episode, year, multi
 
     return base_title, None, None, year, True  # Default to multi=True if no season/episode specified
-
-async def fetch_poster_url(tmdb_id, media_type):
-    async with aiohttp.ClientSession() as session:
-        return await get_poster_url(session, tmdb_id, media_type)
 
 
 def _search_tmdb_only_fast(search_term: str, tmdb_api_key: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -1337,7 +1183,6 @@ def get_tmdb_data(tmdb_id: int, media_type: str, season: Optional[int] = None, e
         return {}
 
 def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int] = None, allow_specials: bool = False) -> Dict[str, Any]:
-    from metadata.metadata import get_all_season_episode_counts, get_show_airtime_by_imdb_id
     logging.info(f"Starting web scrape for TV Show: {title}, media_id: {media_id}, season: {season}, allow_specials: {allow_specials}")
     
     trakt_client_id = get_setting('Trakt', 'client_id')
@@ -2106,15 +1951,6 @@ def get_media_details(media_id: str, media_type: str) -> Dict[str, Any]:
     logging.info(f"Successfully fetched media details for {metadata.get('title', 'Unknown Title')} ({metadata.get('year', 'Unknown Year')})")
     return metadata
 
-def parse_season_episode(search_term: str) -> Tuple[int, int, bool]:
-    # Match patterns like "S01E01", "s01e01", "S01", "s01"
-    match = re.search(r'[Ss](\d+)(?:[Ee](\d+))?', search_term)
-    if match:
-        season = int(match.group(1))
-        episode = int(match.group(2)) if match.group(2) else 1
-        multi = not bool(match.group(2))  # If episode is not specified, set multi to True
-        return season, episode, multi
-    return 1, 1, True  # Default to S01E01 with multi=True if no match
     
 def process_torrent_selection(torrent_index: int, torrent_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     logging.info(f"Processing torrent selection: {torrent_index}")
@@ -2168,14 +2004,3 @@ def process_torrent_selection(torrent_index: int, torrent_results: List[Dict[str
             "error": "Invalid torrent index"
         }
 
-def parse_torrent_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    parsed_results = []
-    for result in results:
-        parsed_result = {
-            "name": result.get("name", "Unknown"),
-            "size": result.get("size", "Unknown"),
-            "seeders": result.get("seeders", 0),
-            "magnet": result.get("magnet", "")
-        }
-        parsed_results.append(parsed_result)
-    return parsed_results

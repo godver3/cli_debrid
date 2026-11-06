@@ -120,11 +120,6 @@ def _start_background_saver():
 # Public API — same signatures as before, now backed by the in-memory dict
 # ---------------------------------------------------------------------------
 
-def is_cache_healthy():
-    """Returns True if the in-memory cache is populated (always True after load)."""
-    _ensure_loaded()
-    return True
-
 
 def load_cache() -> dict:
     """Return the live in-memory cache dict (read-only snapshot not needed for callers)."""
