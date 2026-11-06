@@ -44,6 +44,7 @@ tzlocal==5.2
 pywin32==306
 APScheduler==3.10.4
 PyGithub==2.1.1
+# nyaapy 0.7 caps lxml<6 (CVE-2026-41066 fixed in 6.1.0); its default fromstring() parser does not load external entities, so it is not exposed
 nyaapy==0.7
 tld==0.13.2
 feedparser==6.0.11
