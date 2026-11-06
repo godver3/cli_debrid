@@ -6,10 +6,8 @@ from database.not_wanted_magnets import purge_not_wanted_magnets_file
 import logging
 import time
 from pathlib import Path
-import json
 import os
 import pickle
-import requests
 from routes.notifications import send_notifications
 import uuid
 import ntplib
@@ -86,26 +84,11 @@ class MaintenanceTasks:
                 logging.error(f"Failed to remove processed temp notification file {temp_notifications_file}: {e_unlink}")
 
         if notifications:
-            # Fetch enabled notifications using CLI_DEBRID_PORT
-            port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
             try:
-                response = requests.get(f'http://localhost:{port}/settings/notifications/enabled', timeout=10) # Add timeout
-                response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-
-                enabled_notifications = response.json().get('enabled_notifications', {})
-                
-                # Send notifications
-                send_notifications(notifications, enabled_notifications)
-                
+                from routes.notifications import get_enabled_notifications
+                send_notifications(notifications, get_enabled_notifications())
                 logging.info(f"Sent {len(notifications)} notifications.")
 
-            except requests.exceptions.RequestException as req_err:
-                logging.error(f"Failed to fetch enabled notifications: {req_err}")
-                # Re-queue notifications if fetching config fails?
-                # For simplicity now, we log error and notifications are lost for this cycle.
-                # Could re-pickle 'notifications' back to the original file path.
-            except json.JSONDecodeError as json_err:
-                 logging.error(f"Failed to parse enabled notifications response: {json_err}")
             except Exception as e_send:
                 logging.error(f"Error sending notifications: {str(e_send)}", exc_info=True)
 

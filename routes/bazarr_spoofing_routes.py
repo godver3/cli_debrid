@@ -20,6 +20,7 @@ from typing import List, Dict, Any, Optional
 from utilities.settings import get_setting, set_setting
 from utilities.release_parser import ReleaseParser
 from database.core import get_db_connection
+from routes.models import admin_required
 
 # Create blueprint - mounted at root to handle /api/v3/* and /signalr/* paths
 bazarr_bp = Blueprint('bazarr', __name__)
@@ -1615,6 +1616,7 @@ def handle_signalr_sse():
 # ============================================================================
 
 @bazarr_bp.route('/settings/api/bazarr/generate_key', methods=['POST'])
+@admin_required
 def generate_bazarr_key():
     """Generate a new API key for Bazarr integration."""
     new_key = generate_api_key()
@@ -1623,6 +1625,7 @@ def generate_bazarr_key():
 
 
 @bazarr_bp.route('/settings/api/bazarr/test', methods=['GET'])
+@admin_required
 def test_bazarr_connection():
     """Test that Bazarr spoofing is working."""
     symlinked_mode = is_symlinked_mode()

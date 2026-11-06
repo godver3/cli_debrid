@@ -1,4 +1,4 @@
-from flask import redirect, url_for, request
+from flask import jsonify, redirect, url_for, request
 from functools import wraps, lru_cache
 from flask_login import current_user
 from .utils import is_user_system_enabled
@@ -37,6 +37,42 @@ def _check_api_token():
     if not token:
         return False
     return User.query.filter_by(api_token=token).first() is not None
+
+# Requests that need no login when the user system is on: the login flow, static
+# assets, and integrations that bring their own credentials (Overseerr/rclone/Plex
+# webhooks, and Bazarr's Sonarr/Radarr emulation, which checks its own API key).
+_PUBLIC_ENDPOINTS = frozenset({
+    'static', 'favicon', 'dynamic_favicon', 'manifest', 'redirect_placeholder',
+    'auth.login', 'auth.unauthorized', 'oidc.login', 'oidc.callback',
+    'over_usage.index', 'tooltip.get_tooltips',
+})
+_PUBLIC_BLUEPRINTS = frozenset({'webhook'})
+_BAZARR_PATHS = ('/api/v3/', '/signalr')
+
+
+def _is_public_request():
+    if request.endpoint in _PUBLIC_ENDPOINTS or request.blueprint in _PUBLIC_BLUEPRINTS:
+        return True
+    return request.path == '/api' or request.path.startswith(_BAZARR_PATHS)
+
+
+def require_login():
+    """App-wide before_request: with the user system on, every route needs a
+    logged-in session or an API token unless it is listed as public above.
+
+    Routes still add their own decorators for role checks (admin_required etc.);
+    this only makes a route that forgot one fail closed instead of open.
+    """
+    if request.endpoint is None or _is_public_request():
+        return None  # unknown URL (Flask answers 404/405) or public
+    if not is_user_system_enabled():
+        return None
+    if current_user.is_authenticated or _check_api_token():
+        return None
+    if request.method == 'GET' and request.accept_mimetypes.best == 'text/html':
+        return redirect(url_for('auth.login'))
+    return jsonify({'error': 'Authentication required'}), 401
+
 
 def user_required(f):
     @wraps(f)
