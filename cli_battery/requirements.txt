@@ -1,0 +1,13 @@
+# Temporary: re-added only so GitHub's dependency graph re-reads this path,
+# which it still tracked with pre-0.7.67 pins after the file was deleted.
+# The next commit deletes it again. Nothing installs from this file.
+colorlog==6.8.2
+Flask==3.1.3
+iso8601==2.1.0
+Pillow==13.0.0
+pytrakt==3.4.32
+requests==2.34.2
+SQLAlchemy==2.0.31
+psycopg2-binary==2.9.13
+protobuf==5.29.6
+APScheduler==3.10.4
