@@ -6,7 +6,7 @@ import sys
 from requests.exceptions import RequestException
 from werkzeug.exceptions import TooManyRequests
 
-from .models import admin_required, user_required
+from .models import admin_required, user_required, require_login
 from .auth_routes import auth_bp
 from .scraper_routes import scraper_bp
 from .queues_routes import queues_bp
@@ -109,6 +109,8 @@ def check_rate_limit():
         if request.endpoint == 'reset_rate_limits':
             return  # Allow the reset_rate_limits route to proceed
         return redirect(url_for('over_usage.index'))
+
+app.before_request(require_login)
 
 @app.errorhandler(429)
 def handle_too_many_requests(e):
