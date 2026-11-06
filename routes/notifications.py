@@ -1268,57 +1268,9 @@ def send_telegram_notification(bot_token, chat_id, content):
 
 
 def get_enabled_notifications():
-    """Get enabled notifications from either the settings route or directly from config."""
-    try:
-        # Try to use the Flask route first
-        from routes.settings_routes import get_enabled_notifications as get_notifications
-        enabled_notifications_response = get_notifications()
-        logging.debug("Successfully got enabled notifications from Flask route")
-        return enabled_notifications_response.get_json()['enabled_notifications']
-    except RuntimeError as e:  # Catches "Working outside of application context"
-        if "Working outside of application context" in str(e):
-            # This is expected during startup, just log at debug level
-            pass
-        else:
-            # Log other RuntimeErrors as errors
-            logging.error(f"Unexpected RuntimeError in get_enabled_notifications: {str(e)}")
-            
-        # If we're outside Flask context (e.g. during startup), read directly from config
-        from utilities.settings import load_config
-        config = load_config()
-        notifications = config.get('Notifications', {})
-        
-        enabled_notifications = {}
-        for notification_id, notification_config in notifications.items():
-            if not notification_config or not notification_config.get('enabled', False):
-                continue
-
-            # Only include notifications that have the required fields
-            if notification_config['type'] == 'Discord':
-                if notification_config.get('webhook_url'):
-                    enabled_notifications[notification_id] = notification_config
-            elif notification_config['type'] == 'Email':
-                if all([
-                    notification_config.get('smtp_server'),
-                    notification_config.get('smtp_port'),
-                    notification_config.get('from_address'),
-                    notification_config.get('to_address')
-                ]):
-                    enabled_notifications[notification_id] = notification_config
-            elif notification_config['type'] == 'Telegram':
-                if all([
-                    notification_config.get('bot_token'),
-                    notification_config.get('chat_id')
-                ]):
-                    enabled_notifications[notification_id] = notification_config
-            elif notification_config['type'] == 'NTFY':
-                if all([
-                    notification_config.get('host'),
-                    notification_config.get('topic')
-                ]):
-                    enabled_notifications[notification_id] = notification_config
-
-        return enabled_notifications
+    """Enabled notifications with their required fields, read straight from config."""
+    from routes.settings_routes import collect_enabled_notifications
+    return collect_enabled_notifications()
 
 def send_program_stop_notification(message="Program stopped"):
     """Send notification when program stops."""

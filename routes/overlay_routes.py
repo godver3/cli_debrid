@@ -106,6 +106,20 @@ _BADGE_SAMPLE_PREFERRED_KEYS = {
 overlay_page_bp = Blueprint('overlay_page', __name__)
 overlay_bp = Blueprint('overlay_api', __name__)
 
+
+@admin_required
+def _admin_only():
+    return None
+
+
+@overlay_bp.before_request
+def _overlay_api_admin_only():
+    """/api/overlays/* reads and changes library-wide overlay state: admins only.
+    Logo images stay readable by any logged-in user (Discover shows platform icons)."""
+    if request.endpoint == 'overlay_api.serve_logo':
+        return None
+    return _admin_only()
+
 # HTML routes
 @overlay_page_bp.route('/overlays')
 @admin_required
@@ -2664,6 +2678,7 @@ def _get_badge_manager():
 
 
 @overlay_page_bp.route('/overlays/badges')
+@admin_required
 def badges_page():
     """Serve the badge library UI."""
     return render_template('badges.html')
@@ -3175,14 +3190,12 @@ def serve_logo(filepath):
     if filepath.startswith('logos/'):
         filepath = filepath[len('logos/'):]
     parts = Path(filepath).parts
-    if '..' in parts:
+    if '..' in parts or Path(filepath).is_absolute() or Path(filepath).drive:
         abort(400)
-    user_path = _user_logo_dir() / filepath
-    if user_path.exists():
-        return send_file(str(user_path))
-    system_path = _SYSTEM_LOGO_DIR / filepath
-    if system_path.exists():
-        return send_file(str(system_path))
+    for base in (_user_logo_dir(), _SYSTEM_LOGO_DIR):
+        path = (base / filepath).resolve()
+        if path.is_relative_to(Path(base).resolve()) and path.is_file():
+            return send_file(str(path))
     abort(404)
 
 
