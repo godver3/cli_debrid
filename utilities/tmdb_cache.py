@@ -281,3 +281,66 @@ def get_cached_episode_info(tmdb_ids):
 
     finally:
         cursor.close()
+
+# ========================================
+# Raw TMDB JSON documents
+# ========================================
+
+import threading
+from collections import OrderedDict
+
+import requests
+
+# Detail pages fetch the same few TMDB documents on every visit (show/movie
+# details, release_dates, content ratings, seasons). These only feed what the
+# page shows, so a short in-memory cache is safe: nothing here is written to
+# the database, and the release-date tracking pipeline doesn't use it.
+TMDB_JSON_TTL = 3600
+TMDB_JSON_CACHE_MAX = 500
+
+_json_cache = OrderedDict()  # url -> (expires_at monotonic, response text)
+_json_cache_lock = threading.Lock()
+_json_inflight = {}  # url -> lock held by the request fetching it
+_json_session = requests.Session()
+
+
+def _cached_json_text(url):
+    with _json_cache_lock:
+        hit = _json_cache.get(url)
+        if hit and hit[0] > time.monotonic():
+            _json_cache.move_to_end(url)
+            return hit[1]
+    return None
+
+
+def get_tmdb_json(url, ttl=TMDB_JSON_TTL, timeout=10, ttl_for=None):
+    """GET a TMDB JSON document through a small in-memory cache.
+
+    Concurrent requests for the same URL wait for one fetch instead of each
+    calling TMDB. Each caller gets its own parsed copy, so it may modify it.
+    Errors (HTTP or network) raise as before and are not cached.
+    ttl_for(data) can return a different TTL for a particular response.
+    """
+    text = _cached_json_text(url)
+    if text is None:
+        with _json_cache_lock:
+            url_lock = _json_inflight.setdefault(url, threading.Lock())
+        with url_lock:
+            text = _cached_json_text(url)
+            if text is None:
+                try:
+                    response = _json_session.get(url, timeout=timeout)
+                    response.raise_for_status()
+                    text = response.text
+                    data = json.loads(text)
+                    seconds = ttl_for(data) if ttl_for else ttl
+                    with _json_cache_lock:
+                        _json_cache[url] = (time.monotonic() + seconds, text)
+                        _json_cache.move_to_end(url)
+                        while len(_json_cache) > TMDB_JSON_CACHE_MAX:
+                            _json_cache.popitem(last=False)
+                    return data
+                finally:
+                    with _json_cache_lock:
+                        _json_inflight.pop(url, None)
+    return json.loads(text)

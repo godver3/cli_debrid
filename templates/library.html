@@ -3,17 +3,6 @@
 {% block title %}Library - Media Collection{% endblock %}
 
 {% block head %}
-<script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const theme = getCurrentTheme();
-        const cssFile = 'css/tangerine/tangerine_library.css?v=2';
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = '{{ url_for("static", filename="") }}' + cssFile;
-        document.head.appendChild(link);
-    });
-</script>
 {% endblock %}
 
 {% block content %}
@@ -199,4 +188,8 @@
 <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/deletion_common.js') }}"></script>
 <script src="{{ url_for('static', filename='js/library.js') }}"></script>
+{% endblock %}
+
+{% block head_last %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_library.css') }}">
 {% endblock %}

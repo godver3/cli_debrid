@@ -9,7 +9,6 @@ implementation.
 import json
 import logging
 import concurrent.futures
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -21,15 +20,19 @@ from thefuzz import fuzz
 
 from .logger_config import logger
 from .database import (
-    init_db, Session as DbSession, managed_session,
-    Item, Metadata, Season, Episode, Poster,
-    TMDBToIMDBMapping, TVDBToIMDBMapping, DatabaseManager,
-    get_timezone_aware_now, normalize_imdb_id,
+    init_db,
+    managed_session,
+    Item,
+    Metadata,
+    Season,
+    Episode,
+    TMDBToIMDBMapping,
+    normalize_imdb_id,
 )
 from . import trakt_client
 from . import tvdb_client
 from . import trakt_auth
-from .staleness import is_stale, is_older_than, should_recheck_null_airdate, is_tmdb_mapping_stale
+from .staleness import is_stale, is_older_than, is_tmdb_mapping_stale
 from .xem_utils import fetch_xem_mapping
 from .episode_order import seasons_in_show_order
 

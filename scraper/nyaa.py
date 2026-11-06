@@ -1,13 +1,10 @@
-import sys
 import os
 import logging
 from typing import List, Dict, Any, Optional
-from nyaapy.nyaasi.nyaa import Nyaa
 from nyaapy.torrent import Torrent
-from scraper.functions import *
-from database.database_writing import update_anime_format, get_anime_format
-import threading
+from database.database_writing import update_anime_format
 import concurrent.futures
+from utilities.log_context import ContextThreadPoolExecutor
 import time
 import re
 import random
@@ -251,7 +248,6 @@ def _search_nyaa_with_session(query: str, category: int, subcategory: int, filte
     # we'll reimplement the search logic ourselves using our session
     # This ensures complete isolation from the global requests library
     
-    import requests
     from nyaapy.nyaasi.nyaa import Nyaa
     from nyaapy.parser import parse_nyaa, parse_nyaa_rss
     from nyaapy.torrent import json_to_class
@@ -557,7 +553,7 @@ def scrape_nyaa_anime_season(title: str, year: int, season: int, tmdb_id: str, e
         return results
     
     # Use ThreadPoolExecutor to scrape all formats simultaneously
-    with concurrent.futures.ThreadPoolExecutor() as executor:
+    with ContextThreadPoolExecutor() as executor:
         future_to_format = {
             executor.submit(scrape_with_format, format_type, format_pattern): format_type
             for format_type, format_pattern in episode_formats.items()

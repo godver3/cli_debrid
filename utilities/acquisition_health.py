@@ -63,8 +63,15 @@ def log_deferred(item_identifier, reason):
         logging.debug(message)
 
 
+def _can_cache_check(provider):
+    """AllDebrid caps its cache checks per hour; while the cap is used up its torrent
+    releases wait in Adding like an unavailable backend's, rather than failing."""
+    exhausted = getattr(provider, 'cache_check_budget_exhausted', None)
+    return not (callable(exhausted) and exhausted() is True)
+
+
 def usable_results(results, providers):
-    torrent_ok = any(provider_available(p) for p in providers)
+    torrent_ok = any(provider_available(p) and _can_cache_check(p) for p in providers)
     nzb_ok = usenet_available()
     return [r for r in results if (
         nzb_ok if r.get('protocol') == 'nzb' or r.get('nzb_url') else torrent_ok

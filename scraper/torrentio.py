@@ -1,9 +1,8 @@
 import logging
 from routes.api_tracker import api
 import re
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 from urllib.parse import quote_plus
-from utilities.settings import load_config, get_setting
 from database.database_reading import get_imdb_aliases
 import time
 import random

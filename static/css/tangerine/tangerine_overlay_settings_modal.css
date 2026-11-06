@@ -156,11 +156,40 @@
 }
 
 .overlay-setting-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    flex-shrink: 0;
     width: 20px;
     height: 20px;
+    margin: 0;
+    border: 2px solid #e17c52;
+    border-radius: 5px;
+    background-color: #2a2a2a;
     cursor: pointer;
-    accent-color: #e17c52;
-    flex-shrink: 0;
+    transition: background-color 0.15s ease;
+}
+
+/* Drawn by hand: some mobile browsers render the native unchecked box dark-on-dark */
+.overlay-setting-checkbox:checked {
+    background-color: #e17c52;
+}
+
+.overlay-setting-checkbox:checked::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 45%;
+    width: 5px;
+    height: 10px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.overlay-setting-checkbox:focus-visible {
+    outline: 2px solid #e17c52;
+    outline-offset: 2px;
 }
 
 .overlay-settings-modal-footer {

@@ -1,7 +1,7 @@
 import logging
 import re
 from typing import List, Dict, Any, Tuple, Optional
-from scraper.functions.similarity_checks import similarity, normalize_title
+from scraper.functions.similarity_checks import normalize_title
 from scraper.functions.other_functions import smart_search
 from fuzzywuzzy import fuzz
 
@@ -37,7 +37,29 @@ def check_preferred(patterns_weights, fields, is_bonus):
 
     return score_change, breakdown
 
-_MULTI_AUDIO_RE = re.compile(r'(?i)\bmulti\b(?![ ._-]?subs?\b)|\bdual[ ._-]?audio\b|(?<!web[ ._-])\bdl\b')
+# MULTi, DUAL (bare or Dual-Audio) and the scene 'DL' dual-language tag; WEB-DL and
+# Multi-Subs/Dual.Subs don't count.
+_MULTI_AUDIO_RE = re.compile(r'(?i)\b(?:multi|dual)\b(?![ ._-]?subs?\b)|(?<!web[ ._-])\bdl\b')
+# DUAL on a foreign-language title is, by convention, the original plus an English dub.
+_DUAL_AUDIO_RE = re.compile(r'(?i)\bdual\b(?![ ._-]?subs?\b)')
+# Cap on the extra-audio bonus: a tiebreaker between otherwise close releases (Squid
+# Game S01's DUAL releases lost by ~20 points on bitrate), not enough to bury an
+# untagged release that's clearly better, since many untagged releases do have English.
+_EXTRA_AUDIO_BONUS_CAP = 50.0
+# Audio-description releases (Kitsune's "... with Audio Description ...") carry a
+# narration track for blind viewers. A bare "AD" tag isn't matched: it collides with
+# real titles ("Ad Astra", "A.D. The Bible Continues").
+_AUDIO_DESCRIPTION_RE = re.compile(
+    r'(?i)audio[\s._-]*descri(?:ption|bed)|descriptive[\s._-]+audio|described[\s._-]+video')
+
+
+def _release_tags(torrent_title, extracted_title):
+    """The release name minus its leading title words, so a show called Dual Survival
+    isn't read as a DUAL release."""
+    words = len(re.findall(r'[^\W_]+', extracted_title or ''))
+    if not words:
+        return torrent_title
+    return re.sub(r'^[\W_]*(?:[^\W_]+[\W_]+){%d}' % words, '', torrent_title, count=1)
 
 # Subtitle tags PTT reports as plain languages: SWESUB/ESub/SUBFRENCH, VOSTFR, NORDiC
 # (Nordic subs) and a bare Sub/Subs/Subbed with the word next to it (Subs.Spanish,
@@ -92,6 +114,11 @@ def rank_result_key(
         foreign_language_penalty_setting = abs(float(version_settings.get('foreign_language_penalty', 30)))
     except (TypeError, ValueError):
         foreign_language_penalty_setting = 30.0
+    # Signed: a negative setting is a bonus, for users who want audio-description copies.
+    try:
+        audio_description_penalty_setting = float(version_settings.get('audio_description_penalty', 10000))
+    except (TypeError, ValueError):
+        audio_description_penalty_setting = 10000.0
 
     # Upgrade Hub mode: size, bitrate, country and language are irrelevant when
     # comparing quality upgrades — they cause REMUX files to be mis-scored and
@@ -416,12 +443,14 @@ def rank_result_key(
     # affects ranking for titles with no distinct translated title.
     detected_release_languages = [str(l).lower() for l in (parsed_info.get('languages') or [])]
     foreign_language_penalty = 0.0
+    extra_audio_bonus = 0.0
     if preferred_language:
         preferred_language_lower = preferred_language.lower()
         # Both checks look at audio languages only: SWESUB, VOSTFR or NORDiC are
         # subtitles (a French user's VOSTFR has the original audio), and ESub.Hindi is
         # Hindi audio, not English.
         audio_languages = _audio_languages(torrent_title, parsed_info, detected_release_languages) if detected_release_languages else []
+        release_tags = _release_tags(torrent_title, extracted_title)
         # English releases are normally untagged, so an explicit ENG tag marks a foreign
         # dual-audio rip rather than a better match: no bonus for 'en'.
         if preferred_language_lower in audio_languages and preferred_language_lower != 'en':
@@ -436,14 +465,45 @@ def rank_result_key(
             # GERMAN.DUBBED), so multi-audio is detected from the name itself.
             # The scene 'DL' tag means dual-language; WEB-DL must not match.
             # Scaled by language_weight like the other language scores.
-            is_multi_audio = 'multi' in audio_languages or bool(_MULTI_AUDIO_RE.search(torrent_title))
+            is_multi_audio = 'multi' in audio_languages or bool(_MULTI_AUDIO_RE.search(release_tags))
             # The title's own language is the original audio (Parasite.KOREAN is the same
             # track as an untagged Parasite release), not a dub.
             is_original_audio = bool(original_language) and original_language.lower() in audio_languages
             if not is_multi_audio and not is_original_audio:
                 foreign_language_penalty = -foreign_language_penalty_setting * language_weight
                 language_reason += f" - Penalty {foreign_language_penalty:.0f} for missing preferred language '{preferred_language_lower}' (audio {audio_languages})"
+        # For a title whose original language isn't the preferred one (Squid Game is 'ko'),
+        # an untagged release usually has only the original audio. Untagged releases stay
+        # unpenalized (some do carry the preferred track); a release that says it carries
+        # extra audio (MULTi, DUAL, or the preferred language tagged) gets a bonus of up
+        # to _EXTRA_AUDIO_BONUS_CAP instead, so it wins a close call against an
+        # original-audio-only release.
+        # How sure the release is about carrying the preferred track sets the size:
+        # named in the audio (ENG, English Audio) or DUAL: full bonus. A bare MULTi
+        # usually does but doesn't promise it (French-scene MULTi is French + original,
+        # e.g. Tsundere-Raws' Squid Game S03 had no English): half. Audio that names
+        # dubs without the preferred language (VF/FRENCH, GERMAN.DL): none.
+        if original_language and original_language.lower() != preferred_language_lower:
+            original_lower = original_language.lower()
+            other_dubs = [l for l in audio_languages if l not in (preferred_language_lower, original_lower, 'multi')]
+            full_bonus = min(_EXTRA_AUDIO_BONUS_CAP, foreign_language_penalty_setting * language_weight)
+            if preferred_language_lower in audio_languages or (_DUAL_AUDIO_RE.search(release_tags) and not other_dubs):
+                extra_audio_bonus = full_bonus
+                language_reason += f" + Bonus {extra_audio_bonus:.0f} for extra audio on a '{original_lower}' title (audio {audio_languages})"
+            elif _MULTI_AUDIO_RE.search(release_tags) and not other_dubs:
+                extra_audio_bonus = full_bonus / 2
+                language_reason += f" + Bonus {extra_audio_bonus:.0f} for untagged multi-audio on a '{original_lower}' title (preferred track not named)"
     # --- End Preferred Audio/Sub Language Ranking ---
+
+    # Only the release tags, so a title that is itself about audio description isn't hit.
+    # With no year before it ("By Any Means with Audio Description 1080p"), PTT folds the
+    # phrase into the parsed title, so that counts too unless the searched title has it.
+    audio_description_penalty = 0.0
+    if audio_description_penalty_setting and (
+            _AUDIO_DESCRIPTION_RE.search(_release_tags(torrent_title, extracted_title))
+            or (_AUDIO_DESCRIPTION_RE.search(extracted_title or '')
+                and not _AUDIO_DESCRIPTION_RE.search(query or ''))):
+        audio_description_penalty = -audio_description_penalty_setting
 
     normalized_language = language_score # Use the raw score
 
@@ -581,6 +641,8 @@ def rank_result_key(
         preferred_filter_score +
         language_code_penalty +
         foreign_language_penalty +
+        extra_audio_bonus +
+        audio_description_penalty +
         indexer_bonus +
         scraper_priority +
         version_scraper_priority
@@ -731,7 +793,7 @@ def rank_result_key(
                      f"{season_match_score * 5:.2f} (season) + {episode_match_score * 5:.2f} (ep) + " +
                      f"{multi_pack_score:.2f} (pack_bonus) + {single_episode_score:.2f} (single_ep_penalty) + " +
                      f"{preferred_filter_score:.2f} (pref_filter) + {content_type_score:.2f} (content_type) + " +
-                     f"{language_code_penalty:.2f} (lang_code_penalty) + {foreign_language_penalty:.2f} (foreign_lang_penalty)")
+                     f"{language_code_penalty:.2f} (lang_code_penalty) + {foreign_language_penalty:.2f} (foreign_lang_penalty) + {extra_audio_bonus:.2f} (extra_audio_bonus) + {audio_description_penalty:.2f} (audio_description_penalty)")
         logging.info(f"  Calculated Total Score (before rounding for breakdown): {total_score}")
         logging.info(f"--- End Detailed Score Debug for: {target_debug_title} ---")
     # --- END DEBUG LOGGING FOR SPECIFIC TITLE ---
@@ -756,6 +818,8 @@ def rank_result_key(
         'content_type_score': content_type_score,
         'language_code_penalty': language_code_penalty, # Add language code penalties
         'foreign_language_penalty': foreign_language_penalty,
+        'extra_audio_bonus': extra_audio_bonus,
+        'audio_description_penalty': audio_description_penalty,
         'version_scraper_priority_score': version_scraper_priority, # Add per-version scraper priority score
         'scraper_priority_score': scraper_priority, # Add global scraper priority score
         'total_score': round(total_score, 2)
@@ -785,36 +849,6 @@ def rank_result_key(
 
     # Add the score breakdown to the result
     result['score_breakdown'] = score_breakdown
-
-    # Log detailed score breakdown
-    # logging.debug(f"Score breakdown for '{torrent_title}':")
-    # logging.debug(f"├─ Num Items Covered (for ranking): {num_items}") # Add this to logging if needed
-    # logging.debug(f"├─ Title Similarity: {score_breakdown['similarity_score']:.2f} (weight: {similarity_weight})")
-    # logging.debug(f"├─ Resolution: {score_breakdown['resolution_score']:.2f} (weight: {resolution_weight})")
-    # logging.debug(f"├─ HDR: {score_breakdown['hdr_score']:.2f} (weight: {hdr_weight})")
-    # logging.debug(f"├─ Size: {score_breakdown['size_score']:.2f} (weight: {size_weight})")
-    # logging.debug(f"├─ Bitrate: {score_breakdown['bitrate_score']:.2f} (weight: {bitrate_weight})")
-    # logging.debug(f"├─ Country: {score_breakdown['country_score']:.2f} (weight: {country_weight}, reason: {country_reason})")
-    # logging.debug(f"├─ Language: {score_breakdown['language_score']:.2f} (weight: {language_weight}, reason: {language_reason})")
-    # logging.debug(f"├─ Year Match: {score_breakdown['year_match_score']:.2f} (base: {year_match}, weight: {year_match_weight}, reason: {year_reason})")
-    # if content_type.lower() == 'episode':
-    #     logging.debug(f"├─ Season Match: {score_breakdown['season_match_score']:.2f} (base: {season_match_score})")
-    #     logging.debug(f"├─ Episode Match: {score_breakdown['episode_match_score']:.2f} (base: {episode_match_score})")
-    #     if score_breakdown['is_multi_pack']:
-    #         logging.debug(f"├─ Multi-pack: {score_breakdown['multi_pack_score']:.2f} ({score_breakdown['num_items']} items)")
-    #     if score_breakdown['single_episode_score']:
-    #         logging.debug(f"├─ Single Episode Penalty: {score_breakdown['single_episode_score']:.2f}")
-    # if score_breakdown['content_type_score']:
-    #     logging.debug(f"├─ Content Type Score: {score_breakdown['content_type_score']:.2f}")
-    # if preferred_filter_in_breakdown:
-    #     logging.debug("├─ Preferred Filter Bonuses:")
-    #     for pattern, score in preferred_filter_in_breakdown.items():
-    #         logging.debug(f"│  ├─ {pattern}: +{score}")
-    # if preferred_filter_out_breakdown:
-    #     logging.debug("├─ Preferred Filter Penalties:")
-    #     for pattern, score in preferred_filter_out_breakdown.items():
-    #         logging.debug(f"│  ├─ {pattern}: {score}")
-    # logging.debug(f"└─ Total Score: {score_breakdown['total_score']:.2f}")
 
     # Return negative total_score to sort in descending order
     # Year match raw score is used as a tie-breaker

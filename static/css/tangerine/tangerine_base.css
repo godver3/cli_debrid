@@ -238,7 +238,7 @@ body.initialized {
 }
 
 body.transitions-enabled {
-    transition: all 0.3s ease;
+    transition: background-color 0.3s ease, color 0.3s ease, padding-top 0.3s ease, opacity 0.1s ease-in;
 }
 
 body.has-top-overlay {
@@ -1176,20 +1176,8 @@ tr:hover {
         border-radius: 10px;
     }
 
-    /* Release notes popup mobile styles */
-    .release-notes-popup {
-        width: 95%;
-        padding: 20px;
-        max-height: 90vh;
-    }
 
-    .release-notes-title {
-        font-size: 1.3em;
-    }
 
-    .release-notes-content {
-        font-size: 0.95em;
-    }
 }
 
 /* Desktop styles */
@@ -1416,129 +1404,22 @@ main {
 }
 
 /* Release Notes Popup Styles */
-.release-notes-popup {
-    display: none;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background-color: #1a1a1a;
-    padding: 30px;
-    border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    z-index: 1100;
-    max-width: 800px;
-    width: 90%;
-    max-height: 85vh;
-    overflow: hidden;
-    flex-direction: column;
-}
 
-.release-notes-popup[style*="display: block"],
-.release-notes-popup[style*="display:block"] {
-    display: flex !important;
-}
 
-.release-notes-overlay {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.8);
-    z-index: 1099;
-    backdrop-filter: blur(3px);
-}
 
-.release-notes-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    padding-bottom: 15px;
-    border-bottom: 1px solid #333;
-    flex-shrink: 0;
-}
 
-.release-notes-title {
-    font-size: 1.5em;
-    color: #fff;
-    margin: 0;
-    font-weight: 600;
-}
 
-.release-notes-close {
-    background: none;
-    border: none;
-    color: #888;
-    font-size: 1.8em;
-    cursor: pointer;
-    padding: 5px;
-    transition: color 0.2s ease;
-}
 
-.release-notes-close:hover {
-    color: #fff;
-}
 
-.release-notes-content {
-    color: #e0e0e0;
-    line-height: 1.8;
-    overflow-y: auto;
-    flex: 1;
-    min-height: 0;
-    padding-right: 4px;
-}
 
-.release-notes-content h4 {
-    background: linear-gradient(135deg, #e17c52 0%, #f7931e 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    font-size: 1.2em;
-    margin-bottom: 15px;
-}
 
-.release-notes-content h3 {
-    color: #e8601c !important;
-    font-size: 1em;
-    font-weight: normal;
-    margin: 5px 0 0 0;
-    padding-bottom: 5px;
-    border-bottom: 1px solid #333;
-}
 
-.release-notes-body {
-    padding: 0 0 10px 0;
-    white-space: pre-line;
-}
 
-.release-notes-date {
-    color: #666;
-    font-size: 0.9em;
-    margin-top: 20px;
-    text-align: right;
-    font-style: italic;
-}
 
 /* Custom scrollbar for release notes */
-.release-notes-content::-webkit-scrollbar {
-    width: 6px;
-}
 
-.release-notes-content::-webkit-scrollbar-track {
-    background: transparent;
-}
 
-.release-notes-content::-webkit-scrollbar-thumb {
-    background: #333;
-    border-radius: 3px;
-}
 
-.release-notes-content::-webkit-scrollbar-thumb:hover {
-    background: #555;
-}
 
 /* Add task monitor styles */
 .task-monitor-container {

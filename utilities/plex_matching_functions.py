@@ -7,8 +7,6 @@ from database.core import get_db_connection
 import requests
 import re
 import time  # Add time import for sleep
-import urllib.parse
-from difflib import SequenceMatcher # For comparing titles
 from cli_battery.app.direct_api import DirectAPI # Added import
 import json # Added import
 from datetime import datetime, timezone # Added import
@@ -55,9 +53,6 @@ def _has_been_attempted(plex_rating_key: str, log_data: Dict[str, str]) -> bool:
     """Checks if a rematch has been attempted for the given Plex rating key."""
     return str(plex_rating_key) in log_data
 
-def _similar(a, b):
-    """Helper function for string similarity"""
-    return SequenceMatcher(None, a, b).ratio()
 
 def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str,
                           plex_rating_key: Optional[str] = None,

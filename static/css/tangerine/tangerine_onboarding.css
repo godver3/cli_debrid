@@ -549,3 +549,184 @@ body[data-theme="tangerine"] .universal-popup .popup-content {
     max-height: 80vh !important;
     overflow-y: auto !important;
 }
+
+/* ── step 2 sections, test buttons, health check ─────────── */
+body[data-theme="tangerine"] .ob-section {
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    padding: 16px 18px 4px;
+    margin-bottom: 20px;
+    background: var(--ob-surf2);
+}
+body[data-theme="tangerine"] .ob-section > h3 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--ob-text);
+    margin: 0 0 6px;
+}
+body[data-theme="tangerine"] .ob-section-intro {
+    color: var(--ob-muted);
+    font-size: 0.85rem;
+    line-height: 1.55;
+    margin: 0 0 14px;
+}
+body[data-theme="tangerine"] .ob-choice-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+body[data-theme="tangerine"] .ob-choice {
+    flex: 1 1 200px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 10px 12px;
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    cursor: pointer;
+    color: var(--ob-text);
+    font-size: 0.88rem;
+}
+body[data-theme="tangerine"] .ob-choice:has(input:checked) {
+    border-color: var(--ob-accent);
+    background: rgba(232,96,28,.07);
+}
+body[data-theme="tangerine"] .ob-choice small {
+    display: block;
+    color: var(--ob-muted);
+    font-size: 0.78rem;
+    margin-top: 2px;
+}
+body[data-theme="tangerine"] .ob-inline {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+}
+body[data-theme="tangerine"] .ob-inline .onboarding-input {
+    flex: 1;
+    min-width: 0;
+}
+body[data-theme="tangerine"] .ob-test-btn {
+    flex: none;
+    padding: 8px 14px;
+    background: transparent;
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    color: var(--ob-text);
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+body[data-theme="tangerine"] .ob-test-btn:hover:not(:disabled) {
+    border-color: var(--ob-accent);
+}
+body[data-theme="tangerine"] .ob-test-result {
+    font-size: 0.82rem;
+    margin: -8px 0 14px;
+    line-height: 1.45;
+}
+body[data-theme="tangerine"] .ob-test-result:empty { display: none; }
+body[data-theme="tangerine"] .ob-ok   { color: #4ade80; }
+body[data-theme="tangerine"] .ob-warn { color: #facc15; }
+body[data-theme="tangerine"] .ob-err  { color: var(--ob-danger); }
+body[data-theme="tangerine"] .ob-callout {
+    border: 1px solid rgba(250,204,21,.35);
+    background: rgba(250,204,21,.06);
+    border-radius: var(--ob-radius);
+    padding: 10px 14px;
+    color: #e8dca8;
+    font-size: 0.84rem;
+    line-height: 1.55;
+    margin-bottom: 14px;
+}
+body[data-theme="tangerine"] .ob-callout a,
+body[data-theme="tangerine"] .ob-section-intro a { color: #3498db; }
+body[data-theme="tangerine"] details.ob-details {
+    border: 1px solid var(--ob-border2);
+    border-radius: var(--ob-radius);
+    padding: 8px 12px;
+    margin-bottom: 16px;
+}
+body[data-theme="tangerine"] details.ob-details > summary {
+    cursor: pointer;
+    color: #aaa;
+    font-size: 0.85rem;
+}
+body[data-theme="tangerine"] details.ob-details[open] > summary { margin-bottom: 10px; }
+.validation-check.warning { border-left: 4px solid #facc15; }
+
+body[data-theme="tangerine"] .ob-summary {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+    font-size: 0.86rem;
+}
+body[data-theme="tangerine"] .ob-summary th,
+body[data-theme="tangerine"] .ob-summary td {
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--ob-border);
+    color: var(--ob-text);
+    vertical-align: top;
+    overflow-wrap: anywhere;
+}
+body[data-theme="tangerine"] .ob-summary th {
+    color: var(--ob-muted);
+    font-weight: 500;
+    width: 34%;
+}
+body[data-theme="tangerine"] .ob-health {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 20px;
+}
+body[data-theme="tangerine"] .ob-health li {
+    display: flex;
+    gap: 10px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--ob-border);
+    font-size: 0.86rem;
+    color: var(--ob-text);
+}
+body[data-theme="tangerine"] .ob-health .ob-dot {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-top: 5px;
+}
+body[data-theme="tangerine"] .ob-dot.ok   { background: #4ade80; }
+body[data-theme="tangerine"] .ob-dot.warn { background: #facc15; }
+body[data-theme="tangerine"] .ob-dot.err  { background: var(--ob-danger); }
+body[data-theme="tangerine"] .ob-health .ob-msg {
+    color: var(--ob-muted);
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+}
+body[data-theme="tangerine"] .ob-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+body[data-theme="tangerine"] .onboarding-btn-edit {
+    background: transparent;
+    border: 1px solid var(--ob-border2);
+    color: var(--ob-text);
+    padding: 4px 12px;
+    border-radius: var(--ob-radius);
+    font-size: 0.8rem;
+    cursor: pointer;
+    margin-right: 6px;
+}
+body[data-theme="tangerine"] .onboarding-btn-edit:hover { border-color: var(--ob-accent); }
+@media (max-width: 600px) {
+    body[data-theme="tangerine"] .ob-inline { flex-direction: column; align-items: stretch; }
+    body[data-theme="tangerine"] .ob-test-btn { margin-bottom: 14px; }
+}
+body[data-theme="tangerine"] .ob-section .settings-description a { color: #3498db; }
+@media (max-width: 600px) {
+    /* The NzbDAV helper lays its fields out in two columns; stack them on phones. */
+    body[data-theme="tangerine"] #nzbdav-helper-wrap [style*="grid-template-columns"] {
+        grid-template-columns: 1fr !important;
+    }
+}

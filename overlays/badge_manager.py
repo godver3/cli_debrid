@@ -10,11 +10,12 @@ Composite variations combine two metadata fields into one badge PNG.
 
 import json
 import logging
-import os
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
+
+from utilities.paths import config_dir
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,6 @@ def _get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-
-BADGE_ASSET_DIR_DEFAULT = '/user/config/badge_assets'
 
 # ---------------------------------------------------------------------------
 # Pre-seeded badge type definitions
@@ -326,7 +325,7 @@ class BadgeManager:
     def __init__(self, db_path: str = None, asset_dir: str = None):
         # db_path is unused — kept for API compatibility. DB access uses get_db_connection().
         # user_asset_dir: where uploads land (runtime, outside app)
-        self.user_asset_dir = Path(asset_dir or BADGE_ASSET_DIR_DEFAULT)
+        self.user_asset_dir = Path(asset_dir or config_dir('badge_assets'))
         self.user_asset_dir.mkdir(parents=True, exist_ok=True)
         # backwards-compat alias used by save_variation_asset
         self.asset_dir = self.user_asset_dir
@@ -455,26 +454,6 @@ class BadgeManager:
         finally:
             conn.close()
 
-    def get_variation_by_key(self, badge_type_slug: str, variation_key: str) -> Optional[Dict]:
-        """Get a specific variation by type slug and variation key."""
-        badge_type = self.get_badge_type(badge_type_slug)
-        if not badge_type:
-            return None
-        conn = self._get_conn()
-        try:
-            row = conn.execute(
-                'SELECT * FROM badge_variations WHERE badge_type_id = ? AND variation_key = ?',
-                (badge_type['id'], variation_key)
-            ).fetchone()
-            if not row:
-                return None
-            d = dict(row)
-            d['has_asset'] = bool(d.get('asset_path') and Path(d['asset_path']).exists())
-            safe_key = re.sub(r'[^\w.\-]', '_', d['variation_key'])
-            d['has_system_asset'] = (self.system_asset_dir / badge_type_slug / f"{safe_key}.png").exists()
-            return d
-        finally:
-            conn.close()
 
     def add_variation(self, badge_type_id: int, variation_key: str, display_name: str) -> Optional[int]:
         """Add a new custom variation slot (no asset yet). Returns new id or None on conflict."""

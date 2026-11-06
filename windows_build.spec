@@ -48,7 +48,6 @@ individual_files = [
     ('branch_id', '.'),
     ('tooltip_schema.json', '.'),
     ('main.py', '.'),
-    ('cli_battery/main.py', 'cli_battery'),
     ('optional_default_versions.json', '.'),
     ('utilities/config/downsub_config.py', 'utilities/config'),
     ('utilities/config/__init__.py', 'utilities/config'),  # Explicitly include __init__.py
@@ -172,7 +171,6 @@ a = Analysis(
         'database',
         'database.core',
         'database.collected_items',
-        'database.blacklist',
         'database.schema_management',
         'database.poster_management',
         'database.statistics',

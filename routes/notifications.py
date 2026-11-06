@@ -3,7 +3,6 @@ import requests
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from utilities.settings_schema import SETTINGS_SCHEMA
 from collections import defaultdict
 from datetime import datetime
 import time
@@ -33,24 +32,6 @@ overseerr_scan_schedulers = {} # Stores { 'overseerr_instance_id': threading.Tim
 overseerr_job_id_cache = {} # Stores { 'overseerr_instance_id': 'job_id_for_scan' }
 # --- End Overseerr Scan Scheduling ---
 
-def safe_format_date(date_value):
-    if not date_value:
-        return "Unknown"
-    try:
-        if isinstance(date_value, str):
-            return datetime.fromisoformat(date_value).strftime('%Y-%m-%d')
-        elif isinstance(date_value, datetime):
-            return date_value.strftime('%Y-%m-%d')
-        else:
-            logging.warning(f"Unexpected date type: {type(date_value)}")
-            return "Unknown"
-    except Exception as e:
-        logging.warning(f"Error formatting date {date_value}: {str(e)}")
-        return "Unknown"
-
-def escape_discord_formatting(text):
-    """Escape Discord's Markdown formatting characters in text."""
-    return text.replace('*', '\\*')
 
 def consolidate_items(notifications):
     consolidated = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
@@ -1285,13 +1266,6 @@ def send_telegram_notification(bot_token, chat_id, content):
                 logging.error(f"Telegram notification failed after {MAX_RETRIES} attempts: {str(e)}")
                 raise
 
-def verify_notification_config(notification_type, config):
-    schema = SETTINGS_SCHEMA['Notifications']['schema'][notification_type]
-    for key, value in schema.items():
-        if key not in config or not config[key]:
-            if value.get('default') is None:  # Consider it required if there's no default value
-                return False, f"Missing required field: {key}"
-    return True, None
 
 def get_enabled_notifications():
     """Get enabled notifications from either the settings route or directly from config."""

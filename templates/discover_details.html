@@ -127,6 +127,14 @@
     <!-- Hidden permission flags -->
     <input type="hidden" id="has_user_permissions" value="{{ 'True' if has_user_permissions else 'False' }}">
 
+    <!-- Hidden version select for torrent modal dropdown -->
+    <select id="version-select" style="display: none;">
+        {% for version in versions %}
+            <option value="{{ version }}">{{ version }}</option>
+        {% endfor %}
+        <option value="No Version">No Version</option>
+    </select>
+
     <!-- Full Page Backdrop -->
     <div id="page-backdrop" class="page-backdrop" style="display: none;">
         <img id="page-backdrop-img" src="" alt="Backdrop" class="page-backdrop-image">

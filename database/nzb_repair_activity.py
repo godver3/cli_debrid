@@ -1,4 +1,3 @@
-import json
 import logging
 
 from database.core import get_db_connection

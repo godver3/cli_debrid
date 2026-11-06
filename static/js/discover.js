@@ -17,6 +17,10 @@ window.discoverState = {
     hasMore: true,
     isLoading: false,
     listModeActive: false, // true when list content (MDBList/FlixPatrol/Personal/sidebar) is displayed
+    personId: null,
+    personRole: 'all',
+    person: null,
+    bulkPersonRequest: false,
     contentGen: 0, // bumped by every load that replaces the results view; see beginContentLoad()
     autoLoadCount: 0, // Track consecutive auto-loads to prevent infinite loops
     maxAutoLoads: 1,  // Maximum pages to auto-load before requiring user scroll
@@ -340,8 +344,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     const searchQuery = urlParams.get('q');
     const imdbId = urlParams.get('imdb_id');
     const tmdbId = urlParams.get('tmdb_id');
+    const personId = urlParams.get('person');
 
-    if (imdbId || tmdbId || searchQuery) {
+    if (personId) {
+        loadPersonFilmography(personId);
+    } else if (imdbId || tmdbId || searchQuery) {
         // Determine the search term to use
         const searchTerm = imdbId || (tmdbId ? `tmdb:${tmdbId}` : searchQuery);
 
@@ -379,6 +386,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             const trendingContent = document.getElementById('trending-content');
             const searchResults = document.getElementById('search-results');
             if (trendingContent) trendingContent.style.display = 'none';
+            if (recommendationsContent) recommendationsContent.style.display = 'none';
             if (searchResults) searchResults.style.display = 'block';
         } else {
             // Only load trending if nothing is saved
@@ -2058,12 +2066,16 @@ function handleSearch() {
 
     // Show search results, hide trending content
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
 
     // Reset page and auto-load count for new search
     window.discoverState.page = 1;
     window.discoverState.autoLoadCount = 0;
     searchClearBtn.style.display = 'block';
+    window.discoverState.personId = null;
+    hidePersonBanner();
+    hidePeopleMatches();
     searchContent(query);
 }
 
@@ -2075,6 +2087,10 @@ function clearSearch() {
     searchClearBtn.style.display = 'none';
     window.discoverState.searchTerm = '';
     window.discoverState.filters.searchQuery = '';
+    window.discoverState.personId = null;
+    window.discoverState.person = null;
+    hidePersonBanner();
+    hidePeopleMatches();
     localStorage.removeItem('discoverSearchTerm');
     updateActiveFilters();
     switchTab('trending'); // Fallback to trending
@@ -2274,6 +2290,7 @@ function applyAdvancedFilters(closeDrawer = true) {
     // MDBList and FlixPatrol re-call their loaders so mediaType is sent to the API.
     if (currentTab === 'mdblist' && window.mdblistState && window.mdblistState.currentList) {
         if (trendingContent) trendingContent.style.display = 'none';
+        if (recommendationsContent) recommendationsContent.style.display = 'none';
         if (searchResults) searchResults.style.display = 'block';
         if (closeDrawer && typeof closeFilters === 'function') closeFilters();
         loadMDBListContent(window.mdblistState.currentList.key);
@@ -2281,6 +2298,7 @@ function applyAdvancedFilters(closeDrawer = true) {
     }
     if (currentTab === 'flixpatrol' && window.flixpatrolState && window.flixpatrolState.currentPlatform) {
         if (trendingContent) trendingContent.style.display = 'none';
+        if (recommendationsContent) recommendationsContent.style.display = 'none';
         if (searchResults) searchResults.style.display = 'block';
         if (closeDrawer && typeof closeFilters === 'function') closeFilters();
         loadFlixPatrolContent(window.flixpatrolState.currentPlatform.id, window.flixpatrolState.currentPeriod || 'today');
@@ -2288,6 +2306,7 @@ function applyAdvancedFilters(closeDrawer = true) {
     }
     if (currentTab === 'personal' && window.personalState && window.personalState.currentSelection) {
         if (trendingContent) trendingContent.style.display = 'none';
+        if (recommendationsContent) recommendationsContent.style.display = 'none';
         if (searchResults) searchResults.style.display = 'block';
         if (closeDrawer && typeof closeFilters === 'function') closeFilters();
         loadPersonalContent();
@@ -2309,6 +2328,7 @@ function applyAdvancedFilters(closeDrawer = true) {
 
     // Switch to filtered results view (hide trending, show search results grid)
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
 
     // Close filter drawer after applying (only if explicitly requested, e.g., from Apply button)
@@ -2538,6 +2558,14 @@ async function searchContent(query) {
         updatePagination();
         updateResultsInfo(data);
 
+        // Title/show results are the primary search response. Start the slower
+        // actor/director lookup only after those cards have rendered so a
+        // single-worker server or constrained browser connection pool cannot
+        // put person search in front of the results the user asked for.
+        if (isInitialLoad && !isIDSearch(query)) {
+            loadPeopleMatches(query);
+        }
+
         // Auto-load more if content doesn't fill viewport (so user can scroll)
         // Limit auto-loads to prevent infinite loops
         // Don't auto-load if lists are selected (list results are complete)
@@ -2632,14 +2660,153 @@ async function loadTrending() {
 }
 
 /**
- * Load personalised recommendations from the best connected provider.
- * The backend prefers Trakt and automatically falls back to Scrob For You.
+ * Load personalised recommendations from the source picked in the
+ * Recommendations dropdown (Trakt, Scrob, or a Plex/Emby/Jellyfin user).
+ * Without a pick the backend's default applies: Trakt, then Scrob, then the library.
  */
 let _trendingLoaded = false; // Only fetch once per page load
-let _recLoaded = false;  // Only fetch once per page load
+let _recLoaded = false;  // Only fetch once per page load (per chosen source/user)
+const REC_SOURCE_KEY = 'discoverRecSource';
+const REC_SERVER_LABELS = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+window.recState = { sources: null, selection: null };  // selection: {source, viewer}
+
+async function loadRecommendationSources() {
+    if (window.recState.sources) return window.recState.sources;
+    try {
+        const resp = await fetch('/discover/api/recommendations/sources');
+        const data = await resp.json();
+        window.recState.sources = data.sources || [];
+    } catch (error) {
+        console.error('[Discover] Recommendation sources error:', error);
+        window.recState.sources = [];
+    }
+
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(REC_SOURCE_KEY) || 'null'); } catch (e) { /* storage unavailable */ }
+    window.recState.selection = saved && recSelectionValid(saved) ? saved : recDefaultSelection();
+    populateRecommendationsDropdown();
+    return window.recState.sources;
+}
+
+function recSource(id) {
+    return (window.recState.sources || []).find(s => s.id === id);
+}
+
+function recDefaultSelection() {
+    const first = (window.recState.sources || [])[0];
+    if (!first) return null;
+    return first.id === 'library' ? { source: 'library', viewer: first.default_viewer || 'main' } : { source: first.id };
+}
+
+function recSelectionValid(sel) {
+    const src = recSource(sel.source);
+    if (!src) return false;
+    if (src.id !== 'library') return true;
+    return sel.viewer === 'all' || sel.viewer === 'main' || (src.viewers || []).some(v => v.id === sel.viewer);
+}
+
+function populateRecommendationsDropdown() {
+    const menu = document.getElementById('recommendations-dropdown-menu');
+    if (!menu) return;
+    menu.innerHTML = '';
+    const current = window.recState.selection || {};
+
+    const addHeader = (text) => {
+        const header = document.createElement('div');
+        header.className = 'flixpatrol-dropdown-header';
+        header.textContent = text;
+        menu.appendChild(header);
+    };
+    const addItem = (text, sel) => {
+        const item = document.createElement('div');
+        item.className = 'flixpatrol-dropdown-item';
+        if (current.source === sel.source && (sel.source !== 'library' || current.viewer === sel.viewer)) {
+            item.classList.add('selected');
+        }
+        const name = document.createElement('span');
+        name.className = 'platform-name';
+        name.textContent = text;
+        item.appendChild(name);
+        item.addEventListener('click', () => selectRecommendationSource(sel));
+        menu.appendChild(item);
+    };
+
+    const services = (window.recState.sources || []).filter(s => s.id !== 'library');
+    services.forEach(s => addItem(s.name, { source: s.id }));
+
+    const library = recSource('library');
+    if (!library) {
+        if (!services.length) addHeader('Nothing connected');
+        return;
+    }
+    const viewers = library.viewers || [];
+    if (!viewers.length) {
+        addHeader(library.name);
+        addItem('Your library', { source: 'library', viewer: 'main' });
+        return;
+    }
+    // One group per media server, then everyone together
+    const servers = [...new Set(viewers.map(v => v.source))];
+    servers.forEach(server => {
+        addHeader(REC_SERVER_LABELS[server] || server);
+        viewers.filter(v => v.source === server)
+            .forEach(v => addItem(v.name, { source: 'library', viewer: v.id }));
+    });
+    addItem('Everyone', { source: 'library', viewer: 'all' });
+}
+
+function selectRecommendationSource(sel) {
+    window.recState.selection = sel;
+    try { localStorage.setItem(REC_SOURCE_KEY, JSON.stringify(sel)); } catch (e) { /* storage unavailable */ }
+    populateRecommendationsDropdown();
+
+    const menu = document.getElementById('recommendations-dropdown-menu');
+    const btn = document.getElementById('recommendations-tab-btn');
+    if (menu) menu.classList.remove('open');
+    if (btn) btn.classList.remove('open');
+
+    _recLoaded = false;
+    switchTab('recommendations');
+}
+
+function bindRecommendationsDropdown() {
+    const btn = document.getElementById('recommendations-tab-btn');
+    const menu = document.getElementById('recommendations-dropdown-menu');
+    if (!btn || !menu) return;
+
+    btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const isOpen = menu.classList.toggle('open');
+        btn.classList.toggle('open', isOpen);
+        if (isOpen) {
+            closeAllDropdowns(btn);
+            await loadRecommendationSources();
+            if (window.innerWidth <= 768) {
+                const rect = btn.getBoundingClientRect();
+                menu.style.top = (rect.bottom + 8) + 'px';
+                const menuWidth = menu.offsetWidth || 200;
+                const left = Math.min(rect.left, window.innerWidth - menuWidth - 8);
+                menu.style.left = Math.max(8, left) + 'px';
+            }
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!btn.contains(e.target) && !menu.contains(e.target)) {
+            menu.classList.remove('open');
+            btn.classList.remove('open');
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    bindRecommendationsDropdown();
+    setTimeout(loadRecommendationSources, 120);
+});
 
 async function loadRecommendations() {
-    beginContentLoad();
+    // A newer pick (or another tab) bumps the generation, so a late response is dropped
+    const gen = beginContentLoad();
     if (recommendationsContent) recommendationsContent.style.display = 'block';
     if (trendingContent) trendingContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'none';
@@ -2654,9 +2821,17 @@ async function loadRecommendations() {
         const noProviderMsg = document.getElementById('rec-no-provider');
         const noResultsMsg = document.getElementById('rec-no-results');
 
-        const resp = await fetch('/discover/api/recommendations?type=all');
+        await loadRecommendationSources();
+        const sel = window.recState.selection;
+        let query = '';
+        if (sel) {
+            query += `&source=${encodeURIComponent(sel.source)}`;
+            if (sel.viewer) query += `&viewer=${encodeURIComponent(sel.viewer)}`;
+        }
+        const resp = await fetch(`/discover/api/recommendations?type=all${query}`);
         if (!resp.ok) throw new Error('HTTP error fetching recommendations');
         const data = await resp.json();
+        if (isStaleContentLoad(gen)) return;
 
         if (!data.success) {
             if (noProviderMsg) noProviderMsg.style.display = 'block';
@@ -2694,7 +2869,7 @@ async function loadRecommendations() {
 
     } catch (error) {
         console.error('[Discover] Recommendations error:', error);
-        showError();
+        if (!isStaleContentLoad(gen)) showError();
     } finally {
         clearLoadingFlag();
     }
@@ -3477,7 +3652,9 @@ function setMediaType(type) {
     window.discoverState.autoLoadCount = 0;
 
     // Re-search if we have a search term, otherwise apply filters for live update
-    if (window.discoverState.searchTerm) {
+    if (window.discoverState.personId) {
+        loadPersonFilmography(window.discoverState.personId);
+    } else if (window.discoverState.searchTerm) {
         searchContent(window.discoverState.searchTerm);
     } else {
         // Trigger live filter update
@@ -3576,6 +3753,10 @@ function switchTab(tab) {
     // Clear list mode when switching to non-list tabs so TMDB pagination works
     if (tab === 'trending' || tab === 'recommendations') {
         window.discoverState.listModeActive = false;
+        window.discoverState.personId = null;
+        window.discoverState.person = null;
+        hidePersonBanner();
+        hidePeopleMatches();
         // Clear personal/list selections so refresh stays on this tab
         localStorage.removeItem('discoverPersonal');
         localStorage.removeItem('discoverMDBList');
@@ -4293,6 +4474,10 @@ function createResultItemHTML(item) {
         : '/static/images/placeholder.png';
     const overview = item.overview || 'No overview available.';
     const rating = item.vote_average ? item.vote_average.toFixed(1) : '';
+    // Library recommendations say which watched/collected titles suggested this one
+    const reasonHtml = item.rec_reason
+        ? `<p class="result-reason">${String(item.rec_reason).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]))}</p>`
+        : '';
 
     // Check for mixed states (TV shows only)
     const mixedStates = detectMixedStates(item);
@@ -4362,6 +4547,7 @@ function createResultItemHTML(item) {
                         ${rating}
                     </span>
                 </div>
+                ${reasonHtml}
                 <p class="result-overview">${overview}</p>
                 <!-- Action buttons row -->
                 <div class="hover-action-bar" style="display:flex!important;flex-direction:row!important;flex-wrap:nowrap!important;gap:6px;align-items:center;justify-content:center;width:100%;position:absolute;bottom:8px;left:0;padding:0 8px;box-sizing:border-box;z-index:10">
@@ -7422,7 +7608,8 @@ function closeAllDropdowns(except) {
     [
         { btn: 'mdblist-dropdown-btn', menu: 'mdblist-dropdown-menu' },
         { btn: 'personal-dropdown-btn', menu: 'personal-dropdown-menu' },
-        { btn: 'flixpatrol-dropdown-btn', menu: 'flixpatrol-dropdown-menu' }
+        { btn: 'flixpatrol-dropdown-btn', menu: 'flixpatrol-dropdown-menu' },
+        { btn: 'recommendations-tab-btn', menu: 'recommendations-dropdown-menu' }
     ].forEach(({ btn, menu }) => {
         const b = document.getElementById(btn);
         const m = document.getElementById(menu);
@@ -7511,6 +7698,7 @@ async function selectMDBList(list) {
 
     // Show search results container, hide trending content
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
 
     // Load the list content
@@ -7768,6 +7956,7 @@ async function selectFlixPatrolPlatform(platform, period = 'today') {
 
     // Show search results container, hide trending content
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
 
     // Load the platform's Top 10 content
@@ -8524,6 +8713,7 @@ async function loadAllSelectedLists() {
     const trendingContent = document.getElementById('trending-content');
     const searchResults = document.getElementById('search-results');
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
     window.discoverState.listModeActive = true;
     const _earlyGrid = document.getElementById('results-grid');
@@ -8786,6 +8976,7 @@ async function loadSidebarListContent(source, listId) {
     // Show search results area, hide trending — clear grid immediately so old results
     // don't flash while the new list fetch is in-flight
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
     if (resultsGrid) resultsGrid.innerHTML = '';
 
@@ -9330,7 +9521,7 @@ function showVersionModal(content) {
     subEl.innerHTML = `<i class="fa-solid ${icon}"></i> ${content.title}${content.year ? ' (' + content.year + ')' : ''}`;
     versionCheckboxes.appendChild(subEl);
 
-    if (content.mediaType === 'tv') {
+    if (content.mediaType === 'tv' && !content.bulk) {
         const typeLabel = document.createElement('div');
         typeLabel.className = 'section-label';
         typeLabel.textContent = 'Request Type';
@@ -9572,6 +9763,14 @@ async function handleVersionConfirm() {
 
     if (selectedVersions.length === 0) {
         showPopup({ type: 'warning', title: 'Required', message: 'Please select at least one version' });
+        return;
+    }
+
+    if (window.discoverState.bulkPersonRequest) {
+        closeVersionModal();
+        const items = window.discoverState.bulkPersonRequest;
+        window.discoverState.bulkPersonRequest = false;
+        await requestPersonFilmography(items, selectedVersions);
         return;
     }
 
@@ -9942,6 +10141,7 @@ async function selectPersonalList(sel, restoring = false) {
     window.discoverState.page = 1;
 
     if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
     if (searchResults)   searchResults.style.display = 'block';
 
     await loadPersonalContent();
@@ -10032,3 +10232,291 @@ function bindPersonalEvents() {
 document.addEventListener('DOMContentLoaded', function() {
     setTimeout(initPersonal, 150);
 });
+
+function escapeDiscoverText(value) {
+    return String(value || '').replace(/[&<>"']/g, (ch) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
+}
+
+function peopleMatchesEl() {
+    return document.getElementById('people-matches');
+}
+
+function personBannerEl() {
+    return document.getElementById('person-banner');
+}
+
+function restoreEmptyStatePosition() {
+    const anchor = document.getElementById('empty-state-anchor');
+    const state = emptyState || document.getElementById('empty-state');
+    if (anchor && state && anchor.nextElementSibling !== state) {
+        anchor.insertAdjacentElement('afterend', state);
+    }
+}
+
+function hidePeopleMatches() {
+    const el = peopleMatchesEl();
+    if (el) {
+        el.style.display = 'none';
+        el.innerHTML = '';
+    }
+    restoreEmptyStatePosition();
+}
+
+function hidePersonBanner() {
+    const el = personBannerEl();
+    if (el) {
+        el.style.display = 'none';
+        el.innerHTML = '';
+    }
+}
+
+function personPhoto(path, size) {
+    return path
+        ? `https://image.tmdb.org/t/p/${size}${path}`
+        : '/static/images/placeholder.png';
+}
+
+async function loadPeopleMatches(query) {
+    const el = peopleMatchesEl();
+    if (!el || !query || query.length < 2) {
+        hidePeopleMatches();
+        return;
+    }
+    try {
+        const response = await fetch(`/discover/api/people?query=${encodeURIComponent(query)}`);
+        if (!response.ok) return;
+        const data = await response.json();
+        const people = data.results || [];
+        if (!people.length || searchInput.value.trim() !== query) {
+            hidePeopleMatches();
+            return;
+        }
+        el.innerHTML = people.map((person) => {
+            const dept = person.known_for_department || 'Person';
+            const known = (person.known_for || []).join(', ');
+            return `<button type="button" class="person-chip" data-person-id="${person.id}">
+                <img src="${personPhoto(person.profile_path, 'w185')}" alt="" onerror="this.src='/static/images/placeholder.png'">
+                <span class="person-chip-text">
+                    <span class="person-chip-name">${escapeDiscoverText(person.name)}</span>
+                    <span class="person-chip-meta">${escapeDiscoverText(dept)}${known ? ' · ' + escapeDiscoverText(known) : ''}</span>
+                </span>
+            </button>`;
+        }).join('');
+        el.style.display = 'flex';
+        // When title search is empty but a person matched, keep the person chip
+        // above the empty message instead of leaving it below the whole state.
+        const state = emptyState || document.getElementById('empty-state');
+        if (state && state.classList.contains('active')) {
+            el.insertAdjacentElement('afterend', state);
+        }
+        el.querySelectorAll('.person-chip').forEach((chip) => {
+            chip.addEventListener('click', () => loadPersonFilmography(chip.dataset.personId));
+        });
+    } catch (error) {
+        console.error('[Discover] Person search error:', error);
+    }
+}
+
+function renderPersonBanner(person, counts) {
+    const el = personBannerEl();
+    if (!el || !person) return;
+    const role = window.discoverState.personRole || 'all';
+    const dept = person.known_for_department || '';
+    el.innerHTML = `
+        <img class="person-banner-photo" src="${personPhoto(person.profile_path, 'w185')}" alt="" onerror="this.src='/static/images/placeholder.png'">
+        <div class="person-banner-info">
+            <div class="person-banner-name">${escapeDiscoverText(person.name)}</div>
+            <div class="person-banner-meta">${escapeDiscoverText(dept)}${person.birthday ? ' · ' + escapeDiscoverText(person.birthday.slice(0, 4)) : ''}</div>
+            <div class="person-role-tabs">
+                <button type="button" data-role="all" class="${role === 'all' ? 'active' : ''}">All (${counts.all || 0})</button>
+                <button type="button" data-role="acting" class="${role === 'acting' ? 'active' : ''}">Acting (${counts.acting || 0})</button>
+                <button type="button" data-role="directing" class="${role === 'directing' ? 'active' : ''}">Directing (${counts.directing || 0})</button>
+            </div>
+        </div>
+        <div class="person-banner-actions">
+            <button type="button" class="action-btn action-btn-primary action-btn-sm" id="person-request-all">Request all missing</button>
+            <button type="button" class="action-btn action-btn-sm" id="person-plex-collection">Update Plex collection</button>
+        </div>`;
+    el.style.display = 'flex';
+    el.querySelectorAll('[data-role]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            window.discoverState.personRole = btn.dataset.role;
+            loadPersonFilmography(window.discoverState.personId);
+        });
+    });
+    const requestBtn = document.getElementById('person-request-all');
+    if (requestBtn) requestBtn.addEventListener('click', startPersonRequestAll);
+    const plexBtn = document.getElementById('person-plex-collection');
+    if (plexBtn) plexBtn.addEventListener('click', createPersonPlexCollection);
+}
+
+async function loadPersonFilmography(personId) {
+    const gen = beginContentLoad();
+    window.discoverState.personId = String(personId);
+    window.discoverState.hasMore = false;
+    window.discoverState.page = 1;
+    hidePeopleMatches();
+    if (trendingContent) trendingContent.style.display = 'none';
+    if (recommendationsContent) recommendationsContent.style.display = 'none';
+    if (searchResults) searchResults.style.display = 'block';
+    try {
+        setLoadingFlag();
+        const params = new URLSearchParams({
+            role: window.discoverState.personRole || 'all',
+            type: window.discoverState.mediaType || 'all',
+        });
+        const response = await fetch(`/discover/api/person/${personId}?${params}`);
+        const data = await response.json();
+        if (isStaleContentLoad(gen)) return;
+        if (!response.ok) {
+            showPopup({ type: 'error', title: 'Error', message: data.error || 'Could not load this person' });
+            return;
+        }
+        window.discoverState.person = data.person;
+        renderPersonBanner(data.person, data.counts || {});
+        renderResults(data.results || []);
+        updateResultsInfo({ total_results: (data.results || []).length, page: 1, total_pages: 1 });
+        if (window.history.replaceState) {
+            window.history.replaceState({}, document.title, `/discover?person=${personId}`);
+        }
+    } catch (error) {
+        if (error.name === 'AbortError') return;
+        console.error('[Discover] Person filmography error:', error);
+        showError();
+    } finally {
+        clearLoadingFlag();
+    }
+}
+
+function missingPersonWorks() {
+    return (window.discoverState.currentResults || []).filter((item) => {
+        const status = (item.db_status || 'missing').toLowerCase();
+        return status !== 'collected' && status !== 'blacklisted';
+    });
+}
+
+function startPersonRequestAll() {
+    const items = missingPersonWorks();
+    if (!items.length) {
+        showPopup({ type: 'success', title: 'Nothing to request', message: 'Everything in this list is already collected or blacklisted.' });
+        return;
+    }
+    window.discoverState.bulkPersonRequest = items;
+    showVersionModal({
+        bulk: true,
+        mediaType: 'mixed',
+        title: window.discoverState.person?.name || 'this person',
+        year: `${items.length} titles`,
+    });
+}
+
+async function requestPersonFilmography(items, versions) {
+    showLoadingMessage(`Requesting ${items.length} titles…`);
+    let requested = 0;
+    let already = 0;
+    const failed = [];
+    try {
+        for (let i = 0; i < items.length; i += 15) {
+            const chunk = items.slice(i, i + 15).map((item) => ({
+                id: item.id,
+                media_type: item.media_type,
+                title: item.title || item.name,
+                release_date: item.release_date || item.first_air_date || '',
+            }));
+            const response = await fetch('/discover/api/request-batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items: chunk, versions }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                failed.push({ title: chunk[0]?.title, error: data.error || 'Request failed' });
+                continue;
+            }
+            requested += data.requested || 0;
+            already += data.already || 0;
+            (data.failed || []).forEach((row) => failed.push(row));
+        }
+        hideLoadingMessage();
+        const collectionNote = await ensurePersonPlexCollection();
+        const failNote = failed.length ? ` ${failed.length} could not be requested.` : '';
+        showPopup({
+            type: failed.length && !requested ? 'error' : 'success',
+            title: 'Request all',
+            message: `Requested ${requested} titles (${already} already in your versions).${failNote}${collectionNote}`,
+        });
+        if (window.discoverState.personId) {
+            loadPersonFilmography(window.discoverState.personId);
+        }
+    } catch (error) {
+        hideLoadingMessage();
+        console.error('[Discover] Request all error:', error);
+        showPopup({ type: 'error', title: 'Error', message: 'Could not request this filmography' });
+    }
+}
+
+async function postPersonPlexCollection() {
+    const personId = window.discoverState.personId;
+    if (!personId) return { ok: false, error: 'No person selected' };
+    const response = await fetch(`/discover/api/person/${personId}/plex-collection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            role: window.discoverState.personRole || 'all',
+            type: window.discoverState.mediaType || 'all',
+        }),
+    });
+    const data = await response.json();
+    return { ok: response.ok, data };
+}
+
+function personCollectionSummary(data) {
+    const collections = (data && data.collections) || [];
+    if (!collections.length) return '';
+    return collections.map((c) => {
+        if (c.error) return c.error;
+        const pending = c.missing ? `, ${c.missing} will be added as they collect` : '';
+        return `${c.name}: ${c.added} already in Plex${pending}`;
+    }).join('. ');
+}
+
+async function ensurePersonPlexCollection() {
+    try {
+        const result = await postPersonPlexCollection();
+        if (!result.ok) {
+            if (result.data && /Plex URL or token not configured/.test(result.data.error || '')) {
+                return '';
+            }
+            return result.data && result.data.error ? ` Collection: ${result.data.error}` : '';
+        }
+        const summary = personCollectionSummary(result.data);
+        const name = (result.data && result.data.person) || 'this person';
+        return summary ? ` Created the ${name} Plex collection. ${summary}.` : ` Created a Plex collection for ${name}.`;
+    } catch (error) {
+        console.error('[Discover] Plex collection after request-all:', error);
+        return '';
+    }
+}
+
+async function createPersonPlexCollection() {
+    showLoadingMessage('Updating Plex collection…');
+    try {
+        const result = await postPersonPlexCollection();
+        hideLoadingMessage();
+        if (!result.ok) {
+            showPopup({ type: 'error', title: 'Plex collection', message: (result.data && result.data.error) || 'Could not create the collection' });
+            return;
+        }
+        showPopup({
+            type: 'success',
+            title: 'Plex collection',
+            message: personCollectionSummary(result.data) || 'Collection updated. Titles not in Plex yet are added after they collect.',
+        });
+    } catch (error) {
+        hideLoadingMessage();
+        console.error('[Discover] Plex collection error:', error);
+        showPopup({ type: 'error', title: 'Plex collection', message: 'Could not create the collection' });
+    }
+}

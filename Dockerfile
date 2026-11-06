@@ -24,14 +24,27 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         "setuptools<78" wheel supervisor -r /tmp/requirements-linux.txt
 
 # ---------------------------------------------------------------------------
-# phalanx_db_hyperswarm node_modules. Built on the same base + Debian nodejs as
-# the runtime image so any native addon ABI matches.
+# Node.js runtime, copied from the official image rather than Debian's nodejs
+# package: trixie only ships Node 20 (EOL, no CVE-2026-111497 Brotli fix) and
+# links the system libbrotli. The floating 22-trixie-slim tag picks up each
+# Node 22 security release on rebuild — don't pin it to an exact version.
+# ---------------------------------------------------------------------------
+FROM node:22-trixie-slim AS node
+
+# ---------------------------------------------------------------------------
+# phalanx_db_hyperswarm node_modules. Built on the same base + the same node
+# binary as the runtime image so any native addon ABI matches.
 # ---------------------------------------------------------------------------
 FROM python:3.11-slim AS nodebuild
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends nodejs npm build-essential gyp && \
+    apt-get install -y --no-install-recommends build-essential && \
     rm -rf /var/lib/apt/lists/*
+
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 WORKDIR /build
 COPY phalanx_db_hyperswarm/package.json phalanx_db_hyperswarm/package-lock.json ./
@@ -72,7 +85,7 @@ WORKDIR /app
 # (see overlays/font_manager.py's _LOCAL_FONT_MAP).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        gosu nodejs npm ffmpeg psmisc procps \
+        gosu ffmpeg psmisc procps \
         xvfb xauth fonts-liberation fonts-unifont libnss3 libnspr4 libatk1.0-0 \
         libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
         libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 \
@@ -89,6 +102,13 @@ ENV PUID=0 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 COPY --from=pybuild /opt/venv /opt/venv
+
+# npm stays in the runtime image: supervisord.conf falls back to `npm install`
+# when phalanx node_modules is missing.
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 # Chromium for patchright, installed to a fixed, UID-independent path instead
 # of the default $HOME-based cache: the entrypoint runs the app as `appuser`

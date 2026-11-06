@@ -1,24 +1,19 @@
-from flask import Blueprint, jsonify, request, render_template, session, make_response
+from flask import Blueprint, jsonify, request, render_template
 from datetime import datetime, timedelta
-from operator import itemgetter
-from itertools import groupby
+import threading
 import time
 import logging
 import asyncio
-import aiohttp
-import os
 from utilities.settings import get_setting, set_setting
 from .models import user_required, onboarding_required 
 from routes.extensions import app_start_time
-from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
+from debrid import get_debrid_provider, ProviderUnavailableError
 from .program_operation_routes import get_program_status
-import json
 import math
 from functools import wraps
 # Provider-agnostic: avoid direct Real-Debrid import
 from typing import Optional, Dict, List, Any
-import calendar
-from database.database_writing import RESET_COLLECTION_STATE_SQL, stash_replaced_files
+from database.database_writing import move_to_wanted_for_replacement
 
 def format_file_size(size_gb):
     """Format file size from GB to human-readable format (GB, MB, etc.)"""
@@ -36,25 +31,37 @@ def cache_for_seconds(seconds):
     """Cache the result of a function for the specified number of seconds."""
     def decorator(func):
         cache = {}
+        # When the entry expires, concurrent callers wait for one recompute
+        # instead of all running the (slow) function at once.
+        compute_lock = threading.Lock()
+
+        def cached(key):
+            if key in cache:
+                result, timestamp = cache[key]
+                if time.time() - timestamp < seconds:
+                    return True, result
+            return False, None
         
         @wraps(func)
         def wrapper(*args, **kwargs):
-            now = time.time()
-            
             # Create a cache key from the function name and arguments
             key = (func.__name__, args, frozenset(kwargs.items()))
             
             # Check if we have a cached value and it's still valid
-            if key in cache:
-                result, timestamp = cache[key]
-                if now - timestamp < seconds:
-                    logging.debug(f"Cache hit for {func.__name__}")
-                    return result
+            hit, result = cached(key)
+            if hit:
+                logging.debug(f"Cache hit for {func.__name__}")
+                return result
             
-            # If no valid cached value, call the function
-            result = func(*args, **kwargs)
-            cache[key] = (result, now)
-            return result
+            with compute_lock:
+                hit, result = cached(key)
+                if hit:
+                    return result
+                # If no valid cached value, call the function
+                now = time.time()
+                result = func(*args, **kwargs)
+                cache[key] = (result, now)
+                return result
             
         return wrapper
     return decorator
@@ -74,37 +81,6 @@ def get_cached_user_traffic():
 statistics_bp = Blueprint('statistics', __name__)
 root_bp = Blueprint('root', __name__)
 
-def get_airing_soon():
-    from database import get_db_connection
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    today = datetime.now().date()
-    tomorrow = today + timedelta(days=1)
-    
-    query = """
-    SELECT title, release_date, airtime
-    FROM media_items
-    WHERE type = 'episode' AND release_date BETWEEN ? AND ?
-    ORDER BY release_date, airtime
-    """
-    
-    cursor.execute(query, (today.isoformat(), tomorrow.isoformat()))
-    results = cursor.fetchall()
-    
-    conn.close()
-    
-    # Group by title and take the earliest air date/time for each show
-    grouped_results = []
-    for key, group in groupby(results, key=itemgetter(0)):
-        group_list = list(group)
-        grouped_results.append({
-            'title': key,
-            'air_date': group_list[0][1],
-            'air_time': group_list[0][2]
-        })
-    
-    return grouped_results
 
 @cache_for_seconds(60)  # The missing-episodes count scans every episode row
 def get_badge_counts():
@@ -225,42 +201,49 @@ def get_movies_for_calendar(days_past: int = 7, days_future: int = 28, start_dat
         query_start_date_iso = start_range_date.isoformat()
         query_end_date_iso = end_range_date.isoformat()
     
-    # Query to get movies within the date range, along with their current state.
-    # We group by essential fields to get unique movie releases.
-    # MAX(m.state) is used to get a definitive state if there happen to be multiple entries
-    # for the exact same movie release (which should be rare for type 'movie').
+    # One row per movie release. A movie can have several media_items rows (one per
+    # version), so every row's state is kept and the calendar picks the best one;
+    # MAX(state) used to pick alphabetically, so a collected 1080p plus a wanted 4K
+    # showed as missing. Blacklisted rows are skipped, matching the episode query.
     query = """
-    SELECT 
-        m.title, 
-        m.release_date, 
-        m.tmdb_id, 
+    SELECT
+        m.title,
+        m.release_date,
+        m.tmdb_id,
         m.imdb_id,
-        COALESCE(MAX(m.state), 'Unknown') as state 
+        COALESCE(m.state, 'Unknown') as state,
+        m.upgrading_from
     FROM media_items m
-    WHERE m.type = 'movie' 
+    WHERE m.type = 'movie'
       AND m.release_date BETWEEN ? AND ?
-    GROUP BY m.title, m.release_date, m.tmdb_id, m.imdb_id
+      AND COALESCE(m.state, '') != 'Blacklisted'
     ORDER BY m.release_date ASC, m.title ASC
     """
-    
+
     cursor.execute(query, (query_start_date_iso, query_end_date_iso))
     results = cursor.fetchall()
     conn.close()
-    
-    movies_data = []
-    for title, release_date_str, tmdb_id, imdb_id, state in results:
-        movies_data.append({
-            'title': title,
-            'release_date': release_date_str, # This is a string 'YYYY-MM-DD'
-            'tmdb_id': tmdb_id,
-            'imdb_id': imdb_id,
-            'state': state # Current state from DB
-        })
+
+    movies_by_release = {}
+    for title, release_date_str, tmdb_id, imdb_id, state, upgrading_from in results:
+        key = (title, release_date_str, tmdb_id, imdb_id)
+        if key not in movies_by_release:
+            movies_by_release[key] = {
+                'title': title,
+                'release_date': release_date_str, # This is a string 'YYYY-MM-DD'
+                'tmdb_id': tmdb_id,
+                'imdb_id': imdb_id,
+                'states': []
+            }
+        movies_by_release[key]['states'].append((state, upgrading_from))
+    movies_data = list(movies_by_release.values())
     return movies_data
 
 @cache_for_seconds(600)  # Increase cache to 10 minutes since show airtimes don't change frequently
-def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1, start_date_override_iso: Optional[str] = None, end_date_override_iso: Optional[str] = None):
-    from metadata.metadata import get_show_airtime_by_imdb_id, _get_local_timezone
+def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1, start_date_override_iso: Optional[str] = None, end_date_override_iso: Optional[str] = None, include_all_upcoming: bool = False):
+    # include_all_upcoming keeps future episodes that are already in flight or collected;
+    # the home page's Airing Soon hides them, but the calendar must show every episode.
+    from metadata.metadata import _get_local_timezone
     from database import get_db_connection
     conn = get_db_connection()
     try:
@@ -392,7 +375,8 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
                         'state': state,
                         'imdb_id': imdb_id,
                         'tmdb_id': tmdb_id,
-                        'year': year
+                        'year': year,
+                        'episode_states': {}
                     }
 
                 # If any episode in the group is collected or checking_upgrade, prioritize that status
@@ -404,6 +388,7 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
                     shows[show_key]['state'] = state
                 
                 shows[show_key]['episodes'].add(episode)
+                shows[show_key]['episode_states'][episode] = (state, upgrading_from)
             
             except (ValueError, AttributeError) as e:
                 logging.error(f"Error parsing date/time for {title}: {e}")
@@ -461,7 +446,8 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
                     'imdb_id': show['imdb_id'],
                     'tmdb_id': show['tmdb_id'],
                     'season_number': show['season'],
-                    'episode_number': episodes[0]  # Use first episode number for single episodes or ranges
+                    'episode_number': episodes[0],  # Use first episode number for single episodes or ranges
+                    'episode_states': [show['episode_states'][ep] for ep in episodes]
                 }
                 
                 # Use timestamp comparison which is faster than datetime comparison
@@ -475,7 +461,7 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
                         'Scraping', 'Adding', 'Checking', 'Pending Uncached',
                         'Final Scrape', 'Missing'
                     }
-                    if show.get('state') not in _airing_soon_exclude:
+                    if include_all_upcoming or show.get('state') not in _airing_soon_exclude:
                         airing_soon.append(formatted_item)
         
         processing_time = time.perf_counter() - processing_start
@@ -545,7 +531,6 @@ def root():
     # Get collection counts from the optimized summary function
     collection_start = time.perf_counter()
     from database.statistics import get_statistics_summary
-    from database.database_reading import get_item_count_by_state
     counts = get_statistics_summary()
     stats['total_movies'] = counts['total_movies']
     stats['total_shows'] = counts['total_shows']
@@ -957,96 +942,6 @@ def recently_added():
 
     return jsonify({'recently_added': recently_added})
 
-async def get_recent_from_plex(movie_limit=None, show_limit=None):
-    if movie_limit is None:
-        movie_limit = get_setting('UI Settings', 'recently_added_limit', 7)
-    if show_limit is None:
-        show_limit = get_setting('UI Settings', 'recently_added_limit', 7)
-    plex_url = get_setting('Plex', 'url', '').rstrip('/')
-    plex_token = get_setting('Plex', 'token', '')
-    
-    if not plex_url or not plex_token:
-        return {'movies': [], 'shows': []}
-    
-    headers = {
-        'X-Plex-Token': plex_token,
-        'Accept': 'application/json'
-    }
-
-    async def fetch_metadata(session, item_key):
-        metadata_url = f"{plex_url}{item_key}?includeGuids=1"
-        async with session.get(metadata_url, headers=headers) as response:
-            return await response.json()
-
-    async with aiohttp.ClientSession() as session:
-        # Get library sections
-        async with session.get(f"{plex_url}/library/sections", headers=headers) as response:
-            sections = await response.json()
-
-        recent_movies = []
-        recent_shows = {}
-
-        for section in sections['MediaContainer']['Directory']:
-            if section['type'] == 'movie':
-                async with session.get(f"{plex_url}/library/sections/{section['key']}/recentlyAdded?X-Plex-Container-Start=0&X-Plex-Container-Size={movie_limit}", headers=headers) as response:
-                    data = await response.json()
-                    for item in data['MediaContainer'].get('Metadata', []):
-                        metadata = await fetch_metadata(session, item['key'])
-                        if 'MediaContainer' in metadata and 'Metadata' in metadata['MediaContainer']:
-                            full_metadata = metadata['MediaContainer']['Metadata'][0]
-                            tmdb_id = next((guid['id'] for guid in full_metadata.get('Guid', []) if guid['id'].startswith('tmdb://')), None)
-                            if tmdb_id:
-                                tmdb_id = tmdb_id.split('://')[1]
-                                from metadata.metadata import get_poster_url
-                                poster_url = await get_poster_url(session, tmdb_id, 'movie')
-                                added_at = datetime.fromtimestamp(int(item['addedAt']))
-                                recent_movies.append({
-                                    'title': item['title'],
-                                    'year': item.get('year'),
-                                    'added_at': added_at,
-                                    'poster_url': poster_url
-                                })
-            elif section['type'] == 'show':
-                async with session.get(f"{plex_url}/library/sections/{section['key']}/recentlyAdded?X-Plex-Container-Start=0&X-Plex-Container-Size=100", headers=headers) as response:
-                    data = await response.json()
-                    for item in data['MediaContainer'].get('Metadata', []):
-                        if item['type'] == 'episode' and len(recent_shows) < show_limit:
-                            show_title = item['grandparentTitle']
-                            if show_title not in recent_shows:
-                                show_metadata = await fetch_metadata(session, item['grandparentKey'])
-                                if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
-                                    full_show_metadata = show_metadata['MediaContainer']['Metadata'][0]
-                                    tmdb_id = next((guid['id'] for guid in full_show_metadata.get('Guid', []) if guid['id'].startswith('tmdb://')), None)
-                                    if tmdb_id:
-                                        tmdb_id = tmdb_id.split('://')[1]
-                                        from metadata.metadata import get_poster_url
-                                        poster_url = await get_poster_url(session, tmdb_id, 'tv')
-                                        added_at = datetime.fromtimestamp(int(item['addedAt']))
-                                        recent_shows[show_title] = {
-                                            'title': show_title,
-                                            'added_at': added_at,
-                                            'poster_url': poster_url,
-                                            'seasons': set()
-                                        }
-                            if show_title in recent_shows:
-                                recent_shows[show_title]['seasons'].add(item['parentIndex'])
-                                recent_shows[show_title]['added_at'] = max(
-                                    recent_shows[show_title]['added_at'],
-                                    datetime.fromtimestamp(int(item['addedAt']))
-                                )
-                            if len(recent_shows) == show_limit:
-                                break
-
-        recent_shows = list(recent_shows.values())
-        for show in recent_shows:
-            show['seasons'] = sorted(show['seasons'])
-        recent_shows.sort(key=lambda x: x['added_at'], reverse=True)
-
-    return {
-        'movies': recent_movies[:movie_limit],
-        'shows': recent_shows[:show_limit]
-    }
-
 def format_date(date_string):
     if not date_string:
         return ''
@@ -1182,33 +1077,9 @@ def index_api():
     stats['total_shows'] = counts['total_shows']
     stats['total_episodes'] = counts['total_episodes']
     
-    # Get additional counts for badges
+    # Get additional counts for badges (same 60 s cache as the page)
     try:
-        from database import get_db_connection
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM media_items WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')")
-        stats['total_movie_files'] = cursor.fetchone()[0]
-        
-        cursor.execute("""
-            SELECT COUNT(DISTINCT COALESCE(imdb_id, tmdb_id)) 
-            FROM media_items 
-            WHERE type = 'movie' 
-            AND state = 'Wanted'
-            AND (imdb_id IS NOT NULL OR tmdb_id IS NOT NULL)
-        """)
-        stats['wanted_movies'] = cursor.fetchone()[0]
-        
-        cursor.execute("""
-            SELECT COUNT(DISTINCT imdb_id || '-' || season_number || '-' || episode_number)
-            FROM media_items 
-            WHERE type = 'episode' 
-            AND state NOT IN ('Collected', 'Upgrading')
-            AND imdb_id IN (SELECT DISTINCT imdb_id FROM media_items WHERE type = 'episode' AND state IN ('Collected', 'Upgrading'))
-        """)
-        stats['missing_episodes'] = cursor.fetchone()[0]
-        
-        conn.close()
+        stats['total_movie_files'], stats['wanted_movies'], stats['missing_episodes'] = get_badge_counts()
     except Exception as e:
         logging.error(f"Error getting additional statistics: {str(e)}")
         stats['total_movie_files'] = 0
@@ -1386,97 +1257,24 @@ def move_to_wanted():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Build query based on item type. excluded_release_id captures the release
-        # (magnet/nzb URL) that's currently filling the row *before* filled_by_magnet
-        # is wiped, so the next scrape can skip it for this item only — without
-        # touching the global not-wanted lists — instead of just re-picking the
-        # same top-scored result again. It's a one-shot flag: the scraper clears
-        # it after the item's next scrape completes (see reset_not_wanted_check).
+        # Each branch picks the rows; move_to_wanted_for_replacement saves the release
+        # that's filling them in excluded_release_id (so the next scrape skips it for
+        # these rows only, without touching the global not-wanted lists) and stashes
+        # their old files, which are removed once the replacement is collected.
         if season_number is not None and episode_number is not None:
             # Episode — no item_id scoping here since episode rows group all versions together
-            query = f"""
-                UPDATE media_items
-                SET state = 'Wanted',
-                    filled_by_file = NULL,
-                    filled_by_title = NULL,
-                    filled_by_magnet = NULL,
-                    filled_by_torrent_id = NULL,
-                    {RESET_COLLECTION_STATE_SQL},
-                    last_updated = ?,
-                    disable_not_wanted_check = FALSE,
-                    excluded_release_id = filled_by_magnet,
-                    location_on_disk = NULL,
-                    original_path_for_symlink = NULL,
-                    original_scraped_torrent_title = NULL,
-                    upgrading_from = NULL,
-                    version = TRIM(version, '*'),
-                    upgrading = NULL
-                WHERE (imdb_id = ? OR tmdb_id = ?)
-                AND season_number = ?
-                AND episode_number = ?
-                AND state NOT IN ('Wanted', 'Scraping', 'Adding')
-            """
-            params = (datetime.now(), imdb_id, tmdb_id, season_number, episode_number)
+            where = "(imdb_id = ? OR tmdb_id = ?) AND season_number = ? AND episode_number = ?"
+            params = (imdb_id, tmdb_id, season_number, episode_number)
         elif item_id:
             # Movie with specific row ID — only move this exact version
-            query = f"""
-                UPDATE media_items
-                SET state = 'Wanted',
-                    filled_by_file = NULL,
-                    filled_by_title = NULL,
-                    filled_by_magnet = NULL,
-                    filled_by_torrent_id = NULL,
-                    {RESET_COLLECTION_STATE_SQL},
-                    last_updated = ?,
-                    disable_not_wanted_check = FALSE,
-                    excluded_release_id = filled_by_magnet,
-                    location_on_disk = NULL,
-                    original_path_for_symlink = NULL,
-                    original_scraped_torrent_title = NULL,
-                    upgrading_from = NULL,
-                    version = TRIM(version, '*'),
-                    upgrading = NULL
-                WHERE id = ?
-                AND type = 'movie'
-                AND state NOT IN ('Wanted', 'Scraping', 'Adding')
-            """
-            params = (datetime.now(), item_id)
+            where = "id = ? AND type = 'movie'"
+            params = (item_id,)
         else:
             # Movie fallback (no item_id) — move all versions
-            query = f"""
-                UPDATE media_items
-                SET state = 'Wanted',
-                    filled_by_file = NULL,
-                    filled_by_title = NULL,
-                    filled_by_magnet = NULL,
-                    filled_by_torrent_id = NULL,
-                    {RESET_COLLECTION_STATE_SQL},
-                    last_updated = ?,
-                    disable_not_wanted_check = FALSE,
-                    excluded_release_id = filled_by_magnet,
-                    location_on_disk = NULL,
-                    original_path_for_symlink = NULL,
-                    original_scraped_torrent_title = NULL,
-                    upgrading_from = NULL,
-                    version = TRIM(version, '*'),
-                    upgrading = NULL
-                WHERE (imdb_id = ? OR tmdb_id = ?)
-                AND type = 'movie'
-                AND state NOT IN ('Wanted', 'Scraping', 'Adding')
-            """
-            params = (datetime.now(), imdb_id, tmdb_id)
+            where = "(imdb_id = ? OR tmdb_id = ?) AND type = 'movie'"
+            params = (imdb_id, tmdb_id)
 
-        # Remember the files this release left behind (symlink, mount file, provider
-        # job) before the UPDATE wipes them, so they're removed once the replacement is
-        # collected (see cleanup_files_replaced_by_move_to_wanted). Without this the old
-        # symlink, the mount-side torrent/NZB and the Plex entry were all orphaned.
-        select_query = "SELECT * FROM media_items WHERE " + query.split("WHERE", 1)[1]
-        stashed = stash_replaced_files(cursor.execute(select_query, params[1:]).fetchall())
-
-        cursor.execute(query, params)
-        updated = cursor.rowcount
-        for row_id, replaced_files in stashed:
-            cursor.execute("UPDATE media_items SET replaced_files = ? WHERE id = ?", (replaced_files, row_id))
+        updated = move_to_wanted_for_replacement(cursor, where, params)
         conn.commit()
 
         if updated > 0:
@@ -1490,38 +1288,9 @@ def move_to_wanted():
     finally:
         conn.close()
 
-# Define the path for the size cache file
-DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-SIZE_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'library_size_cache.json')
-CACHE_EXPIRY_HOURS = 72 # How long to consider the cached value valid (e.g., 3 days)
-
-# Helper function to read the cache
 def _read_size_cache() -> Optional[Dict]:
-    try:
-        if os.path.exists(SIZE_CACHE_FILE):
-            with open(SIZE_CACHE_FILE, 'r') as f:
-                data = json.load(f)
-                if isinstance(data, dict) and 'size_str' in data and 'timestamp' in data:
-                     try:
-                        cached_time = datetime.fromisoformat(data['timestamp'])
-                        if datetime.utcnow() - cached_time < timedelta(hours=CACHE_EXPIRY_HOURS):
-                            # logging.debug("Read valid library size cache for initial page load.")
-                            return data
-                        else:
-                            # logging.info("Cached library size expired for initial page load.")
-                            return None
-                     except ValueError:
-                         # logging.warning("Invalid timestamp format in cache file.")
-                         return None
-                else:
-                    # logging.warning("Invalid data format in cache file.")
-                    return None
-        else:
-            # logging.debug("Library size cache file not found for initial load.")
-            return None
-    except Exception as e:
-        logging.error(f"Failed to read library size cache for initial load: {e}")
-        return None
+    from database.statistics import read_library_size_cache
+    return read_library_size_cache()
 
 def _scraper_stats_args():
     raw_days = request.args.get('days', '30')
@@ -1580,14 +1349,17 @@ def get_library_size_api():
     is_cached_value = False
     calculation_error = None # Store the specific error if calculation fails
 
-    from utilities.settings import get_setting as _gs_lib
-    _stats_priority = _gs_lib('UI Settings', 'stats_provider_priority', default='auto').strip()
+    from database.statistics import resolve_stats_mode
+    _stats_mode = resolve_stats_mode()
 
     # Combined mode: always the combined debrid+usenet total from cli_mount,
     # regardless of whether a debrid provider is configured — same source
     # _refresh_download_stats_blocking uses for the toggle-bar Library value,
     # so the on-demand refresh button and the cached value never disagree.
-    if _stats_priority == 'combined':
+    # With base decypharr instead of cli_mount there's no combined size to read (the
+    # stats show the cached debrid size), so fall through and ask the debrid provider.
+    if _stats_mode == 'combined':
+        active = None
         try:
             from database.statistics import download_stats_cache
             download_stats_cache['last_update'] = 0  # force stats re-fetch
@@ -1596,10 +1368,11 @@ def get_library_size_api():
             size_str = (active or {}).get('library_size', 'N/A')
         except Exception as _e:
             size_str = 'N/A'
-        return jsonify({'total_library_size': size_str})
+        if (active or {}).get('library_source') != 'debrid':
+            return jsonify({'total_library_size': size_str})
 
     # cli_mount mode — reset nzbs size cache and re-run statvfs
-    if not _gs_lib('Debrid Provider', 'api_key', default='').strip():
+    if _stats_mode == 'usenet':
         try:
             from database.statistics import _dcy_nzbs_size_cache, download_stats_cache
             _dcy_nzbs_size_cache['last_update'] = 0  # force refresh
@@ -1693,6 +1466,128 @@ def get_library_size_api():
 
     return jsonify({'total_library_size': size_str})
 
+# Calendar statuses, shared by movies and episodes so the same situation gets the
+# same colour and label. Ordered from most to least in need of attention.
+_CALENDAR_STATUS_ORDER = [
+    'premiered_uncollected', 'in_progress', 'checking_upgrade',
+    'upcoming', 'upcoming_collected', 'collected',
+]
+_CALENDAR_STATUS_LABELS = {
+    'premiered_uncollected': 'Not Collected',
+    'in_progress': 'In Progress',
+    'checking_upgrade': 'Checking Upgrade',
+    'upcoming': 'Upcoming',
+    'upcoming_collected': 'Collected',
+    'collected': 'Collected',
+}
+_CALENDAR_IN_PROGRESS_STATES = {'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Final Scrape'}
+_CALENDAR_COLLECTED_STATUSES = {'collected', 'upcoming_collected'}
+
+
+def _calendar_status(state, upgrading_from, released):
+    """Map one media_items state to a calendar status."""
+    if state in ('Collected', 'Upgrading', 'Upgraded'):
+        return 'collected' if released else 'upcoming_collected'
+    if state in ('Adding', 'Checking') and upgrading_from:
+        return 'checking_upgrade'
+    if state in _CALENDAR_IN_PROGRESS_STATES:
+        return 'in_progress'
+    return 'premiered_uncollected' if released else 'upcoming'
+
+
+def _calendar_episode_group_status(episode_states, released):
+    """Status and label for an episode drop (e.g. S01E01-08) from each episode's state.
+
+    The drop takes the status of its episode most in need of attention, and the
+    label says how many are collected when only some are.
+    """
+    statuses = [_calendar_status(state, upgrading_from, released) for state, upgrading_from in episode_states]
+    status = min(statuses, key=_CALENDAR_STATUS_ORDER.index)
+    collected = sum(1 for st in statuses if st in _CALENDAR_COLLECTED_STATUSES)
+    if 0 < collected < len(statuses):
+        return status, f"{collected}/{len(statuses)} Collected"
+    return status, _CALENDAR_STATUS_LABELS[status]
+
+
+def _calendar_movie_status(states, released):
+    """Status and label for a movie; with several versions the best one wins."""
+    statuses = [_calendar_status(state, upgrading_from, released) for state, upgrading_from in states]
+    status = max(statuses, key=_CALENDAR_STATUS_ORDER.index)
+    return status, _CALENDAR_STATUS_LABELS[status]
+
+
+def _calendar_events(start_date, end_date, now_aware, local_tz, use_24hour_format):
+    """Calendar events (episode drops and movie releases) dated start_date..end_date inclusive."""
+    events: List[Dict[str, Any]] = []
+    today_date = now_aware.date()
+
+    # 1. TV episodes
+    recently_aired, airing_soon = get_recently_aired_and_airing_soon(
+        start_date_override_iso=start_date.isoformat(),
+        end_date_override_iso=end_date.isoformat(),
+        include_all_upcoming=True
+    )
+
+    for item in recently_aired + airing_soon:
+        event_date = item['air_datetime'].date()
+        time_str = item['air_datetime'].strftime("%H:%M" if use_24hour_format else "%I:%M %p")
+        if not use_24hour_format and time_str.startswith("0"):
+            time_str = time_str[1:]
+        display_status, status_label = _calendar_episode_group_status(
+            item['episode_states'], item['air_datetime'] <= now_aware
+        )
+
+        events.append({
+            'date': event_date,
+            'time': time_str,
+            'title': item['title'],
+            'type': 'tv_show',
+            'display_status': display_status,
+            'status_label': status_label,
+            'imdb_id': item.get('imdb_id'),
+            'tmdb_id': item.get('tmdb_id'),
+            'season_number': item.get('season_number'),
+            'episode_number': item.get('episode_number'),
+            'sort_datetime': item['air_datetime']
+        })
+
+    # 2. Movies
+    calendar_movies = get_movies_for_calendar(
+        start_date_override_iso=start_date.isoformat(),
+        end_date_override_iso=end_date.isoformat()
+    )
+
+    for movie in calendar_movies:
+        try:
+            release_date_str = movie['release_date']
+            if not isinstance(release_date_str, str):
+                release_date_str = release_date_str.isoformat()
+            release_date_obj = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+        except (ValueError, TypeError) as e:
+            logging.error(f"Could not parse release_date '{movie['release_date']}' for movie '{movie['title']}': {e}")
+            continue
+
+        naive_movie_datetime = datetime.combine(release_date_obj, datetime.min.time())
+        aware_movie_datetime = local_tz.localize(naive_movie_datetime) if hasattr(local_tz, 'localize') and naive_movie_datetime.tzinfo is None else naive_movie_datetime.replace(tzinfo=local_tz)
+
+        # Released movies are those whose date has passed; today's releases still count as upcoming.
+        display_status, status_label = _calendar_movie_status(movie['states'], release_date_obj < today_date)
+
+        events.append({
+            'date': release_date_obj,
+            'time': None,
+            'title': movie['title'],
+            'type': 'movie',
+            'display_status': display_status,
+            'status_label': status_label,
+            'imdb_id': movie.get('imdb_id'),
+            'tmdb_id': movie.get('tmdb_id'),
+            'sort_datetime': aware_movie_datetime
+        })
+
+    return events
+
+
 @statistics_bp.route('/calendar')
 @user_required
 @onboarding_required
@@ -1726,100 +1621,38 @@ def calendar_view():
     view_start_date = this_week_monday - timedelta(weeks=2)
     view_end_date = view_start_date + timedelta(days=34)  # 5 weeks - 1 day
 
-    calendar_pull_start_date_iso = view_start_date.isoformat()
-    calendar_pull_end_date_iso = view_end_date.isoformat()
+    # Simple view: one calendar month (?month=YYYY-MM, default this month), shown as
+    # whole Monday-Sunday weeks, so days from the neighbouring months fill the edges.
+    month_start = today_date.replace(day=1)
+    month_arg = request.args.get('month', '')
+    try:
+        parsed = datetime.strptime(month_arg, '%Y-%m').date()
+        if abs(parsed.year - today_date.year) <= 10:
+            month_start = parsed
+    except ValueError:
+        pass
+    next_month_start = (month_start + timedelta(days=32)).replace(day=1)
+    prev_month_start = (month_start - timedelta(days=1)).replace(day=1)
+    month_grid_start = month_start - timedelta(days=month_start.weekday())
+    month_last_day = next_month_start - timedelta(days=1)
+    month_grid_end = month_last_day + timedelta(days=6 - month_last_day.weekday())
+    month_grid_days = []
+    day = month_grid_start
+    while day <= month_grid_end:
+        month_grid_days.append([day + timedelta(days=i) for i in range(7)])
+        day += timedelta(days=7)
 
-    # 1. Get TV Show Data using the 3-week range
-    recently_aired, airing_soon = get_recently_aired_and_airing_soon(
-        start_date_override_iso=calendar_pull_start_date_iso,
-        end_date_override_iso=calendar_pull_end_date_iso
-    )
-
-    for item in recently_aired + airing_soon:
-        event_date = item['air_datetime'].date()
-        time_str = item['air_datetime'].strftime("%H:%M" if use_24hour_format else "%I:%M %p")
-        if not use_24hour_format and time_str.startswith("0"):
-            time_str = time_str[1:]
-
-        events.append({
-            'date': event_date,
-            'time': time_str,
-            'title': item['title'],
-            'type': 'tv_show',
-            'display_status': item.get('display_status', 'uncollected').lower().replace(' ', '_'),
-            'imdb_id': item.get('imdb_id'),
-            'tmdb_id': item.get('tmdb_id'),
-            'season_number': item.get('season_number'),
-            'episode_number': item.get('episode_number'),
-            'sort_datetime': item['air_datetime']
-        })
-
-    # 2. Get Movies using the 3-week range
-    calendar_movies = get_movies_for_calendar(
-        start_date_override_iso=calendar_pull_start_date_iso,
-        end_date_override_iso=calendar_pull_end_date_iso
-    )
-
-    for movie in calendar_movies:
-        try:
-            release_date_str = movie['release_date']
-            if not isinstance(release_date_str, str):
-                release_date_str = release_date_str.isoformat()
-            release_date_obj = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-        except (ValueError, TypeError) as e:
-            logging.error(f"Could not parse release_date '{movie['release_date']}' for movie '{movie['title']}': {e}")
-            continue
-
-        naive_movie_datetime = datetime.combine(release_date_obj, datetime.min.time())
-        aware_movie_datetime = local_tz.localize(naive_movie_datetime) if hasattr(local_tz, 'localize') and naive_movie_datetime.tzinfo is None else naive_movie_datetime.replace(tzinfo=local_tz)
-
-        movie_state = movie.get('state', 'Unknown').lower()
-        display_status = movie_state
-
-        if release_date_obj < today_date:
-            if movie_state in ['wanted', 'searching', 'unknown', 'not_collected']:
-                display_status = 'premiered_uncollected'
-            elif movie_state == 'collected':
-                display_status = 'collected'
-            elif movie_state == 'upgrading':
-                display_status = 'upgrading'
-            elif movie_state == 'checking':
-                 display_status = 'checking_upgrade'
-        elif release_date_obj >= today_date:
-            if movie_state in ['wanted', 'searching', 'unknown', 'not_collected']:
-                 display_status = 'upcoming_uncollected'
-            elif movie_state == 'collected':
-                 display_status = 'upcoming_collected'
-            else:
-                 display_status = 'upcoming'
-
-        events.append({
-            'date': release_date_obj,
-            'time': None,
-            'title': movie['title'],
-            'type': 'movie',
-            'display_status': display_status.replace(' ', '_'),
-            'imdb_id': movie.get('imdb_id'),
-            'tmdb_id': movie.get('tmdb_id'),
-            'sort_datetime': aware_movie_datetime
-        })
+    # Pull the advanced window and the month separately unless they overlap, so a
+    # month far from today doesn't drag in everything between the two.
+    if month_grid_start <= view_end_date + timedelta(days=1) and month_grid_end >= view_start_date - timedelta(days=1):
+        pull_ranges = [(min(view_start_date, month_grid_start), max(view_end_date, month_grid_end))]
+    else:
+        pull_ranges = [(view_start_date, view_end_date), (month_grid_start, month_grid_end)]
+    for range_start, range_end in pull_ranges:
+        events.extend(_calendar_events(range_start, range_end, now_aware, local_tz, use_24hour_format))
 
     # 3. Sort all events
     events.sort(key=lambda x: x['sort_datetime'])
-
-    # --- Simple view: original 3-week grid (prev week / current week / next week) ---
-    simple_view_start = today_date - timedelta(days=today_date.weekday() + 7)  # Monday of prev week
-    three_week_grid_days = []
-    current_day_for_grid = simple_view_start
-    for _ in range(3):
-        week_days = []
-        for _ in range(7):
-            week_days.append(current_day_for_grid)
-            current_day_for_grid += timedelta(days=1)
-        three_week_grid_days.append(week_days)
-
-    simple_view_end = simple_view_start + timedelta(days=20)
-    three_week_grid_header = f"{simple_view_start.strftime('%b %d')} – {simple_view_end.strftime('%b %d')}"
 
     # --- Advanced view: single week being viewed ---
     viewed_week_days = [viewed_week_monday + timedelta(days=i) for i in range(7)]
@@ -1892,9 +1725,13 @@ def calendar_view():
         }
 
     return render_template('calendar_view.html',
-                           # Simple view 3-week grid
-                           three_week_grid_days=three_week_grid_days,
-                           three_week_grid_header=three_week_grid_header,
+                           # Simple view month grid
+                           month_grid_days=month_grid_days,
+                           month_start=month_start,
+                           month_header=month_start.strftime('%B %Y'),
+                           prev_month=prev_month_start.strftime('%Y-%m'),
+                           next_month=next_month_start.strftime('%Y-%m'),
+                           is_current_month=(month_start == today_date.replace(day=1)),
                            # Advanced view single-week (still used for SSR initial render)
                            viewed_week_days=viewed_week_days,
                            adv_grid_header=adv_grid_header,

@@ -106,8 +106,3 @@ class GlobalTraktCoordinator:
                     'until': None
                 }
 
-    def clear_cooldown(self):
-        """Clear any active cooldown (for testing/debugging purposes)"""
-        with self._lock:
-            self._global_cooldown_until = None
-            logging.info("🔓 Trakt API cooldown cleared")

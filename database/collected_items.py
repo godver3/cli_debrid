@@ -1,4 +1,5 @@
 from .core import get_db_connection, row_to_dict, normalize_string, get_existing_airtime
+import itertools
 import logging
 import time as _time
 
@@ -11,16 +12,13 @@ _UNMATCHED_SUPPRESS_SECS = 3600
 import threading
 _add_collected_lock = threading.Lock()
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 import json
-from .database_writing import add_to_collected_notifications, update_media_item_state, RESET_COLLECTION_STATE_SQL
+from .database_writing import add_to_collected_notifications, RESET_COLLECTION_STATE_SQL
 from utilities.reverse_parser import parser_approximation
-from utilities.settings import get_setting
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from utilities.post_processing import handle_state_change
 from cli_battery.app.direct_api import DirectAPI
-import sqlite3
-import time
 
 def _cache_tmdb_artwork(media_items_batch):
     """
@@ -132,7 +130,7 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
 
 
 def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, data_source='plex'):
-    from datetime import datetime, timedelta
+    from datetime import datetime
     from utilities.settings import get_setting
     from queues.upgrading_queue import log_successful_upgrade
     from metadata.metadata import get_show_airtime_by_imdb_id
@@ -499,7 +497,6 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                     # If imdb_id missing, try to resolve via battery tmdb→imdb mapping
                                     if not _imdb_id and _db_row['tmdb_id']:
                                         try:
-                                            from cli_battery.app.direct_api import DirectAPI
                                             _resolved, _ = DirectAPI.tmdb_to_imdb(
                                                 str(_db_row['tmdb_id']),
                                                 media_type='show' if _db_row['type'] == 'episode' else 'movie'
@@ -740,7 +737,6 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                         _ci_is_absolute = False
                                         try:
                                             from cli_battery.app.database import Session as _BatSession, Item as _BatItem, Season as _BatSeason, Episode as _BatEp
-                                            from sqlalchemy.orm import selectinload as _sil
                                             with _BatSession() as _bs:
                                                 _bi = _bs.query(_BatItem).filter_by(imdb_id=_fix_imdb).first() if _fix_imdb else None
                                                 if _bi:
@@ -791,7 +787,6 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                         import threading as _ci_thread
                                         def _ci_fix(_rk, _title, _year, _tmdb, _imdb, _s, _ep):
                                             try:
-                                                from cli_battery.app.direct_api import DirectAPI
                                                 from utilities.settings import get_setting as _gs
                                                 from plexapi.server import PlexServer as _PS
                                                 _gu = _gs('Plex', 'url', '').rstrip('/')
@@ -1206,12 +1201,14 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                 is_expected_on_disk = filled_by or location_base or location_on_disk
 
                 # Debug: Log cleanup check for items that might be deleted
-                if is_expected_on_disk and not is_present_on_disk:
+                # Guarded: the sample below copies the whole filename set into a list,
+                # once per missing item, even when DEBUG is off.
+                if is_expected_on_disk and not is_present_on_disk and logging.getLogger().isEnabledFor(logging.DEBUG):
                     logging.debug(f"[Cleanup Debug] Item {item['id']} ({item_identifier}) NOT found in Plex scan:")
                     logging.debug(f"  filled_by_file: '{filled_by}' - in valid? {filled_by in all_valid_filenames if filled_by else 'N/A'}")
                     logging.debug(f"  location_basename: '{location_base}' - in valid? {location_base in all_valid_filenames if location_base else 'N/A'}")
                     logging.debug(f"  location_on_disk: '{location_on_disk}' - in valid? {location_on_disk in all_valid_filenames if location_on_disk else 'N/A'}")
-                    logging.debug(f"  all_valid_filenames sample (first 5): {list(all_valid_filenames)[:5]}")
+                    logging.debug(f"  all_valid_filenames sample (first 5): {list(itertools.islice(all_valid_filenames, 5))}")
 
                 if is_expected_on_disk and not is_present_on_disk:
                     file_to_log = location_base or filled_by
@@ -1634,84 +1631,3 @@ def remove_original_item_from_results(item: Dict[str, Any], media_items_batch: L
     except Exception as e:
         logging.error(f"Error in remove_original_item_from_results: {str(e)}", exc_info=True)
 
-# --- START: New function to add/update TV show ---
-def add_or_update_tv_show(imdb_id: str, tmdb_id: Optional[str] = None, title: Optional[str] = None, year: Optional[int] = None, status: Optional[str] = None):
-    """
-    Adds a new TV show to the tv_shows table or updates an existing one.
-    This is typically called when a show is first encountered during metadata processing.
-    Completeness checks are handled by a separate periodic task.
-
-    Args:
-        imdb_id (str): The IMDb ID of the show (required).
-        tmdb_id (str, optional): The TMDB ID of the show.
-        title (str, optional): The title of the show.
-        year (int, optional): The release year of the show.
-        status (str, optional): The current status of the show (e.g., 'Ended', 'Continuing').
-    """
-    if not imdb_id:
-        logging.error("[TV Show Upsert] Attempted to add/update TV show without an IMDb ID.")
-        return
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        now_utc = datetime.now(timezone.utc)
-        # Convert to string format compatible with SQLite DATETIME
-        now_str = now_utc.strftime('%Y-%m-%d %H:%M:%S')
-
-
-        # Data for the INSERT part
-        insert_data = (
-            imdb_id,
-            tmdb_id,
-            title,
-            year,
-            status,
-            False, # Default is_complete to False initially
-            None,  # Default total_episodes to None initially
-            None,  # last_status_check is initially None (set by periodic task)
-            now_str,   # Set added_at timestamp
-            now_str    # Set last_updated timestamp
-        )
-
-        # Use INSERT ... ON CONFLICT for atomic upsert based on imdb_id
-        # We only update fields that might change or need refreshing.
-        # We specifically DO NOT update is_complete or total_episodes here.
-        # last_status_check is also not updated here.
-        # Using COALESCE prevents overwriting existing values with NULL if new metadata is missing fields.
-        # Use NULLIF to treat empty strings as NULL for proper COALESCE behavior.
-        cursor.execute("""
-            INSERT INTO tv_shows (
-                imdb_id, tmdb_id, title, year, status, is_complete,
-                total_episodes, last_status_check, added_at, last_updated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(imdb_id) DO UPDATE SET
-                tmdb_id = COALESCE(NULLIF(excluded.tmdb_id, ''), tmdb_id),
-                title = COALESCE(NULLIF(excluded.title, ''), title),
-                year = COALESCE(excluded.year, year),
-                status = COALESCE(NULLIF(excluded.status, ''), status),
-                last_updated = excluded.last_updated
-            WHERE imdb_id = excluded.imdb_id;
-        """, insert_data)
-
-        conn.commit()
-        if cursor.rowcount > 0:
-            logging.debug(f"[TV Show Upsert] Successfully added or updated show: IMDb ID {imdb_id}")
-        else:
-            # This might happen if the ON CONFLICT update resulted in no actual change
-            logging.debug(f"[TV Show Upsert] No rows affected for show IMDb ID {imdb_id} (likely no change needed).")
-
-    except sqlite3.Error as db_err:
-        logging.error(f"[TV Show Upsert] Database error for show IMDb ID {imdb_id}: {db_err}", exc_info=True)
-        if conn:
-            conn.rollback()
-    except Exception as err:
-        logging.error(f"[TV Show Upsert] Unexpected error for show IMDb ID {imdb_id}: {err}", exc_info=True)
-        if conn:
-            conn.rollback()
-    finally:
-        if conn:
-            conn.close()
-# --- END: New function ---

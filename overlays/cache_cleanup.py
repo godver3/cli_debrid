@@ -4,16 +4,16 @@ Poster Cache Cleanup
 Manages poster cache, including cleanup, backup, and restoration of original posters.
 """
 
-import hashlib
 import logging
 import os
-import shutil
 import sqlite3
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+
+from utilities.paths import config_dir
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class PosterCacheManager:
     - Cleaning up orphaned overlay posters
     """
 
-    def __init__(self, db_path=None, backup_dir: str = "/user/config/poster_backups"):
+    def __init__(self, db_path=None, backup_dir: Optional[str] = None):
         """
         Initialize poster cache manager.
 
@@ -69,7 +69,7 @@ class PosterCacheManager:
             db_path: Unused — kept for API compatibility. DB access uses get_db_connection().
             backup_dir: Directory for poster backups
         """
-        self.backup_dir = Path(backup_dir)
+        self.backup_dir = Path(backup_dir or config_dir('poster_backups'))
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         self.logger = logging.getLogger(__name__)
 
@@ -80,69 +80,6 @@ class PosterCacheManager:
             Path(os.path.expanduser("~/Library/Application Support/Plex Media Server/Cache")),
         ]
 
-    def detect_plex_cache(self) -> Optional[Path]:
-        """
-        Detect Plex poster cache location.
-
-        Returns:
-            Path to Plex cache directory or None if not found
-        """
-        for cache_path in self.plex_cache_paths:
-            if cache_path.exists():
-                self.logger.info(f"Found Plex cache at: {cache_path}")
-                return cache_path
-
-        self.logger.debug("Could not detect Plex cache location")
-        return None
-
-    def calculate_cache_size(self) -> Dict[str, Any]:
-        """
-        Calculate total Plex cache size.
-
-        Returns:
-            Dictionary with cache statistics
-        """
-        cache_path = self.detect_plex_cache()
-
-        if not cache_path:
-            return {
-                'success': False,
-                'message': 'Plex cache not found',
-                'total_size': 0,
-                'file_count': 0
-            }
-
-        try:
-            total_size = 0
-            file_count = 0
-
-            # Walk through cache directory
-            for root, dirs, files in os.walk(cache_path):
-                for file in files:
-                    file_path = Path(root) / file
-                    try:
-                        total_size += file_path.stat().st_size
-                        file_count += 1
-                    except:
-                        pass
-
-            return {
-                'success': True,
-                'cache_path': str(cache_path),
-                'total_size': total_size,
-                'total_size_mb': round(total_size / (1024 * 1024), 2),
-                'total_size_gb': round(total_size / (1024 * 1024 * 1024), 2),
-                'file_count': file_count
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to calculate cache size: {e}")
-            return {
-                'success': False,
-                'message': str(e),
-                'total_size': 0,
-                'file_count': 0
-            }
 
     def backup_poster(self, ms_item_id: str, poster_data: bytes) -> bool:
         """

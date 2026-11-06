@@ -31,9 +31,10 @@ upload_tasks = {}
 @admin_required
 @onboarding_required
 def logs():
-    logs = get_recent_logs(1000, level='all')  # Reduced from 500 to 100
+    # No server-rendered lines: on load the page clears #log-entries and fills
+    # it from /api/logs/stream, so rendering 1000 lines here was thrown away.
     climount_available = _get_active_climount_client() is not None
-    return render_template('logs.html', logs=logs, climount_available=climount_available)
+    return render_template('logs.html', logs=[], climount_available=climount_available)
 
 @logs_bp.route('/api/logs')
 @admin_required

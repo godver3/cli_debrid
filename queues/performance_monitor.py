@@ -1,15 +1,12 @@
 import psutil
 import os
-import gc
 import sys
 import logging
 import threading
-from collections import defaultdict, OrderedDict
-from datetime import datetime, timedelta
+from collections import defaultdict
+from datetime import datetime
 import time
 import json
-import platform
-from utilities.settings import get_setting
 
 _IS_WINDOWS = sys.platform == 'win32'
 
@@ -92,6 +89,11 @@ class PerformanceMonitor:
         # Polling intervals (in seconds)
         self.basic_metrics_interval = 15  # Poll basic metrics every 15 seconds
         self.detailed_metrics_interval = 60  # Poll detailed metrics every minute
+        # The memory-map breakdown parses /proc/self/smaps in Python (~45 ms
+        # holding the GIL on a live install, which page requests wait on), so
+        # it runs every 10 minutes; the rest of the detailed report stays at 1.
+        self.detailed_memory_interval = 600
+        self.last_detailed_memory = None
         self.snapshot_interval = 1800  # Take memory snapshots every 30 minutes
         self.log_cleanup_interval = 3600  # Clean up logs every hour
         
@@ -110,12 +112,6 @@ class PerformanceMonitor:
             self.monitor_thread.start()
             self.performance_logger.info("Started performance monitoring")
     
-    def stop_monitoring(self):
-        """Stop performance monitoring"""
-        try:
-            pass
-        except Exception as e:
-            self.performance_logger.error(f"Error stopping performance monitoring: {e}")
     
     def _monitor_loop(self):
         """Main monitoring loop that collects various performance metrics"""
@@ -132,8 +128,11 @@ class PerformanceMonitor:
                     self.performance_logger.info(" " * 40 + "DETAILED PERFORMANCE REPORT" + " " * 40)
                     self.performance_logger.info("=" * 100 + "\n")
                     
-                    self._log_detailed_memory()
-                    self.performance_logger.info("\n" + "-" * 100 + "\n")
+                    if (self.last_detailed_memory is None or
+                            (current_time - self.last_detailed_memory).total_seconds() >= self.detailed_memory_interval):
+                        self._log_detailed_memory()
+                        self.last_detailed_memory = current_time
+                        self.performance_logger.info("\n" + "-" * 100 + "\n")
                     
                     self._log_memory_growth()
                     self.performance_logger.info("\n" + "-" * 100 + "\n")

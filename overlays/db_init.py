@@ -4,8 +4,6 @@ Database Initialization for Overlay System
 Creates necessary database tables for the overlay system.
 """
 
-import sqlite3
-import os
 import logging
 
 logger = logging.getLogger(__name__)

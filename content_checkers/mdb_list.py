@@ -2,7 +2,7 @@ import logging
 from routes.api_tracker import api
 from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import quote
-from utilities.settings import get_all_settings, get_setting
+from utilities.settings import get_setting
 import os
 import pickle
 from datetime import datetime, timedelta
@@ -50,15 +50,6 @@ def save_mdblist_cache(cache):
     except Exception as e:
         logging.error(f"Error saving MDB List cache: {e}")
 
-def get_mdblist_sources() -> List[Dict[str, Any]]:
-    content_sources = get_all_settings().get('Content Sources', {})
-    mdblist_sources = [data for source, data in content_sources.items() if source.startswith('MDBList')]
-    
-    if not mdblist_sources:
-        logging.error("No MDBList sources configured. Please add MDBList sources in settings.")
-        return []
-    
-    return mdblist_sources
 
 def fetch_items_from_mdblist(url: str) -> List[Dict[str, Any]]:
     headers = {
@@ -406,154 +397,4 @@ def _process_mdblist_items(items: List[Dict[str, Any]], versions: Dict[str, bool
         save_mdblist_cache(cache)
     return all_wanted_items
 
-def remove_from_mdblist(api_key: str, list_id: str, items: List[dict]) -> dict:
-    """
-    Remove items from an MDBList personal list
 
-    Args:
-        api_key: MDBList API key
-        list_id: MDBList list ID (numeric, extracted from URL)
-        items: List of items to remove, each with 'imdb_id', 'tmdb_id', and 'type'
-
-    Returns:
-        dict: {'success': bool, 'removed': int, 'message': str}
-    """
-    if not api_key:
-        return {
-            'success': False,
-            'removed': 0,
-            'message': 'MDBList API key not configured'
-        }
-
-    if not list_id:
-        return {
-            'success': False,
-            'removed': 0,
-            'message': 'MDBList list ID not provided'
-        }
-
-    if not items:
-        return {
-            'success': False,
-            'removed': 0,
-            'message': 'No items provided for removal'
-        }
-
-    # Build removal payload
-    movies = []
-    shows = []
-
-    for item in items:
-        imdb_id = item.get('imdb_id')
-        tmdb_id = item.get('tmdb_id')
-        item_type = item.get('type', '').lower()
-
-        if not imdb_id and not tmdb_id:
-            logging.warning(f"Skipping item without IMDB or TMDB ID: {item}")
-            continue
-
-        # Build item identifier
-        item_ids = {}
-        if imdb_id:
-            item_ids['imdb'] = imdb_id
-        if tmdb_id:
-            item_ids['tmdb'] = int(tmdb_id) if str(tmdb_id).isdigit() else tmdb_id
-
-        # Categorize by type
-        if item_type == 'movie':
-            movies.append(item_ids)
-        elif item_type in ['show', 'episode', 'tv']:
-            shows.append(item_ids)
-        else:
-            # Default to movie if type unknown
-            movies.append(item_ids)
-
-    if not movies and not shows:
-        return {
-            'success': False,
-            'removed': 0,
-            'message': 'No valid items to remove'
-        }
-
-    # Build request payload
-    payload = {}
-    if movies:
-        payload['movies'] = movies
-    if shows:
-        payload['shows'] = shows
-
-    # MDBList API endpoint for removing items from a list
-    # API: POST https://api.mdblist.com/lists/{list_id}/items/remove?apikey={api_key}
-    url = f"https://api.mdblist.com/lists/{list_id}/items/remove"
-
-    params = {
-        'apikey': api_key
-    }
-
-    headers = {
-        'Content-Type': 'application/json'
-    }
-
-    try:
-        logging.info(f"Removing {len(movies)} movie(s) and {len(shows)} show(s) from MDBList {list_id}")
-        response = api.post(url, params=params, json=payload, headers=headers, timeout=REQUEST_TIMEOUT)
-
-        if response.status_code == 200:
-            result = response.json()
-            removed_count = result.get('removed', 0)
-            not_found_count = result.get('not_found', 0)
-
-            logging.info(f"Successfully removed {removed_count} item(s) from MDBList {list_id} ({not_found_count} not found)")
-            return {
-                'success': True,
-                'removed': removed_count,
-                'message': f'Removed {removed_count} item(s) from MDBList' + (f' ({not_found_count} not found)' if not_found_count > 0 else '')
-            }
-        elif response.status_code == 401 or response.status_code == 403:
-            logging.error(f"MDBList authentication failed for list {list_id}: HTTP {response.status_code}")
-            return {
-                'success': False,
-                'removed': 0,
-                'message': 'MDBList authentication failed - check API key'
-            }
-        else:
-            logging.error(f"Failed to remove from MDBList {list_id}: HTTP {response.status_code} - {response.text}")
-            return {
-                'success': False,
-                'removed': 0,
-                'message': f'HTTP {response.status_code}: {response.text}'
-            }
-
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error removing from MDBList {list_id}: {e}")
-        return {
-            'success': False,
-            'removed': 0,
-            'message': str(e)
-        }
-
-def extract_list_id_from_url(url: str) -> str | None:
-    """
-    Extract MDBList list ID from URL
-
-    Examples:
-        https://mdblist.com/lists/linaspurinis/top-watched-movies-of-the-week-from-trakt -> None (public list)
-        https://mdblist.com/lists/user/12345 -> '12345' (personal list ID)
-        https://mdblist.com/lists/12345 -> '12345'
-
-    Args:
-        url: MDBList URL
-
-    Returns:
-        str | None: List ID if it's a personal list, None otherwise
-    """
-    import re
-
-    # Pattern to match numeric list IDs (personal lists)
-    # Personal lists use format: /lists/{user}/{id} or /lists/{id}
-    match = re.search(r'/lists/(?:\w+/)?(\d+)', url)
-    if match:
-        return match.group(1)
-
-    # If no numeric ID found, it's likely a public list (slug-based)
-    return None

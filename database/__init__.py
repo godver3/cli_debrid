@@ -9,7 +9,6 @@ from .database_reading import get_media_item_by_id
 submodules = [
     'core',
     'collected_items',
-    'blacklist',
     'schema_management',
     'poster_management',
     'statistics',

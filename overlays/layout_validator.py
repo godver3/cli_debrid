@@ -9,6 +9,8 @@ import logging
 import re
 from typing import Dict, Any, List, Tuple, Optional
 
+from utilities.paths import config_dir
+
 
 class LayoutValidator:
     """
@@ -26,14 +28,14 @@ class LayoutValidator:
     VALID_POSITIONS = {'top_left', 'top_right', 'bottom_left', 'bottom_right', 'center', 'custom'}
     VALID_MEDIA_TYPES = {'movie', 'tv', 'season', 'both'}
 
-    def __init__(self, asset_dir: str = "/user/config/overlay_assets"):
+    def __init__(self, asset_dir: Optional[str] = None):
         """
         Initialize validator.
 
         Args:
             asset_dir: Path to overlay assets directory
         """
-        self.asset_dir = asset_dir
+        self.asset_dir = asset_dir or config_dir('overlay_assets')
         self.logger = logging.getLogger(__name__)
 
     def validate_layout(self, layout_data: Dict[str, Any]) -> Tuple[bool, List[str]]:

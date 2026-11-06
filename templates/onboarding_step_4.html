@@ -16,33 +16,11 @@
             I prefer Seerr especially because you can set up a webhook to directly trigger Wanted item additions to the queue, and supports partial series requests. All sources can be configured on a per version basis within the settings menu.
         </div>
     </div>
-    <p class="info-message">Content source settings can only be configured when adding a new source. To modify settings, you'll need to delete the existing source and create a new one.</p>
+    <p class="info-message">Content sources decide <b>what</b> cli_debrid fetches. Easiest start if you use Plex: <b>My Plex Watchlist</b>. Anything you add to your Plex watchlist gets requested, with no extra setup. You can edit sources after adding them.</p>
     <button id="add-content-source-btn" class="onboarding-btn">Add Content Source</button>
 </div>
 
-<div id="existing-content-sources">
-    {% if settings['Content Sources'] %}
-        <h3 class="onboarding-title">Content Sources</h3>
-        {% for source, config in settings['Content Sources'].items() %}
-        <div class="content-source-item">
-            <div class="content-source-header">
-                <span class="onboarding-text">{{ source }}</span>
-                <button class="delete-content-source-btn onboarding-btn-delete" data-source-id="{{ source }}">Delete</button>
-            </div>
-            <div class="content-source-settings">
-                {% for key, value in config.items() %}
-                    {% if key != 'enabled' and key != 'versions' %}
-                        <div class="setting-item">
-                            <label class="onboarding-text">{{ key|capitalize }}:</label>
-                            <input type="text" id="content-source-{{ source }}-{{ key }}" value="{{ value }}" readonly class="setting-value">
-                        </div>
-                    {% endif %}
-                {% endfor %}
-            </div>
-        </div>
-        {% endfor %}
-    {% endif %}
-</div>
+<div id="existing-content-sources"></div>
 
 <script type="module">
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
@@ -91,27 +69,36 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    function showContentSourceSettingsPopup(sourceType) {
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : String(text);
+        return div.innerHTML.replace(/"/g, '&quot;');
+    }
+
+    // existing/sourceId are set when editing a source that's already added.
+    function showContentSourceSettingsPopup(sourceType, existing = null, sourceId = null) {
         const sourceSchema = SETTINGS_SCHEMA['Content Sources'].schema[sourceType];
+        const isEdit = existing !== null;
         let formHtml = '<form id="contentSourceSettingsForm">';
 
         for (const [key, value] of Object.entries(sourceSchema)) {
             if (key === 'enabled' || key === 'versions') continue; // Skip 'enabled' and 'versions' fields
 
+            const current = isEdit && key in existing ? existing[key] : value.default;
             let inputHtml = '';
             if (value.type === 'boolean') {
-                inputHtml = `<input type="checkbox" id="${key}" name="${key}" ${value.default ? 'checked' : ''}>`;
+                inputHtml = `<input type="checkbox" id="${key}" name="${key}" ${current ? 'checked' : ''}>`;
             } else if (value.type === 'string') {
                 if (value.choices) {
                     // Handle dropdown fields
                     inputHtml = `<select id="${key}" name="${key}">`;
                     value.choices.forEach(choice => {
-                        inputHtml += `<option value="${choice}" ${value.default === choice ? 'selected' : ''}>${choice}</option>`;
+                        inputHtml += `<option value="${escapeHtml(choice)}" ${current === choice ? 'selected' : ''}>${escapeHtml(choice)}</option>`;
                     });
                     inputHtml += '</select>';
                 } else {
                     // Handle regular text/password fields
-                    inputHtml = `<input type="${value.sensitive ? 'password' : 'text'}" id="${key}" name="${key}" value="${value.default || ''}" ${value.validate === 'url' ? 'pattern="https?://.+"' : ''}>`;
+                    inputHtml = `<input type="${value.sensitive ? 'password' : 'text'}" id="${key}" name="${key}" value="${escapeHtml(current || '')}" ${value.validate === 'url' ? 'pattern="https?://.+"' : ''}>`;
                 }
             }
 
@@ -123,7 +110,37 @@ document.addEventListener('DOMContentLoaded', function() {
             `;
         }
 
+        if (isEdit && CONFIGURED_VERSIONS.length > 0) {
+            const selected = existing.versions || [];
+            formHtml += '<div class="form-group"><label>Versions:</label>' + CONFIGURED_VERSIONS.map(version => `
+                <label style="display:block;font-weight:normal;">
+                    <input type="checkbox" name="version__${escapeHtml(version)}" ${selected.includes(version) ? 'checked' : ''}> ${escapeHtml(version)}
+                </label>`).join('') + '</div>';
+        }
+
         formHtml += '</form>';
+
+        if (isEdit) {
+            showPopup({
+                type: POPUP_TYPES.PROMPT,
+                title: `Edit ${escapeHtml(existing.display_name || sourceId)}`,
+                message: 'Change the content source settings:',
+                formHtml: formHtml,
+                confirmText: 'Save',
+                cancelText: 'Cancel',
+                onConfirm: (formData) => {
+                    const config = {};
+                    const versions = [];
+                    for (const [key, value] of Object.entries(formData)) {
+                        if (key.startsWith('version__')) versions.push(key.slice('version__'.length));
+                        else config[key] = value;
+                    }
+                    if (CONFIGURED_VERSIONS.length > 0) config.versions = versions;
+                    updateContentSource(sourceId, config);
+                }
+            });
+            return;
+        }
 
         showPopup({
             type: POPUP_TYPES.PROMPT,
@@ -168,6 +185,35 @@ document.addEventListener('DOMContentLoaded', function() {
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 message: 'Error adding content source: ' + error.message,
+            });
+        });
+    }
+
+    function updateContentSource(sourceId, sourceConfig) {
+        fetch('/onboarding/content_sources/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_id: sourceId, config: sourceConfig })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) throw new Error(data.error || 'Unknown error');
+            refreshContentSourcesList();
+            showPopup({ type: POPUP_TYPES.SUCCESS, message: 'Content source saved.', autoClose: 3000 });
+        })
+        .catch(error => {
+            showPopup({ type: POPUP_TYPES.ERROR, message: 'Error saving content source: ' + escapeHtml(error.message) });
+        });
+    }
+
+    let currentSources = {};
+
+    function initializeEditButtons() {
+        document.querySelectorAll('.edit-content-source-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const sourceId = this.getAttribute('data-source-id');
+                const source = currentSources[sourceId];
+                if (source) showContentSourceSettingsPopup(source.type, source, sourceId);
             });
         });
     }
@@ -236,7 +282,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/onboarding/content_sources/get')
             .then(response => response.json())
             .then(data => {
-                console.log('Received content sources data:', data);
+                currentSources = data.content_sources || {};
                 const sourcesList = document.getElementById('existing-content-sources');
                 sourcesList.innerHTML = '';
                 if (data.content_sources && Object.keys(data.content_sources).length > 0) {
@@ -258,21 +304,18 @@ document.addEventListener('DOMContentLoaded', function() {
                                     // For fields with choices (like media_type), show as readonly select
                                     settingsHtml += `
                                         <div class="setting-item">
-                                            <label class="onboarding-text">${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</label>
-                                            <select class="setting-value" readonly>
-                                                ${fieldSchema.choices.map(choice => 
-                                                    `<option value="${choice}" ${value === choice ? 'selected' : ''} disabled>${choice}</option>`
-                                                ).join('')}
-                                            </select>
+                                            <label class="onboarding-text">${escapeHtml(key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))}:</label>
+                                            <input type="text" value="${escapeHtml(value)}" readonly class="setting-value">
                                         </div>
                                     `;
                                 } else {
                                     // For other fields, show as readonly text input
                                     displayValue = Array.isArray(value) ? value.join(', ') : value;
+                                    if (fieldSchema.sensitive && displayValue) displayValue = '••••••••';
                                     settingsHtml += `
                                         <div class="setting-item">
-                                            <label class="onboarding-text">${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</label>
-                                            <input type="text" id="content-source-js-${id}-${key}" value="${displayValue}" readonly class="setting-value">
+                                            <label class="onboarding-text">${escapeHtml(key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))}:</label>
+                                            <input type="text" value="${escapeHtml(displayValue)}" readonly class="setting-value">
                                         </div>
                                     `;
                                 }
@@ -280,8 +323,11 @@ document.addEventListener('DOMContentLoaded', function() {
                         }
                         sourceItem.innerHTML = `
                             <div class="content-source-header">
-                                <span class="onboarding-text">${id}</span>
-                                <button class="delete-content-source-btn onboarding-btn-delete" data-source-id="${id}">Delete</button>
+                                <span class="onboarding-text">${escapeHtml(id)}</span>
+                                <span>
+                                    <button class="edit-content-source-btn onboarding-btn-edit" data-source-id="${escapeHtml(id)}">Edit</button>
+                                    <button class="delete-content-source-btn onboarding-btn-delete" data-source-id="${escapeHtml(id)}">Delete</button>
+                                </span>
                             </div>
                             <div class="content-source-settings">
                                 ${settingsHtml}
@@ -290,6 +336,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         sourcesList.appendChild(sourceItem);
                     }
                     initializeDeleteButtons();
+                    initializeEditButtons();
                 } else {
                     console.log('No content sources found or content_sources is empty');
                 }

@@ -15,9 +15,6 @@ if ROOT not in sys.path:
 from utilities.junk_symlink_audit import (  # noqa: E402
     apply_junk_symlink_plan,
     build_junk_symlink_plan,
-    fmt_gb,
-    fmt_mb,
-    item_label,
 )
 
 

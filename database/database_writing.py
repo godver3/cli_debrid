@@ -8,6 +8,7 @@ import os
 import threading
 from utilities.atomic_io import atomic_write_bytes
 from utilities.post_processing import handle_state_change
+from utilities.log_context import log_state_change
 from typing import List, Optional
 import sqlite3
 
@@ -45,6 +46,45 @@ def stash_replaced_files(rows):
         pending.append({k: row.get(k) for k in REPLACED_FILE_FIELDS})
         stashed.append((row['id'], json.dumps(pending, default=str)))
     return stashed
+
+
+def move_to_wanted_for_replacement(cursor, where_sql, params):
+    """Send the media_items rows matching where_sql back to Wanted to get a different release.
+
+    The current release is saved in excluded_release_id so the next scrape skips it for
+    these rows only (the scraper clears it after that scrape, see reset_not_wanted_check),
+    and the old files are stashed in replaced_files so they keep playing until the
+    replacement is Collected (see cleanup_files_replaced_by_move_to_wanted). Rows already
+    in Wanted/Scraping/Adding are left alone. Returns the number of rows moved; the
+    caller commits.
+    """
+    where_sql = f"({where_sql}) AND state NOT IN ('Wanted', 'Scraping', 'Adding')"
+    stashed = stash_replaced_files(
+        cursor.execute(f"SELECT * FROM media_items WHERE {where_sql}", params).fetchall())
+    cursor.execute(
+        f"""UPDATE media_items
+            SET state = 'Wanted',
+                filled_by_file = NULL,
+                filled_by_title = NULL,
+                filled_by_magnet = NULL,
+                filled_by_torrent_id = NULL,
+                {RESET_COLLECTION_STATE_SQL},
+                last_updated = ?,
+                disable_not_wanted_check = FALSE,
+                excluded_release_id = filled_by_magnet,
+                location_on_disk = NULL,
+                original_path_for_symlink = NULL,
+                original_scraped_torrent_title = NULL,
+                upgrading_from = NULL,
+                version = TRIM(version, '*'),
+                upgrading = NULL
+            WHERE {where_sql}""",
+        (datetime.now(), *params),
+    )
+    updated = cursor.rowcount
+    for row_id, replaced_files in stashed:
+        cursor.execute("UPDATE media_items SET replaced_files = ? WHERE id = ?", (replaced_files, row_id))
+    return updated
 
 
 @retry_on_db_lock()
@@ -89,6 +129,7 @@ def replace_collected_item(item: dict) -> Optional[int]:
                    location_on_disk = NULL,
                    original_path_for_symlink = NULL,
                    original_filename = NULL,
+                   size = NULL,
                    collected_at = NULL,
                    upgrading_from = NULL,
                    upgrading = NULL,
@@ -225,6 +266,8 @@ def update_release_date_and_state(
             ]
             params = [release_date, expected_state, state, datetime.now()]
 
+        old_state_row = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_id,)).fetchone()
+
         if airtime is not None:
             set_clauses.append('airtime = ?')
             params.append(airtime)
@@ -263,6 +306,8 @@ def update_release_date_and_state(
 
         conn.commit()
 
+        if updated_item_row:
+            log_state_change(dict(updated_item_row), old_state_row['state'] if old_state_row else None)
         if updated_item_row and updated_item_row['state'] != state:
             logging.info(f"Item {item_id} left {expected_state} (now {updated_item_row['state']}) before the "
                          f"release-date update; kept its state instead of setting {state}")
@@ -308,6 +353,7 @@ def update_media_item_state(item_id, state, skip_state_change_hook=False, **kwar
             SET state = ?, last_updated = ?
         '''
         params = [state, datetime.now()]
+        old_state_row = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_id,)).fetchone()
 
         # Add optional fields to the query if they are provided
         optional_fields = [
@@ -353,6 +399,7 @@ def update_media_item_state(item_id, state, skip_state_change_hook=False, **kwar
         # Post-processing AFTER commit (lock is released)
         if updated_item_row:
             item_dict = dict(updated_item_row)
+            log_state_change(item_dict, old_state_row['state'] if old_state_row else None)
 
             # Handle post-processing based on state. Callers that already ran
             # handle_state_change() for this exact state transition themselves
@@ -611,8 +658,15 @@ def update_media_item(item_id: int, **kwargs):
             WHERE id = ? AND (ghostlisted IS NULL OR ghostlisted = 0)
         '''
 
+        old_state_row = None
+        if 'state' in kwargs:
+            old_state_row = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_id,)).fetchone()
         conn.execute(query, params)
         conn.commit()
+        if old_state_row is not None:
+            updated_row = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+            if updated_row:
+                log_state_change(dict(updated_row), old_state_row['state'])
 
         logging.info(f"Updated media item ID {item_id} with values: {kwargs}")
         return True
@@ -1525,40 +1579,163 @@ def update_item_state(item_id: int, new_state: str) -> bool:
         if conn:
             conn.close()
 
-def cleanup_show_metadata(imdb_id: str) -> bool:
-    """
-    Clean up tv_shows table after show deletion
-    Removes show metadata and version status tracking
 
-    Args:
-        imdb_id: IMDB identifier of the show
+def remove_duplicate_items(dry_run: bool = False, nas_filter: str = 'all',
+                           exclude_patterns: Optional[List[str]] = None) -> dict:
+    """Delete media_items rows that share a filled_by_file, keeping one per file.
 
-    Returns:
-        True if successful, False otherwise
+    Keeps the oldest Collected row; if none, the oldest ghostlisted row when the
+    whole group is Blacklisted; otherwise the oldest row. nas_filter is 'all',
+    'exclude_nas' or 'only_nas'. Rows whose file matches an exclude pattern are
+    never deleted.
     """
+    exclude_patterns = exclude_patterns or []
+
+    from utilities.settings import get_nas_paths, is_nas_path
+    nas_paths = get_nas_paths()
     conn = get_db_connection()
     try:
-        # Remove from tv_shows table
-        conn.execute('DELETE FROM tv_shows WHERE imdb_id = ?', (imdb_id,))
-
-        # Remove from tv_show_version_status table if it exists
-        try:
-            conn.execute('DELETE FROM tv_show_version_status WHERE imdb_id = ?', (imdb_id,))
-        except sqlite3.OperationalError:
-            # Table might not exist, that's okay
-            pass
-
-        conn.commit()
-        logging.info(f"Cleaned up metadata for show {imdb_id}")
-        return True
-    except Exception as e:
-        logging.error(f"Error cleaning up show metadata for {imdb_id}: {e}")
-        try:
-            if conn:
-                conn.rollback()
-        except Exception as rb_ex:
-            logging.error(f"Rollback failed: {rb_ex}")
-        return False
+        return _remove_duplicate_items(conn, dry_run, nas_filter, exclude_patterns, nas_paths, is_nas_path)
     finally:
-        if conn:
-            conn.close()
+        conn.close()
+
+
+def _remove_duplicate_items(conn, dry_run, nas_filter, exclude_patterns, nas_paths, is_nas_path):
+    def _is_excluded(filename, patterns):
+        if not patterns or not filename:
+            return False
+        fn_lower = filename.lower()
+        return any(p.lower() in fn_lower for p in patterns)
+
+    cursor = conn.cursor()
+
+    # Find all items with filled_by_file that have duplicates
+    # Filter out Sample.mkv files
+    cursor.execute("""
+        SELECT filled_by_file, COUNT(*) as count, GROUP_CONCAT(id) as ids
+        FROM media_items
+        WHERE filled_by_file IS NOT NULL
+        AND filled_by_file != ''
+        AND filled_by_file NOT LIKE '%sample%'
+        GROUP BY filled_by_file
+        HAVING COUNT(*) > 1
+        ORDER BY count DESC
+    """)
+    duplicate_groups = cursor.fetchall()
+
+    # Apply NAS filter to groups if configured
+    if nas_filter != 'all' and nas_paths:
+        filtered_groups = []
+        for group in duplicate_groups:
+            group_is_nas = is_nas_path(group['filled_by_file'] or '', nas_paths)
+            if nas_filter == 'exclude_nas' and not group_is_nas:
+                filtered_groups.append(group)
+            elif nas_filter == 'only_nas' and group_is_nas:
+                filtered_groups.append(group)
+        duplicate_groups = filtered_groups
+
+    total_duplicates = 0
+    items_to_delete = []
+    preview = []
+
+    for group in duplicate_groups:
+        filled_by_file = group['filled_by_file']
+        count = group['count']
+        ids = [int(id_str) for id_str in group['ids'].split(',')]
+        
+        # Get details for all items with this filled_by_file
+        cursor.execute("""
+            SELECT id, title, type, state, collected_at, version, imdb_id, tmdb_id,
+                   ghostlisted, filled_by_torrent_id
+            FROM media_items
+            WHERE id IN ({})
+            ORDER BY collected_at ASC, id ASC
+        """.format(','.join(['?'] * len(ids))), ids)
+
+        items = cursor.fetchall()
+
+        # Smart selection logic:
+        # 1. Prefer Collected state over others
+        # 2. If all are Blacklisted, prefer ghostlisted=1
+        # 3. Otherwise, keep oldest (existing logic)
+        collected_items = [item for item in items if item['state'] == 'Collected']
+
+        if collected_items:
+            # Prefer Collected items, keep oldest Collected
+            keep_item = collected_items[0]
+            delete_items = [item for item in items if item['id'] != keep_item['id']]
+        else:
+            # No Collected items - check if all are Blacklisted
+            all_blacklisted = all(item['state'] == 'Blacklisted' for item in items)
+
+            if all_blacklisted:
+                # All are Blacklisted - prefer ghostlisted=1
+                ghostlisted_items = [item for item in items if item['ghostlisted'] == 1]
+                if ghostlisted_items:
+                    keep_item = ghostlisted_items[0]  # Keep oldest ghostlisted
+                else:
+                    keep_item = items[0]  # Fallback to oldest
+                delete_items = [item for item in items if item['id'] != keep_item['id']]
+            else:
+                # Mixed states (no Collected) - keep oldest
+                keep_item = items[0]
+                delete_items = items[1:]
+
+        # Apply exclude patterns — protect matching items from deletion
+        if exclude_patterns:
+            # The per-item rows don't carry filled_by_file; every item in the group shares it.
+            if _is_excluded(filled_by_file or '', exclude_patterns):
+                protected, delete_items = delete_items, []
+            else:
+                protected = []
+            if protected:
+                logging.debug(f"[CLEANUP_DUPES] Protected {len(protected)} items via exclude patterns")
+        
+        total_duplicates += len(delete_items)
+        items_to_delete.extend([item['id'] for item in delete_items])
+
+        # Add all groups to preview for pagination
+        preview.append({
+                'filled_by_file': filled_by_file,
+                'count': count,
+                'keep_item': {
+                    'id': keep_item['id'],
+                    'title': keep_item['title'],
+                    'type': keep_item['type'],
+                    'state': keep_item['state'],
+                    'ghostlisted': keep_item['ghostlisted'],
+                    'torrent_id': keep_item['filled_by_torrent_id']
+                },
+                'delete_items': [
+                    {
+                        'id': item['id'],
+                        'title': item['title'],
+                        'type': item['type'],
+                        'state': item['state'],
+                        'ghostlisted': item['ghostlisted'],
+                        'torrent_id': item['filled_by_torrent_id']
+                    } for item in delete_items
+                ]
+            })
+    
+    if not dry_run and items_to_delete:
+        # Delete the duplicate items
+        placeholders = ','.join(['?'] * len(items_to_delete))
+        cursor.execute(f"DELETE FROM media_items WHERE id IN ({placeholders})", items_to_delete)
+        conn.commit()
+    
+    message = f"Found {len(duplicate_groups)} files with duplicates, totaling {total_duplicates} duplicate items."
+    if not dry_run and items_to_delete:
+        message += f" Deleted {len(items_to_delete)} duplicate items."
+    elif dry_run:
+        message += " (Dry run - no items deleted)"
+    
+    return {
+        'success': True,
+        'message': message,
+        'dry_run': dry_run,
+        'duplicate_groups': len(duplicate_groups),
+        'total_duplicates': total_duplicates,
+        'items_deleted': len(items_to_delete) if not dry_run else 0,
+        'preview': preview
+    }

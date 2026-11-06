@@ -11,6 +11,7 @@ import time # Add time import
 
 from debrid import get_debrid_provider
 from utilities.settings import get_setting
+from utilities.log_context import logs_for_item
 from .torrent_processor import TorrentProcessor
 from .media_matcher import MediaMatcher
 from database.torrent_tracking import update_adding_error
@@ -234,6 +235,68 @@ def chosen_result_score_fields(chosen_result: Optional[Dict[str, Any]]) -> Dict[
     return fields
 
 
+def partition_adding_items(items, downloading_job_ids=None, upgrade_locks=None, ignore_upgrade_lock=False):
+    """Split Adding items into actionable vs held-aside (NZB health / upgrade locks).
+
+    NZB rows already submitted to cli_mount must not enter the per-item handler:
+    they used to be counted as "available", DEBUG-skipped every tick, and freeze
+    Scraping for any sibling of the same show (MaddGuru 2026-10-21).
+    Returns (actionable, nzb_awaiting, nzb_downloading, upgrade_locked).
+    """
+    downloading_job_ids = downloading_job_ids or set()
+    upgrade_locks = upgrade_locks or set()
+    actionable = []
+    nzb_awaiting = nzb_downloading = upgrade_locked = 0
+    for item in items:
+        item_id = item.get('id')
+        if not ignore_upgrade_lock and item_id and item_id in upgrade_locks:
+            upgrade_locked += 1
+            continue
+        tid = str(item.get('filled_by_torrent_id', ''))
+        if tid.startswith('nzb:'):
+            if tid[4:] in downloading_job_ids:
+                nzb_downloading += 1
+            else:
+                nzb_awaiting += 1
+            continue
+        actionable.append(item)
+    return actionable, nzb_awaiting, nzb_downloading, upgrade_locked
+
+
+def adding_item_blocks_scraping(adding_item: Dict) -> bool:
+    """True when an Adding row should defer Scraping for the same IMDb show.
+
+    NZB-awaiting rows are owned by health check and must not freeze Scraping.
+    """
+    return not str(adding_item.get('filled_by_torrent_id', '')).startswith('nzb:')
+
+
+def _result_resolution(result: Dict) -> str:
+    return str((result.get('parsed_info') or {}).get('resolution') or '').strip().lower()
+
+
+def limit_debrid_pack_probe_results(results: List[Dict], item: Dict) -> List[Dict]:
+    """Packs worth trying for a season sent down the debrid-pack path.
+
+    With NZB season packs disabled, Scraping sends a full season down the debrid
+    season pack path when one ranks first, and its single episodes (debrid or
+    NZB) are never scraped. Working down the whole pack list then ends on
+    whatever the debrid service will serve: Shrinking got a 720p Italian dub
+    after Real-Debrid refused (451) all nine 1080p packs. Only packs at the top
+    pack's resolution are tried; once they're refused the season falls back to
+    the single scraper, where every episode's own best release wins. Kept as is
+    when single fallback is off or already used.
+    """
+    if not (results and results[0].get('_debrid_pack_probe')
+            and not item.get('fall_back_to_single_scraper')
+            and get_setting('Scraping', 'fallback_to_single_enabled', True)):
+        return results
+    tier = _result_resolution(results[0])
+    if not tier or tier == 'unknown':
+        return results[:1]
+    return [r for r in results if r.get('_debrid_pack_probe') and _result_resolution(r) == tier]
+
+
 class AddingQueue:
     """Manages the queue of items being added to the debrid service"""
     
@@ -247,11 +310,9 @@ class AddingQueue:
         self._nzb_submitted_ids: set = set()  # IDs submitted to cli_mount; guards concurrent process() calls
         self._adding_ticks: dict = {}  # item_id → tick count in Adding; at 3 → not-wanted + Wanted
         self._nzb_downloading_job_ids: set = set()  # job IDs confirmed actively downloading; skip in Adding loop
+        self._held_summary = None  # last "nothing actionable" counts logged at INFO
+        self._held_summary_at = 0.0
 
-    def reinitialize_provider(self):
-        """Reinitialize the debrid provider and processors"""
-        self.debrid_provider = get_debrid_provider()
-        self.torrent_processor = TorrentProcessor(self.debrid_provider)
         
     def update(self):
         """Update the queue with current items in 'Adding' state"""
@@ -338,42 +399,51 @@ class AddingQueue:
         if not self.items:
             return False
 
-        from database import update_media_item, get_all_media_items, get_media_item_by_id
+        from database import update_media_item, get_media_item_by_id
 
         # NZB health checks are handled by task_nzb_health_check (separate scheduled task)
         # so the Adding queue tick is free to process debrid items without blocking.
 
 
         success = False
-        items_to_process = []
-        for item in self.items[:]: # Iterate over a copy
-             item_id = item.get('id')
-             is_locked = False
-             if not ignore_upgrade_lock:
-                 if item_id and queue_manager and hasattr(queue_manager, 'upgrade_process_locks'):
-                     try:
-                         if item_id in queue_manager.upgrade_process_locks:
-                             is_locked = True
-                     except Exception as lock_check_err:
-                         logging.error(f"Error checking upgrade lock set for item {item_id}: {lock_check_err}")
-
-             if is_locked:
-                 item_identifier_log = f"{item.get('title', 'N/A')} ({item.get('type', 'N/A')})"
-                 logging.debug(f"[{item_identifier_log}] Skipping processing for item {item_id} - locked by upgrade process.")
-                 continue
-
-             # Skip items whose NZB job is confirmed actively downloading — health check owns them
-             _tid = str(item.get('filled_by_torrent_id', ''))
-             if _tid.startswith('nzb:') and _tid[4:] in self._nzb_downloading_job_ids:
-                 continue
-
-             items_to_process.append(item)
+        upgrade_locks = set()
+        if not ignore_upgrade_lock and queue_manager and hasattr(queue_manager, 'upgrade_process_locks'):
+            try:
+                upgrade_locks = set(queue_manager.upgrade_process_locks)
+            except Exception as lock_check_err:
+                logging.error(f"Error reading upgrade lock set: {lock_check_err}")
+        items_to_process, nzb_awaiting, nzb_downloading, upgrade_locked = partition_adding_items(
+            self.items[:], self._nzb_downloading_job_ids, upgrade_locks, ignore_upgrade_lock
+        )
+        if upgrade_locked:
+            logging.debug(f"Adding Queue: holding aside {upgrade_locked} upgrade-locked item(s)")
 
         if not items_to_process:
-             logging.debug("Adding Queue: No items available to process this cycle (either empty or locked).")
+             held = nzb_awaiting + nzb_downloading + upgrade_locked
+             if held:
+                 # Runs every tick: INFO only when the counts change or every
+                 # 10 minutes, so a long NZB wait isn't one identical line per tick.
+                 summary = (nzb_awaiting, nzb_downloading, upgrade_locked)
+                 now = time.monotonic()
+                 log = logging.debug
+                 if summary != self._held_summary or now - self._held_summary_at >= 600:
+                     log = logging.info
+                     self._held_summary, self._held_summary_at = summary, now
+                 log(
+                     f"Adding Queue: nothing actionable this cycle "
+                     f"(awaiting NZB health={nzb_awaiting}, downloading NZB={nzb_downloading}, "
+                     f"upgrade-locked={upgrade_locked}; queue size={len(self.items)})"
+                 )
+             else:
+                 logging.debug("Adding Queue: No items available to process this cycle (either empty or locked).")
              return False
 
-        logging.info(f"Adding Queue - Starting processing of {len(items_to_process)} available items")
+        self._held_summary = None
+        logging.info(
+            f"Adding Queue - Starting processing of {len(items_to_process)} available items"
+            + (f" ({nzb_awaiting} awaiting NZB health, {nzb_downloading} NZB downloading held aside)"
+               if (nzb_awaiting or nzb_downloading) else "")
+        )
             
         # Get Wanted Queue items ONCE before the loop
         wanted_items = []
@@ -398,17 +468,20 @@ class AddingQueue:
         except (ValueError, TypeError):
             delay_seconds = 0.0
 
+        silent_skips = 0
+        reached_handler = 0
         for item in items_to_process:
             item_identifier = f"{item.get('title')} ({item.get('type')})"
             item_id = item.get('id')
             if not item_id:
                 logging.warning(f"Skipping item without ID in AddingQueue: {item.get('title')}")
+                silent_skips += 1
                 continue
 
-            # Skip NZB items already submitted to cli_mount — handled by health check loop above.
-            # Tick counter only increments for items NOT yet submitted (no nzb: torrent_id).
+            # Belt-and-suspenders: NZB-submitted items are filtered above into nzb_awaiting.
             if str(item.get('filled_by_torrent_id', '')).startswith('nzb:'):
                 logging.debug(f"Skipping item {item_id} — already submitted as NZB, awaiting health check")
+                silent_skips += 1
                 continue
 
             # --- Timeout: items with no torrent_id AND no scrape_results stuck in Adding → Wanted ---
@@ -477,7 +550,9 @@ class AddingQueue:
                     self._nzb_submitted_ids.discard(item_id)
                 else:
                     logging.debug(f"Skipping item {item_id} — in submitted set, awaiting health check")
+                    silent_skips += 1
                     continue
+            reached_handler += 1
             logging.info(f"Processing item {item_id}: {item_identifier}")
             processed_this_item = False # Flag for applying delay
             _nzb_attempt_made = False  # Flag: NZB item was attempted this tick
@@ -513,6 +588,12 @@ class AddingQueue:
                     continue
 
                 logging.info(f"Found {len(results)} scrape results for {item_identifier}")
+                _probe_results = limit_debrid_pack_probe_results(results, item)
+                if len(_probe_results) < len(results):
+                    logging.info(f"{item_identifier}: debrid season pack path — trying {len(_probe_results)} of "
+                                 f"{len(results)} pack(s) at {_result_resolution(results[0]) or 'the top'} resolution; "
+                                 f"if they're refused the season falls back to single episodes")
+                    results = _probe_results
 
                 # Add original_scraped_torrent_title to results if missing (important for later matching)
                 for result in results:
@@ -924,6 +1005,12 @@ class AddingQueue:
             if _nzb_attempt_made:
                 break
 
+        if items_to_process and reached_handler == 0 and silent_skips == len(items_to_process):
+            logging.warning(
+                f"Adding Queue - {silent_skips} of {len(items_to_process)} available items "
+                f"silently skipped this pass before the per-item handler; none processed"
+            )
+
         return success
 
     def _process_results_with_mode(self, results: List[Dict], item_identifier: str, accept_uncached: bool, item: Dict) -> Tuple[Optional[Dict], Optional[str], Optional[Dict]]:
@@ -955,6 +1042,7 @@ class AddingQueue:
             logging.error(f"Cannot call _handle_failed_item from _process_results_with_mode directly.")
             return None, None, None # Return None for all three on error
 
+    @logs_for_item
     def _handle_failed_item(self, item: Dict, error: str, queue_manager: Any, *, is_nzb: bool = False):
         """
         Handle a failed item by moving it back to Wanted queue if media matching failed,

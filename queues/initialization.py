@@ -119,8 +119,8 @@ def reset_queued_item_status():
     
     update_initialization_step("Reset Items", f"Reset {total_reset} items to Wanted state", is_substep=True)
 
-def plex_collection_update(skip_initial_plex_update):
-    from queues.run_program import get_and_add_all_collected_from_plex, get_and_add_recent_collected_from_plex
+def plex_collection_update():
+    from queues.run_program import get_and_add_all_collected_from_plex
     from database import get_all_media_items
     from utilities.plex_watch_history_functions import sync_get_watch_history_from_plex
     from utilities.settings import get_setting
@@ -138,14 +138,8 @@ def plex_collection_update(skip_initial_plex_update):
             logging.error(f"Error retrieving Plex watch history: {str(e)}")
 
     try:
-        update_initialization_step("Plex Update", 
-                                 "Performing quick scan" if skip_initial_plex_update else "Performing full library scan",
-                                 is_substep=True)
-        
-        if skip_initial_plex_update:
-            result = get_and_add_recent_collected_from_plex()
-        else:
-            result = get_and_add_all_collected_from_plex()
+        update_initialization_step("Plex Update", "Performing full library scan", is_substep=True)
+        result = get_and_add_all_collected_from_plex()
         
         # First check if we got any content from Plex
         if result and isinstance(result, dict):
@@ -208,7 +202,7 @@ def get_all_wanted_from_enabled_sources(runner=None):
                              f"Processed {len(selected_sources)} sources",
                              is_substep=True)
 
-def initialize(skip_initial_plex_update=False):
+def initialize():
     """Initialize the application state.
     
     Note: This function is typically called on fresh program starts.
@@ -248,18 +242,12 @@ def initialize(skip_initial_plex_update=False):
             update_initialization_step("Plex Update", "No collected items found, performing full library scan", is_substep=True)
             logging.info("No collected items found, performing full library scan.")
             start_phase('plex', 'Plex Update', 'Starting Plex scan')
-            # Force full scan, ignore skip_initial_plex_update parameter
-            plex_success, should_process_sources = plex_collection_update(skip_initial_plex_update=False)
+            plex_success, should_process_sources = plex_collection_update()
             complete_phase('plex')
         else:
             # Collected items exist, skip Plex scan
             update_initialization_step("Plex Update", f"Found {len(existing_collected)} collected items, skipping Plex scan as requested.", is_substep=True)
             logging.info(f"Found {len(existing_collected)} collected items, skipping Plex scan as requested.")
-            # Keep for now: Disable plex_collection_update when items exist
-            # # Plex Update Phase (2 minutes)
-            # start_phase('plex', 'Plex Update', 'Starting Plex scan')
-            # plex_success, should_process_sources = plex_collection_update(skip_initial_plex_update) # Original call
-            # complete_phase('plex')
             # When skipping, assume success and allow source processing
             plex_success = True
             should_process_sources = True

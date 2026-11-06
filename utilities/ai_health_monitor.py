@@ -20,7 +20,6 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +287,3 @@ def start_health_monitor():
         _monitor.start()
 
 
-def stop_health_monitor():
-    """Call on app shutdown."""
-    _monitor.stop()

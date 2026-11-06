@@ -1,11 +1,9 @@
 """Real-Debrid API client implementation"""
 
-import os
 import logging
 import time
 import threading
-from typing import Optional, Dict, Any, Union, List
-from pathlib import Path
+from typing import Optional, Dict, Any, List
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from ..base import ProviderUnavailableError, RateLimitError
 from .exceptions import RealDebridAPIError, RealDebridAuthError

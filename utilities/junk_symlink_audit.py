@@ -16,12 +16,10 @@ When a good Collected sibling exists, the junk duplicate row is deleted instead.
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import re
 import sqlite3
-import sys
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple

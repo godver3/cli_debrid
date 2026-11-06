@@ -1,13 +1,14 @@
 import logging
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 import json
 import os
+import threading
 import time
 
 from database.database_writing import update_media_item_state, add_media_item
-from database.database_reading import get_media_item_by_id, get_item_count_by_state
+from database.database_reading import get_media_item_by_id
 from database.core import get_db_connection
 from database.collected_items import add_to_collected_notifications
 from routes.notifications import send_queue_pause_notification, send_queue_resume_notification
@@ -23,11 +24,10 @@ from queues.pending_uncached_queue import PendingUncachedQueue
 from queues.upgrading_queue import UpgradingQueue
 from queues.final_check_queue import FinalCheckQueue
 from queues.pre_release_queue import PreReleaseQueue
-from queues.base_queue import BaseQueue
 from utilities.settings import get_setting
+from utilities.log_context import logs_for_item, state_change_logged_by_caller
 
 # Get the item tracker logger
-item_tracker_logger = logging.getLogger('item_tracker')
 
 class QueueTimer:
     """Tracks how long items spend in each queue"""
@@ -202,47 +202,19 @@ class QueueTimer:
         """Get timing data for a specific item"""
         return self.queue_times.get(item_id, {})
         
-    def generate_timing_report(self):
-        """Generate a report of queue timing statistics"""
-        report = ["Queue Timing Statistics:"]
-        
-        for queue_name, stats in self.queue_stats.items():
-            count = stats['count']
-            if count > 0:
-                avg_time = stats['total_time'] / count
-                min_time = stats['min_time'] if stats['min_time'] != float('inf') else 0
-                max_time = stats['max_time']
-                
-                report.append(f"{queue_name} Queue:")
-                report.append(f"  Items processed: {count}")
-                report.append(f"  Average time: {self._format_duration(avg_time)}")
-                report.append(f"  Min time: {self._format_duration(min_time)}")
-                report.append(f"  Max time: {self._format_duration(max_time)}")
-                
-        return "\n".join(report)
     
-    def get_current_queue_items(self):
-        """Get all items currently in queues with their entry times"""
-        current_items = {}
-        current_time = datetime.now().timestamp()
-        
-        for item_id, queue_data in self.queue_times.items():
-            for queue_name, times in queue_data.items():
-                entry_time, exit_time = times
-                
-                # If item is still in this queue (no exit time)
-                if exit_time is None:
-                    duration = current_time - entry_time
-                    if queue_name not in current_items:
-                        current_items[queue_name] = []
-                    
-                    current_items[queue_name].append({
-                        'item_id': item_id,
-                        'time_in_queue': self._format_duration(duration),
-                        'entry_time': datetime.fromtimestamp(entry_time).strftime('%Y-%m-%d %H:%M:%S')
-                    })
-        
-        return current_items
+
+def _format_duration(seconds):
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m{seconds % 60:02d}s"
+    return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
+
+
+_wanted_pass_lock = threading.Lock()
+
 
 class QueueManager:
     _instance = None
@@ -296,27 +268,6 @@ class QueueManager:
         logging.info(f"Reinitialized {queue_name} queue")
         return True
 
-    def update_all_queues(self):
-        """
-        Update all queues efficiently, logging only significant changes
-        """
-        for queue_name, queue in self.queues.items():
-            # For in-memory queues, check current content length
-            if queue_name in ["Scraping", "Adding", "Checking", "Sleeping", "Pending Uncached", "Upgrading", "Final_Check"]: # Add other in-memory queues if any
-                before_count = len(queue.get_contents())
-                queue.update()
-                after_count = len(queue.get_contents())
-                if before_count != after_count:
-                     logging.debug(f"Queue {queue_name} updated: {before_count} -> {after_count} items")
-            elif queue_name in ["Wanted", "Unreleased", "Blacklisted"]:
-                 # For DB-based queues, update is a no-op or handles internal logic
-                 # Logging count changes for these would require DB queries before/after, which is less efficient here.
-                 # We rely on their process() methods or direct DB access for counts elsewhere.
-                 queue.update() # Call update even if it's simple
-                 # logging.debug(f"Called update() for DB-backed queue {queue_name}") # Optional debug log
-            else:
-                 # Handle any other queue types if necessary
-                 queue.update()
 
     def get_queue_contents(self):
         """
@@ -433,7 +384,15 @@ class QueueManager:
             logging.error(f"Error processing Checking queue: {str(e)}", exc_info=True)
 
     def process_wanted(self):
-        self._process_queue_safely("Wanted")
+        # The scheduled tick and the post-add kick from add_wanted_items can land
+        # together; two passes would both batch-move the same show's episodes.
+        if not _wanted_pass_lock.acquire(blocking=False):
+            logging.debug("Skipping Wanted queue processing: another pass is already running")
+            return
+        try:
+            self._process_queue_safely("Wanted")
+        finally:
+            _wanted_pass_lock.release()
 
     def process_scraping(self):
         # Skip processing if paused
@@ -466,6 +425,11 @@ class QueueManager:
         return processed > 0
 
     def process_adding(self):
+        # Resync from DB before each tick (Scraping already does this). Without it,
+        # memory can keep NZB-awaiting rows that health check already moved, and the
+        # next process() announces a phantom "available" count.
+        if not self.paused:
+            self.queues["Adding"].update()
         self._process_queue_safely("Adding")
 
     def process_unreleased(self):
@@ -501,6 +465,7 @@ class QueueManager:
         self.queues["Blacklisted"].blacklist_old_season_items(item, self)
         self.queues[from_queue].remove_item(item)
 
+    @logs_for_item
     def move_to_wanted(self, item: Dict[str, Any], from_queue: str, new_version: str = None):
         item_identifier = self.generate_identifier(item)
         target_version_str = f" (Version: {new_version})" if new_version else ""
@@ -537,6 +502,7 @@ class QueueManager:
             # No additional processing needed for Wanted queue itself
             pass
 
+    @logs_for_item
     def move_to_upgrading(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
 
@@ -552,21 +518,8 @@ class QueueManager:
         logging.debug(f"Moving item to Upgrading: {item_identifier}")
         self._move_item_to_queue(item, from_queue, "Upgrading", "Upgrading")
 
-    def move_to_pre_release(self, item: Dict[str, Any], from_queue: str):
-        item_identifier = self.generate_identifier(item)
 
-        # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Pre-Release
-        item_state = item.get('state', '')
-        is_ghostlisted = item.get('ghostlisted') == 1
-        is_blacklisted = item_state == 'Blacklisted'
-
-        if is_ghostlisted or is_blacklisted:
-            logging.warning(f"⛔ BLOCKED: Attempted to move {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} to Pre-Release from {from_queue} - operation blocked")
-            return  # Block the move to Pre-Release
-
-        logging.debug(f"Moving item to Pre-Release: {item_identifier}")
-        self._move_item_to_queue(item, from_queue, "Pre_release", "Pre_release")
-
+    @logs_for_item
     def move_to_scraping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
 
@@ -620,6 +573,7 @@ class QueueManager:
         except Exception as e:
             logging.error(f"Failed to send Scraping state change notification: {str(e)}")
 
+    @logs_for_item
     def move_to_adding(self, item: Dict[str, Any], from_queue: str, filled_by_title: str, scrape_results: List[Dict]):
         item_identifier = self.generate_identifier(item)
 
@@ -675,6 +629,7 @@ class QueueManager:
         except Exception as e:
             logging.error(f"Failed to send Adding state change notification: {str(e)}")
 
+    @logs_for_item
     def move_to_checking(
         self,
         item: Dict[str, Any],
@@ -700,7 +655,6 @@ class QueueManager:
 
         logging.debug(f"Moving item to Checking: {item_identifier}")
 
-        from utilities.settings import get_setting
 
         '''
         # Check if Plex library checks are disabled
@@ -751,7 +705,7 @@ class QueueManager:
         if debrid_provider:
             extra['debrid_provider'] = debrid_provider
 
-        updated_item = self._move_item_to_queue(
+        self._move_item_to_queue(
             item,
             from_queue if from_queue in ["Adding", "Wanted"] else None,
             "Checking",
@@ -761,14 +715,13 @@ class QueueManager:
             filled_by_file=filled_by_file,
             filled_by_torrent_id=torrent_id,
             debrid_folder_name=debrid_folder_name,
+            # Set before the item joins the queue so its notification says Downloading
+            # (re-adding it afterwards listed the item twice).
+            queue_fields={'downloading': item['downloading']} if 'downloading' in item else None,
             **extra,
         )
-        
-        # Copy downloading flag from original item
-        if updated_item and 'downloading' in item:
-            updated_item['downloading'] = item['downloading']
-            self.queues["Checking"].add_item(updated_item)  # Re-add with updated flag
 
+    @logs_for_item
     def move_to_sleeping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
 
@@ -783,16 +736,11 @@ class QueueManager:
 
         logging.debug(f"Moving item {item_identifier} to Sleeping queue")
 
-        from database import get_wake_count
-        wake_count = get_wake_count(item['id'])
-        logging.debug(f"Wake count before moving to Sleeping: {wake_count}")
+        # SleepingQueue.add_item reads the wake count from the DB itself; adding
+        # again here listed the item twice (and sent the notification twice).
+        self._move_item_to_queue(item, from_queue, "Sleeping", "Sleeping")
 
-        updated_item = self._move_item_to_queue(item, from_queue, "Sleeping", "Sleeping")
-
-        if updated_item:
-            updated_item['wake_count'] = wake_count
-            self.queues["Sleeping"].add_item(updated_item)  # Re-add with wake count
-
+    @logs_for_item
     def move_to_unreleased(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
 
@@ -807,6 +755,7 @@ class QueueManager:
 
         self._move_item_to_queue(item, from_queue, "Unreleased", "Unreleased")
 
+    @logs_for_item
     def move_to_blacklisted(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
         logging.debug(f"[move_to_blacklisted] Initiating move for item {item_identifier} from {from_queue} to Blacklisted state via blacklist_item method")
@@ -869,31 +818,7 @@ class QueueManager:
 
         logging.debug(f"Finished processing move for item {item_identifier} (to Blacklisted or Fallback)")
 
-    def move_to_pending_uncached(self, item: Dict[str, Any], from_queue: str, title: str, link: str, scrape_results: List[Dict]):
-        item_identifier = self.generate_identifier(item)
 
-        # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Pending Uncached
-        item_state = item.get('state', '')
-        is_ghostlisted = item.get('ghostlisted') == 1
-        is_blacklisted = item_state == 'Blacklisted'
-
-        if is_ghostlisted or is_blacklisted:
-            logging.warning(f"⛔ BLOCKED: Attempted to move {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} to Pending Uncached from {from_queue} - operation blocked")
-            return  # Block the move to Pending Uncached
-
-        self._move_item_to_queue(
-            item,
-            from_queue,
-            "Pending Uncached",
-            "Pending Uncached",
-            filled_by_title=title,
-            filled_by_magnet=link,
-            scrape_results=scrape_results
-        )
-
-    def get_scraping_items(self) -> List[Dict]:
-        """Get all items currently in the Scraping state"""
-        return self.queues["Scraping"].get_contents()
         
     def get_wake_count(self, item_id):
         from database import get_wake_count
@@ -921,34 +846,9 @@ class QueueManager:
     def is_paused(self):
         return self.paused
 
-    def are_main_queues_empty(self):
-        """Check if the critical processing queues (Scraping, Adding, Checking) are empty."""
-        critical_queues = ['Scraping', 'Adding', 'Checking']
-        
-        for queue_name in critical_queues:
-            if queue_name in self.queues:
-                try:
-                    # Check in-memory queues directly
-                    if hasattr(self.queues[queue_name], 'items'):
-                        if len(self.queues[queue_name].items) > 0:
-                            logging.debug(f"Critical queue '{queue_name}' is not empty (checked items list).")
-                            return False
-                    # Fallback check using get_contents (should work for Scraping, Adding, Checking)
-                    elif len(self.queues[queue_name].get_contents()) > 0:
-                        logging.debug(f"Critical queue '{queue_name}' is not empty (checked get_contents()).")
-                        return False
-                except AttributeError:
-                    # Fallback if direct length check fails
-                     if len(self.queues[queue_name].get_contents()) > 0:
-                         logging.debug(f"Critical queue '{queue_name}' is not empty (checked get_contents() after AttributeError).")
-                         return False
-            else:
-                 logging.warning(f"Critical queue '{queue_name}' not found in QueueManager. Assuming empty.")
 
-        logging.debug("All critical queues (Scraping, Adding, Checking) are empty.")
-        return True
-
-    def _move_item_to_queue(self, item, from_queue, to_queue_name, new_state, new_version=None, **additional_params):
+    @logs_for_item
+    def _move_item_to_queue(self, item, from_queue, to_queue_name, new_state, new_version=None, queue_fields=None, **additional_params):
         """
         Common method to handle moving items between queues.
         
@@ -958,6 +858,7 @@ class QueueManager:
             to_queue_name: The target queue name 
             new_state: The new state for the item
             new_version: [Optional] The new version for the item
+            queue_fields: [Optional] In-memory fields (not DB columns) set on the item before it joins the target queue
             additional_params: Additional parameters to pass to update_media_item_state
         
         Returns:
@@ -990,12 +891,16 @@ class QueueManager:
             additional_params['version'] = new_version
             
         # Update the item's state (and potentially version) in the database - returns updated dict
-        updated_item = update_media_item_state(item['id'], new_state, **additional_params)
+        # This method writes its own state line (with time in queue) below
+        with state_change_logged_by_caller():
+            updated_item = update_media_item_state(item['id'], new_state, **additional_params)
         
         if updated_item:
             # 'updated_item' is now the dictionary returned by the update function
             
             # Add the item to the target queue
+            if queue_fields:
+                updated_item.update(queue_fields)
             if to_queue_name in self.queues:
                 # Record entry into target queue 
                 self.queue_timer.item_entered_queue(updated_item['id'], to_queue_name, item_identifier)
@@ -1005,7 +910,10 @@ class QueueManager:
             if from_queue and from_queue in self.queues:
                 self.queues[from_queue].remove_item(item)
                 
-            logging.debug(f"Successfully moved item {item_identifier} to {to_queue_name}")
+            # One line per state change, so the item's path reads straight down the log.
+            waited = (f" after {_format_duration(time_in_from_queue_seconds)} in {from_queue}"
+                      if time_in_from_queue_seconds is not None else '')
+            logging.info(f"{item_identifier}: {from_queue or 'new'} -> {new_state}{waited}")
             
             # Log completion of move
             log_data = {
@@ -1033,6 +941,7 @@ class QueueManager:
             })
             return None
 
+    @logs_for_item
     def move_to_collected(self, item: Dict[str, Any], from_queue: str, skip_notification: bool = False, skip_state_change_hook: bool = False):
         """Move an item to the Collected state after symlink is created."""
         item_identifier = self.generate_identifier(item)
@@ -1179,18 +1088,9 @@ class QueueManager:
                 'reason': 'Failed to retrieve updated item from database after state update'
             })
             
-    def generate_queue_timing_report(self):
-        """Generate a report of queue timing statistics"""
-        if hasattr(self, 'queue_timer'):
-            return self.queue_timer.generate_timing_report()
-        return "Queue timing not available"
         
-    def get_current_queue_timing(self):
-        """Get timing information for all items currently in queues"""
-        if hasattr(self, 'queue_timer'):
-            return self.queue_timer.get_current_queue_items()
-        return {}
 
+    @logs_for_item
     def initiate_final_check_or_blacklist(self, item: Dict[str, Any], from_queue: str):
         """
         Checks the delay setting and moves item to Final_Check or directly
@@ -1208,55 +1108,6 @@ class QueueManager:
             # Call the original method that handles fallback etc.
             self.move_to_blacklisted(item, from_queue)
 
-    def log_queue_summary(self):
-        """Logs a summary of the number of items in each queue."""
-        summary = ["Queue Summary:"]
-        total_items = 0
-        for queue_name, queue in self.queues.items():
-            count = 0
-            try:
-                 # Get count from DB for refactored queues
-                if queue_name in ["Wanted", "Unreleased", "Blacklisted"]:
-                    count = get_item_count_by_state(queue_name)
-                # Get count from memory for others
-                else:
-                    count = len(queue.get_contents()) # Safe for Scraping, Adding, etc.
-
-                if count > 0:
-                     summary.append(f"  {queue_name}: {count} items")
-                     total_items += count
-            except Exception as e:
-                 summary.append(f"  {queue_name}: Error getting count - {e}")
-
-        if total_items == 0:
-            summary.append("  All queues are empty.")
-
-        logging.info("\n".join(summary))
-
-    def get_all_queue_contents(self):
-        """
-        Get current IN-MEMORY queue contents from all managed queues.
-
-        Note: For queues managing state primarily in the database
-        (e.g., Wanted, Unreleased, Blacklisted), this will return an
-        empty list as items are not stored in the queue object's memory.
-        To get items in those states, query the database directly
-        (e.g., using `database.database_reading.get_all_media_items(state=...)`).
-
-        Returns:
-            OrderedDict: A dictionary where keys are queue names (states)
-                         and values are lists of item dictionaries currently
-                         held in that queue's memory.
-        """
-        contents = OrderedDict()
-        for state, queue in self.queues.items():
-            try:
-                # Attempt to get contents, handle potential errors gracefully
-                contents[state] = queue.get_contents()
-            except Exception as e:
-                logging.error(f"Error getting contents for queue {state}: {e}")
-                contents[state] = [] # Return empty list on error for this queue
-        return contents
 
     def create_and_add_item_to_wanted_queue(self, new_item_data: Dict[str, Any], reason: str = "New item") -> bool:
         """

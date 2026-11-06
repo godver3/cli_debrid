@@ -1,6 +1,4 @@
 import hashlib
-import base64
-from cryptography.fernet import Fernet
 
 class _c:
     """Internal descriptor for capability protection"""

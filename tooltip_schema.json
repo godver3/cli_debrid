@@ -2,7 +2,7 @@
     "global": {
       "logout_button": "Logout of the current user session.",
       "programControlButton": "Start or stop the program.",
-      "releaseNotesButton": "View recent changes and updates.",
+      "releaseNotesButton": "Release notes in the cli_debrid Discord (opens a new tab).",
       "updateAvailableButton": "New version available.",
       "taskMonitorToggle": "Toggle the Task Monitor overlay.",
       "rateLimitsSectionToggle": "Toggle the Rate Limits overlay.",

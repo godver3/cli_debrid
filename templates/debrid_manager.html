@@ -407,27 +407,9 @@
 
                 <!-- Backup slots -->
                 <div class="dm-backup-card">
-                    <div class="dm-backup-card-title" style="display:flex;align-items:center;justify-content:space-between">
-                        <span>Backup Slots</span>
-                        <select id="usenet-migrate-version-select" class="un-btn" style="cursor:pointer;min-width:130px;display:none" title="Version filter applied when migrating to Usenet">
-                            <option value="">Default version</option>
-                        </select>
-                    </div>
+                    <div class="dm-backup-card-title">Backup Slots</div>
                     <div id="bk-slots" class="dm-backup-slots">
                         <div class="dm-backup-activity-loading">Loading…</div>
-                    </div>
-                </div>
-
-                <!-- Migrate to Usenet progress -->
-                <div class="dm-backup-card" id="usenet-migrate-card" style="display:none">
-                    <div class="dm-backup-card-title">Migrate to Usenet</div>
-                    <div id="usenet-migrate-status" style="font-size:12px;color:#aaa;margin-bottom:8px">Starting…</div>
-                    <div style="background:#1a1a1a;border-radius:4px;height:6px;overflow:hidden;margin-bottom:8px">
-                        <div id="usenet-migrate-bar" style="height:100%;background:#ff6b35;width:0%;transition:width 0.3s"></div>
-                    </div>
-                    <div id="usenet-migrate-stats" style="font-size:11px;color:#888"></div>
-                    <div class="dm-backup-actions" style="margin-top:10px">
-                        <button class="dm-btn dm-btn-ghost dm-btn-sm" onclick="usenetMigrateReset()">Dismiss</button>
                     </div>
                 </div>
 
@@ -3493,17 +3475,11 @@ function _bkRenderSlots(status) {
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
             Restore
         </button>
-        <button class="dm-btn dm-btn-secondary dm-btn-sm"
-                onclick="usenetMigrateStart('${filename}', this)"
-                title="Search Newznab indexers for each torrent and submit to {{ _provider_name }}">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-            → Usenet
-        </button>
     </div>
 </div>`;
         }
     }
-    // Extra files section (usenet failed/not-found)
+    // Extra files section
     const extras = status.extra_files || [];
     if (extras.length) {
         html += `<div class="dm-bk-section-label">EXTRA FILES</div>`;
@@ -3523,11 +3499,6 @@ function _bkRenderSlots(status) {
                 onclick="_xpPreselect('${f.filename}')">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
             Restore
-        </button>
-        <button class="dm-btn dm-btn-secondary dm-btn-sm"
-                onclick="usenetMigrateStart('${f.filename}', this)">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-            → Usenet
         </button>
     </div>
 </div>`;
@@ -3560,13 +3531,6 @@ async function loadMaintenance() {
 
         _bkRenderActivity(data);
         _bkRenderSlots(data);
-        // Populate migrate version dropdown
-        const _msel = document.getElementById('usenet-migrate-version-select');
-        if (_msel && data.scraping_versions && data.scraping_versions.length) {
-            _msel.innerHTML = '<option value="">Default version</option>' +
-                data.scraping_versions.map(v => `<option value="${_esc(v)}">${_esc(v)}</option>`).join('');
-            _msel.style.display = '';
-        }
         _updateMaintNotice();
         _xpPopulateFiles(data);
         _xpCheckOnLoad();
@@ -4044,87 +4008,6 @@ const _origXpDoRestore = _xpDoRestore;
 document.querySelector('.dm-tab[data-tab="maintenance"]')?.addEventListener('click', () => {
     setTimeout(_xpCheckOnLoad, 500);
 });
-
-// ── Migrate to Usenet ────────────────────────────────────────────────────────
-let _usenetMigratePollTimer = null;
-
-async function usenetMigrateStart(filename, btn) {
-    const card = document.getElementById('usenet-migrate-card');
-    const status = document.getElementById('usenet-migrate-status');
-    const bar = document.getElementById('usenet-migrate-bar');
-    const stats = document.getElementById('usenet-migrate-stats');
-    const version = document.getElementById('usenet-migrate-version-select')?.value || '';
-
-    showPopup({
-        type: POPUP_TYPES.CONFIRM,
-        title: 'Migrate to Usenet',
-        message: `Search all enabled Newznab indexers for each torrent in "${filename}" and submit found NZBs to ${window.USENET_PROVIDER_NAME || "Usenet provider"}?\n\nVersion filter: ${version || 'Default version'}\nStrategy: hash lookup first, then name search (version filter applied to non-group queries).`,
-        confirmText: 'Start',
-        cancelText: 'Cancel',
-        onConfirm: async () => {
-            card.style.display = '';
-            status.textContent = 'Starting…';
-            bar.style.width = '0%';
-            stats.textContent = '';
-            btn.disabled = true;
-
-            try {
-                const r = await fetch('/debrid_manager/api/usenet/migrate', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({filename, version}),
-                });
-                const d = await r.json();
-                if (!d.success) {
-                    status.textContent = 'Error: ' + (d.error || 'unknown');
-                    btn.disabled = false;
-                    return;
-                }
-                _usenetMigratePoll();
-            } catch(e) {
-                status.textContent = 'Error: ' + e.message;
-                btn.disabled = false;
-            }
-        }
-    });
-}
-
-async function _usenetMigratePoll() {
-    clearTimeout(_usenetMigratePollTimer);
-    try {
-        const r = await fetch('/debrid_manager/api/usenet/migrate/progress');
-        const d = await r.json();
-        const card = document.getElementById('usenet-migrate-card');
-        const status = document.getElementById('usenet-migrate-status');
-        const bar = document.getElementById('usenet-migrate-bar');
-        const stats = document.getElementById('usenet-migrate-stats');
-
-        const pct = d.total > 0 ? Math.round((d.current / d.total) * 100) : 0;
-        bar.style.width = pct + '%';
-        stats.textContent = `Submitted: ${d.submitted || 0}  ·  Skipped: ${d.skipped || 0}  ·  Not found: ${d.not_found || 0}  ·  Failed: ${d.failed || 0}`;
-
-        if (d.status === 'running') {
-            status.textContent = `Processing ${d.current}/${d.total}${d.current_name ? ': ' + d.current_name : ''}`;
-            _usenetMigratePollTimer = setTimeout(_usenetMigratePoll, 1500);
-        } else if (d.status === 'done') {
-            bar.style.width = '100%';
-            status.textContent = `Done — ${d.submitted} submitted, ${d.skipped || 0} skipped, ${d.not_found} not found on usenet, ${d.failed} failed.`;
-            status.style.color = '#4ade80';
-        } else if (d.status === 'error') {
-            status.textContent = 'Error: ' + (d.error || 'unknown');
-            status.style.color = '#e57373';
-        }
-    } catch(e) {
-        _usenetMigratePollTimer = setTimeout(_usenetMigratePoll, 3000);
-    }
-}
-
-async function usenetMigrateReset() {
-    clearTimeout(_usenetMigratePollTimer);
-    await fetch('/debrid_manager/api/usenet/migrate/reset', {method: 'POST'});
-    document.getElementById('usenet-migrate-card').style.display = 'none';
-    document.getElementById('usenet-migrate-status').style.color = '';
-}
 
 async function bkRestore(filename, btn, dryRun) {
     const _doRestore = async function() {

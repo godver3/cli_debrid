@@ -1,5 +1,4 @@
 from flask import Blueprint, request, Response, jsonify, stream_with_context
-from flask_login import current_user
 import requests
 import json
 import logging
@@ -1349,7 +1348,7 @@ def tool_cleanup_failed_upgrades():
     if not ok:
         return err
     try:
-        import os, pickle
+        import os
         pkl_path = os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'failed_upgrades.pkl')
         if os.path.exists(pkl_path):
             os.remove(pkl_path)

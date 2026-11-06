@@ -18,10 +18,8 @@ import shutil
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Optional, Set
-from datetime import datetime
+from typing import List, Optional
 from utilities.settings import get_setting
-from database.core import get_db_connection
 
 # State priority mapping (lower number = higher priority = keep)
 STATE_PRIORITY = {
@@ -234,258 +232,11 @@ class DeletionManager:
     # State Priority Methods
     # =======================================================================
 
-    def get_state_priority(self, state: str) -> int:
-        """Get priority number for a state (lower = higher priority)"""
-        return STATE_PRIORITY.get(state, 100)
-
-    def is_delete_candidate(self, state: str) -> bool:
-        """Check if state is a deletion candidate (priority >= 6)"""
-        return self.get_state_priority(state) >= 6
 
     # =======================================================================
     # File Deletion Methods (Layer 3 & 5)
     # =======================================================================
 
-    def delete_file_from_disk(self, item: dict, force_delete_parent_folder: bool = False) -> dict:
-        """
-        Delete file(s) based on configuration
-
-        Args:
-            item: The media item to delete files for
-            force_delete_parent_folder: If True, delete parent folder even if not empty
-                                        (used for whole show/movie deletion)
-
-        Returns:
-        {
-            'success': bool,
-            'deleted_files': List[str],
-            'deleted_symlinks': List[str],
-            'errors': List[str]
-        }
-        """
-        result = {
-            'success': True,
-            'deleted_files': [],
-            'deleted_symlinks': [],
-            'errors': []
-        }
-
-        if self.limited_env:
-            # Skip actual deletion in limited mode
-            logging.warning(f"Limited environment mode - skipping file deletion for item {item.get('id')}")
-            result['deleted_files'].append(f"[SIMULATED] {item.get('filled_by_file', 'unknown')}")
-            return result
-
-        if self.using_symlinks:
-            return self._delete_symlinked_files(item, force_delete_parent_folder=force_delete_parent_folder)
-        else:
-            return self._delete_plex_mode_files(item)
-
-    def _delete_symlinked_files(self, item: dict, force_delete_parent_folder: bool = False) -> dict:
-        """
-        Symlinked/Local Mode:
-        1. Delete symlink at location_on_disk
-        2. Delete original at original_path_for_symlink
-
-        Args:
-            item: The media item to delete files for
-            force_delete_parent_folder: If True, delete parent folder even if not empty
-                                        (used for whole show/movie deletion)
-        """
-        result = {
-            'success': True,
-            'deleted_files': [],
-            'deleted_symlinks': [],
-            'errors': []
-        }
-
-        # Use symlink directory from settings (dynamic, user-configurable)
-        symlink_base = self.symlink_dir
-        if not symlink_base or not os.path.exists(symlink_base):
-            logging.warning(f"[SYMLINK_DELETION] Symlink directory does not exist: {symlink_base}")
-            result['errors'].append(f"Symlink directory not found: {symlink_base}")
-            result['success'] = False
-            return result
-
-        # Normalize symlink_base for consistent path comparisons
-        symlink_base = os.path.normpath(symlink_base)
-
-        # Check if directory has any content
-        try:
-            dir_contents = os.listdir(symlink_base)
-            if not dir_contents:
-                logging.warning(f"[SYMLINK_DELETION] Symlink directory is empty: {symlink_base}")
-                result['errors'].append(f"Symlink directory is empty: {symlink_base}")
-                result['success'] = False
-                return result
-            logging.debug(f"[SYMLINK_DELETION] Symlink directory verified: {symlink_base} ({len(dir_contents)} items)")
-        except PermissionError as e:
-            logging.error(f"[SYMLINK_DELETION] Permission denied accessing symlink directory: {symlink_base}")
-            result['errors'].append(f"Permission denied: {symlink_base}")
-            result['success'] = False
-            return result
-
-        def is_safe_to_delete(folder_path):
-            """
-            Check if a folder is safe to delete using depth-based protection.
-
-            Depth is calculated from symlink_base (from settings):
-            - Depth 0: symlink_base itself - NEVER DELETE
-            - Depth 1: symlink_base/<library> (Movies, TV Shows, etc.) - NEVER DELETE
-            - Depth 2: symlink_base/<library>/<movie_or_show_name>/ - SAFE TO DELETE
-            - Depth 3: symlink_base/<library>/<show_name>/<season>/ - SAFE TO DELETE
-
-            This approach works regardless of library folder names (Movies, Films, Custom, etc.)
-            because it protects based on structural depth, not folder names.
-
-            From files perspective:
-            - Movie files: library is 1 level up from movie folder (depth 2 = safe)
-            - Show files: library is 2 levels up from file (season=depth 3, show=depth 2 = both safe)
-            - Season folders: library is 1 level up (show folder at depth 2 = safe)
-            """
-            if not folder_path:
-                return False
-
-            # Normalize path for comparison
-            folder_path = os.path.normpath(folder_path)
-
-            # Must be under symlink_base
-            if not folder_path.startswith(symlink_base + '/'):
-                logging.warning(f"[SYMLINK_DELETION] BLOCKED deletion of folder outside symlink base: {folder_path}")
-                return False
-
-            # Calculate depth from symlink_base
-            relative_path = folder_path[len(symlink_base):].strip('/')
-            depth = len(relative_path.split('/')) if relative_path else 0
-
-            # Only allow deletion of folders at depth >= 2 (movie/show folders and below)
-            if depth < 2:
-                logging.warning(f"[SYMLINK_DELETION] BLOCKED deletion of protected folder at depth {depth}: {folder_path}")
-                return False
-
-            return True
-
-        # Delete symlink and clean up parent folders
-        symlink_path = item.get('location_on_disk')
-        if symlink_path and os.path.islink(symlink_path):
-            try:
-                # Get parent folder (movie name or season folder)
-                parent_folder = os.path.dirname(symlink_path)
-                # Get grandparent folder (for shows: show name folder)
-                grandparent_folder = os.path.dirname(parent_folder) if parent_folder else None
-
-                os.unlink(symlink_path)
-                result['deleted_symlinks'].append(symlink_path)
-                logging.info(f"Deleted symlink: {symlink_path}")
-
-                # Delete subtitle sidecar files left by Bazarr (if setting enabled)
-                subtitle_extensions = {'.srt', '.ass', '.sub', '.ssa', '.vtt', '.idx', '.sup'}
-                delete_subtitles = get_setting('Bazarr Integration', 'delete_subtitles_on_removal', fallback=True)
-                if delete_subtitles and parent_folder and os.path.exists(parent_folder):
-                    try:
-                        for fname in os.listdir(parent_folder):
-                            if os.path.splitext(fname)[1].lower() in subtitle_extensions:
-                                sub_path = os.path.join(parent_folder, fname)
-                                os.remove(sub_path)
-                                logging.info(f"[SYMLINK_DELETION] Deleted subtitle sidecar: {sub_path}")
-                    except Exception as e:
-                        logging.warning(f"[SYMLINK_DELETION] Error cleaning up subtitle files in {parent_folder}: {e}")
-
-                # Handle parent folder cleanup (with safety checks)
-                if parent_folder and os.path.exists(parent_folder) and is_safe_to_delete(parent_folder):
-                    try:
-                        if force_delete_parent_folder:
-                            # Force delete: remove folder even if not empty (whole show/movie delete)
-                            shutil.rmtree(parent_folder)
-                            logging.info(f"Force deleted folder: {parent_folder}")
-
-                            # For shows: also force remove show folder (if safe)
-                            if grandparent_folder and os.path.exists(grandparent_folder) and is_safe_to_delete(grandparent_folder):
-                                shutil.rmtree(grandparent_folder)
-                                logging.info(f"Force deleted show folder: {grandparent_folder}")
-                        else:
-                            # Normal: only remove if empty (preserves other episodes/seasons)
-                            if not os.listdir(parent_folder):
-                                os.rmdir(parent_folder)
-                                logging.info(f"Deleted empty folder: {parent_folder}")
-
-                                # For shows: also remove show folder if now empty (if safe)
-                                if grandparent_folder and os.path.exists(grandparent_folder) and is_safe_to_delete(grandparent_folder):
-                                    if not os.listdir(grandparent_folder):
-                                        os.rmdir(grandparent_folder)
-                                        logging.info(f"Deleted empty show folder: {grandparent_folder}")
-                    except OSError as e:
-                        logging.debug(f"Could not remove folder {parent_folder}: {e}")
-
-            except Exception as e:
-                result['errors'].append(f"Failed to delete symlink {symlink_path}: {e}")
-                result['success'] = False
-
-        # Delete original file and clean up parent folders
-        original_path = item.get('original_path_for_symlink')
-        if original_path and os.path.exists(original_path):
-            try:
-                # Get parent folder (movie name or season folder)
-                parent_folder = os.path.dirname(original_path)
-                # Get grandparent folder (for shows: show name folder)
-                grandparent_folder = os.path.dirname(parent_folder) if parent_folder else None
-
-                os.remove(original_path)
-                result['deleted_files'].append(original_path)
-                logging.info(f"Deleted original file: {original_path}")
-
-                # Get original files base path from settings for protection
-                original_base = self.original_files_path
-                if original_base:
-                    original_base = os.path.normpath(original_base)
-
-                def is_safe_to_delete_original(folder_path):
-                    """Check if folder is safe to delete (not the original_files_path root or library folders)"""
-                    if not folder_path or not original_base:
-                        return False
-                    folder_path = os.path.normpath(folder_path)
-                    if not folder_path.startswith(original_base + '/'):
-                        logging.warning(f"[ORIGINAL_DELETION] BLOCKED deletion of folder outside original base: {folder_path}")
-                        return False
-                    # Calculate depth - same logic as symlinks
-                    relative_path = folder_path[len(original_base):].strip('/')
-                    depth = len(relative_path.split('/')) if relative_path else 0
-                    if depth < 2:
-                        logging.warning(f"[ORIGINAL_DELETION] BLOCKED deletion of protected folder at depth {depth}: {folder_path}")
-                        return False
-                    return True
-
-                # Handle parent folder cleanup (with depth-based protection)
-                if parent_folder and os.path.exists(parent_folder):
-                    try:
-                        if force_delete_parent_folder and is_safe_to_delete_original(parent_folder):
-                            # Force delete: remove folder even if not empty (whole show/movie delete)
-                            shutil.rmtree(parent_folder)
-                            logging.info(f"Force deleted folder: {parent_folder}")
-
-                            # For shows: also force remove show folder (if safe)
-                            if grandparent_folder and os.path.exists(grandparent_folder) and is_safe_to_delete_original(grandparent_folder):
-                                shutil.rmtree(grandparent_folder)
-                                logging.info(f"Force deleted show folder: {grandparent_folder}")
-                        elif not force_delete_parent_folder and is_safe_to_delete_original(parent_folder):
-                            # Normal: only remove if empty (preserves other episodes/seasons)
-                            if not os.listdir(parent_folder):
-                                os.rmdir(parent_folder)
-                                logging.info(f"Deleted empty folder: {parent_folder}")
-
-                                # For shows: also remove show folder if now empty (if safe)
-                                if grandparent_folder and os.path.exists(grandparent_folder) and is_safe_to_delete_original(grandparent_folder):
-                                    if not os.listdir(grandparent_folder):
-                                        os.rmdir(grandparent_folder)
-                                        logging.info(f"Deleted empty show folder: {grandparent_folder}")
-                    except OSError as e:
-                        logging.debug(f"Could not remove folder {parent_folder}: {e}")
-
-            except Exception as e:
-                result['errors'].append(f"Failed to delete original {original_path}: {e}")
-                result['success'] = False
-
-        return result
 
     def _verify_content_in_plex(self, plex_deletion_type: str, content_title: str,
                                 imdb_id: str = None, tmdb_id: str = None,
@@ -897,32 +648,8 @@ class DeletionManager:
         # In symlink mode, Plex removal happens automatically on next library scan
         # We don't actively call Plex API here - just report that removal is pending
         if self.plex_enabled:
-            try:
-                from utilities.plex_functions import check_item_in_plex
-                item_title = item.get('title', '')
-                item_path = symlink_path
-
-                # Quick check if item is still in Plex (this is informational only)
-                # Note: Plex may not have scanned yet, so item might still appear
-                in_plex = check_item_in_plex(item_title, item_path) if item_title else None
-
-                if in_plex is False:
-                    result['plex_removed'] = True
-                    logging.info(f"[SYMLINK_VALIDATION] Item confirmed removed from Plex: {item_title}")
-                elif in_plex is True:
-                    result['plex_removed'] = False
-                    logging.info(f"[SYMLINK_VALIDATION] Item still in Plex (pending scan): {item_title}")
-                else:
-                    # Could not determine - assume pending
-                    result['plex_removed'] = False
-                    logging.debug(f"[SYMLINK_VALIDATION] Could not determine Plex status for: {item_title}")
-            except ImportError:
-                # check_item_in_plex function doesn't exist yet - that's OK
-                result['plex_removed'] = False
-                logging.debug(f"[SYMLINK_VALIDATION] Plex validation function not available")
-            except Exception as e:
-                result['plex_removed'] = False
-                logging.debug(f"[SYMLINK_VALIDATION] Error checking Plex status: {e}")
+            result['plex_removed'] = False
+            logging.debug(f"[SYMLINK_VALIDATION] Plex removal pending next library scan: {item.get('title', '')}")
         else:
             # No Plex configured
             result['plex_removed'] = True
@@ -937,36 +664,6 @@ class DeletionManager:
 
         return result
 
-    def _delete_plex_mode_files(self, item: dict) -> dict:
-        """
-        Plex Mode:
-        Delete file at location_on_disk (on rclone mount)
-        """
-        result = {
-            'success': True,
-            'deleted_files': [],
-            'deleted_symlinks': [],
-            'paths_for_plex_scan': [],  # Paths that need Plex scan even if file not found
-            'errors': []
-        }
-
-        file_path = item.get('location_on_disk') or item.get('filled_by_file')
-        if file_path:
-            if os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                    result['deleted_files'].append(file_path)
-                    logging.info(f"Deleted file: {file_path}")
-                except Exception as e:
-                    result['errors'].append(f"Failed to delete file {file_path}: {e}")
-                    result['success'] = False
-            else:
-                # File not found locally - may have been removed by debrid deletion
-                # Still track path for Plex scan so it can detect the missing file
-                result['paths_for_plex_scan'].append(file_path)
-                logging.warning(f"File not found for deletion: {file_path} (will still scan Plex)")
-
-        return result
 
     # =======================================================================
     # Media Server Removal (Layer 2)
@@ -1116,7 +813,7 @@ class DeletionManager:
     # Content Source Management (Layer 6)
     # =======================================================================
 
-    def remove_from_content_source(self, item: dict) -> dict:
+    def remove_from_content_source(self, item: dict, queue_retry: bool = True) -> dict:
         """
         Remove item from all enabled content sources to prevent re-addition
 
@@ -1126,6 +823,8 @@ class DeletionManager:
 
         Args:
             item: Media item dict with imdb_id, tmdb_id, type fields
+            queue_retry: if a source fails, queue the item for
+                task_retry_content_source_removals (off when called by that task)
 
         Returns:
             dict: {
@@ -1195,27 +894,6 @@ class DeletionManager:
             logging.warning(f"[CONTENT_SOURCE_REMOVAL] No content_source field found - will check all enabled sources (slower)")
 
         try:
-            # Check Trakt Watchlist - SKIP if item not from Trakt
-            if item_source_types and 'Trakt' not in item_source_types:
-                logging.info(f"[CONTENT_SOURCE_REMOVAL] ⏭️  Skipping Trakt Watchlist - item not from Trakt source")
-            else:
-                trakt_watchlist_enabled = get_setting('Trakt', 'trakt_get_watchlist', False)
-                logging.info(f"[CONTENT_SOURCE_REMOVAL] Trakt Watchlist enabled: {trakt_watchlist_enabled}")
-                if trakt_watchlist_enabled:
-                    result['sources_attempted'].append('Trakt_Watchlist')
-                    try:
-                        from content_checkers.trakt import remove_from_trakt_watchlist
-                        removal_result = remove_from_trakt_watchlist([item])
-                        result['details']['Trakt_Watchlist'] = removal_result
-                        if removal_result.get('success'):
-                            result['sources_succeeded'].append('Trakt_Watchlist')
-                        else:
-                            result['sources_failed'].append('Trakt_Watchlist')
-                    except Exception as e:
-                        logging.error(f"Error removing from Trakt Watchlist: {e}")
-                        result['sources_failed'].append('Trakt_Watchlist')
-                        result['details']['Trakt_Watchlist'] = {'success': False, 'message': str(e)}
-
             # Check Trakt Personal Lists from Content Sources
             content_sources = get_setting('Content Sources', default={})
             trakt_list_sources = []
@@ -1319,6 +997,39 @@ class DeletionManager:
                         logging.error(f"[CONTENT_SOURCE_REMOVAL] Exception removing from Trakt list '{list_name}': {e}")
                         result['sources_failed'].append(source_name)
                         result['details'][source_name] = {'success': False, 'message': str(e)}
+
+            # Check the user's own Trakt Watchlist (not Friends' watchlists, which we can't edit).
+            # item_source_types holds full type names ("Trakt Watchlist_1" -> "Trakt Watchlist").
+            # Like the other sources, a source limited to Movies or Shows only covers that type.
+            def _watchlist_covers(cfg):
+                source_media_type = cfg.get('media_type', 'All')
+                if source_media_type == 'Movies':
+                    return media_type == 'movie'
+                if source_media_type == 'Shows':
+                    return media_type in ('show', 'episode')
+                return True
+            watchlist_enabled = any(
+                cfg.get('type') == 'Trakt Watchlist' and cfg.get('enabled', False) and _watchlist_covers(cfg)
+                for cfg in content_sources.values()
+            )
+            if watchlist_enabled and item_source_types and 'Trakt Watchlist' not in item_source_types:
+                logging.info(f"[CONTENT_SOURCE_REMOVAL] ⏭️  Skipping Trakt Watchlist - item not from it")
+            elif watchlist_enabled:
+                result['sources_attempted'].append('Trakt_Watchlist')
+                try:
+                    from content_checkers.trakt import remove_from_trakt_watchlist
+                    removal_result = remove_from_trakt_watchlist([item])
+                    result['details']['Trakt_Watchlist'] = removal_result
+                    if removal_result.get('success'):
+                        logging.info(f"[CONTENT_SOURCE_REMOVAL] ✓ Removed from Trakt Watchlist: {removal_result.get('message')}")
+                        result['sources_succeeded'].append('Trakt_Watchlist')
+                    else:
+                        logging.warning(f"[CONTENT_SOURCE_REMOVAL] ✗ Failed to remove from Trakt Watchlist: {removal_result.get('message')}")
+                        result['sources_failed'].append('Trakt_Watchlist')
+                except Exception as e:
+                    logging.error(f"[CONTENT_SOURCE_REMOVAL] Exception removing from Trakt Watchlist: {e}")
+                    result['sources_failed'].append('Trakt_Watchlist')
+                    result['details']['Trakt_Watchlist'] = {'success': False, 'message': str(e)}
 
             # Check Trakt Collection from Content Sources
             trakt_collection_sources = []
@@ -1541,70 +1252,7 @@ class DeletionManager:
                             result['sources_failed'].append('Overseerr')
                             result['details']['Overseerr'] = {'success': False, 'message': str(e)}
 
-            # Check MDBList Personal Lists from Content Sources - DISABLED (removal not supported via MDBList API)
-            # NOTE: MDBList removal is not supported, so this entire section is commented out
-            if False:  # Disabled - MDBList removal not supported
-                pass
-            elif item_source_types and 'MDBList' not in item_source_types:
-                logging.info(f"[CONTENT_SOURCE_REMOVAL] ⏭️  Skipping MDBList - item not from MDBList source")
-            elif False:  # Disabled block below
-                mdblist_api_key = get_setting('Content Sources', 'mdblist_api_key', '') or get_setting('MDBList', 'api_key', '')
-                mdblist_sources = []
-
-                # Find all enabled MDBList content sources
-                for source_key, source_config in content_sources.items():
-                    if source_config.get('type') == 'MDBList' and source_config.get('enabled', False):
-                        mdblist_sources.append({
-                            'key': source_key,
-                            'url': source_config.get('urls', ''),
-                            'display_name': source_config.get('display_name', source_key),
-                            'media_type': source_config.get('media_type', 'All')
-                        })
-
-                logging.info(f"[CONTENT_SOURCE_REMOVAL] Found {len(mdblist_sources)} enabled MDBList source(s) in Content Sources")
-
-                if mdblist_api_key and imdb_id:
-                    for mdblist_source in mdblist_sources:
-                        # Extract list ID from URL
-                        mdblist_url = mdblist_source['url']
-                        from content_checkers.mdb_list import extract_list_id_from_url
-                        list_id = extract_list_id_from_url(mdblist_url)
-                        list_name = mdblist_source['display_name']
-
-                        # Skip if media type doesn't match
-                        if mdblist_source['media_type'] != 'All':
-                            if media_type == 'movie' and mdblist_source['media_type'] != 'Movies':
-                                logging.debug(f"[CONTENT_SOURCE_REMOVAL] Skipping MDBList '{list_name}' - media type mismatch")
-                                continue
-                            if media_type == 'show' and mdblist_source['media_type'] != 'Shows':
-                                logging.debug(f"[CONTENT_SOURCE_REMOVAL] Skipping MDBList '{list_name}' - media type mismatch")
-                                continue
-
-                        # Only attempt removal for personal lists (have numeric list ID)
-                        if list_id:
-                            source_label = f'MDBList_{list_id}'
-                            result['sources_attempted'].append(source_label)
-                            logging.info(f"[CONTENT_SOURCE_REMOVAL] Attempting removal from MDBList '{list_name}' (ID: {list_id})")
-                            try:
-                                from content_checkers.mdb_list import remove_from_mdblist
-                                removal_result = remove_from_mdblist(
-                                    api_key=mdblist_api_key,
-                                    list_id=list_id,
-                                    items=[item]
-                                )
-                                result['details'][source_label] = removal_result
-                                if removal_result.get('success'):
-                                    logging.info(f"[CONTENT_SOURCE_REMOVAL] ✓ Successfully removed from MDBList '{list_name}': {removal_result.get('message')}")
-                                    result['sources_succeeded'].append(source_label)
-                                else:
-                                    logging.warning(f"[CONTENT_SOURCE_REMOVAL] ✗ Failed to remove from MDBList '{list_name}': {removal_result.get('message')}")
-                                    result['sources_failed'].append(source_label)
-                            except Exception as e:
-                                logging.error(f"[CONTENT_SOURCE_REMOVAL] Exception removing from MDBList '{list_name}': {e}")
-                                result['sources_failed'].append(source_label)
-                                result['details'][source_label] = {'success': False, 'message': str(e)}
-                elif not mdblist_api_key and mdblist_sources:
-                    logging.warning(f"[CONTENT_SOURCE_REMOVAL] MDBList sources configured but API key is missing")
+            # MDBList lists aren't touched: its API has no way to remove an item from a list.
 
             # Build summary message
             if not result['sources_attempted']:
@@ -1631,7 +1279,25 @@ class DeletionManager:
             result['message'] = f'Unexpected error: {str(e)}'
             result['success'] = False
 
+        if queue_retry and result['sources_failed']:
+            self._queue_content_source_retry(item, result['message'])
+
         return result
+
+    @staticmethod
+    def _queue_content_source_retry(item: dict, error: str):
+        """Queue a failed removal so a timed-out source doesn't re-add the item later."""
+        from database.content_source_retry import add_to_retry_queue
+        # Only what removal reads, and only JSON-safe values (rows carry datetimes)
+        keys = ('id', 'imdb_id', 'tmdb_id', 'type', 'title', 'year', 'season_number',
+                'episode_number', 'version', 'content_source', 'content_sources')
+        item_data = {k: item[k] for k in keys
+                     if k in item and isinstance(item[k], (str, int, float, bool, type(None)))}
+        media_id = item.get('imdb_id') or (f"tmdb:{item['tmdb_id']}" if item.get('tmdb_id') else None)
+        if not media_id:
+            logging.warning(f"[CONTENT_SOURCE_REMOVAL] Not queuing retry for {item.get('title')}: no imdb/tmdb id")
+            return
+        add_to_retry_queue(media_id, item.get('title', ''), item.get('type', ''), item_data, error=error)
 
     def check_content_sources(self, item: dict) -> dict:
         """
@@ -1809,42 +1475,6 @@ class DeletionManager:
 
         return result
 
-    def get_blacklist_recommendation(self, item: dict, source_info: dict) -> dict:
-        """
-        Recommend whether to blacklist based on content source
-
-        Returns:
-        {
-            'should_blacklist': True,
-            'reason': 'Item from Trakt - will be re-added',
-            'manual_removal_required': True,
-            'manual_removal_instructions': 'Remove from Trakt at https://...'
-        }
-        """
-        sources = source_info['sources']
-
-        if not sources:
-            return {
-                'should_blacklist': False,
-                'reason': 'No content source - safe to delete permanently'
-            }
-
-        # Map sources to user-friendly instructions
-        source_instructions = {
-            'Trakt_Watchlist': ('Trakt Watchlist', 'https://trakt.tv/users/me/watchlist'),
-            'Overseerr': ('Overseerr', 'Delete request in Overseerr'),
-            'Plex_Watchlist': ('Plex Watchlist', 'Remove from Plex watchlist'),
-        }
-
-        source_name = sources[0].split('_')[0]  # Get base source name
-        instructions = source_instructions.get(sources[0], ('content source', ''))
-
-        return {
-            'should_blacklist': True,
-            'reason': f'Item from {source_name} - will be re-added when cache expires (~12 hours)',
-            'manual_removal_required': True,
-            'manual_removal_instructions': instructions[1] if len(instructions) > 1 else 'Remove from source'
-        }
 
     # =======================================================================
     # Main Deletion Methods
@@ -2295,175 +1925,6 @@ class DeletionManager:
             result['success'] = False  # Explicit for clarity (already False from init)
             return result
 
-    def _delete_show_folder(self, item: dict, delete_files: bool = True,
-                            delete_symlinks: bool = True) -> dict:
-        """
-        Delete an entire show folder (and all its contents).
-        Used when deleting a whole show to avoid per-episode race conditions.
-        ONLY runs in Symlinked/Local mode (not Plex mode).
-
-        Args:
-            item: Item dict (any episode from the show)
-            delete_files: If True, delete original files folder
-            delete_symlinks: If True, delete symlink folder
-
-        Returns:
-            dict with 'success', 'deleted_folders', 'errors'
-        """
-        result = {
-            'success': True,
-            'deleted_folders': [],
-            'errors': []
-        }
-
-        location = item.get('location_on_disk')
-        if not location:
-            result['errors'].append("No location_on_disk found in item")
-            result['success'] = False
-            return result
-
-        # Get settings paths needed for both operations
-        # Note: These settings are stored under 'File Management' section
-        symlink_base = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
-        original_base = get_setting('File Management', 'original_files_path', '')
-
-        # Extract show folder path (grandparent of file)
-        # Structure: /symlink_base/library/ShowName/Season/episode.mkv
-        # parent_folder = Season folder (e.g., /symlink_base/library/ShowName/Season)
-        # show_folder = Show folder (e.g., /symlink_base/library/ShowName)
-        parent_folder = os.path.dirname(location)
-        show_folder = os.path.dirname(parent_folder)
-
-        if not show_folder:
-            result['errors'].append(f"Could not determine show folder from location: {location}")
-            result['success'] = False
-            return result
-
-        logging.info(f"[DELETE_SHOW_FOLDER] Extracted show folder: {show_folder}")
-        logging.info(f"[DELETE_SHOW_FOLDER] Symlink base: {symlink_base}, Original base: {original_base}")
-
-        # Track what we were asked to delete vs what we actually deleted
-        requested_deletions = 0
-        successful_deletions = 0
-
-        # Handle symlink deletion
-        if delete_symlinks:
-            requested_deletions += 1
-            if not symlink_base:
-                error_msg = "Symlink deletion requested but symlink_location not configured"
-                result['errors'].append(error_msg)
-                logging.warning(f"[DELETE_SHOW_FOLDER] {error_msg}")
-                result['success'] = False
-            elif not show_folder.startswith(symlink_base + '/'):
-                error_msg = f"Show folder {show_folder} is not under symlink base {symlink_base}"
-                result['errors'].append(error_msg)
-                logging.warning(f"[DELETE_SHOW_FOLDER] {error_msg}")
-                result['success'] = False
-            else:
-                def is_safe_to_delete_symlink(folder_path):
-                    """Check if folder is safe to delete using depth-based protection"""
-                    if not folder_path:
-                        return False
-                    folder_path = os.path.normpath(folder_path)
-                    if not folder_path.startswith(symlink_base + '/'):
-                        return False
-                    relative_path = folder_path[len(symlink_base):].strip('/')
-                    depth = len(relative_path.split('/')) if relative_path else 0
-                    if depth < 2:
-                        logging.warning(f"[SYMLINK_DELETION] BLOCKED: protected folder at depth {depth}: {folder_path}")
-                        return False
-                    return True
-
-                if not os.path.exists(show_folder):
-                    logging.info(f"[DELETE_SHOW_FOLDER] Symlink show folder already gone: {show_folder}")
-                    successful_deletions += 1  # Count as success if already deleted
-                elif is_safe_to_delete_symlink(show_folder):
-                    try:
-                        logging.info(f"[DELETE_SHOW_FOLDER] Attempting to delete symlink folder: {show_folder}")
-                        shutil.rmtree(show_folder)
-                        result['deleted_folders'].append(show_folder)
-                        successful_deletions += 1
-                        logging.info(f"[DELETE_SHOW_FOLDER] ✓ Deleted symlink show folder: {show_folder}")
-                    except Exception as e:
-                        error_msg = f"Failed to delete symlink show folder {show_folder}: {e}"
-                        result['errors'].append(error_msg)
-                        logging.error(f"[DELETE_SHOW_FOLDER] {error_msg}")
-                        result['success'] = False
-                else:
-                    error_msg = f"Safety check failed for symlink show folder: {show_folder}"
-                    result['errors'].append(error_msg)
-                    logging.warning(f"[DELETE_SHOW_FOLDER] {error_msg}")
-                    result['success'] = False
-
-        # Handle original file deletion
-        if delete_files:
-            requested_deletions += 1
-            if not original_base:
-                logging.info(f"[DELETE_SHOW_FOLDER] Original files deletion skipped: original_files_path not configured")
-                successful_deletions += 1  # Not an error if not configured
-            elif not symlink_base:
-                error_msg = "Cannot determine original path: symlink_location not configured"
-                result['errors'].append(error_msg)
-                logging.warning(f"[DELETE_SHOW_FOLDER] {error_msg}")
-                result['success'] = False
-            elif not show_folder.startswith(symlink_base + '/'):
-                error_msg = f"Cannot derive original path: show folder {show_folder} not under symlink base"
-                result['errors'].append(error_msg)
-                logging.warning(f"[DELETE_SHOW_FOLDER] {error_msg}")
-                result['success'] = False
-            else:
-                # Derive original path by replacing symlink base with original base
-                original_show_folder = show_folder.replace(symlink_base, original_base, 1)
-                logging.info(f"[DELETE_SHOW_FOLDER] Derived original show folder: {original_show_folder}")
-
-                def is_safe_to_delete_original(folder_path):
-                    """Check if folder is safe to delete using depth-based protection"""
-                    if not folder_path:
-                        return False
-                    folder_path = os.path.normpath(folder_path)
-                    if not folder_path.startswith(original_base + '/'):
-                        return False
-                    relative_path = folder_path[len(original_base):].strip('/')
-                    depth = len(relative_path.split('/')) if relative_path else 0
-                    if depth < 2:
-                        logging.warning(f"[ORIGINAL_DELETION] BLOCKED: protected folder at depth {depth}: {folder_path}")
-                        return False
-                    return True
-
-                if not os.path.exists(original_show_folder):
-                    logging.info(f"[DELETE_SHOW_FOLDER] Original show folder already gone: {original_show_folder}")
-                    successful_deletions += 1  # Count as success if already deleted
-                elif is_safe_to_delete_original(original_show_folder):
-                    try:
-                        logging.info(f"[DELETE_SHOW_FOLDER] Attempting to delete original folder: {original_show_folder}")
-                        shutil.rmtree(original_show_folder)
-                        result['deleted_folders'].append(original_show_folder)
-                        successful_deletions += 1
-                        logging.info(f"[DELETE_SHOW_FOLDER] ✓ Deleted original show folder: {original_show_folder}")
-                    except Exception as e:
-                        error_msg = f"Failed to delete original show folder {original_show_folder}: {e}"
-                        result['errors'].append(error_msg)
-                        logging.error(f"[DELETE_SHOW_FOLDER] {error_msg}")
-                        result['success'] = False
-                else:
-                    error_msg = f"Safety check failed for original show folder: {original_show_folder}"
-                    result['errors'].append(error_msg)
-                    logging.warning(f"[DELETE_SHOW_FOLDER] {error_msg}")
-                    result['success'] = False
-
-        # Final success check: we must have successfully handled all requested deletions
-        if result['success'] and successful_deletions < requested_deletions:
-            result['success'] = False
-            result['errors'].append(f"Only {successful_deletions}/{requested_deletions} deletions completed")
-
-        if result['deleted_folders']:
-            logging.info(f"[DELETE_SHOW_FOLDER] ✓ Successfully deleted {len(result['deleted_folders'])} folder(s): {result['deleted_folders']}")
-        elif result['success']:
-            logging.info(f"[DELETE_SHOW_FOLDER] ✓ No folders needed deletion (already gone)")
-        else:
-            logging.error(f"[DELETE_SHOW_FOLDER] ✗ Deletion failed with errors: {result['errors']}")
-
-        return result
 
     def delete_multiple_items(self, item_ids: List[int], blacklist: bool = False,
                              blacklist_sources: bool = False,
@@ -3024,122 +2485,4 @@ class DeletionManager:
     # Duplicate Detection Methods (for Maintenance Page)
     # =======================================================================
 
-    def find_state_duplicates(self) -> dict:
-        """
-        Find items with same media ID but different states
 
-        Returns:
-        {
-            'groups': [
-                {
-                    'group_key': 'tt10620868_movie',
-                    'title': '#Alive',
-                    'year': 2020,
-                    'type': 'movie',
-                    'items': [...]
-                }
-            ],
-            'total_duplicates': int,
-            'recommended_deletions': int
-        }
-        """
-        conn = get_db_connection()
-        try:
-            # Find duplicates by counting items with same media ID
-            # Use NULLIF to convert empty strings to NULL for proper COALESCE behavior
-            query = """
-                SELECT
-                    COALESCE(NULLIF(tmdb_id, ''), NULLIF(imdb_id, '')) as media_id,
-                    type,
-                    title,
-                    year,
-                    COUNT(*) as count
-                FROM media_items
-                WHERE type IN ('movie', 'show')
-                GROUP BY COALESCE(NULLIF(tmdb_id, ''), NULLIF(imdb_id, '')), type
-                HAVING COUNT(*) > 1
-            """
-
-            cursor = conn.execute(query)
-            duplicate_groups = []
-            total_recommended = 0
-
-            for row in cursor:
-                media_id = row['media_id']
-                media_type = row['type']
-
-                # Get all items for this media ID
-                # Use NULLIF to convert empty strings to NULL for proper COALESCE behavior
-                items_query = """
-                    SELECT * FROM media_items
-                    WHERE COALESCE(NULLIF(tmdb_id, ''), NULLIF(imdb_id, '')) = ?
-                    AND type = ?
-                    ORDER BY
-                        CASE state
-                            WHEN 'Collected' THEN 1
-                            WHEN 'Upgrading' THEN 2
-                            WHEN 'Final_Check' THEN 3
-                            WHEN 'Wanted' THEN 4
-                            WHEN 'Unreleased' THEN 5
-                            WHEN 'Error' THEN 6
-                            WHEN 'Blacklisted' THEN 7
-                            WHEN 'ghostlisted' THEN 8
-                            WHEN 'all_blacklisted' THEN 9
-                            ELSE 10
-                        END
-                """
-                items_cursor = conn.execute(items_query, (media_id, media_type))
-                items = [dict(item_row) for item_row in items_cursor]
-
-                # Analyze group
-                analysis = self.analyze_duplicate_group(items, 'state')
-
-                group = {
-                    'group_key': f"{media_id}_{media_type}",
-                    'title': row['title'],
-                    'year': row['year'],
-                    'type': media_type,
-                    'media_id': media_id,
-                    'items': items,
-                    'analysis': analysis
-                }
-
-                duplicate_groups.append(group)
-                total_recommended += sum(1 for item in items if analysis.get('recommended_delete', {}).get(str(item['id'])))
-
-            return {
-                'groups': duplicate_groups,
-                'total_duplicates': len(duplicate_groups),
-                'recommended_deletions': total_recommended
-            }
-
-        finally:
-            conn.close()
-
-    def analyze_duplicate_group(self, items: List[dict], criteria: str = 'state') -> dict:
-        """
-        Analyze a group of duplicate items and recommend which to delete
-
-        Returns:
-        {
-            'best_item_id': int,
-            'recommended_delete': {item_id: True/False},
-            'reason': str
-        }
-        """
-        if not items:
-            return {}
-
-        # Find best item (highest priority state)
-        best_item = min(items, key=lambda x: self.get_state_priority(x.get('state', '')))
-
-        recommended_delete = {}
-        for item in items:
-            # Recommend deletion if not the best item
-            recommended_delete[str(item['id'])] = (item['id'] != best_item['id'])
-
-        return {
-            'best_item_id': best_item['id'],
-            'recommended_delete': recommended_delete,
-            'reason': f"Keep {best_item.get('state')} (highest priority), delete others"
-        }

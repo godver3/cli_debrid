@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import random as _random
+import re
 import threading
 import time
 import urllib.parse
@@ -98,8 +99,17 @@ def _update_source_state(source_id: str, updates: dict) -> None:
 # ── Plex credentials ─────────────────────────────────────────────────────────
 
 def _get_plex_credentials() -> tuple:
+    """Plex API credentials from either file-management mode.
+
+    Collections are created through the Plex API, so Symlinked/Local is fine
+    as long as a Plex URL and token are set (Required Plex settings, or the
+    symlink Plex URL/token).
+    """
     plex_url = get_setting('Plex', 'url', '').rstrip('/')
     plex_token = get_setting('Plex', 'token', '')
+    if not plex_url or not plex_token:
+        plex_url = get_setting('File Management', 'plex_url_for_symlink', '').rstrip('/')
+        plex_token = get_setting('File Management', 'plex_token_for_symlink', '')
     if not plex_url or not plex_token:
         raise ValueError("Plex URL or token not configured")
     return plex_url, plex_token
@@ -157,9 +167,19 @@ def _find_section_key(sections: dict, lib_type: str) -> Optional[str]:
     return None
 
 
+def _title_year_key(title, year_or_date) -> str:
+    """Stable fallback key for Plex items whose external GUIDs are incomplete."""
+    title = re.sub(r'\s+', ' ', str(title or '')).strip().casefold()
+    year = str(year_or_date or '')[:4]
+    if not title or len(year) != 4 or not year.isdigit():
+        return ''
+    return f'title:{year}:{title}'
+
+
 def _get_section_id_map(plex_url: str, token: str, section_key: str, lib_type: str) -> dict:
     """
-    Return {imdb_id: ratingKey, tmdb_id: ratingKey} for all items in a Plex section.
+    Return external-ID and unambiguous title/year keys mapped to ratingKey for
+    all items in a Plex section.
     Results are cached for _SECTION_ITEMS_CACHE_TTL seconds.
     Used to resolve section-local ratingKeys before adding items to a collection.
     """
@@ -179,16 +199,32 @@ def _get_section_id_map(plex_url: str, token: str, section_key: str, lib_type: s
         )
         resp.raise_for_status()
         id_map = {}
+        ambiguous_title_keys = set()
         for item in resp.json().get('MediaContainer', {}).get('Metadata', []):
             rk = str(item.get('ratingKey', ''))
             if not rk:
                 continue
+            has_tmdb_guid = False
             for guid in item.get('Guid', []):
                 gid = guid.get('id', '')
                 if gid.startswith('imdb://'):
                     id_map[gid[7:]] = rk
                 elif gid.startswith('tmdb://'):
                     id_map['tmdb:' + gid[7:]] = rk
+                    has_tmdb_guid = True
+            # Some Plex agents expose only an IMDb GUID while TMDB person
+            # credits contain only a TMDB ID. Exact title + year gives those
+            # existing library items a safe fallback without guessing between
+            # remakes. Ambiguous duplicate keys are deliberately discarded.
+            # Items with a TMDB GUID already match by ID; a credit that missed
+            # that ID is a different title, so they get no fallback key.
+            title_key = '' if has_tmdb_guid else _title_year_key(item.get('title'), item.get('year'))
+            if title_key:
+                if title_key in id_map and id_map[title_key] != rk:
+                    id_map.pop(title_key, None)
+                    ambiguous_title_keys.add(title_key)
+                elif title_key not in ambiguous_title_keys:
+                    id_map[title_key] = rk
         _section_items_cache[cache_key] = {'data': id_map, 'ts': now}
         return id_map
     except Exception as e:
@@ -1036,8 +1072,10 @@ def sync_collection_for_source(source_id: str, source_data: dict, ordered_imdb_i
     elif poster_design > 0:
         try:
             from database.collection_poster_renderer import (
-                render_collection_poster, upload_collection_poster,
-                fetch_movie_thumbs, compute_poster_hash, get_source_icon
+                render_collection_poster,
+                upload_collection_poster,
+                fetch_movie_thumbs,
+                compute_poster_hash,
             )
             from database.collection_poster_renderer import DESIGNS as _DESIGNS
             poster_accent = coll_cfg.get('poster_accent', '').strip()
@@ -1244,3 +1282,124 @@ def check_and_sync_if_needed(source_id: str, source_data: dict, ordered_imdb_ids
     finally:
         with _sync_lock:
             _sync_in_flight.discard(source_id)
+
+
+_PERSON_COLLECTIONS_KEY = '_person_collections'
+_person_refresh_ts = 0.0
+_PERSON_REFRESH_TTL = 600
+
+
+def remember_person_collection(person_id, name: str, role: str, media_type: str, items: list) -> None:
+    """Keep a person's filmography so later Plex scans can add newly collected titles."""
+    slim = []
+    for item in items:
+        tmdb_id = item.get('id') or item.get('tmdb_id')
+        media = item.get('media_type')
+        if not tmdb_id or media not in ('movie', 'tv', 'show'):
+            continue
+        slim.append({
+            'id': tmdb_id,
+            'media_type': 'tv' if media == 'show' else media,
+            'imdb_id': item.get('imdb_id') or '',
+        })
+    state = _load_state()
+    people = state.get(_PERSON_COLLECTIONS_KEY) or {}
+    people[str(person_id)] = {
+        'name': name,
+        'role': role or 'all',
+        'type': media_type or 'all',
+        'items': slim,
+    }
+    state[_PERSON_COLLECTIONS_KEY] = people
+    _save_state(state)
+
+
+def refresh_saved_person_collections(force: bool = False) -> None:
+    """Re-add titles that have since appeared in Plex for every saved person collection."""
+    global _person_refresh_ts
+    now = time.time()
+    if not force and (now - _person_refresh_ts) < _PERSON_REFRESH_TTL:
+        return
+    try:
+        _get_plex_credentials()
+    except ValueError:
+        return
+    people = (_load_state().get(_PERSON_COLLECTIONS_KEY) or {})
+    if not people:
+        return
+    _person_refresh_ts = now
+    for entry in people.values():
+        name = entry.get('name')
+        items = entry.get('items') or []
+        if not name or not items:
+            continue
+        try:
+            create_named_collections_from_tmdb(name, items)
+        except Exception as e:
+            logger.warning(f"[PlexCollections] Person collection refresh for '{name}' failed: {e}")
+
+
+def create_named_collections_from_tmdb(name: str, items: list) -> dict:
+    """Create or update Plex collections named after a person from TMDB works.
+
+    Only titles already in Plex can be added. Movies and shows go into
+    separate collections when both kinds are present.
+    """
+    plex_url, plex_token = _get_plex_credentials()
+    sections = _get_library_sections(plex_url, plex_token)
+    machine_id = _get_machine_id(plex_url, plex_token)
+
+    movies = [i for i in items if (i.get('media_type') or '') == 'movie']
+    shows = [i for i in items if (i.get('media_type') or '') in ('tv', 'show')]
+    both = bool(movies) and bool(shows)
+
+    created = []
+
+    def _sync(lib_type: str, subset: list, suffix: str):
+        if not subset:
+            return
+        section_key = _find_section_key(sections, lib_type)
+        if not section_key:
+            created.append({'type': lib_type, 'name': None, 'added': 0, 'missing': len(subset),
+                            'error': f'No {lib_type} library section'})
+            return
+        coll_name = f'{name} ({suffix})' if both else name
+        id_map = _get_section_id_map(plex_url, plex_token, section_key, lib_type)
+        rating_keys = []
+        missing = 0
+        seen = set()
+        for item in subset:
+            tmdb_id = str(item.get('id') or item.get('tmdb_id') or '')
+            imdb_id = item.get('imdb_id') or ''
+            rk = None
+            if tmdb_id:
+                rk = id_map.get('tmdb:' + tmdb_id)
+            if not rk and imdb_id:
+                rk = id_map.get(imdb_id)
+            if not rk:
+                title_key = _title_year_key(
+                    item.get('title') or item.get('name'),
+                    item.get('release_date') or item.get('first_air_date') or item.get('year'),
+                )
+                if title_key:
+                    rk = id_map.get(title_key)
+            if rk and rk not in seen:
+                rating_keys.append(rk)
+                seen.add(rk)
+            else:
+                missing += 1
+        rk = _get_or_create_collection(plex_url, plex_token, section_key, coll_name, lib_type, '!')
+        if rating_keys:
+            _add_items_to_collection(plex_url, plex_token, machine_id, rk, rating_keys)
+        created.append({
+            'type': lib_type,
+            'name': coll_name,
+            'rating_key': rk,
+            'added': len(rating_keys),
+            'missing': missing,
+        })
+
+    _sync('movie', movies, 'Movies')
+    _sync('show', shows, 'Shows')
+    return {'collections': created}
+

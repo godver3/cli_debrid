@@ -38,7 +38,6 @@ def log_activity(
     """
     try:
         from database.core import get_db_connection
-        import sqlite3
         conn = get_db_connection()
         conn.execute(
             '''INSERT INTO overlay_activity

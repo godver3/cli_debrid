@@ -19,13 +19,11 @@ from plexapi.myplex import MyPlexAccount
 
 from typing import List, Dict, Any, Tuple
 from utilities.settings import get_setting
-from database.database_reading import get_media_item_presence, get_media_item_presence_overall
+from database.database_reading import get_media_item_presence_overall
 from queues.config_manager import load_config
 from cli_battery.app.direct_api import DirectAPI
 import os
-import pickle
-from datetime import datetime, timedelta
-from .plex_token_manager import update_token_status, get_token_status, load_token_status
+from .plex_token_manager import update_token_status, load_token_status
 from .skipped_items import SkippedItems as _SkippedItems, NO_ID_REASON as _NO_ID_REASON, fetch_error_reason as _fetch_error_reason
 import time
 import aiohttp
@@ -35,26 +33,8 @@ from types import SimpleNamespace
 
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-PLEX_WATCHLIST_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'plex_watchlist_cache.pkl')
-OTHER_PLEX_WATCHLIST_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'other_plex_watchlist_cache.pkl')
 CACHE_EXPIRY_DAYS = 7
 
-def load_plex_cache(cache_file):
-    try:
-        if os.path.exists(cache_file):
-            with open(cache_file, 'rb') as f:
-                return pickle.load(f)
-    except (EOFError, pickle.UnpicklingError, FileNotFoundError) as e:
-        logging.warning(f"Error loading Plex watchlist cache: {e}. Creating a new cache.")
-    return {}
-
-def save_plex_cache(cache, cache_file):
-    try:
-        os.makedirs(os.path.dirname(cache_file), exist_ok=True)
-        with open(cache_file, 'wb') as f:
-            pickle.dump(cache, f)
-    except Exception as e:
-        logging.error(f"Error saving Plex watchlist cache: {e}")
 
 async def _fetch_item_details_once(session, item_data, plex_token_str):
     """
@@ -132,19 +112,47 @@ async def fetch_item_details_and_extract_ids(session, item_data, plex_token_str,
         result = await _fetch_item_details_once(session, item_data, plex_token_str)
     return result
 
+# Details URL -> (imdb_id, tmdb_id, media_type). A Plex metadata key always points at the
+# same title, so only titles new to a watchlist need a detail request. Results with no
+# ID are not cached, so Plex can still add the GUIDs later.
+_ITEM_IDS_CACHE: Dict[str, Tuple[Any, Any, Any]] = {}
+_ITEM_IDS_CACHE_MAX = 20000
+
 async def run_async_fetches(watchlist_items_with_urls, plex_token_str):
     """
-    Runs all async fetch tasks concurrently.
+    Runs all async fetch tasks concurrently, skipping items whose IDs are already cached.
     watchlist_items_with_urls is a list of dicts: [{'title': str, 'url': str, 'original_plex_item': PlexAPIObject}]
     """
+    results = [None] * len(watchlist_items_with_urls)
+    to_fetch = []
+    for i, item_data in enumerate(watchlist_items_with_urls):
+        cached = _ITEM_IDS_CACHE.get(item_data['url'])
+        if cached:
+            imdb_id, tmdb_id, media_type = cached
+            results[i] = {'imdb_id': imdb_id, 'tmdb_id': tmdb_id, 'media_type': media_type,
+                          'original_plex_item': item_data['original_plex_item']}
+        else:
+            to_fetch.append(i)
+    logging.debug(f"AsyncFetch: {len(results) - len(to_fetch)} item(s) from ID cache, fetching {len(to_fetch)}.")
+    if not to_fetch:
+        return results
+
     conn = aiohttp.TCPConnector(limit_per_host=10) # Limit concurrent connections to the same host
     async with aiohttp.ClientSession(connector=conn) as session:
         tasks = [
-            fetch_item_details_and_extract_ids(session, item_data, plex_token_str)
-            for item_data in watchlist_items_with_urls
+            fetch_item_details_and_extract_ids(session, watchlist_items_with_urls[i], plex_token_str)
+            for i in to_fetch
         ]
-        results = await asyncio.gather(*tasks, return_exceptions=False) # Errors handled in fetch_item_details
-        return results
+        fetched = await asyncio.gather(*tasks, return_exceptions=False) # Errors handled in fetch_item_details
+
+    if len(_ITEM_IDS_CACHE) > _ITEM_IDS_CACHE_MAX:
+        _ITEM_IDS_CACHE.clear()
+    for i, result in zip(to_fetch, fetched):
+        results[i] = result
+        if not result.get('error') and (result.get('imdb_id') or result.get('tmdb_id')):
+            _ITEM_IDS_CACHE[watchlist_items_with_urls[i]['url']] = (
+                result['imdb_id'], result['tmdb_id'], result['media_type'])
+    return results
 
 def _main_plex_token():
     """The main Plex token: Plex:token, falling back to the symlink-mode token."""

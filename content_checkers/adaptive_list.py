@@ -20,38 +20,12 @@ REQUEST_TIMEOUT = 15  # seconds
 
 # Cache configuration
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-ADAPTIVE_LIST_TMDB_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'adaptive_list_tmdb_cache.pkl')
 ADAPTIVE_LIST_IMDB_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'adaptive_list_imdb_cache.pkl')
 
 # Cache control flag
 disable_caching = False
 
 logger = logging.getLogger(__name__)
-
-# TMDB Metadata Cache Functions
-def load_tmdb_cache():
-    """Load TMDB metadata cache"""
-    if disable_caching or not os.path.exists(ADAPTIVE_LIST_TMDB_CACHE_FILE):
-        return {}
-    try:
-        with open(ADAPTIVE_LIST_TMDB_CACHE_FILE, 'rb') as f:
-            cache = pickle.load(f)
-            logger.debug(f"Loaded TMDB cache with {len(cache)} entries")
-            return cache
-    except Exception as e:
-        logger.warning(f"Failed to load TMDB cache: {e}")
-        return {}
-
-def save_tmdb_cache(cache):
-    """Save TMDB metadata cache"""
-    if disable_caching:
-        return
-    try:
-        with open(ADAPTIVE_LIST_TMDB_CACHE_FILE, 'wb') as f:
-            pickle.dump(cache, f)
-            logger.debug(f"Saved TMDB cache with {len(cache)} entries")
-    except Exception as e:
-        logger.error(f"Failed to save TMDB cache: {e}")
 
 # TMDB→IMDB ID Cache Functions
 def load_imdb_cache():
@@ -583,7 +557,6 @@ def enrich_mdblist_items_with_tmdb(api_key: str, items: List[Dict]) -> List[Dict
             continue
     
     return enriched
-
 
 
 def fetch_trakt_special_items(tmdb_api_key, list_type, source_media_type='all'):
@@ -1585,16 +1558,3 @@ def get_imdb_id(api_key: str, tmdb_id: int, media_type: str, release_date: str |
         return None
 
 
-def remove_from_adaptive_list(items: List[dict]) -> dict:
-    """
-    Adaptive lists don't support removal as they're dynamic TMDB queries.
-    Items are filtered by the ghostlist/already collected check instead.
-
-    Returns:
-        dict: Always returns success with 0 removed
-    """
-    return {
-        'success': True,
-        'removed': 0,
-        'message': 'Adaptive lists do not support item removal - items are managed via ghostlist'
-    }
