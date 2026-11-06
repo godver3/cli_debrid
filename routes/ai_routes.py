@@ -943,6 +943,7 @@ def ai_skill_download():
 
 
 @ai_bp.route('/api/ai/settings', methods=['GET'])
+@admin_required
 def ai_get_settings():
     """Return current AI Assistant settings for the in-chat settings modal."""
     keys = [

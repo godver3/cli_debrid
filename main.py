@@ -23,7 +23,6 @@ import tracemalloc
 
 # Existing imports
 import shutil
-import requests
 import subprocess
 from utilities.settings import get_setting
 from logging_config import stop_global_profiling, start_global_profiling
@@ -67,7 +66,6 @@ import shutil
 import signal
 import time
 from utilities.settings import get_setting
-import requests
 import subprocess
 import threading
 from logging_config import stop_global_profiling, start_global_profiling
@@ -969,15 +967,13 @@ def fix_notification_settings():
 
         if needs_update:
             logging.info("Found notifications with missing or empty notify_on settings, fixing...")
-            port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
-            try:
-                response = requests.post(f'http://localhost:{port}/notifications/update_defaults')
-                if response.status_code == 200:
-                    logging.info("Successfully updated notification defaults")
-                else:
-                    logging.error(f"Failed to update notification defaults: {response.text}")
-            except requests.RequestException as e:
-                logging.error(f"Error updating notification defaults: {e}")
+            from queues.config_manager import save_config
+            from routes.settings_routes import ensure_notification_defaults
+            for notification_id, notification_config in config['Notifications'].items():
+                if notification_config is not None:
+                    config['Notifications'][notification_id] = ensure_notification_defaults(notification_config)
+            save_config(config)
+            logging.info("Successfully updated notification defaults")
     except Exception as e:
         logging.error(f"Error checking notification settings: {e}")
 

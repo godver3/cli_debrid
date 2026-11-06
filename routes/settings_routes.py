@@ -848,6 +848,7 @@ HARDCODED_DEFAULT_VERSIONS = {
 # --- END Hardcoded Default Versions ---
 
 @settings_bp.route('/content-sources/content')
+@admin_required
 def content_sources_content():
     import json as _json
     config = load_config()
@@ -885,6 +886,7 @@ def content_sources_types():
     })
 
 @settings_bp.route('/content-sources/trakt-friends')
+@admin_required
 def get_trakt_friends():
     """Get a list of authorized Trakt friends for the dropdown"""
     try:
@@ -924,6 +926,7 @@ def get_trakt_friends():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/content-sources/scrob-lists')
+@admin_required
 def get_scrob_lists():
     """Get the user's Scrob lists (id + name) for the multi-select picker."""
     try:
@@ -944,6 +947,7 @@ def get_scrob_lists():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/content-sources/overseerr-users')
+@admin_required
 def get_overseerr_users():
     from utilities.settings import get_all_settings
     source_id = request.args.get('source_id', '')
@@ -1062,6 +1066,7 @@ def add_scraper_route():
         return jsonify({'success': False, 'error': str(e)}), 500
     
 @settings_bp.route('/scrapers/content')
+@admin_required
 def scrapers_content():
     try:
         # Run migration to ensure all scrapers have priority field
@@ -1080,6 +1085,7 @@ def scrapers_content():
         return jsonify({'error': 'An error occurred while loading scraper settings'}), 500
 
 @settings_bp.route('/scrapers/get', methods=['GET'])
+@admin_required
 def get_scrapers():
     config = load_config()
     scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())
@@ -1321,6 +1327,7 @@ def ensure_notification_defaults(notification_config):
     return notification_config
 
 @settings_bp.route('/notifications/content', methods=['GET'])
+@admin_required
 def notifications_content():
     try:
         config = load_config()
@@ -2765,47 +2772,54 @@ def save_single_setting():
     return jsonify({'status': 'success'})
 
 
+def collect_enabled_notifications():
+    """Enabled notifications that have their required fields, with defaults applied."""
+    config = load_config()
+    notifications = config.get('Notifications', {})
+    
+    enabled_notifications = {}
+    for notification_id, notification_config in notifications.items():
+        if not notification_config:
+            continue
+        # Ensure defaults are present
+        notification_config = ensure_notification_defaults(notification_config)
+        
+        if notification_config.get('enabled', False):
+            # Only include notifications that are enabled and have non-empty required fields
+            if notification_config['type'] == 'Discord':
+                if notification_config.get('webhook_url'):
+                    enabled_notifications[notification_id] = notification_config
+            elif notification_config['type'] == 'Email':
+                # Only check required fields (smtp_username and smtp_password are optional)
+                if all([
+                    notification_config.get('smtp_server'),
+                    notification_config.get('smtp_port'),
+                    notification_config.get('from_address'),
+                    notification_config.get('to_address')
+                ]):
+                    enabled_notifications[notification_id] = notification_config
+            elif notification_config['type'] == 'Telegram':
+                if all([
+                    notification_config.get('bot_token'),
+                    notification_config.get('chat_id')
+                ]):
+                    enabled_notifications[notification_id] = notification_config
+            elif notification_config['type'] == 'NTFY':
+                if all([
+                    notification_config.get('host'),
+                    notification_config.get('topic')
+                ]):
+                    enabled_notifications[notification_id] = notification_config
+    return enabled_notifications
+
+
 @settings_bp.route('/notifications/enabled', methods=['GET'])
+@admin_required
 def get_enabled_notifications():
     try:
-        config = load_config()
-        notifications = config.get('Notifications', {})
-        
-        enabled_notifications = {}
-        for notification_id, notification_config in notifications.items():
-            # Ensure defaults are present
-            notification_config = ensure_notification_defaults(notification_config)
-            
-            if notification_config.get('enabled', False):
-                # Only include notifications that are enabled and have non-empty required fields
-                if notification_config['type'] == 'Discord':
-                    if notification_config.get('webhook_url'):
-                        enabled_notifications[notification_id] = notification_config
-                elif notification_config['type'] == 'Email':
-                    # Only check required fields (smtp_username and smtp_password are optional)
-                    if all([
-                        notification_config.get('smtp_server'),
-                        notification_config.get('smtp_port'),
-                        notification_config.get('from_address'),
-                        notification_config.get('to_address')
-                    ]):
-                        enabled_notifications[notification_id] = notification_config
-                elif notification_config['type'] == 'Telegram':
-                    if all([
-                        notification_config.get('bot_token'),
-                        notification_config.get('chat_id')
-                    ]):
-                        enabled_notifications[notification_id] = notification_config
-                elif notification_config['type'] == 'NTFY':
-                    if all([
-                        notification_config.get('host'),
-                        notification_config.get('topic')
-                    ]):
-                        enabled_notifications[notification_id] = notification_config
-        
         return jsonify({
             'success': True,
-            'enabled_notifications': enabled_notifications
+            'enabled_notifications': collect_enabled_notifications()
         })
     except Exception as e:
         logging.error(f"Error getting enabled notifications: {str(e)}", exc_info=True)
@@ -3250,6 +3264,7 @@ def api_settings_schema():
         return jsonify({"error": "An error occurred while loading settings schema."}), 500
 
 @settings_bp.route('/api/scrapers', methods=['GET'])
+@admin_required
 def api_get_scrapers():
     """API endpoint to get scrapers configuration as JSON"""
     try:
