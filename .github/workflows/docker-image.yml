@@ -254,6 +254,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # The dev build creates v<version> first, as a pre-release; the main build
+      # only updates it to a full release, and GitHub doesn't move the "Latest"
+      # badge on an update. Set it explicitly.
+      - name: Mark main release as latest
+        if: github.ref_name == 'main'
+        run: gh release edit "v${{ env.VERSION }}" --latest --repo "${{ github.repository }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # Each platform builds on a native runner (no QEMU emulation) with its own
   # layer cache, pushes by digest, and docker-merge stitches the manifest list.
   # The builds run alongside the Windows exe; only docker-merge, which applies
