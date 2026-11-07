@@ -191,6 +191,66 @@ class TestReplacementSubmission(unittest.TestCase):
         self.assertEqual(summary.get('not_found', 0), 0)
         self.assertEqual(summary.get('errors', 0), 0)
 
+    def _setup_ended_exact_repair_sweep(self):
+        original_reasons = re_mod.PLAYBACK_REPAIR_REASONS
+        re_mod.PLAYBACK_REPAIR_REASONS = {'usenet_segment_missing'}
+        self.addCleanup(lambda: setattr(re_mod, 'PLAYBACK_REPAIR_REASONS', original_reasons))
+        stubs = {
+            'has_active_exact_repair': lambda *a: False,
+            'has_ended_exact_repair': lambda *a: True,
+            'fetch_broken_items': lambda *a, **k: [{
+                'entry_name': 'Old.Release', 'file_name': 'old.mkv', 'info_hash': 'old-uuid',
+                'cli_debrid_id': 42, 'reason': 'usenet_segment_missing',
+            }],
+            '_find_db_item_by_id': lambda item_id: {
+                'id': 42, 'state': 'Collected', 'filled_by_torrent_id': 'nzb:old-uuid', 'title': 'Old Movie',
+            },
+            'log_repair_activity': lambda **kwargs: None,
+            '_blacklist_broken_nzb': lambda *a, **k: None,
+            '_scrape_for_replacement': lambda *a, **k: self.scrapes.append(a) or [],
+            'begin_playback_repair': lambda *a, **k: None,
+        }
+        self.scrapes = []
+        for name, value in stubs.items():
+            original = getattr(re_mod, name)
+            setattr(re_mod, name, value)
+            self.addCleanup(setattr, re_mod, name, original)
+
+    def test_scheduled_sweep_does_not_restart_ended_exact_repair(self):
+        """A repair of this exact file already ended with no replacement.
+        Playback targets bypass the sweep's attempt cap and backoff, so
+        restarting it would re-search the indexers on every sweep."""
+        self._setup_ended_exact_repair_sweep()
+        summary = re_mod._run_repair_inner(triggered_by='scheduled')
+        self.assertEqual(self.scrapes, [])
+        self.assertEqual(summary.get('skipped_max_attempts', 0), 1)
+
+    def test_manual_sweep_may_retry_ended_exact_repair(self):
+        self._setup_ended_exact_repair_sweep()
+        re_mod._run_repair_inner(triggered_by='manual')
+        self.assertEqual(len(self.scrapes), 1)
+
+    def test_sweep_ends_new_repair_when_every_result_already_failed(self):
+        """The sweep's own first search found only excluded releases: end
+        the repair now instead of leaving it for the worker to re-search."""
+        self._setup_ended_exact_repair_sweep()
+        ended = []
+        stubs = {
+            'has_ended_exact_repair': lambda *a: False,
+            'begin_playback_repair': lambda *a, **k: 5,
+            '_scrape_for_replacement': lambda *a, **k: [{'title': 'Failed.Release', 'protocol': 'nzb'}],
+            'candidate_keys': lambda r: {'t:failedrelease'},
+            'candidate_is_excluded': lambda item_id, r: True,
+            'end_repair_all_excluded': ended.append,
+        }
+        for name, value in stubs.items():
+            original = getattr(re_mod, name)
+            setattr(re_mod, name, value)
+            self.addCleanup(setattr, re_mod, name, original)
+        summary = re_mod._run_repair_inner(triggered_by='scheduled')
+        self.assertEqual(ended, [5])
+        self.assertEqual(summary.get('no_replacement', 0), 1)
+
     def test_explicit_failed_job_is_not_accepted(self):
         class Client:
             last_failed_job_id = ''

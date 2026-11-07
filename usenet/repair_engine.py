@@ -60,7 +60,9 @@ from database.nzb_playback_repair import (
     begin_playback_repair,
     candidate_is_excluded,
     candidate_keys,
+    end_repair_all_excluded,
     has_active_exact_repair,
+    has_ended_exact_repair,
     playback_candidate_search_blocked,
     record_failed_candidate,
     set_playback_candidate,
@@ -1122,29 +1124,45 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
                 and r.get('original_title') != _raw_broken
             ]
 
-        # Pre-fetch NZBs and filter segment-blacklisted ones
-        filtered = []
-        for r in nzb_results:
-            nzb_url = r.get('nzb_url') or r.get('magnet', '')
-            if nzb_url:
-                try:
-                    resp = requests.get(nzb_url, timeout=15, allow_redirects=True,
-                                        headers={'User-Agent': 'Sabnzbd/3.0.0'})
-                    if resp.status_code == 200 and '<nzb' in resp.text.lower():
-                        if is_nzb_segment_not_wanted(resp.text):
-                            logger.debug(f'[NZBRepair] Skipping blacklisted segment: {r.get("title")}')
-                            continue
-                        r['_prefetched_nzb'] = resp.text
-                except Exception:
-                    pass
-            filtered.append(r)
-
-        logger.info(f'[NZBRepair] Found {len(filtered)} usable replacement candidates for {item.get("title")!r}')
-        return filtered
+        # NZBs are NOT downloaded here. Callers drop excluded candidates by
+        # title/guid first, then call _prefetch_candidate_nzb() only on the
+        # one they are about to submit. Downloading every result up front made
+        # stuck playback repairs re-download the same already-failed NZB from
+        # every indexer each retry (every 30 min for up to 7 days), which
+        # indexers flag as abusive grab volume.
+        logger.info(f'[NZBRepair] Found {len(nzb_results)} usable replacement candidates for {item.get("title")!r}')
+        return nzb_results
 
     except Exception as e:
         logger.error(f'[NZBRepair] _scrape_for_replacement error: {e}', exc_info=True)
         return []
+
+
+def _prefetch_candidate_nzb(result: dict) -> bool:
+    """Download one candidate's NZB just before submission.
+
+    Stores the XML in ``result['_prefetched_nzb']`` (which also makes its
+    segment key visible to candidate_keys) and returns False when the NZB's
+    segment is blacklisted, so the caller skips it. A failed download returns
+    True and leaves the candidate to be submitted by URL, as before.
+    """
+    if result.get('_prefetched_nzb'):
+        return True
+    nzb_url = result.get('nzb_url') or result.get('magnet', '')
+    if not nzb_url:
+        return True
+    try:
+        resp = requests.get(nzb_url, timeout=15, allow_redirects=True,
+                            headers={'User-Agent': 'Sabnzbd/3.0.0'})
+        if resp.status_code == 200 and '<nzb' in resp.text.lower():
+            logger.info(f'[NZBRepair] Fetched NZB for candidate {result.get("title")!r}')
+            if is_nzb_segment_not_wanted(resp.text):
+                logger.info(f'[NZBRepair] Skipping blacklisted segment: {result.get("title")!r}')
+                return False
+            result['_prefetched_nzb'] = resp.text
+    except Exception:
+        pass
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1312,6 +1330,21 @@ def _update_db_for_repair(item: dict, new_job_id: str, replacement_result: dict,
         return False
 
 
+def _prefetch_playback_candidate(item_id, candidate: dict) -> bool:
+    """_prefetch_candidate_nzb plus the segment-key exclusion check that the
+    title/guid-only check before the download could not do. A candidate
+    rejected here is recorded as failed so its title/guid keys exclude it
+    before any download on the next retry."""
+    if not _prefetch_candidate_nzb(candidate):
+        record_failed_candidate(item_id, candidate, '')
+        return False
+    if candidate.get('_prefetched_nzb') and candidate_is_excluded(item_id, candidate):
+        logger.info('[NZBPlayback] Excluding failed candidate by segment %r', candidate.get('title'))
+        record_failed_candidate(item_id, candidate, '')
+        return False
+    return True
+
+
 def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
     """Re-run the same scrape/submit/exclude pipeline used for the initial
     broken-entry repair, for a playback repair whose accepted candidate was
@@ -1345,7 +1378,10 @@ def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
             continue
         unique_candidates.append(candidate)
     if not unique_candidates:
-        return 'no_replacement'
+        # 'all_excluded': the indexers only have releases that already failed
+        # for this item, so the worker ends the repair instead of retrying
+        # as it does for an empty search.
+        return 'all_excluded' if candidates else 'no_replacement'
 
     for candidate in unique_candidates:
         blocked, block_reason = playback_candidate_search_blocked(repair_id, item_id, old_info_hash)
@@ -1360,6 +1396,8 @@ def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
                 '[NZBPlayback] Skipping junk replacement candidate %r',
                 candidate.get('title'),
             )
+            continue
+        if not _prefetch_playback_candidate(item_id, candidate):
             continue
         job_id, submitted_title, disposition = _submit_and_confirm_replacement(
             candidate, item.get('title', ''), item=item)
@@ -1965,6 +2003,19 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                     playback_target['cli_debrid_id'], info_hash, playback_target['file_name'],
                 )
                 continue
+            # A repair of this exact file already ended with no replacement
+            # (every result had failed, or the 7-day search gave up). Only a
+            # manual run may start another; it inherits the old exclusions.
+            if (playback_target and triggered_by not in ('manual', 'manual_single')
+                    and has_ended_exact_repair(playback_target['cli_debrid_id'], info_hash,
+                                               playback_target['file_name'])):
+                logger.info(
+                    '[NZBPlayback] Item %s: repair of this file already ended with no replacement; '
+                    'skipping until a manual repair run (uuid=%s file=%s)',
+                    playback_target['cli_debrid_id'], info_hash, playback_target['file_name'],
+                )
+                summary['skipped_max_attempts'] += 1
+                continue
 
             # Skip if all items already in Adding (repair already in progress)
             if all(i.get('state') == 'Adding' for i in db_items):
@@ -2086,6 +2137,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                     logger.error('[NZBPlayback] State persistence failed; submitting nothing for item %s', rep.get('id'))
                     summary['errors'] += 1
                     continue
+                all_excluded = bool(candidates)
                 unique_candidates = []
                 seen_keys = set()
                 for candidate in candidates:
@@ -2098,6 +2150,12 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                         continue
                     unique_candidates.append(candidate)
                 candidates = unique_candidates
+            else:
+                # Non-playback repairs submit only the first candidate whose
+                # NZB segment is not blacklisted; download just far enough to
+                # find it.
+                candidates = next((c for c in candidates if _prefetch_candidate_nzb(c)), None)
+                candidates = [candidates] if candidates else []
 
             if not candidates:
                 # No replacement found — leave Collected items in place (file may still be
@@ -2108,6 +2166,8 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 next_repair_at = calculate_next_repair_at(new_attempts)
                 if playback_target:
                     logger.warning('[NZBPlayback] No distinct candidate for item %s; exact original remains mounted', rep['id'])
+                    if all_excluded:
+                        end_repair_all_excluded(repair_id)
                     summary['no_replacement'] += 1
                     continue
                 for db_item in db_items:
@@ -2145,6 +2205,8 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                     )
                     if playback_target:
                         record_failed_candidate(rep['id'], candidate, '')
+                    continue
+                if playback_target and not _prefetch_playback_candidate(rep['id'], candidate):
                     continue
                 job_id, submitted_title, candidate_disposition = _submit_and_confirm_replacement(
                     candidate, rep.get('title', ''), item=rep)

@@ -227,6 +227,13 @@ def begin_playback_repair(item, entry, triggered_by='manual'):
             excluded.add(f"t:{normalize_release(original_release)}")
         if entry.get('segment_id'):
             excluded.add(f"s:{entry['segment_id']}")
+        # Releases that failed in this item's earlier (completed) repairs stay
+        # excluded, so ending a repair never lets the next one resubmit them.
+        for (prior,) in conn.execute(
+            "SELECT excluded_keys_json FROM nzb_playback_repairs WHERE cli_debrid_id=?",
+            (item_id,),
+        ).fetchall():
+            excluded |= set(_json(prior, []))
         cursor = conn.execute(
             """INSERT INTO nzb_playback_repairs
                (cli_debrid_id,old_info_hash,old_entry_name,old_file_name,old_reason,
@@ -298,6 +305,32 @@ def has_active_exact_repair(item_id, old_info_hash, old_file_name):
                  AND status!='complete'
                LIMIT 1""",
             (int(item_id), old_info_hash, old_file_name),
+        ).fetchone()
+        return bool(row)
+    finally:
+        conn.close()
+
+
+# last_error values of repairs that ended without finding a replacement.
+ENDED_WITHOUT_REPLACEMENT = ('all_excluded', 'abandoned_after_retries')
+
+
+def has_ended_exact_repair(item_id, old_info_hash, old_file_name):
+    """Return whether a repair of this exact mounted file already ended
+    without finding a replacement. Scheduled sweeps must not restart it: a
+    playback target bypasses the sweep's attempt cap and backoff, so a new
+    repair would re-search the indexers on every sweep."""
+    if not item_id or not old_info_hash or not old_file_name:
+        return False
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            f"""SELECT 1 FROM nzb_playback_repairs
+               WHERE cli_debrid_id=? AND old_info_hash=? AND old_file_name=?
+                 AND status='complete'
+                 AND last_error IN ({','.join('?' * len(ENDED_WITHOUT_REPLACEMENT))})
+               LIMIT 1""",
+            (int(item_id), old_info_hash, old_file_name, *ENDED_WITHOUT_REPLACEMENT),
         ).fetchone()
         return bool(row)
     finally:
@@ -600,6 +633,42 @@ def _bump_attempt(repair_id, column):
         conn.close()
 
 
+def _close_candidate_search(repair, activity_outcome, last_error):
+    """End a repair that is still searching for a candidate."""
+    conn = get_db_connection()
+    try:
+        if repair.get('activity_id'):
+            conn.execute(
+                """UPDATE nzb_repair_activity SET outcome=?,
+                   updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (activity_outcome, repair['activity_id']),
+            )
+        conn.execute(
+            """UPDATE nzb_playback_repairs SET status='complete',completed_at=CURRENT_TIMESTAMP,
+               next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
+               last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (last_error, repair['id']),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def end_repair_all_excluded(repair_id):
+    """End a just-started repair whose first search found only releases that
+    already failed, without waiting for the worker to search again."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM nzb_playback_repairs WHERE id=? AND status='awaiting_candidate'",
+            (repair_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row:
+        _close_candidate_search(dict(row), 'no_replacement', 'all_excluded')
+
+
 def process_pending_playback_repairs():
     """Complete only already-started repairs; never scans or starts the backlog."""
     if not _worker_lock.acquire(blocking=False):
@@ -697,6 +766,18 @@ def process_pending_playback_repairs():
                     _schedule(repair['id'], outcome, 15)
                     continue
 
+                if outcome == 'all_excluded':
+                    # Every result is a release that already failed for this
+                    # item. Searching again would only re-hit the indexers for
+                    # the same answer, so end the repair now. Its exclusions
+                    # carry into any later repair of this item.
+                    _close_candidate_search(repair, 'no_replacement', 'all_excluded')
+                    log.warning(
+                        '[NZBPlayback] Every result already failed for item %s; ending repair=%s as no replacement',
+                        repair['cli_debrid_id'], repair['id'],
+                    )
+                    continue
+
                 attempts = _bump_attempt(repair['id'], 'candidate_search_attempts')
                 stuck_since = repair.get('candidate_search_stuck_since')
                 if attempts >= CANDIDATE_SEARCH_VISIBILITY_ATTEMPTS and not stuck_since:
@@ -725,23 +806,7 @@ def process_pending_playback_repairs():
                 if stuck_since:
                     stuck_dt = datetime.strptime(stuck_since, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
                     if datetime.now(timezone.utc) - stuck_dt >= timedelta(days=CANDIDATE_SEARCH_GIVE_UP_DAYS):
-                        conn = get_db_connection()
-                        try:
-                            if repair.get('activity_id'):
-                                conn.execute(
-                                    """UPDATE nzb_repair_activity SET outcome='abandoned_after_retries',
-                                       updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-                                    (repair['activity_id'],),
-                                )
-                            conn.execute(
-                                """UPDATE nzb_playback_repairs SET status='complete',completed_at=CURRENT_TIMESTAMP,
-                                   next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,
-                                   last_error='abandoned_after_retries',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-                                (repair['id'],),
-                            )
-                            conn.commit()
-                        finally:
-                            conn.close()
+                        _close_candidate_search(repair, 'abandoned_after_retries', 'abandoned_after_retries')
                         log.warning(
                             '[NZBPlayback] Giving up after %s days with no healthy candidate found repair=%s item=%s',
                             CANDIDATE_SEARCH_GIVE_UP_DAYS, repair['id'], repair['cli_debrid_id'],
