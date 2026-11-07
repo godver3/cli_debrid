@@ -60,7 +60,9 @@ from database.nzb_playback_repair import (
     begin_playback_repair,
     candidate_is_excluded,
     candidate_keys,
+    end_repair_all_excluded,
     has_active_exact_repair,
+    has_ended_exact_repair,
     playback_candidate_search_blocked,
     record_failed_candidate,
     set_playback_candidate,
@@ -1377,8 +1379,8 @@ def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
         unique_candidates.append(candidate)
     if not unique_candidates:
         # 'all_excluded': the indexers only have releases that already failed
-        # for this item, so the worker backs off far longer than for an
-        # empty search.
+        # for this item, so the worker ends the repair instead of retrying
+        # as it does for an empty search.
         return 'all_excluded' if candidates else 'no_replacement'
 
     for candidate in unique_candidates:
@@ -2001,6 +2003,19 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                     playback_target['cli_debrid_id'], info_hash, playback_target['file_name'],
                 )
                 continue
+            # A repair of this exact file already ended with no replacement
+            # (every result had failed, or the 7-day search gave up). Only a
+            # manual run may start another; it inherits the old exclusions.
+            if (playback_target and triggered_by not in ('manual', 'manual_single')
+                    and has_ended_exact_repair(playback_target['cli_debrid_id'], info_hash,
+                                               playback_target['file_name'])):
+                logger.info(
+                    '[NZBPlayback] Item %s: repair of this file already ended with no replacement; '
+                    'skipping until a manual repair run (uuid=%s file=%s)',
+                    playback_target['cli_debrid_id'], info_hash, playback_target['file_name'],
+                )
+                summary['skipped_max_attempts'] += 1
+                continue
 
             # Skip if all items already in Adding (repair already in progress)
             if all(i.get('state') == 'Adding' for i in db_items):
@@ -2122,6 +2137,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                     logger.error('[NZBPlayback] State persistence failed; submitting nothing for item %s', rep.get('id'))
                     summary['errors'] += 1
                     continue
+                all_excluded = bool(candidates)
                 unique_candidates = []
                 seen_keys = set()
                 for candidate in candidates:
@@ -2150,6 +2166,8 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 next_repair_at = calculate_next_repair_at(new_attempts)
                 if playback_target:
                     logger.warning('[NZBPlayback] No distinct candidate for item %s; exact original remains mounted', rep['id'])
+                    if all_excluded:
+                        end_repair_all_excluded(repair_id)
                     summary['no_replacement'] += 1
                     continue
                 for db_item in db_items:

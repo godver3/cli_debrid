@@ -311,6 +311,32 @@ def has_active_exact_repair(item_id, old_info_hash, old_file_name):
         conn.close()
 
 
+# last_error values of repairs that ended without finding a replacement.
+ENDED_WITHOUT_REPLACEMENT = ('all_excluded', 'abandoned_after_retries')
+
+
+def has_ended_exact_repair(item_id, old_info_hash, old_file_name):
+    """Return whether a repair of this exact mounted file already ended
+    without finding a replacement. Scheduled sweeps must not restart it: a
+    playback target bypasses the sweep's attempt cap and backoff, so a new
+    repair would re-search the indexers on every sweep."""
+    if not item_id or not old_info_hash or not old_file_name:
+        return False
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            f"""SELECT 1 FROM nzb_playback_repairs
+               WHERE cli_debrid_id=? AND old_info_hash=? AND old_file_name=?
+                 AND status='complete'
+                 AND last_error IN ({','.join('?' * len(ENDED_WITHOUT_REPLACEMENT))})
+               LIMIT 1""",
+            (int(item_id), old_info_hash, old_file_name, *ENDED_WITHOUT_REPLACEMENT),
+        ).fetchone()
+        return bool(row)
+    finally:
+        conn.close()
+
+
 @retry_on_db_lock(max_attempts=4, initial_wait=0.1, backoff_factor=2)
 def record_failed_candidate(item_id, result, job_id=''):
     conn = get_db_connection()
@@ -626,6 +652,21 @@ def _close_candidate_search(repair, activity_outcome, last_error):
         conn.commit()
     finally:
         conn.close()
+
+
+def end_repair_all_excluded(repair_id):
+    """End a just-started repair whose first search found only releases that
+    already failed, without waiting for the worker to search again."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM nzb_playback_repairs WHERE id=? AND status='awaiting_candidate'",
+            (repair_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row:
+        _close_candidate_search(dict(row), 'no_replacement', 'all_excluded')
 
 
 def process_pending_playback_repairs():

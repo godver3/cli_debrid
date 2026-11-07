@@ -756,6 +756,17 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         self.assertIsNone(updated['next_attempt_at'])
         self.assertEqual(activity['outcome'], 'no_replacement')
 
+    def test_ended_exact_repair_is_detected_only_for_no_replacement_endings(self):
+        playback.begin_playback_repair(self.item, self.target)
+        self.assertFalse(playback.has_ended_exact_repair(7, 'old-uuid', 'old.mkv'))
+        for last_error, ended in (('all_excluded', True), ('abandoned_after_retries', True),
+                                  ('verified', False)):
+            with self.connect() as conn:
+                conn.execute("UPDATE nzb_playback_repairs SET status='complete', last_error=?", (last_error,))
+                conn.commit()
+            self.assertEqual(playback.has_ended_exact_repair(7, 'old-uuid', 'old.mkv'), ended, last_error)
+        self.assertFalse(playback.has_ended_exact_repair(7, 'old-uuid', 'other.mkv'))
+
     def test_new_repair_inherits_exclusions_from_completed_repairs(self):
         """Ending a repair must not let the next repair of the same item
         resubmit the releases that already failed."""
