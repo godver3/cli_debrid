@@ -791,6 +791,7 @@ def api_nzb_reinsert():
                 from usenet.repair_engine import (
                     _scrape_for_replacement, _submit_and_confirm_replacement,
                     _update_db_for_repair, _is_junk_replacement_result,
+                    _prefetch_candidate_nzb,
                 )
                 results = _scrape_for_replacement(item, broken_nzb_title=nzb_title)
                 # Each submit can wait ~30s for the provider, and this runs inside the request
@@ -801,6 +802,8 @@ def api_nzb_reinsert():
                     if attempts_left <= 0:
                         logging.warning(f"[ReNZB] item={item_id} gave up after {_RENZB_MAX_RESCRAPE_SUBMITS} rejected candidates")
                         break
+                    if not _prefetch_candidate_nzb(candidate):
+                        continue
                     attempts_left -= 1
                     job_id, submitted_title, disposition = _submit_and_confirm_replacement(
                         candidate, item['title'], item=item)
