@@ -737,6 +737,39 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         self.assertEqual(activity['outcome'], 'abandoned_after_retries')
         self.assertIsNone(updated['next_attempt_at'])
 
+    def test_all_excluded_search_ends_repair_as_no_replacement(self):
+        """Every result is a release that already failed: searching again
+        would only re-hit the indexers for the same answer, so the repair
+        ends right away instead of retrying for days."""
+        playback.begin_playback_repair(self.item, self.target)
+        self._install_fake_repair_engine(lambda repair_row, item: 'all_excluded')
+        old_item = playback._media_item
+        playback._media_item = lambda _id: dict(self.item)
+        self.addCleanup(lambda: setattr(playback, '_media_item', old_item))
+
+        playback.process_pending_playback_repairs()
+        with self.connect() as conn:
+            updated = conn.execute('SELECT * FROM nzb_playback_repairs').fetchone()
+            activity = conn.execute('SELECT * FROM nzb_repair_activity WHERE id=?', (updated['activity_id'],)).fetchone()
+        self.assertEqual(updated['status'], 'complete')
+        self.assertEqual(updated['last_error'], 'all_excluded')
+        self.assertIsNone(updated['next_attempt_at'])
+        self.assertEqual(activity['outcome'], 'no_replacement')
+
+    def test_new_repair_inherits_exclusions_from_completed_repairs(self):
+        """Ending a repair must not let the next repair of the same item
+        resubmit the releases that already failed."""
+        playback.begin_playback_repair(self.item, self.target)
+        playback.record_failed_candidate(self.item['id'], {'title': 'Failed.Release'}, 'job-1')
+        with self.connect() as conn:
+            conn.execute("UPDATE nzb_playback_repairs SET status='complete'")
+            conn.commit()
+        self.assertFalse(playback.candidate_is_excluded(self.item['id'], {'title': 'Failed.Release'}))
+
+        self.assertIsNotNone(playback.begin_playback_repair(self.item, self.target))
+        self.assertTrue(playback.candidate_is_excluded(self.item['id'], {'title': 'Failed.Release'}))
+        self.assertFalse(playback.candidate_is_excluded(self.item['id'], {'title': 'Fresh.Release'}))
+
     def test_source_mismatch_rejects_candidate_after_max_attempts_when_reverted(self):
         """If the item is back on the original broken hash (not replaced by
         anything else), a persistent candidate/source mismatch after the cap

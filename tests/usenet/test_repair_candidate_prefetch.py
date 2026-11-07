@@ -129,8 +129,17 @@ class TestPlaybackCandidateRetry(_Base):
     def test_title_excluded_candidate_is_never_downloaded(self):
         self.excluded = {'t:Failed'}
         outcome = self._run(_candidate('Failed'))
-        self.assertEqual(outcome, 'no_replacement')
+        self.assertEqual(outcome, 'all_excluded')
         self.assertEqual(self.fetched, [])
+
+    def test_results_that_all_failed_before_report_all_excluded(self):
+        self.excluded = {'t:Failed', 't:AlsoFailed'}
+        outcome = self._run(_candidate('Failed'), _candidate('AlsoFailed'))
+        self.assertEqual(outcome, 'all_excluded')
+        self.assertEqual(self.fetched, [])
+
+    def test_empty_search_still_reports_no_replacement(self):
+        self.assertEqual(self._run(), 'no_replacement')
 
     def test_only_the_submitted_candidate_is_downloaded(self):
         self.excluded = {'t:Failed'}

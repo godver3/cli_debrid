@@ -1376,7 +1376,10 @@ def find_and_submit_playback_candidate(repair_row: dict, item: dict) -> str:
             continue
         unique_candidates.append(candidate)
     if not unique_candidates:
-        return 'no_replacement'
+        # 'all_excluded': the indexers only have releases that already failed
+        # for this item, so the worker backs off far longer than for an
+        # empty search.
+        return 'all_excluded' if candidates else 'no_replacement'
 
     for candidate in unique_candidates:
         blocked, block_reason = playback_candidate_search_blocked(repair_id, item_id, old_info_hash)
