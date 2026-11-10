@@ -444,7 +444,7 @@ SETTINGS_SCHEMA = {
         },
         "client_secret": {
             "type": "string",
-            "description": "Trakt client secret",
+            "description": "Trakt client secret (optional; new Trakt apps don't get one)",
             "default": "",
             "sensitive": True
         }

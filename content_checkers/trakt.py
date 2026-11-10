@@ -5,7 +5,7 @@ import json
 from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
 from utilities.settings import get_all_settings
-import trakt.core
+from utilities import trakt_oauth
 import time
 import pickle
 import os
@@ -465,22 +465,13 @@ def refresh_friend_token(auth_id: str) -> bool:
         client_id = state.get('client_id')
         client_secret = state.get('client_secret')
         
-        if not client_id or not client_secret:
+        if not client_id:
             logging.error(f"No client credentials available for friend's Trakt account: {auth_id}")
             return False
         
         # Refresh the token
         logging.debug(f"Making token refresh request to Trakt API for auth_id: {auth_id}")
-        response = requests.post(
-            f"{TRAKT_API_URL}/oauth/token",
-            json={
-                'refresh_token': state['refresh_token'],
-                'client_id': client_id,
-                'client_secret': client_secret,
-                'grant_type': 'refresh_token'
-            },
-            timeout=REQUEST_TIMEOUT
-        )
+        response = trakt_oauth.refresh_token(state['refresh_token'], client_id, client_secret)
         logging.debug(f"Token refresh response status: {response.status_code}")
         
         if response.status_code == 200:
@@ -1009,6 +1000,35 @@ def is_refresh_token_expired() -> bool:
         logging.error(f"Error checking refresh token status: {e}")
         return True
 
+def _refresh_main_token(trakt_config, client_id, client_secret):
+    """Refresh the main account's token and store it in .pytrakt.json and in
+    settings (the Metadata Battery's copy).
+
+    Trakt refresh tokens are single-use, so both stores must get the new one:
+    a stale copy would fail on its next refresh. Raises on a non-200 response
+    with Trakt's error text, which ensure_trakt_auth inspects.
+    """
+    response = trakt_oauth.refresh_token(trakt_config.get('OAUTH_REFRESH'), client_id, client_secret)
+    if response.status_code != 200:
+        raise Exception(f"Trakt token refresh failed (HTTP {response.status_code}): {response.text[:300]}")
+    token_data = response.json()
+    now = datetime.now(timezone.utc)
+    expires_at = int(now.timestamp()) + int(token_data['expires_in'])
+    trakt_config.update({
+        'CLIENT_ID': client_id,
+        'CLIENT_SECRET': client_secret or '',
+        'OAUTH_TOKEN': token_data['access_token'],
+        'OAUTH_REFRESH': token_data['refresh_token'],
+        'OAUTH_EXPIRES_AT': expires_at,
+        'LAST_REFRESH': now.isoformat(),
+    })
+    save_trakt_config(trakt_config)
+    from utilities.settings import set_setting
+    set_setting('Trakt', 'access_token', token_data['access_token'])
+    set_setting('Trakt', 'refresh_token', token_data['refresh_token'])
+    set_setting('Trakt', 'expires_at', expires_at)
+    set_setting('Trakt', 'last_refresh', now.isoformat())
+
 def ensure_trakt_auth():
     logging.debug("Checking Trakt authentication")
 
@@ -1024,7 +1044,8 @@ def ensure_trakt_auth():
     # "not configured" whenever settings.json's Trakt section is empty.
     client_id = trakt_config.get('CLIENT_ID', '') or get_setting('Trakt', 'client_id', '')
     client_secret = trakt_config.get('CLIENT_SECRET', '') or get_setting('Trakt', 'client_secret', '')
-    if not str(client_id or '').strip() or not str(client_secret or '').strip():
+    # The secret is optional: Trakt no longer issues one to new (PKCE) apps.
+    if not str(client_id or '').strip():
         logging.debug("Trakt is not configured; skipping Trakt authentication")
         return None
     
@@ -1039,11 +1060,7 @@ def ensure_trakt_auth():
             logging.info("Access token missing but refresh token available. Attempting to refresh...")
             # Try to refresh the token
             try:
-                # Use the trakt library for refresh but read result directly
-                trakt.core.CONFIG_PATH = TRAKT_CONFIG_FILE
-                trakt.core.load_config()
-                trakt.core._validate_token(trakt.core.CORE)
-                trakt.core.load_config()
+                _refresh_main_token(trakt_config, client_id, client_secret)
                 logging.info("Token refreshed successfully")
                 
                 # Re-read config after refresh
@@ -1074,11 +1091,7 @@ def ensure_trakt_auth():
             logging.info("Token nearing expiration (within 1 hour), refreshing")
         
         try:
-            # Use the trakt library for refresh but read result directly
-            trakt.core.CONFIG_PATH = TRAKT_CONFIG_FILE
-            trakt.core.load_config()
-            trakt.core._validate_token(trakt.core.CORE)
-            trakt.core.load_config()
+            _refresh_main_token(trakt_config, client_id, client_secret)
             logging.debug("Token refreshed successfully and config reloaded.")
             
             # Re-read config after refresh

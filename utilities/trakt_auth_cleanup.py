@@ -22,14 +22,12 @@ def _has_value(value: Any) -> bool:
 
 
 def trakt_is_configured(config: Dict[str, Any]) -> bool:
-    """Return whether both credentials required for Trakt OAuth are present."""
+    """Return whether a Trakt client ID is set. The secret is optional: Trakt
+    no longer issues one to new (PKCE) apps."""
     trakt_config = config.get('Trakt', {})
     if not isinstance(trakt_config, dict):
         return False
-    return (
-        _has_value(trakt_config.get('client_id'))
-        and _has_value(trakt_config.get('client_secret'))
-    )
+    return _has_value(trakt_config.get('client_id'))
 
 
 def _legacy_config_path(config_dir: Optional[str] = None) -> str:

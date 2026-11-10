@@ -19,9 +19,8 @@ def get_available_recommendation_providers():
         # Current settings are authoritative. Do not let credentials left in
         # legacy .pytrakt.json select Trakt after it was disabled in Settings.
         client_id = str(get_setting('Trakt', 'client_id', '') or '').strip()
-        client_secret = str(get_setting('Trakt', 'client_secret', '') or '').strip()
         access_token = str(get_trakt_config().get('OAUTH_TOKEN', '') or '').strip()
-        if client_id and client_secret and access_token:
+        if client_id and access_token:
             providers.append('trakt')
     except Exception as e:
         logging.debug(f"Recommendations: Trakt availability check failed: {e}")
