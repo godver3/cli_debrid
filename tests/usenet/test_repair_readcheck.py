@@ -251,6 +251,45 @@ class TestReplacementSubmission(unittest.TestCase):
         self.assertEqual(ended, [5])
         self.assertEqual(summary.get('no_replacement', 0), 1)
 
+    def test_stale_superseded_entry_deleted_once_then_acked_until_cleared(self):
+        """cli_mount keeps a superseded old UUID's broken-health record after
+        the provider delete, so the sweep re-reported it every cycle and
+        re-deleted it each time. Delete once, then ack until it clears."""
+        self._setup_ended_exact_repair_sweep()
+
+        class Conn:
+            def execute(self, *a):
+                return self
+
+            def fetchone(self):
+                return [0]
+
+            def close(self):
+                pass
+
+        deletes, acks = [], []
+        ack_results = [False, True]
+        stubs = {
+            '_find_db_item_by_id': lambda item_id: {
+                'id': 42, 'state': 'Collected', 'filled_by_torrent_id': 'nzb:new-uuid', 'title': 'Old Movie',
+            },
+            'get_db_connection': lambda: Conn(),
+            '_delete_from_provider': lambda h, n: deletes.append(h) or True,
+            'acknowledge_stale_target': lambda t: acks.append(t['info_hash']) or ack_results.pop(0),
+        }
+        for name, value in stubs.items():
+            original = getattr(re_mod, name)
+            setattr(re_mod, name, value)
+            self.addCleanup(setattr, re_mod, name, original)
+        self.addCleanup(re_mod._stale_provider_deleted.clear)
+
+        re_mod._run_repair_inner(triggered_by='scheduled')
+        re_mod._run_repair_inner(triggered_by='scheduled')
+        self.assertEqual(deletes, ['old-uuid'])
+        self.assertEqual(acks, ['old-uuid', 'old-uuid'])
+        self.assertNotIn('old-uuid', re_mod._stale_provider_deleted)
+        self.assertEqual(self.scrapes, [])
+
     def test_explicit_failed_job_is_not_accepted(self):
         class Client:
             last_failed_job_id = ''

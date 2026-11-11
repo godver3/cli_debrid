@@ -203,9 +203,19 @@ def begin_playback_repair(item, entry, triggered_by='manual'):
                 targets.append(exact)
             excluded = set(_json(row['excluded_keys_json'], []))
             excluded.add(f"t:{normalize_release(entry.get('entry_name'))}")
+            failed_jobs = set(_json(row['failed_job_ids_json'], []))
+            # The broken entry is this repair's own provisional candidate.
+            # Its entry_name is cli_mount's renamed folder, which never
+            # matches the indexer title, so exclude the candidate's recorded
+            # keys too — otherwise the next search resubmits the same release.
+            broken_hash = (entry.get('info_hash') or '').lower()
+            if broken_hash and (row['candidate_info_hash'] or '').lower() == broken_hash:
+                excluded |= set(_json(row['candidate_keys_json'], []))
+                failed_jobs.add(entry['info_hash'])
             conn.execute(
-                "UPDATE nzb_playback_repairs SET cleanup_targets_json=?, excluded_keys_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (json.dumps(targets), json.dumps(sorted(excluded)), row['id']),
+                "UPDATE nzb_playback_repairs SET cleanup_targets_json=?, excluded_keys_json=?, "
+                "failed_job_ids_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (json.dumps(targets), json.dumps(sorted(excluded)), json.dumps(sorted(failed_jobs)), row['id']),
             )
             conn.commit()
             return row['id']
@@ -440,6 +450,21 @@ def _mount_request(path, payload, timeout):
         return response.status_code, body, ''
     except Exception as exc:
         return 0, {}, str(exc)
+
+
+def acknowledge_stale_target(target):
+    """Clear cli_mount's broken-health record for an exact old file whose
+    item has moved on. Deleting the provider entry alone leaves the record
+    (it is keyed by entry name), so every sweep would report it again."""
+    code, body, error = _mount_request('/api/repair/replacements/ack', _target(target), 20)
+    if code == 200 and body.get('status') in ('removed', 'already_removed'):
+        return True
+    log.info(
+        '[NZBPlayback] Stale health ack not accepted uuid=%s file=%s code=%s http=%s error=%s',
+        target.get('info_hash') or '', target.get('file_name') or '',
+        body.get('code') or '', code, error or '',
+    )
+    return False
 
 
 @retry_on_db_lock(max_attempts=4, initial_wait=0.1, backoff_factor=2)
