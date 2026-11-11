@@ -139,6 +139,46 @@ class TestNZBPlaybackRepair(unittest.TestCase):
         playback.record_failed_candidate(7, failed, 'failed-uuid')
         self.assertTrue(playback.candidate_is_excluded(7, failed))
 
+    def test_broken_active_candidate_is_excluded_by_its_release_keys(self):
+        """cli_mount reports the provisional candidate broken under its
+        renamed entry name; the repair must still exclude the candidate's
+        indexer title/GUID or the next search resubmits the same release."""
+        playback.begin_playback_repair(self.item, self.target)
+        candidate = {'title': 'Candidate.Release', 'guid': 'GUID-2'}
+        playback.set_playback_candidate(7, candidate, 'new-uuid', 'Renamed Folder (Candidate)')
+        broken = dict(self.target, entry_name='Renamed Folder (Candidate)',
+                      file_name='Renamed Folder (Candidate).mkv', info_hash='new-uuid')
+        playback.begin_playback_repair(self.item, broken)
+        self.assertTrue(playback.candidate_is_excluded(7, {'title': 'Candidate.Release'}))
+        self.assertTrue(playback.candidate_is_excluded(7, {'title': 'Other.Name', 'guid': 'GUID-2'}))
+        with self.connect() as conn:
+            repair = conn.execute('SELECT failed_job_ids_json FROM nzb_playback_repairs').fetchone()
+        self.assertIn('new-uuid', repair[0])
+
+    def test_unrelated_broken_entry_does_not_exclude_active_candidate(self):
+        playback.begin_playback_repair(self.item, self.target)
+        candidate = {'title': 'Candidate.Release', 'guid': 'GUID-2'}
+        playback.set_playback_candidate(7, candidate, 'new-uuid', 'Candidate.Release')
+        other = dict(self.target, entry_name='Other.Entry', file_name='other.mkv', info_hash='other-uuid')
+        playback.begin_playback_repair(self.item, other)
+        self.assertFalse(playback.candidate_is_excluded(7, {'title': 'Candidate.Release', 'guid': 'GUID-2'}))
+
+    def test_acknowledge_stale_target_sends_exact_identity(self):
+        calls = []
+        original = playback._mount_request
+        self.addCleanup(setattr, playback, '_mount_request', original)
+        playback._mount_request = lambda path, payload, timeout: (
+            calls.append((path, payload)) or (200, {'status': 'already_removed'}, ''))
+        self.assertTrue(playback.acknowledge_stale_target(self.target))
+        path, payload = calls[0]
+        self.assertEqual(path, '/api/repair/replacements/ack')
+        self.assertEqual(
+            {k: payload[k] for k in ('entry_name', 'file_name', 'info_hash', 'cli_debrid_id', 'reason')},
+            {'entry_name': 'Old.Release', 'file_name': 'old.mkv', 'info_hash': 'old-uuid',
+             'cli_debrid_id': 7, 'reason': 'media_probe_failed'})
+        playback._mount_request = lambda *a: (409, {'code': 'repair_busy'}, '')
+        self.assertFalse(playback.acknowledge_stale_target(self.target))
+
     def test_failed_active_candidate_restores_original(self):
         playback.begin_playback_repair(self.item, self.target)
         candidate = {'title': 'Candidate.Release', 'guid': 'GUID-2'}

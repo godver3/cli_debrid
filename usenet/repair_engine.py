@@ -57,6 +57,7 @@ from database.not_wanted_magnets import (
 from utilities.settings import get_setting
 from database.nzb_playback_repair import (
     ELIGIBLE_REASONS as PLAYBACK_REPAIR_REASONS,
+    acknowledge_stale_target,
     begin_playback_repair,
     candidate_is_excluded,
     candidate_keys,
@@ -73,6 +74,10 @@ logger = logging.getLogger(__name__)
 # Module-level lock — prevents concurrent repair runs (manual UI + automated check)
 import threading as _threading
 _repair_lock = _threading.Lock()
+
+# Old UUIDs of superseded items already deleted from the provider while their
+# cli_mount health record is still pending an exact ack.
+_stale_provider_deleted: set = set()
 
 
 # ---------------------------------------------------------------------------
@@ -1960,11 +1965,19 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                         finally:
                             conn.close()
                         if sibling_count == 0:
-                            logger.info(
-                                f'[NZBPlayback] Stale broken entry for superseded item '
-                                f'{playback_target["cli_debrid_id"]} — deleting {info_hash!r} from provider'
-                            )
-                            _delete_from_provider(info_hash, entry_name)
+                            # cli_mount keys broken health by entry name, so the
+                            # provider delete alone never clears it and this UUID
+                            # came back every sweep. Delete once, then ack the
+                            # exact file until cli_mount drops the record.
+                            if info_hash not in _stale_provider_deleted:
+                                logger.info(
+                                    f'[NZBPlayback] Stale broken entry for superseded item '
+                                    f'{playback_target["cli_debrid_id"]} — deleting {info_hash!r} from provider'
+                                )
+                                if _delete_from_provider(info_hash, entry_name):
+                                    _stale_provider_deleted.add(info_hash)
+                            if acknowledge_stale_target(playback_target):
+                                _stale_provider_deleted.discard(info_hash)
                         else:
                             logger.info(
                                 f'[NZBPlayback] Skipping provider delete for {info_hash!r} — '

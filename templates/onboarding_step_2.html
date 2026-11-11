@@ -245,11 +245,12 @@
                 <summary>Use Trakt instead (optional)</summary>
                 <p class="settings-description">Without a TVDB key, cli_debrid looks shows and movies up on Trakt instead. Trakt is also needed for Trakt-based content sources. Create an application at <a href="https://trakt.tv/oauth/applications/" target="_blank" style="color: #3498db;">Trakt Applications</a>. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p>
                 <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
+                <p class="settings-description">Trakt may warn that this redirect URI is insecure. cli_debrid signs in with a device code and never uses it, so the warning can be ignored.</p>
 
                 <label for="trakt_client_id" class="onboarding-label"><br>Trakt Client ID:</label>
                 <input type="text" id="trakt_client_id" name="trakt_client_id" class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_id', '') }}">
 
-                <label for="trakt_client_secret" class="onboarding-label">Trakt Client Secret:</label>
+                <label for="trakt_client_secret" class="onboarding-label">Trakt Client Secret (optional, new Trakt apps don't get one):</label>
                 <input type="text" id="trakt_client_secret" name="trakt_client_secret" class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_secret', '') }}">
 
                 <div class="settings-section">
@@ -1070,8 +1071,8 @@ function saveTraktCredentials() {
     const clientSecretInput = document.getElementById('trakt_client_secret');
     const clientId = clientIdInput ? clientIdInput.value.trim() : '';
     const clientSecret = clientSecretInput ? clientSecretInput.value.trim() : '';
-    if (!clientId || !clientSecret) {
-        return Promise.reject(new Error('Enter both a Trakt Client ID and Client Secret first.'));
+    if (!clientId) {
+        return Promise.reject(new Error('Enter a Trakt Client ID first.'));
     }
     return fetch('/settings/api/settings', {
         method: 'POST',

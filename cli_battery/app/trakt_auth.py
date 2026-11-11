@@ -2,12 +2,8 @@
 
 import json
 import os
-import requests
 from datetime import datetime, timedelta, timezone
 from .logger_config import logger
-
-TRAKT_API_URL = "https://api.trakt.tv"
-REQUEST_TIMEOUT = 10
 
 
 def _get_setting(key, default=''):
@@ -78,15 +74,9 @@ def refresh_access_token() -> bool:
         logger.error("No refresh token available.")
         return False
 
-    data = {
-        'refresh_token': refresh_token,
-        'client_id': client_id,
-        'client_secret': client_secret,
-        'grant_type': 'refresh_token',
-    }
-
     try:
-        response = requests.post(f"{TRAKT_API_URL}/oauth/token", json=data, timeout=REQUEST_TIMEOUT)
+        from utilities.trakt_oauth import refresh_token as request_refresh
+        response = request_refresh(refresh_token, client_id, client_secret)
     except Exception as e:
         logger.error(f"Network error refreshing Trakt token: {e}")
         return False

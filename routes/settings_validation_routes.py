@@ -4,7 +4,7 @@ from plexapi.server import PlexServer
 from plexapi.exceptions import Unauthorized, NotFound
 import requests
 from urllib.parse import urlparse
-from trakt.core import get_device_code
+from utilities.trakt_oauth import request_device_code
 from utilities.jellyfin_auth import jellyfin_auth_headers
 from routes.models import admin_required
 
@@ -201,21 +201,30 @@ def validate_debrid_api_key(api_key, provider="RealDebrid"):
     return False, f"Unsupported debrid provider: {provider}"
 
 def validate_trakt_credentials(client_id, client_secret):
-    """Validate Trakt credentials format and basic authentication."""
-    if not client_id or not client_secret:
-        return False, "Both Client ID and Client Secret are required"
+    """Validate Trakt credentials format and basic authentication.
+
+    The secret is optional: Trakt no longer issues one to new (PKCE) apps.
+    """
+    if not client_id:
+        return False, "A Trakt Client ID is required"
     
     # Validate basic sanity (Trakt has changed key lengths over time, so we
     # avoid hardcoding an exact character count and only guard against
     # obviously-wrong input, e.g. empty/placeholder text pasted by mistake).
     if len(client_id.strip()) < 10:
         return False, "Invalid Trakt Client ID format (too short)"
-    if len(client_secret.strip()) < 10:
+    if client_secret and len(client_secret.strip()) < 10:
         return False, "Invalid Trakt Client Secret format (too short)"
     
     try:
-        # Try to get a device code - this validates both client ID and secret
-        device_code_response = get_device_code(client_id, client_secret)
+        # Requesting a device code validates the client ID. Trakt has no
+        # check for the secret short of a full sign-in.
+        response = request_device_code(client_id)
+        if response.status_code == 401:
+            return False, "Invalid Trakt Client ID"
+        if response.status_code != 200:
+            return False, f"Trakt returned HTTP {response.status_code}"
+        device_code_response = response.json()
         
         # Add debug logging
         print(f"Trakt API Response: {device_code_response}")
@@ -475,7 +484,7 @@ def validate_onboarding_settings():
     if trakt_client_id or trakt_client_secret:
         add('Trakt Configuration', *validate_trakt_credentials(trakt_client_id, trakt_client_secret),
             blocking=not tvdb_key)
-    if not tvdb_key and not (trakt_client_id and trakt_client_secret):
+    if not tvdb_key and not trakt_client_id:
         add('Metadata', False, 'Add a TVDB API key (recommended) or Trakt credentials. '
             'cli_debrid needs one of them to look up shows and movies')
     if tmdb_key:

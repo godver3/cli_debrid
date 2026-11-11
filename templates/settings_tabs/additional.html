@@ -362,7 +362,7 @@
             <div class="settings-subheader">
                 <h5>Authorization</h5>
             </div>
-            <p class="settings-description">Click the button below to authorize Trakt. You must first have entered your Client ID and Client Secret above (after creating an application).</p>
+            <p class="settings-description">Click the button below to authorize Trakt. You must first have entered your Client ID above (after creating an application). The Client Secret is optional: new Trakt apps don't get one.</p>
             <button id="trakt-auth-btn" class="settings-button">Authorize Trakt</button>
             <div id="trakt-auth-status" class="trakt-status"></div>
             <div id="trakt-auth-code" class="trakt-auth-code" style="display: none;">
@@ -1317,8 +1317,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const clientSecretInput = document.getElementById('trakt-client_secret');
         const clientId = clientIdInput ? clientIdInput.value.trim() : '';
         const clientSecret = clientSecretInput ? clientSecretInput.value.trim() : '';
-        if (!clientId || !clientSecret) {
-            return Promise.reject(new Error('Enter both a Trakt Client ID and Client Secret first.'));
+        if (!clientId) {
+            return Promise.reject(new Error('Enter a Trakt Client ID first.'));
         }
         return fetch('/settings/api/settings', {
             method: 'POST',

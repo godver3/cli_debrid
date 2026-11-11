@@ -477,9 +477,8 @@ def check_service_connectivity():
     # Trakt is an optional integration; an unconfigured or unauthorized Trakt
     # account must never block program start or pause the running queues.
     trakt_client_id = get_setting('Trakt', 'client_id')
-    trakt_client_secret = get_setting('Trakt', 'client_secret')
 
-    if trakt_client_id and trakt_client_secret:
+    if trakt_client_id:
         try:
             from cli_battery.app.direct_api import DirectAPI
             result = DirectAPI.check_trakt_auth()
