@@ -77,7 +77,7 @@ class FakeHighwayApi:
 def _provider():
     p = HighwayProvider.__new__(HighwayProvider)
     p._status = {}
-    p._cached_torrent_ids, p._cached_torrent_titles = {}, {}
+    p._cached_torrent_ids, p._cached_torrent_titles, p._all_torrent_ids = {}, {}, {}
     p._api_key = 'token'
     p._setup_encryption()
     return p

@@ -38,6 +38,9 @@ class HighwayProvider(DebridProvider):
         super().__init__()
         self._cached_torrent_ids: Dict[str, str] = {}
         self._cached_torrent_titles: Dict[str, str] = {}
+        # hash -> transfer id of everything this provider added; read directly by
+        # queues/torrent_processor.py, routes/scraper_routes.py and utilities/web_scraper.py
+        self._all_torrent_ids: Dict[str, str] = {}
 
     def _load_api_key(self) -> str:
         if getattr(self, '_api_key', None):
@@ -235,6 +238,8 @@ class HighwayProvider(DebridProvider):
             raise TorrentAdditionError(f"Failed to add torrent - response: {result}")
         if _QUEUE_ID.match(torrent_id) and hash_value:
             torrent_id = f"{torrent_id}-{hash_value}"
+        if hash_value:
+            self._all_torrent_ids[hash_value] = torrent_id
         self._remember(hash_value, torrent_id, {'state': result.get('state'), 'name': ''})
         return torrent_id
 
@@ -373,6 +378,9 @@ class HighwayProvider(DebridProvider):
                 if result.get('reason') != 'not_found':
                     return False
             self.update_status(torrent_id, TorrentStatus.REMOVED)
+            for known_hash, known_id in list(self._all_torrent_ids.items()):
+                if known_id == str(torrent_id) or known_hash == hash_value:
+                    self._all_torrent_ids.pop(known_hash, None)
             if hash_value:
                 self._cached_torrent_ids.pop(hash_value, None)
                 self._cached_torrent_titles.pop(hash_value, None)
