@@ -7,6 +7,7 @@ from .alldebrid import AllDebridProvider
 from .premiumize import PremiumizeProvider
 from .torbox import TorboxProvider
 from .debridlink import DebridLinkProvider
+from .highway import HighwayProvider
 from .common import (
     extract_hash_from_magnet,
     download_and_extract_hash,
@@ -26,6 +27,7 @@ _NAME_MAP = {
     'premiumize':  'Premiumize',
     'debridlink':  'Debrid-Link',
     'debrid-link': 'Debrid-Link',
+    'highway':     'HighWay',
 }
 
 
@@ -43,6 +45,8 @@ def _instantiate_provider(provider_name_raw: str, api_key: Optional[str] = None)
         p = TorboxProvider()
     elif provider_name in ('debridlink', 'debrid-link'):
         p = DebridLinkProvider()
+    elif provider_name == 'highway':
+        p = HighwayProvider()
     else:
         raise ValueError(f"Unknown debrid provider: {provider_name_raw}")
     if api_key:
@@ -160,6 +164,7 @@ __all__ = [
     'PremiumizeProvider',
     'TorboxProvider',
     'DebridLinkProvider',
+    'HighwayProvider',
     'extract_hash_from_magnet',
     'download_and_extract_hash',
     'timed_lru_cache',

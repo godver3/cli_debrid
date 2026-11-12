@@ -172,6 +172,31 @@ def validate_debrid_api_key(api_key, provider="RealDebrid"):
         except requests.exceptions.RequestException as e:
             return False, f"Error validating Torbox API key: {str(e)}"
 
+    elif provider == "HighWay":
+        try:
+            response = requests.get(
+                "https://cloud.high-way.me/center-api/transfers.php",
+                params={'stats': '1'},
+                headers={'Authorization': f'Bearer {api_key}'},
+                timeout=10
+            )
+            if response.status_code == 200:
+                try:
+                    if response.json().get('user_id'):
+                        return True, "HighWay API token is valid"
+                    return False, "Invalid HighWay API response"
+                except ValueError:
+                    return False, "Invalid HighWay API response format"
+            elif response.status_code == 401:
+                return False, "Invalid HighWay API token"
+            elif response.status_code == 403:
+                return False, "Access denied - the HighWay token needs the torrent scopes"
+            else:
+                return False, f"HighWay API error (HTTP {response.status_code})"
+        except requests.exceptions.Timeout:
+            return False, "Timeout while validating HighWay API token"
+        except requests.exceptions.RequestException as e:
+            return False, f"Error validating HighWay API token: {str(e)}"
     elif provider == "DebridLink":
         try:
             response = requests.get(
