@@ -285,7 +285,7 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Debrid service provider. AllDebrid note: AllDebrid can't report whether a release is cached without adding it to your account, and it has suspended accounts that add many releases without downloading them. cli_debrid limits AllDebrid cache checks to 150 per hour and 10 per item and removes the ones it doesn't use; items over the limit wait in Adding. When another provider is also set up, AllDebrid is only checked if the providers ranked above it don't have the release cached.",
             "default": "RealDebrid",
-            "choices": ["RealDebrid", "AllDebrid", "Premiumize", "Torbox", "DebridLink"]
+            "choices": ["RealDebrid", "AllDebrid", "Premiumize", "Torbox", "DebridLink", "HighWay"]
         },
         "api_key": {
             "type": "string",

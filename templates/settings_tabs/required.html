@@ -316,7 +316,7 @@
             {% for fb in fallbacks %}
             <div class="fallback-provider-row settings-form-group" style="display: flex;flex-direction: column;gap: 8px;align-items: baseline;margin-bottom: 8px;">
                 <select class="settings-input fallback-provider-name" style="flex:0 0 150px">
-                    {% for choice in ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink'] %}
+                    {% for choice in ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink','HighWay'] %}
                     <option value="{{ choice }}" {% if fb.provider == choice %}selected{% endif %}>{{ choice }}</option>
                     {% endfor %}
                 </select>
@@ -336,7 +336,7 @@
 
 <script>
 (function() {
-    const PROVIDER_CHOICES = ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink'];
+    const PROVIDER_CHOICES = ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink','HighWay'];
 
     function buildRow(name, key) {
         const row = document.createElement('div');

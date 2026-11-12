@@ -2,7 +2,7 @@
 
 cli_debrid is a successor to, and pays homage to, plex_debrid. It watches your lists, finds the best release for everything on them, gets it through your debrid service or Usenet, and keeps your Plex or Jellyfin library organised and upgraded, with no files downloaded to your server.
 
-It works with **Real-Debrid, AllDebrid, TorBox, Premiumize and Debrid-Link**, and with **Usenet (NZB)** through cli_mount, NzbDAV or Zurg, for **Plex, Jellyfin and Emby**.
+It works with **Real-Debrid, AllDebrid, TorBox, Premiumize, Debrid-Link and HighWay**, and with **Usenet (NZB)** through cli_mount, NzbDAV or Zurg, for **Plex, Jellyfin and Emby**.
 
 **📖 [Getting Started](https://godver3.github.io/cli_docs/getting-started/)** · [Documentation](https://godver3.github.io/cli_docs/) · [Discord](https://discord.gg/ynqnXGJ4hU)
 
@@ -68,7 +68,7 @@ Content sources ──> Scrapers ──> Debrid / Usenet ──> Mount ──> L
 ## Key Features
 
 ### Getting content
-- **Debrid providers:** Real-Debrid, AllDebrid, Premiumize, TorBox and Debrid-Link.
+- **Debrid providers:** Real-Debrid, AllDebrid, Premiumize, TorBox, Debrid-Link and HighWay.
 - **Usenet:** NZBs from your Newznab indexers, streamed through [cli_mount](https://github.com/mash2k3/decypharr/tree/dev), NzbDAV or Zurg, with no download step. Usenet can be used alone or next to a debrid service.
 - **Scrapers:** Torrentio, Jackett, Prowlarr, Zilean, Nyaa, MediaFusion, AIOStreams and Newznab, with SeaDex for best-release anime picks.
 - **Content sources:** MDBList, Trakt (watchlists, lists, collection, friends), Plex (your watchlist, other users' and friends' watchlists, RSS), Seerr/Overseerr, Agregarr, Scrob, Adaptive Lists and your existing collection.
