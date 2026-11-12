@@ -261,6 +261,7 @@ def index():
         'Premiumize':   'PM',
         'Torbox':       'TB',
         'Debrid-Link':  'DL',
+        'HighWay':      'HW',
     }
     provider_abbrev = _prefix_map.get(provider_name, provider_name[:2].upper())
     climount_mode = _get_bad_folder_path() is not None

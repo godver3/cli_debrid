@@ -17,7 +17,7 @@
             <div class="ob-choice-row">
                 <label class="ob-choice">
                     <input type="checkbox" id="use_debrid" name="use_debrid" {% if use_debrid or not use_usenet %}checked{% endif %}>
-                    <span>Debrid<small>Real-Debrid, AllDebrid, Premiumize, Torbox, Debrid-Link</small></span>
+                    <span>Debrid<small>Real-Debrid, AllDebrid, Premiumize, Torbox, Debrid-Link, HighWay</small></span>
                 </label>
                 <label class="ob-choice">
                     <input type="checkbox" id="use_usenet" name="use_usenet" {% if use_usenet %}checked{% endif %}>
@@ -28,7 +28,7 @@
             <div id="panel-debrid">
                 <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
                 <select id="debrid_provider" name="debrid_provider" class="onboarding-input">
-                    {% for value, label in [('RealDebrid', 'RealDebrid'), ('AllDebrid', 'AllDebrid'), ('Premiumize', 'Premiumize'), ('Torbox', 'Torbox'), ('DebridLink', 'Debrid-Link')] %}
+                    {% for value, label in [('RealDebrid', 'RealDebrid'), ('AllDebrid', 'AllDebrid'), ('Premiumize', 'Premiumize'), ('Torbox', 'Torbox'), ('DebridLink', 'Debrid-Link'), ('HighWay', 'HighWay')] %}
                     <option value="{{ value }}" {% if settings.get('Debrid Provider', {}).get('provider', '') == value %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}
                 </select>

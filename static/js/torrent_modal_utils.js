@@ -225,7 +225,7 @@ function createMultiProviderCacheIcon(status, cacheProviders) {
     }
     const abbrev = {
         'Real-Debrid': 'RD', 'AllDebrid': 'AD', 'Torbox': 'TB',
-        'Premiumize': 'PM', 'Debrid-Link': 'DL',
+        'Premiumize': 'PM', 'Debrid-Link': 'DL', 'HighWay': 'HW',
     };
     const badges = Object.entries(cacheProviders).map(([name, st]) => {
         const ab = abbrev[name] || name.slice(0, 2).toUpperCase();
@@ -272,9 +272,9 @@ function createCacheIcon(status) {
     }
 }
 
-const _CP_ABBREV = {'Real-Debrid':'RD','AllDebrid':'AD','Torbox':'TB','Premiumize':'PM','Debrid-Link':'DL'};
+const _CP_ABBREV = {'Real-Debrid':'RD','AllDebrid':'AD','Torbox':'TB','Premiumize':'PM','Debrid-Link':'DL','HighWay':'HW'};
 // Known provider priority order — primary first, fallbacks after
-const _CP_ORDER = ['Real-Debrid','AllDebrid','Torbox','Premiumize','Debrid-Link'];
+const _CP_ORDER = ['Real-Debrid','AllDebrid','Torbox','Premiumize','Debrid-Link','HighWay'];
 
 function createCacheProviderBadges(torrent) {
     const cpData = torrent.cache_providers || {};

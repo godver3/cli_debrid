@@ -84,6 +84,9 @@ class DebridProvider(ABC):
         self._api_key = api_key
         self._status = {}
         self._cached_torrent_ids = {}  # Store torrent IDs for cached content
+        # hash -> torrent id of everything the provider added; queues/torrent_processor.py
+        # and the scraper routes read it directly, so every provider must have it
+        self._all_torrent_ids = {}
         self._setup_encryption()
         
         # Log provider capabilities
