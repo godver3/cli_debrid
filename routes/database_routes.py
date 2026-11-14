@@ -231,6 +231,45 @@ def item_source_label(item):
     provider = item.get('debrid_provider')
     return f'Debrid ({provider})' if provider else 'Debrid'
 
+def source_sql(db_columns):
+    """SQL for item_source_label(): the Source column's value, for filtering."""
+    if 'filled_by_torrent_id' not in db_columns:
+        return None
+    debrid = ("CASE WHEN COALESCE(debrid_provider, '') != '' THEN 'Debrid (' || debrid_provider || ')' "
+              "ELSE 'Debrid' END") if 'debrid_provider' in db_columns else "'Debrid'"
+    return ("(CASE WHEN COALESCE(filled_by_torrent_id, '') = '' THEN '' "
+            "WHEN filled_by_torrent_id LIKE 'nzb:%' THEN 'Usenet' "
+            f"ELSE {debrid} END)")
+
+
+def source_filter_clause(db_columns, operator, value):
+    """(where clause, params) for a filter on the computed Source column, or None.
+
+    'Debrid' matches every debrid row; 'Debrid (<provider>)' one provider; 'None' no file."""
+    expr = source_sql(db_columns)
+    if expr is None:
+        return None
+    value = '' if value in (None, 'None') else str(value)
+    if operator == 'is_null':
+        return f"{expr} = ''", []
+    if operator == 'is_not_null':
+        return f"{expr} != ''", []
+    if operator in ('equals', 'not_equals'):
+        clause = f"{expr} LIKE 'Debrid%'" if value == 'Debrid' else f"{expr} = ?"
+        params = [] if value == 'Debrid' else [value]
+        return (clause if operator == 'equals' else f"NOT ({clause})"), params
+    if operator in ('contains', 'not_contains'):
+        if not value:
+            return None
+        clause = f"{expr} LIKE ?"
+        return (clause if operator == 'contains' else f"NOT ({clause})"), [f'%{value}%']
+    if operator == 'starts_with' and value:
+        return f"{expr} LIKE ?", [f'{value}%']
+    if operator == 'ends_with' and value:
+        return f"{expr} LIKE ?", [f'%{value}']
+    return None
+
+
 @database_bp.route('/', methods=['GET', 'POST'])
 @admin_required
 def index():
@@ -418,6 +457,15 @@ def index():
                 operator = filter_item.get('operator', 'contains')
 
                 # Size column CAN be filtered if it exists in the database as a real column
+                if column == 'source':
+                    if operator not in [op['value'] for op in data['operators']]:
+                        continue
+                    _src = source_filter_clause(db_actual_columns, operator, raw_value)
+                    if _src:
+                        filter_where_clauses.append(_src[0])
+                        filter_params.extend(_src[1])
+                    continue
+
                 if column == 'size' and 'size' not in db_actual_columns:
                     logging.warning(f"Ignoring filter on 'size' column: '{column}' as it doesn't exist in database.")
                     continue
@@ -2573,6 +2621,18 @@ def get_column_values(column_name):
         # Validate column name to prevent SQL injection
         cursor.execute("PRAGMA table_info(media_items)")
         valid_columns = [row[1] for row in cursor.fetchall()]
+
+        if column_name == 'source':
+            # Computed column: 'Debrid' (any provider), each provider seen, Usenet, None.
+            expr = source_sql(valid_columns)
+            found = [row[0] for row in cursor.execute(f"SELECT DISTINCT {expr} FROM media_items")] if expr else []
+            values = ['Usenet'] if 'Usenet' in found else []
+            debrid = sorted(v for v in found if v and v.startswith('Debrid'))
+            if debrid:
+                values += ['Debrid'] + [v for v in debrid if v != 'Debrid']
+            if '' in found:
+                values.append('None')
+            return jsonify({'success': True, 'column': column_name, 'values': values})
 
         if column_name not in valid_columns:
             return jsonify({'success': False, 'error': f'Invalid column name: "{column_name}". Please select a valid column from the available options.'}), 400
