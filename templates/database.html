@@ -309,11 +309,14 @@
                                 <button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="{{ item['id'] }}" title="Rescrape">
                                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                                 </button>
+                                <span class="db-quick-slot" data-item-id="{{ item['id'] }}" data-type="{{ item['type'] or '' }}" data-tmdb="{{ item['tmdb_id'] or '' }}" data-imdb="{{ item['imdb_id'] or '' }}"></span>
                             </span>
                         </td>
                         {% for column in selected_columns %}
                             {% if column == 'size' %}
                                 <td class="truncate" data-full-content="{{ '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' }}">{{ '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' }}</td>
+                            {% elif column == 'source' %}
+                                <td>{% if item['source'] %}<span class="db-src {{ 'db-src-usenet' if item['source'] == 'Usenet' else 'db-src-debrid' }}">{{ item['source'] }}</span>{% endif %}</td>
                             {% elif column == 'imdb_id' %}
                                 <td class="truncate" data-full-content="{{ item[column] }}"><span class="db-imdb-link classic-plain">{{ item[column] }}</span></td>
                             {% elif column == 'state' %}
@@ -1672,6 +1675,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 tableHTML += `<td><span style="display:flex;gap:4px;align-items:center">` +
                     `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${item['id']}" title="Delete">${deleteSVG}</button>` +
                     `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${item['id']}" title="Rescrape">${refreshSVG}</button>` +
+                    window.dbQuickSlot(item) +
                     `</span></td>`;
             } else {
                 tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`;
@@ -3242,6 +3246,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 html += `<td><span style="display:flex;gap:4px;align-items:center">` +
                     `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${item.id}" title="Delete">${deleteSVG}</button>` +
                     `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${item.id}" title="Rescrape">${refreshSVG}</button>` +
+                    window.dbQuickSlot(item) +
                     `</span></td>`;
             } else {
                 html += `<td><button class="delete-item" data-item-id="${item.id}">X</button></td>`;
@@ -3697,6 +3702,86 @@ document.addEventListener('DOMContentLoaded', function() {
 
     }); // end DOMContentLoaded
 
+</script>
+<style>
+.db-src{display:inline-block;padding:1px 7px;border-radius:3px;font-size:11px;font-weight:600;white-space:nowrap}
+.db-src-usenet{background:#1e3a5f;color:#93c5fd}
+.db-src-debrid{background:#3b2a12;color:#fdba74}
+.db-quick{display:inline-flex;gap:4px}
+.db-quick .db-action-btn{font-size:11px}
+</style>
+<script>
+(function () {
+    // Row quick actions: open the item, move it to Wanted, or blacklist it.
+    const ICONS = {
+        open: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>',
+        wanted: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>',
+        blacklist: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>',
+    };
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function buttons(id) {
+        return `<span class="db-quick">` +
+            `<button class="db-action-btn" data-qa="open" data-item-id="${esc(id)}" title="Open in Library">${ICONS.open}</button>` +
+            `<button class="db-action-btn" data-qa="wanted" data-item-id="${esc(id)}" title="Move to Wanted">${ICONS.wanted}</button>` +
+            `<button class="db-action-btn db-action-btn-delete" data-qa="blacklist" data-item-id="${esc(id)}" title="Blacklist">${ICONS.blacklist}</button>` +
+            `</span>`;
+    }
+    // Used by the script-built rows (infinite scroll, AJAX filter results).
+    window.dbQuickSlot = function (item) {
+        return `<span class="db-quick-slot" data-item-id="${esc(item.id)}" data-type="${esc(item.type)}" data-tmdb="${esc(item.tmdb_id)}" data-imdb="${esc(item.imdb_id)}">${buttons(item.id)}</span>`;
+    };
+    function fillSlots(root) {
+        root.querySelectorAll('.db-quick-slot:empty').forEach(slot => { slot.innerHTML = buttons(slot.dataset.itemId); });
+        // Source column: badge the plain-text cells the script-built rows produce.
+        const ths = Array.from(document.querySelectorAll('thead th'));
+        const idx = ths.findIndex(th => th.dataset.col === 'source');
+        if (idx < 0) return;
+        root.querySelectorAll('tbody tr').forEach(tr => {
+            const td = tr.children[idx];
+            if (!td || td.querySelector('.db-src')) return;
+            const t = td.textContent.trim();
+            if (!t || t === 'None') { if (td.childNodes.length) td.textContent = ''; return; }
+            td.innerHTML = `<span class="db-src ${t === 'Usenet' ? 'db-src-usenet' : 'db-src-debrid'}">${esc(t)}</span>`;
+        });
+    }
+    async function move(id, queue) {
+        const fd = new FormData();
+        fd.append('action', 'move'); fd.append('target_queue', queue); fd.append('selected_items', id);
+        const r = await fetch('/database/bulk_queue_action', { method: 'POST', body: fd });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || j.success === false) throw new Error(j.error || j.message || ('HTTP ' + r.status));
+    }
+    document.addEventListener('click', async function (e) {
+        const btn = e.target.closest('[data-qa]');
+        if (!btn) return;
+        e.preventDefault(); e.stopPropagation();
+        const slot = btn.closest('.db-quick-slot');
+        const id = btn.dataset.itemId;
+        if (btn.dataset.qa === 'open') {
+            const key = slot.dataset.tmdb || slot.dataset.imdb;
+            if (!key) { alert('This item has no TMDB or IMDb ID.'); return; }
+            const kind = slot.dataset.type === 'movie' ? 'movie' : 'show';
+            window.open(`/library/${kind}/${encodeURIComponent(key)}`, '_blank');
+            return;
+        }
+        const queue = btn.dataset.qa === 'wanted' ? 'Wanted' : 'Blacklisted';
+        if (!confirm(`Move item ${id} to ${queue}?`)) return;
+        btn.disabled = true;
+        try {
+            await move(id, queue);
+            const row = btn.closest('tr');
+            if (row) row.style.opacity = '0.45';
+            btn.title = `Moved to ${queue}`;
+        } catch (err) {
+            alert('Could not move the item: ' + err.message);
+            btn.disabled = false;
+        }
+    });
+    document.addEventListener('DOMContentLoaded', function () {
+        fillSlots(document);
+        new MutationObserver(() => fillSlots(document)).observe(document.body, { childList: true, subtree: true });
+    });
+})();
 </script>
 <button id="db-back-top" class="tangerine-only" title="Back to top / Row 1" aria-label="Back to top">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

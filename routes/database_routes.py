@@ -220,6 +220,17 @@ def get_basic_collection_counts():
         if conn:
             conn.close()
 
+
+def item_source_label(item):
+    """Where an item's file came from: 'Usenet', 'Debrid (<provider>)', 'Debrid', or ''."""
+    tid = str(item.get('filled_by_torrent_id') or '')
+    if not tid:
+        return ''
+    if tid.startswith('nzb:'):
+        return 'Usenet'
+    provider = item.get('debrid_provider')
+    return f'Debrid ({provider})' if provider else 'Debrid'
+
 @database_bp.route('/', methods=['GET', 'POST'])
 @admin_required
 def index():
@@ -295,9 +306,12 @@ def index():
         all_columns_for_ui = db_actual_columns[:]
         if 'size' not in all_columns_for_ui:
             all_columns_for_ui.append('size')
+        # 'source' is computed per row: Usenet or Debrid (from filled_by_torrent_id).
+        if 'source' not in all_columns_for_ui:
+            all_columns_for_ui.append('source')
         data['all_columns'] = all_columns_for_ui
 
-        default_display_columns = ['id', 'title', 'year', 'type', 'state', 'version']
+        default_display_columns = ['id', 'title', 'year', 'type', 'state', 'version', 'source']
 
         # 1. Get raw selected columns (from POST or session/GET)
         raw_selected_columns = []
@@ -313,6 +327,11 @@ def index():
                     raw_selected_columns = session.get('selected_columns', [])
             else:
                 raw_selected_columns = session.get('selected_columns', [])
+            # Source was added after column choices were saved: show it once by default.
+            if raw_selected_columns and 'source' not in raw_selected_columns and not session.get('source_column_offered'):
+                raw_selected_columns = list(raw_selected_columns) + ['source']
+                session['selected_columns'] = raw_selected_columns
+                session['source_column_offered'] = True
 
         # 2. Get filter, sort, and other parameters from the request *NOW*
         filters = []
@@ -359,8 +378,12 @@ def index():
         data['sort_column'] = sort_column_req # Store validated sort column for the template
         data['sort_order'] = sort_order_req   # Store validated sort order for the template
         
-        # Continue with setting up SQL query columns
+        # Continue with setting up SQL query columns. type/tmdb_id/imdb_id are always
+        # read for the row's Open button; filled_by_torrent_id/debrid_provider for Source.
         columns_for_sql_query = set(['id'])
+        for _col in ('type', 'tmdb_id', 'imdb_id', 'filled_by_torrent_id', 'debrid_provider'):
+            if _col in db_actual_columns:
+                columns_for_sql_query.add(_col)
         for col in current_selected_columns_for_display: # Use the finalized display columns
             if col in db_actual_columns:  # Include size if it exists in DB
                 columns_for_sql_query.add(col)
@@ -566,6 +589,10 @@ def index():
             # Python sort did, in both directions)
             if 'size' in db_actual_columns:
                 order_clause = f'ORDER BY COALESCE("size", 0.0) {sort_order_req}, rowid ASC'
+        elif sort_column_req == 'source' and 'filled_by_torrent_id' in db_actual_columns:
+            # Usenet, then debrid, then none (or reversed)
+            order_clause = (f"ORDER BY CASE WHEN filled_by_torrent_id LIKE 'nzb:%' THEN 0 "
+                            f"WHEN COALESCE(filled_by_torrent_id, '') != '' THEN 1 ELSE 2 END {sort_order_req}, rowid ASC")
         elif sort_column_req in db_actual_columns:
             order_clause = f'ORDER BY "{sort_column_req}" {sort_order_req}'
 
@@ -598,6 +625,8 @@ def index():
         timings['main_query_executed'] = time.perf_counter()
         
         items_dict_list = [dict(zip(final_columns_for_sql_query_list, item_row)) for item_row in items_from_db]
+        for item_dict in items_dict_list:
+            item_dict['source'] = item_source_label(item_dict)
 
         if needs_size_data:
             # PERFORMANCE FIX: Only use database size values, skip slow disk I/O
