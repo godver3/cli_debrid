@@ -90,16 +90,38 @@ def _search_cooldown_left(endpoint: str) -> float:
         return left
 
 
+# Search pauses are short: a search refusal is often a burst rate limit that
+# clears in a minute, and a paused indexer drops out of every item's scrape.
+# NZB downloads keep their own, longer cooldown (usenet.nzb_fetch_cooldown).
+_SEARCH_PAUSE_RATE_LIMIT = 2 * 60    # plain 429 with no limit wording
+_SEARCH_PAUSE_UNAVAILABLE = 60       # bare 503
+_SEARCH_PAUSE_QUOTA = 10 * 60        # explicit API limit / quota reached
+_SEARCH_PAUSE_MAX = 10 * 60          # cap for a Retry-After the indexer sends
+# Wording that means a quota is used up, as opposed to "too many requests" /
+# "rate limited", which is a burst limit that clears on its own quickly.
+_QUOTA_RE = re.compile(r'\b(?:quota|limit (?:reached|exceeded)|exceeded|maximum (?:number|grabs|downloads|api)|daily)\b',
+                       re.IGNORECASE)
+
+
 def _search_refusal_seconds(status_code: int, headers, body: str) -> int:
-    """Cooldown for a refused search response, 0 when it isn't a limit/outage."""
-    from usenet.nzb_fetch_cooldown import classify_refusal
-    body = body or ''
+    """How long to pause searches after a refused search response, 0 when it isn't one."""
+    from usenet.nzb_fetch_cooldown import _retry_after_seconds, classify_refusal
+    body = (body or '')[:2000]
     # A 200 is only a refusal when it is a Newznab <error> document; never
     # phrase-match a real result feed (release titles can contain anything).
     if status_code == 200 and '<error' not in body[:500].lower():
         return 0
     try:
-        return int(classify_refusal(status_code, headers, body[:2000]) or 0)
+        if not classify_refusal(status_code, headers, body):
+            return 0
+        retry_after = _retry_after_seconds(headers)
+        if retry_after:
+            return min(retry_after, _SEARCH_PAUSE_MAX)
+        if _QUOTA_RE.search(body) or re.search(r'<error\b[^>]*\bcode\s*=\s*"50[01]"', body, re.IGNORECASE):
+            return _SEARCH_PAUSE_QUOTA
+        if status_code == 503:
+            return _SEARCH_PAUSE_UNAVAILABLE
+        return _SEARCH_PAUSE_RATE_LIMIT   # 429, or a Newznab <error> asking to slow down
     except Exception:
         return 0
 
@@ -110,7 +132,7 @@ def _record_search_refusal(endpoint: str, instance: str, seconds: int, status_co
         if until > _SEARCH_COOLDOWN.get(endpoint, 0):
             _SEARCH_COOLDOWN[endpoint] = until
     logging.warning(f"Newznab '{instance}' refused a search (HTTP {status_code}); "
-                    f"pausing searches to it for {max(1, seconds // 60)} min")
+                    f"pausing searches to it for {seconds // 60} min {seconds % 60} s")
 
 
 def reset_search_cooldowns() -> None:

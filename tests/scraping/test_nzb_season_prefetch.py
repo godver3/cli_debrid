@@ -176,6 +176,18 @@ class TestSearchCooldown(unittest.TestCase):
             self._scrape(1)
         self.assertEqual(self.nz._search_cooldown_left('http://idx/api'), 0)
 
+    def test_pause_lengths(self):
+        f = self.nz._search_refusal_seconds
+        self.assertEqual(f(429, {}, 'Too Many Requests'), 120)          # burst rate limit
+        self.assertEqual(f(503, {}, 'Service Unavailable'), 60)
+        self.assertEqual(f(200, {}, '<error code="500" description="Request limit reached"/>'), 600)
+        self.assertEqual(f(429, {'Retry-After': '90'}, ''), 90)
+        self.assertEqual(f(429, {'Retry-After': '3600'}, ''), 600)      # capped
+        self.assertEqual(f(404, {}, 'not found'), 0)
+        self.assertEqual(f(500, {}, 'boom'), 0)
+        self.assertEqual(f(200, {}, '<error code="429" description="Slow down"/>'), 120)
+        self.assertEqual(f(403, {}, '{"message": "Daily API quota exceeded"}'), 600)
+
     def test_other_indexers_unaffected(self):
         self.nz._record_search_refusal('http://idx/api', 'Idx', 600, 429)
         self.assertEqual(self.nz._search_cooldown_left('http://other/api'), 0)
