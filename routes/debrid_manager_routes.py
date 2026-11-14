@@ -3,7 +3,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, redirect, url_for
 from debrid import get_debrid_provider, get_provider_display_name, get_debrid_providers
 from database.torrent_tracking import get_recent_additions
 from .models import admin_required
@@ -242,6 +242,27 @@ def _invalidate_library_cache():
 @debrid_manager_bp.route('/')
 @admin_required
 def index():
+    # Usenet-only setups have no debrid tabs to show: send them to the cli_mount page.
+    from debrid import get_debrid_providers
+    try:
+        has_debrid = bool(get_debrid_providers())
+    except Exception:
+        has_debrid = True
+    if not has_debrid:
+        return redirect(url_for('debrid_manager.climount_page'))
+    return render_debrid_manager('debrid')
+
+
+@debrid_manager_bp.route('/climount')
+@admin_required
+def climount_page():
+    """cli_mount page: usenet repair and files, the usenet half of Plex Trash, and the
+    library audits that aren't about the debrid account. Same template as Debrid
+    Manager, showing only these tabs."""
+    return render_debrid_manager('climount')
+
+
+def render_debrid_manager(dm_mode):
     from routes.debrid_manager.torrent_audits import _get_bad_folder_path  # imported when called
     from utilities.settings import get_setting
     file_mgmt = get_setting('File Management', 'file_collection_management', default='Plex')
@@ -279,6 +300,7 @@ def index():
         all_providers = [{'index': 0, 'name': provider_name}]
     return render_template(
         'debrid_manager.html',
+        dm_mode=dm_mode,
         show_plex_trash=show_plex_trash,
         symlink_mode=symlink_mode,
         climount_mode=climount_mode,
