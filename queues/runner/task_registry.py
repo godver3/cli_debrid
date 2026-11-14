@@ -12,8 +12,8 @@ its tasks on even after the user has used the Automation page.
 import json
 import logging
 import os
-from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, Optional, Set, Tuple
+from dataclasses import dataclass
+from typing import Dict, Iterable, Optional, Set, Tuple
 
 TOGGLES_VERSION_KEY = '_migration_version'
 # 0.6.34: every task's full on/off state. 2: overrides only.
