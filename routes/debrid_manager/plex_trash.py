@@ -497,7 +497,7 @@ def api_plex_trash_items():
                 year = str(item.get('year', '') or '').strip()
                 tk = f"{title_norm} {year}".strip() if year else title_norm
                 item['title_match_count'] = sum(
-                    1 for _, _, rnn, _ in rd_entries if tk and rnn.startswith(tk)
+                    1 for _, _, rnn, _, _ in rd_entries if tk and rnn.startswith(tk)
                 ) if tk else 0
         else:
             for item in unique_items:
