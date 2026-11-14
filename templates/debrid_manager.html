@@ -12,7 +12,7 @@
     <div class="dm-header">
         <h2>{{ 'cli_mount' if dm_mode == 'climount' else 'Debrid Manager' }}</h2>
         {% if dm_mode != 'climount' and debrid_all_providers|length > 1 %}
-        <label class="dm-provider-pick" title="Active, Usage and torrent actions use this provider. Torrents and Audit show {{ debrid_all_providers[0].name }}.">
+        <label class="dm-provider-pick" title="Active, Torrents, Usage and torrent actions use this provider. Audit checks every provider.">
             <select id="dm-provider-select" class="dm-select">
                 {% for p in debrid_all_providers %}<option value="{{ p.name }}">{{ p.name }}</option>{% endfor %}
             </select>
@@ -2720,12 +2720,27 @@ function _updateCacheBadge(status, ageSeconds, total, loading) {
     }
 }
 
+// The library holds every provider's torrents; Torrents shows the one picked in the header.
+function _dmPickedProvider() {
+    const sel = document.getElementById('dm-provider-select');
+    return sel ? sel.value : '';
+}
+
+// ?provider=<name> for a request about a torrent whose provider is known (Audit rows):
+// it comes before the one the header picker appends, so it wins.
+function _dmProviderQS(name) {
+    return name ? `?provider=${encodeURIComponent(name)}` : '';
+}
+
 function _applyLibraryData(data) {
-    _libAll = data.torrents.map(t => ({ ...t, _type: detectType(t.filename, t._db) }));
+    const picked = _dmPickedProvider();
+    _libAll = data.torrents
+        .filter(t => !picked || !t._provider || t._provider === picked)
+        .map(t => ({ ...t, _type: detectType(t.filename, t._db) }));
     window._libLoaded = true;
     buildHashCounts();
     updateDupesBtn();
-    document.getElementById('library-tab-count').textContent = data.total || '';
+    document.getElementById('library-tab-count').textContent = _libAll.length || '';
     applyLibFilters();
     _updateCacheBadge(data.cache_status, data.cache_age || 0, data.total, data.loading);
 }
@@ -6852,7 +6867,7 @@ function _rcRenderUntracked(items) {
         <td style="text-align:center">${plexBadge}</td>
         <td class="dm-col-actions">
             <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-del-btn"
-                data-tid="${escHtml(item.filled_by_torrent_id)}" title="Delete from debrid provider">Delete from Debrid</button>
+                data-tid="${escHtml(item.filled_by_torrent_id)}" data-provider="${escHtml(item.debrid_provider || '')}" title="Delete from ${escHtml(item.debrid_provider || 'debrid provider')}">Delete from Debrid</button>
         </td>
     </tr>`;
     }).join('');
@@ -6868,7 +6883,7 @@ function _rcRenderUntracked(items) {
             onConfirm: async function() {
                 const orig = _self.innerHTML; _self.disabled = true; _self.innerHTML = '<span class="dm-spinner"></span>';
                 try {
-                    const r = await fetch(`/debrid_manager/api/torrent/${encodeURIComponent(tid)}`, {method:'DELETE'});
+                    const r = await fetch(`/debrid_manager/api/torrent/${encodeURIComponent(tid)}${_dmProviderQS(_self.dataset.provider)}`, {method:'DELETE'});
                     const d = await r.json();
                     if (d.success) {
                         _self.closest('tr')?.remove();
@@ -7071,14 +7086,22 @@ async function _rcBulkDeleteRD(items, btnEl) {
         cancelText: 'Cancel',
         onConfirm: async function() {
             const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Deleting…';
-            const tids = items.map(i => i.filled_by_torrent_id).filter(Boolean);
+            // One request per provider: each torrent is deleted from the account that holds it.
+            const byProvider = {};
+            items.forEach(i => { if (i.filled_by_torrent_id) (byProvider[i.debrid_provider || ''] ||= []).push(i.filled_by_torrent_id); });
             try {
-                const r = await fetch('/debrid_manager/api/torrent/batch-delete', {
-                    method:'POST', headers:{'Content-Type':'application/json'},
-                    body: JSON.stringify({ids: tids})
-                });
-                const d = await r.json();
-                btnEl.textContent = d.success ? `Done (${d.deleted?.length||0})` : 'Failed';
+                let deleted = 0, ok = true;
+                for (const [prov, tids] of Object.entries(byProvider)) {
+                    const r = await fetch('/debrid_manager/api/torrent/batch-delete' + _dmProviderQS(prov), {
+                        method:'POST', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({ids: tids})
+                    });
+                    const part = await r.json();
+                    ok = ok && part.success;
+                    deleted += part.deleted?.length || 0;
+                }
+                const d = {success: ok};
+                btnEl.textContent = d.success ? `Done (${deleted})` : 'Failed';
                 if (d.success) { window._rcLoaded = false; setTimeout(() => loadReconcile(true), 2000); }
                 else setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
             } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + e.message, autoClose: 5000 }); btnEl.innerHTML = orig; btnEl.disabled = false; }

@@ -7,16 +7,13 @@ from flask import jsonify
 import logging
 from flask import request
 import time
-from debrid import get_debrid_provider
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
 from utilities.jellyfin_auth import jellyfin_auth_headers
 from routes.debrid_manager_routes import (
-    _fetch_all_bg,
-    _fetch_pages_bg,
     _lib,
     _load_lib_cache_from_db,
+    start_library_refresh,
     _plex_trash_items_cache,
     debrid_manager_bp,
 )
@@ -287,18 +284,7 @@ def api_plex_trash_items():
         rd_library_status = 'ok'
         if stable is None and not rd_is_loading:
             try:
-                provider = get_debrid_provider()
-                with _lib['lock']:
-                    _lib['gen'] += 1
-                    _bg_gen = _lib['gen']
-                    _lib['loading'] = True
-                    _lib['partial'] = []
-                if provider.PROVIDER_NAME == 'Real-Debrid':
-                    threading.Thread(target=_fetch_pages_bg,
-                                     args=(provider.api_key, 1, _bg_gen), daemon=True).start()
-                else:
-                    threading.Thread(target=_fetch_all_bg,
-                                     args=(_bg_gen,), daemon=True).start()
+                start_library_refresh()
                 logging.info("[PlexTrash] No library — triggered background fetch")
                 rd_library_status = 'loading'
             except Exception as _bg_e:
@@ -343,24 +329,28 @@ def api_plex_trash_items():
         in_rd = []
         not_in_rd = []
         if stable:
-            rd_entries = [(t.get('id', ''), t.get('filename', ''), _norm(t.get('filename', '')), t.get('hash', ''))
+            rd_entries = [(t.get('id', ''), t.get('filename', ''), _norm(t.get('filename', '')), t.get('hash', ''),
+                           t.get('_provider', ''))
                           for t in stable['torrents']]
             for item in unique_items:
                 fn = _norm(item['folder_name'])
                 matched_id = None
                 matched_name = None
                 matched_hash = None
+                matched_provider = ''
                 if fn:
-                    for rd_id, rd_filename, rd_norm_name, rd_hash in rd_entries:
+                    for rd_id, rd_filename, rd_norm_name, rd_hash, rd_provider in rd_entries:
                         if fn in rd_norm_name or rd_norm_name.startswith(fn):
                             matched_id = rd_id
                             matched_name = rd_filename
                             matched_hash = rd_hash
+                            matched_provider = rd_provider
                             break
                 if matched_id:
                     item['rd_torrent_id'] = matched_id
                     item['rd_filename'] = matched_name
                     item['rd_hash'] = matched_hash
+                    item['rd_provider'] = matched_provider
                     in_rd.append(item)
                 else:
                     not_in_rd.append(item)
