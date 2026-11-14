@@ -18,6 +18,7 @@ from .statistics_routes import statistics_bp, root_bp
 from .webhook_routes import webhook_bp
 from .trakt_friends_routes import trakt_friends_bp
 from .debug_routes import debug_bp
+from .tool_pages_routes import tool_pages_bp
 from .trakt_routes import trakt_bp
 from .log_viewer_routes import logs_bp
 from .settings_routes import settings_bp
@@ -146,6 +147,7 @@ def register_blueprints(app):
         (trakt_friends_bp, '/trakt_friends'),
         (webhook_bp, '/webhook'),
         (debug_bp, '/debug'),
+        (tool_pages_bp, ''),
         (trakt_bp, '/trakt'),
         (logs_bp, '/logs'),
         (settings_bp, '/settings'),

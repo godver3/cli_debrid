@@ -1,0 +1,30 @@
+{% extends "tool_cards/layout.html" %}
+{% block title %}Tools{% endblock %}
+{% block page_title %}Tools{% endblock %}
+{% block intro %}<p class="tdb-intro">Hands-on tools for the library, symlinks and Plex labels. Backups, cleanups and database fixes are on the <a href="{{ url_for('tool_pages.maintenance') }}">Maintenance</a> page; scheduled jobs are on <a href="{{ url_for('program_operation.automation') }}">Automation</a>.</p>{% endblock %}
+{% block tabs %}
+<button class="tab" data-cat="library">Library</button>
+<button class="tab" data-cat="symlinks">Symlinks</button>
+<button class="tab" data-cat="plex_labels">Plex Labels</button>
+<button class="tab" data-cat="usenet">Usenet</button>
+<button class="tab" data-cat="pages">More tools</button>
+{% endblock %}
+{% block cards %}
+{% include 'tool_cards/tools.html' %}
+{% include '_provider_transfer.html' %}
+<div data-cat="pages" class="debug_item">
+  <h3>Other tool pages</h3>
+  <p class="description">Tools that have a page of their own.</p>
+  <div class="tdb-links" style="display:flex;flex-wrap:wrap;gap:8px">
+    <a class="tdb-link" href="{{ url_for('scraper.scraper_tester') }}"><i class="fa-solid fa-flask"></i> Scraper Tester</a>
+    <a class="tdb-link" href="{{ url_for('database.reverse_parser') }}"><i class="fa-solid fa-rotate"></i> Reverse Parser</a>
+    <a class="tdb-link" href="{{ url_for('magnet.assign_magnet') }}"><i class="fa-solid fa-arrow-right-arrow-left"></i> Manual Assign</a>
+    <a class="tdb-link" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i> Manual Blacklist</a>
+    <a class="tdb-link" href="{{ url_for('symlink_tools.index') }}"><i class="fa-solid fa-link"></i> Create a Symlink</a>
+    <a class="tdb-link" href="{{ url_for('metadata.metadata_debug') }}"><i class="fa-solid fa-tags"></i> Metadata Lookup</a>
+    <a class="tdb-link" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
+    <a class="tdb-link" href="{{ url_for('trakt_friends.manage_friends') }}"><i class="fa-solid fa-users"></i> Trakt Friends</a>
+    <a class="tdb-link" href="{{ url_for('user_token.collect_tokens_page') }}"><i class="fa-solid fa-key"></i> Plex User Tokens</a>
+  </div>
+</div>
+{% endblock %}

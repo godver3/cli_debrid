@@ -637,26 +637,6 @@
     </div>
 </div>
 
-<!-- Testing & Development Section -->
-<div class="settings-section settings-card">
-    <div class="settings-section-header">
-        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-        <div class="settings-header-left">
-            <h4>Testing & Development</h4>
-        </div>
-    </div>
-    <div class="settings-section-content">
-        <div class="settings-form-group">
-            <label for="debug-enable_crash_test-td" class="settings-title">Enable Crash Test:</label>
-            <input type="checkbox" id="debug-enable_crash_test-td" name="Debug.enable_crash_test"
-                   data-section="Debug" data-key="enable_crash_test"
-                   {% if settings.get('Debug', {}).get('enable_crash_test', False) %}checked{% endif %}>
-            <p class="settings-description">Enable crash testing functionality</p>
-        </div>
-    </div>
-</div>
 
 
         </div>

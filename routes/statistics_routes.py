@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request, render_template
+from flask import Blueprint, jsonify, request, render_template, redirect, url_for
 from datetime import datetime, timedelta
 import threading
 import time
@@ -1308,6 +1308,9 @@ def _scraper_stats_args():
 @statistics_bp.route('/scraper_stats')
 @user_required
 def scraper_stats_page():
+    # Shown as a tab of the Performance Dashboard (loaded with ?embed=1).
+    if not request.args.get('embed'):
+        return redirect(url_for('performance.performance_dashboard') + '#scraper-stats')
     return render_template('scraper_stats.html')
 
 

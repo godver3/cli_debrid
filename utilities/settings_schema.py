@@ -983,11 +983,6 @@ SETTINGS_SCHEMA = {
             "description": "Do not add Plex watch history items to queue",
             "default": False
         },
-        "enable_crash_test": {
-            "type": "boolean",
-            "description": "Enable crash test",
-            "default": False
-        },
         "enable_detailed_notification_information": {
             "type": "boolean",
             "description": "Enable detailed information in notifications including content source and content source details",

@@ -1653,7 +1653,7 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             current_thread_id_after_lock = threading.get_ident()
             logging.info(f"ENABLE_TASK: Acquired scheduler_lock for '{normalized_name}'. (Thread: {current_thread_id_after_lock})")
             job = self.scheduler.get_job(job_id)
-            if job and not self.scheduler.running:
+            if job and not getattr(self.scheduler, 'running', True):
                 # Program stopped: a pending job is already set to run once it starts.
                 self.enabled_tasks.add(normalized_name)
                 return True
@@ -1717,7 +1717,7 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             # Disabled while the queue is paused: resume_queue must not resume it.
             self.paused_jobs_by_queue.discard(job_id)
             job = self.scheduler.get_job(job_id)
-            if job and not self.scheduler.running:
+            if job and not getattr(self.scheduler, 'running', True):
                 # Program stopped: jobs are still pending and have no next_run_time yet.
                 self.scheduler.remove_job(job_id)
                 self.enabled_tasks.discard(normalized_name)
