@@ -49,7 +49,7 @@ How movies are ordered inside the Plex collection:
 
 ## Schedule
 
-Runs automatically every **24 hours**. Use the **Run Now** button or Task Manager to trigger immediately.
+Runs automatically every **24 hours**. Use the **Run Now** button or the Automation page to trigger immediately.
 
 The first run performs a TMDB lookup for every movie in your database (~30 minutes for large libraries). Subsequent runs are near-instant as already-checked movies are skipped.
 

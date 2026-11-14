@@ -780,18 +780,6 @@ export function updateSettings() {
     } else {
     }
 
-    // Handle Content Source check periods
-    const contentSourceCheckPeriods = {};
-    document.querySelectorAll('#content-source-check-periods input').forEach(input => {
-        const sourceName = input.id.replace('debug-content-source-', '');
-        const value = input.value.trim();
-        if (value !== '') {
-            contentSourceCheckPeriods[sourceName] = parseFloat(value) || 0.1;
-        }
-    });
-    settingsData['Debug'] = settingsData['Debug'] || {};
-    settingsData['Debug']['content_source_check_period'] = contentSourceCheckPeriods;
-
     // Handle Reverse Parser settings
     const reverseParserSettings = {
         version_terms: {},
@@ -993,50 +981,10 @@ export function updateSettings() {
     } else {
     }
 
-    const traktWatchlistRemoval = document.getElementById('scraping-trakt_watchlist_removal');
-    
-    if (traktWatchlistRemoval) {
-        settingsData['Scraping']['trakt_watchlist_removal'] = traktWatchlistRemoval.checked;
-
-    } else {
-    }
-
-    const traktWatchlistKeepSeries = document.getElementById('scraping-trakt_watchlist_keep_series');
-    
-    if (traktWatchlistKeepSeries) {
-        settingsData['Scraping']['trakt_watchlist_keep_series'] = traktWatchlistKeepSeries.checked;
-
-    } else {
-    }
-
     const blacklistDuration = document.getElementById('queue-blacklist_duration');
     
     if (blacklistDuration) {
         settingsData['Queue']['blacklist_duration'] = parseInt(blacklistDuration.value) || 30;
-
-    } else {
-    }
-
-    const plexWatchlistRemoval = document.getElementById('scraping-plex_watchlist_removal');
-    
-    if (plexWatchlistRemoval) {
-        settingsData['Scraping']['plex_watchlist_removal'] = plexWatchlistRemoval.checked;
-
-    } else {
-    }
-
-    const plexWatchlistKeepSeries = document.getElementById('scraping-plex_watchlist_keep_series');
-    
-    if (plexWatchlistKeepSeries) {
-        settingsData['Scraping']['plex_watchlist_keep_series'] = plexWatchlistKeepSeries.checked;
-
-    } else {
-    }
-
-    const allowPartialOverseerrRequests = document.getElementById('scraping-allow_partial_overseerr_requests');
-    
-    if (allowPartialOverseerrRequests) {
-        settingsData['Scraping']['allow_partial_overseerr_requests'] = allowPartialOverseerrRequests.checked;
 
     } else {
     }
@@ -1268,51 +1216,6 @@ export function updateSettings() {
     });
 }
 
-function updateContentSourceCheckPeriods() {
-    const contentSourcesDiv = document.getElementById('content-source-check-periods');
-    if (!contentSourcesDiv) {
-        console.warn("Element with id 'content-source-check-periods' not found. Skipping update.");
-        return;
-    }
-
-    const defaultIntervals = {
-        'Overseerr': 900,
-        'Agregarr': 900,
-        'MDBList': 900,
-        'Collected': 86400,
-        'Trakt Watchlist': 900,
-        'Trakt Lists': 900,
-        'Trakt Collection': 900,
-        'Special Trakt Lists': 900,
-        'Scrob Lists': 900,
-        'Scrob Collection': 900,
-        'Special Scrob Lists': 900,
-        'My Plex Watchlist': 900,
-        'Other Plex Watchlist': 900,
-        'My Plex RSS Watchlist': 900,
-        'My Friends Plex RSS Watchlist': 900,
-        'Plex Friends Watchlist': 900,
-        'Adaptive List': 900
-    };
-
-    const enabledContentSources = Object.keys(settingsData['Content Sources'] || {}).filter(source => settingsData['Content Sources'][source].enabled);
-    
-    contentSourcesDiv.innerHTML = '';
-    enabledContentSources.forEach(source => {
-        const sourceType = source.split('_')[0];
-        const div = document.createElement('div');
-        div.className = 'content-source-check-period';
-        const defaultInterval = defaultIntervals[sourceType] ? Math.floor(defaultIntervals[sourceType] / 60) : '';  // Convert seconds to minutes
-        div.innerHTML = `
-            <label for="debug-content-source-${source}">${source}:</label>
-            <input type="number" id="debug-content-source-${source}" name="Debug.content_source_check_period.${source}" 
-                   value="${(settingsData['Debug'] && settingsData['Debug']['content_source_check_period'] && settingsData['Debug']['content_source_check_period'][source]) || ''}" 
-                   step="0.1" min="0.1" class="settings-input" placeholder="${defaultInterval}">
-        `;
-        contentSourcesDiv.appendChild(div);
-    });
-}
-
 // Function to initialize settings tabs
 function initializeSettingsTabs() {
     const tabButtons = document.querySelectorAll('.settings-tab-button');
@@ -1372,17 +1275,6 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
         
-        // Add event listeners for content source check periods
-        const contentSourceCheckPeriods = document.getElementById('content-source-check-periods');
-        if (contentSourceCheckPeriods) {
-            const checkPeriodInputs = contentSourceCheckPeriods.querySelectorAll('input[type="number"]');
-            checkPeriodInputs.forEach(function(input) {
-                input.addEventListener('change', function() {
-                    updateContentSourceCheckPeriod(this);
-                });
-            });
-        }
-        // Removed warning - this code may run on pages that don't have this element
         
         // Hide hybrid mode and jackett seeders only checkboxes
         hideHybridModeCheckboxes();

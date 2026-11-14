@@ -198,7 +198,8 @@ def get_show_status(imdb_id: str) -> str:
     status = str(stored_status or '').strip().lower()
     return 'ended' if status in _ENDED_SHOW_STATUSES else status
 
-def should_remove_from_watchlist(imdb_id: str, media_type: str, item_state: str = None) -> Tuple[bool, str]:
+def should_remove_from_watchlist(imdb_id: str, media_type: str, item_state: str = None,
+                                 keep_series: bool = False) -> Tuple[bool, str]:
     """Shared rule for taking a collected title off a Plex watchlist.
 
     Used by fetch-time removal (My Plex), RSS suppression and post-processing removal so
@@ -212,7 +213,7 @@ def should_remove_from_watchlist(imdb_id: str, media_type: str, item_state: str 
     if media_type in ('tv', 'show', 'episode'):
         if item_state not in ('Collected', 'Partial'):
             return False, f'not collected ({item_state})'
-        if get_setting('Debug', 'plex_watchlist_keep_series', False):
+        if keep_series:
             return False, 'keep_series is enabled'
         status = get_show_status(imdb_id)
         if status != 'ended':
@@ -256,8 +257,12 @@ def plex_token_matches_username(account, username: str) -> bool:
     expected = (username or '').strip().casefold()
     return bool(expected) and any(n.strip().casefold() == expected for n in plex_account_owner_names(account))
 
-def get_wanted_from_plex_watchlist(versions: Dict[str, bool], read_only: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
-    """Fetch My Plex Watchlist. read_only=True never removes or hides collected titles (used by label sync)."""
+def get_wanted_from_plex_watchlist(versions: Dict[str, bool], read_only: bool = False,
+                                   remove_when_collected: bool = False,
+                                   keep_series: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    """Fetch My Plex Watchlist. read_only=True never removes or hides collected titles (used by label sync).
+
+    remove_when_collected / keep_series are the source's own options."""
     overall_start_time = time.time()
     all_wanted_items = []
     processed_items_for_current_run = [] # Changed variable name
@@ -279,8 +284,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool], read_only: bool = 
     logging.info(f"Using Plex account: {account.username}")
     
     try:
-        should_remove = get_setting('Debug', 'plex_watchlist_removal', False)
-        keep_series = get_setting('Debug', 'plex_watchlist_keep_series', False)
+        should_remove = bool(remove_when_collected)
 
         logging.info("Fetching initial watchlist from Plex.tv cloud service")
         fetch_watchlist_start_time = time.time()
@@ -354,7 +358,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool], read_only: bool = 
                 # read_only (label sync) lists every title as-is: it must neither remove anything
                 # from Plex nor hide the collected titles it is meant to label.
                 if item_state in ("Collected", "Partial") and should_remove and not read_only:
-                    remove_item, reason = should_remove_from_watchlist(imdb_id, media_type, item_state)
+                    remove_item, reason = should_remove_from_watchlist(imdb_id, media_type, item_state, keep_series)
                     if media_type == 'tv' and not remove_item:
                         # Collected series stay on the watchlist and keep feeding new episodes.
                         logging.debug(f"Retaining and processing collected TV series: '{title}' (IMDB: {imdb_id}) - {reason}.")

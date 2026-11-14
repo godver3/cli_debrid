@@ -32,98 +32,37 @@ from content_checkers.content_cache_management import save_source_cache
 from content_checkers.content_cache_management import should_process_item
 import traceback
 from content_checkers.content_cache_management import update_cache_for_item
+from queues.runner import task_registry
 
 
 class ContentSourceTasks:
     def get_content_sources(self, force_refresh=False):
+        """Load content sources and register a task_<source>_wanted task for each.
+
+        Source tasks are on by default; an override saved on the Automation page
+        switches one off. Custom intervals come from task_intervals.json.
+        """
         if self.content_sources is None or force_refresh:
-            settings = get_all_settings()
-            self.content_sources = settings.get('Content Sources', {})
-            debug_settings = settings.get('Debug', {})
-            custom_check_periods = debug_settings.get('content_source_check_period', {})
-            
-            default_intervals = {
-                'Overseerr': 900,
-                'MDBList': 900,
-                'Collected': 86400,
-                'Trakt Watchlist': 900,
-                'Trakt Lists': 900,
-                'Trakt Collection': 900,
-                'My Plex Watchlist': 900,
-                'Other Plex Watchlist': 900,
-                'My Plex RSS Watchlist': 900,
-                'My Friends Plex RSS Watchlist': 900,
-                'Plex Friends Watchlist': 900,
-                'My Friends Trakt Watchlist': 900,
-                'Special Trakt Lists': 900,
-                'Scrob Lists': 900,
-                'Scrob Collection': 900,
-                'Special Scrob Lists': 900,
-                'Adaptive List': 900  # TMDB discover-based adaptive lists
-            }
-            
-            log_intervals_message = ["Content source intervals being applied to effective set:"] # Prepare log message
-            
+            self.content_sources = get_all_settings().get('Content Sources', {})
+            overrides = getattr(self, '_task_overrides', None)
+            if overrides is None:
+                overrides = task_registry.load_overrides()
             for source, data in self.content_sources.items():
                 if isinstance(data, str):
                     data = {'enabled': data.lower() == 'true'}
-                
+                    self.content_sources[source] = data
                 if not isinstance(data, dict):
                     logging.error(f"Unexpected data type for content source {source}: {type(data)}")
                     continue
-                
-                source_type = source.split('_')[0]
-
-                # Use custom check period if present, otherwise use default
-                custom_interval = custom_check_periods.get(source)
-                final_interval = 0 # Initialize
-                if custom_interval is not None:
-                    try:
-                        final_interval = int(float(custom_interval) * 60)
-                        data['interval'] = final_interval
-                    except ValueError:
-                         logging.error(f"Invalid custom interval '{custom_interval}' for source {source}. Using default.")
-                         final_interval = int(data.get('interval', default_intervals.get(source_type, 3600)))
-                         data['interval'] = final_interval
-                else:
-                    final_interval = int(data.get('interval', default_intervals.get(source_type, 3600)))
-                    data['interval'] = final_interval
-
-                task_name = f'task_{source}_wanted'
-                
-                # Store the calculated default interval (before any custom overrides)
-                calculated_default_interval = final_interval
-                
-                # Check if a custom interval was already loaded for this task (from user's saved preferences)
-                if task_name in self.task_intervals:
-                    # A custom interval exists, preserve it instead of overwriting with defaults
-                    existing_custom_interval = self.task_intervals[task_name]
-                    logging.info(f"Preserving custom interval for content source '{task_name}': {existing_custom_interval}s (would have been {calculated_default_interval}s from source defaults)")
-                    # Update final_interval so the log message below shows the preserved value
-                    final_interval = existing_custom_interval
-                else:
-                    # No custom interval exists, use the calculated default interval
-                    self.task_intervals[task_name] = final_interval
-                
-                # Add to original_task_intervals with the calculated default (not the custom value)
-                # This ensures that resets will go back to the true calculated default
-                if task_name not in self.original_task_intervals:
-                    self.original_task_intervals[task_name] = calculated_default_interval
-
-                log_intervals_message.append(f"  {task_name}: {final_interval} seconds")
-                
                 if isinstance(data.get('enabled'), str):
                     data['enabled'] = data['enabled'].lower() == 'true'
-                
-                # Add content source tasks by default; toggles will disable later if set to False
-                if task_name not in self.enabled_tasks:
+                task_name = task_registry.content_source_task_name(source)
+                default_interval = task_registry.content_source_default_interval(source, data)
+                self.original_task_intervals[task_name] = default_interval
+                self.task_intervals.setdefault(task_name, default_interval)
+                self.default_enabled_tasks.add(task_name)
+                if overrides.get(task_name, True):
                     self.enabled_tasks.add(task_name)
-                    logging.info(f"Enabled content source task by default (ignoring config flag): {task_name}")
-                # Do not remove here based on config; rely solely on saved toggles applied later
-
-            # Log the intervals once after processing all sources
-            logging.info("\n".join(log_intervals_message))
-
         return self.content_sources
 
     def process_content_source(self, source, data, bypass_cache=False):
@@ -242,13 +181,13 @@ class ContentSourceTasks:
                 wanted_content = get_wanted_from_collected() # Doesn't take versions arg
             elif source_type == 'My Plex Watchlist':
                 from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist
-                wanted_content = get_wanted_from_plex_watchlist(versions_from_config)
+                wanted_content = get_wanted_from_plex_watchlist(versions_from_config, remove_when_collected=bool(data.get('remove_when_collected')), keep_series=bool(data.get('keep_series')))
             elif source_type == 'My Plex RSS Watchlist':
                 plex_rss_url = data.get('url', '')
-                wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions_from_config)
+                wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions_from_config, remove_when_collected=bool(data.get('remove_when_collected')), keep_series=bool(data.get('keep_series')))
             elif source_type == 'My Friends Plex RSS Watchlist':
                 plex_rss_url = data.get('url', '')
-                wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config)
+                wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config, remove_when_collected=bool(data.get('remove_when_collected')), keep_series=bool(data.get('keep_series')))
             elif source_type == 'Plex Friends Watchlist':
                 from content_checkers.plex_watchlist import get_wanted_from_plex_friends_watchlist
                 wanted_content = get_wanted_from_plex_friends_watchlist(data, versions_from_config)

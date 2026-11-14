@@ -99,24 +99,17 @@ def _parse_last_updated(value):
         return None
 
 
+from queues.runner import task_registry
+
 # Tasks whose on/off switch is a setting. ProgramRunner schedules them from the setting
-# alone (saved Task Manager toggles are ignored), and flipping one in the Task Manager
-# writes the setting (see _sync_setting_backed_tasks in program_operation_routes).
-SETTING_BACKED_TASKS = {
-    'task_process_plex_reported_issues': ('Plex Reported Issues', 'enabled'),
-}
+# alone (saved overrides are ignored), and flipping one on the Automation page writes
+# the setting (see _sync_setting_backed_tasks in program_operation_routes).
+SETTING_BACKED_TASKS = {s.name: s.setting for s in task_registry.SPECS.values() if s.setting}
 
 
 def viewer_history_task_wanted():
-    """task_sync_viewer_history is on by default when its sync has somewhere to read
-    from (Plex, or Emby/Jellyfin) and the library recommendations it feeds can run
-    (a TMDB key). A Task Manager toggle still overrides this."""
-    if not str(get_setting('TMDB', 'api_key', '') or '').strip():
-        return False
-    plex = get_setting('Plex', 'url', '') and get_setting('Plex', 'token', '')
-    emby = (str(get_setting('Debug', 'emby_jellyfin_url', '') or '').strip()
-            and str(get_setting('Debug', 'emby_jellyfin_token', '') or '').strip())
-    return bool(plex or emby)
+    """task_sync_viewer_history is on by default when a media server and a TMDB key are set."""
+    return task_registry._viewer_history_default(get_setting)
 
 
 VIEWER_HISTORY_FIRST_RUN_DELAY = 300  # first sync soon after startup when there's no history yet
@@ -212,7 +205,6 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
 
         # self.scheduler_lock = threading.Lock() # Previous version
         self.scheduler_lock = threading.RLock() # MODIFIED: Ensure RLock for reentrancy
-        self.heavy_task_lock = threading.Lock()
         self.paused_jobs_by_queue = set() # Keep track of jobs paused by pause_queue
         
         self.executing_task_start_times = {}
@@ -254,627 +246,30 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             'Pre_release': 'process_pre_release'
         }
 
-        # Define BASE set of heavy DB tasks
-        # Add tasks that are always considered heavy, except content sources
-        # Content source tasks ('task_..._wanted') will NOT use this lock.
-        self.HEAVY_DB_TASKS = {
-            'task_reconcile_queues',
-            'task_check_database_health',
-            'task_run_library_maintenance',
-            'task_update_show_ids',
-            'task_update_show_titles',
-            'task_update_movie_ids',
-            'task_update_movie_titles',
-            'task_update_tv_show_status',
-            'task_plex_full_scan',
-            'task_get_plex_watch_history',
-            'task_refresh_release_dates',
-        }
-        # --- Updated log message ---
-        logging.info(f"Defined {len(self.HEAVY_DB_TASKS)} base tasks requiring exclusive execution lock. Global sequential execution is handled by scheduler config.")
-
-        # Base Task Intervals
-        self.task_intervals = {
-            # Queue Processing Tasks (intervals for individual queues are less critical now)
-            'Wanted': 60,             # Increased from 5
-            'Scraping': 1,           # Increased from 5
-            'Adding': 1,             # Increased from 5
-            'Checking': 30,
-            'Sleeping': 300,
-            'Unreleased': 300,
-            'Blacklisted': 7200,
-            'Pending Uncached': 3600,
-            'Upgrading': 3600,
-            'final_check_queue': 900, # Use lowercase key matching the task ID
-            'Pre_release': 24 * 60 * 60, # Run every 24 hours (daily)
-            # Combined/High Frequency Tasks
-            'task_update_queue_views': 30,     # Update queue views every 30 seconds
-            'task_send_notifications': 15,       # Run every 15 seconds
-            'task_check_plex_files': 60,         # Run every 60 seconds (if enabled)
-            # Periodic Maintenance/Update Tasks
-            'task_check_service_connectivity': 60, # Run every 60 seconds
-            'task_heartbeat': 120,               # Run every 2 minutes
-            # 'task_update_statistics_summary': 300, # Run every 5 minutes
-            'task_refresh_download_stats': 300,    # Run every 5 minutes
-            'task_precompute_airing_shows': 600,   # Precompute airing shows every 10 minutes
-            'task_verify_symlinked_files': 7200,    # Run every 120 minutes (if enabled)
-            'task_verify_plex_removals': 900,      # Run every 15 minutes (if enabled) - supports both Plex and Jellyfin/Emby
-            'task_reconcile_queues': 3600,         # Run every 1 hour
-            'task_check_database_health': 3600,    # Run every hour
-            'task_retry_content_source_removals': 300,  # Every 5 minutes; no-op unless a removal failed
-            'task_sync_time': 3600,                # Run every hour
-            'task_check_trakt_early_releases': 7200,# Run every 2 hours (reduced to minimize API calls)
-            'task_update_show_ids': 40600,         # Run every ~11 hours
-            'task_update_show_titles': 45600,      # Run every ~12 hours
-            'task_update_movie_ids': 50600,        # Run every ~14 hours
-            'task_update_movie_titles': 55600,     # Run every ~15 hours
-            'task_refresh_release_dates': 36600,   # Run every 10h 10m (10 hours + 600s stagger to avoid overlap with early_releases)
-            'task_sync_episode_metadata': 24 * 60 * 60,  # Run every 24 hours to sync episode titles from TMDB/Trakt
-            'task_cleanup_title_year_suffixes': 24 * 60 * 60,  # Run every 24 hours
-            # 'task_generate_airtime_report': 3600,  # Run every hour
-            'task_run_library_maintenance': 12 * 60 * 60, # Run every twelve hours (if enabled)
-            'task_sync_library_metadata': 24 * 60 * 60,  # Run every 24 hours (if enabled)
-            'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours (if enabled)
-            'task_sync_viewer_history': 6 * 60 * 60,  # Run every 6 hours (if enabled) - per-user history for Discover recommendations
-            'task_refresh_plex_tokens': 24 * 60 * 60,   # Run every 24 hours
-            'task_sync_plex_labels': 30 * 60,           # Run every 30 minutes
-            'task_process_plex_reported_issues': 30, # Run every 30 seconds (if enabled) - Plex has no push for reports
-            'task_update_tv_show_status': 172800,       # Run every 48 hours
-            # 'task_purge_not_wanted_magnets_file': 604800, # Default: 1 week (Can be added if needed)
-            'task_plex_full_scan': 1800, # Run every hour (Can be adjusted)
-            # NEW Load Adjustment Task
-            # 'task_adjust_intervals_for_load': 120, # Run every 2 minutes
-            # Add new task for library size refresh
-            'task_refresh_library_size_cache': 12 * 60 * 60, # Run every 12 hours
-            'task_backup_database': 24 * 60 * 60, # Run every 24 hours (daily backup)
-            'task_backup_debrid': 24 * 60 * 60, # Run every 24 hours (disabled by default)
-            'task_cleanup_debrid': 24 * 60 * 60, # Run every 24 hours (disabled by default)
-            'task_backfill_nzb_torrent_ids': 24 * 60 * 60, # Run once (disabled by default)
-            'task_repair_broken_nzbs': 6 * 60 * 60, # Run every 6 hours
-            'task_repair_broken_debrids': 6 * 60 * 60, # Run every 6 hours
-            'task_sync_cli_mount_changes': 5 * 60, # Run every 5 minutes
-            'task_push_pending_climount_tags': 5 * 60, # Run every 5 minutes — catches tags changed on cli_debrid side only
-            'task_scan_mount_for_external_adds': 15 * 60, # Run every 15 minutes (disabled by default)
-            'task_nzb_health_check': 10,             # Run every 10 seconds — polls NZB items in Adding
-            'task_nzb_playback_repair_completion': 15, # Confirm only already-started playback repairs
-            'task_nzb_playback_cleanup_retry': 20 * 60, # Background retry for old-file cleanup deferred after finalization
-            'task_backfill_plex_guids': 24 * 60 * 60,    # Run once (disabled by default)
-            'task_backfill_plex_ms_item_id': 24 * 60 * 60, # Run once (disabled by default)
-            'task_process_standalone_plex_removals': 60 * 60, # Run every hour
-            # Add media analysis task interval
-            'task_analyze_media_files': 1 * 60 * 60, # Once an hour
-            # Add manual Plex full scan task
-            'task_manual_plex_full_scan': 3600, # Run every 60 minutes, disabled by default
-            # Add bulk subtitle processing task
-            'task_process_bulk_subtitles': 3600, # Run every hour, disabled by default
-            # Add Plex overlay tasks
-            'task_overlay_sync': 3600, # Run every 1 hour (if overlays enabled)
-            'task_overlay_cleanup': 86400, # Run every 24 hours (if overlays enabled)
-            'task_plex_smart_collection_posters': 86400, # Run every 24 hours (if Plex mode)
-            'task_plex_movie_boxsets': 86400, # Run every 24 hours (if Plex mode)
-            'task_regulate_system_load': 30, # Check system load every 30 seconds
-            'task_upgrade_hub_scan': 24 * 60 * 60, # Run every 24 hours (disabled by default)
-            'task_upgrade_hub_auto_queue': 24 * 60 * 60, # Run every 24 hours (disabled by default)
-            'task_trim_memory': 60 * 60, # Run every hour
-        }
-        # Store original intervals for reference (will be updated after content sources)
-        self.original_task_intervals = self.task_intervals.copy()
-        logging.info(f"Base default task intervals defined: {len(self.original_task_intervals)}")
-
-        # Load custom intervals
-        custom_intervals_applied = 0
-        intervals_file_path = None # Define outside try
-        try:
-            # Add import os
-            import os
-            import json
-            from routes.program_operation_routes import _get_task_intervals_file_path # Import helper
-            intervals_file_path = _get_task_intervals_file_path()
-            if os.path.exists(intervals_file_path): # Error occurred here
-                # Added log
-                logging.info(f"Loading custom task intervals from {intervals_file_path}")
-                with open(intervals_file_path, 'r') as f:
-                    # Added try-except for JSON decode
-                    try:
-                        saved_intervals = json.load(f)
-                        logging.debug(f"Successfully loaded JSON data: {saved_intervals}") # Log loaded data
-                    except json.JSONDecodeError as json_e:
-                        logging.error(f"Failed to decode JSON from {intervals_file_path}: {json_e}")
-                        saved_intervals = {} # Use empty dict on decode error
-
-                # Process values as SECONDS
-                for task_name, interval_seconds_val in saved_intervals.items(): # Rename loop variable
-                    # Log raw values
-                    logging.debug(f"Processing raw custom interval: Task='{task_name}', Value='{interval_seconds_val}'")
-                    normalized_name = self._normalize_task_name(task_name) # Normalize saved task name
-                    # Log normalized name
-                    logging.debug(f"Normalized task name: '{normalized_name}'")
-
-                    # Check if this task exists in our task_intervals (which start as defaults)
-                    if normalized_name in self.task_intervals: # Check against task_intervals
-                        # Log default interval
-                        # default_interval here refers to the current value in self.task_intervals,
-                        # which might have already been set by a previous custom rule if keys overlap, or is the hardcoded default.
-                        current_effective_interval = self.task_intervals[normalized_name]
-                        logging.debug(f"Task '{normalized_name}' exists. Current effective interval: {current_effective_interval}s")
-
-                        if interval_seconds_val is not None: # Ignore None values (means reset)
-                            try:
-                                # Value is already in seconds
-                                interval_sec_int = int(interval_seconds_val)
-                                # Log parsed custom interval
-                                logging.debug(f"Parsed custom interval for '{normalized_name}' as {interval_sec_int} seconds.")
-
-                                MIN_INTERVAL_SECONDS = 1 # Define or import this constant
-                                if interval_sec_int >= MIN_INTERVAL_SECONDS:
-                                    # Log comparison
-                                    # Compare with current effective, not original_task_intervals necessarily
-                                    logging.debug(f"Comparing current effective ({current_effective_interval}s) with custom ({interval_sec_int}s) for '{normalized_name}'")
-                                    if current_effective_interval != interval_sec_int: # Apply if different
-                                        # Log application
-                                        logging.info(f"Applying custom interval to '{normalized_name}': {interval_sec_int} seconds (Previous effective: {current_effective_interval}s)")
-                                        self.task_intervals[normalized_name] = interval_sec_int # MODIFIES task_intervals ONLY
-                                        custom_intervals_applied += 1
-                                    else:
-                                        # Log skipping
-                                        logging.debug(f"Custom interval ({interval_sec_int}s) for '{normalized_name}' matches current effective ({current_effective_interval}s). Skipping update.")
-                                else:
-                                    logging.warning(f"Skipping invalid custom interval for '{normalized_name}': {interval_sec_int}s (must be >= {MIN_INTERVAL_SECONDS} seconds).")
-                            except (ValueError, TypeError) as parse_e:
-                                logging.warning(f"Skipping invalid custom interval format for '{normalized_name}': {interval_seconds_val}. Error: {parse_e}")
-                        else:
-                             # Custom interval is None, reset to original default for this task
-                             if normalized_name in self.original_task_intervals:
-                                 original_default = self.original_task_intervals[normalized_name]
-                                 if self.task_intervals.get(normalized_name) != original_default:
-                                     logging.info(f"Resetting custom interval for '{normalized_name}' to its original default: {original_default}s.")
-                                     self.task_intervals[normalized_name] = original_default
-                                     custom_intervals_applied += 1 # Count as an applied change
-                                 else:
-                                     logging.debug(f"Custom interval for '{normalized_name}' is None, and it already matches original default. No change.")
-                             else:
-                                 logging.warning(f"Custom interval for '{normalized_name}' is None, but no original default found. Cannot reset.")
-                    else:
-                        # Task from custom file is not in our initial defaults. Add it to task_intervals
-                        # but NOT to original_task_intervals.
-                        if interval_seconds_val is not None:
-                            try:
-                                interval_sec_int = int(interval_seconds_val)
-                                MIN_INTERVAL_SECONDS = 10
-                                if interval_sec_int >= MIN_INTERVAL_SECONDS:
-                                    logging.info(f"Custom interval for new task '{normalized_name}' found: {interval_sec_int}s. Adding to effective intervals.")
-                                    self.task_intervals[normalized_name] = interval_sec_int
-                                    # DO NOT ADD TO self.original_task_intervals
-                                    custom_intervals_applied += 1
-                                else:
-                                    logging.warning(f"Skipping invalid custom interval for new task '{normalized_name}': {interval_sec_int}s.")
-                            except (ValueError, TypeError) as parse_e:
-                                logging.warning(f"Skipping invalid custom interval format for new task '{normalized_name}': {interval_seconds_val}. Error: {parse_e}")
-                        else:
-                            logging.debug(f"Custom interval for new task '{normalized_name}' is None. Ignoring.")
-
-
-            else:
-                logging.info("No custom task_intervals.json found, using default intervals.")
-        except Exception as e:
-            log_path_str = f" at {intervals_file_path}" if intervals_file_path else ""
-            logging.error(f"Error loading custom task intervals{log_path_str}: {e}", exc_info=True)
-
-        if custom_intervals_applied > 0:
-             logging.info(f"Applied {custom_intervals_applied} custom task intervals to effective set.")
-
-        # Define constants for dynamic interval adjustment
-        # Based on slowdown_candidates logic from task_adjust_intervals_for_load
-        self.DYNAMIC_INTERVAL_TASKS = {
-            'Checking', 'Sleeping', 'Blacklisted', 'Pending Uncached', 'Upgrading',
-            'task_refresh_release_dates', 'task_purge_not_wanted_magnets_file',
-            'task_generate_airtime_report', 'task_sync_time', 'task_check_trakt_early_releases',
-            'task_reconcile_queues', 'task_refresh_download_stats',
-            'task_update_show_ids', 'task_update_show_titles', 'task_update_movie_ids',
-            'task_update_movie_titles', 'task_sync_episode_metadata', 'task_cleanup_title_year_suffixes', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
-            'task_check_database_health', 'task_run_library_maintenance',
-            'task_verify_symlinked_files', 'task_update_statistics_summary',
-            'task_precompute_airing_shows',
-            'task_update_tv_show_status',
-            # Add new task to dynamic intervals
-            'task_refresh_library_size_cache',
-            'task_process_standalone_plex_removals', # Add to dynamic intervals as well
-            'task_scan_mount_for_external_adds',
-            # Add media analysis task to dynamic intervals
-            'task_analyze_media_files',
-            # Add manual plex scan to dynamic intervals
-            'task_manual_plex_full_scan',
-        }
-        # Add content source tasks with interval > 900s (15 min) to dynamic set
-        # This needs to happen *after* content sources are processed, let's refine this later if needed
-        # For now, initialize with the base set. We can add sources dynamically later.
-
-        self.MAX_INTERVAL_MULTIPLIER = 4 # Example: Max increase is 4x original
-        self.ABSOLUTE_MAX_INTERVAL = 24 * 60 * 60 # Example: Max interval is 24 hours
-
-        # Initialize content_sources attribute FIRST
+        # Tasks, intervals and default on/off come from queues/runner/task_registry.py.
+        # Content source tasks are added by get_content_sources(); saved intervals and the
+        # user's on/off overrides (task_toggles.json) are applied on top.
         self.content_sources = None
-
         self.start_time = time.time()
-
-        # --- START: Task Enabling Logic Reorder ---
-
-        # 1. Initialize enabled_tasks with base/essential tasks
-        self.enabled_tasks = {
-            # Core Queue Processing (Individual queues are less important to enable here)
-            'Wanted',
-            'Scraping',
-            'Adding',
-            'Checking',
-            'Sleeping',
-            'Unreleased',
-            'Blacklisted',
-            'Pending Uncached',
-            'Upgrading',
-            'final_check_queue', # Use lowercase key matching the task ID
-            'Pre_release',
-            # Combined/High Frequency Tasks
-            'task_update_queue_views',
-            'task_send_notifications',
-            'task_retry_content_source_removals',
-            'task_nzb_health_check',
-            'task_nzb_playback_repair_completion',
-            'task_nzb_playback_cleanup_retry',
-            # Essential Periodic Tasks
-            'task_check_service_connectivity',
-            'task_heartbeat',
-            # 'task_update_statistics_summary',
-            'task_refresh_download_stats',
-            'task_precompute_airing_shows',
-            'task_reconcile_queues',
-            'task_check_database_health',
-            'task_sync_time',
-            'task_check_trakt_early_releases',
-            # 'task_update_show_ids',
-            # 'task_update_show_titles',
-            # 'task_update_movie_ids',
-            # 'task_update_movie_titles',
-            'task_refresh_release_dates',
-            # 'task_generate_airtime_report',
-            'task_refresh_plex_tokens',
-            # 'task_update_tv_show_status',
-            # NEW Load Adjustment Task
-            # 'task_adjust_intervals_for_load',
-            # Add 'task_verify_plex_removals' back to default set
-            'task_verify_plex_removals',
-            # Enable new library size task by default
-            'task_refresh_library_size_cache',
-            # Enable database backup task by default
-            'task_backup_database',
-            'task_process_standalone_plex_removals', # Enable by default
-            # Enable media analysis task by default
-            # 'task_analyze_media_files', # disabled by default
-            'task_trim_memory',
-            'task_sync_library_metadata',
-            'task_repair_broken_nzbs',
-            'task_repair_broken_debrids',
-            'task_sync_cli_mount_changes',
-            'task_push_pending_climount_tags',
-        }
-        logging.info("Initialized base enabled tasks.")
-        # (The accurate default snapshot will be captured later, after content-source and conditional tasks.)
-
-        # 2. Load task_toggles.json ONCE and update enabled_tasks
-        # Initialize saved_states before try block
-        saved_states = {} # Ensure saved_states exists even if file loading fails
-
+        # The runner can be built before main.py's startup migrations run; migrate first
+        # so an old full-state task_toggles.json is never read as overrides.
         try:
-            import os
-            import json
-
-            db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-            toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
-
-            if os.path.exists(toggles_file_path):
-                logging.info(f"Loading task toggle states from {toggles_file_path}")
-                with open(toggles_file_path, 'r') as f:
-                    saved_states = json.load(f)
-
-                # Defer actual enabling/disabling based on toggles until after all default/conditional logic is done.
-                self._saved_toggle_states = saved_states
-            else:
-                logging.info("No task_toggles.json found, using default enabled tasks.")
+            from utilities.settings import get_all_settings
+            task_registry.migrate(get_setting, get_all_settings)
         except Exception as e:
-            logging.error(f"Error loading saved task toggle states: {str(e)}")
-
-        # 3. Get Content Sources (populates intervals AND updates enabled_tasks based on source settings)
-        logging.info("Populating content source intervals and updating enabled tasks based on source settings...")
-        self.get_content_sources(force_refresh=True) # This populates task_intervals and toggles sources
-        logging.info("Content source processing complete.")
-
-        # 4. Apply remaining get_setting() checks for specific tasks
-        # Add file_collection_management check before other settings
-        file_management_mode = get_setting('File Management', 'file_collection_management', 'Symlinked/Local') # Default for safety
-        logging.info(f"File management mode: {file_management_mode}")
-
-        # Enable 'task_plex_full_scan' only if mode is NOT Symlinked/Local
-        # Check against toggle state first
-        plex_scan_task = 'task_plex_full_scan'
-        is_plex_scan_toggled_off = saved_states.get(self._normalize_task_name(plex_scan_task), True) is False
-        if file_management_mode != 'Symlinked/Local':
-            if not is_plex_scan_toggled_off and plex_scan_task not in self.enabled_tasks:
-                self.enabled_tasks.add(plex_scan_task)
-                logging.info(f"Enabled '{plex_scan_task}' as mode is not Symlinked/Local and not toggled off.")
-        else:
-            # Ensure it's disabled if mode IS Symlinked/Local, unless manually toggled ON
-            is_plex_scan_toggled_on = saved_states.get(self._normalize_task_name(plex_scan_task), False) is True
-            if plex_scan_task in self.enabled_tasks and not is_plex_scan_toggled_on:
-                self.enabled_tasks.remove(plex_scan_task)
-                logging.info(f"Disabled '{plex_scan_task}' as mode is Symlinked/Local and not toggled on.")
-
-        if get_setting('File Management', 'file_collection_management') == 'Plex':
-            # Check if Plex library checks are disabled and mounted path is blank
-            plex_mounted_location = get_setting('Plex', 'mounted_file_location', default='')
-            disable_plex_library_checks = get_setting('Plex', 'disable_plex_library_checks', default=False)
-            mounted_path_is_blank = not plex_mounted_location or plex_mounted_location.strip() == ''
-            
-            # If library checks are disabled AND mounted path is blank, disable all Plex collection tasks
-            if disable_plex_library_checks and mounted_path_is_blank:
-                # Disable Plex file checking task
-                if 'Checking' in self.enabled_tasks:
-                    self.enabled_tasks.remove('Checking')
-                    logging.info("Disabled 'Checking' as Plex library checks are disabled and mounted path is blank.")
-                
-                # Disable Plex full scan task
-                if 'task_plex_full_scan' in self.enabled_tasks:
-                    self.enabled_tasks.remove('task_plex_full_scan')
-                    logging.info("Disabled 'task_plex_full_scan' as Plex library checks are disabled and mounted path is blank.")
-
-                if 'task_check_plex_files' not in self.enabled_tasks:
-                    self.enabled_tasks.add('task_check_plex_files')
-                    logging.info("Enabled 'task_check_plex_files' as Plex library checks are disabled and mounted path is blank.")
-                    
-            else:
-                # Enable Plex file checking if either setting is true and not explicitly disabled by toggle
-                if get_setting('Plex', 'update_plex_on_file_discovery') or get_setting('Plex', 'disable_plex_library_checks'):
-                     if 'task_check_plex_files' not in self.enabled_tasks:
-                          # Check if it was disabled by toggle before enabling
-                          # This logic might be complex depending on desired precedence (setting vs toggle)
-                          # Assuming setting enables it unless explicitly toggled off:
-                          # Check toggle state again (or rely on previous toggle load)
-                          is_toggled_off = saved_states.get(self._normalize_task_name('task_check_plex_files'), True) is False
-                          if not is_toggled_off:
-                              self.enabled_tasks.add('task_check_plex_files')
-                              logging.info("Enabled 'task_check_plex_files' based on Plex settings.")
-                else:
-                     # Ensure it's disabled if conditions aren't met AND wasn't manually enabled by toggle
-                     is_toggled_on = saved_states.get(self._normalize_task_name('task_check_plex_files'), False) is True
-                     if 'task_check_plex_files' in self.enabled_tasks and not is_toggled_on:
-                          self.enabled_tasks.remove('task_check_plex_files')
-                          logging.info("Disabled 'task_check_plex_files' as relevant Plex settings are off.")
-
-        if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-             # Enable symlink task if configured (Plex OR Jellyfin/Emby) and not toggled off
-            plex_configured = (get_setting('File Management', 'plex_url_for_symlink') and 
-                              get_setting('File Management', 'plex_token_for_symlink'))
-            jellyfin_configured = (get_setting('Debug', 'emby_jellyfin_url', default='').strip() and 
-                                  get_setting('Debug', 'emby_jellyfin_token', default='').strip())
-            
-            if plex_configured or jellyfin_configured:
-                symlink_task = 'task_verify_symlinked_files'
-                is_symlink_toggled_off = saved_states.get(self._normalize_task_name(symlink_task), True) is False
-
-                if not is_symlink_toggled_off and symlink_task not in self.enabled_tasks:
-                    self.enabled_tasks.add(symlink_task)
-                    media_server = "Jellyfin/Emby" if jellyfin_configured else "Plex"
-                    logging.info(f"Enabled symlink verification task based on {media_server} settings.")
-            else:
-                 # Disable if no media server settings are configured and not toggled on
-                 is_symlink_toggled_on = saved_states.get(self._normalize_task_name('task_verify_symlinked_files'), False) is True
-                 if 'task_verify_symlinked_files' in self.enabled_tasks and not is_symlink_toggled_on:
-                     self.enabled_tasks.remove('task_verify_symlinked_files')
-                     logging.info("Disabled symlink verification task as no media server settings are configured.")
-
-        # Enable the external-add mount scan only in symlink mode and only when opted in.
-        # Picks up content added straight to the debrid account (DMM, provider UI) on
-        # setups whose mount provider has no library-update webhook.
-        _ext_scan_task = 'task_scan_mount_for_external_adds'
-        if (file_management_mode == 'Symlinked/Local'
-                and get_setting('File Management', 'scan_mount_for_external_adds', False)):
-            _is_ext_toggled_off = saved_states.get(self._normalize_task_name(_ext_scan_task), True) is False
-            if not _is_ext_toggled_off and _ext_scan_task not in self.enabled_tasks:
-                self.enabled_tasks.add(_ext_scan_task)
-                logging.info(f"Enabled '{_ext_scan_task}' based on File Management setting.")
-        else:
-            _is_ext_toggled_on = saved_states.get(self._normalize_task_name(_ext_scan_task), False) is True
-            if _ext_scan_task in self.enabled_tasks and not _is_ext_toggled_on:
-                self.enabled_tasks.remove(_ext_scan_task)
-                logging.info(f"Disabled '{_ext_scan_task}' as the setting is off or mode is not Symlinked/Local.")
-
-
-        if get_setting('Debug', 'do_not_add_plex_watch_history_items_to_queue', False):
-             task_name = 'task_get_plex_watch_history'
-             is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
-             if not is_toggled_off and task_name not in self.enabled_tasks:
-                self.enabled_tasks.add(task_name)
-                logging.info(f"Enabled '{task_name}' based on Debug setting.")
-        else:
-            task_name = 'task_get_plex_watch_history'
-            is_toggled_on = saved_states.get(self._normalize_task_name(task_name), False) is True
-            if task_name in self.enabled_tasks and not is_toggled_on:
-                 self.enabled_tasks.remove(task_name)
-                 logging.info(f"Disabled '{task_name}' as Debug setting is off.")
-
-        # Per-user watch history for Discover recommendations: on by default.
-        _viewer_task = 'task_sync_viewer_history'
-        if viewer_history_task_wanted():
-            if saved_states.get(self._normalize_task_name(_viewer_task), True) is not False \
-                    and _viewer_task not in self.enabled_tasks:
-                self.enabled_tasks.add(_viewer_task)
-                logging.info(f"Enabled '{_viewer_task}' (media server and TMDB key configured).")
-        elif _viewer_task in self.enabled_tasks \
-                and saved_states.get(self._normalize_task_name(_viewer_task), False) is not True:
-            self.enabled_tasks.remove(_viewer_task)
-            logging.info(f"Disabled '{_viewer_task}' as no media server or TMDB key is configured.")
-
-        # Check for limited environment and enable library maintenance task by default
-        from utilities.set_supervisor_env import is_limited_environment
-        if is_limited_environment():
-            task_name = 'task_run_library_maintenance'
-            is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
-            if not is_toggled_off and task_name not in self.enabled_tasks:
-                self.enabled_tasks.add(task_name)
-                logging.info(f"Enabled '{task_name}' by default in limited environment.")
-            system_load_take_name = 'task_regulate_system_load'
-            self.enabled_tasks.add(system_load_take_name)
-            logging.info(f"Enabled '{system_load_take_name}' by default in limited environment.")
-        
-        if get_setting('Debug', 'enable_library_maintenance_task', False):
-            task_name = 'task_run_library_maintenance'
-            is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
-            if not is_toggled_off and task_name not in self.enabled_tasks:
-                self.enabled_tasks.add(task_name)
-                logging.info(f"Enabled '{task_name}' based on Debug setting.")
-        else:
-            # Only disable if not in limited environment (limited environment takes precedence)
-            if not is_limited_environment():
-                task_name = 'task_run_library_maintenance'
-                is_toggled_on = saved_states.get(self._normalize_task_name(task_name), False) is True
-                if task_name in self.enabled_tasks and not is_toggled_on:
-                     self.enabled_tasks.remove(task_name)
-                     logging.info(f"Disabled '{task_name}' as Debug setting is off.")
-
-        # Enable Plex smart collection poster task if Plex is configured and not Jellyfin symlink mode
-        _fm = get_setting('File Management', 'file_collection_management', '')
-        _ms = get_setting('File Management', 'media_server_type', '')
-        _plex_mode = not (_fm == 'Symlinked/Local' and _ms == 'jellyfin')
-        if _plex_mode:
-            _task_name = 'task_plex_smart_collection_posters'
-            _is_toggled_off = saved_states.get(self._normalize_task_name(_task_name), True) is False
-            if not _is_toggled_off and _task_name not in self.enabled_tasks:
-                self.enabled_tasks.add(_task_name)
-        else:
-            _task_name = 'task_plex_smart_collection_posters'
-            _is_toggled_on = saved_states.get(self._normalize_task_name(_task_name), False) is True
-            if _task_name in self.enabled_tasks and not _is_toggled_on:
-                self.enabled_tasks.remove(_task_name)
-
-        # Enable Plex movie box sets task (same Plex-mode guard)
-        if _plex_mode:
-            _bs_task = 'task_plex_movie_boxsets'
-            _is_toggled_off = saved_states.get(self._normalize_task_name(_bs_task), True) is False
-            if not _is_toggled_off and _bs_task not in self.enabled_tasks:
-                self.enabled_tasks.add(_bs_task)
-        else:
-            _bs_task = 'task_plex_movie_boxsets'
-            _is_toggled_on = saved_states.get(self._normalize_task_name(_bs_task), False) is True
-            if _bs_task in self.enabled_tasks and not _is_toggled_on:
-                self.enabled_tasks.remove(_bs_task)
-
-        # Setting-backed tasks follow their setting alone (see SETTING_BACKED_TASKS).
-        for _sb_task, (_sb_section, _sb_key) in SETTING_BACKED_TASKS.items():
-            if get_setting(_sb_section, _sb_key, False):
-                self.enabled_tasks.add(_sb_task)
-            else:
-                self.enabled_tasks.discard(_sb_task)
-
-        # Enable overlay tasks if overlays are enabled
-        if get_setting('Overlay Settings', 'overlays_enabled', False):
-            overlay_tasks = ['task_overlay_sync', 'task_overlay_cleanup']
-            for task_name in overlay_tasks:
-                is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
-                if not is_toggled_off and task_name not in self.enabled_tasks:
-                    self.enabled_tasks.add(task_name)
-                    logging.info(f"Enabled '{task_name}' as overlays are enabled.")
-        else:
-            # Disable overlay tasks if overlays are disabled and not manually toggled on
-            overlay_tasks = ['task_overlay_sync', 'task_overlay_cleanup']
-            for task_name in overlay_tasks:
-                is_toggled_on = saved_states.get(self._normalize_task_name(task_name), False) is True
-                if task_name in self.enabled_tasks and not is_toggled_on:
-                    self.enabled_tasks.remove(task_name)
-                    logging.info(f"Disabled '{task_name}' as overlays are disabled.")
-
-        # 5. Ensure legacy individual Scraping/Adding tasks are removed *after* all logic
-        # --- START REVERT: Comment out or remove this block ---
-        # if 'Scraping' in self.enabled_tasks:
-        #     logging.info("Removing legacy 'Scraping' task from enabled tasks (handled by combined task).")
-        #     self.enabled_tasks.remove('Scraping')
-        # if 'Adding' in self.enabled_tasks:
-        #     logging.info("Removing legacy 'Adding' task from enabled tasks (handled by combined task).")
-        #     self.enabled_tasks.remove('Adding')
-        # --- END REVERT ---
-
-        # 6. Finalize original task intervals *after* content sources potentially added intervals
-        # self.original_task_intervals = self.task_intervals.copy() # REMOVE THIS LINE
-        logging.info("Finalized original task intervals after all task definitions and settings.") # Comment becomes slightly less accurate but fine
-
-        # --- NEW STEP: Capture default-enabled snapshot AFTER content-source and conditional tasks,
-        # but BEFORE applying user toggle overrides. This snapshot now truly represents defaults.
-        if not hasattr(self, 'default_enabled_tasks_snapshot'):
-            self.default_enabled_tasks_snapshot = set(self.enabled_tasks)
-            logging.info(f"Captured default_enabled_tasks_snapshot with {len(self.default_enabled_tasks_snapshot)} tasks.")
-
-        # --- NOW apply saved toggle overrides (if any) ---
-        saved_states_to_apply = getattr(self, '_saved_toggle_states', {})
-        if saved_states_to_apply:
-            logging.info("Applying saved task toggles after default snapshot capture...")
-            for task_name, enabled in saved_states_to_apply.items():
-                # Skip non-task entries (like version tracking fields)
-                if not task_name.startswith('task_'):
-                    logging.debug(f"Skipping non-task entry in task_toggles.json: {task_name}")
-                    continue
-
-                normalized_name = self._normalize_task_name(task_name)
-                if normalized_name not in self.original_task_intervals and normalized_name not in self.task_intervals:
-                    logging.warning(f"Task '{normalized_name}' in task_toggles.json not defined in intervals. Skipping toggle application.")
-                    continue
-                if normalized_name in SETTING_BACKED_TASKS:
-                    continue
-                if enabled:
-                    if normalized_name not in self.enabled_tasks:
-                        self.enabled_tasks.add(normalized_name)
-                        logging.info(f"Toggle applied: ENABLED '{normalized_name}' from saved settings.")
-                else:
-                    if normalized_name in self.enabled_tasks:
-                        self.enabled_tasks.remove(normalized_name)
-                        logging.info(f"Toggle applied: DISABLED '{normalized_name}' from saved settings.")
-        else:
-            logging.info("No saved toggle states to apply.")
-
-        # --- END: Task Enabling Logic Reorder ---
-
-
-        # Define queue processing map EARLIER
-        self.queue_processing_map = {
-            'Wanted': 'process_wanted',
-            'Scraping': 'process_scraping',
-            'Adding': 'process_adding',
-            'Checking': 'process_checking',
-            'Sleeping': 'process_sleeping',
-            'Unreleased': 'process_unreleased',
-            'Blacklisted': 'process_blacklisted',
-            'Pending Uncached': 'process_pending_uncached',
-            'Upgrading': 'process_upgrading',
-            'final_check_queue': 'process_final_check', # Use lowercase key matching the task ID
-            'Pre_release': 'process_pre_release'
-        }
+            logging.error(f"Task settings migration failed: {e}", exc_info=True)
+        self.original_task_intervals = task_registry.default_intervals()
+        self.task_intervals = dict(self.original_task_intervals)
+        self.default_enabled_tasks = task_registry.default_enabled(get_setting)
+        self.enabled_tasks = set(self.default_enabled_tasks)
+        self._task_overrides = task_registry.load_overrides()
+        self.get_content_sources(force_refresh=True)
+        self._apply_saved_intervals()
+        self.enabled_tasks = task_registry.apply_overrides(
+            self.default_enabled_tasks, self._task_overrides, self.task_intervals)
 
         # Log the final set of enabled tasks right before starting the scheduling process
         logging.info(f"Final enabled tasks before initial scheduling: {sorted(list(self.enabled_tasks))}")
-
-        # Serialize all scheduled tasks
-        # To address potential DB contention by making all scheduled tasks run sequentially.
-        # logging.info("Configuring all scheduled tasks to run sequentially to prevent DB contention.") # This logic is now handled by scheduler config
-        # if not hasattr(self, 'task_intervals') or not self.task_intervals:
-            # logging.error("Cannot configure HEAVY_DB_TASKS for serialization: self.task_intervals is not populated. Tasks will use original HEAVY_DB_TASKS definition if any.")
-            # If self.HEAVY_DB_TASKS was already defined with a base set, it would be used.
-            # Since we initialized it to set(), if this unlikely error occurs, no tasks will be considered "heavy" by default.
-        # else:
-            # self.HEAVY_DB_TASKS = set(self.task_intervals.keys()) # REVERTED: Scheduler now handles global sequential execution. HEAVY_DB_TASKS reverts to original intent.
-            # logging.info(f"All {len(self.HEAVY_DB_TASKS)} tasks defined in task_intervals will now use the exclusive execution lock, effectively running sequentially.")
-
-        # Capture baseline enabled tasks snapshot
-        # Store the set of tasks that were enabled immediately after initialization (including
-        # any changes applied from task_toggles.json, content-source processing, and settings).
-        # When the user later saves toggle states we can compare against this snapshot and only
-        # persist differences, keeping the JSON file minimal.
-        self.initial_enabled_tasks_snapshot = set(self.enabled_tasks)
 
         # Schedule initial tasks
         self._schedule_initial_tasks()
@@ -923,16 +318,6 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
         self.base_inter_task_sleep = float(get_setting('Queue', 'main_loop_sleep_seconds', 0.0))
         self.current_inter_task_sleep = self.base_inter_task_sleep
         logging.info(f"Initialized inter-task sleep to {self.current_inter_task_sleep}s based on settings.")
-
-        # Add long-running content source tasks to DYNAMIC_INTERVAL_TASKS
-        # This should run *after* self.content_sources is populated and intervals set
-        # Ideally placed after self.get_content_sources(force_refresh=True) call inside __init__
-        if self.content_sources: # Check if sources were loaded
-            for task_id, interval in self.task_intervals.items():
-                 # Check if it's a content source task and interval is long
-                 if task_id.startswith('task_') and task_id.endswith('_wanted') and interval > 900:
-                      self.DYNAMIC_INTERVAL_TASKS.add(task_id)
-            logging.info(f"Updated DYNAMIC_INTERVAL_TASKS with long-running content sources. Total: {len(self.DYNAMIC_INTERVAL_TASKS)}")
 
         # Add currently_executing_tasks set
         self.currently_executing_tasks = set()
@@ -1128,17 +513,7 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
 
                         # Queue-processing tasks get their own executor so they don't
                         # block scheduled maintenance tasks and vice versa.
-                        _QUEUE_TASKS = {
-                            'Adding', 'Checking', 'Scraping', 'Wanted',
-                            'Sleeping', 'Unreleased',
-                            'Blacklisted', 'Pending Uncached', 'Upgrading',
-                            'final_check_queue', 'Pre_release',
-                            'task_check_plex_files', 'task_send_notifications',
-                            'task_update_queue_views',
-                            'task_regulate_system_load',
-                            'task_nzb_health_check',
-                        }
-                        _executor = 'queue' if job_id in _QUEUE_TASKS else 'default'
+                        _executor = task_registry.executor_for(job_id)
 
                         add_job_kwargs = {
                             'func': self._run_and_measure_task,
@@ -1421,17 +796,11 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
         # exactly what made adding/deleting a content source "take forever".
         if not getattr(self, '_reinitializing', False):
             try:
-                _CRITICAL_QUEUES = {
-                    'Scraping': 1,
-                    'Adding': 1,
-                    'Checking': 30,
-                    'Wanted': 30,
-                }
                 _scheduled_job_ids = {job.id for job in self.scheduler.get_jobs()}
-                for _task_name, _interval in _CRITICAL_QUEUES.items():
+                for _task_name in ('Scraping', 'Adding', 'Checking', 'Wanted'):
                     if _task_name not in _scheduled_job_ids and _task_name in self.enabled_tasks:
                         logging.warning(f'[Heartbeat] Watchdog: {_task_name!r} missing from scheduler — rescheduling')
-                        self._schedule_task(_task_name, _interval)
+                        self._schedule_task(_task_name, self.task_intervals.get(_task_name, 30))
             except Exception as _wd_err:
                 logging.debug(f'[Heartbeat] Watchdog error: {_wd_err}')
 
@@ -2202,7 +1571,9 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
                 # Prevent duplicate concurrent runs — check if this task is already executing.
                 with self._running_task_lock:
                     _already_running = any(
-                        job_id_base in jid for jid in self.currently_executing_tasks
+                        # scheduled job id is the task name; manual runs are manual_<task>_<uuid4>
+                        jid == job_id_base or (jid.startswith('manual_') and jid[7:-37] == job_id_base)
+                        for jid in self.currently_executing_tasks
                     )
                 if _already_running:
                     logging.warning(f"Task '{job_id_base}' is already running — skipping manual trigger.")
@@ -2238,15 +1609,7 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
                         logging.error(f"Cannot trigger task '{job_id_base}': Scheduler is not initialized")
                         raise RuntimeError(f"Scheduler not initialized for manual task '{job_id_base}'")
                     
-                    _QUEUE_TASKS_MANUAL = {
-                        'Adding', 'Checking', 'Sleeping', 'Unreleased',
-                        'Blacklisted', 'Pending Uncached', 'Upgrading',
-                        'final_check_queue', 'Pre_release',
-                        'task_check_plex_files', 'task_send_notifications',
-                        'task_update_queue_views',
-                        'task_regulate_system_load',
-                    }
-                    _manual_executor = 'queue' if job_id_base in _QUEUE_TASKS_MANUAL else 'default'
+                    _manual_executor = task_registry.executor_for(job_id_base)
                     self.scheduler.add_job(
                         func=self._run_and_measure_task,
                         args=manual_job_args,
@@ -2290,6 +1653,10 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             current_thread_id_after_lock = threading.get_ident()
             logging.info(f"ENABLE_TASK: Acquired scheduler_lock for '{normalized_name}'. (Thread: {current_thread_id_after_lock})")
             job = self.scheduler.get_job(job_id)
+            if job and not self.scheduler.running:
+                # Program stopped: a pending job is already set to run once it starts.
+                self.enabled_tasks.add(normalized_name)
+                return True
             if job:
                  logging.debug(f"ENABLE_TASK: Job '{job_id}' exists. (Thread: {current_thread_id_after_lock})")
                  if job.next_run_time is not None: # Job exists and is scheduled (not paused indefinitely)
@@ -2350,6 +1717,12 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             # Disabled while the queue is paused: resume_queue must not resume it.
             self.paused_jobs_by_queue.discard(job_id)
             job = self.scheduler.get_job(job_id)
+            if job and not self.scheduler.running:
+                # Program stopped: jobs are still pending and have no next_run_time yet.
+                self.scheduler.remove_job(job_id)
+                self.enabled_tasks.discard(normalized_name)
+                logging.info(f"Removed pending job for task: {normalized_name}")
+                return True
             if job:
                  if job.next_run_time is None: # Already paused
                       logging.info(f"Task '{normalized_name}' job is already paused.")
@@ -2370,6 +1743,36 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
                  # Ensure it's removed from enabled_tasks set
                  if normalized_name in self.enabled_tasks: self.enabled_tasks.remove(normalized_name)
                  return True
+
+    def _apply_saved_intervals(self):
+        """Apply custom intervals (seconds) from task_intervals.json to self.task_intervals."""
+        import json
+        from routes.program_operation_routes import _get_task_intervals_file_path
+        path = _get_task_intervals_file_path()
+        try:
+            with open(path) as f:
+                saved = json.load(f)
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError) as e:
+            logging.error(f"Error loading custom task intervals from {path}: {e}")
+            return
+        applied = 0
+        for task_name, seconds in (saved or {}).items():
+            name = self._normalize_task_name(task_name)
+            if name not in self.task_intervals or seconds is None:
+                continue
+            try:
+                seconds = int(seconds)
+            except (TypeError, ValueError):
+                logging.warning(f"Skipping invalid custom interval for '{name}': {seconds!r}")
+                continue
+            if seconds < 1:
+                continue
+            self.task_intervals[name] = seconds
+            applied += 1
+        if applied:
+            logging.info(f"Applied {applied} custom task intervals from {path}")
 
     def _normalize_task_name(self, task_name):
         """Normalize task name to match how it's stored internally."""
@@ -2777,23 +2180,21 @@ class ProgramRunner(ContentSourceTasks, ConnectivityTasks, PlexTasks, LibraryTas
             logging.info(f"Updating task '{normalized_name}' interval live to: {target_interval_seconds}s")
             self.task_intervals[normalized_name] = target_interval_seconds # Update internal map
 
-        # Apply the change to the scheduler
+        # Apply the change to the scheduler. _schedule_task replaces the job with the same
+        # jitter and timezone as a normal schedule; a paused (disabled) job stays paused.
         with self.scheduler_lock:
             job = self.scheduler.get_job(normalized_name)
             if not job:
                 logging.info(f"Task '{normalized_name}' is not currently scheduled. Interval preference updated internally.")
                 return True
-
-            try:
-                self.scheduler.reschedule_job(
-                    normalized_name,
-                    trigger=IntervalTrigger(seconds=target_interval_seconds) # Use target seconds
-                )
-                logging.info(f"Successfully rescheduled task '{normalized_name}' with new interval {target_interval_seconds}s.")
-                return True
-            except Exception as e:
-                logging.error(f"Error rescheduling job '{normalized_name}' with new interval: {e}", exc_info=True)
+            was_paused = job.next_run_time is None
+            if not self._schedule_task(normalized_name, target_interval_seconds):
+                logging.error(f"Error rescheduling job '{normalized_name}' with new interval.")
                 return False
+            if was_paused:
+                self.scheduler.pause_job(normalized_name)
+            logging.info(f"Successfully rescheduled task '{normalized_name}' with new interval {target_interval_seconds}s.")
+            return True
 
 
     def task_trim_memory(self):

@@ -1,0 +1,36 @@
+{# Per-source options for what happens once items from this source are collected.
+   Included by content_sources.html in each source-type branch. #}
+{% set _plex_wl = config.type in ['My Plex Watchlist', 'Other Plex Watchlist'] %}
+{% set _plex_rss = config.type in ['My Plex RSS Watchlist', 'My Friends Plex RSS Watchlist'] %}
+{% set _trakt_wl = config.type == 'Trakt Watchlist' %}
+{% set _schema = settings_schema['Content Sources'].schema.get(config.type, {}) if settings_schema['Content Sources'].schema is defined else {} %}
+{% if _plex_wl or _plex_rss or _trakt_wl %}
+    {% for key, title in [('remove_when_collected', 'Skip collected items' if _plex_rss else 'Remove from watchlist when collected'), ('keep_series', 'Keep series')] %}
+    {% set value = config.get(key, False) %}
+    <div class="settings-form-group">
+        <label class="settings-title">
+            <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
+                   name="Content Sources.{{ source_id }}.{{ key }}"
+                   data-section="Content Sources"
+                   data-key="{{ source_id }}.{{ key }}"
+                   {% if value %}checked{% endif %}>
+            {{ title }}
+        </label>
+        {% if _schema.get(key, {}).description %}<p class="settings-description">{{ _schema[key].description }}</p>{% endif %}
+    </div>
+    {% endfor %}
+{% elif config.type == 'Overseerr' %}
+    {% set key = 'allow_partial_requests' %}
+    {% set value = config.get(key, False) %}
+    <div class="settings-form-group">
+        <label class="settings-title">
+            <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
+                   name="Content Sources.{{ source_id }}.{{ key }}"
+                   data-section="Content Sources"
+                   data-key="{{ source_id }}.{{ key }}"
+                   {% if value %}checked{% endif %}>
+            Allow partial requests
+        </label>
+        {% if _schema.get(key, {}).description %}<p class="settings-description">{{ _schema[key].description }}</p>{% endif %}
+    </div>
+{% endif %}

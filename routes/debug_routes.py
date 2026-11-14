@@ -1011,19 +1011,19 @@ def get_and_add_wanted_content(source_id):
         if source_type == 'Overseerr':
             wanted_content = get_wanted_from_overseerr(versions_from_config)
         elif source_type == 'My Plex Watchlist':
-            wanted_content = get_wanted_from_plex_watchlist(versions_from_config)
+            wanted_content = get_wanted_from_plex_watchlist(versions_from_config, remove_when_collected=bool(source_data.get('remove_when_collected')), keep_series=bool(source_data.get('keep_series')))
         elif source_type == 'My Plex RSS Watchlist':
             plex_rss_url = source_data.get('url', '')
             if not plex_rss_url:
                 logging.error(f"Missing URL for source: {source_id}")
                 return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Missing URL for {source_id}"}
-            wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions_from_config)
+            wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions_from_config, remove_when_collected=bool(source_data.get('remove_when_collected')), keep_series=bool(source_data.get('keep_series')))
         elif source_type == 'My Friends Plex RSS Watchlist':
             plex_rss_url = source_data.get('url', '')
             if not plex_rss_url:
                 logging.error(f"Missing URL for source: {source_id}")
                 return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Missing URL for {source_id}"}
-            wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config)
+            wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config, remove_when_collected=bool(source_data.get('remove_when_collected')), keep_series=bool(source_data.get('keep_series')))
         elif source_type == 'Plex Friends Watchlist':
             wanted_content = get_wanted_from_plex_friends_watchlist(source_data, versions_from_config)
         elif source_type == 'Other Plex Watchlist':

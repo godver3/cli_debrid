@@ -881,14 +881,6 @@ SETTINGS_SCHEMA = {
             "description": "Enable caching of Plex removal operations before executing them",
             "default": True
         },
-        "content_source_check_period": {
-            "type": "dict",
-            "description": "Override Content Source checking period (in minutes) - note that a minimum of 5 minutes is recommended",
-            "default": {},
-            "schema": {
-                "*": {"type": "integer", "min": 1}
-            }
-        },
         "checking_queue_period": {
             "type": "integer",
             "description": "Checking queue max period (in seconds) before moving items back to Wanted queue",
@@ -909,26 +901,6 @@ SETTINGS_SCHEMA = {
             "description": "Disable the not wanted check for items in the queue",
             "default": False
         },
-        "plex_watchlist_removal": {
-            "type": "boolean",
-            "description": "Remove items from the Plex Watchlist once they have been collected. Movies are removed when every wanted version is collected; shows only once the series has ended (a running show stays on the watchlist so new episodes keep being added). Removes from My Plex Watchlist and Other Plex Watchlist; for the Plex RSS sources, which are read-only, collected items are skipped instead of removed.",
-            "default": False
-        },
-        "plex_watchlist_keep_series": {
-            "type": "boolean",
-            "description": "Never remove or skip series, even ended ones, when they have been collected; only movies are removed. Applies to the Plex Watchlist and Plex RSS sources.",
-            "default": False
-        },
-        "trakt_watchlist_removal": {
-            "type": "boolean",
-            "description": "Remove items from Trakt Watchlist when they have been collected",
-            "default": False
-        },
-        "trakt_watchlist_keep_series": {
-            "type": "boolean",
-            "description": "Keep series in Trakt Watchlist when they have been collected, only delete movies",
-            "default": False
-        },
         "symlink_movie_template": {
             "type": "string",
             "description": [
@@ -945,11 +917,6 @@ SETTINGS_SCHEMA = {
                 "Example: {title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})",
             ],
             "default": "{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})"
-        },
-        "allow_partial_overseerr_requests": {
-            "type": "boolean",
-            "description": "Allow partial show requests from Overseerr",
-            "default": False
         },
         "timezone_override": {
             "type": "string",
@@ -1019,11 +986,6 @@ SETTINGS_SCHEMA = {
         "enable_crash_test": {
             "type": "boolean",
             "description": "Enable crash test",
-            "default": False
-        },
-        "enable_library_maintenance_task": {
-            "type": "boolean",
-            "description": "Enable library maintenance task to run periodically. This is a destructive process and should be used with caution",
             "default": False
         },
         "enable_detailed_notification_information": {
@@ -1495,6 +1457,8 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "Trakt Watchlist"},
+                "remove_when_collected": {"type": "boolean", "default": False, "description": "Remove items from this Trakt watchlist once they have been collected."},
+                "keep_series": {"type": "boolean", "default": False, "description": "Keep series on this Trakt watchlist when collected; only movies are removed."},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
@@ -2045,6 +2009,7 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "Overseerr"},
+                "allow_partial_requests": {"type": "boolean", "default": False, "description": "Only add the seasons that were requested in Seerr instead of the whole show."},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
@@ -2215,6 +2180,8 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "My Plex Watchlist"},
+                "remove_when_collected": {"type": "boolean", "default": False, "description": "Remove items from this watchlist once they have been collected. Movies are removed when every wanted version is collected; shows only once the series has ended (a running show stays so new episodes keep being added)."},
+                "keep_series": {"type": "boolean", "default": False, "description": "Never remove series from this watchlist, even ended ones; only movies are removed."},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
@@ -2297,6 +2264,8 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "Other Plex Watchlist"},
+                "remove_when_collected": {"type": "boolean", "default": False, "description": "Remove items from this watchlist once they have been collected. Movies are removed when every wanted version is collected; shows only once the series has ended (a running show stays so new episodes keep being added)."},
+                "keep_series": {"type": "boolean", "default": False, "description": "Never remove series from this watchlist, even ended ones; only movies are removed."},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
@@ -2378,6 +2347,8 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "My Plex RSS Watchlist"},
+                "remove_when_collected": {"type": "boolean", "default": False, "description": "RSS feeds are read-only, so collected items are skipped on later runs instead of removed. Movies are skipped when every wanted version is collected; shows only once the series has ended."},
+                "keep_series": {"type": "boolean", "default": False, "description": "Never skip series, even ended ones; only movies are skipped."},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
@@ -2459,6 +2430,8 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "My Friends Plex RSS Watchlist"},
+                "remove_when_collected": {"type": "boolean", "default": False, "description": "RSS feeds are read-only, so collected items are skipped on later runs instead of removed. Movies are skipped when every wanted version is collected; shows only once the series has ended."},
+                "keep_series": {"type": "boolean", "default": False, "description": "Never skip series, even ended ones; only movies are skipped."},
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",

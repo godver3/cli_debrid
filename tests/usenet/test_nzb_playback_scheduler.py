@@ -22,22 +22,10 @@ class TestNZBPlaybackScheduler(unittest.TestCase):
         self.fail(f'No literal assignment found for self.{attribute}')
 
     def test_completion_task_is_enabled_at_fifteen_seconds(self):
-        intervals = self._assigned_literal('task_intervals', ast.Dict)
-        values = {
-            key.value: value
-            for key, value in zip(intervals.keys, intervals.values)
-            if isinstance(key, ast.Constant) and isinstance(key.value, str)
-        }
-        enabled = self._assigned_literal('enabled_tasks', ast.Set)
-        enabled_names = {
-            item.value for item in enabled.elts
-            if isinstance(item, ast.Constant) and isinstance(item.value, str)
-        }
-
-        self.assertEqual(
-            ast.literal_eval(values['task_nzb_playback_repair_completion']), 15,
-        )
-        self.assertIn('task_nzb_playback_repair_completion', enabled_names)
+        from queues.runner import task_registry
+        spec = task_registry.SPECS['task_nzb_playback_repair_completion']
+        self.assertEqual(spec.interval, 15)
+        self.assertIs(spec.default, True)
 
         completion = next(
             node for node in ast.walk(self.tree)

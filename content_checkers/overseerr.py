@@ -262,9 +262,7 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
 def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     content_sources = get_all_settings().get('Content Sources', {})
     overseerr_sources = [(source_id, data) for source_id, data in content_sources.items() if source_id.startswith('Overseerr') and data.get('enabled', False)]
-    allow_partial = parse_bool(get_setting('Debug', 'allow_partial_overseerr_requests', 'False'))
     disable_caching = True  # Hardcoded to True
-    logging.info(f"allow_partial: {allow_partial}")
 
     all_wanted_items = []
     cache = {} if disable_caching else load_overseerr_cache()
@@ -274,6 +272,8 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
         overseerr_url = source.get('url')
         overseerr_api_key = source.get('api_key')
         display_name = source.get('display_name') or source_id
+        allow_partial = parse_bool(source.get('allow_partial_requests', False))
+        logging.info(f"{display_name}: allow partial requests: {allow_partial}")
         ignore_tags_str = source.get('ignore_tags', '')
         ignore_tags = {tag.strip().lower() for tag in ignore_tags_str.split(',') if tag.strip()} if ignore_tags_str else set()
 

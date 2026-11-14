@@ -1,19 +1,15 @@
-"""Task Manager info text (static/js/task_help_data.json) covers every scheduled task."""
+"""Automation page info text (static/js/task_help_data.json) covers every scheduled task."""
 import json
 import os
-import re
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _scheduled_task_names():
-    """Keys of ProgramRunner's base task_intervals dict, read from source (no app import)."""
-    with open(os.path.join(ROOT, 'queues', 'run_program.py')) as f:
-        src = f.read()
-    start = src.index('self.task_intervals = {')
-    block = src[start:src.index('\n        }\n', start)]
-    return set(re.findall(r"^\s+'([^']+)':", block, re.M))
+    """Scheduled tasks in queues/runner/task_registry.py."""
+    from queues.runner import task_registry
+    return {s.name for s in task_registry.SCHEDULED_SPECS}
 
 
 class TaskHelpDataTest(unittest.TestCase):

@@ -1094,54 +1094,18 @@ def migrate_upgrade_rationale():
             conn.close()
 
 def migrate_task_toggles():
+    """Bring task_toggles.json and the old task settings up to the Automation page format.
+
+    See queues/runner/task_registry.migrate: full-state toggles become overrides,
+    and Debug.enable_library_maintenance_task / content_source_check_period move
+    into task_toggles.json / task_intervals.json.
     """
-    Ensures task_toggles.json exists and contains the migration version marker.
-    If the file is missing or the marker is absent/incorrect, it resets the file.
-    """
-    MIGRATION_VERSION = "0.6.34"
-    VERSION_KEY = "_migration_version"
-    
     try:
-        import os
-        import json
-        
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
-        
-        needs_reset = False
-        current_data = {}
-
-        if os.path.exists(toggles_file_path):
-            try:
-                with open(toggles_file_path, 'r') as f:
-                    current_data = json.load(f)
-                if not isinstance(current_data, dict) or current_data.get(VERSION_KEY) != MIGRATION_VERSION:
-                    logging.info(f"Task toggles file found but missing or incorrect version marker ({current_data.get(VERSION_KEY)} != {MIGRATION_VERSION}). Resetting.")
-                    needs_reset = True
-            except json.JSONDecodeError:
-                logging.warning(f"Task toggles file exists but is corrupted. Resetting.")
-                needs_reset = True
-            except Exception as e:
-                 logging.error(f"Error reading task toggles file: {e}. Resetting.")
-                 needs_reset = True
-        else:
-            logging.info(f"Task toggles file not found. Creating with version {MIGRATION_VERSION}.")
-            needs_reset = True
-
-        if needs_reset:
-            try:
-                with open(toggles_file_path, 'w') as f:
-                    json.dump({VERSION_KEY: MIGRATION_VERSION}, f, indent=4)
-                    # Log SUCCESS only *after* successful dump and *before* exiting 'with'
-                    logging.info(f"Successfully reset task_toggles.json with version {MIGRATION_VERSION}.")
-            except Exception as e:
-                # This log will catch errors during open() or json.dump()
-                logging.error(f"Failed to write reset task toggles file: {e}")
-        # else:
-        #     logging.debug(f"Task toggles file already at migration version {MIGRATION_VERSION}. No reset needed.")
-
+        from queues.runner import task_registry
+        from utilities.settings import get_setting, get_all_settings
+        task_registry.migrate(get_setting, get_all_settings)
     except Exception as e:
-        logging.error(f"Unexpected error during task toggles migration check: {e}")
+        logging.error(f"Unexpected error during task toggles migration: {e}", exc_info=True)
 
 def migrate_content_source_versions():
     """
@@ -1486,6 +1450,8 @@ def main():
     # Run specific data migrations first if they don't depend on full schema being present
     # (Keep these if they are safe before full schema verify/migrate)
     migrate_upgrade_rationale()
+    from utilities.source_options_migration import migrate_watchlist_options_to_sources
+    migrate_watchlist_options_to_sources()
     migrate_task_toggles()
 
     # Ensure the main schema (including notifications table) is verified and migrated
@@ -1639,11 +1605,6 @@ def main():
         set_setting('Scraping', 'trakt_early_releases', False)
         logging.info("Setting default trakt_early_releases to False")
         
-    # Initialize content_source_check_period if it doesn't exist
-    if 'content_source_check_period' not in debug_settings:
-        set_setting('Debug', 'content_source_check_period', {})
-        logging.info("Initializing content_source_check_period as empty dictionary")
-
     if get_setting('Debug', 'enabled_separate_anime_folders') is True:
         set_setting('Debug', 'enable_separate_anime_folders', True)
         # Remove the old setting key

@@ -1,4 +1,4 @@
-from flask import jsonify, request, current_app, Blueprint, logging, render_template
+from flask import jsonify, request, current_app, Blueprint, logging, render_template, redirect, url_for
 from routes import admin_required
 from .database_routes import perform_database_migration 
 from routes.extensions import initialize_app 
@@ -20,7 +20,7 @@ from routes.notifications import (
     send_queue_start_notification,
     send_queue_stop_notification
 )
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 from utilities.jellyfin_auth import jellyfin_auth_headers
 
@@ -889,194 +889,96 @@ def check_program_conditions():
         'missingFields': missing_fields
     })
 
+def _load_task_help():
+    """Help text for the Automation page (static/js/task_help_data.json)."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'static', 'js', 'task_help_data.json')
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {'tasks': {}, 'content_source': {}, 'fallback': {}}
+
+
 @program_operation_bp.route('/api/task_timings', methods=['GET'])
 @admin_required
 def get_task_timings():
+    """Every task with its group, state, interval and next run, for the Automation page."""
+    from queues.runner import task_registry
+
     runner = get_program_runner()
-    if not runner or not runner.is_running():
-        # If not running, return empty or maybe load saved toggles/intervals?
-        # Let's return empty for now, UI can handle loading saved states.
-        return jsonify(success=False, error="Program is not running", tasks={
-            'queues': {}, 'content_sources': {}, 'system_tasks': {},
-            'library_tasks': {}, 'metadata_tasks': {}, 'feature_tasks': {}
-        })
-
-    # Load custom intervals (now expects seconds)
-    saved_intervals_seconds = {}
-    intervals_file_path = _get_task_intervals_file_path()
-    if os.path.exists(intervals_file_path):
-        try:
-            with open(intervals_file_path, 'r') as f:
-                saved_intervals_seconds = json.load(f) # Load the saved seconds
-        except Exception as e:
-            logging.error(f"Error loading saved task intervals (seconds) from {intervals_file_path}: {e}")
-
-    # Tasks explicitly assigned to Library, Metadata, or Feature tabs
-    _LIBRARY_TASKS = {
-        'task_verify_plex_removals',
-        'task_check_trakt_early_releases',
-        'task_refresh_library_size_cache',
-        'task_check_plex_files',
-        'task_plex_full_scan',
-        'task_verify_symlinked_files',
-        'task_get_plex_watch_history',
-        'task_run_library_maintenance',
-        'task_analyze_media_files',
-        'task_manual_plex_full_scan',
-        'task_sync_library_metadata',
-        'task_backfill_plex_guids',
-        'task_backfill_plex_ms_item_id',
-        'task_sync_cli_mount_changes',
-        'task_repair_broken_nzbs',
-        'task_repair_broken_debrids',
-        'task_scan_mount_for_external_adds',
-    }
-    _METADATA_TASKS = {
-        'task_refresh_release_dates',
-        'task_sync_episode_metadata',
-        'task_update_show_ids',
-        'task_update_show_titles',
-        'task_update_movie_ids',
-        'task_update_movie_titles',
-        'task_update_tv_show_status',
-        'task_cleanup_title_year_suffixes',
-    }
-    _FEATURE_TASKS = {
-        'task_overlay_sync',
-        'task_overlay_cleanup',
-        'task_sync_plex_labels',
-        'task_process_plex_reported_issues',
-        'task_sync_viewer_history',
-        'task_process_bulk_subtitles',
-        'task_backup_debrid',
-        'task_cleanup_debrid',
-        'task_upgrade_hub_scan',
-        'task_upgrade_hub_auto_queue',
-        'task_plex_smart_collection_posters',
-        'task_plex_movie_boxsets',
-        'task_backfill_nzb_torrent_ids',
-    }
-
-    tasks_data = {
-        'queues': {},
-        'content_sources': {},
-        'system_tasks': {},
-        'library_tasks': {},
-        'metadata_tasks': {},
-        'feature_tasks': {},
-    }
-    job_infos = {}
+    running = bool(runner and runner.is_running())
 
     try:
+        with open(_get_task_intervals_file_path()) as f:
+            saved_intervals = json.load(f) or {}
+    except (OSError, ValueError):
+        saved_intervals = {}
+
+    if runner and hasattr(runner, 'task_intervals'):
+        content_sources = runner.content_sources or {}
+        intervals = dict(runner.task_intervals)
+        defaults_iv = dict(getattr(runner, 'original_task_intervals', {}) or intervals)
+        enabled = set(runner.enabled_tasks)
+        default_on = set(getattr(runner, 'default_enabled_tasks', enabled))
+        executing = set(getattr(runner, 'currently_executing_tasks', set()))
+    else:
+        content_sources = get_setting('Content Sources') or {}
+        defaults_iv = task_registry.default_intervals(content_sources)
+        intervals = {k: saved_intervals.get(k) or v for k, v in defaults_iv.items()}
+        default_on = task_registry.default_enabled(get_setting, content_sources)
+        enabled = task_registry.apply_overrides(default_on, task_registry.load_overrides(), intervals)
+        executing = set()
+
+    jobs = {}
+    tz = None
+    if running and runner.scheduler:
         with runner.scheduler_lock:
-            if not runner.scheduler or not runner.scheduler.running:
-                # Added check inside lock as well
-                return jsonify(success=False, error="Scheduler is not running", tasks=tasks_data)
+            tz = runner.scheduler.timezone
+            jobs = {job.id: job.next_run_time for job in runner.scheduler.get_jobs()}
+    now = datetime.now(tz) if tz else None
 
-            jobs = runner.scheduler.get_jobs()
-            for job in jobs:
-                job_infos[job.id] = job
-
-    except Exception as e:
-        logging.error(f"Error accessing scheduler jobs: {e}", exc_info=True)
-        return jsonify(success=False, error="Failed to access scheduler jobs", tasks=tasks_data)
-
-    now_local = datetime.now(runner.scheduler.timezone) # Use scheduler's timezone
-
-    # Ensure these attributes exist before accessing them
-    original_intervals = getattr(runner, 'original_task_intervals', {})
-    queue_map = getattr(runner, 'queue_processing_map', {})
-    content_sources_map = getattr(runner, 'content_sources', {}) # Use content_sources dict
-
-    all_defined_tasks = set(original_intervals.keys())
-    for task_name in all_defined_tasks:
-        normalized_name = runner._normalize_task_name(task_name) # Use runner's normalization
-        job = job_infos.get(normalized_name)
-        
-        # Determine the configured interval (custom if set, else default)
-        task_default_interval = original_intervals.get(normalized_name, 0)
-        task_custom_saved_interval = saved_intervals_seconds.get(normalized_name) # Raw value from JSON (number or None)
-
-        # The configured interval is the custom value if set, otherwise the default
-        configured_interval = task_custom_saved_interval if task_custom_saved_interval is not None else task_default_interval
-        
-        task_info = {
-            'enabled': job is not None and job.next_run_time is not None,
-            'interval': 0, # Current interval from job or default
-            'next_run_in': {'hours': 0, 'minutes': 0, 'seconds': 0, 'total_seconds': 0},
-            'display_name': _format_task_display_name(normalized_name, queue_map, content_sources_map),
-            'current_interval_seconds': 0, # Actual live interval or configured if disabled
-            'default_interval_seconds': task_default_interval, # Original default (never changes)
-            'custom_interval_seconds': task_custom_saved_interval, # Raw saved value (number or null)
-            'configured_interval_seconds': configured_interval # Current effective interval (custom or default)
-        }
-
-        if job:
-            # Get current interval from the job's trigger
-            current_job_interval_seconds = 0
-            if hasattr(job.trigger, 'interval') and isinstance(job.trigger.interval, timedelta):
-                 current_job_interval_seconds = job.trigger.interval.total_seconds()
-            task_info['interval'] = current_job_interval_seconds 
-            task_info['current_interval_seconds'] = current_job_interval_seconds
-            
-            if job.next_run_time:
-                 # Ensure next_run_time is timezone-aware using scheduler's timezone
-                next_run_local = job.next_run_time.astimezone(runner.scheduler.timezone) if job.next_run_time.tzinfo else runner.scheduler.timezone.localize(job.next_run_time)
-
-                time_diff = next_run_local - now_local
-                total_seconds = max(0, time_diff.total_seconds())
-
-                task_info['next_run_in'] = {
-                    'hours': int(total_seconds // 3600),
-                    'minutes': int((total_seconds % 3600) // 60),
-                    'seconds': int(total_seconds % 60),
-                    'total_seconds': total_seconds
-                }
-            else:
-                 # Job exists but is paused (next_run_time is None)
-                 task_info['enabled'] = False # Explicitly set enabled to false if paused
-
-        else:
-            # Task is defined but not scheduled (disabled)
-            task_info['enabled'] = False
-            # For a disabled task, current_interval_seconds reflects what it would be if it started, which is its configured_interval
-            task_info['interval'] = configured_interval 
-            task_info['current_interval_seconds'] = configured_interval
-            # default_interval_seconds, custom_interval_seconds, and configured_interval_seconds are already set above
+    help_data = _load_task_help()
+    tasks = []
+    names = list(intervals) + [s.name for s in task_registry.SPECS.values() if s.kind == task_registry.MANUAL]
+    for name in names:
+        spec = task_registry.spec_for(name, content_sources)
+        if not spec:
+            continue
+        is_source = spec.group == 'content_sources'
+        info = help_data.get('content_source', {}) if is_source else help_data.get('tasks', {}).get(name, {})
+        next_run = jobs.get(name)
+        tasks.append({
+            'name': name,
+            'label': spec.label,
+            'group': spec.group,
+            'kind': spec.kind,
+            'enabled': name in enabled,
+            'default_enabled': name in default_on,
+            'interval': intervals.get(name, 0),
+            'default_interval': defaults_iv.get(name, spec.interval),
+            'custom_interval': saved_intervals.get(name),
+            'next_run_seconds': max(0, int((next_run - now).total_seconds())) if next_run and now else None,
+            'running': any(j == name or (j.startswith('manual_') and j[7:-37] == name) for j in executing),
+            'destructive': spec.destructive,
+            'controlled_by': spec.controlled_by,
+            'setting_backed': bool(spec.setting),
+            'description': info.get('description', ''),
+            'action': info.get('action', ''),
+        })
+    return jsonify(success=True, running=running, groups=task_registry.groups_payload(), tasks=tasks)
 
 
-        # Categorize task
-        if normalized_name in queue_map:
-            tasks_data['queues'][normalized_name] = task_info
-        elif normalized_name.startswith('task_') and normalized_name.endswith('_wanted'):
-             # Use the display name logic to check if it was a derived content source
-             source_key = normalized_name[5:-7] # Extract potential source key
-             is_content_source = False
-             if content_sources_map:
-                 simple_key_match = source_key in content_sources_map
-                 if simple_key_match:
-                      is_content_source = True
+@program_operation_bp.route('/automation')
+@admin_required
+def automation():
+    return render_template('automation.html')
 
-             if is_content_source:
-                 tasks_data['content_sources'][normalized_name] = task_info
-             else:
-                 logging.debug(f"Task '{normalized_name}' looks like a content source but key '{source_key}' not found in content_sources map. Categorizing as system.")
-                 tasks_data['system_tasks'][normalized_name] = task_info
-        elif normalized_name in _LIBRARY_TASKS:
-            tasks_data['library_tasks'][normalized_name] = task_info
-        elif normalized_name in _METADATA_TASKS:
-            tasks_data['metadata_tasks'][normalized_name] = task_info
-        elif normalized_name in _FEATURE_TASKS:
-            tasks_data['feature_tasks'][normalized_name] = task_info
-        else:
-            tasks_data['system_tasks'][normalized_name] = task_info
-
-    return jsonify(success=True, tasks=tasks_data)
 
 @program_operation_bp.route('/task_timings')
 @admin_required
 def task_timings():
-    return render_template('task_timings.html')
+    return redirect(url_for('program_operation.automation'))
+
 
 @program_operation_bp.route('/trigger_task', methods=['POST'])
 @admin_required
@@ -1167,70 +1069,25 @@ def _sync_setting_backed_tasks(runner):
 
 
 def _persist_task_toggles_from_runner(runner):
-    """Write ProgramRunner's live enabled_tasks state to task_toggles.json.
+    """Write the live on/off state to task_toggles.json as overrides of each task's default.
 
-    Shared by the explicit 'Save' button on the Task Manager page and by the
-    individual enable_task/disable_task toggle endpoints. Flipping a single
-    switch used to only pause/resume the in-memory scheduler job -- nothing
-    wrote it to disk until a separate Save click. Any subsequent settings
-    save (which restarts ProgramRunner) then rebuilt enabled_tasks from the
-    stale on-disk file, silently re-enabling a source the user had "disabled"
-    minutes earlier. Persisting on every toggle closes that gap.
-
+    Called by the enable/disable endpoints right after the live change, so a later
+    settings save (which rebuilds ProgramRunner) keeps what the user chose.
     Returns (success: bool, error: str | None).
     """
-    MIGRATION_VERSION_KEY = "_migration_version"
-
+    from queues.runner import task_registry
     if not (hasattr(runner, 'task_intervals') and hasattr(runner, 'enabled_tasks')):
         return False, 'ProgramRunner instance is missing necessary attributes (task_intervals or enabled_tasks).'
-
-    # Construct live_task_states from ProgramRunner
-    live_task_states = {}
-    for task_name in runner.task_intervals.keys():
-        # Ensure we use the same normalized name that would be stored/checked
-        normalized_name = runner._normalize_task_name(task_name)
-        live_task_states[normalized_name] = normalized_name in runner.enabled_tasks
-
-    # Save the full live state for all known tasks.
-    # Diff-based saving caused a bug: after one correct restart with a disabled task,
-    # the snapshot no longer contained that task (since it was already excluded by the
-    # toggle-aware init logic), so subsequent saves dropped the 'false' entry, causing
-    # the task to re-enable on the next restart.
-    # Saving the full state is safe: stale tasks are excluded because we only iterate
-    # runner.task_intervals.keys() above, and the file format is unchanged.
-    data_to_save = live_task_states.copy()
-
-    # Get the file path
-    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-    toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
-
-    migration_version = None
-
-    # Read existing file to preserve metadata (like _migration_version)
-    if os.path.exists(toggles_file_path):
-        try:
-            with open(toggles_file_path, 'r') as f:
-                current_data_from_file = json.load(f)
-                if isinstance(current_data_from_file, dict) and MIGRATION_VERSION_KEY in current_data_from_file:
-                    migration_version = current_data_from_file[MIGRATION_VERSION_KEY]
-        except (json.JSONDecodeError, OSError) as e:
-            logging.warning(f"Could not read existing task toggles file to preserve metadata: {e}")
-
-    # Preserve the migration version marker
-    if migration_version is not None:
-        data_to_save[MIGRATION_VERSION_KEY] = migration_version
-
-    # Save the combined data to JSON file
     try:
-        os.makedirs(os.path.dirname(toggles_file_path), exist_ok=True)
-        with open(toggles_file_path, 'w') as f:
-            json.dump(data_to_save, f, indent=4)
-        logging.info(f"Live task toggle states saved to {toggles_file_path}")
+        defaults = getattr(runner, 'default_enabled_tasks', None)
+        if defaults is None:
+            defaults = task_registry.default_enabled(get_setting, runner.content_sources or {})
+        runner._task_overrides = task_registry.save_overrides(runner.enabled_tasks, defaults, runner.task_intervals)
         _sync_setting_backed_tasks(runner)
         return True, None
     except OSError as e:
-        logging.error(f"Error writing task toggles file: {str(e)}")
-        return False, f"Failed to write file: {str(e)}"
+        logging.error(f"Error writing task toggles file: {e}")
+        return False, f"Failed to write file: {e}"
 
 
 @program_operation_bp.route('/save_task_toggles', methods=['POST'])
@@ -1444,10 +1301,12 @@ def reset_all_task_settings():
                 "deletion_errors": deletion_errors
             }), 500
 
-        success_message = f"Task settings reset. {files_deleted_count} configuration files deleted."
-        if files_not_found_count > 0:
-            success_message += f" {files_not_found_count} files were already absent."
-        success_message += " Please restart the program for changes to take full effect."
+        success_message = "Automation reset to defaults."
+        runner = get_program_runner()
+        if runner and runner.is_running():
+            runner.reinitialize()
+        else:
+            success_message += " It applies when the program starts."
         
         logging.info(success_message)
         return jsonify({"status": "success", "message": success_message, "files_deleted": files_deleted_count})
@@ -1455,61 +1314,6 @@ def reset_all_task_settings():
     except Exception as e:
         logging.error(f"Critical error in reset_all_task_settings: {str(e)}", exc_info=True)
         return jsonify({'status': 'error', 'message': f"An unexpected critical error occurred during reset: {str(e)}"}), 500
-
-# Define the missing helper function
-def _format_task_display_name(task_name, queue_map, content_sources_map):
-    """Formats the internal task name into a user-friendly display name."""
-    
-    # Check if it's a known queue task (using the map keys)
-    if task_name in queue_map:
-        # Special-case display names for specific queue tasks
-        if task_name == 'final_check_queue':
-            return 'Final Scrape'
-        elif task_name == 'Pre_release':
-            return 'Pre-Release'
-        # For other queues, the key itself is usually descriptive enough
-        return task_name.capitalize()
-
-    # Check if it's a content source task
-    if task_name.startswith('task_') and task_name.endswith('_wanted'):
-        source_key = task_name[5:-7] # Extract potential key 'My_Overseerr' etc.
-        
-        # Try to find a matching entry in the content_sources_map
-        # Prioritize configured display_name
-        if content_sources_map and source_key in content_sources_map:
-            source_config = content_sources_map[source_key]
-            # Check if the source config has a non-empty 'display_name' field
-            config_display_name = getattr(source_config, 'display_name', '') or source_config.get('display_name', '') if isinstance(source_config, dict) else ''
-
-            if config_display_name and config_display_name.strip():
-                return config_display_name.strip()
-            else:
-                # Fallback to formatting the key if display_name is missing/empty
-                display_name = source_key.replace('_', ' ').strip()
-                # Basic capitalization (capitalize first letter of each word)
-                return ' '.join(word.capitalize() for word in display_name.split())
-        else:
-            # Fallback if key not found in map (shouldn't happen often if maps are synced)
-             logging.debug(f"Could not find source key '{source_key}' in content_sources_map for display name formatting.")
-             # Fallback to generic formatting
-             display_name = source_key.replace('_', ' ').strip()
-             return ' '.join(word.capitalize() for word in display_name.split()) + " (Source)"
-
-
-    # Handle other system tasks (usually start with 'task_')
-    if task_name.startswith('task_'):
-        _TASK_DISPLAY_OVERRIDES = {
-            'task_sync_cli_mount_changes': 'Sync cli_mount Changes',
-        }
-        if task_name in _TASK_DISPLAY_OVERRIDES:
-            return _TASK_DISPLAY_OVERRIDES[task_name]
-        display_name = task_name[5:].replace('_', ' ').strip() # Remove prefix, replace underscores
-         # Capitalize first letter of each word
-        return ' '.join(word.capitalize() for word in display_name.split())
-
-    # Default fallback if no rule matches (should be rare)
-    return task_name.replace('_', ' ').capitalize()
-
 
 # ---------------------------------------------------------------------------
 # NzbDAV setup helper — backs the in-app "Test connection & ensure categories"

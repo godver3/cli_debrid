@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+
+{% block title %}Automation{% endblock %}
+
+{% block head %}
+<style>
+#auto{
+  --surface:#1a1a1a;--surface2:#222;--border:#2d2d2d;--border2:#3d3d3d;
+  --accent:#e8601c;--text:#e0e0e0;--text2:#aaa;--text3:#777;
+  --green:#22c55e;--red:#ef4444;--yellow:#f59e0b;--blue:#60a5fa;
+  font-family:'Inter',sans-serif;font-size:13px;color:var(--text);
+  max-width:1100px;margin:0 auto;padding:1.25rem 16px;box-sizing:border-box;
+}
+.container:has(#auto){max-width:100%!important;padding:0!important;}
+#auto *{box-sizing:border-box;}
+#auto .hdr{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:.5rem;}
+#auto .title{font-size:20px;font-weight:700;border-left:3px solid var(--accent);padding-left:10px;}
+#auto .intro{color:var(--text2);font-size:12px;margin:0 0 1rem;max-width:760px;line-height:1.5;}
+#auto .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:1rem;}
+#auto .search{flex:1 1 220px;max-width:340px;background:var(--surface2);border:1px solid var(--border2);border-radius:6px;color:var(--text);padding:7px 10px;font:inherit;}
+#auto .chk{display:inline-flex;align-items:center;gap:6px;color:var(--text2);font-size:12px;cursor:pointer;user-select:none;}
+#auto .btn{background:var(--surface2);border:1px solid var(--border2);border-radius:6px;color:var(--text);padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap;}
+#auto .btn:hover{border-color:var(--accent);}
+#auto .btn.danger{color:var(--red);}
+#auto .btn:disabled{opacity:.5;cursor:default;}
+#auto .notice{background:#f59e0b14;border:1px solid #f59e0b55;color:var(--yellow);border-radius:7px;padding:8px 12px;margin-bottom:1rem;font-size:12px;}
+#auto .group{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;overflow:hidden;}
+#auto .g-head{display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;}
+#auto .g-head:hover{background:var(--surface2);}
+#auto .g-caret{color:var(--text3);font-size:11px;width:12px;transition:transform .15s;}
+#auto .group.open .g-caret{transform:rotate(90deg);}
+#auto .g-main{flex:1;min-width:0;}
+#auto .g-name{font-weight:600;font-size:14px;}
+#auto .g-desc{color:var(--text3);font-size:12px;margin-top:2px;}
+#auto .g-count{color:var(--text2);font-size:12px;white-space:nowrap;}
+#auto .g-body{display:none;border-top:1px solid var(--border);}
+#auto .group.open .g-body{display:block;}
+#auto .task{display:flex;align-items:center;gap:12px;padding:10px 14px 10px 38px;border-bottom:1px solid var(--border);flex-wrap:wrap;}
+#auto .task:last-child{border-bottom:none;}
+#auto .t-main{flex:1 1 260px;min-width:0;}
+#auto .t-label{font-weight:500;}
+#auto .t-name{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text3);margin-left:6px;}
+#auto .t-desc{color:var(--text3);font-size:12px;margin-top:3px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer;}
+#auto .t-desc.full{display:block;}
+#auto .t-note{color:var(--blue);font-size:11px;margin-top:3px;}
+#auto .t-warn{color:var(--red);font-size:11px;margin-top:3px;}
+#auto .t-status{font-size:11px;color:var(--text3);white-space:nowrap;min-width:110px;text-align:right;}
+#auto .t-status.run{color:var(--green);}
+#auto .t-iv{display:flex;align-items:center;gap:6px;}
+#auto .t-iv input{width:90px;background:var(--surface2);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-family:'JetBrains Mono',monospace;font-size:12px;}
+#auto .t-iv input.custom{border-color:var(--accent);}
+#auto .t-iv span{color:var(--text3);font-size:11px;}
+#auto .tag{display:inline-block;padding:0 6px;border-radius:8px;font-size:10px;margin-left:6px;vertical-align:1px;}
+#auto .tag.changed{background:#e8601c22;color:var(--accent);}
+#auto .switch{position:relative;width:36px;height:20px;flex:0 0 auto;}
+#auto .switch input{opacity:0;width:0;height:0;}
+#auto .slider{position:absolute;inset:0;background:var(--border2);border-radius:20px;cursor:pointer;transition:background .15s;}
+#auto .slider:before{content:'';position:absolute;width:14px;height:14px;left:3px;top:3px;background:#fff;border-radius:50%;transition:transform .15s;}
+#auto .switch input:checked + .slider{background:var(--accent);}
+#auto .switch input:checked + .slider:before{transform:translateX(16px);}
+#auto .switch input:disabled + .slider{opacity:.5;cursor:default;}
+#auto .switch input:indeterminate + .slider{background:#e8601c77;}
+#auto .switch input:indeterminate + .slider:before{transform:translateX(8px);}
+#auto .empty{padding:2rem;text-align:center;color:var(--text2);}
+#auto .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:8px 14px;border-radius:7px;font-size:12px;z-index:9999;display:none;max-width:90vw;}
+#auto .toast.err{border-color:var(--red);color:var(--red);}
+@media (max-width:640px){
+  #auto .task{padding-left:14px;}
+  #auto .t-status{text-align:left;min-width:0;}
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="auto">
+  <div class="hdr">
+    <div class="title">Automation</div>
+  </div>
+  <p class="intro">
+    What cli_debrid does on its own, grouped by feature. Turn a feature off to stop it running, or use
+    <b>Run now</b> to run it once. Some features follow a setting by default; the note under them says where.
+    Turn on <b>Advanced</b> to change how often each one runs.
+  </p>
+
+  <div class="toolbar">
+    <input class="search" id="autoSearch" type="search" placeholder="Filter…" aria-label="Filter features">
+    <label class="chk"><input type="checkbox" id="autoAdvanced"> Advanced</label>
+    <label class="chk" id="autoInternalWrap" style="display:none"><input type="checkbox" id="autoInternal"> Show internal &amp; one-time tasks</label>
+    <button class="btn danger" id="autoReset" style="display:none">Reset all to defaults</button>
+  </div>
+
+  <div class="notice" id="autoNotStarted" style="display:none">
+    The program is not running. Changes are saved and apply when it starts; Run now needs it running.
+  </div>
+
+  <div id="autoGroups"><div class="empty">Loading…</div></div>
+  <div class="toast" id="autoToast"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const LS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
+
+  let data = { groups: [], tasks: [], running: false };
+  let open = new Set(JSON.parse(LS('auto.open') || '["queues"]'));
+  const expanded = new Set();
+  const state = {
+    advanced: LS('auto.advanced') === '1',
+    internal: LS('auto.internal') === '1',
+    filter: '',
+  };
+  $('autoAdvanced').checked = state.advanced;
+  $('autoInternal').checked = state.internal;
+
+  function toast(msg, err) {
+    const t = $('autoToast');
+    t.textContent = msg;
+    t.className = 'toast' + (err ? ' err' : '');
+    t.style.display = 'block';
+    clearTimeout(t._h);
+    t._h = setTimeout(() => { t.style.display = 'none'; }, 3500);
+  }
+
+  function fmtSecs(s) {
+    if (s == null) return '';
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.round(s / 60) + 'm';
+    if (s < 86400) { const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h + 'h' + (m ? ' ' + m + 'm' : ''); }
+    const d = Math.floor(s / 86400), h = Math.round((s % 86400) / 3600); return d + 'd' + (h ? ' ' + h + 'h' : '');
+  }
+
+  function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+  function visible(t) {
+    if (!state.internal && (t.kind === 'internal' || t.group === 'one_time')) return false;
+    if (state.filter) {
+      const hay = (t.label + ' ' + t.name + ' ' + t.description).toLowerCase();
+      if (!hay.includes(state.filter)) return false;
+    }
+    return true;
+  }
+
+  function toggleable(t) { return t.kind !== 'manual'; }
+
+  function statusText(t) {
+    if (t.running) return { cls: 'run', txt: 'Running…' };
+    if (t.kind === 'manual') return { cls: '', txt: 'Run by hand' };
+    if (!t.enabled) return { cls: '', txt: 'Off' };
+    if (t.next_run_seconds == null) return { cls: '', txt: 'Every ' + fmtSecs(t.interval) };
+    return { cls: '', txt: 'Next in ' + fmtSecs(t.next_run_seconds) };
+  }
+
+  function taskRow(t) {
+    const st = statusText(t);
+    const changed = toggleable(t) && !t.setting_backed && t.enabled !== t.default_enabled;
+    let html = `<div class="task" data-task="${esc(t.name)}">
+      <div class="t-main">
+        <div><span class="t-label">${esc(t.label)}</span>${state.advanced ? `<span class="t-name">${esc(t.name)}</span>` : ''}${changed ? `<span class="tag changed" title="Default: ${t.default_enabled ? 'on' : 'off'}">changed</span>` : ''}</div>
+        ${t.description ? `<div class="t-desc${expanded.has(t.name) ? ' full' : ''}" data-desc="${esc(t.name)}" title="Click to show more">${esc(t.description)}</div>` : ''}
+        ${t.controlled_by ? `<div class="t-note">${esc(t.controlled_by)}</div>` : ''}
+        ${t.destructive ? `<div class="t-warn">Deletes or changes data. Read the description before turning it on.</div>` : ''}
+      </div>`;
+    if (state.advanced && toggleable(t)) {
+      const custom = t.custom_interval != null && t.custom_interval !== '';
+      html += `<div class="t-iv"><input type="number" min="1" step="1" data-iv="${esc(t.name)}" value="${t.interval}" class="${custom ? 'custom' : ''}" title="Seconds. Default ${t.default_interval}s" aria-label="Interval in seconds"><span>s · default ${fmtSecs(t.default_interval)}</span></div>`;
+    }
+    html += `<div class="t-status ${st.cls}">${st.txt}</div>
+      <button class="btn" data-run="${esc(t.name)}" ${data.running && !t.running ? '' : 'disabled'}>Run now</button>`;
+    if (toggleable(t)) {
+      html += `<label class="switch" title="${t.enabled ? 'On' : 'Off'}"><input type="checkbox" data-toggle="${esc(t.name)}" ${t.enabled ? 'checked' : ''}><span class="slider"></span></label>`;
+    }
+    return html + '</div>';
+  }
+
+  function render() {
+    $('autoNotStarted').style.display = data.running ? 'none' : '';
+    $('autoInternalWrap').style.display = state.advanced ? '' : 'none';
+    $('autoReset').style.display = state.advanced ? '' : 'none';
+    const root = $('autoGroups');
+    const parts = [];
+    for (const g of data.groups) {
+      const all = data.tasks.filter(t => t.group === g.id);
+      const tasks = all.filter(visible);
+      if (!tasks.length) continue;
+      const tog = tasks.filter(toggleable);
+      const on = tog.filter(t => t.enabled).length;
+      const isOpen = open.has(g.id) || !!state.filter;
+      parts.push(`<div class="group ${isOpen ? 'open' : ''}" data-group="${g.id}">
+        <div class="g-head" data-head="${g.id}">
+          <span class="g-caret">▶</span>
+          <div class="g-main"><div class="g-name">${esc(g.label)}</div><div class="g-desc">${esc(g.description)}</div></div>
+          ${tog.length ? `<span class="g-count">${on} of ${tog.length} on</span>
+          <label class="switch" title="Turn the whole group on or off"><input type="checkbox" data-gtoggle="${g.id}" ${on === tog.length ? 'checked' : ''}><span class="slider"></span></label>` : ''}
+        </div>
+        <div class="g-body">${tasks.map(taskRow).join('')}</div>
+      </div>`);
+    }
+    root.innerHTML = parts.join('') || '<div class="empty">Nothing matches.</div>';
+    root.querySelectorAll('[data-gtoggle]').forEach(el => {
+      const g = el.dataset.gtoggle;
+      const tog = data.tasks.filter(t => t.group === g && visible(t) && toggleable(t));
+      const on = tog.filter(t => t.enabled).length;
+      el.indeterminate = on > 0 && on < tog.length;
+    });
+  }
+
+  async function load() {
+    try {
+      const r = await fetch('/program_operation/api/task_timings');
+      const j = await r.json();
+      if (!j.success) throw new Error(j.error || 'failed');
+      data = j;
+      render();
+    } catch (e) {
+      $('autoGroups').innerHTML = '<div class="empty">Could not load tasks: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  async function post(url, body) {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+    return r.json();
+  }
+
+  async function setTask(t, on) {
+    if (on && t.destructive && !confirm(`"${t.label}" deletes or changes data on its own. Turn it on?`)) return false;
+    const j = await post(on ? '/program_operation/enable_task' : '/program_operation/disable_task', 'task_name=' + encodeURIComponent(t.name));
+    if (!j.success) { toast(j.error || 'Could not change ' + t.label, true); return false; }
+    t.enabled = on;
+    return true;
+  }
+
+  $('autoGroups').addEventListener('click', async (ev) => {
+    const desc = ev.target.closest('[data-desc]');
+    if (desc) {
+      const n = desc.dataset.desc;
+      expanded.has(n) ? expanded.delete(n) : expanded.add(n);
+      desc.classList.toggle('full');
+      return;
+    }
+    const head = ev.target.closest('[data-head]');
+    if (head && !ev.target.closest('.switch')) {
+      const g = head.dataset.head;
+      open.has(g) ? open.delete(g) : open.add(g);
+      LS('auto.open', JSON.stringify([...open]));
+      head.parentElement.classList.toggle('open');
+      return;
+    }
+    const run = ev.target.closest('[data-run]');
+    if (run) {
+      const t = data.tasks.find(x => x.name === run.dataset.run);
+      if (t.destructive && !confirm(`Run "${t.label}" now? It deletes or changes data.`)) return;
+      run.disabled = true;
+      const j = await post('/program_operation/trigger_task', 'task_name=' + encodeURIComponent(t.name));
+      toast(j.success ? `${t.label} queued` : (j.message || 'Could not run ' + t.label), !j.success);
+      setTimeout(load, 800);
+    }
+  });
+
+  $('autoGroups').addEventListener('change', async (ev) => {
+    const el = ev.target;
+    if (el.dataset.toggle) {
+      const t = data.tasks.find(x => x.name === el.dataset.toggle);
+      el.disabled = true;
+      const ok = await setTask(t, el.checked);
+      if (!ok) el.checked = !el.checked;
+      render();
+      return;
+    }
+    if (el.dataset.gtoggle) {
+      const g = data.groups.find(x => x.id === el.dataset.gtoggle);
+      const on = el.checked;
+      const tasks = data.tasks.filter(t => t.group === g.id && visible(t) && toggleable(t) && t.enabled !== on);
+      if (!on && g.id === 'queues' && !confirm('Turning off every queue stops cli_debrid from scraping and adding anything. Continue?')) { el.checked = true; return; }
+      if (on && tasks.some(t => t.destructive) && !confirm(`This also turns on: ${tasks.filter(t => t.destructive).map(t => t.label).join(', ')}, which delete or change data. Continue?`)) { el.checked = false; render(); return; }
+      el.disabled = true;
+      for (const t of tasks) {
+        const j = await post(on ? '/program_operation/enable_task' : '/program_operation/disable_task', 'task_name=' + encodeURIComponent(t.name));
+        if (j.success) t.enabled = on; else toast(j.error || 'Could not change ' + t.label, true);
+      }
+      render();
+      return;
+    }
+    if (el.dataset.iv) {
+      const t = data.tasks.find(x => x.name === el.dataset.iv);
+      const v = parseInt(el.value, 10);
+      if (!(v >= 1)) { toast('Enter a whole number of seconds (1 or more)', true); el.value = t.interval; return; }
+      const payload = {}; payload[t.name] = v === t.default_interval ? null : v;
+      const r = await fetch('/program_operation/save_task_intervals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task_intervals: payload }) });
+      const j = await r.json();
+      toast(j.success ? `${t.label}: every ${fmtSecs(v)}` : (j.error || 'Could not save'), !j.success);
+      load();
+    }
+  });
+
+  $('autoSearch').addEventListener('input', (e) => { state.filter = e.target.value.trim().toLowerCase(); render(); });
+  $('autoAdvanced').addEventListener('change', (e) => { state.advanced = e.target.checked; LS('auto.advanced', state.advanced ? '1' : '0'); render(); });
+  $('autoInternal').addEventListener('change', (e) => { state.internal = e.target.checked; LS('auto.internal', state.internal ? '1' : '0'); render(); });
+  $('autoReset').addEventListener('click', async () => {
+    if (!confirm('Reset every feature and interval to its default?')) return;
+    const r = await fetch('/program_operation/api/reset_all_task_settings', { method: 'POST' });
+    const j = await r.json();
+    toast(j.message || (j.status === 'success' ? 'Reset' : 'Reset failed'), j.status !== 'success');
+    setTimeout(load, 1500);
+  });
+
+  // Refresh every 5s while visible; keep interval inputs stable while typing.
+  setInterval(() => {
+    if (document.hidden) return;
+    const a = document.activeElement;
+    if (a && a.dataset && a.dataset.iv) return;
+    load();
+  }, 5000);
+  load();
+})();
+</script>
+{% endblock %}
