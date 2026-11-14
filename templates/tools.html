@@ -1,0 +1,30 @@
+{% extends "tool_cards/layout.html" %}
+{% block title %}Tools{% endblock %}
+{% block page_title %}Tools{% endblock %}
+{% block intro %}<p class="tdb-intro">Hands-on tools for the library, symlinks and Plex labels. Backups, cleanups and database fixes are on the <a href="{{ url_for('tool_pages.maintenance') }}">Maintenance</a> page; scheduled jobs are on <a href="{{ url_for('program_operation.automation') }}">Automation</a>.</p>{% endblock %}
+{% block tabs %}
+<button class="tab" data-cat="library">Library</button>
+<button class="tab" data-cat="symlinks">Symlinks</button>
+<button class="tab" data-cat="plex_labels">Plex Labels</button>
+<button class="tab" data-cat="usenet">Usenet</button>
+<button class="tab" data-cat="pages">More tools</button>
+{% endblock %}
+{% block cards %}
+{% include 'tool_cards/tools.html' %}
+{% include '_provider_transfer.html' %}
+<div data-cat="pages" class="debug_item">
+  <h3>Other tool pages</h3>
+  <p class="description">Tools that have a page of their own.</p>
+  <div class="tdb-tiles">
+    <a class="tdb-tile" href="{{ url_for('scraper.scraper_tester') }}"><i class="fa-solid fa-flask"></i><span><b>Scraper Tester</b><small>Run a search through your scrapers and see what each returns.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('database.reverse_parser') }}"><i class="fa-solid fa-rotate"></i><span><b>Reverse Parser</b><small>Work out which version your existing files belong to.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('magnet.assign_magnet') }}"><i class="fa-solid fa-arrow-right-arrow-left"></i><span><b>Manual Assign</b><small>Assign a torrent or NZB to items by hand.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i><span><b>Manual Blacklist</b><small>Titles that should never be requested.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('symlink_tools.index') }}"><i class="fa-solid fa-link"></i><span><b>Create a Symlink</b><small>Make a single symlink by hand.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('metadata.metadata_debug') }}"><i class="fa-solid fa-tags"></i><span><b>Metadata Lookup</b><small>See the metadata stored for a title.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i><span><b>Overlays</b><small>Design the badges drawn on your posters.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('trakt_friends.manage_friends') }}"><i class="fa-solid fa-users"></i><span><b>Trakt Friends</b><small>Link friends' Trakt accounts.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('user_token.collect_tokens_page') }}"><i class="fa-solid fa-key"></i><span><b>Plex User Tokens</b><small>Collect Plex tokens for friends' watchlists.</small></span></a>
+  </div>
+</div>
+{% endblock %}

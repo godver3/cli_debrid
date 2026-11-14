@@ -136,11 +136,30 @@
 .pd-toast{position:fixed;bottom:1.25rem;right:1.25rem;background:var(--pd-surface);border:1px solid var(--pd-border2);border-radius:7px;padding:9px 14px;font-size:12px;color:var(--pd-text);z-index:9999;opacity:0;transform:translateY(6px);transition:all .2s;pointer-events:none;display:flex;align-items:center;gap:7px;font-family:var(--pd-sans)}
 .pd-toast.show{opacity:1;transform:translateY(0)}
 .pd-toast-dot{width:6px;height:6px;border-radius:50%}
+
+/* Tabs: Performance is this page; the others are their own pages in a frame. */
+.pd-tabs-wrap{padding-bottom:0!important}
+.pd-tabbar{display:flex;gap:2px;background:#222;border-radius:6px;padding:3px;width:max-content;max-width:100%;overflow-x:auto}
+.pd-tab{padding:6px 14px;border-radius:4px;font-size:13px;font-weight:600;cursor:pointer;color:#777;border:1px solid transparent;background:none;font-family:inherit;white-space:nowrap}
+.pd-tab.active{background:#1a1a1a;color:#e0e0e0;border-color:#3d3d3d}
+.pd-frame iframe{display:block;width:100%;border:0;min-height:calc(100vh - 140px)}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="pd-wrap">
+{% set _is_admin = not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') %}
+<div class="pd-wrap pd-tabs-wrap">
+  <div class="pd-tabbar" role="tablist">
+    <button class="pd-tab" data-tab="performance">Performance</button>
+    <button class="pd-tab" data-tab="connections">Connections</button>
+    <button class="pd-tab" data-tab="scraper-stats">Scraper Stats</button>
+    {% if _is_admin %}<button class="pd-tab" data-tab="diagnostics">Diagnostics</button>{% endif %}
+  </div>
+</div>
+<div class="pd-frame" id="pd-frame-connections" data-src="{{ url_for('connections.index', embed=1) }}" hidden></div>
+<div class="pd-frame" id="pd-frame-scraper-stats" data-src="{{ url_for('statistics.scraper_stats_page', embed=1) }}" hidden></div>
+{% if _is_admin %}<div class="pd-frame" id="pd-frame-diagnostics" data-src="{{ url_for('tool_pages.diagnostics', embed=1) }}" hidden></div>{% endif %}
+<div class="pd-wrap" id="pd-panel-performance">
 
   <div class="pd-hdr">
     <div class="pd-title">Performance Dashboard</div>
@@ -789,6 +808,40 @@ window.addEventListener('resize', function() {
 });
 
 // ── Init ───────────────────────────────────────────────────────────────
+// Tabs: frames load when first opened and are emptied when left, so their
+// polling (connection checks, stats) only runs while visible.
+(function () {
+  const tabs = Array.from(document.querySelectorAll('.pd-tab'));
+  function show(name) {
+    if (!tabs.some(t => t.dataset.tab === name)) name = 'performance';
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    document.getElementById('pd-panel-performance').hidden = name !== 'performance';
+    document.querySelectorAll('.pd-frame').forEach(f => {
+      const on = f.id === 'pd-frame-' + name;
+      f.hidden = !on;
+      if (on && !f.firstChild) {
+        const fr = document.createElement('iframe');
+        fr.src = f.dataset.src;
+        fr.title = name;
+        f.appendChild(fr);
+        // Grow the frame with its content so the page has one scrollbar.
+        const fit = setInterval(() => {
+          if (!fr.isConnected) return clearInterval(fit);
+          try {
+            const h = fr.contentDocument.body.scrollHeight;
+            fr.style.height = Math.max(window.innerHeight - 140, h + 20) + 'px';
+          } catch (e) {}
+        }, 1000);
+      } else if (!on && f.firstChild) {
+        f.innerHTML = '';
+      }
+    });
+    if (history.replaceState) history.replaceState(null, '', name === 'performance' ? location.pathname : '#' + name);
+  }
+  tabs.forEach(t => t.addEventListener('click', () => show(t.dataset.tab)));
+  show((location.hash || '').slice(1) || 'performance');
+})();
+
 document.addEventListener('DOMContentLoaded', function() {
   drawMemChart();
   drawCpuChart();

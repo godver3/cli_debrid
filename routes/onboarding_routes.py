@@ -682,7 +682,7 @@ def onboarding_health():
         add(f"Debrid ({debrid.get('provider', 'RealDebrid')})",
             *validate_debrid_api_key(_real_debrid_key(config), debrid.get('provider', 'RealDebrid')))
     if usenet.get('enabled') and usenet.get('url'):
-        add('Usenet provider', *validate_usenet_provider(usenet.get('provider'), usenet['url'],
+        add('Usenet mount', *validate_usenet_provider(usenet.get('provider'), usenet['url'],
                                                          usenet.get('api_token', '')))
     if not checks:
         add('Provider', False, 'No debrid or usenet provider is set up (step 2)')
@@ -1235,6 +1235,49 @@ def check_plex_pin():
             'success': False,
             'error': str(e)
         }), 500
+
+@onboarding_bp.route('/overlays', methods=['POST'])
+@login_required
+@admin_required
+def onboarding_overlays():
+    """Turn on poster overlays with the bundled "Simple" layout, or leave them off."""
+    from utilities.settings import set_setting
+    data = request.get_json(silent=True) or {}
+    if not data.get('enable'):
+        set_setting('Overlay Settings', 'overlays_enabled', False)
+        return jsonify({'success': True, 'enabled': False})
+    try:
+        layout = install_simple_overlay()
+    except Exception as e:
+        logging.error(f"[Onboarding] Could not set up the Simple overlay: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+    set_setting('Overlay Settings', 'overlays_enabled', True)
+    return jsonify({'success': True, 'enabled': True, 'layout': layout.get('name')})
+
+
+def install_simple_overlay():
+    """Add the "Simple" preset (overlays/preset_layouts/simple.json) and make it the
+    active layout for movies and shows. Season layouts are left alone."""
+    import json as _json
+    from overlays.layout_manager import LayoutManager
+    preset_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               'overlays', 'preset_layouts', 'simple.json')
+    with open(preset_path) as f:
+        preset = _json.load(f)
+    manager = LayoutManager()
+    layout = manager.get_layout_by_name(preset['name'])
+    if not layout:
+        layout = manager.create_layout(name=preset['name'], description=preset.get('description', ''),
+                                       media_type=preset.get('media_type', 'both'),
+                                       layout_json=preset['layout_json'], is_default=True)
+    else:
+        manager.update_layout(layout['id'], is_default=True)
+    # The renderer uses the first active layout for a media type, so Simple must be the only one.
+    for other in manager.list_layouts():
+        if other['id'] != layout['id'] and other.get('media_type') in ('movie', 'tv', 'both') and other.get('is_default'):
+            manager.update_layout(other['id'], is_default=False)
+    return layout
+
 
 @onboarding_bp.route('/skip', methods=['GET', 'POST'])
 @login_required

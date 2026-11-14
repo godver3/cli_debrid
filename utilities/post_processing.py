@@ -396,10 +396,8 @@ def run_custom_script(item: Dict[str, Any]) -> None:
         logging.error(f"Failed to run custom script: {str(e)}")
 
 def _handle_plex_watchlist_removal(item: Dict[str, Any]) -> None:
-    """Remove item from My Plex Watchlist or Other Plex Watchlist based on its content_source."""
-    if not get_setting('Debug', 'plex_watchlist_removal', False):
-        return
-
+    """Remove item from My Plex Watchlist or Other Plex Watchlist when its source has
+    'Remove from watchlist when collected' on."""
     content_source = item.get('content_source', '')
     if not content_source:
         return
@@ -411,6 +409,8 @@ def _handle_plex_watchlist_removal(item: Dict[str, Any]) -> None:
     source_type = source_config.get('type', '')
     if source_type not in ('My Plex Watchlist', 'Other Plex Watchlist'):
         return
+    if not source_config.get('remove_when_collected'):
+        return
 
     # Same rule as fetch-time removal (keep_series, movies only when every version is collected,
     # shows only once ended), so one collected episode can't take a running show off the watchlist.
@@ -419,7 +419,7 @@ def _handle_plex_watchlist_removal(item: Dict[str, Any]) -> None:
     media_type = 'tv' if item.get('type') in ('episode', 'show') else 'movie'
     if not imdb_id:
         return
-    remove, reason = should_remove_from_watchlist(imdb_id, media_type)
+    remove, reason = should_remove_from_watchlist(imdb_id, media_type, keep_series=bool(source_config.get('keep_series')))
     if not remove:
         logging.debug(f"[WATCHLIST_REMOVE] Keeping '{item.get('title')}' on the watchlist: {reason}")
         return

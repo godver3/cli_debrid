@@ -1876,8 +1876,8 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     else:
                         logging.info(f"[UPGRADE] Attempting to remove old torrent {old_torrent_id} via debrid API.")
                         try:
-                            from debrid import get_debrid_provider, ProviderUnavailableError
-                            debrid_provider = get_debrid_provider()
+                            from debrid import provider_holding_torrent, ProviderUnavailableError
+                            debrid_provider = provider_holding_torrent(old_torrent_id)
                             if not debrid_provider:
                                 logging.debug(f"[UPGRADE] No debrid provider configured — skipping torrent removal for {old_torrent_id}")
                                 removal_successful = True

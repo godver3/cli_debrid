@@ -257,8 +257,109 @@
         </div>
     </div>
     <div class="settings-section-content">
+        {% set _dp = settings.get('Debrid Provider', {}) %}
+        {% set _choices = settings_schema['Debrid Provider']['provider'].choices %}
+        {# Debrid providers: one ranked list. Row 1 is stored as provider/api_key and the
+           rest as fallback_providers, so existing configs need no migration. #}
+        <div class="settings-form-group">
+            <label class="settings-title">Debrid Providers:</label>
+            <p class="settings-description">Every provider here is used. For each release cli_debrid checks them in this order and adds it to the first one that has it cached; if a provider fails (DMCA block, rate limit, outage) the next one is tried. Each needs its own API key. Change the order with the arrows. AllDebrid can only check cache by adding, so put it last.</p>
+            <input type="hidden" id="debrid provider-provider" name="Debrid Provider.provider" data-section="Debrid Provider" data-key="provider" value="{{ _dp.get('provider', '') }}">
+            <input type="hidden" id="debrid provider-api_key" name="Debrid Provider.api_key" data-section="Debrid Provider" data-key="api_key" value="{{ _dp.get('api_key', '') }}">
+            <input type="hidden" id="fallback-providers-hidden" name="Debrid Provider.fallback_providers" data-section="Debrid Provider" data-key="fallback_providers" value="">
+            <div id="debrid-providers-list" class="debrid-providers-list">
+                {% set _rows = [{'provider': _dp.get('provider', ''), 'api_key': _dp.get('api_key', '')}] + (_dp.get('fallback_providers') or []) %}
+                {% for row in _rows %}
+                {% if loop.first or row.provider %}
+                <div class="debrid-provider-row">
+                    <span class="dpr-rank">{{ loop.index }}</span>
+                    <select class="settings-input dpr-name">
+                        <option value="">— none —</option>
+                        {% for choice in _choices %}<option value="{{ choice }}" {% if row.provider == choice %}selected{% endif %}>{{ choice }}</option>{% endfor %}
+                    </select>
+                    <input type="password" class="settings-input dpr-key" placeholder="API key" value="{{ row.api_key }}" autocomplete="off">
+                    <button type="button" class="dpr-btn dpr-up" title="Move up"><i class="fa-solid fa-arrow-up"></i></button>
+                    <button type="button" class="dpr-btn dpr-down" title="Move down"><i class="fa-solid fa-arrow-down"></i></button>
+                    <button type="button" class="dpr-btn dpr-test" title="Test this key">Test</button>
+                    <button type="button" class="dpr-btn dpr-remove" title="Remove"><i class="fa-solid fa-trash"></i></button>
+                    <span class="dpr-result"></span>
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
+            <button type="button" id="add-debrid-provider-btn" class="add-version-link btn-primary" style="margin-top:8px">
+                <i class="fa-solid fa-plus"></i> Add provider
+            </button>
+        </div>
+        <style>
+        .debrid-providers-list{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+        .debrid-provider-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+        .debrid-provider-row .dpr-rank{width:18px;color:#888;font-size:12px;text-align:right}
+        #debrid-providers-list .debrid-provider-row select.dpr-name{flex:0 0 160px!important;width:160px!important;max-width:160px!important;margin:0!important}
+        #debrid-providers-list .debrid-provider-row input.dpr-key{flex:1 1 220px!important;width:auto!important;min-width:0!important;margin:0!important}
+        .debrid-provider-row .dpr-btn{background:#222;border:1px solid #3d3d3d;color:#ddd;border-radius:5px;padding:5px 9px;cursor:pointer;font-size:12px}
+        .debrid-provider-row .dpr-btn:hover{border-color:#e8601c}
+        .debrid-provider-row .dpr-result{font-size:12px;flex-basis:100%;padding-left:24px}
+        .debrid-provider-row .dpr-result.ok{color:#22c55e}.debrid-provider-row .dpr-result.bad{color:#ef4444}
+        </style>
+        <script>
+        (function () {
+            const list = document.getElementById('debrid-providers-list');
+            if (!list) return;
+            const choices = {{ _choices|tojson }};
+            function sync() {
+                const rows = Array.from(list.querySelectorAll('.debrid-provider-row'));
+                rows.forEach((r, i) => { r.querySelector('.dpr-rank').textContent = i + 1; });
+                const vals = rows.map(r => ({ provider: r.querySelector('.dpr-name').value, api_key: r.querySelector('.dpr-key').value.trim() }))
+                                 .filter(v => v.provider);
+                const first = vals[0] || { provider: '', api_key: '' };
+                document.getElementById('debrid provider-provider').value = first.provider;
+                document.getElementById('debrid provider-api_key').value = first.api_key;
+                document.getElementById('fallback-providers-hidden').value = JSON.stringify(vals.slice(1).filter(v => v.api_key));
+                ['debrid provider-provider', 'debrid provider-api_key', 'fallback-providers-hidden'].forEach(id =>
+                    document.getElementById(id).dispatchEvent(new Event('change', { bubbles: true })));
+            }
+            function addRow(provider, key) {
+                const row = list.querySelector('.debrid-provider-row').cloneNode(true);
+                row.querySelector('.dpr-name').value = provider || '';
+                row.querySelector('.dpr-key').value = key || '';
+                row.querySelector('.dpr-result').textContent = '';
+                list.appendChild(row);
+                sync();
+            }
+            list.addEventListener('change', sync);
+            list.addEventListener('input', e => { if (e.target.classList.contains('dpr-key')) sync(); });
+            list.addEventListener('click', async e => {
+                const row = e.target.closest('.debrid-provider-row');
+                if (!row) return;
+                if (e.target.closest('.dpr-up') && row.previousElementSibling) { list.insertBefore(row, row.previousElementSibling); sync(); }
+                else if (e.target.closest('.dpr-down') && row.nextElementSibling) { list.insertBefore(row.nextElementSibling, row); sync(); }
+                else if (e.target.closest('.dpr-remove')) {
+                    if (list.children.length > 1) row.remove();
+                    else { row.querySelector('.dpr-name').value = ''; row.querySelector('.dpr-key').value = ''; }
+                    sync();
+                } else if (e.target.closest('.dpr-test')) {
+                    const out = row.querySelector('.dpr-result');
+                    out.className = 'dpr-result'; out.textContent = 'Testing…';
+                    try {
+                        const r = await fetch('/settings_validation/test-debrid-key', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ provider: row.querySelector('.dpr-name').value, api_key: row.querySelector('.dpr-key').value.trim() }) });
+                        const j = await r.json();
+                        out.className = 'dpr-result ' + (j.success ? 'ok' : 'bad');
+                        out.textContent = j.message || (j.success ? 'Key works' : 'Key rejected');
+                    } catch (err) { out.className = 'dpr-result bad'; out.textContent = 'Test failed: ' + err; }
+                }
+            });
+            document.getElementById('add-debrid-provider-btn').addEventListener('click', () => {
+                const used = new Set(Array.from(list.querySelectorAll('.dpr-name')).map(s => s.value));
+                addRow(choices.find(c => !used.has(c)) || '', '');
+            });
+            sync();
+        })();
+        </script>
+
         {% for key, value in settings_schema['Debrid Provider'].items() %}
-            {% if key != 'tab' %}
+            {% if key not in ('tab', 'provider', 'api_key') %}
             <div class="settings-form-group">
                 <label for="debrid provider-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                 {% if value.type == 'boolean' %}
@@ -306,112 +407,19 @@
         })();
         </script>
 
-        <!-- Fallback Providers -->
-        <div class="settings-form-group" style="margin-top:16px">
-            <label class="settings-title">Fallback Providers</label>
-            <p class="settings-description">Additional debrid services tried in order when the primary provider fails (e.g. 451 DMCA block, rate limit). Each fallback needs its own API key.</p>
-        </div>
-        <div id="fallback-providers-list">
-            {% set fallbacks = settings.get('Debrid Provider', {}).get('fallback_providers', []) %}
-            {% for fb in fallbacks %}
-            <div class="fallback-provider-row settings-form-group" style="display: flex;flex-direction: column;gap: 8px;align-items: baseline;margin-bottom: 8px;">
-                <select class="settings-input fallback-provider-name" style="flex:0 0 150px">
-                    {% for choice in ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink','HighWay'] %}
-                    <option value="{{ choice }}" {% if fb.provider == choice %}selected{% endif %}>{{ choice }}</option>
-                    {% endfor %}
-                </select>
-                <input type="password" class="settings-input fallback-provider-key" placeholder="API key" value="{{ fb.api_key }}" style="flex:1;min-width:0">
-                <button type="button" class="delete-version-btn btn-danger fallback-provider-remove">
-                    <i class="fa-solid fa-trash"></i>
-                    <span class="btn-text">Remove</span>
-                </button>
-            </div>
-            {% endfor %}
-        </div>
-        <button type="button" id="add-fallback-provider-btn" class="add-version-link btn-primary">
-            <i class="fa-solid fa-plus"></i> Add Fallback Provider
-        </button>
     </div>
 </div>
 
-<script>
-(function() {
-    const PROVIDER_CHOICES = ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink','HighWay'];
-
-    function buildRow(name, key) {
-        const row = document.createElement('div');
-        row.className = 'fallback-provider-row settings-form-group';
-        row.style.cssText = 'display:flex;flex-direction:column;gap:8px;align-items:baseline;margin-bottom:8px';
-        const sel = document.createElement('select');
-        sel.className = 'settings-input fallback-provider-name';
-        sel.style.cssText = 'flex:0 0 150px';
-        PROVIDER_CHOICES.forEach(c => {
-            const o = document.createElement('option');
-            o.value = c; o.textContent = c;
-            if (c === name) o.selected = true;
-            sel.appendChild(o);
-        });
-        const inp = document.createElement('input');
-        inp.type = 'password'; inp.className = 'settings-input fallback-provider-key';
-        inp.placeholder = 'API key'; inp.value = key || '';
-        inp.style.cssText = 'flex:1;min-width:0';
-        const btn = document.createElement('button');
-        btn.type = 'button'; btn.className = 'delete-version-btn btn-danger fallback-provider-remove';
-        btn.innerHTML = '<i class="fa-solid fa-trash"></i> <span class="btn-text">Remove</span>';
-        btn.addEventListener('click', () => { row.remove(); saveFallbacks(); });
-        sel.addEventListener('change', saveFallbacks);
-        inp.addEventListener('change', saveFallbacks);
-        row.appendChild(sel); row.appendChild(inp); row.appendChild(btn);
-        return row;
-    }
-
-    function saveFallbacks() {
-        const rows = document.querySelectorAll('#fallback-providers-list .fallback-provider-row');
-        const fallbacks = [];
-        rows.forEach(row => {
-            const name = row.querySelector('.fallback-provider-name')?.value;
-            const key  = row.querySelector('.fallback-provider-key')?.value;
-            if (name && key) fallbacks.push({provider: name, api_key: key});
-        });
-        // Store as JSON in a hidden input that the settings save picks up
-        let hidden = document.getElementById('fallback-providers-hidden');
-        if (!hidden) {
-            hidden = document.createElement('input');
-            hidden.type = 'hidden'; hidden.id = 'fallback-providers-hidden';
-            hidden.name = 'Debrid Provider.fallback_providers';
-            hidden.dataset.section = 'Debrid Provider';
-            hidden.dataset.key = 'fallback_providers';
-            hidden.dataset.jsonList = 'true';
-            document.getElementById('fallback-providers-list').after(hidden);
-        }
-        hidden.value = JSON.stringify(fallbacks);
-    }
-
-    document.querySelectorAll('#fallback-providers-list .fallback-provider-remove').forEach(btn => {
-        btn.addEventListener('click', () => { btn.closest('.fallback-provider-row').remove(); saveFallbacks(); });
-    });
-    document.querySelectorAll('#fallback-providers-list .fallback-provider-name, #fallback-providers-list .fallback-provider-key').forEach(el => {
-        el.addEventListener('change', saveFallbacks);
-    });
-    document.getElementById('add-fallback-provider-btn')?.addEventListener('click', () => {
-        const row = buildRow('Torbox', '');
-        document.getElementById('fallback-providers-list').appendChild(row);
-        saveFallbacks();
-    });
-    // Initialize hidden input on load
-    saveFallbacks();
-})();
-</script>
 {% endif %}
 
-<!-- Usenet Provider (cli_mount) -->
+<!-- Usenet Mount (cli_mount / NzbDAV / Zurg); config section is still "Usenet Provider" -->
 <div class="settings-section settings-card">
     <div class="settings-section-header">
         <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
         </svg>
         <div class="settings-header-left">
-            <h4>Usenet Provider</h4>
+            <h4>Usenet Mount</h4>
         </div>
     </div>
     <div class="settings-section-content">
@@ -422,7 +430,7 @@
             <div class="info-banner-content">Connect a usenet backend — <strong>cli_mount</strong> (custom API, default port 8888), <strong>NzbDAV</strong> (SAB-compatible API, default port 3000), or <strong>Zurg</strong> (SABnzbd-emulation endpoint, e.g. Zurg 2.0). All handle NNTP and serve files via an rclone mount.</div>
         </div>
         <div class="settings-form-group">
-            <label for="usenet_provider-enabled" class="settings-title">Enable Usenet:</label>
+            <label for="usenet_provider-enabled" class="settings-title">Enable Usenet Mount:</label>
             <input type="checkbox" id="usenet_provider-enabled" name="Usenet Provider.enabled"
                    data-section="Usenet Provider" data-key="enabled"
                    {% if settings.get('Usenet Provider', {}).get('enabled') %}checked{% endif %}>
@@ -437,6 +445,8 @@
                 <option value="nzbdav"    {% if _provider == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
                 <option value="zurg"      {% if _provider == 'zurg' %}selected{% endif %}>Zurg (generic SAB mount)</option>
             </select>
+            <button type="button" id="usenet-mount-detect-btn" class="dpr-btn" style="margin-top:6px">Detect</button>
+            <span id="usenet-mount-detect-status" class="settings-description" style="margin-left:8px"></span>
             <p class="settings-description">Backend type. cli_mount uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Zurg selects the same SAB-compatible logic as NzbDAV but resolves job folders directly under the mount root instead of a <code>&lt;category&gt;/&lt;job&gt;</code> layout — use it for Zurg 2.0's usenet SAB emulation, or any other flat-layout SAB-compatible mount. All three expose the same client interface internally.</p>
         </div>
         <details data-provider-only="nzbdav" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
@@ -451,7 +461,7 @@
                 <li><strong>Bind the mount + Plex:</strong> bind the nzbdav rclone mount into this container (e.g. at <code>/mnt/nzbdav</code>), and add the <code>movies</code>, <code>shows</code> (+ <code>_1080p_264</code>) folders under its <code>content/</code> subfolder to your Plex libraries.</li>
                 <li><strong>Verify</strong> with the helper's <em>Test connection &amp; ensure categories</em> button below, then toggle <em>Enable Usenet</em> above.</li>
             </ol>
-            <p class="settings-description" style="margin-top:4px;"><strong>Switching from cli_mount?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing cli_mount files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). To move existing downloads across, use <strong>Debug → Library → "Migrate between usenet providers"</strong> (in-app, both directions). For the cli_mount→NzbDAV direction it reads cli_mount's stored <code>.nzb</code> files, so bind cli_mount's appdata into cli-debrid (set <em>cli_mount Data Path</em> below) and the tool reads them from <code>&lt;data_path&gt;/usenet/nzbs</code>. (The host CLI <code>nzbdav_setup.py migrate-files</code> does the same from the shell.)</p>
+            <p class="settings-description" style="margin-top:4px;"><strong>Switching from cli_mount?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing cli_mount files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). To move existing downloads across, use <strong>Tools → Usenet → "Migrate between usenet providers"</strong> (in-app, both directions). For the cli_mount→NzbDAV direction it reads cli_mount's stored <code>.nzb</code> files, so bind cli_mount's appdata into cli-debrid (set <em>cli_mount Data Path</em> below) and the tool reads them from <code>&lt;data_path&gt;/usenet/nzbs</code>. (The host CLI <code>nzbdav_setup.py migrate-files</code> does the same from the shell.)</p>
         </details>
         {% include '_nzbdav_setup_helper.html' %}
         <details data-provider-only="zurg" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
@@ -475,11 +485,12 @@
             </ol>
         </details>
         <div class="settings-form-group">
-            <label for="usenet_provider-url" class="settings-title">Provider URL:</label>
+            <label for="usenet_provider-url" class="settings-title">Mount URL:</label>
             <input type="text" id="usenet_provider-url" name="Usenet Provider.url"
                    value="{{ settings.get('Usenet Provider', {}).get('url', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="url"
                    placeholder="e.g. http://192.168.1.x:8888 (cli_mount) or http://192.168.1.x:3000 (nzbdav)">
+            <div class="mount-suggest" data-for="usenet_provider-url"></div>
             <p class="settings-description" data-provider-only="climount">Do not use localhost:8888 — that conflicts with Phalanx DB. Use the cli_mount host IP or container name.</p>
             <p class="settings-description" data-provider-only="nzbdav">Use the NzbDAV host IP or container name with its port (default 3000), e.g. <code>http://192.168.1.x:3000</code>. Do not append <code>/sabnzbd</code> — NzbDAV serves its SAB-compatible API at the root <code>/api</code>.</p>
             <p class="settings-description" data-provider-only="zurg">Use Zurg's SABnzbd-emulation host/port, e.g. <code>http://192.168.1.x:9999</code>.</p>
@@ -506,7 +517,8 @@
                    value="{{ settings.get('Usenet Provider', {}).get('data_path', '/climount_data') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="data_path"
                    placeholder="/cli_mount_data">
-            <p class="settings-description">Path to cli_mount's data directory inside the container. Add <code>- /path/to/cli_mount/appdata:/cli_mount_data</code> to your docker-compose volumes, then set this to <code>/cli_mount_data</code>. Required for cli_mount DB backup, restore, and cleanup tools — and lets the in-app provider migration (<strong>Debug → Library</strong>) read cli_mount's stored <code>.nzb</code> files from <code>&lt;data_path&gt;/usenet/nzbs</code>.</p>
+            <div class="mount-suggest" data-for="usenet_provider-data_path"></div>
+            <p class="settings-description">Path to cli_mount's data directory inside the container. Add <code>- /path/to/cli_mount/appdata:/cli_mount_data</code> to your docker-compose volumes, then set this to <code>/cli_mount_data</code>. Required for cli_mount DB backup, restore, and cleanup tools — and lets the in-app provider migration (<strong>Tools → Usenet</strong>) read cli_mount's stored <code>.nzb</code> files from <code>&lt;data_path&gt;/usenet/nzbs</code>.</p>
         </div>
         <div class="settings-form-group" data-provider-only="nzbdav,zurg">
             <label for="usenet_provider-mounted_file_location" class="settings-title"><span data-provider-only="nzbdav">NzbDAV Mount Path</span><span data-provider-only="zurg">Zurg Mount Path</span>:</label>
@@ -514,6 +526,74 @@
                    value="{{ settings.get('Usenet Provider', {}).get('mounted_file_location', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="mounted_file_location"
                    placeholder="/mnt/nzbdav or /mnt/zurg">
+            <div class="mount-suggest" data-for="usenet_provider-mounted_file_location"></div>
+
+<style>
+.mount-suggest{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.mount-suggest:empty{display:none}
+.mount-suggest .ms-item{display:inline-flex;align-items:center;gap:6px;background:#1f2a1f;border:1px solid #2f5f2f;color:#cfe8cf;border-radius:5px;padding:4px 8px;font-size:12px}
+.mount-suggest .ms-item button{background:#2f5f2f;border:none;color:#fff;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px}
+.mount-suggest .ms-none{color:#999;font-size:12px}
+#usenet-mount-detect-btn{background:#222;border:1px solid #3d3d3d;color:#ddd;border-radius:5px;padding:5px 10px;cursor:pointer;font-size:12px}
+#usenet-mount-detect-btn:hover{border-color:#e8601c}
+</style>
+<script>
+(function () {
+  // Settings → Usenet Mount: suggest the URL and paths. Nothing is overwritten:
+  // a field is only filled when it is empty and exactly one match was found.
+  const sel = document.getElementById('usenet_provider-provider');
+  const btn = document.getElementById('usenet-mount-detect-btn');
+  const status = document.getElementById('usenet-mount-detect-status');
+  if (!sel || !btn) return;
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function setField(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  function show(id, items, label) {
+    const box = document.querySelector('.mount-suggest[data-for="' + id + '"]');
+    if (!box) return;
+    const field = document.getElementById(id);
+    if (!items.length) { box.innerHTML = '<span class="ms-none">Nothing found — enter it yourself.</span>'; return; }
+    box.innerHTML = items.map((it, i) =>
+      '<span class="ms-item">' + esc(label(it)) + ' <button type="button" data-i="' + i + '">Use</button></span>').join('');
+    box.querySelectorAll('button').forEach(b => b.addEventListener('click', () => setField(id, items[+b.dataset.i].value)));
+    if (field && !field.value.trim() && items.length === 1) setField(id, items[0].value);
+  }
+  async function detect() {
+    const provider = sel.value;
+    status.textContent = 'Looking…';
+    btn.disabled = true;
+    try {
+      const r = await fetch('/settings_validation/usenet-mount-detect', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: provider,
+          url: (document.getElementById('usenet_provider-url') || {}).value || '',
+          token: (document.getElementById('usenet_provider-api_token') || {}).value || '' })
+      });
+      const j = await r.json();
+      const name = sel.options[sel.selectedIndex].text;
+      show('usenet_provider-url', (j.urls || []).map(u => ({ value: u.url, version: u.version })),
+           it => 'Found ' + name + (it.version ? ' ' + it.version : '') + ' at ' + it.value);
+      if (provider === 'climount') {
+        show('usenet_provider-data_path', (j.data_paths || []).map(p => ({ value: p })), it => 'cli_mount data at ' + it.value);
+      } else {
+        show('usenet_provider-mounted_file_location', (j.mount_paths || []).map(p => ({ value: p })), it => 'Mount at ' + it.value);
+      }
+      status.textContent = '';
+    } catch (e) {
+      status.textContent = 'Detect failed: ' + e;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  btn.addEventListener('click', detect);
+  sel.addEventListener('change', detect);
+})();
+</script>
             <p class="settings-description" data-provider-only="nzbdav">Path inside <em>this</em> container to the <code>content</code> folder <strong>inside</strong> the NzbDAV rclone-mount (e.g. <code>/mnt/nzbdav/content</code>, not <code>/mnt/nzbdav</code> itself) — the folder that directly contains your category subdirectories (<code>movies/</code>, <code>shows/</code>, etc.). NzbDAV has no <code>/browse</code> API, so folder lookups walk the filesystem under <code>&lt;this path&gt;/&lt;category&gt;/</code>. Bind-mount the nzbdav-rclone mount into the cli-debrid container, then point this at its <code>content</code> subfolder. A trailing <code>/__all__</code> is stripped automatically. Effectively required when provider is NzbDAV.</p>
             <p class="settings-description" data-provider-only="zurg">Path inside <em>this</em> container where the Zurg rclone-mount appears. Zurg's mount is flat — content lives directly at <code>&lt;this path&gt;/&lt;job name&gt;/</code>, with no per-category subfolder — so folder lookups resolve the job name directly under this path instead of walking a category layout. Bind-mount Zurg's rclone mount into the cli-debrid container and point this at its <code>__all__</code> folder (e.g. <code>/mnt/zurg/__all__</code>, or <code>Z:\__all__</code> on Windows) — that is the folder holding the release folders, so it is used as-is and not stripped. Effectively required when provider is Zurg.</p>
         </div>

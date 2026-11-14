@@ -39,7 +39,7 @@ Each discovered Plex smart collection appears as an individual toggle. Only enab
 
 ## Schedule
 
-Runs automatically every **24 hours**. Use the **Run Now** button or Task Manager to trigger immediately.
+Runs automatically every **24 hours**. Use the **Run Now** button or the Automation page to trigger immediately.
 
 ---
 

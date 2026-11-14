@@ -1850,7 +1850,9 @@ class DeletionManager:
                 elif self.debrid and torrent_id:
                     logging.info(f"[DEBRID_REMOVAL] Attempting to remove torrent {torrent_id} for '{item_title}'")
                     try:
-                        self.debrid.remove_torrent(torrent_id, removal_reason=f"Library deletion: {item_title}")
+                        from debrid import provider_for_item
+                        provider_for_item(item, self.debrid).remove_torrent(
+                            torrent_id, removal_reason=f"Library deletion: {item_title}")
                         result['debrid_removed'] = True
                         logging.info(f"[DEBRID_REMOVAL] Successfully removed torrent {torrent_id} from debrid provider")
                     except Exception as e:
@@ -2084,6 +2086,7 @@ class DeletionManager:
 
             # Collect unique torrent/NZB IDs from all items, split by type
             unique_torrent_ids = {}   # torrent_id -> (title, infohash, debrid_folder_name)
+            torrent_provider_names = {}  # torrent_id -> media_items.debrid_provider
             unique_nzb_ids = {}       # info_hash -> (filled_by_file, title) (cli_mount)
             for item_id in item_ids:
                 try:
@@ -2105,6 +2108,7 @@ class DeletionManager:
                             infohash = _m.group(1).lower() if _m else ''
                             folder_name = item.get('debrid_folder_name') or ''
                             unique_torrent_ids[tid] = (title, infohash, folder_name)
+                            torrent_provider_names[tid] = item.get('debrid_provider')
                 except Exception as e:
                     logging.warning(f"[DELETE_MULTIPLE] Could not get item {item_id} for dedup: {e}")
 
@@ -2172,7 +2176,9 @@ class DeletionManager:
                         logging.info(f"[DELETE_MULTIPLE] Skipping debrid removal for {torrent_id} — still referenced by an item outside this batch")
                         return torrent_id, False, None
                     try:
-                        self.debrid.remove_torrent(torrent_id, removal_reason=f"Library deletion: {first_title}", skip_hash_tracking=True)
+                        from debrid import provider_for_item
+                        provider_for_item(torrent_provider_names.get(torrent_id), self.debrid).remove_torrent(
+                            torrent_id, removal_reason=f"Library deletion: {first_title}", skip_hash_tracking=True)
                         logging.info(f"[DELETE_MULTIPLE] Removed torrent {torrent_id} from debrid")
                     except Exception as e:
                         error_msg = str(e)

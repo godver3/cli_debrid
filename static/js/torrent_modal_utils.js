@@ -11,107 +11,84 @@
 function extractQualityTags(title) {
     const tags = [];
     
-    // Resolution patterns
-    const resolutionPatterns = {
-        '2160P': /(?:2160p|4K|UHD)/i,
-        '1080P': /1080p/i,
-        '720P': /720p/i,
-        '480P': /480p/i,
-    };
-    
-    // Source patterns
-    const sourcePatterns = {
-        'REMUX': /REMUX/i,
-        'BluRay': /(?:BluRay|Blu-Ray|BDMV|BDRip)/i,
-        'WEB-DL': /WEB-?DL/i,
-        'WEBRip': /WEBRip/i,
-        'HDTV': /HDTV/i,
-        'DVD': /DVDRip/i,
-    };
-    
-    // Codec patterns
-    const codecPatterns = {
-        'x265': /(?:x265|H\.265|HEVC)/i,
-        'x264': /(?:x264|H\.264|AVC)/i,
-        'AV1': /AV1/i,
-        'VP9': /VP9/i,
-    };
-    
-    // Audio patterns
-    const audioPatterns = {
-        'Atmos': /Atmos/i,
-        'TrueHD': /TrueHD/i,
-        'DTS-HD MA': /DTS-?HD\.?MA/i,
-        'DTS-X': /DTS-?X/i,
-        'DTS': /(?<!HD\.)DTS(?!\-?X)/i,
-        'DD+': /(?:DD\+|E-?AC3|DDP)/i,
-        'DD': /(?<![\+])DD(?![\+])/i,
-        'AAC': /AAC/i,
-    };
-    
+    // Short tokens must stand alone ("DV" is not in "DVDRip" or "Advent").
+    const L = '(?<![a-z0-9])', R = '(?![a-z0-9])';
+    const word = (src, right = true) => new RegExp(L + '(?:' + src + ')' + (right ? R : ''), 'i');
+
+    // Resolution: a stated resolution wins over UHD/4K
+    // ("1080p.UHD.BluRay" is a 1080p encode of a UHD disc).
+    const resolutionPatterns = [
+        ['2160P', word('2160p')],
+        ['1080P', word('1080[pi]')],
+        ['720P', word('720p')],
+        ['480P', word('480p|576p')],
+        ['2160P', word('4k|uhd')],
+    ];
+
+    // Source: REMUX is listed alongside the disc type, not instead of it.
+    const remuxPattern = word('remux');
+    const sourcePatterns = [
+        ['BluRay', word('blu-?ray|bdmv|bdrip|brrip')],
+        ['WEB-DL', word('web-?dl')],
+        ['WEBRip', word('webrip')],
+        ['HD-DVD', word('hd-?dvd')],
+        ['HDTV', word('hdtv')],
+        ['DVD', word('dvdrip|dvd')],
+    ];
+
+    // Codec (right side open: "x264-GROUP", "H.265.10bit")
+    const codecPatterns = [
+        ['x265', word('[xh]\\.?265|hevc', false)],
+        ['x264', word('[xh]\\.?264|avc', false)],
+        ['AV1', word('av1')],
+        ['VP9', word('vp9')],
+    ];
+
+    // Audio codec (right side open for channels: "DDP5.1", "AAC2.0")
+    const audioPatterns = [
+        ['TrueHD', word('truehd', false)],
+        ['DTS-HD MA', word('dts-?hd[ .-]?ma', false)],
+        ['DTS-X', word('dts-?x')],
+        ['DTS', word('dts', false)],
+        ['DD+', word('dd\\+|ddp|e-?ac-?3', false)],
+        ['DD', word('dd|ac-?3', false)],
+        ['AAC', word('aac', false)],
+        ['FLAC', word('flac', false)],
+    ];
+
     // Audio channel patterns
-    const audioChannelPatterns = {
-        '7.1': /7\.1/i,
-        '5.1': /5\.1/i,
-        '2.0': /2\.0/i,
+    const audioChannelPatterns = [
+        ['7.1', /(?<!\d)7\.1(?!\d)/],
+        ['5.1', /(?<!\d)5\.1(?!\d)/],
+        ['2.0', /(?<!\d)2\.0(?!\d)/],
+    ];
+
+    // HDR patterns (HDR10+/HDR10 already imply HDR, so only one HDR* tag)
+    const dvPattern = word('dv|dovi|dolby[ .]?vision');
+    const hdrPatterns = [
+        ['HDR10+', word('hdr10\\+|hdr10plus', false)],
+        ['HDR10', word('hdr10')],
+        ['HDR', word('hdr')],
+    ];
+
+    const first = (patterns) => {
+        for (const [value, pattern] of patterns) {
+            if (pattern.test(title)) return value;
+        }
+        return null;
     };
-    
-    // HDR patterns
-    const hdrPatterns = {
-        'DV': /(?:DV|DoVi|Dolby\.?Vision)/i,
-        'HDR10+': /HDR10\+/i,
-        'HDR10': /HDR10(?!\+)/i,
-        'HDR': /(?<!10)HDR(?!\+|10)/i,
-    };
-    
-    // Extract resolution
-    for (const [value, pattern] of Object.entries(resolutionPatterns)) {
-        if (pattern.test(title)) {
-            tags.push({ type: 'resolution', value });
-            break;
-        }
-    }
-    
-    // Extract source
-    for (const [value, pattern] of Object.entries(sourcePatterns)) {
-        if (pattern.test(title)) {
-            tags.push({ type: 'source', value });
-            break;
-        }
-    }
-    
-    // Extract codec
-    for (const [value, pattern] of Object.entries(codecPatterns)) {
-        if (pattern.test(title)) {
-            tags.push({ type: 'codec', value });
-            break;
-        }
-    }
-    
-    // Extract audio
-    for (const [value, pattern] of Object.entries(audioPatterns)) {
-        if (pattern.test(title)) {
-            tags.push({ type: 'audio', value });
-            break;
-        }
-    }
-    
-    // Extract audio channels
-    for (const [value, pattern] of Object.entries(audioChannelPatterns)) {
-        if (pattern.test(title)) {
-            tags.push({ type: 'audio', value });
-            break;
-        }
-    }
-    
-    // Extract ALL HDR types (don't break after first match)
-    for (const [value, pattern] of Object.entries(hdrPatterns)) {
-        if (pattern.test(title)) {
-            tags.push({ type: 'hdr', value });
-            // Don't break - continue checking for other HDR types
-        }
-    }
-    
+    const add = (type, value) => { if (value) tags.push({ type, value }); };
+
+    add('resolution', first(resolutionPatterns));
+    if (remuxPattern.test(title)) add('source', 'REMUX');
+    add('source', first(sourcePatterns));
+    add('codec', first(codecPatterns));
+    add('audio', first(audioPatterns));
+    add('audio', first(audioChannelPatterns));
+    if (word('atmos').test(title)) add('audio', 'Atmos');
+    if (dvPattern.test(title)) add('hdr', 'DV');
+    add('hdr', first(hdrPatterns));
+
     // Extract release group - should be last dash-separated segment before extension or at end
     // Handles: -GROUPNAME.mkv, -GROUPNAME mkv, -GROUPNAME, -GROUP NAME (with spaces)
     let releaseGroupMatch = title.match(/-([A-Za-z][A-Za-z0-9\s]+?)[\.\s](?:mkv|mp4|avi)$/i);
@@ -124,7 +101,8 @@ function extractQualityTags(title) {
         // Filter out common quality terms, movie title words, and short codes
         const notGroups = ['mkv', 'mp4', 'avi', 'x264', 'x265', 'hevc', 'avc', 'bluray', 'webdl', 'webrip', 'hdtv', 
                           '1080p', '720p', '2160p', '480p', 'web', 'dl', 'ddp', 'atmos', 'dts', 'truehd', 'hdr', 'dv', 
-                          'h264', 'h265', 'ma', 'predator', 'badlands', 'homeland'];
+                          'h264', 'h265', 'ma', 'predator', 'badlands', 'homeland',
+                          'ac3', 'aac', 'dd', 'flac', 'remux', 'hddvd'];
         if (group && group.length >= 3 && !notGroups.includes(group.toLowerCase())) {
             tags.push({ type: 'group', value: group });
         }

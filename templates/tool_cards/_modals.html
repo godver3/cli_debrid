@@ -1,0 +1,62 @@
+<!-- Episode Results Modal -->
+<div id="episode-results-modal" class="episode-modal" style="display: none;">
+    <div class="episode-modal-overlay"></div>
+    <div class="episode-modal-content">
+        <div class="episode-modal-header">
+            <h2 id="episode-modal-title">Episode Fix Results</h2>
+            <button class="episode-modal-close" id="episode-modal-close-btn">&times;</button>
+        </div>
+        <div class="episode-modal-body" id="episode-modal-body">
+            <!-- Results will be inserted here -->
+        </div>
+    </div>
+</div>
+
+<!-- Cleanup Results Modal -->
+<div id="cleanup-results-modal" class="episode-modal" style="display: none;">
+    <div class="episode-modal-overlay"></div>
+    <div class="episode-modal-content">
+        <div class="episode-modal-header">
+            <h2 id="cleanup-modal-title">Cleanup Results</h2>
+            <button class="episode-modal-close" id="cleanup-modal-close-btn">&times;</button>
+        </div>
+        <div class="episode-modal-body" id="cleanup-modal-body">
+            <!-- Results will be inserted here -->
+        </div>
+    </div>
+</div>
+
+<!-- API Summary Modal -->
+<div id="api-summary-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;padding:1rem;padding-top:calc(1rem + 30px)">
+  <div style="width:100%;max-width:900px;max-height:90vh;background:#1a1a1a;border:1px solid #333;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #333;flex-shrink:0">
+      <div style="font-size:15px;font-weight:700;color:#e0e0e0;border-left:3px solid #e8601c;padding-left:10px">API Summary</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <select id="api-summary-timeframe" style="background:#222;border:1px solid #3d3d3d;color:#e0e0e0;border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer">
+          <option value="hour">By Hour</option>
+          <option value="day" selected>By Day</option>
+          <option value="month">By Month</option>
+        </select>
+        <button id="api-summary-close" style="background:transparent;border:none;color:#aaa;font-size:20px;cursor:pointer;line-height:1">&times;</button>
+      </div>
+    </div>
+    <div id="api-summary-modal-body" style="padding:18px;font-family:'Inter',sans-serif;font-size:13px;color:#e0e0e0;overflow-y:auto;flex:1"></div>
+  </div>
+</div>
+
+<!-- Real Time API Modal -->
+<div id="realtime-api-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;padding:1rem;padding-top:calc(1rem + 30px)">
+  <div style="width:100%;max-width:1000px;max-height:90vh;background:#1a1a1a;border:1px solid #333;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #333;flex-shrink:0">
+      <div style="font-size:15px;font-weight:700;color:#e0e0e0;border-left:3px solid #e8601c;padding-left:10px">Real Time API Calls</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <select id="realtime-api-filter" style="background:#222;border:1px solid #3d3d3d;color:#e0e0e0;border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer">
+          <option value="">All Domains</option>
+        </select>
+        <button id="realtime-api-refresh" style="background:#e8601c;color:#fff;border:none;border-radius:5px;padding:5px 12px;font-size:12px;cursor:pointer">Refresh</button>
+        <button id="realtime-api-close" style="background:transparent;border:none;color:#aaa;font-size:20px;cursor:pointer;line-height:1">&times;</button>
+      </div>
+    </div>
+    <div id="realtime-api-modal-body" style="padding:18px;font-family:'Inter',sans-serif;font-size:13px;color:#e0e0e0;overflow-y:auto;flex:1"></div>
+  </div>
+</div>

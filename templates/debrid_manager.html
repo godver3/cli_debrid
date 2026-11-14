@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% set _provider_name = usenet_provider_name|default('cli_mount') %}
-{% block title %}Debrid Manager{% endblock %}
+{% block title %}{{ 'cli_mount' if dm_mode == 'climount' else 'Debrid Manager' }}{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_debrid_manager.css') }}">
@@ -10,32 +10,71 @@
 {% block content %}
 <div class="dm-container">
     <div class="dm-header">
-        <h2>Debrid Manager</h2>
+        <h2>{{ 'cli_mount' if dm_mode == 'climount' else 'Debrid Manager' }}</h2>
+        {% if dm_mode != 'climount' and debrid_all_providers|length > 1 %}
+        <label class="dm-provider-pick" title="Active, Torrents, Usage and torrent actions use this provider. Audit checks every provider.">
+            <select id="dm-provider-select" class="dm-select">
+                {% for p in debrid_all_providers %}<option value="{{ p.name }}">{{ p.name }}</option>{% endfor %}
+            </select>
+        </label>
+        <style>.dm-provider-pick{margin-left:12px}.dm-provider-pick select{padding:4px 8px;font-size:12px}</style>
+        <script>
+        (function () {
+            // Send the picked provider with the requests that act on one account.
+            var sel = document.getElementById('dm-provider-select');
+            var KEY = 'dm_provider';
+            try { var saved = sessionStorage.getItem(KEY); if (saved) sel.value = saved; } catch (e) {}
+            if (!sel.value) sel.selectedIndex = 0;
+            var scoped = /^\/debrid_manager\/api\/(active|usage|torrent\/|batch_delete)/;
+            var origFetch = window.fetch;
+            window.fetch = function (input, init) {
+                if (typeof input === 'string' && scoped.test(input) && sel.selectedIndex > 0) {
+                    input += (input.indexOf('?') >= 0 ? '&' : '?') + 'provider=' + encodeURIComponent(sel.value);
+                }
+                return origFetch.call(this, input, init);
+            };
+            sel.addEventListener('change', function () {
+                try { sessionStorage.setItem(KEY, sel.value); } catch (e) {}
+                location.reload();
+            });
+        })();
+        </script>
+        {% endif %}
         <div class="dm-tabs">
+            {% if dm_mode != 'climount' %}
             <button class="dm-tab active" data-tab="active">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
                 Active
                 <span class="dm-tab-badge" id="active-tab-count"></span>
             </button>
+            {% endif %}
+            {% if dm_mode != 'climount' %}
             <button class="dm-tab" data-tab="library">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
                 Torrents
                 <span class="dm-tab-badge" id="library-tab-count"></span>
             </button>
+            {% endif %}
+            {% if dm_mode != 'climount' %}
             <button class="dm-tab" data-tab="history">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/></svg>
                 Tracker
                 <span class="dm-tab-badge" id="history-tab-count"></span>
             </button>
+            {% endif %}
+            {% if dm_mode != 'climount' %}
             <button class="dm-tab" data-tab="maintenance">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                 Maintenance
             </button>
+            {% endif %}
+            {% if dm_mode != 'climount' %}
             <button class="dm-tab" data-tab="usage">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
                 Usage
             </button>
-            {% if show_climount_tab %}
+            {% endif %}
+            {% if show_climount_tab and dm_mode == 'climount' %}
             <button class="dm-tab" data-tab="usenet">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                 cli_mount
@@ -51,14 +90,14 @@
             {% endif %}
             <button class="dm-tab" data-tab="reconcile">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
-                Audit
+                {{ 'Library audit' if dm_mode == 'climount' else 'Audit' }}
                 <span class="dm-tab-badge" id="reconcile-tab-badge"></span>
             </button>
         </div>
     </div>
 
     <!-- ── ACTIVE TAB ── -->
-    <div id="active-tab" class="dm-panel active">
+    <div id="active-tab" class="dm-panel{% if dm_mode != 'climount' %} active{% endif %}">
         <div class="dm-toolbar">
             <div class="dm-toolbar-left">
                 <input type="text" id="active-filter" class="dm-filter-input" placeholder="Filter by name, hash… (regex ok)">
@@ -222,8 +261,8 @@
         <div id="maint-scheduler-notice" class="dm-maint-notice" style="display:none">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             <span><strong>Note:</strong> Scheduled tasks are enabled here, but also need to be active in
-            <a href="{{ url_for('program_operation.task_timings') }}" class="dm-maint-notice-link">Task Manager</a>
-            under the Features tab to run on schedule.</span>
+            <a href="{{ url_for('program_operation.automation') }}" class="dm-maint-notice-link">Automation</a>
+            (Library &amp; Upgrades) to run on schedule.</span>
         </div>
         <div class="dm-backup-layout">
 
@@ -952,14 +991,18 @@
 
             <!-- Sub-tab bar -->
             <div class="dm-rc-tab-bar">
+                {% if dm_mode != 'climount' %}
                 <button class="dm-rc-tab dm-pt-subtab dm-rc-tab-active" data-pt-group="debrid">
                     <span class="dm-rc-tab-name">{{ debrid_provider_name }}</span>
                     <span class="dm-rc-tab-count" id="pt-subtab-debrid-count">0</span>
                 </button>
+                {% endif %}
+                {% if dm_mode == 'climount' %}
                 <button class="dm-rc-tab dm-pt-subtab" data-pt-group="usenet">
                     <span class="dm-rc-tab-name">Usenet</span>
                     <span class="dm-rc-tab-count" id="pt-subtab-usenet-count">0</span>
                 </button>
+                {% endif %}
             </div>
 
             <!-- Debrid panel -->
@@ -1189,6 +1232,7 @@
         <div id="rc-error" class="dm-error" style="display:none"></div>
         <div id="rc-content" style="display:none">
 
+            {% if dm_mode != 'climount' %}
             <!-- Stats header -->
             <div class="dm-rc-header" style="flex-direction:column; align-items:flex-start;">
                 <p class="dm-rc-stats-bar">
@@ -1205,9 +1249,11 @@
                     </span>
                 </p>
             </div>
+            {% endif %}
 
             <!-- Tab bar -->
             <div class="dm-rc-tab-bar">
+                {% if dm_mode != 'climount' %}
                 <button class="dm-rc-tab" data-rc-group="not-in-plex">
                     <span class="dm-rc-tab-name">Not in {{ ms_label }}</span>
                     <span class="dm-rc-tab-count" id="rc-count-not-in-plex">—</span>
@@ -1217,6 +1263,8 @@
                         <span class="dm-rc-badge dm-rc-badge-bad">{{ ms_badge }}</span>
                     </span>
                 </button>
+                {% endif %}
+                {% if dm_mode != 'climount' %}
                 <button class="dm-rc-tab" data-rc-group="torrent-gone">
                     <span class="dm-rc-tab-name">Torrent Gone</span>
                     <span class="dm-rc-tab-count" id="rc-count-torrent-gone">—</span>
@@ -1226,6 +1274,8 @@
                         <span class="dm-rc-badge dm-rc-badge-ok">{{ ms_badge }}</span>
                     </span>
                 </button>
+                {% endif %}
+                {% if dm_mode != 'climount' %}
                 <button class="dm-rc-tab" data-rc-group="lost">
                     <span class="dm-rc-tab-name">Lost</span>
                     <span class="dm-rc-tab-count" id="rc-count-lost">—</span>
@@ -1235,6 +1285,8 @@
                         <span class="dm-rc-badge dm-rc-badge-bad">{{ ms_badge }}</span>
                     </span>
                 </button>
+                {% endif %}
+                {% if dm_mode != 'climount' %}
                 <button class="dm-rc-tab" data-rc-group="untracked">
                     <span class="dm-rc-tab-name">Untracked {{ debrid_provider_abbrev }}</span>
                     <span class="dm-rc-tab-count" id="rc-count-untracked">—</span>
@@ -1244,6 +1296,8 @@
                         <span class="dm-rc-badge dm-rc-badge-mixed">{{ ms_badge }}</span>
                     </span>
                 </button>
+                {% endif %}
+                {% if dm_mode != 'climount' %}
                 <button class="dm-rc-tab" data-rc-group="nas" id="rc-tab-nas" style="display:none">
                     <span class="dm-rc-tab-name">NAS</span>
                     <span class="dm-rc-tab-count" id="rc-count-nas">—</span>
@@ -1251,7 +1305,9 @@
                         <span class="dm-rc-badge dm-rc-badge-mixed">FS</span>
                     </span>
                 </button>
+                {% endif %}
                 {% if symlink_mode %}
+                {% if dm_mode == 'climount' %}
                 <button class="dm-rc-tab" data-rc-group="symlinks" id="rc-tab-symlinks">
                     <span class="dm-rc-tab-name">Symlinks</span>
                     <span class="dm-rc-tab-count" id="rc-count-symlinks">—</span>
@@ -1259,6 +1315,8 @@
                         <span class="dm-rc-badge dm-rc-badge-mixed">FS</span>
                     </span>
                 </button>
+                {% endif %}
+                {% if dm_mode == 'climount' %}
                 <button class="dm-rc-tab" data-rc-group="junk-files" id="rc-tab-junk-files">
                     <span class="dm-rc-tab-name">Junk Files</span>
                     <span class="dm-rc-tab-count" id="ja-total-badge">—</span>
@@ -1267,6 +1325,8 @@
                     </span>
                 </button>
                 {% endif %}
+                {% endif %}
+                {% if dm_mode == 'climount' %}
                 <button class="dm-rc-tab" data-rc-group="battery" id="rc-tab-battery">
                     <span class="dm-rc-tab-name">Battery</span>
                     <span class="dm-rc-tab-count" id="batt-total-badge">—</span>
@@ -1274,7 +1334,9 @@
                         <span class="dm-rc-badge dm-rc-badge-mixed">META</span>
                     </span>
                 </button>
+                {% endif %}
                 {% if climount_mode %}
+                {% if dm_mode != 'climount' %}
                 <button class="dm-rc-tab" data-rc-group="bad-torrents" id="rc-tab-bad-torrents">
                     <span class="dm-rc-tab-name">Broken</span>
                     <span class="dm-rc-tab-count" id="bta-total-badge">—</span>
@@ -1282,6 +1344,7 @@
                         <span class="dm-rc-badge dm-rc-badge-bad">{{ debrid_provider_abbrev }}</span>
                     </span>
                 </button>
+                {% endif %}
                 {% endif %}
             </div>
 
@@ -1984,7 +2047,9 @@ function status_class(s) {
 
 // ── shared state (declared early — tab handler runs before section declarations) ──
 let _libPollTimer  = null;
-let _dmActiveTab   = 'active';
+// Debrid Manager and the cli_mount page share this template; each shows its own tabs.
+const DM_MODE = '{{ dm_mode }}';
+let _dmActiveTab   = DM_MODE === 'climount' ? '' : 'active';
 let _pollTimer     = null;
 let _pollInterval  = 5000;
 let _noChangeCount = 0;
@@ -1999,7 +2064,7 @@ document.querySelectorAll('.dm-tab').forEach(btn => {
         document.querySelectorAll('.dm-panel').forEach(p => p.classList.remove('active'));
         btn.classList.add('active');
         document.getElementById(btn.dataset.tab + '-tab').classList.add('active');
-        sessionStorage.setItem('dm_tab', btn.dataset.tab);
+        sessionStorage.setItem('dm_tab_' + DM_MODE, btn.dataset.tab);
         // Pause active polling when leaving active tab, resume when returning
         if (prevTab === 'active' && btn.dataset.tab !== 'active') {
             clearTimeout(_pollTimer);
@@ -2020,9 +2085,10 @@ document.querySelectorAll('.dm-tab').forEach(btn => {
     });
 });
 const _urlTab = new URLSearchParams(window.location.search).get('tab');
-const _savedTab = _urlTab || sessionStorage.getItem('dm_tab');
-if (_savedTab) {
-    const btn = document.querySelector(`.dm-tab[data-tab="${_savedTab}"]`);
+const _savedTab = _urlTab || sessionStorage.getItem('dm_tab_' + DM_MODE);
+{
+    const btn = (_savedTab && document.querySelector(`.dm-tab[data-tab="${_savedTab}"]`))
+        || (DM_MODE === 'climount' ? document.querySelector('.dm-tab') : null);
     if (btn) btn.click();
 }
 
@@ -2654,12 +2720,27 @@ function _updateCacheBadge(status, ageSeconds, total, loading) {
     }
 }
 
+// The library holds every provider's torrents; Torrents shows the one picked in the header.
+function _dmPickedProvider() {
+    const sel = document.getElementById('dm-provider-select');
+    return sel ? sel.value : '';
+}
+
+// ?provider=<name> for a request about a torrent whose provider is known (Audit rows):
+// it comes before the one the header picker appends, so it wins.
+function _dmProviderQS(name) {
+    return name ? `?provider=${encodeURIComponent(name)}` : '';
+}
+
 function _applyLibraryData(data) {
-    _libAll = data.torrents.map(t => ({ ...t, _type: detectType(t.filename, t._db) }));
+    const picked = _dmPickedProvider();
+    _libAll = data.torrents
+        .filter(t => !picked || !t._provider || t._provider === picked)
+        .map(t => ({ ...t, _type: detectType(t.filename, t._db) }));
     window._libLoaded = true;
     buildHashCounts();
     updateDupesBtn();
-    document.getElementById('library-tab-count').textContent = data.total || '';
+    document.getElementById('library-tab-count').textContent = _libAll.length || '';
     applyLibFilters();
     _updateCacheBadge(data.cache_status, data.cache_age || 0, data.total, data.loading);
 }
@@ -5725,7 +5806,7 @@ let _ptSelected = new Set();
 let _ptInRd = [];
 let _ptNotInRd = [];
 let _ptLoaded = false;
-let _ptActiveSubtab = 'debrid';
+let _ptActiveSubtab = DM_MODE === 'climount' ? 'usenet' : 'debrid';
 
 function _ptSwitchSubtab(group) {
     _ptActiveSubtab = group;
@@ -5741,6 +5822,7 @@ function _ptSwitchSubtab(group) {
 document.querySelectorAll('.dm-pt-subtab').forEach(btn => {
     btn.addEventListener('click', () => _ptSwitchSubtab(btn.dataset.ptGroup));
 });
+_ptSwitchSubtab(_ptActiveSubtab);
 
 function _ptUpdatePurgeBtn() {
     const btn = document.getElementById('pt-purge-btn');
@@ -5976,7 +6058,7 @@ function _ptUpdateCounts() {
     if (debridSubtabBadge) debridSubtabBadge.textContent = debridTotal || '';
     // Total tab badge = all items across both sub-tabs
     const usenetTotal = _ptInUsenet.length + _ptNotUsenet.length;
-    const grand = debridTotal + usenetTotal;
+    const grand = DM_MODE === 'climount' ? usenetTotal : debridTotal;
     if (tabCount) tabCount.textContent = grand ? grand : '';
     const info = document.getElementById('pt-info-text');
     if (info) info.textContent = grand ? `${grand} item${grand !== 1 ? 's' : ''} in Plex Trash` : '';
@@ -6785,7 +6867,7 @@ function _rcRenderUntracked(items) {
         <td style="text-align:center">${plexBadge}</td>
         <td class="dm-col-actions">
             <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-del-btn"
-                data-tid="${escHtml(item.filled_by_torrent_id)}" title="Delete from debrid provider">Delete from Debrid</button>
+                data-tid="${escHtml(item.filled_by_torrent_id)}" data-provider="${escHtml(item.debrid_provider || '')}" title="Delete from ${escHtml(item.debrid_provider || 'debrid provider')}">Delete from Debrid</button>
         </td>
     </tr>`;
     }).join('');
@@ -6801,7 +6883,7 @@ function _rcRenderUntracked(items) {
             onConfirm: async function() {
                 const orig = _self.innerHTML; _self.disabled = true; _self.innerHTML = '<span class="dm-spinner"></span>';
                 try {
-                    const r = await fetch(`/debrid_manager/api/torrent/${encodeURIComponent(tid)}`, {method:'DELETE'});
+                    const r = await fetch(`/debrid_manager/api/torrent/${encodeURIComponent(tid)}${_dmProviderQS(_self.dataset.provider)}`, {method:'DELETE'});
                     const d = await r.json();
                     if (d.success) {
                         _self.closest('tr')?.remove();
@@ -6902,7 +6984,7 @@ function _rcBindActions(tbody) {
 
 function _rcShowGroup(name) {
     document.querySelectorAll('.dm-rc-group-panel').forEach(p => p.style.display = 'none');
-    document.querySelectorAll('.dm-rc-tab').forEach(t => t.classList.remove('dm-rc-tab-active'));
+    document.querySelectorAll('.dm-rc-tab[data-rc-group]').forEach(t => t.classList.remove('dm-rc-tab-active'));
     const panel = document.getElementById('rc-panel-' + name);
     if (panel) panel.style.display = '';
     const tab = document.querySelector(`.dm-rc-tab[data-rc-group="${name}"]`);
@@ -6913,8 +6995,9 @@ function _rcShowGroup(name) {
 
 function _rcUpdateBadge() {
     if (!_rcData) return;
-    const issues = (_rcData.not_in_plex?.length||0) + (_rcData.torrent_gone?.length||0)
-                 + (_rcData.lost?.length||0) + (_rcData.untracked_rd?.length||0);
+    const issues = DM_MODE === 'climount'
+        ? (_rcData.not_in_plex?.length||0) + (_rcData.lost?.length||0)
+        : (_rcData.torrent_gone?.length||0) + (_rcData.untracked_rd?.length||0);
     const badge = document.getElementById('reconcile-tab-badge');
     if (badge) badge.textContent = issues ? issues : '';
 }
@@ -7003,14 +7086,22 @@ async function _rcBulkDeleteRD(items, btnEl) {
         cancelText: 'Cancel',
         onConfirm: async function() {
             const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Deleting…';
-            const tids = items.map(i => i.filled_by_torrent_id).filter(Boolean);
+            // One request per provider: each torrent is deleted from the account that holds it.
+            const byProvider = {};
+            items.forEach(i => { if (i.filled_by_torrent_id) (byProvider[i.debrid_provider || ''] ||= []).push(i.filled_by_torrent_id); });
             try {
-                const r = await fetch('/debrid_manager/api/torrent/batch-delete', {
-                    method:'POST', headers:{'Content-Type':'application/json'},
-                    body: JSON.stringify({ids: tids})
-                });
-                const d = await r.json();
-                btnEl.textContent = d.success ? `Done (${d.deleted?.length||0})` : 'Failed';
+                let deleted = 0, ok = true;
+                for (const [prov, tids] of Object.entries(byProvider)) {
+                    const r = await fetch('/debrid_manager/api/torrent/batch-delete' + _dmProviderQS(prov), {
+                        method:'POST', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({ids: tids})
+                    });
+                    const part = await r.json();
+                    ok = ok && part.success;
+                    deleted += part.deleted?.length || 0;
+                }
+                const d = {success: ok};
+                btnEl.textContent = d.success ? `Done (${deleted})` : 'Failed';
                 if (d.success) { window._rcLoaded = false; setTimeout(() => loadReconcile(true), 2000); }
                 else setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
             } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + e.message, autoClose: 5000 }); btnEl.innerHTML = orig; btnEl.disabled = false; }
@@ -7107,13 +7198,14 @@ function _rcRenderAll(data) {
     if (btnDelAllRd) btnDelAllRd.onclick = function() { _rcBulkDeleteRD(_rcData.untracked_rd||[], this); };
 
     // Wire tab clicks
-    document.querySelectorAll('.dm-rc-tab').forEach(tab => {
+    document.querySelectorAll('.dm-rc-tab[data-rc-group]').forEach(tab => {
         tab.onclick = () => _rcShowGroup(tab.dataset.rcGroup);
         tab.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _rcShowGroup(tab.dataset.rcGroup); } };
     });
 
     // Auto-select first non-empty group
-    const order = ['not-in-plex','torrent-gone','lost','untracked','nas'];
+    const order = ['not-in-plex','torrent-gone','lost','untracked','nas']
+        .filter(g => document.querySelector(`.dm-rc-tab[data-rc-group="${g}"]`));
     const counts = {
         'not-in-plex':   data.not_in_plex?.length||0,
         'torrent-gone':  data.torrent_gone?.length||0,
@@ -7121,7 +7213,8 @@ function _rcRenderAll(data) {
         'untracked':     data.untracked_rd?.length||0,
         'nas':           data.nas_items?.length||0,
     };
-    const first = order.find(g => counts[g] > 0) || 'not-in-plex';
+    const firstTab = document.querySelector('.dm-rc-tab[data-rc-group]');
+    const first = order.find(g => counts[g] > 0) || order[0] || (firstTab && firstTab.dataset.rcGroup) || 'not-in-plex';
     _rcShowGroup(first);
 }
 
@@ -7130,6 +7223,18 @@ async function loadReconcile(force) {
     const content = document.getElementById('rc-content');
     const errEl   = document.getElementById('rc-error');
     if (!loading) return;
+    if (DM_MODE === 'climount') {
+        // The cli_mount page only has the audits that don't need the debrid library
+        // (symlinks, junk files, battery); each loads when its group is opened.
+        document.querySelectorAll('.dm-rc-tab[data-rc-group]').forEach(tab => {
+            tab.onclick = () => _rcShowGroup(tab.dataset.rcGroup);
+        });
+        content.style.display = '';
+        const firstTab = document.querySelector('.dm-rc-tab[data-rc-group]');
+        if (firstTab) _rcShowGroup(firstTab.dataset.rcGroup);
+        window._rcLoaded = true;
+        return;
+    }
     loading.style.display = ''; content.style.display = 'none'; errEl.style.display = 'none';
     try {
         const r = await fetch('/debrid_manager/api/reconcile' + (force ? '?force=1' : ''));

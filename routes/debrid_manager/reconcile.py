@@ -5,7 +5,6 @@ Part of the Debrid Manager blueprint (routes/debrid_manager_routes.py).
 from concurrent.futures import ThreadPoolExecutor
 from routes.models import admin_required
 from concurrent.futures import as_completed
-from debrid import get_debrid_provider
 from utilities.jellyfin_auth import jellyfin_auth_headers
 from flask import jsonify
 import logging
@@ -14,12 +13,11 @@ from flask import request
 import threading
 import time
 from routes.debrid_manager_routes import (
-    _fetch_all_bg,
-    _fetch_pages_bg,
     _lib,
     _load_lib_cache_from_db,
     _reconcile_cache,
     debrid_manager_bp,
+    start_library_refresh,
 )
 from routes.debrid_manager.symlink_audits import _RCLONE_COUNT_STALE, _rclone_count_state, _run_rclone_count_bg, _symlink_audit_state
 
@@ -66,24 +64,7 @@ def api_reconcile():
                 is_already_loading = _lib['loading']
             if not is_already_loading:
                 try:
-                    provider = get_debrid_provider()
-                    with _lib['lock']:
-                        _lib['gen'] += 1
-                        _gen = _lib['gen']
-                        _lib['loading'] = True
-                        _lib['partial'] = []
-                    if provider.PROVIDER_NAME == 'Real-Debrid':
-                        threading.Thread(
-                            target=_fetch_pages_bg,
-                            args=(provider.api_key, 1, _gen),
-                            daemon=True,
-                        ).start()
-                    else:
-                        threading.Thread(
-                            target=_fetch_all_bg,
-                            args=(_gen,),
-                            daemon=True,
-                        ).start()
+                    start_library_refresh()
                     logging.info('[Reconcile] Force refresh — triggered background library re-fetch')
                 except Exception as _e:
                     logging.warning(f'[Reconcile] Could not trigger library re-fetch: {_e}')
@@ -543,6 +524,7 @@ def api_reconcile():
                 'imdb_id':              '',
                 'filled_by_file':       '',
                 'filled_by_torrent_id': t['id'],
+                'debrid_provider':      t.get('_provider', ''),
                 'magnet_hash':          '',
                 'ms_item_id':           None,
                 'rd_filename':          fname,

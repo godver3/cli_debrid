@@ -376,3 +376,105 @@ body[data-theme="tangerine"] .cal-slide-incoming {
 .cal-month-today:hover { border-color: #e17c52; color: #e17c52 !important; }
 /* Days from the neighbouring months: dimmed, events still listed */
 .calendar-grid td.other-month .grid-event-list { display: block; opacity: 0.45; }
+
+/* ======================================================
+   Month view in the sharper style of the old week view:
+   square cells, small uppercase day names, events as
+   cards with a coloured left edge instead of pills.
+   ====================================================== */
+.calendar-page-container .calendar-grid-section {
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+.calendar-page-container .cal-month-header {
+    justify-content: space-between;
+    border-bottom: none;
+    padding-bottom: 0;
+    gap: 12px;
+}
+.calendar-page-container .cal-month-header h5 {
+    flex: 1;
+    text-align: center;
+    color: #e17c52;
+    font-size: 1.35em;
+    font-weight: 700;
+    margin: 0;
+}
+.calendar-page-container .calendar-grid th {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    color: #888;
+    font-size: 0.72em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 9px 6px;
+}
+.calendar-page-container .calendar-grid td {
+    border: 1px solid #2d2d2d;
+    background: #181818;
+    height: 128px;
+    padding: 6px;
+    cursor: pointer;
+}
+.calendar-page-container .calendar-grid td:hover { background: #1e1e1e; }
+.calendar-page-container .calendar-grid td.other-month { background: #141414; }
+.calendar-page-container .calendar-grid td.is-today {
+    background: #1a261a;
+    border-color: #4a5e40;
+}
+.calendar-page-container .calendar-grid td .day-number {
+    color: #ccc;
+    font-weight: 600;
+}
+.calendar-page-container .calendar-grid td.is-today .day-number {
+    background: #e17c52;
+    width: 24px;
+    height: 24px;
+    font-size: 0.78em;
+}
+.calendar-page-container .grid-event-list { margin-top: 26px; }
+.calendar-page-container .grid-event-item {
+    background: #252525 !important;
+    border-left: 3px solid #555;
+    border-radius: 3px;
+    color: #ddd;
+    padding: 3px 6px;
+    margin-bottom: 3px;
+    font-size: 0.74em;
+}
+.calendar-page-container .grid-event-item.more-events { border-left: none; }
+.calendar-page-container .grid-event-item.event-type-movie   { border-left-color: #3498db; }
+.calendar-page-container .grid-event-item.event-type-tv_show { border-left-color: #9b59b6; }
+.calendar-page-container .grid-event-item.status-collected,
+.calendar-page-container .grid-event-item.status-upcoming_collected { border-left-color: #27ae60; opacity: 0.7; }
+.calendar-page-container .grid-event-item.status-checking_upgrade   { border-left-color: #d35400; opacity: 0.75; }
+.calendar-page-container .grid-event-item.status-premiered_uncollected { border-left-color: #e74c3c; }
+.calendar-page-container .grid-event-item.status-upcoming_uncollected  { border-left-color: #5dade2; }
+.calendar-page-container .grid-event-item.status-in_progress           { border-left-color: #1abc9c; }
+
+.calendar-page-container .calendar-timeline-section .timeline-header {
+    color: #e17c52;
+    font-size: 1.1em;
+    font-weight: 700;
+    text-align: left;
+    border-left: 3px solid #e17c52;
+    padding-left: 10px;
+}
+.calendar-page-container .calendar-event {
+    background: #1e1e1e;
+    border-radius: 4px;
+    border-left-width: 3px;
+    padding: 9px 10px;
+    cursor: pointer;
+}
+.calendar-page-container .calendar-event:hover { filter: brightness(1.15); }
+.calendar-page-container .event-status-badge,
+.calendar-page-container .modal-event-status-badge { border-radius: 3px; }
+.calendar-page-container .cal-nav-btn,
+.calendar-page-container .cal-month-today { border-radius: 4px; }
+.modal-event-item.cal-clickable-event { cursor: pointer; }
+.calendar-page-container .calendar-day-group { border-radius: 4px; background: #161616; }
+.calendar-page-container .calendar-grid td.other-month .day-number { color: #555; }

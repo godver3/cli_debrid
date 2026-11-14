@@ -7,7 +7,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                 </svg>
         <div class="info-banner-content">
-            <strong>Note:</strong> To enable or disable content sources, please use the <a href="/program_operation/task_timings" class="info-link">Task Manager page</a>.
+            <strong>Note:</strong> To enable or disable content sources, please use the <a href="/program_operation/automation" class="info-link">Automation page</a>.
             The Task Manager allows you to control which content sources are active and their processing intervals.
         </div>
     </div>
@@ -1576,6 +1576,8 @@
                             <p class="settings-description">Allow TV show specials (Season 0) to be added from this source.</p>
                         </div>
 
+                        {% include 'settings_tabs/_source_collected_options.html' %}
+
                         {# Unblacklist on Source Run #}
                         {% set key = 'unblacklist_on_source_run' %}
                         {% set value = config.get(key, False) %}
@@ -1983,6 +1985,8 @@
                            </div>
                         {% endif %}
 
+                        {% include 'settings_tabs/_source_collected_options.html' %}
+
                         {# Unblacklist on Source Run #}
                         {% set key = 'unblacklist_on_source_run' %}
                         {% set value = config.get(key, False) %}
@@ -2097,7 +2101,7 @@
                         {% for key, value in config.items() %}
                             {# Skip standard 'type' field and any empty/invalid keys #}
                             {% if key and key != 'type' %}
-                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters', 'seasons_per_show', 'season_grab_order', 'tags', 'tags_exclusive'] or (key == 'ignore_tags' and config.type == 'Overseerr') or (config.type == 'MDBList' and key in ['source_mode', 'urls', 'username', 'listname', 'list_id']) %}
+                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'remove_when_collected', 'keep_series', 'allow_partial_requests', 'plex_collection', 'allowed_requesters', 'seasons_per_show', 'season_grab_order', 'tags', 'tags_exclusive'] or (key == 'ignore_tags' and config.type == 'Overseerr') or (config.type == 'MDBList' and key in ['source_mode', 'urls', 'username', 'listname', 'list_id']) %}
                                 {% if not _skip %}
                                 <div class="settings-form-group">
                                     {% if key == 'versions' %}
@@ -2390,6 +2394,8 @@
                                  {% endif %}
                              </div>
                          {% endif %}
+
+                        {% include 'settings_tabs/_source_collected_options.html' %}
 
                         {# Unblacklist on Source Run #}
                         {% set key = 'unblacklist_on_source_run' %}

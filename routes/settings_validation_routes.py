@@ -520,3 +520,26 @@ def validate_onboarding_settings():
 
     all_valid = all(c['valid'] or c['warning'] for c in checks)
     return jsonify({'valid': all_valid, 'checks': checks})
+
+
+@settings_validation_bp.route('/test-debrid-key', methods=['POST'])
+@admin_required
+def test_debrid_key():
+    """Check one debrid provider + API key (the per-row Test button in Settings)."""
+    data = request.get_json(silent=True) or {}
+    provider = (data.get('provider') or '').strip()
+    api_key = (data.get('api_key') or '').strip()
+    if not provider or not api_key:
+        return jsonify({'success': False, 'message': 'Pick a provider and enter its API key.'})
+    ok, message = validate_debrid_api_key(api_key, provider)
+    return jsonify({'success': bool(ok), 'message': message})
+
+
+@settings_validation_bp.route('/usenet-mount-detect', methods=['POST'])
+@admin_required
+def usenet_mount_detect():
+    """Look for the usenet mount's URL and paths (Settings → Usenet Mount → Detect)."""
+    from usenet.mount_detect import detect
+    data = request.get_json(silent=True) or {}
+    found = detect(data.get('provider') or 'climount', data.get('url') or '', data.get('token') or '')
+    return jsonify({'success': True, **found})

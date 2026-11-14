@@ -6,7 +6,7 @@ import os
 import re
 
 from utilities.settings import get_setting
-from utilities.log_context import logs_for_item
+from utilities.log_context import ContextThreadPoolExecutor, logs_for_item
 from queues.scrape_window import in_alternate_scrape_window
 from scraper.scraper import scrape
 from scraper.functions.anime_utils import absolute_episode_for
@@ -936,6 +936,21 @@ class ScrapingQueue:
                                             _batch_ids_to_remove.add(_b['id'])
                                             return True
                                         return False
+
+                                    # Search the whole season once per Newznab indexer up front;
+                                    # each episode's scrape below is then served from that list
+                                    # (scraper/newznab.py season prefetch) instead of costing two
+                                    # API calls per episode per indexer. Episodes the season search
+                                    # didn't return still get their own live query.
+                                    if _newznab_scrapers and len(_batch) >= 2:
+                                        try:
+                                            from scraper.newznab import prefetch_season as _prefetch_season
+                                            with ContextThreadPoolExecutor(max_workers=min(len(_newznab_scrapers), 8)) as _pex:
+                                                list(_pex.map(lambda sc: _prefetch_season(
+                                                    sc[0], sc[1], _curr_imdb, item_to_process.get('title') or '',
+                                                    _curr_season), _newznab_scrapers))
+                                        except Exception as _pf_err:
+                                            logging.warning(f'[NZBBatch] season prefetch failed, scraping episodes individually: {_pf_err}')
 
                                     for _bep in _batch:
                                         try:

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{# Shared layout for card pages (Tools, Maintenance). Child templates fill
+   page_title, intro, tabs and cards. #}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_debug_functions.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tool_cards.css') }}">
+<style>
+#tngDebug .tdb-intro{color:var(--text2);font-size:12px;line-height:1.55;margin:-.5rem 0 1rem;max-width:820px}
+#tngDebug .tdb-intro a{color:var(--accent)}
+#tngDebug .tdb-links{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 1.25rem}
+#tngDebug .tdb-link{display:inline-flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 12px;color:var(--text);font-size:12px;text-decoration:none}
+#tngDebug .tdb-link:hover{border-color:var(--accent)}
+#tngDebug .tdb-link i{color:var(--accent)}
+#tngDebug .tab.danger{color:#ef4444}
+#tngDebug .tab.danger.active{border-color:#7f1d1d}
+#tngDebug .danger-note{display:none;background:#1a0a0a;border:1px solid #7f1d1d;border-radius:6px;padding:10px 14px;font-size:12px;color:#fca5a5;margin-bottom:1rem}
+@media (max-width:640px){ #tngDebug{padding:1rem 16px} #tngDebug .grid{grid-template-columns:1fr} #tngDebug .grid .card[data-title="plex labels management"]{grid-column:auto} }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="toast-container" style="display: none !important;"></div>
+<div id="tngDebug">
+  <div class="tdb-title">{% block page_title %}{% endblock %}</div>
+  {% block intro %}{% endblock %}
+  {% if environment_mode != 'full' %}
+  <div class="tdb-warn">You are in a restricted environment mode. Avoid changing things here.</div>
+  {% endif %}
+  <div class="toolbar">
+    <div class="tabs" id="tdbTabs">{% block tabs %}{% endblock %}</div>
+    <div class="search-wrap">
+      <span class="search-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4"/><path d="M11 11l3 3"/></svg></span>
+      <input class="search-input" type="text" placeholder="Filter…" id="tdbSearch">
+    </div>
+  </div>
+  {% block before_grid %}{% endblock %}
+  <div class="grid" id="tdbMainGrid"></div>
+</div>
+<div id="tngDebug-toast"><span class="toast-dot" id="tdbToastDot"></span><span id="tdbToastMsg"></span></div>
+
+{# Cards start here, hidden; tool_cards.js moves them into the grid. #}
+<div class="debug-container"><div class="debug_items">
+{% block cards %}{% endblock %}
+</div></div>
+
+{% include 'tool_cards/_modals.html' %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tool_cards.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/tool_cards_actions.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tool_cards_api.js') }}"></script>
+{% endblock %}

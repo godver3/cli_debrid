@@ -159,7 +159,8 @@ class PlexWatchlistRetentionTests(unittest.TestCase):
 
         module.run_async_fetches = fake_fetches
         with self.assertLogs(level=logging.INFO) as captured:
-            batches = module.get_wanted_from_plex_watchlist({'1080p': True})
+            batches = module.get_wanted_from_plex_watchlist(
+                {'1080p': True}, remove_when_collected=removal, keep_series=keep_series)
         returned = [entry for batch, _ in batches for entry in batch]
         return returned, account.removed, '\n'.join(captured.output)
 
@@ -241,7 +242,8 @@ class PlexRssRetentionTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, {'content_checkers.plex_watchlist': shared}), \
                 self.assertLogs(level=logging.INFO) as captured:
             batches = module.get_wanted_from_plex_rss(
-                'https://plex.test/rss', {'1080p': True}, read_only=read_only)
+                'https://plex.test/rss', {'1080p': True}, read_only=read_only,
+                remove_when_collected=removal, keep_series=keep_series)
         returned = [entry for batch, _ in batches for entry in batch]
         return returned, '\n'.join(captured.output)
 

@@ -1,0 +1,278 @@
+{# Cards moved from the old Debug page; data-cat picks the tab. #}
+<div data-cat="library" class="debug_item">
+            <h3>Get Collected from Library (Plex)</h3>
+            <form action="{{ url_for('debug.get_collected_from_plex') }}" method="POST" id="get-collected-form">
+                <div class="form-group">
+                    <label for="collection_type">Collection Type:</label>
+                    <select id="collection_type" name="collection_type" required>
+                        <option value="all">All</option>
+                        <option value="recent">Recent</option>
+                        <option value="backfill">Backfill (Update file sizes for already-Collected items)</option>
+                    </select>
+                </div>
+                <button type="submit">Get Plex Collected</button>
+            </form>
+        </div>
+<div data-cat="library" class="debug_item">
+            <h3>Version Propagator</h3>
+            <form action="{{ url_for('debug.propagate_version') }}" method="POST" id="version-propagator-form">
+                <div class="form-group">
+                    <label for="media_type">Media Type:</label>
+                    <select id="media_type" name="media_type" required>
+                        <option value="all">All</option>
+                        <option value="movie">Movies Only</option>
+                        <option value="episode">Episodes Only</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="original_version">Original Version:</label>
+                    <select id="original_version" name="original_version" required>
+                        <option value="">Select Version</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="propagated_version">Propagated Version:</label>
+                    <select id="propagated_version" name="propagated_version" required>
+                        <option value="">Select Version</option>
+                    </select>
+                </div>
+                <button type="submit">Propagate Version</button>
+            </form>
+        </div>
+<div data-cat="library" class="debug_item">
+            <h3>Bulk Subtitle Scan</h3>
+            <p class="description">Scan your symlinked library for missing subtitles and download them.</p>
+            <form id="bulk-subtitle-scan-form">
+                <button type="submit">Run Bulk Subtitle Scan</button>
+            </form>
+        </div>
+<div data-cat="library" class="debug_item">
+            <h3>Direct Emby/Jellyfin Scan</h3>
+            <p class="description">Trigger a full library scan on Emby/Jellyfin and add/update items in the database.</p>
+            <form action="{{ url_for('debug.direct_emby_scan') }}" method="POST" id="direct-emby-scan-form">
+                <button type="submit">Run Emby/Jellyfin Scan</button>
+            </form>
+        </div>
+<div data-cat="library" class="debug_item">
+            <h3>Move Item ID to Upgrading</h3>
+            <form action="{{ url_for('debug.move_to_upgrading') }}" method="POST" id="move-to-upgrading-form">
+                <div class="form-group">
+                    <label for="item_id">Item ID:</label>
+                    <input type="text" id="item_id" name="item_id" required>
+                </div>
+                <button type="submit">Move to Upgrading</button>
+            </form>
+        </div>
+<div data-cat="library" class="debug_item">
+            <h3>Fix Missing IMDb ID</h3>
+            <p class="description">Add or update the IMDb ID for a media item. Search by Item ID (single row) or TMDB ID (updates all matching rows at once).</p>
+            <form id="fix-imdb-form" onsubmit="return false;">
+                <div class="form-group">
+                    <label for="fix_imdb_search_by">Search by:</label>
+                    <select id="fix_imdb_search_by">
+                        <option value="item_id">Item ID</option>
+                        <option value="tmdb_id">TMDB ID</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="fix_imdb_item_id" id="fix_imdb_lookup_label">Item ID:</label>
+                    <input type="number" id="fix_imdb_item_id" name="item_id" placeholder="e.g., 98080" required>
+                </div>
+                <div class="form-group">
+                    <label for="fix_imdb_id">IMDb ID:</label>
+                    <input type="text" id="fix_imdb_id" name="imdb_id" placeholder="e.g., tt37212066" required pattern="tt\d+">
+                </div>
+                <button type="button" onclick="fixImdbId()">Update IMDb ID</button>
+                <div id="fix-imdb-results" class="results-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
+<div data-cat="library" class="debug_item">
+            <h3>Test Plex Item Lookup</h3>
+            <p class="description">Test if a database item can be found in Plex. Shows IMDb ID, TMDb ID, title, year, and whether Plex match was successful.</p>
+            <form id="test-item-lookup-form" onsubmit="return false;">
+                <div class="form-group">
+                    <label for="test_lookup_item_id">Item ID:</label>
+                    <input type="number" id="test_lookup_item_id" name="item_id" placeholder="e.g., 98080" required>
+                </div>
+                <button type="button" onclick="testItemLookup()">Test Lookup</button>
+                <div id="test-lookup-results" class="results-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
+<div data-cat="symlinks" class="debug_item verification-queue">
+            <h3>Symlink Verification Queue</h3>
+            <div id="verification-stats" class="verification-stats">
+                <div class="stats-loading">Loading verification stats...</div>
+            </div>
+            <div class="verification-actions">
+                <button type="button" id="refresh-verification-queue" class="btn">Refresh Queue</button>
+                <button type="button" id="run-verification-scan" class="btn">Verification Scan</button>
+            </div>
+            <div id="verification-queue-container" class="verification-queue-container">
+                <div class="queue-loading">Loading verification queue...</div>
+            </div>
+        </div>
+<div data-cat="symlinks" class="debug_item">
+            <h3>Convert Library to Symlinks</h3>
+            <form id="convert-to-symlinks-form">
+                <p>This function will convert an existing Plex library to use symlinks. This is ONLY intended for converting existing Plex libraries to a Symlinked library, and should only be done once. This action is not reversible.</p>
+                <button type="submit">Convert to Symlinks</button>
+            </form>
+            <div id="convert-to-symlinks-progress" class="progress-area" style="margin-top: 15px;"></div>
+        </div>
+<div data-cat="symlinks" class="debug_item">
+            <h3>Rclone Mount to Symlinks</h3>
+            <p class="description">Scan an Rclone mount, fetch metadata, create DB entries, and generate symlinks.</p>
+            <form id="rclone-to-symlinks-form">
+                <div class="form-group">
+                    <label for="rclone_mount_path">Rclone Mount Path:</label>
+                    <input type="text" id="rclone_mount_path" name="rclone_mount_path" placeholder="/mnt/rclone_mount" required>
+                </div>
+                <div class="form-group">
+                    <label for="symlink_base_path">Symlink Base Path:</label>
+                    <input type="text" id="symlink_base_path" name="symlink_base_path" placeholder="/mnt/symlinked_media" required>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="rclone_dry_run" name="dry_run">
+                        Dry Run (Preview changes without saving)
+                    </label>
+                </div>
+                <button type="submit">Start Scan</button>
+                <div id="rclone-scan-progress" class="progress-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
+<div data-cat="symlinks" class="debug_item">
+            <h3>Duplicate Symlink Targets</h3>
+            <p class="description">Scans TV Shows symlinks for episodes pointing at the same underlying file - usually means a season pack was mismatched and multiple "different" episodes are actually playing identical content. Read-only scan; rescraping fully deletes the affected episode(s) - symlink, source file/debrid download, media server entry - before moving them back to Wanted.</p>
+            <button type="button" id="scan-duplicate-symlinks-btn">Scan for Duplicates</button>
+            <div id="duplicate-symlinks-results" class="results-area" style="margin-top: 15px;"></div>
+        </div>
+<div data-cat="symlinks" class="debug_item">
+            <h3>Resync Symlinks with New Settings</h3>
+            <p class="description">Resyncs symlinks for collected items. If old/new original paths are provided, it first updates the stored original file paths in the database for matching items. Then, it regenerates symlinks for relevant collected items based on current symlink settings and these (potentially updated) original paths. If no paths are provided, it attempts to resync all collected items.</p>
+            <form id="resync-symlinks-form" action="{{ url_for('debug.resync_symlinks_route') }}" method="POST">
+                <button type="submit">Resync Symlinks</button>
+                <div id="resync-symlinks-results" class="results-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
+<div data-cat="symlinks" class="debug_item">
+            <h3>Modify Symlink Base Paths</h3>
+            <p class="description">Update the base paths for symlinks and original file locations in the database. Use carefully!</p>
+            <form id="modify-symlink-paths-form">
+                <div class="form-group form-group-horizontal">
+                    <label for="current_symlink_base">Current Symlink Base:</label>
+                    <input type="text" id="current_symlink_base" name="current_symlink_base" placeholder="/mnt/symlinked">
+                    <label for="new_symlink_base">New Symlink Base:</label>
+                    <input type="text" id="new_symlink_base" name="new_symlink_base" placeholder="/mnt/new_symlinked">
+                </div>
+                 <div class="form-group form-group-horizontal">
+                    <label for="current_original_base">Current Original Base:</label>
+                    <input type="text" id="current_original_base" name="current_original_base" placeholder="/mnt/zurg/__all__">
+                    <label for="new_original_base">New Original Base:</label>
+                    <input type="text" id="new_original_base" name="new_original_base" placeholder="/mnt/rclone/__all__">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="dry_run" name="dry_run" checked>
+                        Dry Run (Preview changes without saving)
+                    </label>
+                </div>
+                <button type="submit">Modify Paths</button>
+                <div id="modify-symlink-results" class="results-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
+<div data-cat="symlinks" class="debug_item">
+            <h3>Symlink Library Recovery</h3>
+            <p class="description">Recover database entries from your existing symlink structure if the database was lost. You must ensure that your symlink settings under Additional Settings match the structure of your folders to be recovered.</p>
+            <a href="{{ url_for('debug.recover_symlinks_page') }}" class="btn">Recover Symlink Library</a>
+        </div>
+<div data-cat="plex_labels" class="debug_item" style="grid-column: 1 / -1;">
+            <div style="position: relative;">
+                <h3>Plex Labels Management</h3>
+                <button onclick="showPlexLabelsHelp()" class="plex-labels-help-btn" data-tooltip="View comprehensive help about Plex Labels">
+                    <i class="fas fa-question-circle"></i>
+                </button>
+            </div>
+            <p class="description">
+                Manage Plex labels for your content. These utilities allow you to view, apply, and remove labels manually, as well as sync labels from configured content sources.
+            </p>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 20px; margin-top: 20px;">
+                <!-- View Items by Label -->
+                <div class="label-items">
+                    <h4 style="margin-bottom: 10px;">View Items by Label</h4>
+                    <p class="description" style="margin-bottom: 10px;">
+                        Search for items that have a specific Plex label applied.
+                    </p>
+                    <input type="text" id="label-search-input" class="finput" placeholder="Enter label name">
+                    <button type="button" onclick="searchItemsByLabel()" class="btn"
+                            style="padding: 8px 16px; width: 100%;">Search</button>
+                    <div id="label-search-results" style="margin-top: 15px; max-height: 300px; overflow-y: auto;"></div>
+                </div>
+
+                <!-- Bulk Label Application -->
+                <div class="label-items">
+                    <h4 style="margin-bottom: 10px;">Bulk Apply Labels from Source</h4>
+                    <p class="description" style="margin-bottom: 10px;">
+                        Apply Plex labels to all existing items from a specific content source. This is useful for retroactively labeling content that was added before labels were configured.
+                    </p>
+                    <select id="bulk-apply-source" class="fselect">
+                        <option value="">Select a content source...</option>
+                    </select>
+                    <button type="button" onclick="previewBulkApply()" class="btn"
+                            style="padding: 8px 16px; width: 100%; margin-bottom: 5px;">Preview</button>
+                    <button type="button" onclick="executeBulkApply()" class="btn"
+                            style="padding: 8px 16px; width: 100%; background-color: #007bff;" disabled id="bulk-apply-execute-btn">Apply Labels</button>
+                    <div id="bulk-apply-preview" style="margin-top: 15px;"></div>
+                </div>
+
+                <!-- Bulk Label Removal -->
+                <div class="label-items">
+                    <h4 style="margin-bottom: 10px;">Bulk Remove Labels</h4>
+                    <p class="description" style="margin-bottom: 10px;">
+                        Remove a specific label from all items in the database and Plex.
+                    </p>
+                    <input type="text" id="bulk-remove-label-input" class="finput" placeholder="Enter label name to remove">
+                    <button type="button" onclick="previewBulkRemove()" class="btn"
+                            style="padding: 8px 16px; width: 100%; margin-bottom: 5px;">Preview</button>
+                    <button type="button" onclick="executeBulkRemove()" class="btn"
+                            style="padding: 8px 16px; width: 100%; background-color: #dc3545;" disabled id="bulk-remove-execute-btn">Remove Label</button>
+                    <div id="bulk-remove-preview" style="margin-top: 15px;"></div>
+                </div>
+
+                <!-- Orphaned Label Cleanup -->
+                <div class="label-items">
+                    <h4 style="margin-bottom: 10px;">Orphaned Label Cleanup</h4>
+                    <p class="description" style="margin-bottom: 10px;">
+                        Find and remove labels that are tracked in the database but no longer exist on any content source configuration.
+                    </p>
+                    <button type="button" onclick="findOrphanedLabels()" class="btn"
+                            style="padding: 8px 16px; width: 100%; margin-bottom: 5px;">Find Orphaned Labels</button>
+                    <button type="button" onclick="cleanupOrphanedLabels()" class="btn"
+                            style="padding: 8px 16px; width: 100%; background-color: #dc3545;" disabled id="orphaned-cleanup-btn">Cleanup</button>
+                    <div id="orphaned-labels-results" style="margin-top: 15px;"></div>
+                </div>
+
+                <!-- Sync Labels Now -->
+                <div class="label-items">
+                    <h4 style="margin-bottom: 10px;">Sync Labels from Content Sources</h4>
+                    <p class="description" style="margin-bottom: 10px;">
+                        Re-sync all labels based on current content source configurations. This will apply labels to all Collected items from sources that have Plex labels enabled.
+                    </p>
+                    <button type="button" onclick="syncAllLabels()" class="btn"
+                            style="padding: 8px 16px; width: 100%; background-color: #28a745;">Sync All Labels</button>
+                    <div id="sync-labels-status" style="margin-top: 15px;"></div>
+                </div>
+
+                <!-- Backfill Resolution -->
+                <div class="label-items">
+                    <h4 style="margin-bottom: 10px;">Backfill Resolution Data</h4>
+                    <p class="description" style="margin-bottom: 10px;">
+                        Extract resolution (2160p, 1080p, etc.) from stored file paths for Collected items missing resolution data. This is safe to run multiple times.
+                    </p>
+                    <button type="button" onclick="backfillResolution()" class="btn"
+                            style="padding: 8px 16px; width: 100%; background-color: #17a2b8;">Backfill Resolution</button>
+                    <div id="backfill-resolution-status" style="margin-top: 15px;"></div>
+                </div>
+            </div>
+        </div>

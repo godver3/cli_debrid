@@ -71,8 +71,8 @@
       "runs": "Always on."
     },
     "task_repair_broken_nzbs": {
-      "description": "Asks the usenet provider (cli_mount) for a health scan, then repairs the NZB files it reports as broken. For each one it blacklists the broken release and scrapes for a usenet replacement. The old file is only deleted after the replacement is confirmed in the provider's queue. If no replacement is found, the broken file stays in place, the item goes back to Wanted, and the repair tries again later (1, 2, 4 hours apart, up to 24 hours). Auto-repair gives up on an item after 3 failed attempts.",
-      "action": "Run a health scan and repair the broken NZBs.",
+      "description": "Once a month, asks the usenet provider (cli_mount) to re-check every file, then repairs the ones it reports as broken. You don't need this for everyday repairs: the NZB health check already repairs anything the provider marks broken within about 5 minutes, and stuck playback starts its own repair. This scan catches old files whose articles have expired since they were last checked. For each broken file it blacklists the release and scrapes for a usenet replacement; the old file is only deleted after the replacement is confirmed. If no replacement is found, the file stays, the item goes back to Wanted and the repair tries again later. Auto-repair gives up after 3 failed attempts.",
+      "action": "Re-check every usenet file now and repair the broken ones.",
       "runs": "On by default. Needs cli_mount as the usenet provider."
     },
     "task_repair_broken_debrids": {
@@ -342,7 +342,7 @@
     }
   },
   "content_source": {
-    "description": "Fetches the items from this content source (watchlist, list, request service...) and adds new ones to the Wanted queue for each version the source has enabled. Items already in the database are skipped. Item details are cached for 6 hours. The cache can be cleared on the Debug page.",
+    "description": "Fetches the items from this content source (watchlist, list, request service...) and adds new ones to the Wanted queue for each version the source has enabled. Items already in the database are skipped. Item details are cached for 6 hours. The cache can be cleared in Settings → Maintenance.",
     "action": "Fetch this content source now.",
     "runs": "On while the content source is enabled."
   },

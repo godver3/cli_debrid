@@ -123,7 +123,10 @@ class TestMyPlexWatchlist(unittest.TestCase):
              mock.patch.object(pw, 'run_async_fetches', _fetched(entries)), \
              mock.patch.object(pw, 'get_media_item_presence_overall', side_effect=presence), \
              mock.patch.object(pw, 'get_show_status', return_value=show_status):
-            result = pw.get_wanted_from_plex_watchlist({'Default': True}, read_only=read_only)
+            result = pw.get_wanted_from_plex_watchlist(
+                {'Default': True}, read_only=read_only,
+                remove_when_collected=values['plex_watchlist_removal'],
+                keep_series=values['plex_watchlist_keep_series'])
         return [i for batch, _ in result for i in batch], account.removed
 
     def test_one_failing_item_does_not_empty_the_source(self):
@@ -354,9 +357,9 @@ class TestEpisodelessRefreshThrottle(unittest.TestCase):
 
 class TestRemovalRule(unittest.TestCase):
     def _rule(self, media_type, state, status='returning series', keep_series=False):
-        with mock.patch.object(pw, 'get_setting', side_effect=lambda s, k, d=False: keep_series if k == 'plex_watchlist_keep_series' else d), \
+        with mock.patch.object(pw, 'get_setting', return_value=False), \
              mock.patch.object(pw, 'get_show_status', return_value=status):
-            return pw.should_remove_from_watchlist('tt0000001', media_type, state)[0]
+            return pw.should_remove_from_watchlist('tt0000001', media_type, state, keep_series)[0]
 
     def test_movies_only_when_fully_collected(self):
         self.assertTrue(self._rule('movie', 'Collected'))
@@ -408,7 +411,8 @@ class TestExactImdbMatch(unittest.TestCase):
 class TestPostProcessingRemoval(unittest.TestCase):
     def _handle(self, item, source_type='My Plex Watchlist', **rule):
         from utilities import post_processing
-        config = {'Content Sources': {'My Plex Watchlist_1': {'type': source_type, 'token': 'tok'}}}
+        config = {'Content Sources': {'My Plex Watchlist_1': {'type': source_type, 'token': 'tok',
+                                                              'remove_when_collected': True}}}
         with mock.patch.object(post_processing, 'get_setting', return_value=True), \
              mock.patch('queues.config_manager.load_config', return_value=config), \
              mock.patch.object(pw, 'should_remove_from_watchlist', return_value=(rule.get('remove', False), 'why')), \
@@ -437,7 +441,7 @@ class TestPostProcessingRemoval(unittest.TestCase):
     def test_movie_is_judged_as_a_movie(self):
         from utilities import post_processing
         movie = dict(self.ITEM, type='movie')
-        config = {'Content Sources': {'My Plex Watchlist_1': {'type': 'My Plex Watchlist'}}}
+        config = {'Content Sources': {'My Plex Watchlist_1': {'type': 'My Plex Watchlist', 'remove_when_collected': True}}}
         with mock.patch.object(post_processing, 'get_setting', return_value=True), \
              mock.patch('queues.config_manager.load_config', return_value=config), \
              mock.patch.object(pw, 'should_remove_from_watchlist', return_value=(False, 'partial')) as rule:
@@ -454,7 +458,8 @@ class TestRssSharesTheRemovalRule(unittest.TestCase):
              mock.patch.object(rss, 'get_media_item_presence_overall', return_value=state), \
              mock.patch.object(pw, 'get_setting', side_effect=lambda s, k, d=False: values.get(k, d)), \
              mock.patch.object(pw, 'get_show_status', return_value='returning series'):
-            result = rss.get_wanted_from_plex_rss('https://rss.plex.tv/x', {'Default': True}, read_only=read_only)
+            result = rss.get_wanted_from_plex_rss('https://rss.plex.tv/x', {'Default': True}, read_only=read_only,
+                                                  remove_when_collected=True)
         return [i for batch, _ in result for i in batch]
 
     def test_partial_movie_is_no_longer_suppressed(self):
@@ -728,7 +733,7 @@ class TestSkipReasonsAreLogged(unittest.TestCase):
              mock.patch.object(rss, 'get_media_item_presence_overall', return_value='Collected'), \
              mock.patch.object(pw, 'get_setting', side_effect=lambda s, k, d=False: values.get(k, d)), \
              self.assertLogs(level='INFO') as cm:
-            rss.get_wanted_from_plex_rss('https://rss.plex.tv/x', {'Default': True})
+            rss.get_wanted_from_plex_rss('https://rss.plex.tv/x', {'Default': True}, remove_when_collected=True)
         lines = [r.getMessage() for r in cm.records]
         self.assertTrue(any('feed entry has no guid' in l and "'No Guid'" in l for l in lines), lines)
         self.assertTrue(any('no IMDb ID from its guids' in l and 'tvdb://999' in l for l in lines), lines)
@@ -762,3 +767,26 @@ class TestPipelineSummaryIsLogged(unittest.TestCase):
         self.assertIn('newly_added=1', lines[0])
         self.assertTrue(any("no metadata produced" in l and "'tt3'" in l for l in lines), lines)
         self.assertTrue(any("removed by the source filters" in l and "'Ancient'" in l for l in lines), lines)
+
+
+class TestPostProcessingRespectsSourceOption(unittest.TestCase):
+    def test_source_without_removal_is_left_alone(self):
+        from utilities import post_processing
+        config = {'Content Sources': {'My Plex Watchlist_1': {'type': 'My Plex Watchlist'}}}
+        item = {'imdb_id': 'tt0000001', 'title': 'T', 'type': 'movie', 'content_source': 'My Plex Watchlist_1'}
+        with mock.patch('queues.config_manager.load_config', return_value=config), \
+             mock.patch.object(pw, 'should_remove_from_watchlist', return_value=(True, 'x')) as rule, \
+             mock.patch.object(pw, 'remove_from_plex_watchlist_by_item') as mine:
+            post_processing._handle_plex_watchlist_removal(item)
+        rule.assert_not_called()
+        mine.assert_not_called()
+
+    def test_keep_series_comes_from_the_source(self):
+        from utilities import post_processing
+        config = {'Content Sources': {'My Plex Watchlist_1': {
+            'type': 'My Plex Watchlist', 'remove_when_collected': True, 'keep_series': True}}}
+        item = {'imdb_id': 'tt0000001', 'title': 'T', 'type': 'episode', 'content_source': 'My Plex Watchlist_1'}
+        with mock.patch('queues.config_manager.load_config', return_value=config), \
+             mock.patch.object(pw, 'should_remove_from_watchlist', return_value=(False, 'x')) as rule:
+            post_processing._handle_plex_watchlist_removal(item)
+        self.assertTrue(rule.call_args.kwargs['keep_series'])

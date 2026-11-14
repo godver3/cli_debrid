@@ -128,7 +128,7 @@
     {% block head_last %}{% endblock %}
 </head>
 
-<body data-theme="tangerine" class="tangerine-theme" data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}"
+<body data-theme="tangerine" class="tangerine-theme{% if request.args.get('embed') %} embed{% endif %}" data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}"
       data-program-status="{{ get_program_status() }}"
       data-is-onboarding="{{ 'true' if is_onboarding else 'false' }}"
       data-rate-limited="{{ 'true' if is_rate_limited else 'false' }}"
@@ -150,6 +150,15 @@
         };
     </script>
 
+    {% if request.args.get('embed') %}
+    {# Embedded in another page's tab (e.g. Performance Dashboard): page content only. #}
+    <style>
+      body.embed .st-nav-wrap, body.embed header, body.embed #supportModal,
+      body.embed .rate-limits-section, body.embed .rate-limits-section-toggle,
+      body.embed .rate-limits-toggle, body.embed #rateLimitsSection { display: none !important; }
+      body.embed, body.embed main { padding-top: 0 !important; margin-top: 0 !important; }
+    </style>
+    {% endif %}
     <!-- Tangerine Nav Redesign (hidden on classic via CSS) -->
     <div class="st-nav-wrap" style="display:none">
         <nav class="st-nav">
@@ -186,7 +195,7 @@
                         <div class="st-nav-dd-sep"></div>
                         <a class="st-nav-dd-item" href="{{ url_for('queues.index') }}"><i class="fa-solid fa-bars"></i> Queues</a>
                         {% if show_full_menu %}
-                        <a class="st-nav-dd-item" href="{{ url_for('program_operation.task_timings') }}"><i class="fa-solid fa-list-check"></i> Task Manager</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('program_operation.automation') }}"><i class="fa-solid fa-list-check"></i> Automation</a>
                         {% endif %}
                         <a class="st-nav-dd-item" href="{{ url_for('statistics.calendar_view') }}"><i class="fa-solid fa-calendar"></i> Calendar</a>
                         <div class="st-nav-dd-sep"></div>
@@ -203,15 +212,15 @@
                         <a class="st-nav-dd-item" href="{{ url_for('logs.logs') }}"><i class="fa-solid fa-scroll"></i> Logs</a>
                         <a class="st-nav-dd-item" href="{{ url_for('settings.index') }}"><i class="fa-solid fa-gear"></i> Settings</a>
                         <a class="st-nav-dd-item" href="{{ url_for('database.index') }}"><i class="fa-solid fa-database"></i> Database</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('tool_pages.maintenance') }}"><i class="fa-solid fa-screwdriver-wrench"></i> Maintenance</a>
                         <a class="st-nav-dd-item" href="{{ url_for('database.phalanxdb_status') }}"><i class="fa-solid fa-server"></i> Phalanx DB</a>
                         <div class="st-nav-dd-sep"></div>
                         <a class="st-nav-dd-item" href="{{ url_for('performance.performance_dashboard') }}"><i class="fa-solid fa-chart-line"></i> Performance Dashboard</a>
                         {% if not is_limited_environment() %}
                         <a class="st-nav-dd-item" href="{{ url_for('debrid_manager.index') }}"><i class="fa-solid fa-cloud-arrow-down"></i> Debrid Manager</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('debrid_manager.climount_page') }}"><i class="fa-solid fa-hard-drive"></i> cli_mount</a>
                         <a class="st-nav-dd-item" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i> Upgrade Hub</a>
                         {% endif %}
-                        <a class="st-nav-dd-item" href="{{ url_for('connections.index') }}"><i class="fa-solid fa-plug"></i> Connections</a>
-                        <a class="st-nav-dd-item" href="{{ url_for('statistics.scraper_stats_page') }}"><i class="fa-solid fa-ranking-star"></i> Scraper Stats</a>
                     </div>
                 </div>
 
@@ -219,16 +228,11 @@
                 <div class="st-nav-item" id="st-dd-tools">
                     <button class="st-nav-btn" onclick="stToggleDD('st-dd-tools')">Tools <i class="fa-solid fa-chevron-down st-arr"></i></button>
                     <div class="st-nav-dropdown">
-                        <a class="st-nav-dd-item" href="{{ url_for('scraper.scraper_tester') }}"><i class="fa-solid fa-flask"></i> Tester</a>
-                        <a class="st-nav-dd-item" href="{{ url_for('debug.debug_functions') }}"><i class="fa-solid fa-bug"></i> Debug</a>
-                        <a class="st-nav-dd-item" href="{{ url_for('database.reverse_parser') }}"><i class="fa-solid fa-rotate"></i> R. Parser</a>
-                        <a class="st-nav-dd-item" href="{{ url_for('magnet.assign_magnet') }}"><i class="fa-solid fa-arrow-right-arrow-left"></i> M. Assign</a>
-                        <a class="st-nav-dd-item" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i> M. Blacklist</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('tool_pages.tools') }}"><i class="fa-solid fa-toolbox"></i> All Tools</a>
                         <div class="st-nav-dd-sep"></div>
-                        <a class="st-nav-dd-item" href="{{ url_for('trakt_friends.manage_friends') }}"><i class="fa-solid fa-users"></i> Trakt Friends</a>
-                        <a class="st-nav-dd-item" href="{{ url_for('user_token.collect_tokens_page') }}"><i class="fa-solid fa-key"></i> Plex User Token M.</a>
-                        <a class="st-nav-dd-item" href="{{ url_for('symlink_tools.index') }}"><i class="fa-solid fa-link"></i> Symlink Tools</a>
-                        <a class="st-nav-dd-item" href="{{ url_for('metadata.metadata_debug') }}"><i class="fa-solid fa-tags"></i> Metadata Debug</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('scraper.scraper_tester') }}"><i class="fa-solid fa-flask"></i> Scraper Tester</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('magnet.assign_magnet') }}"><i class="fa-solid fa-arrow-right-arrow-left"></i> Manual Assign</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i> Manual Blacklist</a>
                         <a class="st-nav-dd-item" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
                     </div>
                 </div>
@@ -346,7 +350,7 @@
                             <a class="st-nav-mob-item" href="{{ url_for('library.index') }}"><i class="fa-solid fa-film"></i> Library</a>
                             <a class="st-nav-mob-item" href="{{ url_for('queues.index') }}"><i class="fa-solid fa-bars"></i> Queues</a>
                             {% if show_full_menu %}
-                            <a class="st-nav-mob-item" href="{{ url_for('program_operation.task_timings') }}"><i class="fa-solid fa-list-check"></i> Task Manager</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('program_operation.automation') }}"><i class="fa-solid fa-list-check"></i> Automation</a>
                             {% endif %}
                             <a class="st-nav-mob-item" href="{{ url_for('statistics.calendar_view') }}"><i class="fa-solid fa-calendar"></i> Calendar</a>
                             <a class="st-nav-mob-item" href="https://godver3.github.io/cli_docs/" target="_blank"><i class="fa-solid fa-book"></i> Docs</a>
@@ -364,14 +368,14 @@
                             <a class="st-nav-mob-item" href="{{ url_for('logs.logs') }}"><i class="fa-solid fa-scroll"></i> Logs</a>
                             <a class="st-nav-mob-item" href="{{ url_for('settings.index') }}"><i class="fa-solid fa-gear"></i> Settings</a>
                             <a class="st-nav-mob-item" href="{{ url_for('database.index') }}"><i class="fa-solid fa-database"></i> Database</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('tool_pages.maintenance') }}"><i class="fa-solid fa-screwdriver-wrench"></i> Maintenance</a>
                             <a class="st-nav-mob-item" href="{{ url_for('database.phalanxdb_status') }}"><i class="fa-solid fa-server"></i> Phalanx DB</a>
                             <a class="st-nav-mob-item" href="{{ url_for('performance.performance_dashboard') }}"><i class="fa-solid fa-chart-line"></i> Performance Dashboard</a>
                             {% if not is_limited_environment() %}
                             <a class="st-nav-mob-item" href="{{ url_for('debrid_manager.index') }}"><i class="fa-solid fa-cloud-arrow-down"></i> Debrid Manager</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('debrid_manager.climount_page') }}"><i class="fa-solid fa-hard-drive"></i> cli_mount</a>
                             <a class="st-nav-mob-item" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i> Upgrade Hub</a>
                             {% endif %}
-                            <a class="st-nav-mob-item" href="{{ url_for('connections.index') }}"><i class="fa-solid fa-plug"></i> Connections</a>
-                            <a class="st-nav-mob-item" href="{{ url_for('statistics.scraper_stats_page') }}"><i class="fa-solid fa-ranking-star"></i> Scraper Stats</a>
                         </div>
                     </div>
 
@@ -381,15 +385,10 @@
                             Tools <i class="fa-solid fa-chevron-down st-acc-arr"></i>
                         </div>
                         <div class="st-nav-acc-body">
-                            <a class="st-nav-mob-item" href="{{ url_for('scraper.scraper_tester') }}"><i class="fa-solid fa-flask"></i> Tester</a>
-                            <a class="st-nav-mob-item" href="{{ url_for('debug.debug_functions') }}"><i class="fa-solid fa-bug"></i> Debug</a>
-                            <a class="st-nav-mob-item" href="{{ url_for('database.reverse_parser') }}"><i class="fa-solid fa-rotate"></i> R. Parser</a>
-                            <a class="st-nav-mob-item" href="{{ url_for('magnet.assign_magnet') }}"><i class="fa-solid fa-arrow-right-arrow-left"></i> M. Assign</a>
-                            <a class="st-nav-mob-item" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i> M. Blacklist</a>
-                            <a class="st-nav-mob-item" href="{{ url_for('trakt_friends.manage_friends') }}"><i class="fa-solid fa-users"></i> Trakt Friends</a>
-                            <a class="st-nav-mob-item" href="{{ url_for('user_token.collect_tokens_page') }}"><i class="fa-solid fa-key"></i> Plex User Token M.</a>
-                            <a class="st-nav-mob-item" href="{{ url_for('symlink_tools.index') }}"><i class="fa-solid fa-link"></i> Symlink Tools</a>
-                            <a class="st-nav-mob-item" href="{{ url_for('metadata.metadata_debug') }}"><i class="fa-solid fa-tags"></i> Metadata Debug</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('tool_pages.tools') }}"><i class="fa-solid fa-toolbox"></i> All Tools</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('scraper.scraper_tester') }}"><i class="fa-solid fa-flask"></i> Scraper Tester</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('magnet.assign_magnet') }}"><i class="fa-solid fa-arrow-right-arrow-left"></i> Manual Assign</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i> Manual Blacklist</a>
                             <a class="st-nav-mob-item" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
                         </div>
                     </div>
@@ -518,7 +517,7 @@
                         ('library.index', 'Library'),
                         ('queues.index', 'Queues')
                     ] + (
-                        [('program_operation.task_timings', 'Task Manager')] if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') else []
+                        [('program_operation.automation', 'Automation')] if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') else []
                     ) + [
                         ('statistics.calendar_view', 'Calendar'),
                         ('wiki', 'Docs', 'https://godver3.github.io/cli_docs/')
@@ -527,22 +526,16 @@
                         ('logs.logs', 'Logs'),
                         ('settings.index', 'Settings'),
                         ('database.index', 'Database'),
+                        ('tool_pages.maintenance', 'Maintenance'),
                         ('database.phalanxdb_status', 'Phalanx DB'),
                         ('performance.performance_dashboard', 'Performance Dashboard')] +
-                        ([] if is_limited_environment() or (is_user_system_enabled() and not (current_user.is_authenticated and current_user.role == 'admin')) else [('debrid_manager.index', 'Debrid Manager'), ('upgrade_hub.index', 'Upgrade Hub')]) + [
-                        ('connections.index', 'Connections'),
-                        ('statistics.scraper_stats_page', 'Scraper Stats')
+                        ([] if is_limited_environment() or (is_user_system_enabled() and not (current_user.is_authenticated and current_user.role == 'admin')) else [('debrid_manager.index', 'Debrid Manager'), ('debrid_manager.climount_page', 'cli_mount'), ('upgrade_hub.index', 'Upgrade Hub')]) + [
                     ],
                     'Tools': [
+                        ('tool_pages.tools', 'All Tools'),
                         ('scraper.scraper_tester', 'Tester'),
-                        ('debug.debug_functions', 'Debug'),
-                        ('database.reverse_parser', 'R. Parser'),
                         ('magnet.assign_magnet', 'M. Assign'),
                         ('debug.manual_blacklist', 'M. Blacklist'),
-                        ('trakt_friends.manage_friends', 'Trakt Friends'),
-                        ('user_token.collect_tokens_page', 'Plex User Token M.'),
-                        ('symlink_tools.index', 'Symlink Tools'),
-                        ('metadata.metadata_debug', 'Metadata Debug'),
                     ] + ([('overlay_page.overlays_page', 'Overlays')] if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') else [])
                 } %}
 
@@ -551,7 +544,7 @@
                     'Discover': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>',
                     'Library': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>',
                     'Queues': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>',
-                    'Task Manager': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>',
+                    'Automation': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>',
                     'Calendar': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>',
                     'Docs': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>',
                     'Logs': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>',
@@ -560,12 +553,15 @@
                     'Phalanx DB': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>',
                     'Performance Dashboard': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>',
                     'Torrent Status': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>',
+                    'cli_mount': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg>',
                     'Debrid Manager': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>',
                     'Upgrade Hub': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>',
                     'Connections': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>',
                     'API Summary': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>',
                     'Real Time API': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>',
                     'Tester': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>',
+                    'All Tools': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16"/></svg>',
+                    'Maintenance': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>',
                     'Debug': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
                     'R. Parser': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>',
                     'M. Assign': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg>',

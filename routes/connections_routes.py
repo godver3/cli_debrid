@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template
+from flask import Blueprint, render_template, request, redirect, url_for
 import requests
 import os
 import threading
@@ -1557,7 +1557,11 @@ def api_stream_content_sources():
 @connections_bp.route('/')
 @user_required
 def index():
-    """Render the connections status page instantly with skeleton cards."""
+    """Render the connections status page instantly with skeleton cards.
+
+    Shown as a tab of the Performance Dashboard (loaded with ?embed=1)."""
+    if not request.args.get('embed'):
+        return redirect(url_for('performance.performance_dashboard') + '#connections')
     # Build skeleton cards from config using exact SSE name format
     skeleton_scrapers = []
     skeleton_sources = []

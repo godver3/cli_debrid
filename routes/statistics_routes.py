@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request, render_template
+from flask import Blueprint, jsonify, request, render_template, redirect, url_for
 from datetime import datetime, timedelta
 import threading
 import time
@@ -7,7 +7,6 @@ import asyncio
 from utilities.settings import get_setting, set_setting
 from .models import user_required, onboarding_required 
 from routes.extensions import app_start_time
-from debrid import get_debrid_provider, ProviderUnavailableError
 from .program_operation_routes import get_program_status
 import math
 from functools import wraps
@@ -1308,6 +1307,9 @@ def _scraper_stats_args():
 @statistics_bp.route('/scraper_stats')
 @user_required
 def scraper_stats_page():
+    # Shown as a tab of the Performance Dashboard (loaded with ?embed=1).
+    if not request.args.get('embed'):
+        return redirect(url_for('performance.performance_dashboard') + '#scraper-stats')
     return render_template('scraper_stats.html')
 
 
@@ -1403,66 +1405,17 @@ def get_library_size_api():
     except Exception as _cm_exc:
         logging.debug(f"cli_mount library size fetch failed, falling back to provider API: {_cm_exc}")
 
+    # Every configured debrid provider, summed; the last good total (cached) if one fails.
     try:
-        provider = get_debrid_provider()
-        # Gate behavior using capability flags rather than concrete type
-        if hasattr(provider, 'get_total_library_size'):
-            logging.info("Fetching library size via API request...")
-            try:
-                # Run the async function which now writes cache on success
-                calculated_size = asyncio.run(provider.get_total_library_size())
-
-                # Check if the calculation resulted in an error state
-                if calculated_size is None or calculated_size.startswith("Error"):
-                     calculation_error = calculated_size if calculated_size else "Error (Unknown)"
-                     logging.warning(f"Library size calculation failed ({calculation_error}). Attempting to read from cache.")
-                     # Fall through to read cache below
-                else:
-                    # Calculation was successful
-                    size_str = calculated_size
-
-            except RuntimeError as e:
-                 logging.error(f"Asyncio runtime error calculating library size: {e}", exc_info=True)
-                 calculation_error = "Error (Async)"
-                 # Fall through to read cache below
-
-            # --- Attempt to read cache ONLY if calculation failed ---
-            if calculation_error:
-                cached_data = _read_size_cache()
-                if cached_data:
-                    size_str = f"{cached_data['size_str']} (cached)"
-                    is_cached_value = True
-                else:
-                    # If cache is unavailable/invalid/expired, return the original calculation error
-                    size_str = calculation_error
-
-            log_prefix = "(Cached) " if is_cached_value else ""
-            logging.info(f"{log_prefix}Library size retrieval took {(time.perf_counter() - start_time)*1000:.2f}ms. Result: {size_str}")
-
-        else:
-            size_str = "N/A (Not RD)"
-            logging.info("Library size requested, but provider is not RealDebrid.")
-
-    except ProviderUnavailableError:
-        logging.warning("Debrid provider unavailable when calculating library size.")
-        calculation_error = "Error (Provider)"
-        # Try reading cache
-        cached_data = _read_size_cache()
-        if cached_data:
-            size_str = f"{cached_data['size_str']} (cached)"
-            is_cached_value = True
-        else:
-            size_str = calculation_error # Return provider error if cache fails
+        from database.statistics import refresh_debrid_library_size
+        size_str = refresh_debrid_library_size()
     except Exception as e:
-        logging.error(f"Error calculating library size via API: {e}", exc_info=True)
-        calculation_error = "Error (Server)"
-         # Try reading cache
+        logging.error(f"Error calculating library size: {e}", exc_info=True)
+        size_str = None
+    if size_str is None:
         cached_data = _read_size_cache()
-        if cached_data:
-            size_str = f"{cached_data['size_str']} (cached)"
-            is_cached_value = True
-        else:
-             size_str = calculation_error # Return server error if cache fails
+        size_str = f"{cached_data['size_str']} (cached)" if cached_data else 'N/A'
+    logging.info(f"Library size retrieval took {(time.perf_counter() - start_time)*1000:.2f}ms. Result: {size_str}")
 
     return jsonify({'total_library_size': size_str})
 

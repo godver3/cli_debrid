@@ -1,0 +1,8 @@
+{% extends "tool_cards/layout.html" %}
+{# Diagnostics tab of the Performance Dashboard (loaded with ?embed=1). #}
+{% block title %}Diagnostics{% endblock %}
+{% block page_title %}Diagnostics{% endblock %}
+{% block intro %}<p class="tdb-intro">Token status, rate limits and recent API calls.</p>
+<style>#tngDebug .toolbar{display:none}</style>{% endblock %}
+{% block tabs %}<button class="tab" data-cat="diagnostics">Diagnostics</button>{% endblock %}
+{% block cards %}{% include 'tool_cards/diagnostics.html' %}{% endblock %}

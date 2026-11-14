@@ -1921,19 +1921,6 @@ def update_settings():
                  # config['Staleness Threshold']['staleness_threshold'] = load_config().get('Staleness Threshold', {}).get('staleness_threshold', 7) # Revert to loaded or default
 
 
-        # Update content source check periods (Seems correctly handled by update_nested_dict if types match)
-        # If type conversion is needed (e.g., string to float):
-        if 'Debug' in new_settings and 'content_source_check_period' in new_settings['Debug']:
-            if 'Debug' not in config: config['Debug'] = {} # Ensure Debug section exists
-            if 'content_source_check_period' not in config['Debug']: config['Debug']['content_source_check_period'] = {} # Ensure sub-section exists
-            
-            for source, period_str in new_settings['Debug']['content_source_check_period'].items():
-                 try:
-                     config['Debug']['content_source_check_period'][source] = float(period_str)
-                 except (ValueError, TypeError):
-                      logging.warning(f"Invalid period value '{period_str}' for source '{source}'. Skipping update.")
-                      # Keep existing value or set to a default if needed
-
         # Handle Reverse Parser settings (Seems correctly handled by update_nested_dict)
         # Add validation if necessary
 

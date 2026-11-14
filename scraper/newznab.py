@@ -53,6 +53,17 @@ _NZB_CACHE: Dict[str, tuple] = {}   # key -> (timestamp, results)
 _NZB_CACHE_LOCK = threading.Lock()
 _NZB_CACHE_TTL = 600  # 10 minutes
 
+# Season prefetch: one whole-season search per indexer, reused by every
+# episode of that season scraped shortly after (the NZBBatch loop). Without it
+# a season of N episodes costs ~2N indexer API calls; with it, ~2-5 per indexer.
+# key -> (timestamp, results), keyed by (endpoint, clean imdb, season).
+_SEASON_CACHE: Dict[tuple, tuple] = {}
+_SEASON_CACHE_LOCK = threading.Lock()
+_SEASON_CACHE_TTL = 600     # same window as the query cache
+_SEASON_PAGE = 100          # results per request (most indexers cap at 100)
+_SEASON_MAX_PAGES = 4       # follow the ID search for at most this many pages
+_SEASON_MAX_EPISODES = 2    # a release with more episodes than this is a pack, not served per episode
+
 # Coalesces concurrent identical searches (e.g. the same ID-based query fired
 # by two title-variant threads within milliseconds of each other) so only one
 # of them actually hits the indexer — see scraper/request_dedup.py.
@@ -204,6 +215,16 @@ def scrape_newznab_instance(
         api_key, clean_imdb, title, year, content_type, season, episode, multi
     )
 
+    # One episode of a season that was just prefetched (NZBBatch): serve it
+    # from that list instead of spending two API calls on it.
+    _served = None
+    if (content_type.lower() == 'episode' and not multi
+            and season is not None and episode is not None):
+        _served = _season_cached_episode(endpoint, clean_imdb, season, episode)
+        if _served is not None:
+            logging.info(f"[NZBSeason] '{instance}' S{season:02d}E{episode:02d} served from season "
+                         f"prefetch ({len(_served)} results, no API call)")
+
     def _fetch(params):
         ck = _cache_key(endpoint, params)
         cached = _cache_get(ck)
@@ -251,7 +272,9 @@ def scrape_newznab_instance(
 
     # Run both queries in parallel if there are 2, otherwise just run one
     all_results: List[Dict[str, Any]] = []
-    if len(params_list) == 1:
+    if _served is not None:
+        all_results = _served
+    elif len(params_list) == 1:
         all_results = _fetch_coalesced(params_list[0])
     else:
         with ContextThreadPoolExecutor(max_workers=2) as ex:
@@ -304,6 +327,99 @@ def scrape_newznab_instance(
         _msg += f", {_retention_filtered} filtered by retention ({_retention}d)"
     logging.info(_msg)
     return deduped
+
+
+def _season_cache_key(endpoint: str, clean_imdb: str, season: int) -> tuple:
+    return (endpoint, clean_imdb, int(season))
+
+
+def prefetch_season(
+    instance: str,
+    settings: Dict[str, Any],
+    imdb_id: Optional[str],
+    title: str,
+    season: int,
+) -> int:
+    """Fetch every result for one season from one Newznab indexer, once.
+
+    Runs the ID tvsearch for the season with no episode number (following up
+    to _SEASON_MAX_PAGES pages) plus the "<title> Sxx" text search, and keeps
+    the parsed results for _SEASON_CACHE_TTL. scrape_newznab_instance() then
+    serves each episode of that season from this list instead of making two
+    API calls per episode. Returns the number of results cached (0 if the
+    indexer couldn't be reached; episodes then fall back to live queries).
+    """
+    url = (settings.get('url') or '').rstrip('/')
+    api_key = (settings.get('api_key') or '').strip()
+    clean_imdb = imdb_id.replace('tt', '') if imdb_id else ''
+    if not url or not api_key or season is None:
+        return 0
+    endpoint = f'{url}/api'
+    timeout = get_setting('Scraping', 'scraper_timeout', 30) or None
+    results: List[Dict[str, Any]] = []
+    calls = 0
+    ok = False
+
+    def _get(params):
+        nonlocal calls, ok
+        calls += 1
+        try:
+            r = api.get(endpoint, params=params, timeout=timeout)
+        except Exception as exc:
+            logging.warning(f"[NZBSeason] '{instance}' season prefetch request error: {exc}")
+            return None
+        if r.status_code != 200:
+            logging.warning(f"[NZBSeason] '{instance}' season prefetch HTTP {r.status_code}")
+            return None
+        ok = True
+        return _parse_newznab_xml(r.text, instance)
+
+    if clean_imdb:
+        for page in range(_SEASON_MAX_PAGES):
+            got = _get({'apikey': api_key, 't': 'tvsearch', 'imdbid': clean_imdb, 'season': season,
+                        'cat': _CAT_TV, 'limit': _SEASON_PAGE, 'offset': page * _SEASON_PAGE,
+                        'extended': 1})
+            if got is None:
+                break
+            results.extend(_drop_other_titles(got, clean_imdb, instance))
+            if len(got) < _SEASON_PAGE:
+                break
+    q = _SANITIZE_RE.sub('', f'{title} S{season:02d}').strip()
+    got = _get({'apikey': api_key, 't': 'search', 'q': q, 'cat': _CAT_TV, 'limit': _SEASON_PAGE})
+    if got:
+        results.extend(got)
+    if not ok:
+        return 0
+    with _SEASON_CACHE_LOCK:
+        _SEASON_CACHE[_season_cache_key(endpoint, clean_imdb, season)] = (time.monotonic(), results)
+    logging.info(f"[NZBSeason] '{instance}' prefetched S{season:02d} of '{title}': "
+                 f"{len(results)} results in {calls} API call(s)")
+    return len(results)
+
+
+def _season_cached_episode(endpoint: str, clean_imdb: str, season: int,
+                           episode: int) -> Optional[List[Dict[str, Any]]]:
+    """This episode's results from a fresh season prefetch, or None if there's
+    no prefetch or it holds nothing for this episode (caller then queries live)."""
+    with _SEASON_CACHE_LOCK:
+        entry = _SEASON_CACHE.get(_season_cache_key(endpoint, clean_imdb, season))
+    if not entry or time.monotonic() - entry[0] > _SEASON_CACHE_TTL:
+        return None
+    matches = []
+    for r in entry[1]:
+        pi = r.get('parsed_info') or {}
+        seasons = pi.get('seasons') or []
+        eps = pi.get('episodes') or []
+        if seasons and int(season) not in seasons:
+            continue
+        if episode in eps and len(eps) <= _SEASON_MAX_EPISODES:
+            matches.append(r)
+    return copy.deepcopy(matches) if matches else None
+
+
+def clear_season_cache() -> None:
+    with _SEASON_CACHE_LOCK:
+        _SEASON_CACHE.clear()
 
 
 def _item_indexer_name(item, ns) -> str:

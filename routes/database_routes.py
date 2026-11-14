@@ -220,6 +220,56 @@ def get_basic_collection_counts():
         if conn:
             conn.close()
 
+
+def item_source_label(item):
+    """Where an item's file came from: 'Usenet', 'Debrid (<provider>)', 'Debrid', or ''."""
+    tid = str(item.get('filled_by_torrent_id') or '')
+    if not tid:
+        return ''
+    if tid.startswith('nzb:'):
+        return 'Usenet'
+    provider = item.get('debrid_provider')
+    return f'Debrid ({provider})' if provider else 'Debrid'
+
+def source_sql(db_columns):
+    """SQL for item_source_label(): the Source column's value, for filtering."""
+    if 'filled_by_torrent_id' not in db_columns:
+        return None
+    debrid = ("CASE WHEN COALESCE(debrid_provider, '') != '' THEN 'Debrid (' || debrid_provider || ')' "
+              "ELSE 'Debrid' END") if 'debrid_provider' in db_columns else "'Debrid'"
+    return ("(CASE WHEN COALESCE(filled_by_torrent_id, '') = '' THEN '' "
+            "WHEN filled_by_torrent_id LIKE 'nzb:%' THEN 'Usenet' "
+            f"ELSE {debrid} END)")
+
+
+def source_filter_clause(db_columns, operator, value):
+    """(where clause, params) for a filter on the computed Source column, or None.
+
+    'Debrid' matches every debrid row; 'Debrid (<provider>)' one provider; 'None' no file."""
+    expr = source_sql(db_columns)
+    if expr is None:
+        return None
+    value = '' if value in (None, 'None') else str(value)
+    if operator == 'is_null':
+        return f"{expr} = ''", []
+    if operator == 'is_not_null':
+        return f"{expr} != ''", []
+    if operator in ('equals', 'not_equals'):
+        clause = f"{expr} LIKE 'Debrid%'" if value == 'Debrid' else f"{expr} = ?"
+        params = [] if value == 'Debrid' else [value]
+        return (clause if operator == 'equals' else f"NOT ({clause})"), params
+    if operator in ('contains', 'not_contains'):
+        if not value:
+            return None
+        clause = f"{expr} LIKE ?"
+        return (clause if operator == 'contains' else f"NOT ({clause})"), [f'%{value}%']
+    if operator == 'starts_with' and value:
+        return f"{expr} LIKE ?", [f'{value}%']
+    if operator == 'ends_with' and value:
+        return f"{expr} LIKE ?", [f'%{value}']
+    return None
+
+
 @database_bp.route('/', methods=['GET', 'POST'])
 @admin_required
 def index():
@@ -295,9 +345,12 @@ def index():
         all_columns_for_ui = db_actual_columns[:]
         if 'size' not in all_columns_for_ui:
             all_columns_for_ui.append('size')
+        # 'source' is computed per row: Usenet or Debrid (from filled_by_torrent_id).
+        if 'source' not in all_columns_for_ui:
+            all_columns_for_ui.append('source')
         data['all_columns'] = all_columns_for_ui
 
-        default_display_columns = ['id', 'title', 'year', 'type', 'state', 'version']
+        default_display_columns = ['id', 'title', 'year', 'type', 'state', 'version', 'source']
 
         # 1. Get raw selected columns (from POST or session/GET)
         raw_selected_columns = []
@@ -313,6 +366,11 @@ def index():
                     raw_selected_columns = session.get('selected_columns', [])
             else:
                 raw_selected_columns = session.get('selected_columns', [])
+            # Source was added after column choices were saved: show it once by default.
+            if raw_selected_columns and 'source' not in raw_selected_columns and not session.get('source_column_offered'):
+                raw_selected_columns = list(raw_selected_columns) + ['source']
+                session['selected_columns'] = raw_selected_columns
+                session['source_column_offered'] = True
 
         # 2. Get filter, sort, and other parameters from the request *NOW*
         filters = []
@@ -359,8 +417,12 @@ def index():
         data['sort_column'] = sort_column_req # Store validated sort column for the template
         data['sort_order'] = sort_order_req   # Store validated sort order for the template
         
-        # Continue with setting up SQL query columns
+        # Continue with setting up SQL query columns. type/tmdb_id/imdb_id are always
+        # read for the row's Open button; filled_by_torrent_id/debrid_provider for Source.
         columns_for_sql_query = set(['id'])
+        for _col in ('type', 'tmdb_id', 'imdb_id', 'filled_by_torrent_id', 'debrid_provider'):
+            if _col in db_actual_columns:
+                columns_for_sql_query.add(_col)
         for col in current_selected_columns_for_display: # Use the finalized display columns
             if col in db_actual_columns:  # Include size if it exists in DB
                 columns_for_sql_query.add(col)
@@ -395,6 +457,15 @@ def index():
                 operator = filter_item.get('operator', 'contains')
 
                 # Size column CAN be filtered if it exists in the database as a real column
+                if column == 'source':
+                    if operator not in [op['value'] for op in data['operators']]:
+                        continue
+                    _src = source_filter_clause(db_actual_columns, operator, raw_value)
+                    if _src:
+                        filter_where_clauses.append(_src[0])
+                        filter_params.extend(_src[1])
+                    continue
+
                 if column == 'size' and 'size' not in db_actual_columns:
                     logging.warning(f"Ignoring filter on 'size' column: '{column}' as it doesn't exist in database.")
                     continue
@@ -566,6 +637,10 @@ def index():
             # Python sort did, in both directions)
             if 'size' in db_actual_columns:
                 order_clause = f'ORDER BY COALESCE("size", 0.0) {sort_order_req}, rowid ASC'
+        elif sort_column_req == 'source' and 'filled_by_torrent_id' in db_actual_columns:
+            # Usenet, then debrid, then none (or reversed)
+            order_clause = (f"ORDER BY CASE WHEN filled_by_torrent_id LIKE 'nzb:%' THEN 0 "
+                            f"WHEN COALESCE(filled_by_torrent_id, '') != '' THEN 1 ELSE 2 END {sort_order_req}, rowid ASC")
         elif sort_column_req in db_actual_columns:
             order_clause = f'ORDER BY "{sort_column_req}" {sort_order_req}'
 
@@ -598,6 +673,8 @@ def index():
         timings['main_query_executed'] = time.perf_counter()
         
         items_dict_list = [dict(zip(final_columns_for_sql_query_list, item_row)) for item_row in items_from_db]
+        for item_dict in items_dict_list:
+            item_dict['source'] = item_source_label(item_dict)
 
         if needs_size_data:
             # PERFORMANCE FIX: Only use database size values, skip slow disk I/O
@@ -2544,6 +2621,18 @@ def get_column_values(column_name):
         # Validate column name to prevent SQL injection
         cursor.execute("PRAGMA table_info(media_items)")
         valid_columns = [row[1] for row in cursor.fetchall()]
+
+        if column_name == 'source':
+            # Computed column: 'Debrid' (any provider), each provider seen, Usenet, None.
+            expr = source_sql(valid_columns)
+            found = [row[0] for row in cursor.execute(f"SELECT DISTINCT {expr} FROM media_items")] if expr else []
+            values = ['Usenet'] if 'Usenet' in found else []
+            debrid = sorted(v for v in found if v and v.startswith('Debrid'))
+            if debrid:
+                values += ['Debrid'] + [v for v in debrid if v != 'Debrid']
+            if '' in found:
+                values.append('None')
+            return jsonify({'success': True, 'column': column_name, 'values': values})
 
         if column_name not in valid_columns:
             return jsonify({'success': False, 'error': f'Invalid column name: "{column_name}". Please select a valid column from the available options.'}), 400

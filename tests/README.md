@@ -32,6 +32,7 @@ Tests are grouped by the part of the app they cover, and each test is automatica
 | `queues/` | Queue states, sleeping and wake limits, the scheduler, task toggles |
 | `metadata/` | Metadata refresh, release dates, TMDB/TVDB |
 | `core/` | Settings, database, logging, stats, onboarding, Task Manager info, the UI |
+| `plex_bench/` | Plex mode end to end on a simulated clock against a simulated Plex (see its README) |
 
 ## Writing a test
 

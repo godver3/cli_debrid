@@ -3,7 +3,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, redirect, url_for
 from debrid import get_debrid_provider, get_provider_display_name, get_debrid_providers
 from database.torrent_tracking import get_recent_additions
 from .models import admin_required
@@ -58,6 +58,7 @@ def _save_lib_cache_to_db(stable_data: dict) -> None:
                 'torrents':    stable_data['torrents'],
                 'total':       stable_data['total'],
                 'total_bytes': stable_data['total_bytes'],
+                'providers':   stable_data.get('providers'),
             }), stable_data['fetched_at'])
         )
         conn.commit()
@@ -89,6 +90,9 @@ def _load_lib_cache_from_db() -> None:
                         'total':       data.get('total', 0),
                         'total_bytes': data.get('total_bytes', 0),
                         'fetched_at':  row[1],
+                        # None for a snapshot saved before it covered every provider:
+                        # treated as stale, so it's rebuilt on the next visit.
+                        'providers':   data.get('providers'),
                     }
             logging.info(f"[LibCache] Loaded {data.get('total', 0)} torrents from DB "
                          f"(age: {int(time.time() - row[1])}s)")
@@ -96,88 +100,117 @@ def _load_lib_cache_from_db() -> None:
         logging.debug(f"[LibCache] Could not load library from DB: {e}")
 
 
-def _fetch_all_bg(gen):
-    """Background thread for providers that return all torrents in one call (e.g. AllDebrid, Premiumize).
-    For Premiumize, uses list_completed_torrents() so the library/reconcile only
-    shows finished items — pending downloads are excluded.
-    Aborts silently if a newer fetch generation has started."""
+def _provider_signature(providers=None):
+    """Names of the providers a library snapshot was built from, in chain order."""
+    if providers is None:
+        providers = get_debrid_providers()
+    return [p.PROVIDER_NAME for p in providers]
+
+
+def _tag_torrents(torrents, provider_name):
+    """Mark each torrent with the provider that holds it (``_provider``)."""
+    for t in torrents:
+        t['_provider'] = provider_name
+        # Ensure status is always a plain string (enum .value may be int for UNKNOWN)
+        if 'status' in t and not isinstance(t['status'], str):
+            t['status'] = str(t['status'])
+    return torrents
+
+
+def _provider_pages(provider):
+    """Yield one provider's torrents a page at a time, each tagged with the provider.
+
+    Real-Debrid pages through /torrents; the others return everything in one call
+    (Premiumize: completed only, so pending downloads stay out of the library).
+    Errors name the provider, so a bad second key is easy to spot."""
+    name = provider.PROVIDER_NAME
     try:
-        provider = get_debrid_provider()
-        # Premiumize: use completed-only list for the library snapshot
+        if name == 'Real-Debrid':
+            from debrid.real_debrid.api import make_request
+            page = 1
+            while True:
+                result = make_request('GET', '/torrents', provider.api_key,
+                                      params={'limit': _PAGE_SIZE, 'page': page})
+                if not isinstance(result, list) or not result:
+                    return
+                yield _tag_torrents(result, name)
+                if len(result) < _PAGE_SIZE:
+                    return
+                page += 1
         if hasattr(provider, 'list_completed_torrents'):
             result = provider.list_completed_torrents()
         else:
             result = provider.list_active_torrents()
-        if not isinstance(result, list):
-            result = []
-
-        with _lib['lock']:
-            if _lib['gen'] != gen:
-                return
-            _lib['partial'].extend(result)
-
     except Exception as e:
-        logging.error(f"Library bg fetch error (all-at-once): {e}")
+        raise RuntimeError(f"{name}: {e}") from e
+    yield _tag_torrents(result if isinstance(result, list) else [], name)
 
 
-def _fetch_pages_bg(api_key, start_page, gen):
-    """Background thread for RD-style paginated /torrents endpoint.
-    Aborts silently if a newer fetch generation has started."""
-    from debrid.real_debrid.api import make_request
-    page = start_page
+def _new_library_generation(clear_stable=False):
+    """Start a new library build; older builds still running stop writing."""
+    with _lib['lock']:
+        _lib['gen'] += 1
+        _lib['loading'] = True
+        _lib['partial'] = []
+        if clear_stable:
+            _lib['stable'] = None
+        return _lib['gen']
+
+
+def _finish_library(gen, torrents, signature):
+    """Promote a finished build to the stable snapshot (unless a newer build started)."""
+    _enrich_with_db(torrents)
+    new_stable = {
+        'torrents':    torrents,
+        'total':       len(torrents),
+        'total_bytes': sum(t.get('bytes', 0) or 0 for t in torrents),
+        'fetched_at':  time.time(),
+        'providers':   signature,
+    }
+    with _lib['lock']:
+        if _lib['gen'] != gen:
+            return None
+        _lib['stable'] = new_stable
+        _lib['partial'] = []
+        _lib['loading'] = False
+    _save_lib_cache_to_db(new_stable)
+    logging.info(f"Library cache complete: {len(torrents)} torrents from {', '.join(signature) or 'no providers'}")
+    return new_stable
+
+
+def _continue_library_bg(gen, page_iters, signature):
+    """Fetch the remaining pages of every provider, then promote the snapshot.
+
+    A provider that fails leaves the previous snapshot in place: a library missing
+    one provider would make the audits report all of its torrents as gone."""
     try:
-        while True:
-            with _lib['lock']:
-                if _lib['gen'] != gen:
-                    return  # superseded by a newer fetch
-            try:
-                result = make_request('GET', '/torrents', api_key,
-                                      params={'limit': _PAGE_SIZE, 'page': page})
-            except Exception as e:
-                logging.error(f"Library bg fetch error at page {page}: {e}")
-                break
-
-            if not isinstance(result, list) or not result:
-                break
-
-            with _lib['lock']:
-                if _lib['gen'] != gen:
-                    return
-                _lib['partial'].extend(result)
-
-            if len(result) < _PAGE_SIZE:
-                break
-            page += 1
-
-        # Enrich with DB metadata before promoting to stable (done outside lock — it's a read-only query)
+        for pages in page_iters:
+            for page in pages:
+                with _lib['lock']:
+                    if _lib['gen'] != gen:
+                        return
+                    _lib['partial'].extend(page)
         with _lib['lock']:
             if _lib['gen'] != gen:
                 return
-            all_torrents = list(_lib['partial'])
-
-        _enrich_with_db(all_torrents)
-
-        # Promote partial → stable
-        new_stable = {
-            'torrents':    all_torrents,
-            'total':       len(all_torrents),
-            'total_bytes': sum(t.get('bytes', 0) or 0 for t in all_torrents),
-            'fetched_at':  time.time(),
-        }
-        with _lib['lock']:
-            if _lib['gen'] != gen:
-                return
-            _lib['stable'] = new_stable
-            _lib['partial'] = []
-            _lib['loading'] = False
-        _save_lib_cache_to_db(new_stable)
-        logging.info(f"Library cache complete: {len(all_torrents)} torrents")
-
+            torrents = list(_lib['partial'])
+        _finish_library(gen, torrents, signature)
     except Exception as e:
-        logging.error(f"Library bg fetch unexpected error: {e}")
+        logging.error(f"Library bg fetch error: {e}")
         with _lib['lock']:
             if _lib['gen'] == gen:
                 _lib['loading'] = False
+                _lib['partial'] = []
+
+
+def start_library_refresh():
+    """Re-fetch the whole library (every provider) in the background."""
+    providers = get_debrid_providers()
+    gen = _new_library_generation()
+    threading.Thread(target=_continue_library_bg,
+                     args=(gen, [_provider_pages(p) for p in providers], _provider_signature(providers)),
+                     daemon=True).start()
+    return gen
 
 
 def _enrich_with_db(torrents):
@@ -242,6 +275,27 @@ def _invalidate_library_cache():
 @debrid_manager_bp.route('/')
 @admin_required
 def index():
+    # Usenet-only setups have no debrid tabs to show: send them to the cli_mount page.
+    from debrid import get_debrid_providers
+    try:
+        has_debrid = bool(get_debrid_providers())
+    except Exception:
+        has_debrid = True
+    if not has_debrid:
+        return redirect(url_for('debrid_manager.climount_page'))
+    return render_debrid_manager('debrid')
+
+
+@debrid_manager_bp.route('/climount')
+@admin_required
+def climount_page():
+    """cli_mount page: usenet repair and files, the usenet half of Plex Trash, and the
+    library audits that aren't about the debrid account. Same template as Debrid
+    Manager, showing only these tabs."""
+    return render_debrid_manager('climount')
+
+
+def render_debrid_manager(dm_mode):
     from routes.debrid_manager.torrent_audits import _get_bad_folder_path  # imported when called
     from utilities.settings import get_setting
     file_mgmt = get_setting('File Management', 'file_collection_management', default='Plex')
@@ -279,6 +333,7 @@ def index():
         all_providers = [{'index': 0, 'name': provider_name}]
     return render_template(
         'debrid_manager.html',
+        dm_mode=dm_mode,
         show_plex_trash=show_plex_trash,
         symlink_mode=symlink_mode,
         climount_mode=climount_mode,
@@ -296,11 +351,20 @@ _plex_trash_items_cache = {'items': None, 'ts': 0}
 _RENZB_MAX_RESCRAPE_SUBMITS = 3
 
 
+def _dm_provider():
+    """Provider picked in the Debrid Manager header (?provider=<name>), else the primary."""
+    from debrid import get_provider_by_name
+    name = request.args.get('provider')
+    if not name and request.is_json:
+        name = (request.get_json(silent=True) or {}).get('provider')
+    return (get_provider_by_name(name) if name else None) or get_debrid_provider()
+
+
 @debrid_manager_bp.route('/api/active')
 @admin_required
 def api_active():
     try:
-        provider = get_debrid_provider()
+        provider = _dm_provider()
         all_torrents = provider.list_active_torrents()
         if not isinstance(all_torrents, list):
             all_torrents = []
@@ -518,7 +582,7 @@ def api_active_files_delete():
 @admin_required
 def api_torrent_detail(torrent_id):
     try:
-        provider = get_debrid_provider()
+        provider = _dm_provider()
         detail = provider.get_torrent_info(torrent_id)
         return jsonify({'success': True, 'torrent': detail})
     except Exception as e:
@@ -530,7 +594,7 @@ def api_torrent_detail(torrent_id):
 @admin_required
 def api_delete_torrent(torrent_id):
     try:
-        provider = get_debrid_provider()
+        provider = _dm_provider()
         provider.remove_torrent(torrent_id, removal_reason='Manual removal via Debrid Manager')
         _invalidate_library_cache()
         _reconcile_cache['data'] = None
@@ -553,7 +617,7 @@ def api_batch_delete():
     if not ids:
         return jsonify({'success': False, 'error': 'No IDs provided'}), 400
 
-    provider = get_debrid_provider()
+    provider = _dm_provider()
     results = {'deleted': [], 'failed': []}
 
     def delete_one(tid):
@@ -848,149 +912,71 @@ def api_nzb_reinsert():
 @debrid_manager_bp.route('/api/library')
 @admin_required
 def api_library():
+    """Every configured debrid provider's torrents, each tagged with ``_provider``."""
     global _lib_last_accessed
     force = request.args.get('force') == '1'
     now   = time.time()
     _lib_last_accessed = now  # track for idle eviction
 
+    providers = get_debrid_providers()
+    signature = _provider_signature(providers)
+    if not providers:
+        return jsonify({'success': True, 'loading': False, 'cache_status': 'live', 'cache_age': 0,
+                        'torrents': [], 'total': 0, 'total_bytes': 0, 'providers': []})
+
+    _load_lib_cache_from_db()
     with _lib['lock']:
         stable   = _lib['stable']
         is_loading = _lib['loading']
         partial  = list(_lib['partial'])       # snapshot to avoid holding lock
 
+    def _reply(data, loading, status, age):
+        return jsonify({
+            'success': True, 'loading': loading, 'cache_status': status, 'cache_age': age,
+            'torrents': data['torrents'], 'total': data['total'],
+            'total_bytes': data['total_bytes'], 'providers': signature,
+        })
+
     stable_age = int(now - stable['fetched_at']) if stable else None
-    is_fresh   = stable is not None and stable_age < _LIB_TTL
+    # A snapshot of a different provider list (one added, removed or reordered) is stale.
+    is_fresh   = (stable is not None and stable_age < _LIB_TTL
+                  and stable.get('providers') == signature)
 
     # ── 1. Complete fresh cache ─────────────────────────────────────────────
     if is_fresh and not is_loading and not force:
-        return jsonify({
-            'success': True, 'loading': False,
-            'cache_status': 'fresh', 'cache_age': stable_age,
-            'torrents': stable['torrents'], 'total': stable['total'],
-            'total_bytes': stable['total_bytes'],
-        })
+        return _reply(stable, False, 'fresh', stable_age)
 
     # ── 2. Already loading ──────────────────────────────────────────────────
     if is_loading and not force:
         if stable:
             # Stale refresh — serve old complete snapshot while new one builds
-            return jsonify({
-                'success': True, 'loading': True,
-                'cache_status': 'refreshing', 'cache_age': stable_age,
-                'torrents': stable['torrents'], 'total': stable['total'],
-                'total_bytes': stable['total_bytes'],
-            })
-        else:
-            # First load — serve whatever partial data we have so far
-            total_bytes = sum(t.get('bytes', 0) or 0 for t in partial)
-            return jsonify({
-                'success': True, 'loading': True,
-                'cache_status': 'partial', 'cache_age': 0,
-                'torrents': partial, 'total': len(partial),
-                'total_bytes': total_bytes,
-            })
-
-    provider = get_debrid_provider()
-    _uses_pagination = (provider.PROVIDER_NAME == 'Real-Debrid')
+            return _reply(stable, True, 'refreshing', stable_age)
+        # First load — serve whatever partial data we have so far
+        return _reply({'torrents': partial, 'total': len(partial),
+                       'total_bytes': sum(t.get('bytes', 0) or 0 for t in partial)}, True, 'partial', 0)
 
     # ── 3. Complete but stale — serve stale, trigger background re-fetch ────
-    if stable and not is_fresh and not is_loading and not force:
-        with _lib['lock']:
-            _lib['gen'] += 1
-            gen = _lib['gen']
-            _lib['loading'] = True
-            _lib['partial'] = []
-        if _uses_pagination:
-            threading.Thread(target=_fetch_pages_bg,
-                             args=(provider.api_key, 1, gen), daemon=True).start()
-        else:
-            threading.Thread(target=_fetch_all_bg,
-                             args=(gen,), daemon=True).start()
-        return jsonify({
-            'success': True, 'loading': True,
-            'cache_status': 'stale', 'cache_age': stable_age,
-            'torrents': stable['torrents'], 'total': stable['total'],
-            'total_bytes': stable['total_bytes'],
-        })
+    if stable and not is_fresh and not force:
+        start_library_refresh()
+        return _reply(stable, True, 'stale', stable_age)
 
-    # ── 4. No cache or force refresh — fetch synchronously ──────────────────
-    with _lib['lock']:
-        _lib['gen'] += 1
-        gen = _lib['gen']
-        _lib['stable']  = None
-        _lib['partial'] = []
-        _lib['loading'] = True
-
+    # ── 4. No cache or force refresh — fetch the first pages now, the rest in the background
+    gen = _new_library_generation(clear_stable=True)
+    remaining = [_provider_pages(p) for p in providers]
     initial = []
+    pages_read = 0
     try:
-        if not _uses_pagination:
-            # Non-paginated providers: Premiumize uses completed-only list for
-            # the library snapshot; others use list_active_torrents
-            if hasattr(provider, 'list_completed_torrents'):
-                initial = provider.list_completed_torrents() or []
-            else:
-                initial = provider.list_active_torrents() or []
-            # Ensure status is always a plain string (enum .value may be int for UNKNOWN)
-            for t in initial:
-                if 'status' in t and not isinstance(t['status'], str):
-                    t['status'] = str(t['status'])
-            _enrich_with_db(initial)
-            new_stable = {
-                'torrents':    initial,
-                'total':       len(initial),
-                'total_bytes': sum(t.get('bytes', 0) or 0 for t in initial),
-                'fetched_at':  time.time(),
-            }
-            with _lib['lock']:
-                if _lib['gen'] == gen:
-                    _lib['stable'] = new_stable
-                    _lib['partial'] = []
-                    _lib['loading'] = False
-            _save_lib_cache_to_db(new_stable)
-            return jsonify({
-                'success': True, 'loading': False,
-                'cache_status': 'live', 'cache_age': 0,
+        while remaining and pages_read < _INITIAL_PAGES:
+            try:
+                initial.extend(next(remaining[0]))
+                pages_read += 1
+            except StopIteration:
+                remaining.pop(0)
+        if not remaining:
+            done = _finish_library(gen, initial, signature) or {
                 'torrents': initial, 'total': len(initial),
-                'total_bytes': sum(t.get('bytes', 0) or 0 for t in initial),
-            })
-        else:
-            # RD: fetch initial pages synchronously; if all fit, cache and return.
-            # If more pages exist, fall through to background thread below.
-            from debrid.real_debrid.api import make_request
-            api_key = provider.api_key
-            all_fit = False
-            for page in range(1, _INITIAL_PAGES + 1):
-                result = make_request('GET', '/torrents', api_key,
-                                      params={'limit': _PAGE_SIZE, 'page': page})
-                if not isinstance(result, list) or not result:
-                    all_fit = True
-                    break
-                initial.extend(result)
-                if len(result) < _PAGE_SIZE:
-                    # Partial page — all torrents fetched
-                    all_fit = True
-                    break
-            if all_fit:
-                _enrich_with_db(initial)
-                new_stable = {
-                    'torrents':    initial,
-                    'total':       len(initial),
-                    'total_bytes': sum(t.get('bytes', 0) or 0 for t in initial),
-                    'fetched_at':  time.time(),
-                }
-                with _lib['lock']:
-                    if _lib['gen'] == gen:
-                        _lib['stable'] = new_stable
-                        _lib['partial'] = []
-                        _lib['loading'] = False
-                _save_lib_cache_to_db(new_stable)
-                return jsonify({
-                    'success': True, 'loading': False,
-                    'cache_status': 'live', 'cache_age': 0,
-                    'torrents': initial, 'total': len(initial),
-                    'total_bytes': sum(t.get('bytes', 0) or 0 for t in initial),
-                })
-            # More pages exist — fall through to background thread
+                'total_bytes': sum(t.get('bytes', 0) or 0 for t in initial)}
+            return _reply(done, False, 'live', 0)
     except Exception as e:
         logging.error(f"Library initial fetch error: {e}")
         with _lib['lock']:
@@ -998,22 +984,13 @@ def api_library():
                 _lib['loading'] = False
         return jsonify({'success': False, 'error': str(e)}), 500
 
-    # Seed partial with initial pages, launch background for the rest
+    # Seed partial with the pages read so far, fetch the rest in the background
     with _lib['lock']:
         if _lib['gen'] == gen:
-            _lib['partial'] = initial
-
-    if _uses_pagination:
-        threading.Thread(target=_fetch_pages_bg,
-                         args=(provider.api_key, _INITIAL_PAGES + 1, gen), daemon=True).start()
-
-    total_bytes = sum(t.get('bytes', 0) or 0 for t in initial)
-    return jsonify({
-        'success': True, 'loading': True,
-        'cache_status': 'partial', 'cache_age': 0,
-        'torrents': initial, 'total': len(initial),
-        'total_bytes': total_bytes,
-    })
+            _lib['partial'] = list(initial)
+    threading.Thread(target=_continue_library_bg, args=(gen, remaining, signature), daemon=True).start()
+    return _reply({'torrents': initial, 'total': len(initial),
+                   'total_bytes': sum(t.get('bytes', 0) or 0 for t in initial)}, True, 'partial', 0)
 
 
 # ---------------------------------------------------------------------------
@@ -1032,7 +1009,7 @@ def api_usage():
     """Return account info + traffic details for the Usage tab."""
     try:
         from datetime import datetime
-        provider = get_debrid_provider()
+        provider = _dm_provider()
         if not provider:
             return jsonify({'error': 'No debrid provider configured'}), 503
         sub = provider.get_subscription_status()

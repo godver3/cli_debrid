@@ -258,7 +258,7 @@
         </div>
     </div>
     <div class="settings-section-content">
-        {% for key in ['sort_by_uncached_status', 'checking_queue_period', 'ignore_wanted_queue_throttling', 'disable_not_wanted_check', 'allow_partial_overseerr_requests', 'max_upgrading_score', 'upgrade_queue_duration_hours', 'enable_library_maintenance_task'] %}
+        {% for key in ['sort_by_uncached_status', 'checking_queue_period', 'ignore_wanted_queue_throttling', 'disable_not_wanted_check', 'max_upgrading_score', 'upgrade_queue_duration_hours'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">
@@ -487,66 +487,6 @@
     </div>
 </div>
 
-<!-- Watchlist Management Section -->
-<div class="settings-section settings-card">
-    <div class="settings-section-header">
-        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-        <div class="settings-header-left">
-            <h4>Watchlist Management</h4>
-        </div>
-    </div>
-    <div class="settings-section-content">
-        {% for key in ['plex_watchlist_removal', 'plex_watchlist_keep_series', 'trakt_watchlist_removal', 'trakt_watchlist_keep_series'] %}
-            {% set value = settings_schema.Debug.get(key) %}
-            {% if value %}
-            <div class="settings-form-group">
-                <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                {% if value.type == 'boolean' %}
-                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}"
-                           data-section="Debug" data-key="{{ key }}"
-                           {% if settings.get('Debug', {}).get(key, value.default) == True %}checked{% endif %}>
-                {% elif value.type == 'string' and value.choices %}
-                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input"
-                            data-section="Debug" data-key="{{ key }}">
-                        {% for option in value.choices %}
-                            <option value="{{ option }}" {% if (settings.get('Debug', {}).get(key, value.default) | string) == (option | string) %}selected{% endif %}>{{ option }}</option>
-                        {% endfor %}
-                    </select>
-                {% else %}
-                    <input type="{{ value.type if value.type != 'string' else 'text' }}" id="debug-{{ key }}" name="Debug.{{ key }}"
-                           value="{% set val = settings.get('Debug', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
-                           data-section="Debug" data-key="{{ key }}"
-                           {% if value.sensitive %}type="password"{% endif %}
-                           {% if value.min is defined %}min="{{ value.min }}"{% endif %}
-                           {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
-                {% endif %}
-                {% if value.description %}
-                    {% if value.description is string %}
-                        <p class="settings-description">{{ value.description }}</p>
-                    {% else %}
-                        <div class="settings-description">
-                            {% for item in value.description %}
-                                {% if loop.first %}
-                                    <p>{{ item }}</p>
-                                    <ul>
-                                {% elif loop.last %}
-                                    <li>{{ item }}</li>
-                                    </ul>
-                                {% else %}
-                                    <li>{{ item }}</li>
-                                {% endif %}
-                            {% endfor %}
-                        </div>
-                    {% endif %}
-                {% endif %}
-            </div>
-            {% endif %}
-        {% endfor %}
-    </div>
-</div>
-
 <!-- Scraping & Scoring Section -->
 <div class="settings-section settings-card">
     <div class="settings-section-header">
@@ -697,58 +637,7 @@
     </div>
 </div>
 
-<!-- Testing & Development Section -->
-<div class="settings-section settings-card">
-    <div class="settings-section-header">
-        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-        <div class="settings-header-left">
-            <h4>Testing & Development</h4>
-        </div>
-    </div>
-    <div class="settings-section-content">
-        <div class="settings-form-group">
-            <label for="debug-enable_crash_test-td" class="settings-title">Enable Crash Test:</label>
-            <input type="checkbox" id="debug-enable_crash_test-td" name="Debug.enable_crash_test"
-                   data-section="Debug" data-key="enable_crash_test"
-                   {% if settings.get('Debug', {}).get('enable_crash_test', False) %}checked{% endif %}>
-            <p class="settings-description">Enable crash testing functionality</p>
-        </div>
-    </div>
-</div>
 
-<!-- Content Source Check Periods Section -->
-<div class="settings-section" style="display: none;">
-    <div class="settings-section-header">
-        <h4>Content Source Check Periods</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        <div class="settings-subsection">
-            <div id="content-source-check-periods">
-                <h5>Content Source Check Periods (minutes)</h5>
-                {% for source_id, source_config in settings.get('Content Sources', {}).items() %}
-                    {% if source_config.get('enabled', False) %}
-                        <div class="content-source-check-period">
-                            {% set display_name = source_config.get('display_name') %}
-                            {% if display_name and display_name != "" %}
-                                <label for="debug-content-source-{{ source_id }}">{{ display_name }} ({{ source_id }}):</label>
-                            {% else %}
-                                <label for="debug-content-source-{{ source_id }}">{{ source_config.get('type', source_id) }} ({{ source_id }}):</label>
-                            {% endif %}
-                            <input type="number" id="debug-content-source-{{ source_id }}" 
-                                   name="Debug.content_source_check_period.{{ source_id }}" 
-                                   value="{{ settings.get('Debug', {}).get('content_source_check_period', {}).get(source_id, 15) }}" 
-                                   step="0.1" min="0.1" class="settings-input">
-                        </div>
-                    {% endif %}
-                {% endfor %}
-                <p class="settings-description">Override Content Source checking period (in minutes) - note that a minimum of 5 minutes is recommended</p>
-            </div>
-        </div>
-    </div>
-</div>
 
         </div>
     </div>
