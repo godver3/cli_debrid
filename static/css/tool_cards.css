@@ -556,3 +556,77 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
         margin-right: 8px;
         cursor: pointer;
     }
+
+/* ══ One card design for every tool (Tools, Maintenance, Diagnostics) ══════════
+   Header: icon + title + one-line description. Body: fields. Footer: one action
+   row. Three button tones: primary (solid accent), secondary (neutral), danger
+   (red outline). Cards take their own height; big tools span the full row. */
+#tngDebug .tdb-intro{color:var(--text2);font-size:12.5px}
+#tngDebug .grid{grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;align-items:start}
+#tngDebug .grid .card.card-wide,
+#tngDebug .grid .card[data-title="plex labels management"]{grid-column:1/-1}
+#tngDebug .grid .card[data-title="manage cache files"]{grid-row:auto}
+
+#tngDebug .card{padding:0;gap:0;border-radius:10px;overflow:hidden;background:var(--surface);border:1px solid var(--border)}
+#tngDebug .card:hover{border-color:var(--border2)}
+#tngDebug .card-head{display:flex;align-items:flex-start;gap:12px;padding:15px 18px 13px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,#1e1e1e,var(--surface))}
+#tngDebug .card-icon{width:34px;height:34px;flex-shrink:0;border-radius:8px;display:grid;place-items:center;background:rgba(232,96,28,.12);color:var(--accent);font-size:14px}
+#tngDebug .card-head-text{flex:1;min-width:0}
+#tngDebug .card-head .card-title{border-left:none;padding-left:0;font-size:14px;font-weight:600;line-height:1.35;color:var(--text);display:block}
+#tngDebug .card-head .card-desc{margin-top:3px;font-size:12px;line-height:1.5;color:var(--text2)}
+#tngDebug .card-head .card-desc code{font-size:11px;background:var(--surface2);padding:1px 4px;border-radius:3px}
+#tngDebug .card-head .plex-labels-help-btn{margin-left:auto}
+#tngDebug .card-body{padding:14px 18px 16px;display:flex;flex-direction:column;gap:12px}
+#tngDebug .card-body > .debug_item{display:flex;flex-direction:column;gap:12px}
+
+#tngDebug .card.card-danger{border-color:#3a1717}
+#tngDebug .card.card-danger:hover{border-color:#7f1d1d}
+#tngDebug .card.card-danger .card-head{background:linear-gradient(180deg,#201414,var(--surface))}
+#tngDebug .card.card-danger .card-icon{background:rgba(239,68,68,.12);color:var(--red)}
+
+/* Fields */
+#tngDebug .card .field-label,
+#tngDebug .card label:not(.check-row){font-size:11.5px;color:var(--text2);font-weight:500}
+#tngDebug .fselect,#tngDebug .finput{padding:8px 10px;border-radius:6px;font-size:12.5px}
+#tngDebug .card p:not(.description){color:var(--text2)}
+
+/* Action row */
+#tngDebug .card-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding-top:12px;border-top:1px solid var(--border)}
+#tngDebug .card-body > .debug_item > .card-actions:first-child,
+#tngDebug .card-body form > .card-actions:first-child{border-top:none;padding-top:0}
+#tngDebug .card-actions .btn,
+#tngDebug .verification-actions .btn{width:auto}
+
+/* Buttons: three tones */
+#tngDebug .btn{padding:7px 14px;font-size:12.5px;font-weight:600;border-radius:6px;min-height:32px}
+#tngDebug .btn-orange{background:var(--accent);border:1px solid var(--accent);color:#fff}
+#tngDebug .btn-orange:hover{background:var(--accent-h);border-color:var(--accent-h)}
+#tngDebug .btn-outline-orange,
+#tngDebug .btn-outline-blue{background:var(--surface2);border:1px solid var(--border2);color:var(--text)}
+#tngDebug .btn-outline-orange:hover,
+#tngDebug .btn-outline-blue:hover{background:var(--surface3);border-color:var(--accent);color:#fff}
+#tngDebug .btn-outline-red{background:transparent;border:1px solid #7f1d1d;color:#f87171}
+#tngDebug .btn-outline-red:hover{background:#7f1d1d33;border-color:var(--red);color:#fca5a5}
+#tngDebug .btn-outline-orange i,#tngDebug .btn-outline-blue i{color:var(--text2)}
+
+/* Result / progress boxes */
+#tngDebug .card .results-area,
+#tngDebug .card .progress-area{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:12px;color:var(--text2)}
+
+/* "More tools": link tiles */
+#tngDebug .tdb-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+#tngDebug .tdb-tile{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);text-decoration:none;transition:border-color .15s,background .15s}
+#tngDebug .tdb-tile:hover{border-color:var(--accent);background:var(--surface3)}
+#tngDebug .tdb-tile i{width:30px;height:30px;flex-shrink:0;border-radius:7px;display:grid;place-items:center;background:rgba(232,96,28,.12);color:var(--accent);font-size:13px}
+#tngDebug .tdb-tile b{display:block;font-size:13px;font-weight:600}
+#tngDebug .tdb-tile small{display:block;margin-top:2px;font-size:11.5px;line-height:1.45;color:var(--text2)}
+
+@media (max-width:640px){
+  #tngDebug .grid{grid-template-columns:1fr}
+  #tngDebug .card-head{padding:13px 14px 11px}
+  #tngDebug .card-body{padding:12px 14px 14px}
+}
+#tngDebug .card .card-note{font-size:12px;line-height:1.55;color:var(--text2);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:9px 11px}
+#tngDebug .card .tdb-tile small{color:var(--text2);font-size:11.5px}
+#tngDebug .card-head .plex-labels-help-btn{background:var(--surface2);border:1px solid var(--border2);color:var(--text2)}
+#tngDebug .card-head .plex-labels-help-btn:hover{border-color:var(--accent);color:#fff}

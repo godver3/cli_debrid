@@ -15,16 +15,16 @@
 <div data-cat="pages" class="debug_item">
   <h3>Other tool pages</h3>
   <p class="description">Tools that have a page of their own.</p>
-  <div class="tdb-links" style="display:flex;flex-wrap:wrap;gap:8px">
-    <a class="tdb-link" href="{{ url_for('scraper.scraper_tester') }}"><i class="fa-solid fa-flask"></i> Scraper Tester</a>
-    <a class="tdb-link" href="{{ url_for('database.reverse_parser') }}"><i class="fa-solid fa-rotate"></i> Reverse Parser</a>
-    <a class="tdb-link" href="{{ url_for('magnet.assign_magnet') }}"><i class="fa-solid fa-arrow-right-arrow-left"></i> Manual Assign</a>
-    <a class="tdb-link" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i> Manual Blacklist</a>
-    <a class="tdb-link" href="{{ url_for('symlink_tools.index') }}"><i class="fa-solid fa-link"></i> Create a Symlink</a>
-    <a class="tdb-link" href="{{ url_for('metadata.metadata_debug') }}"><i class="fa-solid fa-tags"></i> Metadata Lookup</a>
-    <a class="tdb-link" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
-    <a class="tdb-link" href="{{ url_for('trakt_friends.manage_friends') }}"><i class="fa-solid fa-users"></i> Trakt Friends</a>
-    <a class="tdb-link" href="{{ url_for('user_token.collect_tokens_page') }}"><i class="fa-solid fa-key"></i> Plex User Tokens</a>
+  <div class="tdb-tiles">
+    <a class="tdb-tile" href="{{ url_for('scraper.scraper_tester') }}"><i class="fa-solid fa-flask"></i><span><b>Scraper Tester</b><small>Run a search through your scrapers and see what each returns.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('database.reverse_parser') }}"><i class="fa-solid fa-rotate"></i><span><b>Reverse Parser</b><small>Work out which version your existing files belong to.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('magnet.assign_magnet') }}"><i class="fa-solid fa-arrow-right-arrow-left"></i><span><b>Manual Assign</b><small>Assign a torrent or NZB to items by hand.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i><span><b>Manual Blacklist</b><small>Titles that should never be requested.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('symlink_tools.index') }}"><i class="fa-solid fa-link"></i><span><b>Create a Symlink</b><small>Make a single symlink by hand.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('metadata.metadata_debug') }}"><i class="fa-solid fa-tags"></i><span><b>Metadata Lookup</b><small>See the metadata stored for a title.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i><span><b>Overlays</b><small>Design the badges drawn on your posters.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('trakt_friends.manage_friends') }}"><i class="fa-solid fa-users"></i><span><b>Trakt Friends</b><small>Link friends' Trakt accounts.</small></span></a>
+    <a class="tdb-tile" href="{{ url_for('user_token.collect_tokens_page') }}"><i class="fa-solid fa-key"></i><span><b>Plex User Tokens</b><small>Collect Plex tokens for friends' watchlists.</small></span></a>
   </div>
 </div>
 {% endblock %}

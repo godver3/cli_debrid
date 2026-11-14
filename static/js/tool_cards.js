@@ -86,6 +86,8 @@
       if (n.classList.contains('episode-modal-close') || n.classList.contains('plex-labels-help-btn')) return;
 
       const txt = n.textContent.trim().toLowerCase();
+      /* A bare "Refresh" next to a field reloads its options: small and secondary. */
+      if (/^\W*refresh$/.test(txt)) { n.className = 'btn btn-outline-orange btn-sm'; return; }
       const map = BTN_MAP[txt];
 
       if (map) {
@@ -272,6 +274,72 @@
     });
   }
 
+  /*
+   * One look for every card: icon + title + one-line description in the header,
+   * fields in the body, actions in one row at the bottom. Keyed by the card's
+   * lowercased <h3>. desc is used only when the card has no description of its own.
+   */
+  const TOOL_META = {
+    /* Tools */
+    'get collected from library (plex)': { icon:'fa-solid fa-film', desc:'Read what Plex already has and mark it Collected. Backfill only updates file sizes of Collected items.' },
+    'version propagator':                { icon:'fa-solid fa-code-branch', desc:'Add a second version to everything that has the first: every item with the original version gets the propagated one too.' },
+    'bulk subtitle scan':                { icon:'fa-solid fa-closed-captioning' },
+    'direct emby/jellyfin scan':         { icon:'fa-solid fa-server' },
+    'move item id to upgrading':         { icon:'fa-solid fa-arrow-up-right-dots', desc:'Send one Collected item back to Upgrading so it looks for a better release.' },
+    'fix missing imdb id':               { icon:'fa-solid fa-fingerprint', desc:'Set the IMDb ID on one item, or on every row with the same TMDB ID.' },
+    'test plex item lookup':             { icon:'fa-solid fa-magnifying-glass', desc:'Check whether Plex can find a database item, and how it matched.' },
+    'symlink verification queue':        { icon:'fa-solid fa-list-check', desc:'Symlinks waiting for your media server to confirm it picked them up.', wide:true },
+    'convert library to symlinks':       { icon:'fa-solid fa-link', desc:'One-time conversion of an existing Plex library to symlinks. Not reversible.', danger:true },
+    'rclone mount to symlinks':          { icon:'fa-solid fa-folder-tree' },
+    'duplicate symlink targets':         { icon:'fa-solid fa-clone', desc:'Find TV episodes whose symlinks point at the same file, usually a mismatched season pack.' , note:true },
+    'resync symlinks with new settings': { icon:'fa-solid fa-rotate', desc:'Rebuild the symlinks of Collected items after changing symlink settings or moving files.' , note:true },
+    'modify symlink base paths':         { icon:'fa-solid fa-pen-to-square', desc:'Change the base paths stored for symlinks and original files.' },
+    'symlink library recovery':          { icon:'fa-solid fa-life-ring', desc:'Rebuild lost database entries from your existing symlink folders.' , note:true },
+    'plex labels management':            { icon:'fa-solid fa-tags', wide:true, desc:'View, apply and remove Plex labels, and sync them from your content sources.' },
+    'migrate between usenet providers':  { icon:'fa-solid fa-right-left', wide:true },
+    'other tool pages':                  { icon:'fa-solid fa-toolbox', wide:true },
+    /* Maintenance */
+    'restore database from backup':          { icon:'fa-solid fa-clock-rotate-left' },
+    'clean up old database files':           { icon:'fa-solid fa-broom' },
+    'backup cli_mount databases':            { icon:'fa-solid fa-floppy-disk' },
+    'restore cli_mount database from backup':{ icon:'fa-solid fa-clock-rotate-left' },
+    'clean up old cli_mount backup files':   { icon:'fa-solid fa-broom' },
+    'remove duplicate database items':       { icon:'fa-solid fa-clone', desc:'Keep one database row per file when several rows point at the same file.' , note:true },
+    'manage duplicate versions':             { icon:'fa-solid fa-layer-group', desc:'Clean up items collected more than once, by quality, state or version.' },
+    'fix episode numbers':                   { icon:'fa-solid fa-list-ol', desc:'Re-read season and episode numbers from file names and fix the wrong ones.' , note:true },
+    'manage cache files':                    { icon:'fa-solid fa-box-archive', desc:'Delete cached content-source lists so they are fetched fresh on the next run.' },
+    'cli_mount db cleanup':                  { icon:'fa-solid fa-database', desc:'Remove one debrid provider\'s entries from cli_mount\'s databases.' , note:true },
+    'backfill nzb file names':               { icon:'fa-solid fa-file-signature', desc:'Rename collected NZB items to the structured NZB naming format.' , note:true },
+    'cleanup my plex watchlist and other plex watchlists': { icon:'fa-solid fa-eraser', desc:'Remove every Collected item from your Plex watchlists now.' , note:true },
+    'reset battery show status cache':       { icon:'fa-solid fa-battery-half', desc:'Re-fetch every show\'s status (Ended, Canceled...) on the next run.' , note:true },
+    'not wanted list':                       { icon:'fa-solid fa-ban' },
+    'full cli_mount sync':                   { icon:'fa-solid fa-arrows-rotate' },
+    'bulk delete from database':             { icon:'fa-solid fa-trash', desc:'Delete several items from the database by ID.', danger:true },
+    'delete battery database files':         { icon:'fa-solid fa-battery-empty', danger:true },
+    'delete database':                       { icon:'fa-solid fa-bomb', danger:true },
+    /* Diagnostics */
+    'current rate limit state':     { icon:'fa-solid fa-gauge-high', desc:'Requests used against each site\'s rate limit.' },
+    'plex token status':            { icon:'fa-solid fa-key', desc:'Whether each Plex token cli_debrid holds is still valid.' },
+    'personal trakt token status':  { icon:'fa-solid fa-key', desc:'Whether your Trakt sign-in is still valid.' },
+    'torrent tracking':             { icon:'fa-solid fa-clock-rotate-left' },
+    'api summary':                  { icon:'fa-solid fa-chart-column' },
+    'real time api':                { icon:'fa-solid fa-wave-square' },
+  };
+
+  /* Buttons placed straight in a form (or the card) become one action row. */
+  function groupActions(container) {
+    const btns = Array.from(container.children).filter(n => n.matches('button, a.btn'));
+    if (!btns.length) return;
+    const row = document.createElement('div');
+    row.className = 'card-actions';
+    container.insertBefore(row, btns[0]);
+    btns.forEach(b => row.appendChild(b));
+    /* A lone, non-destructive action is the card's primary action. */
+    if (btns.length === 1 && /btn-outline-(orange|blue)/.test(btns[0].className)) {
+      btns[0].className = btns[0].className.replace(/btn-outline-(orange|blue)/, 'btn-orange');
+    }
+  }
+
   function buildCards() {
     const mainGrid = document.getElementById('tdbMainGrid');
     if (!mainGrid) return;
@@ -283,32 +351,59 @@
       const h3 = item.querySelector('h3');
       if (!h3) return;
       const title = h3.textContent.trim();
+      const key = title.toLowerCase();
+      const meta = TOOL_META[key] || {};
       const cat = item.dataset.cat || 'all';
 
       const descEl = item.querySelector('p.description');
-      let descHtml = '';
-      if (descEl) { descHtml = `<div class="card-desc">${descEl.innerHTML}</div>`; descEl.remove(); }
+      let descHtml = meta.desc ? escapeHtml(meta.desc) : '';
+      let noteHtml = '';
+      if (descEl) {
+        /* The card's own description, when a short one replaces it in the header,
+           stays in the body only if it says more (note:true). */
+        if (!descHtml) descHtml = descEl.innerHTML;
+        else if (meta.note) noteHtml = descEl.innerHTML;  /* it adds a warning or a requirement */
+        descEl.remove();
+      }
 
       h3.style.display = 'none';
 
-      /* For Plex Labels: extract help button to place in card-title row */
+      /* For Plex Labels: extract help button to place in the header */
       const helpBtn = item.querySelector('.plex-labels-help-btn');
 
       restyleItem(item);
+      item.querySelectorAll('form').forEach(groupActions);
+      groupActions(item);
+      item.querySelectorAll('.verification-actions').forEach(n => n.classList.add('card-actions'));
 
       const card = document.createElement('div');
       card.className = 'card';
+      if (meta.wide) card.classList.add('card-wide');
+      if (meta.danger || cat === 'danger') card.classList.add('card-danger');
       card.dataset.cat = cat;
-      card.dataset.title = title.toLowerCase();
-      const titleDiv = document.createElement('div');
-      titleDiv.className = 'card-title';
-      titleDiv.textContent = title;
-      if (helpBtn) titleDiv.appendChild(helpBtn);
-      card.appendChild(titleDiv);
-      if (descHtml) card.insertAdjacentHTML('beforeend', descHtml);
-      card.appendChild(item); /* MOVE — preserves event listeners */
+      card.dataset.title = key;
+
+      const head = document.createElement('div');
+      head.className = 'card-head';
+      head.innerHTML =
+        `<div class="card-icon"><i class="${meta.icon || 'fa-solid fa-wrench'}"></i></div>` +
+        `<div class="card-head-text"><div class="card-title"></div>` +
+        (descHtml ? `<div class="card-desc">${descHtml}</div>` : '') + `</div>`;
+      head.querySelector('.card-title').textContent = title;
+      if (helpBtn) head.appendChild(helpBtn);
+      card.appendChild(head);
+
+      const body = document.createElement('div');
+      body.className = 'card-body';
+      if (noteHtml) body.insertAdjacentHTML('beforeend', `<div class="card-note">${noteHtml}</div>`);
+      body.appendChild(item); /* MOVE — preserves event listeners */
+      card.appendChild(body);
       mainGrid.appendChild(card);
     });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
   let currentCat = null;
