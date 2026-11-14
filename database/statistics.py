@@ -24,8 +24,9 @@ def format_bytes(size):
         size /= 1024.0
     return f"{size:.2f} PB"
 
-# Debrid library size written by the Real-Debrid client (get_total_library_size) and
-# refreshed by task_refresh_library_size_cache.
+# Debrid library size, summed over every configured provider by
+# refresh_debrid_library_size() (task_refresh_library_size_cache and the Statistics
+# page's refresh button).
 LIBRARY_SIZE_CACHE_FILE = os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'),
                                        'library_size_cache.json')
 LIBRARY_SIZE_CACHE_EXPIRY_HOURS = 72
@@ -47,6 +48,63 @@ def read_library_size_cache():
     except Exception as e:
         logging.error(f"Failed to read library size cache: {e}")
         return None
+
+
+
+def _provider_library_bytes(provider) -> int:
+    """Total size of one provider's torrents, each hash counted once."""
+    if provider.PROVIDER_NAME == 'Real-Debrid':
+        from debrid.real_debrid.api import get_all_torrents
+        torrents = asyncio.run(get_all_torrents(provider.api_key))
+        if torrents is None:
+            raise RuntimeError('Real-Debrid did not return its torrent list')
+    elif hasattr(provider, 'list_completed_torrents'):
+        torrents = provider.list_completed_torrents()  # Premiumize: finished items only
+    else:
+        torrents = provider.list_active_torrents()
+    seen, total = set(), 0
+    for t in torrents or []:
+        h = (t.get('hash') or '').lower()
+        if h:
+            if h in seen:
+                continue
+            seen.add(h)
+        try:
+            total += max(0, int(t.get('bytes') or 0))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def refresh_debrid_library_size():
+    """Sum the library of every configured debrid provider and cache it.
+
+    Returns the size string, or None when there's no provider or one of them
+    didn't answer (a total missing a provider is not cached)."""
+    from debrid import get_debrid_providers
+    providers = get_debrid_providers()
+    if not providers:
+        return None
+    total, parts = 0, []
+    for provider in providers:
+        try:
+            size = _provider_library_bytes(provider)
+        except Exception as e:
+            logging.warning(f"[LibSize] {provider.PROVIDER_NAME} library size failed: {e}")
+            return None
+        total += size
+        parts.append({'provider': provider.PROVIDER_NAME, 'bytes': size})
+    size_str = format_bytes(total)
+    try:
+        os.makedirs(os.path.dirname(LIBRARY_SIZE_CACHE_FILE), exist_ok=True)
+        with open(LIBRARY_SIZE_CACHE_FILE, 'w') as f:
+            json.dump({'size_str': size_str, 'timestamp': datetime.utcnow().isoformat(),
+                       'providers': parts}, f, indent=2)
+    except Exception as e:
+        logging.error(f"[LibSize] Failed to write library size cache: {e}")
+    detail = ', '.join(f"{p['provider']} {format_bytes(p['bytes'])}" for p in parts)
+    logging.info(f"[LibSize] Debrid library: {size_str} ({detail})")
+    return size_str
 
 
 # Cache for cli_mount nzbs folder size (updated by background du -sh)
