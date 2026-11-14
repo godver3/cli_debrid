@@ -287,7 +287,6 @@ class TestRssCategoryAndCap(unittest.TestCase):
     def test_cap_warning_also_fires_for_fifty_item_feeds(self):
         entries = [{'title': f'M{n}', 'guids': [f'imdb://tt{n:07d}'], 'category': 'movie'} for n in range(50)]
         with mock.patch.object(rss, 'fetch_plex_rss_entries', return_value=entries), \
-             mock.patch.object(rss, 'get_setting', return_value=False), \
              mock.patch.object(rss, 'get_media_item_presence_overall', return_value='Missing'), \
              mock.patch.object(rss.logging, 'warning') as warn:
             rss.get_wanted_from_plex_rss('https://rss.plex.tv/x', {'Default': True})
@@ -454,7 +453,6 @@ class TestRssSharesTheRemovalRule(unittest.TestCase):
         entry = {'title': 'T', 'guids': ['imdb://tt0000001'], 'category': 'show' if media_type == 'tv' else 'movie'}
         values = {'plex_watchlist_removal': True, 'plex_watchlist_keep_series': False}
         with mock.patch.object(rss, 'fetch_plex_rss_entries', return_value=[entry]), \
-             mock.patch.object(rss, 'get_setting', side_effect=lambda s, k, d=False: values.get(k, d)), \
              mock.patch.object(rss, 'get_media_item_presence_overall', return_value=state), \
              mock.patch.object(pw, 'get_setting', side_effect=lambda s, k, d=False: values.get(k, d)), \
              mock.patch.object(pw, 'get_show_status', return_value='returning series'):
@@ -729,7 +727,6 @@ class TestSkipReasonsAreLogged(unittest.TestCase):
         values = {'plex_watchlist_removal': True, 'plex_watchlist_keep_series': False}
         with mock.patch.object(rss, 'fetch_plex_rss_entries', return_value=entries), \
              mock.patch.object(rss, 'extract_imdb_id', return_value=None), \
-             mock.patch.object(rss, 'get_setting', side_effect=lambda s, k, d=False: values.get(k, d)), \
              mock.patch.object(rss, 'get_media_item_presence_overall', return_value='Collected'), \
              mock.patch.object(pw, 'get_setting', side_effect=lambda s, k, d=False: values.get(k, d)), \
              self.assertLogs(level='INFO') as cm:
