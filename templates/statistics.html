@@ -1049,6 +1049,9 @@
             </div>
         </div>
 
+        {% if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') %}
+        {% include 'partials/_command_bar.html' %}
+        {% endif %}
         <div class="top-stats">
             <div class="stats-box recently-aired" id="recently_aired">
                 <h3>

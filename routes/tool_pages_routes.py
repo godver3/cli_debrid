@@ -5,7 +5,7 @@ endpoints in routes/debug_routes.py; only the pages changed.
 """
 import os
 
-from flask import Blueprint, redirect, render_template, request, url_for
+from flask import Blueprint, jsonify, redirect, render_template, request, url_for
 
 from routes.models import admin_required
 from utilities.settings import get_all_settings
@@ -47,3 +47,36 @@ def diagnostics():
     if not request.args.get('embed'):
         return redirect(url_for('performance.performance_dashboard') + '#diagnostics')
     return render_template('diagnostics.html', **_card_context())
+
+
+@tool_pages_bp.route('/api/command/items')
+@admin_required
+def command_items():
+    """Library items matching a title or an item ID, for the home page command bar
+    (/rescrape, /blacklist)."""
+    from database.core import get_db_connection
+    q = (request.args.get('q') or '').strip()
+    if not q:
+        return jsonify({'items': []})
+    conn = get_db_connection()
+    try:
+        cols = 'id, title, type, season_number, episode_number, state, version, year'
+        if q.isdigit():
+            rows = conn.execute(f'SELECT {cols} FROM media_items WHERE id = ?', (int(q),)).fetchall()
+        else:
+            rows = conn.execute(
+                f'SELECT {cols} FROM media_items WHERE title LIKE ? '
+                'ORDER BY title, season_number, episode_number LIMIT 25', (f'%{q}%',)).fetchall()
+    finally:
+        conn.close()
+    keys = ['id', 'title', 'type', 'season_number', 'episode_number', 'state', 'version', 'year']
+    return jsonify({'items': [dict(zip(keys, tuple(r))) for r in rows]})
+
+
+@tool_pages_bp.route('/api/command/versions')
+@admin_required
+def command_versions():
+    """Configured versions, for /request in the command bar."""
+    from utilities.settings import get_setting
+    return jsonify({'versions': list((get_setting('Scraping', 'versions', {}) or {}).keys())})
+

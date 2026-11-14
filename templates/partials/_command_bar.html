@@ -1,0 +1,326 @@
+{# Home page command line: /request, /rescrape, /run and friends. Collapsible; type /help. #}
+<div class="cmdbar" id="cmdbar">
+  <div class="cmdbar-head" id="cmdbarHead">
+    <span class="cmdbar-dots"><i></i><i></i><i></i></span>
+    <span class="cmdbar-title">cli_debrid — terminal</span>
+    <button type="button" class="cmdbar-help-btn" id="cmdbarHelpBtn" title="Show commands">help</button>
+    <span class="cmdbar-caret">▾</span>
+  </div>
+  <div class="cmdbar-body" id="cmdbarBody">
+    <div class="cmdbar-out" id="cmdbarOut" aria-live="polite"></div>
+    <form class="cmdbar-form" id="cmdbarForm" autocomplete="off">
+      <span class="cmdbar-ps1">user@cli_debrid:~$</span>
+      <input type="text" id="cmdbarInput" class="cmdbar-input" spellcheck="false" autocapitalize="off"
+             placeholder="/request the matrix   (type /help)" aria-label="Command">
+    </form>
+  </div>
+</div>
+<style>
+.cmdbar{background:#0b0d0b;border:1px solid #2b2b2b;border-radius:6px;margin:0 0 16px;overflow:hidden;
+  font-family:'JetBrains Mono','Fira Code',ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#cfd8cf;box-shadow:0 6px 20px rgba(0,0,0,.35)}
+.cmdbar-head{display:flex;align-items:center;gap:10px;padding:7px 10px;background:#1b1b1b;border-bottom:1px solid #2b2b2b;cursor:pointer;user-select:none}
+.cmdbar-dots{display:inline-flex;gap:6px}
+.cmdbar-dots i{width:11px;height:11px;border-radius:50%;background:#ff5f57;display:block}
+.cmdbar-dots i:nth-child(2){background:#febc2e}.cmdbar-dots i:nth-child(3){background:#28c840}
+.cmdbar-title{flex:1;text-align:center;color:#8a8a8a;font-size:12px}
+.cmdbar-help-btn{background:#262626;border:1px solid #3a3a3a;color:#cfcfcf;border-radius:4px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px}
+.cmdbar-help-btn:hover{border-color:#28c840;color:#fff}
+.cmdbar-caret{color:#777;font-size:12px;transition:transform .15s}
+.cmdbar:not(.open) .cmdbar-caret{transform:rotate(-90deg)}
+.cmdbar-body{display:none}
+.cmdbar.open .cmdbar-body{display:block}
+.cmdbar-out{max-height:360px;overflow-y:auto;padding:10px 14px 2px;white-space:pre-wrap;line-height:1.55}
+.cmdbar-out:empty{display:none}
+.cmdbar-out .c-in{color:#9aa59a}
+.cmdbar-out .c-in b{color:#28c840;font-weight:600}
+.cmdbar-out .c-ok{color:#4ade80}
+.cmdbar-out .c-err{color:#f87171}
+.cmdbar-out .c-dim{color:#6f7a6f}
+.cmdbar-out .c-cmd{color:#febc2e}
+.cmdbar-out .c-res{display:flex;gap:10px;align-items:baseline;padding:1px 6px;margin:0 -6px;border-radius:3px;cursor:pointer}
+.cmdbar-out .c-res:hover,.cmdbar-out .c-res.sel{background:#16301a}
+.cmdbar-out .c-res .n{color:#febc2e;min-width:2ch;text-align:right}
+.cmdbar-out .c-res .t{color:#e8f0e8}
+.cmdbar-out .c-res .y{color:#7dd3fc}
+.cmdbar-out .c-res .k{color:#c4b5fd}
+.cmdbar-out .c-res .r{color:#fbbf24}
+.cmdbar-out .c-res .l{color:#4ade80}
+.cmdbar-out .c-detail{border-left:2px solid #28c840;padding:4px 10px;margin:4px 0 6px}
+.cmdbar-out .c-detail .ov{color:#9aa59a}
+.cmdbar-out .c-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:2px 0}
+.cmdbar-out button{background:#151a15;border:1px solid #2f3f2f;color:#cfd8cf;border-radius:3px;padding:0 8px;cursor:pointer;font:inherit;font-size:12px;line-height:20px}
+.cmdbar-out button:hover{border-color:#28c840;color:#fff}
+.cmdbar-out button.on{background:#14532d;border-color:#28c840;color:#bbf7d0}
+.cmdbar-out button.go{background:#28c840;border-color:#28c840;color:#062b0f;font-weight:700}
+.cmdbar-out a{color:#7dd3fc}
+.cmdbar-form{display:flex;align-items:center;gap:8px;padding:6px 14px 10px}
+.cmdbar-ps1{color:#28c840;font-weight:600;white-space:nowrap}
+#cmdbar .cmdbar-input,#cmdbar .cmdbar-input:focus{flex:1;min-width:0;background:transparent!important;border:none!important;box-shadow:none!important;outline:none!important;color:#e8f0e8;font:inherit;padding:2px 0!important;margin:0!important;height:auto!important;border-radius:0!important;caret-color:#28c840}
+.cmdbar-input::placeholder{color:#3f4a3f}
+@media (max-width:640px){.cmdbar-ps1{display:none}.cmdbar-title{text-align:left}}
+</style>
+<script>
+(function () {
+  const bar = document.getElementById('cmdbar');
+  if (!bar) return;
+  const out = document.getElementById('cmdbarOut');
+  const input = document.getElementById('cmdbarInput');
+  const LS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  const COMMANDS = {
+    '/request': { args: '<title>', help: 'Search TMDB and add a movie or show as Wanted (pick versions, then Request).' },
+    '/search': { args: '<title>', help: 'Open the title on Discover.' },
+    '/rescrape': { args: '<title | item id>', help: 'Find library items and rescrape one.' },
+    '/blacklist': { args: '<title | item id>', help: 'Find library items and blacklist one.' },
+    '/queue': { args: '<state>', help: 'Show items in a state on the Database page (wanted, scraping, checking, collected...).' },
+    '/run': { args: '<task>', help: 'Run an Automation task now (e.g. /run backup database).' },
+    '/status': { args: '', help: 'Is the program running?' },
+    '/start': { args: '', help: 'Start the program.' },
+    '/stop': { args: '', help: 'Stop the program.' },
+    '/godver': { args: '', help: 'Open the MediaStorm GitHub.' },
+    '/clear': { args: '', help: 'Clear this output.' },
+    '/help': { args: '', help: 'List the commands.' },
+  };
+
+  let history = []; try { history = JSON.parse(LS('cmdbar.history') || '[]'); } catch (e) {}
+  let hIdx = history.length;
+  let versions = null;
+
+  function setOpen(open) {
+    bar.classList.toggle('open', open);
+    LS('cmdbar.open', open ? '1' : '0');
+    if (open) setTimeout(() => input.focus(), 0);
+  }
+  setOpen(LS('cmdbar.open') === '1');
+  document.getElementById('cmdbarHead').addEventListener('click', e => {
+    if (e.target.closest('#cmdbarHelpBtn')) return;
+    setOpen(!bar.classList.contains('open'));
+  });
+  document.getElementById('cmdbarHelpBtn').addEventListener('click', () => { setOpen(true); run('/help'); });
+
+  function print(html, cls) {
+    const div = document.createElement('div');
+    if (cls) div.className = cls;
+    div.innerHTML = html;
+    out.appendChild(div);
+    out.scrollTop = out.scrollHeight;
+    return div;
+  }
+  const ok = t => print(esc(t), 'c-ok');
+  const err = t => print(esc(t), 'c-err');
+  const dim = t => print(esc(t), 'c-dim');
+
+  async function getJSON(url, opts) {
+    const r = await fetch(url, opts);
+    let j = null;
+    try { j = await r.json(); } catch (e) {}
+    if (!r.ok) throw new Error((j && (j.error || j.message)) || ('HTTP ' + r.status));
+    return j;
+  }
+  const postJSON = (url, body) => getJSON(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+
+  function itemLabel(it) {
+    let t = it.title || '?';
+    if (it.type === 'episode' && it.season_number != null) t += ` S${String(it.season_number).padStart(2, '0')}E${String(it.episode_number || 0).padStart(2, '0')}`;
+    else if (it.year) t += ` (${it.year})`;
+    return `#${it.id} ${t} · ${it.state || ''}${it.version ? ' · ' + it.version : ''}`;
+  }
+
+  async function findItems(arg, verb, action) {
+    if (!arg) return err(`Usage: /${verb} <title | item id>`);
+    const j = await getJSON('/api/command/items?q=' + encodeURIComponent(arg));
+    if (!j.items.length) return dim('No library items match.');
+    j.items.forEach(it => {
+      const row = print(`<span>${esc(itemLabel(it))}</span> <button type="button">${esc(verb)}</button>`, 'c-row');
+      row.querySelector('button').addEventListener('click', async ev => {
+        ev.target.disabled = true;
+        try { await action(it); ok(`${verb} started for #${it.id}`); }
+        catch (e) { err(`${verb} failed for #${it.id}: ${e.message}`); ev.target.disabled = false; }
+      });
+    });
+  }
+
+  // /request: numbered results; pick one (click, its number, or ↑/↓ + Enter),
+  // toggle versions, Enter or [request] adds it.
+  let results = null;      // current result list
+  let selected = -1;       // highlighted result
+  let picked = null;       // result shown in detail, ready to request
+
+  async function loadVersions() {
+    if (!versions) { try { versions = (await getJSON('/api/command/versions')).versions; } catch (e) { versions = []; } }
+    return versions;
+  }
+
+  async function cmdRequest(arg) {
+    if (!arg) return err('Usage: /request <title>');
+    await loadVersions();
+    dim(`searching TMDB for "${arg}"…`);
+    const j = await getJSON('/discover/api/search?query=' + encodeURIComponent(arg));
+    const list = (j.results || []).slice(0, 8);
+    if (!list.length) { results = null; return dim('No matches.'); }
+    results = list.map((res, i) => {
+      const type = res.media_type === 'movie' ? 'movie' : 'show';
+      const year = (res.release_date || res.first_air_date || '').slice(0, 4) || '????';
+      const rating = res.vote_average ? Number(res.vote_average).toFixed(1) : '';
+      const row = print(
+        `<span class="n">${i + 1}</span><span class="t">${esc(res.title || res.name)}</span>` +
+        `<span class="y">(${esc(year)})</span><span class="k">${type}</span>` +
+        (rating ? `<span class="r">★ ${rating}</span>` : ''), 'c-res');
+      const item = { res, type, year, rating, row };
+      row.addEventListener('click', () => pick(i));
+      return item;
+    });
+    selected = 0; highlight();
+    dim('pick one: click it, type its number, or ↑/↓ then Enter');
+  }
+
+  function highlight() {
+    (results || []).forEach((r, i) => r.row.classList.toggle('sel', i === selected));
+  }
+
+  async function pick(i) {
+    if (!results || !results[i]) return err('No result ' + (i + 1));
+    selected = i; highlight();
+    const it = results[i];
+    picked = it;
+    await loadVersions();
+    const ov = (it.res.overview || '').slice(0, 280) + ((it.res.overview || '').length > 280 ? '…' : '');
+    const box = print(
+      `<div><span class="t" style="color:#fff;font-weight:600">${esc(it.res.title || it.res.name)}</span> ` +
+      `<span class="y">(${esc(it.year)})</span> <span class="k">${it.type}</span>` +
+      (it.rating ? ` <span class="r">★ ${it.rating}</span>` : '') +
+      ` <a href="/discover/details/${it.res.id}/${it.type === 'movie' ? 'movie' : 'tv'}" target="_blank">details ↗</a></div>` +
+      (ov ? `<div class="ov">${esc(ov)}</div>` : '') +
+      `<div class="c-row">versions: ${versions.length ? versions.map((v, k) => `<button type="button" class="v${k === 0 ? ' on' : ''}" data-v="${esc(v)}">${esc(v)}</button>`).join('') : '<span class="c-err">none set up — add one in Settings → Version Settings</span>'}` +
+      ` <button type="button" class="go">request ⏎</button></div>`, 'c-detail');
+    box.querySelectorAll('button.v').forEach(b => b.addEventListener('click', () => { b.classList.toggle('on'); input.focus(); }));
+    box.querySelector('button.go').addEventListener('click', () => doRequest(box));
+    it.box = box;
+    input.placeholder = 'Enter to request · click versions to toggle · /request to search again';
+    input.focus();
+  }
+
+  async function doRequest(box) {
+    const it = picked;
+    if (!it) return;
+    const chosen = Array.from(box.querySelectorAll('button.v.on')).map(b => b.dataset.v);
+    if (!chosen.length) return err('pick at least one version');
+    const go = box.querySelector('button.go');
+    go.disabled = true;
+    try {
+      const r = await postJSON('/content/request', { id: it.res.id, mediaType: it.type, versions: chosen, title: it.res.title || it.res.name });
+      ok((r && r.message) || `requested ${it.res.title || it.res.name} (${it.year}) — ${chosen.join(', ')}`);
+      picked = null;
+      input.placeholder = '/request the matrix   (type /help)';
+    } catch (e) { err('request failed: ' + e.message); go.disabled = false; }
+  }
+
+  async function cmdRun(arg) {
+    if (!arg) return err('Usage: /run <task>');
+    const j = await getJSON('/program_operation/api/task_timings');
+    const q = arg.toLowerCase();
+    const matches = (j.tasks || []).filter(t => t.label.toLowerCase().includes(q) || t.name.toLowerCase().includes(q));
+    if (!matches.length) return dim('No task matches. See Automation for the list.');
+    const exact = matches.find(t => t.label.toLowerCase() === q);
+    const pick = exact || (matches.length === 1 ? matches[0] : null);
+    if (!pick) {
+      matches.slice(0, 10).forEach(t => {
+        const row = print(`<span>${esc(t.label)}</span> <button type="button">run</button>`, 'c-row');
+        row.querySelector('button').addEventListener('click', () => run('/run ' + t.label));
+      });
+      return;
+    }
+    const r = await getJSON('/program_operation/trigger_task', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'task_name=' + encodeURIComponent(pick.name) });
+    (r.success ? ok : err)(r.message || (r.success ? `${pick.label} queued` : 'Could not run ' + pick.label));
+  }
+
+  const STATES = { wanted: 'Wanted', scraping: 'Scraping', adding: 'Adding', checking: 'Checking', sleeping: 'Sleeping',
+                   unreleased: 'Unreleased', blacklisted: 'Blacklisted', upgrading: 'Upgrading', collected: 'Collected',
+                   'pending uncached': 'Pending Uncached', 'final scrape': 'Final_Check', 'pre-release': 'Pre_release' };
+
+  async function run(line) {
+    line = line.trim();
+    if (!line) {
+      if (picked && picked.box) return doRequest(picked.box);
+      if (results && selected >= 0) return pick(selected);
+      return;
+    }
+    if (/^\d+$/.test(line) && results) { print('<b>user@cli_debrid:~$</b> ' + esc(line), 'c-in'); return pick(parseInt(line, 10) - 1); }
+    if (!line.startsWith('/')) line = '/request ' + line;
+    print('<b>user@cli_debrid:~$</b> ' + esc(line), 'c-in');
+    if (history[history.length - 1] !== line) { history.push(line); history = history.slice(-50); LS('cmdbar.history', JSON.stringify(history)); }
+    hIdx = history.length;
+    picked = null;
+    const sp = line.indexOf(' ');
+    const cmd = (sp < 0 ? line : line.slice(0, sp)).toLowerCase();
+    const arg = sp < 0 ? '' : line.slice(sp + 1).trim();
+    try {
+      switch (cmd) {
+        case '/help': case '/?':
+          Object.entries(COMMANDS).forEach(([c, d]) => print(`<span class="c-cmd">${esc(c.padEnd(11))}</span>${esc(d.args.padEnd(20))} <span class="c-dim">${esc(d.help)}</span>`));
+          dim('Text without a slash is a /request. Tab completes commands; ↑/↓ for history or to move through results; Esc cancels.');
+          break;
+        case '/godver':
+          window.open('https://github.com/godver3/mediastorm', '_blank', 'noopener');
+          ok('opening github.com/godver3/mediastorm');
+          break;
+        case '/clear': out.innerHTML = ''; results = null; picked = null; break;
+        case '/request': await cmdRequest(arg); break;
+        case '/search':
+          if (!arg) return err('Usage: /search <title>');
+          location.href = '/discover/?search=' + encodeURIComponent(arg); break;
+        case '/rescrape':
+          await findItems(arg, 'rescrape', it => postJSON('/debug/rescrape_item', { item_id: it.id })); break;
+        case '/blacklist':
+          await findItems(arg, 'blacklist', async it => {
+            const fd = new FormData();
+            fd.append('action', 'move'); fd.append('target_queue', 'Blacklisted'); fd.append('selected_items', it.id);
+            const j = await getJSON('/database/bulk_queue_action', { method: 'POST', body: fd });
+            if (j && j.success === false) throw new Error(j.error || j.message || 'failed');
+          }); break;
+        case '/queue': {
+          const st = STATES[arg.toLowerCase()];
+          if (!st) return err('Usage: /queue <' + Object.keys(STATES).join(' | ') + '>');
+          const filters = JSON.stringify([{ column: 'state', operator: 'equals', value: st }]);
+          location.href = '/database/?filters=' + encodeURIComponent(filters); break;
+        }
+        case '/run': await cmdRun(arg); break;
+        case '/status': {
+          const j = await getJSON('/program_operation/api/program_status');
+          print(`Program: <b>${esc(j.status || (j.running ? 'Running' : 'Stopped'))}</b>`); break;
+        }
+        case '/start': case '/stop': {
+          const j = await getJSON(`/program_operation/api/${cmd.slice(1)}_program`, { method: 'POST' });
+          (j.status === 'error' || j.success === false ? err : ok)(j.message || j.status || 'done'); break;
+        }
+        default:
+          err(`Unknown command ${cmd}. Type /help.`);
+      }
+    } catch (e) {
+      err(e.message || String(e));
+    }
+  }
+
+  document.getElementById('cmdbarForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const v = input.value; input.value = '';
+    run(v);
+  });
+  input.addEventListener('keydown', e => {
+    // With results on screen and an empty prompt, ↑/↓ move through them; otherwise history.
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && results && !input.value && !picked) {
+      selected = Math.max(0, Math.min(results.length - 1, selected + (e.key === 'ArrowUp' ? -1 : 1)));
+      highlight(); results[selected].row.scrollIntoView({ block: 'nearest' }); e.preventDefault();
+    }
+    else if (e.key === 'ArrowUp' && hIdx > 0) { hIdx--; input.value = history[hIdx] || ''; e.preventDefault(); }
+    else if (e.key === 'ArrowDown') { hIdx = Math.min(history.length, hIdx + 1); input.value = history[hIdx] || ''; e.preventDefault(); }
+    else if (e.key === 'Escape') { picked = null; results = null; input.placeholder = '/request the matrix   (type /help)'; }
+    else if (e.key === 'Tab' && input.value.startsWith('/') && !input.value.includes(' ')) {
+      const m = Object.keys(COMMANDS).filter(c => c.startsWith(input.value.toLowerCase()));
+      if (m.length === 1) { input.value = m[0] + ' '; e.preventDefault(); }
+      else if (m.length > 1) { dim(m.join('  ')); e.preventDefault(); }
+    }
+  });
+})();
+</script>
