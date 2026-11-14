@@ -613,7 +613,12 @@ class AddingQueue:
                     results, item_identifier, accept_uncached, item=item
                 )
 
-                if not torrent_info and not magnet and get_setting('Scraping', 'hybrid_mode', True): # Check hybrid setting explicitly
+                # Hybrid's second pass re-runs the same list with uncached allowed. An NZB
+                # result has no cached/uncached distinction, so after an NZB attempt that
+                # pass would only re-submit (and re-download) the same NZB this tick; the
+                # NZB path already tries one result per tick and the next one on the next.
+                if (not torrent_info and not magnet and not _nzb_attempt_made
+                        and get_setting('Scraping', 'hybrid_mode', True)): # Check hybrid setting explicitly
                     logging.info(f"No cached results found, trying uncached results (Hybrid Mode)")
                     accept_uncached = True # Now accept uncached
                     # Call again, getting all three return values

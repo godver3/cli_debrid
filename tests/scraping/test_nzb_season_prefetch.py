@@ -20,6 +20,8 @@ class TestSeasonPrefetch(unittest.TestCase):
         self.nz = newznab
         self.nz._NZB_CACHE.clear()
         self.nz.clear_season_cache()
+        self.nz.reset_search_cooldowns()
+        self.addCleanup(self.nz.reset_search_cooldowns)
         self.calls = []
         self.settings = {'url': 'http://idx', 'api_key': 'k'}
 
@@ -94,6 +96,89 @@ class TestSeasonPrefetch(unittest.TestCase):
         ts, res = self.nz._SEASON_CACHE[key]
         self.nz._SEASON_CACHE[key] = (ts - self.nz._SEASON_CACHE_TTL - 1, res)
         self.assertIsNone(self.nz._season_cached_episode('http://idx/api', '0000001', 1, 1))
+
+
+    def test_fresh_prefetch_is_reused_not_refetched(self):
+        with mock.patch.object(self.nz.api, 'get', side_effect=self.fake_get), \
+             mock.patch.object(self.nz, '_get_retention_days', return_value=0):
+            self.assertEqual(self.nz.prefetch_season('Idx', self.settings, 'tt0000001', 'Show', 1), 5)
+            first = len(self.calls)
+            # NZBBatch calls this again on the next Scraping tick: no new requests.
+            self.assertEqual(self.nz.prefetch_season('Idx', self.settings, 'tt0000001', 'Show', 1), 5)
+            self.assertEqual(len(self.calls), first)
+
+    def test_pack_search_skipped_when_nzb_packs_disabled(self):
+        def setting(section, key, default=None):
+            if key == 'disable_nzb_season_packs':
+                return True
+            return default
+        with mock.patch.object(self.nz.api, 'get', side_effect=self.fake_get), \
+             mock.patch.object(self.nz, 'get_setting', side_effect=setting):
+            out = self.nz.scrape_newznab_instance(
+                'Idx', self.settings, 'tt0000001', 'Show', 2024, 'episode', season=1, episode=3, multi=True)
+        self.assertEqual(out, [])
+        self.assertEqual(self.calls, [])
+
+    def test_pack_search_runs_when_nzb_packs_allowed(self):
+        def setting(section, key, default=None):
+            if key == 'disable_nzb_season_packs':
+                return False
+            return default
+        with mock.patch.object(self.nz.api, 'get', side_effect=self.fake_get), \
+             mock.patch.object(self.nz, '_get_retention_days', return_value=0), \
+             mock.patch.object(self.nz, 'get_setting', side_effect=setting):
+            self.nz.scrape_newznab_instance(
+                'Idx', self.settings, 'tt0000001', 'Show', 2024, 'episode', season=1, episode=3, multi=True)
+        self.assertTrue(self.calls)
+
+
+class TestSearchCooldown(unittest.TestCase):
+    def setUp(self):
+        from scraper import newznab
+        self.nz = newznab
+        self.nz._NZB_CACHE.clear()
+        self.nz.clear_season_cache()
+        self.nz.reset_search_cooldowns()
+        self.addCleanup(self.nz.reset_search_cooldowns)
+        self.settings = {'url': 'http://idx', 'api_key': 'k'}
+
+    def _scrape(self, ep):
+        return self.nz.scrape_newznab_instance(
+            'Idx', self.settings, 'tt0000001', 'Show', 2024, 'episode', season=1, episode=ep)
+
+    def test_raised_429_pauses_every_query_to_that_indexer(self):
+        import requests
+        resp = mock.Mock(status_code=429, text='Too Many Requests', headers={})
+        api_get = mock.Mock(side_effect=requests.exceptions.HTTPError('429', response=resp))
+        with mock.patch.object(self.nz.api, 'get', api_get):
+            self._scrape(1)
+            hits = api_get.call_count
+            self.assertGreaterEqual(hits, 1)
+            self._scrape(2)   # a different query: still not sent
+            self.nz.prefetch_season('Idx', self.settings, 'tt0000001', 'Show', 2)
+        self.assertEqual(api_get.call_count, hits)
+
+    def test_newznab_limit_error_with_http_200(self):
+        body = '<?xml version="1.0"?><error code="500" description="Request limit reached"/>'
+        api_get = mock.Mock(return_value=mock.Mock(status_code=200, text=body, headers={}, url='u'))
+        with mock.patch.object(self.nz.api, 'get', api_get):
+            self._scrape(1)
+            hits = api_get.call_count
+            self._scrape(2)
+        self.assertEqual(api_get.call_count, hits)
+        self.assertGreater(self.nz._search_cooldown_left('http://idx/api'), 0)
+
+    def test_result_feed_mentioning_limits_is_not_a_refusal(self):
+        feed = _rss('Show.S01E01.Download.Limit.Reached.1080p.WEB-GRP')
+        api_get = mock.Mock(return_value=mock.Mock(status_code=200, text=feed, headers={}, url='u'))
+        with mock.patch.object(self.nz.api, 'get', api_get), \
+             mock.patch.object(self.nz, '_get_retention_days', return_value=0):
+            self._scrape(1)
+        self.assertEqual(self.nz._search_cooldown_left('http://idx/api'), 0)
+
+    def test_other_indexers_unaffected(self):
+        self.nz._record_search_refusal('http://idx/api', 'Idx', 600, 429)
+        self.assertEqual(self.nz._search_cooldown_left('http://other/api'), 0)
 
 
 if __name__ == '__main__':

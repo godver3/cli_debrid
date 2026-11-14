@@ -69,6 +69,54 @@ _SEASON_MAX_EPISODES = 2    # a release with more episodes than this is a pack, 
 # of them actually hits the indexer — see scraper/request_dedup.py.
 _NZB_INFLIGHT = SingleFlightGuard()
 
+# Indexer-wide search backoff. A 429/503 or a Newznab <error> limit response
+# (often sent with HTTP 200) means every other query to that indexer would be
+# refused too, so stop searching it for the cooldown instead of only caching
+# the one failed query. Kept apart from usenet.nzb_fetch_cooldown, which covers
+# NZB downloads: API and grab limits are separate quotas on most indexers.
+_SEARCH_COOLDOWN: Dict[str, float] = {}   # endpoint -> monotonic deadline
+_SEARCH_COOLDOWN_LOCK = threading.Lock()
+
+
+def _search_cooldown_left(endpoint: str) -> float:
+    with _SEARCH_COOLDOWN_LOCK:
+        until = _SEARCH_COOLDOWN.get(endpoint)
+        if until is None:
+            return 0.0
+        left = until - time.monotonic()
+        if left <= 0:
+            del _SEARCH_COOLDOWN[endpoint]
+            return 0.0
+        return left
+
+
+def _search_refusal_seconds(status_code: int, headers, body: str) -> int:
+    """Cooldown for a refused search response, 0 when it isn't a limit/outage."""
+    from usenet.nzb_fetch_cooldown import classify_refusal
+    body = body or ''
+    # A 200 is only a refusal when it is a Newznab <error> document; never
+    # phrase-match a real result feed (release titles can contain anything).
+    if status_code == 200 and '<error' not in body[:500].lower():
+        return 0
+    try:
+        return int(classify_refusal(status_code, headers, body[:2000]) or 0)
+    except Exception:
+        return 0
+
+
+def _record_search_refusal(endpoint: str, instance: str, seconds: int, status_code) -> None:
+    with _SEARCH_COOLDOWN_LOCK:
+        until = time.monotonic() + seconds
+        if until > _SEARCH_COOLDOWN.get(endpoint, 0):
+            _SEARCH_COOLDOWN[endpoint] = until
+    logging.warning(f"Newznab '{instance}' refused a search (HTTP {status_code}); "
+                    f"pausing searches to it for {max(1, seconds // 60)} min")
+
+
+def reset_search_cooldowns() -> None:
+    with _SEARCH_COOLDOWN_LOCK:
+        _SEARCH_COOLDOWN.clear()
+
 
 def _normalize_imdb(value: str) -> str:
     """'tt0121955' / '0121955' / '121955' -> '121955' (0 or empty -> '')."""
@@ -205,6 +253,15 @@ def scrape_newznab_instance(
         logging.error(f"Newznab instance '{instance}' is missing URL.")
         return []
 
+    # A season-pack search (multi) can only return packs, and with NZB season
+    # packs disabled every one of them is rejected after the fact
+    # (filter_results), so the request is pure waste: skip it.
+    if (multi and content_type.lower() == 'episode'
+            and get_setting('Usenet Provider', 'disable_nzb_season_packs', True)):
+        logging.info(f"Newznab '{instance}': skipping season-pack search for '{title}' "
+                     f"S{season if season is not None else '?'} (NZB season packs are disabled)")
+        return []
+
     clean_imdb = imdb_id.replace('tt', '') if imdb_id else ''
     endpoint = f'{url}/api'
     # scraper_timeout's own setting description says "0 to disable" — requests
@@ -231,9 +288,18 @@ def scrape_newznab_instance(
         if cached is not None:
             logging.info(f"Newznab '{instance}' cache hit for {params.get('t')} query")
             return cached
+        _left = _search_cooldown_left(endpoint)
+        if _left:
+            logging.info(f"Newznab '{instance}' skipped: searches paused for {int(_left // 60) + 1} more min "
+                         f"after the indexer refused one")
+            return []
         try:
             r = api.get(endpoint, params=params, timeout=timeout)
             logging.info(f"Newznab '{instance}' full request URL: {r.url}")
+            _refused = _search_refusal_seconds(r.status_code, getattr(r, 'headers', None), r.text)
+            if _refused:
+                _record_search_refusal(endpoint, instance, _refused, r.status_code)
+                return []
             if r.status_code != 200:
                 logging.error(f"Newznab '{instance}' HTTP {r.status_code}: {r.text[:200]}")
                 # Cache empty on rate limit or server errors to avoid hammering
@@ -245,6 +311,13 @@ def scrape_newznab_instance(
             return results
         except Exception as exc:
             logging.error(f"Newznab '{instance}' request error: {exc}")
+            # api.get raises on 4xx/5xx: the refusal arrives here with the response.
+            _resp = getattr(exc, 'response', None)
+            if _resp is not None:
+                _refused = _search_refusal_seconds(_resp.status_code, getattr(_resp, 'headers', None),
+                                                   getattr(_resp, 'text', '') or '')
+                if _refused:
+                    _record_search_refusal(endpoint, instance, _refused, _resp.status_code)
             # Cache empty result on rate limit or server errors to avoid immediate retry
             _exc_str = str(exc)
             if any(code in _exc_str for code in ('429', '503', '502', '500')):
@@ -355,6 +428,15 @@ def prefetch_season(
     if not url or not api_key or season is None:
         return 0
     endpoint = f'{url}/api'
+    # NZBBatch calls this on every Scraping tick while any episode of the batch
+    # is still unresolved; a fresh prefetch already holds everything this would
+    # fetch, so reuse it instead of re-paging the whole season every tick.
+    with _SEASON_CACHE_LOCK:
+        fresh = _SEASON_CACHE.get(_season_cache_key(endpoint, clean_imdb, season))
+    if fresh and time.monotonic() - fresh[0] <= _SEASON_CACHE_TTL:
+        logging.info(f"[NZBSeason] '{instance}' S{season:02d} of '{title}': reusing prefetch "
+                     f"from {int(time.monotonic() - fresh[0])}s ago ({len(fresh[1])} results, no API call)")
+        return len(fresh[1])
     timeout = get_setting('Scraping', 'scraper_timeout', 30) or None
     results: List[Dict[str, Any]] = []
     calls = 0
@@ -362,11 +444,23 @@ def prefetch_season(
 
     def _get(params):
         nonlocal calls, ok
+        if _search_cooldown_left(endpoint):
+            return None
         calls += 1
         try:
             r = api.get(endpoint, params=params, timeout=timeout)
         except Exception as exc:
             logging.warning(f"[NZBSeason] '{instance}' season prefetch request error: {exc}")
+            _resp = getattr(exc, 'response', None)
+            if _resp is not None:
+                _refused = _search_refusal_seconds(_resp.status_code, getattr(_resp, 'headers', None),
+                                                   getattr(_resp, 'text', '') or '')
+                if _refused:
+                    _record_search_refusal(endpoint, instance, _refused, _resp.status_code)
+            return None
+        _refused = _search_refusal_seconds(r.status_code, getattr(r, 'headers', None), r.text)
+        if _refused:
+            _record_search_refusal(endpoint, instance, _refused, r.status_code)
             return None
         if r.status_code != 200:
             logging.warning(f"[NZBSeason] '{instance}' season prefetch HTTP {r.status_code}")

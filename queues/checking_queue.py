@@ -108,6 +108,26 @@ class CheckingQueue:
             self._torrent_providers = {}
         if not hasattr(self, '_rediscovery_exhausted'):
             self._rediscovery_exhausted = set()
+        if not hasattr(self, '_immediate_scan_at'):
+            self._immediate_scan_at = {}  # directory -> time of its last ffprobe-path immediate scan
+        if not hasattr(self, '_cli_ids_sent'):
+            self._cli_ids_sent = {}  # infohash -> cli_ids map last registered with cli_mount
+
+    def _register_cli_ids_once(self, client, infohash, cli_ids) -> bool:
+        """Send cli_ids (and tags) to cli_mount unless this exact map was already sent.
+
+        Checking runs every 30 s and reaches the registration from two places per
+        pass, so without this the same PATCH went out twice a pass until the item
+        was Collected.
+        """
+        if self._cli_ids_sent.get(infohash) == cli_ids:
+            return False
+        client.register_cli_ids(infohash, cli_ids)
+        client.push_tags_for_item(infohash, next(iter(cli_ids.values())))
+        self._cli_ids_sent[infohash] = dict(cli_ids)
+        if len(self._cli_ids_sent) > 2000:
+            self._cli_ids_sent.pop(next(iter(self._cli_ids_sent)))
+        return True
 
     def update(self):
         from database import get_all_media_items
@@ -1541,10 +1561,8 @@ class CheckingQueue:
                                         try:
                                             from usenet.climount_client import get_climount_client as _get_dc2
                                             _dc2 = _get_dc2()
-                                            if _dc2 and _dc2.is_enabled():
-                                                _dc2.register_cli_ids(_ih2, _cli_ids2)
+                                            if _dc2 and _dc2.is_enabled() and self._register_cli_ids_once(_dc2, _ih2, _cli_ids2):
                                                 logging.info(f'[CheckingQueue] Registered {len(_cli_ids2)} cli_debrid IDs for {_ih2}')
-                                                _dc2.push_tags_for_item(_ih2, next(iter(_cli_ids2.values())))
                                         except Exception as _r2:
                                             logging.debug(f'[CheckingQueue] cli_ids registration error: {_r2}')
                             except Exception as _r2e:
@@ -1562,6 +1580,11 @@ class CheckingQueue:
                                 self._nzb_plex_scan_triggered.add(torrent_id)
                                 self._plex_scan_tried_at[torrent_id] = current_time
                                 _scan_mount = get_setting('Plex', 'mounted_file_location', '').rstrip('/') or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/')
+                                # In Symlinked/Local mode Plex's libraries are the symlink tree,
+                                # which the batched scan below covers; a scan of the raw mount
+                                # folder matches no library and only costs Plex calls.
+                                if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                                    _scan_mount = ''
                                 _scan_folder = _sample.get('debrid_folder_name') or _sample.get('filled_by_title') or ''
                                 _scan_itype = _sample.get('type', 'movie')
                                 if _scan_mount and _scan_folder:
@@ -1653,7 +1676,12 @@ class CheckingQueue:
                                                 _is_nzb_for_scan = _torrent_id_for_scan.startswith('nzb:')
                                                 _ffprobe_scan_section = 'Usenet Provider' if _is_nzb_for_scan else 'Debrid Provider'
                                                 _ffprobe_scan_key = 'ffprobe_all_nzbs' if _is_nzb_for_scan else 'ffprobe_all_debrid_additions'
-                                                if get_setting(_ffprobe_scan_section, _ffprobe_scan_key, False):
+                                                _now_scan = time.time()
+                                                _recent_scan = _now_scan - self._immediate_scan_at.get(directory, 0) < 60
+                                                if get_setting(_ffprobe_scan_section, _ffprobe_scan_key, False) and not _recent_scan:
+                                                    self._immediate_scan_at[directory] = _now_scan
+                                                    if len(self._immediate_scan_at) > 500:
+                                                        self._immediate_scan_at.pop(next(iter(self._immediate_scan_at)))
                                                     try:
                                                         if use_jellyfin:
                                                             emby_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
@@ -1663,6 +1691,9 @@ class CheckingQueue:
                                                     except Exception as _ffprobe_scan_err:
                                                         logging.warning(f"[ffprobe] Immediate scan failed for {directory}: {_ffprobe_scan_err}")
                                                 else:
+                                                    # Setting off, or this directory had an immediate
+                                                    # scan moments ago (the other episodes of a pack):
+                                                    # one batched scan after the group covers them.
                                                     directories_to_scan[directory] = item_type
 
                                 conn = get_db_connection()
@@ -1757,8 +1788,7 @@ class CheckingQueue:
                                     from usenet.climount_client import get_climount_client as _get_dc
                                     _dc = _get_dc()
                                     if _dc and _dc.is_enabled():
-                                        _dc.register_cli_ids(_infohash, _cli_ids)
-                                        _dc.push_tags_for_item(_infohash, next(iter(_cli_ids.values())))
+                                        self._register_cli_ids_once(_dc, _infohash, _cli_ids)
                         except Exception as _cli_reg_err:
                             logging.debug(f'[CheckingQueue] cli_ids registration error: {_cli_reg_err}')
                     # --- End of restored Symlinked/Local processing logic ---

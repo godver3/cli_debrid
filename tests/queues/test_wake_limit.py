@@ -34,5 +34,32 @@ class ResolveWakeLimitTest(unittest.TestCase):
             self.assertEqual(sleeping_queue.get_global_wake_limit(), 10)
 
 
+class WakeBackoffTest(unittest.TestCase):
+    def test_backoff_steps_and_cap(self):
+        from datetime import timedelta
+        base = timedelta(minutes=30)
+        got = [sleeping_queue.sleep_for_wake(base, n) for n in (0, 3, 4, 7, 8, 11, 12, 23, None)]
+        self.assertEqual([g.total_seconds() / 60 for g in got],
+                         [30, 30, 60, 60, 120, 120, 120, 120, 30])
+
+    def test_process_waits_for_the_backed_off_sleep(self):
+        from datetime import datetime, timedelta
+        q = sleeping_queue.SleepingQueue()
+        q.items = [{'id': 1, 'version': '1080p', 'wake_count': 5},   # 60 min sleep
+                   {'id': 2, 'version': '1080p', 'wake_count': 1}]   # 30 min sleep
+        asleep_since = datetime.now() - timedelta(minutes=45)
+        q.sleeping_queue_times = {1: asleep_since, 2: asleep_since}
+        qm = mock.Mock()
+        qm.generate_identifier.side_effect = lambda item: str(item['id'])
+        with mock.patch.object(sleeping_queue, 'load_config', return_value={}), \
+             mock.patch.object(sleeping_queue, '_get_int_setting',
+                               side_effect=lambda s, k, default=None: {'wake_limit': 24, 'sleep_duration_minutes': 30}.get(k, default)), \
+             mock.patch.object(q, 'wake_items') as wake, \
+             mock.patch.object(q, 'blacklist_items'):
+            q.process(qm)
+        woken = [i['id'] for i in wake.call_args.args[1]]
+        self.assertEqual(woken, [2])
+
+
 if __name__ == '__main__':
     unittest.main()

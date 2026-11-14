@@ -1160,37 +1160,6 @@ class TorrentProcessor:
                 logging.info(f'[{item_identifier}] Skipping NZB {title!r} — guid in not-wanted list')
                 return None
 
-        # Fetch NZB XML once for segment blacklist checks on reuse and submit paths.
-        _nzb_xml = None
-        # Set when this indexer refused downloads for a limit, now or moments ago.
-        # Reusing an in-flight job (below) doesn't need the indexer, so only a
-        # fresh submission is blocked.
-        from usenet.nzb_fetch_cooldown import (
-            classify_refusal, cooldown_reason, first_skip_this_window, record_indexer_limit,
-        )
-        _indexer_refusal = cooldown_reason(nzb_url)
-        if not _indexer_refusal:
-            try:
-                from routes.api_tracker import api as _nzb_api_early
-                _nr_early = _nzb_api_early.get(nzb_url, timeout=15, allow_redirects=True)
-                if _nr_early.status_code == 200 and '<nzb' in _nr_early.text.lower():
-                    _nzb_xml = _nr_early.text
-                    from database.not_wanted_magnets import is_nzb_segment_not_wanted
-                    if is_nzb_segment_not_wanted(_nzb_xml):
-                        logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
-                        return None
-                else:
-                    _cooldown_s = classify_refusal(_nr_early.status_code, getattr(_nr_early, 'headers', None),
-                                                   _nr_early.text[:2000])
-                    if _cooldown_s:
-                        # cli_mount's URL fetch and the direct-upload fallback would hit
-                        # the same refusal, so don't send either.
-                        record_indexer_limit(nzb_url, _cooldown_s)
-                        _indexer_refusal = (f'indexer refused the download (HTTP {_nr_early.status_code}); '
-                                            f'skipping its NZBs for {max(1, _cooldown_s // 60)} min')
-            except Exception as _nzb_early_err:
-                logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_early_err}')
-
         def _blocked_nzb_job_reuse(existing_hash: str) -> bool:
             """True when an existing cli_mount job must not be reused for this result."""
             if is_magnet_not_wanted(existing_hash):
@@ -1259,7 +1228,12 @@ class TorrentProcessor:
             _found_dc = False
             while not _found_dc:
                 _er = _check_api.get(f'{_dcy_url}/api/torrents', headers=_ch,
+                                     # search= (name/hash substring) narrows the list to
+                                     # candidates whose name contains the prefix — every
+                                     # exact/prefix match below does — instead of paging
+                                     # through every job in cli_mount on each submission.
                                      params={'page': _page_dc, 'limit': 100,
+                                             'search': _job_prefix or job_title,
                                              'sort_by': 'added_on', 'sort_order': 'desc'},
                                      timeout=5)
                 if _er.status_code != 200:
@@ -1303,6 +1277,55 @@ class TorrentProcessor:
                 _page_dc += 1
         except Exception:
             pass
+
+        # Fetch the NZB XML once, for the segment blacklist check and the upload.
+        # Done only after the two reuse checks above found no in-flight job, so a
+        # reused job never costs an indexer grab.
+        _nzb_xml = None
+        # Set when this indexer refused downloads for a limit, now or moments ago.
+        # Only a fresh submission (below) is blocked.
+        from usenet.nzb_fetch_cooldown import (
+            classify_refusal, cooldown_reason, first_skip_this_window, record_indexer_limit,
+        )
+        _indexer_refusal = cooldown_reason(nzb_url)
+        if not _indexer_refusal:
+            try:
+                from routes.api_tracker import api as _nzb_api_early
+                _nr_early = _nzb_api_early.get(nzb_url, timeout=15, allow_redirects=True)
+                if _nr_early.status_code == 200 and '<nzb' in _nr_early.text.lower():
+                    _nzb_xml = _nr_early.text
+                    from database.not_wanted_magnets import is_nzb_segment_not_wanted
+                    if is_nzb_segment_not_wanted(_nzb_xml):
+                        logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
+                        return None
+                else:
+                    _cooldown_s = classify_refusal(_nr_early.status_code, getattr(_nr_early, 'headers', None),
+                                                   _nr_early.text[:2000])
+                    if _cooldown_s:
+                        # cli_mount's URL fetch and the direct-upload fallback would hit
+                        # the same refusal, so don't send either.
+                        record_indexer_limit(nzb_url, _cooldown_s)
+                        _indexer_refusal = (f'indexer refused the download (HTTP {_nr_early.status_code}); '
+                                            f'skipping its NZBs for {max(1, _cooldown_s // 60)} min')
+            except Exception as _nzb_early_err:
+                # api.get raises on 4xx/5xx, so a 429/503 refusal lands here, not
+                # in the status-code branch above: classify it the same way so the
+                # cooldown starts and cli_mount's URL fetch + the direct-upload
+                # fallback don't hit the refusing indexer again.
+                _err_resp = getattr(_nzb_early_err, 'response', None)
+                _cooldown_s = 0
+                if _err_resp is not None:
+                    try:
+                        _cooldown_s = classify_refusal(_err_resp.status_code, getattr(_err_resp, 'headers', None),
+                                                       (getattr(_err_resp, 'text', '') or '')[:2000])
+                    except Exception:
+                        _cooldown_s = 0
+                if _cooldown_s:
+                    record_indexer_limit(nzb_url, _cooldown_s)
+                    _indexer_refusal = (f'indexer refused the download (HTTP {_err_resp.status_code}); '
+                                        f'skipping its NZBs for {max(1, _cooldown_s // 60)} min')
+                else:
+                    logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_early_err}')
 
         _item = item or {}
         # Derive is_anime: prefer trigger_is_anime DB flag, fall back to genres

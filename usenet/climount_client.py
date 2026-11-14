@@ -16,6 +16,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 from typing import Optional, Dict, Any, Tuple
 
 from utilities.settings import get_setting
@@ -247,7 +248,7 @@ class CliMountClient:
         # Fast path: try direct URL with the original (un-normalised) name
         if original_name:
             try:
-                r = api.get(f'{self.base_url}/api/browse/nzbs/{original_name}',
+                r = api.get(f'{self.base_url}/api/browse/nzbs/{urllib.parse.quote(original_name, safe="")}',
                             headers=self._headers(), timeout=10)
                 if r.status_code == 200:
                     return original_name
@@ -288,7 +289,7 @@ class CliMountClient:
         """Return all video files inside a cli_mount NZB folder."""
         _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
         try:
-            r = api.get(f'{self.base_url}/api/browse/nzbs/{folder_name}',
+            r = api.get(f'{self.base_url}/api/browse/nzbs/{urllib.parse.quote(folder_name, safe="")}',
                         headers=self._headers(), timeout=15)
             if r.status_code != 200:
                 return []
