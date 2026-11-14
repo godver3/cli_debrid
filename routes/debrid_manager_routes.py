@@ -318,11 +318,20 @@ _plex_trash_items_cache = {'items': None, 'ts': 0}
 _RENZB_MAX_RESCRAPE_SUBMITS = 3
 
 
+def _dm_provider():
+    """Provider picked in the Debrid Manager header (?provider=<name>), else the primary."""
+    from debrid import get_provider_by_name
+    name = request.args.get('provider')
+    if not name and request.is_json:
+        name = (request.get_json(silent=True) or {}).get('provider')
+    return (get_provider_by_name(name) if name else None) or get_debrid_provider()
+
+
 @debrid_manager_bp.route('/api/active')
 @admin_required
 def api_active():
     try:
-        provider = get_debrid_provider()
+        provider = _dm_provider()
         all_torrents = provider.list_active_torrents()
         if not isinstance(all_torrents, list):
             all_torrents = []
@@ -540,7 +549,7 @@ def api_active_files_delete():
 @admin_required
 def api_torrent_detail(torrent_id):
     try:
-        provider = get_debrid_provider()
+        provider = _dm_provider()
         detail = provider.get_torrent_info(torrent_id)
         return jsonify({'success': True, 'torrent': detail})
     except Exception as e:
@@ -552,7 +561,7 @@ def api_torrent_detail(torrent_id):
 @admin_required
 def api_delete_torrent(torrent_id):
     try:
-        provider = get_debrid_provider()
+        provider = _dm_provider()
         provider.remove_torrent(torrent_id, removal_reason='Manual removal via Debrid Manager')
         _invalidate_library_cache()
         _reconcile_cache['data'] = None
@@ -575,7 +584,7 @@ def api_batch_delete():
     if not ids:
         return jsonify({'success': False, 'error': 'No IDs provided'}), 400
 
-    provider = get_debrid_provider()
+    provider = _dm_provider()
     results = {'deleted': [], 'failed': []}
 
     def delete_one(tid):
@@ -1054,7 +1063,7 @@ def api_usage():
     """Return account info + traffic details for the Usage tab."""
     try:
         from datetime import datetime
-        provider = get_debrid_provider()
+        provider = _dm_provider()
         if not provider:
             return jsonify({'error': 'No debrid provider configured'}), 503
         sub = provider.get_subscription_status()

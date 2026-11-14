@@ -11,6 +11,35 @@
 <div class="dm-container">
     <div class="dm-header">
         <h2>{{ 'cli_mount' if dm_mode == 'climount' else 'Debrid Manager' }}</h2>
+        {% if dm_mode != 'climount' and debrid_all_providers|length > 1 %}
+        <label class="dm-provider-pick" title="Active, Usage and torrent actions use this provider. Torrents and Audit show {{ debrid_all_providers[0].name }}.">
+            <select id="dm-provider-select" class="dm-select">
+                {% for p in debrid_all_providers %}<option value="{{ p.name }}">{{ p.name }}</option>{% endfor %}
+            </select>
+        </label>
+        <style>.dm-provider-pick{margin-left:12px}.dm-provider-pick select{padding:4px 8px;font-size:12px}</style>
+        <script>
+        (function () {
+            // Send the picked provider with the requests that act on one account.
+            var sel = document.getElementById('dm-provider-select');
+            var KEY = 'dm_provider';
+            try { var saved = sessionStorage.getItem(KEY); if (saved) sel.value = saved; } catch (e) {}
+            if (!sel.value) sel.selectedIndex = 0;
+            var scoped = /^\/debrid_manager\/api\/(active|usage|torrent\/|batch_delete)/;
+            var origFetch = window.fetch;
+            window.fetch = function (input, init) {
+                if (typeof input === 'string' && scoped.test(input) && sel.selectedIndex > 0) {
+                    input += (input.indexOf('?') >= 0 ? '&' : '?') + 'provider=' + encodeURIComponent(sel.value);
+                }
+                return origFetch.call(this, input, init);
+            };
+            sel.addEventListener('change', function () {
+                try { sessionStorage.setItem(KEY, sel.value); } catch (e) {}
+                location.reload();
+            });
+        })();
+        </script>
+        {% endif %}
         <div class="dm-tabs">
             {% if dm_mode != 'climount' %}
             <button class="dm-tab active" data-tab="active">

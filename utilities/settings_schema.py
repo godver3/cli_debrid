@@ -323,7 +323,7 @@ SETTINGS_SCHEMA = {
         },
         "url": {
             "type": "string",
-            "description": "cli_mount URL — must not conflict with Phalanx DB (port 8888). Use the actual cli_mount host/port (e.g. http://192.168.1.x:8888 or http://climount:8888)",
+            "description": "Mount URL: where cli_debrid reaches the usenet mount (cli_mount, NzbDAV or Zurg). Settings → Usenet Mount → Detect looks for it. For cli_mount don't use localhost:8888 (that is Phalanx DB); use its host/container name, e.g. http://climount:8888.",
             "default": ""
         },
         "api_token": {
