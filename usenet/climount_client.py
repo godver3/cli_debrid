@@ -217,6 +217,13 @@ class CliMountClient:
                 files={k: (None, v) for k, v in fields},
                 timeout=30,
             )
+            # cli_mount downloads the NZB from the indexer itself: that is a grab
+            # api.get never sees, so count it here.
+            try:
+                from usenet import indexer_quota
+                indexer_quota.record_url(nzb_url, 'grab')
+            except Exception:
+                pass
             if r.status_code == 200:
                 result = r.json()
                 if isinstance(result, list) and result:

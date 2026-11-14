@@ -183,6 +183,9 @@ class APITracker:
             self.current_url = url
             self._args = None
             kwargs.setdefault('timeout', DEFAULT_TIMEOUT)
+            # Count requests to Newznab indexers against their daily API/grab limits.
+            from usenet.indexer_quota import note_request
+            note_request(url, kwargs.get('params'))
             response = self.session.get(url, **kwargs)
             response.raise_for_status()
             return response

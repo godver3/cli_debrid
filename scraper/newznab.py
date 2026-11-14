@@ -16,6 +16,7 @@ from utilities.settings import get_setting
 from PTT import parse_title as ptt_parse
 from rapidfuzz import fuzz as _fuzz
 from scraper.request_dedup import SingleFlightGuard
+from usenet import indexer_quota
 
 def _get_retention_days() -> int:
     """Get configured usenet retention days. 0 = disabled."""
@@ -315,6 +316,8 @@ def scrape_newznab_instance(
             logging.info(f"Newznab '{instance}' skipped: searches paused for {int(_left // 60) + 1} more min "
                          f"after the indexer refused one")
             return []
+        if not indexer_quota.allow(instance, 'api'):
+            return []
         try:
             r = api.get(endpoint, params=params, timeout=timeout)
             logging.info(f"Newznab '{instance}' full request URL: {r.url}")
@@ -466,7 +469,7 @@ def prefetch_season(
 
     def _get(params):
         nonlocal calls, ok
-        if _search_cooldown_left(endpoint):
+        if _search_cooldown_left(endpoint) or not indexer_quota.allow(instance, 'api'):
             return None
         calls += 1
         try:
@@ -761,6 +764,8 @@ def scrape_newznab_season_aggregate(
             return []
         ep_endpoint = f'{url}/api'
         results = []
+        if not indexer_quota.allow(instance, 'api'):
+            return results
         # ID-based tvsearch first
         if clean_imdb:
             id_params = {

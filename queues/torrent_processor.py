@@ -1289,6 +1289,10 @@ class TorrentProcessor:
         )
         _indexer_refusal = cooldown_reason(nzb_url)
         if not _indexer_refusal:
+            from usenet import indexer_quota as _iq
+            if not _iq.allow_url(nzb_url, 'grab'):
+                _indexer_refusal = "the indexer's daily grab limit is used up; waiting for it to reset"
+        if not _indexer_refusal:
             try:
                 from routes.api_tracker import api as _nzb_api_early
                 _nr_early = _nzb_api_early.get(nzb_url, timeout=15, allow_redirects=True)

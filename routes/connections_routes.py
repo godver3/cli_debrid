@@ -601,6 +601,14 @@ def check_climount_connection():
         return {'name': 'Usenet Provider', 'connected': False, 'error': str(e), 'details': {}}
 
 
+def _indexer_usage_line(scraper_id):
+    try:
+        from usenet.indexer_quota import usage_line
+        return usage_line(scraper_id)
+    except Exception:
+        return ''
+
+
 def check_scraper_connection(scraper_id, scraper_config):
     """Check connection to a specific scraper."""
     scraper_type = scraper_config.get('type')
@@ -770,7 +778,8 @@ def check_scraper_connection(scraper_id, scraper_config):
             base_response['details'].update({
                 'url': url,
                 'subscription_expiry_date': scraper_config.get('subscription_expiry_date', ''),
-                'auto_renew': scraper_config.get('auto_renew', False)
+                'auto_renew': scraper_config.get('auto_renew', False),
+                'indexer_usage': _indexer_usage_line(scraper_id),
             })
 
         elif scraper_type == 'AIOStreams':
@@ -1576,6 +1585,7 @@ def index():
                 if scraper_type == 'Newznab':
                     details['subscription_expiry_date'] = scfg.get('subscription_expiry_date', '')
                     details['auto_renew'] = scfg.get('auto_renew', False)
+                    details['indexer_usage'] = _indexer_usage_line(sid)
                 skeleton_scrapers.append({'name': name, 'connected': None, 'details': details})
         for sid, scfg in _cfg.get('Content Sources', {}).items():
             if scfg.get('enabled', False) and scfg.get('type') != 'Collected':

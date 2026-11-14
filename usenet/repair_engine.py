@@ -1215,7 +1215,13 @@ def _prefetch_candidate_nzb(result: dict) -> bool:
     nzb_url = result.get('nzb_url') or result.get('magnet', '')
     if not nzb_url:
         return True
+    from usenet import indexer_quota
+    if not indexer_quota.allow_url(nzb_url, 'grab'):
+        # Submitting it by URL would make cli_mount grab it anyway: skip it.
+        logger.info(f'[NZBRepair] Skipping {result.get("title")!r}: its indexer\'s daily grab limit is used up')
+        return False
     try:
+        indexer_quota.record_url(nzb_url, 'grab')
         resp = requests.get(nzb_url, timeout=15, allow_redirects=True,
                             headers={'User-Agent': 'Sabnzbd/3.0.0'})
         if resp.status_code == 200 and '<nzb' in resp.text.lower():

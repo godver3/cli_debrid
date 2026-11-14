@@ -376,6 +376,26 @@
             <input type="checkbox" id="{{ scraper_id }}-auto_renew" name="Scrapers.{{ scraper_id }}.auto_renew" {% if config.auto_renew %}checked{% endif %} data-section="Scrapers" data-key="{{ scraper_id }}.auto_renew">
             <small class="settings-description">Optional. Whether this subscription renews automatically.</small>
         </div>
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-api_limit_per_day" class="settings-title">API Hits per Day:</label>
+            <input type="number" min="0" step="1" id="{{ scraper_id }}-api_limit_per_day" name="Scrapers.{{ scraper_id }}.api_limit_per_day" value="{{ config.api_limit_per_day | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.api_limit_per_day" placeholder="No limit">
+            <small class="settings-description">Optional. Leave blank for no limit. Searches stop for the day once reached. Set it a little under your real limit if other apps share this API key.</small>
+        </div>
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-grab_limit_per_day" class="settings-title">Grabs per Day:</label>
+            <input type="number" min="0" step="1" id="{{ scraper_id }}-grab_limit_per_day" name="Scrapers.{{ scraper_id }}.grab_limit_per_day" value="{{ config.grab_limit_per_day | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.grab_limit_per_day" placeholder="No limit">
+            <small class="settings-description">Optional. Leave blank for no limit. Once reached, this indexer's NZBs wait (results are kept) until the limit resets.</small>
+        </div>
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-limit_reset" class="settings-title">Limits Reset:</label>
+            <select id="{{ scraper_id }}-limit_reset" name="Scrapers.{{ scraper_id }}.limit_reset" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.limit_reset">
+                {% set _reset = config.limit_reset | default('midnight_local') %}
+                <option value="midnight_local" {% if _reset == 'midnight_local' %}selected{% endif %}>Midnight (this server's time zone)</option>
+                <option value="midnight_utc" {% if _reset == 'midnight_utc' %}selected{% endif %}>Midnight UTC</option>
+                <option value="rolling_24h" {% if _reset == 'rolling_24h' %}selected{% endif %}>Rolling 24 hours (safest if unsure)</option>
+            </select>
+            <small class="settings-description">When the daily counts start over. Only used when a limit is set.</small>
+        </div>
         {% endif %}
         {% if config.type == 'AIOStreams' %}
         <!-- AIOStreams Setup Information -->

@@ -188,6 +188,14 @@ class TestProcessNzbResult(unittest.TestCase):
         self.client.add_nzb.assert_not_called()
         self.assertIsNotNone(cd.cooldown_reason(self.URL))
 
+    def test_daily_grab_limit_defers_without_touching_the_indexer(self):
+        with mock.patch('usenet.indexer_quota.allow_url', return_value=False):
+            out, hits = self._run(_Resp(200, NZB_XML))
+        self.assertIs(out, NZB_DEFERRED_INDEXER_COOLDOWN)
+        self.assertEqual(hits, 0)
+        self.client.add_nzb.assert_not_called()
+        self.client.add_nzb_content.assert_not_called()
+
     def test_newznab_limit_error_with_http_200(self):
         out, hits = self._run(_Resp(200, LIMIT_XML))
         self.assertIs(out, NZB_DEFERRED_INDEXER_COOLDOWN)

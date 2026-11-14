@@ -1191,6 +1191,22 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "default": False,
                     "description": "Optional: whether this Newznab subscription auto-renews."
+                },
+                "api_limit_per_day": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional: API hits (searches) this indexer allows per day. Leave blank for no limit. When reached, cli_debrid stops searching this indexer until the limit resets. Set it a little under your real limit if other apps use the same API key."
+                },
+                "grab_limit_per_day": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional: NZB downloads (grabs) this indexer allows per day. Leave blank for no limit. When reached, its results are kept and tried again after the limit resets."
+                },
+                "limit_reset": {
+                    "type": "string",
+                    "default": "midnight_local",
+                    "choices": ["midnight_local", "midnight_utc", "rolling_24h"],
+                    "description": "When the daily limits start over: midnight in this server's time zone, midnight UTC, or a rolling 24 hours (the safest if you don't know what your indexer uses). Only used when a limit is set."
                 }
             }
         }
