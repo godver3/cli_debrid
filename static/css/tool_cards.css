@@ -630,3 +630,9 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
 #tngDebug .card .tdb-tile small{color:var(--text2);font-size:11.5px}
 #tngDebug .card-head .plex-labels-help-btn{background:var(--surface2);border:1px solid var(--border2);color:var(--text2)}
 #tngDebug .card-head .plex-labels-help-btn:hover{border-color:var(--accent);color:#fff}
+/* Masonry: cards stack in columns at their own height, no holes under short ones. */
+#tngDebug .grid{display:block;columns:3 320px;column-gap:14px}
+#tngDebug .grid > .card{break-inside:avoid;margin:0 0 14px;width:100%}
+#tngDebug .grid > .card.card-wide,
+#tngDebug .grid > .card[data-title="plex labels management"]{column-span:all}
+@media (max-width:640px){ #tngDebug .grid{columns:1} }

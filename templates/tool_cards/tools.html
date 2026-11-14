@@ -98,6 +98,100 @@
                 <div id="test-lookup-results" class="results-area" style="margin-top: 15px;"></div>
             </form>
         </div>
+{# Restored from the old Debug page (they were removed in the split, but people use them). #}
+<div data-cat="library" class="debug_item">
+            <h3>Get Wanted Content</h3>
+            <form action="{{ url_for('debug.get_wanted_content') }}" method="POST" id="get-wanted-form">
+                <div class="form-group">
+                    <label for="wanted_source">Source:</label>
+                    <select id="wanted_source" name="source" required>
+                        <option value="all">All Enabled Sources</option>
+                        {% for source in content_sources %}
+                            {% if content_sources[source].enabled %}
+                                {% set display_name = content_sources[source].get('display_name') %}
+                                {% if display_name %}
+                                    <option value="{{ source }}">{{ display_name }}</option>
+                                {% else %}
+                                    {% set formatted_name = source.replace('_', ' ') %}
+                                    <option value="{{ source }}">{{ formatted_name | title }}</option>
+                                {% endif %}
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit">Get Wanted</button>
+            </form>
+        </div>
+<div data-cat="library" class="debug_item">
+            <h3>Refresh Release Dates</h3>
+            <p class="description">Force a fresh release-date lookup from your metadata providers for active queue items, bypassing cached values. Useful when a date is unknown or outdated.</p>
+            <form action="{{ url_for('debug.refresh_release_dates_route') }}" method="POST" id="refresh-release-dates-form">
+                <button type="submit">Refresh Release Dates</button>
+            </form>
+        </div>
+<div data-cat="queues" class="debug_item">
+            <h3>Run Task Manually</h3>
+            <form id="run-task-form">
+                <div class="form-group">
+                    <label for="task_select">Select Task:</label>
+                    <input type="text" id="task_select_filter" class="finput" placeholder="Filter tasks..." autocomplete="off">
+                    <select id="task_select" name="task_name" size="1">
+                        <!-- Options will be populated dynamically -->
+                    </select>
+                </div>
+                <button type="submit">Run Task</button>
+            </form>
+        </div>
+<div data-cat="queues" class="debug_item">
+            <h3>Bulk Queue Actions</h3>
+            <form id="bulk-queue-action-form">
+                <div class="form-group">
+                    <label for="queue_select">Select Queue:</label>
+                    <select id="queue_select" name="queue_select">
+                        <option value="Adding">Adding</option>
+                        <option value="Blacklisted">Blacklisted</option>
+                        <option value="Checking">Checking</option>
+                        <option value="Scraping">Scraping</option>
+                        <option value="Sleeping">Sleeping</option>
+                        <option value="Unreleased">Unreleased</option>
+                        <option value="Wanted">Wanted</option>
+                        <option value="Pending Uncached">Pending Uncached</option>
+                        <option value="Upgrading">Upgrading</option>
+                    </select>
+                </div>
+                <div id="queue_items_container" class="queue-items-container">
+                    <h4>Select Items:</h4>
+                    <div class="select-all-container">
+                        <button type="button" id="select_all_btn">Select All</button>
+                        <button type="button" id="unselect_all_btn">Unselect All</button>
+                    </div>
+                    <div id="queue_items">Loading...</div>
+                </div>
+                <div class="form-group">
+                    <label for="action_select">Action:</label>
+                    <select id="action_select" name="action">
+                        <option value="delete">Delete</option>
+                        <option value="move">Move to...</option>
+                    </select>
+                </div>
+                <div id="target_queue_container" style="display: none;">
+                    <label for="target_queue">Target Queue:</label>
+                    <select id="target_queue" name="target_queue">
+                        <option value="Adding">Adding</option>
+                        <option value="Blacklisted">Blacklisted</option>
+                        <option value="Checking">Checking</option>
+                        <option value="Scraping">Scraping</option>
+                        <option value="Sleeping">Sleeping</option>
+                        <option value="Unreleased">Unreleased</option>
+                        <option value="Wanted">Wanted</option>
+                        <option value="Pending Uncached">Pending Uncached</option>
+                        <option value="Upgrading">Upgrading</option>
+                        <option value="Collected">Collected</option>
+                    </select>
+                </div>
+                <button type="submit">Apply Action</button>
+            </form>
+        </div>
 <div data-cat="symlinks" class="debug_item verification-queue">
             <h3>Symlink Verification Queue</h3>
             <div id="verification-stats" class="verification-stats">

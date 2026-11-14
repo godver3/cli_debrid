@@ -283,6 +283,10 @@
     /* Tools */
     'get collected from library (plex)': { icon:'fa-solid fa-film', desc:'Read what Plex already has and mark it Collected. Backfill only updates file sizes of Collected items.' },
     'version propagator':                { icon:'fa-solid fa-code-branch', desc:'Add a second version to everything that has the first: every item with the original version gets the propagated one too.' },
+    'get wanted content':                { icon:'fa-solid fa-download', desc:'Check your content sources now and add anything new to Wanted.' },
+    'refresh release dates':             { icon:'fa-solid fa-calendar-days' },
+    'run task manually':                 { icon:'fa-solid fa-play', desc:'Run a queue or a task once, right now.' },
+    'bulk queue actions':                { icon:'fa-solid fa-boxes-stacked', desc:'Delete items in a queue, or move them to another queue.' },
     'bulk subtitle scan':                { icon:'fa-solid fa-closed-captioning' },
     'direct emby/jellyfin scan':         { icon:'fa-solid fa-server' },
     'move item id to upgrading':         { icon:'fa-solid fa-arrow-up-right-dots', desc:'Send one Collected item back to Upgrading so it looks for a better release.' },

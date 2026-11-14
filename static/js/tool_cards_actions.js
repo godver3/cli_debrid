@@ -246,6 +246,8 @@
 
         let lastChecked = null;
 
+        // Bulk Queue Actions: only on the page that has the card (Tools > Queues & tasks).
+        if (queueSelect && actionSelect && selectAllBtn && unselectAllBtn) {
         queueSelect.addEventListener('change', function() {
             console.log('Queue selected:', this.value);
             fetchQueueItems(this.value);
@@ -444,6 +446,7 @@
         // Initial fetch of queue items
         console.log('Initial queue fetch');
         fetchQueueItems(queueSelect.value);
+        } // end Bulk Queue Actions
 
         // Add this new function to fetch and display rate limit information
         function fetchRateLimitInfo() {
@@ -456,9 +459,13 @@
                 return;
             }
             
+            // base.html has its own #rate-limit-info; this card's parts are only on Diagnostics.
+            const rlLoading = document.getElementById('rate-limit-loading');
+            const rlContent = document.getElementById('rate-limit-content');
+            if (!rlLoading || !rlContent) return;
             // Show loading message
-            document.getElementById('rate-limit-loading').style.display = 'block';
-            document.getElementById('rate-limit-content').style.display = 'none';
+            rlLoading.style.display = 'block';
+            rlContent.style.display = 'none';
             
             // Fetch the rate limit data
             fetch('/debug/api/rate_limit_info')
@@ -512,7 +519,8 @@
             // Check if rate limit info is displayed after a short delay
             setTimeout(function() {
                 const rateLimitInfo = document.getElementById('rate-limit-info');
-                if (rateLimitInfo && document.getElementById('rate-limit-loading').style.display === 'block') {
+                const rlLoading = document.getElementById('rate-limit-loading');
+                if (rateLimitInfo && rlLoading && rlLoading.style.display === 'block') {
                     console.log('Rate limit info still loading, trying again');
                     fetchRateLimitInfo();
                 }
@@ -646,7 +654,7 @@
 
         // Handler for getCollectedForm
         const getCollectedForm = document.getElementById('get-collected-form');
-        getCollectedForm.addEventListener('submit', function(e) {
+        getCollectedForm?.addEventListener('submit', function(e) {
             e.preventDefault();
             const formData = new FormData(this);
             const collectionType = formData.get('collection_type');
@@ -692,7 +700,7 @@
 
         // Handler for getWantedForm
         const getWantedForm = document.getElementById('get-wanted-form');
-        getWantedForm.addEventListener('submit', function(e) {
+        getWantedForm?.addEventListener('submit', function(e) {
             e.preventDefault();
             const formData = new FormData(this);
             const sourceId = formData.get('source');
@@ -832,7 +840,7 @@
 
         // Add event listener for the run task form
         const runTaskForm = document.getElementById('run-task-form');
-        runTaskForm.addEventListener('submit', function(e) {
+        runTaskForm?.addEventListener('submit', function(e) {
             e.preventDefault();
             const taskSelect = document.getElementById('task_select');
             const taskName = taskSelect.value;
@@ -912,7 +920,7 @@
         });
 
         // Reset battery show cache button
-        document.getElementById('reset-battery-show-cache-btn').addEventListener('click', function() {
+        document.getElementById('reset-battery-show-cache-btn')?.addEventListener('click', function() {
             const btn = this;
             const result = document.getElementById('reset-battery-show-cache-result');
             btn.disabled = true;
@@ -1178,7 +1186,8 @@
             });
         }
 
-        // Initial fetch to show current status without refreshing
+        // Initial fetch to show current status without refreshing (only where the card is: Diagnostics)
+        if (document.getElementById('plex-token-status')) {
         fetch('/debug/validate_plex_tokens', {
             method: 'GET'
         })
@@ -1189,11 +1198,12 @@
         .catch(error => {
             console.error('Error:', error);
             const container = document.querySelector('.token-status-container');
-            container.innerHTML = `<div class="error">Error loading token status: ${error}</div>`;
+            if (container) container.innerHTML = `<div class="error">Error loading token status: ${error}</div>`;
         });
+        }
 
         // Add click handler for refresh button
-        document.getElementById('refresh-plex-tokens').addEventListener('click', () => {
+        document.getElementById('refresh-plex-tokens')?.addEventListener('click', () => {
             refreshPlexTokens();
         });
 
@@ -1268,6 +1278,7 @@
 
         function refreshTraktTokenStatus() {
             const button = document.getElementById('refresh-trakt-tokens');
+            if (!button) return;  // the card is only on Diagnostics
             button.disabled = true;
             button.textContent = 'Refreshing...';
 
@@ -1291,13 +1302,14 @@
         refreshTraktTokenStatus();
 
         // Add click handler for refresh button
-        document.getElementById('refresh-trakt-tokens').addEventListener('click', refreshTraktTokenStatus);
+        document.getElementById('refresh-trakt-tokens')?.addEventListener('click', refreshTraktTokenStatus);
 
         // Verification Queue functionality
         function fetchVerificationQueue() {
             const statsContainer = document.getElementById('verification-stats');
             const queueContainer = document.getElementById('verification-queue-container');
-            
+            if (!statsContainer || !queueContainer) return;  // the card is only on Tools > Symlinks
+
             statsContainer.innerHTML = '<div class="stats-loading">Loading verification stats...</div>';
             queueContainer.innerHTML = '<div class="queue-loading">Loading verification queue...</div>';
             
@@ -1415,8 +1427,8 @@
         }
         
         // Add event listeners
-        document.getElementById('refresh-verification-queue').addEventListener('click', fetchVerificationQueue);
-        document.getElementById('run-verification-scan').addEventListener('click', runVerificationScan);
+        document.getElementById('refresh-verification-queue')?.addEventListener('click', fetchVerificationQueue);
+        document.getElementById('run-verification-scan')?.addEventListener('click', runVerificationScan);
         
         // Initial fetch of verification queue
         fetchVerificationQueue();
@@ -3191,7 +3203,9 @@
     window.backfillResolution = function() {
         const statusDiv = document.getElementById('backfill-resolution-status');
 
-        showConfirmationModal({
+        // showConfirmationModal was never defined, so this button did nothing; use the app's confirm popup.
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
             title: 'Backfill Resolution Data',
             message: 'This will extract resolution data (2160p, 1080p, etc.) from stored file paths for all Collected items with NULL resolution. This is safe to run multiple times and will not overwrite existing resolution data.',
             confirmText: 'Start Backfill',

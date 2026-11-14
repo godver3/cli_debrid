@@ -1,9 +1,10 @@
 {% extends "tool_cards/layout.html" %}
 {% block title %}Tools{% endblock %}
 {% block page_title %}Tools{% endblock %}
-{% block intro %}<p class="tdb-intro">Hands-on tools for the library, symlinks and Plex labels. Backups, cleanups and database fixes are on the <a href="{{ url_for('tool_pages.maintenance') }}">Maintenance</a> page; scheduled jobs are on <a href="{{ url_for('program_operation.automation') }}">Automation</a>.</p>{% endblock %}
+{% block intro %}<p class="tdb-intro">Hands-on tools for the library, queues, symlinks and Plex labels. Backups, cleanups and database fixes are on the <a href="{{ url_for('tool_pages.maintenance') }}">Maintenance</a> page; scheduled jobs are on <a href="{{ url_for('program_operation.automation') }}">Automation</a>.</p>{% endblock %}
 {% block tabs %}
 <button class="tab" data-cat="library">Library</button>
+<button class="tab" data-cat="queues">Queues &amp; tasks</button>
 <button class="tab" data-cat="symlinks">Symlinks</button>
 <button class="tab" data-cat="plex_labels">Plex Labels</button>
 <button class="tab" data-cat="usenet">Usenet</button>
