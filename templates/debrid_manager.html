@@ -74,6 +74,13 @@
                 Usage
             </button>
             {% endif %}
+            {% if show_climount_tab and dm_mode != 'climount' %}
+            <button class="dm-tab" data-tab="debrid-repair" title="Health checks and repair for debrid torrents served through cli_mount">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+                Health &amp; Repair
+                <span class="dm-tab-badge" id="debrid-tab-badge" style="display:none"></span>
+            </button>
+            {% endif %}
             {% if show_climount_tab and dm_mode == 'climount' %}
             <button class="dm-tab" data-tab="usenet">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
@@ -703,19 +710,6 @@
             <div id="af-list"><div id="af-empty" style="display:none">No active files</div></div>
         </div>
 
-        <!-- Sub-tab nav -->
-        <div id="climount-subtabs" style="display:flex;gap:4px;margin-bottom:0;border-bottom:1px solid #252525;padding-bottom:0">
-            <button id="usenet-subtab-btn" class="dcy-subtab-btn active" onclick="switchcli_mountSubtab('usenet')">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:14px;height:14px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
-                Usenet
-            </button>
-            <button id="debrid-subtab-btn" class="dcy-subtab-btn" onclick="switchcli_mountSubtab('debrid')">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:14px;height:14px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/></svg>
-                Debrid
-                <span id="debrid-tab-badge" style="display:none;background:#CE93D8;color:#1a0a2a;border-radius:10px;padding:1px 7px;font-size:0.75rem;margin-left:2px"></span>
-            </button>
-        </div>
-
         <!-- Usenet sub-tab content -->
         <div id="usenet-subtab-content" style="padding-top:16px">
         <div id="usenet-loading" style="padding:40px;text-align:center;color:#888">Loading…</div>
@@ -846,15 +840,19 @@
         <div id="usenet-error" style="display:none;padding:20px;color:#f87171;text-align:center"></div>
         </div><!-- /usenet-subtab-content -->
 
-        <!-- Debrid sub-tab content -->
-        <div id="debrid-subtab-content" style="display:none;padding-top:16px">
+
+    </div><!-- /usenet-tab -->
+    {% if dm_mode != 'climount' %}
+    <!-- ── HEALTH & REPAIR TAB (debrid torrents tracked by cli_mount) ── -->
+    <div id="debrid-repair-tab" class="dm-panel">
+        <div id="debrid-subtab-content">
         <div id="dr-loading" style="padding:40px;text-align:center;color:#888">Loading…</div>
         <div id="dr-content" style="display:none">
 
             <div class="un-header">
                 <div>
                     <h1 class="un-title">Debrid Health &amp; Repair</h1>
-                    <p class="un-subtitle">RealDebrid torrent health monitoring and repair</p>
+                    <p class="un-subtitle">Health checks and repair for debrid torrents served through cli_mount</p>
                 </div>
                 <div class="un-actions" style="flex-wrap:nowrap">
                     <div style="position:relative;display:inline-block" id="dr-scan-btn-wrap">
@@ -959,8 +957,8 @@
         </div><!-- /dr-content -->
         <div id="dr-error" style="display:none;padding:20px;color:#f87171;text-align:center"></div>
         </div><!-- /debrid-subtab-content -->
-
-    </div><!-- /usenet-tab -->
+    </div><!-- /debrid-repair-tab -->
+    {% endif %}
     {% endif %}
 
     {% if show_plex_trash %}
@@ -2078,6 +2076,7 @@ document.querySelectorAll('.dm-tab').forEach(btn => {
         if (btn.dataset.tab === 'library' && !window._libLoaded) loadLibrary(false);
         if (btn.dataset.tab === 'maintenance' && !_bkLoaded) loadMaintenance();
         if (btn.dataset.tab === 'usenet' && !window._usenetLoaded) loadUsenetTab();
+        if (btn.dataset.tab === 'debrid-repair' && !window._debridLoaded) loadDebridTab();
         if (btn.dataset.tab === 'usenet') afStartPolling();
         if (btn.dataset.tab !== 'usenet') afStopPolling();
         if (btn.dataset.tab === 'reconcile' && !window._rcLoaded) { loadReconcile(false); loadBatteryAudit(false); }
@@ -5241,22 +5240,6 @@ function afStartPolling() {
 function afStopPolling() {
     clearInterval(_afTimer);
     _afTimer = null;
-}
-
-// ── cli_mount SUB-TAB SWITCHING ────────────────────────────────────────────
-let _climountActiveSubtab = 'usenet';
-
-function switchcli_mountSubtab(tab) {
-    _climountActiveSubtab = tab;
-    const usenetBtn  = document.getElementById('usenet-subtab-btn');
-    const debridBtn  = document.getElementById('debrid-subtab-btn');
-    const usenetContent = document.getElementById('usenet-subtab-content');
-    const debridContent = document.getElementById('debrid-subtab-content');
-    if (usenetBtn)  usenetBtn.classList.toggle('active', tab === 'usenet');
-    if (debridBtn)  debridBtn.classList.toggle('active', tab === 'debrid');
-    if (usenetContent) usenetContent.style.display = tab === 'usenet' ? '' : 'none';
-    if (debridContent) debridContent.style.display = tab === 'debrid' ? '' : 'none';
-    if (tab === 'debrid' && !window._debridLoaded) loadDebridTab();
 }
 
 // ── DEBRID REPAIR TAB ──────────────────────────────────────────────────────
