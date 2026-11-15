@@ -674,12 +674,16 @@ def get_library_data():
                 count_params.append(resolution_filter)
 
         # Search filter
+        # Accent-insensitive ("pokemon" finds "Pokémon") and alias-aware
+        # ("money heist" finds "La casa de papel" via battery alternative titles).
         if search_term:
-            query += " AND title LIKE ?"
-            count_query += " AND title LIKE ?"
-            search_param = f"%{search_term}%"
-            params.append(search_param)
-            count_params.append(search_param)
+            from utilities.title_search import register_fold_function, title_search_clause
+            register_fold_function(conn)
+            clause, search_params = title_search_clause(search_term)
+            query += f" AND {clause}"
+            count_query += f" AND {clause}"
+            params.extend(search_params)
+            count_params.extend(search_params)
 
         # Group by tmdb_id (or imdb_id if no tmdb_id) to deduplicate
         # Use NULLIF to convert empty strings to NULL for proper COALESCE behavior
