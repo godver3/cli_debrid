@@ -1046,6 +1046,15 @@ def get_and_add_wanted_content(source_id):
             wanted_content = get_wanted_from_scrob_collection(versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Special Scrob Lists':
             wanted_content = get_wanted_from_scrob_special(source_data, versions_from_config, unblacklist=unblacklist_on_source_run)
+        elif source_type == 'Floppy Watchlist':
+            from content_checkers.floppy import get_wanted_from_floppy_watchlist
+            wanted_content = get_wanted_from_floppy_watchlist(source_data, versions_from_config, unblacklist=unblacklist_on_source_run)
+        elif source_type == 'Floppy Lists':
+            from content_checkers.floppy import get_wanted_from_floppy_lists
+            wanted_content = get_wanted_from_floppy_lists(source_data.get('floppy_list_ids', ''), versions_from_config, unblacklist=unblacklist_on_source_run)
+        elif source_type == 'Simkl Watchlist':
+            from content_checkers.simkl import get_wanted_from_simkl_watchlist
+            wanted_content = get_wanted_from_simkl_watchlist(source_data, versions_from_config, unblacklist=unblacklist_on_source_run)
         elif source_type == 'Collected':
             wanted_content = get_wanted_from_collected()
         elif source_type == 'Adaptive List':

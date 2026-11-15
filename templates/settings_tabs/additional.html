@@ -120,7 +120,7 @@
         <div class="settings-list">
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" and section != "Discover Settings" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Plex Smart Collections" and section != "Plex Movie Box Sets" and section != "Tags" and section != "Trakt" and section != "Scrob" and section != "MDBList" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" and section != "Discover Settings" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Plex Smart Collections" and section != "Plex Movie Box Sets" and section != "Tags" and section != "Trakt" and section != "Scrob" and section != "MDBList" and section != "Floppy" and section != "Simkl" %}
     <div class="settings-section settings-card">
         <div class="settings-section-header">
             <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -340,7 +340,7 @@
             </div>
         </div>
         <div class="settings-section-content">
-            <p class="settings-description">Accounts on list and tracking services. Content sources and Discover use them.</p>
+            <p class="settings-description">Accounts on list and tracking services (MDBList, Trakt, Scrob, Floppy, Simkl). Content sources and Discover use them.</p>
             <div class="settings-subheader"><h5>MDBList</h5></div>
             {% for key, value in settings_schema['MDBList'].items() %}
                 {% if key != 'tab' %}
@@ -409,6 +409,99 @@
                 </div>
                 {% endif %}
             {% endfor %}
+            <div class="settings-subheader"><h5>Floppy</h5></div>
+            <p class="settings-description">Floppy is a self-hosted media tracker (<a href="https://github.com/dannyvfilms/Floppy" target="_blank" rel="noopener">dannyvfilms/Floppy</a>). Used by the Floppy Watchlist and Floppy Lists content sources.</p>
+            {% for key, value in settings_schema['Floppy'].items() %}
+                {% if key != 'tab' %}
+                <div class="settings-form-group">
+                    <label for="floppy-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                    <input type="{% if value.sensitive %}password{% else %}text{% endif %}"
+                           id="floppy-{{ key }}" name="Floppy.{{ key }}"
+                           value="{{ settings.get('Floppy', {}).get(key, '') }}" class="settings-input"
+                           data-section="Floppy" data-key="{{ key }}">
+                    {% if value.description %}<p class="settings-description">{{ value.description }}</p>{% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+            <button type="button" id="floppy-test-btn" class="settings-button">Test Floppy</button>
+            <span id="floppy-test-status" class="settings-description" style="margin-left:8px"></span>
+
+            <div class="settings-subheader"><h5>Simkl</h5></div>
+            <p class="settings-description">Used by the Simkl Watchlist content source. Create an app at <a href="https://simkl.com/settings/developer/" target="_blank" rel="noopener">simkl.com/settings/developer</a> (Auth V2, type <b>TV, devices &amp; command line</b>), paste its Client ID, save, then sign in.</p>
+            {% for key, value in settings_schema['Simkl'].items() %}
+                {% if key != 'tab' %}
+                <div class="settings-form-group">
+                    <label for="simkl-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                    <input type="{% if value.sensitive %}password{% else %}text{% endif %}"
+                           id="simkl-{{ key }}" name="Simkl.{{ key }}"
+                           value="{{ settings.get('Simkl', {}).get(key, '') }}" class="settings-input"
+                           data-section="Simkl" data-key="{{ key }}">
+                    {% if value.description %}<p class="settings-description">{{ value.description }}</p>{% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+            <button type="button" id="simkl-auth-btn" class="settings-button">Sign in to Simkl</button>
+            <button type="button" id="simkl-signout-btn" class="settings-button" style="display:none">Sign out</button>
+            <div id="simkl-auth-status" class="settings-description" style="margin-top:6px"></div>
+            <script>
+            (function () {
+                const statusEl = document.getElementById('simkl-auth-status');
+                const signIn = document.getElementById('simkl-auth-btn');
+                const signOut = document.getElementById('simkl-signout-btn');
+                const floppyBtn = document.getElementById('floppy-test-btn');
+                const floppyStatus = document.getElementById('floppy-test-status');
+                const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+                let timer = null;
+                async function refresh() {
+                    try {
+                        const r = await fetch('/tracking/simkl/auth/status');
+                        const d = await r.json();
+                        if (d.signed_in) {
+                            statusEl.textContent = 'Signed in to Simkl.';
+                            signIn.textContent = 'Sign in again';
+                            signOut.style.display = '';
+                        } else {
+                            statusEl.textContent = d.client_id_set ? 'Not signed in.' : 'Add your Client ID and save, then sign in.';
+                            signIn.textContent = 'Sign in to Simkl';
+                            signOut.style.display = 'none';
+                        }
+                    } catch (e) {}
+                }
+                signIn.addEventListener('click', async () => {
+                    clearInterval(timer);
+                    signIn.disabled = true;
+                    try {
+                        const r = await fetch('/tracking/simkl/auth/start', { method: 'POST' });
+                        const d = await r.json();
+                        if (!d.success) { statusEl.textContent = d.error || 'Could not start sign-in'; return; }
+                        statusEl.innerHTML = `Go to <a href="${esc(d.verification_uri)}" target="_blank" rel="noopener">${esc(d.verification_uri)}</a> and enter <b style="font-size:15px;letter-spacing:1px">${esc(d.user_code)}</b>. This page updates when you approve.`;
+                        const until = Date.now() + d.expires_in * 1000;
+                        timer = setInterval(async () => {
+                            if (Date.now() > until) { clearInterval(timer); statusEl.textContent = 'The code expired. Click Sign in to try again.'; return; }
+                            try {
+                                const p = await (await fetch('/tracking/simkl/auth/poll', { method: 'POST' })).json();
+                                if (p.status === 'approved') { clearInterval(timer); refresh(); }
+                                else if (p.status === 'expired') { clearInterval(timer); statusEl.textContent = 'The code expired. Click Sign in to try again.'; }
+                                else if (p.status === 'error') { clearInterval(timer); statusEl.textContent = 'Sign-in failed: ' + (p.error || 'unknown error'); }
+                            } catch (e) {}
+                        }, Math.max(5, d.interval) * 1000);
+                    } finally { signIn.disabled = false; }
+                });
+                signOut.addEventListener('click', async () => {
+                    await fetch('/tracking/simkl/auth/signout', { method: 'POST' });
+                    refresh();
+                });
+                floppyBtn.addEventListener('click', async () => {
+                    floppyStatus.textContent = 'Testing… (save first if you changed the fields)';
+                    try {
+                        const d = await (await fetch('/tracking/floppy/test', { method: 'POST' })).json();
+                        floppyStatus.textContent = d.message;
+                        floppyStatus.style.color = d.success ? '#4ade80' : '#f87171';
+                    } catch (e) { floppyStatus.textContent = 'Test failed'; }
+                });
+                refresh();
+            })();
+            </script>
         </div>
     </div>
     {% elif section == "Queue" %}

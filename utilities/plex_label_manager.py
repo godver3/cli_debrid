@@ -1719,6 +1719,19 @@ def _fetch_live_imdb_ids_for_source(src_id: str, src_cfg: dict, all_settings: di
             for items, _ in results:
                 _ingest(items)
 
+        elif src_type in ('Floppy Watchlist', 'Floppy Lists', 'Simkl Watchlist'):
+            if src_type == 'Floppy Watchlist':
+                from content_checkers.floppy import get_wanted_from_floppy_watchlist
+                results = get_wanted_from_floppy_watchlist(src_cfg, versions)
+            elif src_type == 'Floppy Lists':
+                from content_checkers.floppy import get_wanted_from_floppy_lists
+                results = get_wanted_from_floppy_lists(src_cfg.get('floppy_list_ids', ''), versions)
+            else:
+                from content_checkers.simkl import get_wanted_from_simkl_watchlist
+                results = get_wanted_from_simkl_watchlist(src_cfg, versions)
+            for items, _ in results:
+                _ingest(items)
+
         elif src_type == 'Special Scrob Lists':
             from content_checkers.scrob import get_wanted_from_scrob_special
             results = get_wanted_from_scrob_special(src_cfg, versions)

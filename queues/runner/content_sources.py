@@ -177,6 +177,15 @@ class ContentSourceTasks:
                 wanted_content = get_wanted_from_scrob_collection(versions_from_config, unblacklist=unblacklist_on_source_run)
             elif source_type == 'Special Scrob Lists':
                 wanted_content = get_wanted_from_scrob_special(data, versions_from_config, unblacklist=unblacklist_on_source_run)
+            elif source_type == 'Floppy Watchlist':
+                from content_checkers.floppy import get_wanted_from_floppy_watchlist
+                wanted_content = get_wanted_from_floppy_watchlist(data, versions_from_config, unblacklist=unblacklist_on_source_run)
+            elif source_type == 'Floppy Lists':
+                from content_checkers.floppy import get_wanted_from_floppy_lists
+                wanted_content = get_wanted_from_floppy_lists(data.get('floppy_list_ids', ''), versions_from_config, unblacklist=unblacklist_on_source_run)
+            elif source_type == 'Simkl Watchlist':
+                from content_checkers.simkl import get_wanted_from_simkl_watchlist
+                wanted_content = get_wanted_from_simkl_watchlist(data, versions_from_config, unblacklist=unblacklist_on_source_run)
             elif source_type == 'Collected':
                 wanted_content = get_wanted_from_collected() # Doesn't take versions arg
             elif source_type == 'My Plex Watchlist':

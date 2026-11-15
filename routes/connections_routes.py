@@ -1270,6 +1270,27 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 base_response['error'] = f'TMDB API error: {str(e)}'
                 base_response['connected'] = False
 
+        # --- Floppy / Simkl sources ---
+        elif source_type in ['Floppy Watchlist', 'Floppy Lists']:
+            from content_checkers.floppy import get_floppy_config, test_connection
+            floppy_config = get_floppy_config()
+            if not floppy_config:
+                base_response['error'] = 'Floppy URL or API key not configured in Additional Settings'
+                base_response['connected'] = False
+                return base_response
+            ok, message = test_connection()
+            base_response['connected'] = ok
+            if ok:
+                base_response['details'].update({'url': floppy_config['base_url']})
+            else:
+                base_response['error'] = message
+        elif source_type == 'Simkl Watchlist':
+            from content_checkers.simkl import auth_status
+            status = auth_status()
+            base_response['connected'] = bool(status.get('signed_in'))
+            if not status.get('signed_in'):
+                base_response['error'] = 'Not signed in to Simkl (Additional Settings → Tracking accounts)'
+
         # --- Scrob Sources (Lists, Collection, Special Lists) ---
         elif source_type in ['Scrob Lists', 'Scrob Collection', 'Special Scrob Lists']:
             from content_checkers.scrob import get_scrob_config, _scrob_get
