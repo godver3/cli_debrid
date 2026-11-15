@@ -56,6 +56,20 @@ def _is_public_request():
     return request.path == '/api' or request.path.startswith(_BAZARR_PATHS)
 
 
+def _wants_html():
+    """True when the client named text/html and prefers it over JSON.
+
+    Don't use accept_mimetypes.best: werkzeug ranks entries with parameters
+    first, so Chrome's "...,application/signed-exchange;v=b3;q=0.7" header
+    makes best == 'application/signed-exchange' and a page load got the JSON
+    401 instead of the login redirect. A bare */* (fetch's default) has no
+    explicit text/html, so API callers still get the 401.
+    """
+    accept = request.accept_mimetypes
+    return ('text/html' in accept.values()
+            and accept.best_match(['text/html', 'application/json']) == 'text/html')
+
+
 def require_login():
     """App-wide before_request: with the user system on, every route needs a
     logged-in session or an API token unless it is listed as public above.
@@ -69,7 +83,7 @@ def require_login():
         return None
     if current_user.is_authenticated or _check_api_token():
         return None
-    if request.method == 'GET' and request.accept_mimetypes.best == 'text/html':
+    if request.method == 'GET' and _wants_html():
         return redirect(url_for('auth.login'))
     return jsonify({'error': 'Authentication required'}), 401
 
