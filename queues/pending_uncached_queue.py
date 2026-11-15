@@ -137,6 +137,11 @@ class PendingUncachedQueue:
             if (parsed_file := self.media_matcher._parse_file_info(f)) is not None
         ]
 
+        from debrid.common import drop_junk_torrent_videos
+        parsed_torrent_files, _junk_reason = drop_junk_torrent_videos(parsed_torrent_files, files)
+        if _junk_reason:
+            logging.warning(f"Rejecting torrent for {item_identifier}: {_junk_reason}")
+
         if not parsed_torrent_files:
             logging.debug(f"No valid video files found in torrent for {item_identifier} after parsing.")
             self._handle_failed_add(item, queue_manager)

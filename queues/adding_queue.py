@@ -837,6 +837,13 @@ class AddingQueue:
                          parsed_torrent_files.append(parsed_info)
                 logging.info(f"Parsed {len(parsed_torrent_files)} valid video files from torrent.")
 
+                # Site promo clips (RARBG.com.mp4) and torrents whose payload isn't a
+                # playable video (3D Blu-ray ISO + promo clip) are not the item (#575).
+                from debrid.common import drop_junk_torrent_videos
+                parsed_torrent_files, _junk_reason = drop_junk_torrent_videos(parsed_torrent_files, raw_files)
+                if _junk_reason:
+                    logging.warning(f"Rejecting torrent for {item_identifier}: {_junk_reason}")
+
                 if not parsed_torrent_files:
                     logging.error(f"No valid video files found in torrent after parsing/filtering for {item_identifier}")
                     # The log here is redundant if the one above captures the content of filtered_raw_files correctly.

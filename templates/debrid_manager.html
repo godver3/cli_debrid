@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% set _provider_name = usenet_provider_name|default('cli_mount') %}
-{% block title %}{{ 'cli_mount' if dm_mode == 'climount' else 'Debrid Manager' }}{% endblock %}
+{% block title %}{{ 'Usenet Manager' if dm_mode == 'climount' else 'Debrid Manager' }}{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_debrid_manager.css') }}">
@@ -10,7 +10,7 @@
 {% block content %}
 <div class="dm-container">
     <div class="dm-header">
-        <h2>{{ 'cli_mount' if dm_mode == 'climount' else 'Debrid Manager' }}</h2>
+        <h2>{{ 'Usenet Manager' if dm_mode == 'climount' else 'Debrid Manager' }}</h2>
         {% if dm_mode != 'climount' and debrid_all_providers|length > 1 %}
         <label class="dm-provider-pick" title="Active, Torrents, Usage and torrent actions use this provider. Audit checks every provider.">
             <select id="dm-provider-select" class="dm-select">

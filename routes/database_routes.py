@@ -1273,12 +1273,10 @@ def bulk_queue_action():
 
                         cleaned_version_val = current_version_val # Default assignment
 
-                        if current_version_val is None:
-                            logging.warning(f"Rescrape Detail: Item ID {item_id} - Version from DB is None. 'cleaned_version_val' will be None.")
-                            # cleaned_version_val is already None
-                        elif isinstance(current_version_val, str):
-                            if '*' in current_version_val:
-                                cleaned_version_val = current_version_val.replace('*', '')
+                        if current_version_val is None or isinstance(current_version_val, str):
+                            # Never '' or None (a '**' row): that scraped with no version filters (#576).
+                            from utilities.reverse_parser import resolve_scraping_version
+                            cleaned_version_val = resolve_scraping_version(current_version_val)
                         else: # Not a string and not None
                             logging.warning(f"Rescrape Detail: Item ID {item_id} - Version from DB is not a string or None: '{current_version_val}' (type: {type(current_version_val)}). 'cleaned_version_val' currently is '{cleaned_version_val}'. This might cause issues if DB expects a string for version.")
                             # cleaned_version_val will hold the original non-string, non-None value here.
@@ -1694,8 +1692,10 @@ def rescrape_single_item(item_id):
 
         current_version_val = item_db_data.get('version')
         cleaned_version_val = current_version_val
-        if isinstance(current_version_val, str) and '*' in current_version_val:
-            cleaned_version_val = current_version_val.replace('*', '')
+        if current_version_val is None or isinstance(current_version_val, str):
+            # Never '' (a '**' row): that scraped with no version filters (#576).
+            from utilities.reverse_parser import resolve_scraping_version
+            cleaned_version_val = resolve_scraping_version(current_version_val)
 
         # cli_mount torrent/NZB removal — skip if another item still actively uses it
         if item_db_data['state'] in ('Collected', 'Upgrading', 'Checking'):
