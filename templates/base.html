@@ -215,7 +215,19 @@
                         <a class="st-nav-dd-item" href="{{ url_for('tool_pages.maintenance') }}"><i class="fa-solid fa-screwdriver-wrench"></i> Maintenance</a>
                         <a class="st-nav-dd-item" href="{{ url_for('database.phalanxdb_status') }}"><i class="fa-solid fa-server"></i> Phalanx DB</a>
                         <div class="st-nav-dd-sep"></div>
-                        <a class="st-nav-dd-item" href="{{ url_for('performance.performance_dashboard') }}"><i class="fa-solid fa-chart-line"></i> Performance Dashboard</a>
+                        {# Hovering opens its tabs to the side (mouse only; touch keeps the plain link). #}
+                        {% set _pd = url_for('performance.performance_dashboard') %}
+                        <div class="st-nav-dd-sub">
+                            <a class="st-nav-dd-item" href="{{ _pd }}"><i class="fa-solid fa-chart-line"></i> Performance Dashboard <i class="fa-solid fa-chevron-right st-nav-dd-sub-arr"></i></a>
+                            <div class="st-nav-dd-flyout">
+                                <a class="st-nav-dd-item" href="{{ _pd }}"><i class="fa-solid fa-gauge"></i> Performance</a>
+                                <a class="st-nav-dd-item" href="{{ _pd }}#connections"><i class="fa-solid fa-plug"></i> Connections</a>
+                                <a class="st-nav-dd-item" href="{{ _pd }}#scraper-stats"><i class="fa-solid fa-magnifying-glass-chart"></i> Scraper Stats</a>
+                                {% if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') %}
+                                <a class="st-nav-dd-item" href="{{ _pd }}#diagnostics"><i class="fa-solid fa-stethoscope"></i> Diagnostics</a>
+                                {% endif %}
+                            </div>
+                        </div>
                         {% if not is_limited_environment() %}
                         <a class="st-nav-dd-item" href="{{ url_for('debrid_manager.index') }}"><i class="fa-solid fa-cloud-arrow-down"></i> Debrid Manager</a>
                         <a class="st-nav-dd-item" href="{{ url_for('debrid_manager.climount_page') }}"><i class="fa-solid fa-hard-drive"></i> Usenet Manager</a>

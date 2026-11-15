@@ -840,6 +840,8 @@ window.addEventListener('resize', function() {
   }
   tabs.forEach(t => t.addEventListener('click', () => show(t.dataset.tab)));
   show((location.hash || '').slice(1) || 'performance');
+  // The System menu links straight to tabs (#connections...), also from this page.
+  window.addEventListener('hashchange', () => show((location.hash || '').slice(1) || 'performance'));
 })();
 
 document.addEventListener('DOMContentLoaded', function() {
