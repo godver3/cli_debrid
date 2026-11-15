@@ -6097,11 +6097,8 @@ async function loadPlexTrash(force) {
         loading.style.display = 'none';
         content.style.display = '';
         _ptLoaded = true;
-        // Auto-switch to usenet tab if there are usenet items but no debrid items
-        const hasDebrid = (_ptInRd.length + _ptNotInRd.length) > 0;
-        const hasUsenet = (_ptInUsenet.length + _ptNotUsenet.length) > 0;
-        if (!hasDebrid && hasUsenet) _ptSwitchSubtab('usenet');
-        else _ptSwitchSubtab(_ptActiveSubtab);
+        // Each page shows only its own panel: debrid trash here, usenet trash on cli_mount.
+        _ptSwitchSubtab(_ptActiveSubtab);
         // If RD library was not ready, show a notice and auto-refresh in 15s
         const rdBanner = document.getElementById('pt-rd-loading-banner');
         if (data.rd_library_status === 'loading') {

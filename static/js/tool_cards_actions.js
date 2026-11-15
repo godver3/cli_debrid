@@ -849,6 +849,9 @@
 
         // Load versions for the version propagator dropdowns
         function loadVersions() {
+            // The propagator card is only on the Tools page; this script also runs on
+            // Maintenance and Diagnostics.
+            if (!document.getElementById('original_version') || !document.getElementById('propagated_version')) return;
             fetch('/debug/get_versions')
                 .then(response => response.json())
                 .then(data => {
