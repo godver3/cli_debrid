@@ -5745,3 +5745,8 @@ body[data-theme="tangerine"] .settings-form-group:has(input[type="checkbox"]) .s
     border: 1px solid var(--st-border, #3a3a3a);
 }
 .settings-section-content button.settings-button.secondary:hover { color: #fff; border-color: #ff6b35; background: transparent; }
+
+/* Single-card settings pages (Subtitles, Tracking accounts): no dropdown header. */
+.settings-section.single-section > .settings-section-header {
+    display: none;
+}

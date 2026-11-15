@@ -350,7 +350,24 @@
                 collapseAllButton.addEventListener('click', () => collapseAll(tabContent));
             }
 
+            // Settings pages with only one card (e.g. Subtitles, Tracking accounts):
+            // no dropdown at all. Show the card open, drop its header (it repeats the
+            // page title) and the Collapse/Expand All buttons.
+            const pageCards = tabContent.querySelectorAll('.additional-settings-page > .content-section > .settings-list > .settings-section');
+            if (pageCards.length === 1) {
+                const card = pageCards[0];
+                const content = card.querySelector('.settings-section-content');
+                if (content) {
+                    content.style.display = 'block';
+                    card.classList.add('expanded', 'single-section');
+                    const page = card.closest('.additional-settings-page');
+                    const buttons = page && page.querySelector('.settings-expand-collapse-buttons');
+                    if (buttons) buttons.style.display = 'none';
+                }
+            }
+
             settingsSections.forEach(section => {
+                if (section.classList.contains('single-section')) return;
                 const header = section.querySelector('.settings-section-header');
                 const content = section.querySelector('.settings-section-content');
                 const toggleIcon = header.querySelector('.settings-toggle-icon');
